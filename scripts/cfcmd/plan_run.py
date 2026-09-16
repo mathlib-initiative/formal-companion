@@ -68,6 +68,9 @@ def register(subparsers):
     p.add_argument("--i-have-consent", action="store_true",
                    help="the owner of --host has agreed to receive private sources and book text")
     p.add_argument("--force", action="store_true", help="replan into an existing run directory")
+    p.add_argument("--allow-unreconciled", action="store_true",
+                   help="plan a differential run although pairs/reconciliation.json is missing "
+                        "or predates the task-universe gate (nothing then checks the task count)")
     p.set_defaults(func=run)
     return p
 
@@ -152,6 +155,51 @@ def _stage_data(camp, rd: Path, companions: list[str]) -> list[str]:
     return staged
 
 
+def _task_universe(p, args) -> tuple[list[str] | None, int | None]:
+    """The reconciled item set a differential run's tasks must equal.
+
+    ``pairs/reconciliation.json`` is written by ``cf pair``; an absent file or
+    an absent ``task_universe`` used to make the check silently vanish -- no
+    warning, and the banner still claimed "universe: queue.json + targets.*.json
+    (items ∩ any-repo)".  An unreconciled plan is exactly the 382-vs-383 state
+    this gate exists to prevent, so it is refused instead.
+    """
+    allow = bool(getattr(args, "allow_unreconciled", False))
+    recon_path = p.pairs_dir / "reconciliation.json"
+    if not recon_path.exists():
+        if allow:
+            return None, None
+        raise CfError(
+            f"no {recon_path}: the task universe is unknown",
+            hint="run `cf pair` first (it writes the reconciliation), or pass "
+                 "--allow-unreconciled to plan a run nothing checks the size of",
+        )
+    recon = json.loads(recon_path.read_text(encoding="utf-8"))
+    items = recon.get("task_universe_items")
+    count = recon.get("task_universe")
+    if count is None:
+        if allow:
+            return None, None
+        raise CfError(
+            f"{recon_path} has no `task_universe`",
+            hint="it predates the reconciliation gate; re-run `cf pair`, or pass "
+                 "--allow-unreconciled",
+        )
+    if items is None:
+        # an older reconciliation: the count is all we have, so keep the count check
+        print(f"warn {recon_path} has no `task_universe_items`; falling back to a "
+              "count-only check (re-run `cf pair` to name a dropped item)")
+        return None, int(count)
+    names = sorted({str(i) for i in items})
+    if len(names) != int(count):
+        raise CfError(
+            f"{recon_path}: task_universe {count} != {len(names)} distinct "
+            "task_universe_items",
+            hint="the reconciliation is malformed; re-run `cf pair`",
+        )
+    return names, len(names)
+
+
 def _companion_rows(camp, host_paths: dict) -> list[dict]:
     rows = []
     for c in camp.companions:
@@ -209,7 +257,12 @@ def run(args) -> int:
             _read_json(p.targets_json(companion), f"targets.{companion}.json")
         )
         entries = mt.target_entries(targets, companion, offset=camp.offset)
-        expected_n = len(targets)
+        # The ITEM SET, not its length: comparing len(entries) to len(targets)
+        # is tautological (entries is built from targets), so it could only ever
+        # catch a drop inside make_tasks, never one between the companion's item
+        # set and targets.<name>.json.
+        expected_items = sorted({str(r.get("item")) for r in targets if r.get("item")})
+        expected_n = len(expected_items)
         universe = f"targets.{companion}.json"
     else:
         queue = _queue_rows(_read_json(p.queue_json, "queue.json"))
@@ -223,10 +276,7 @@ def run(args) -> int:
         entries = mt.differential_entries(
             queue, targets_by, offset=camp.offset, chapters=chapters, kinds=kinds
         )
-        recon_path = p.pairs_dir / "reconciliation.json"
-        expected_n = None
-        if recon_path.exists():
-            expected_n = json.loads(recon_path.read_text(encoding="utf-8")).get("task_universe")
+        expected_items, expected_n = _task_universe(p, args)
         universe = "queue.json + targets.*.json (items ∩ any-repo)"
 
     # ---- prompts -----------------------------------------------------------
@@ -261,6 +311,9 @@ def run(args) -> int:
         },
         kinds=kinds,
         max_open_tasks=args.max_open_tasks,
+        # critique.json moves `tasks == items ∩ any-repo` into make_tasks, and
+        # reconcile(expected_items=...) NAMES what is missing or unexpected.
+        expected_items=expected_items,
     )
     if expected_n is not None and len(tasks) != expected_n:
         raise CfError(

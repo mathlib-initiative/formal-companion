@@ -185,8 +185,12 @@ def reconcile(
                 "items_out_of_scope": sorted((keys & in_book) - in_scope, key=item_sort_key),
             }
         )
-        # what plan/make_tasks must reconcile its task count against
+        # What plan/make_tasks must reconcile against.  The NAMES, not only the
+        # count: a count-only check can say "382 where 383 were expected" but
+        # never which item went missing, and naming it is the whole point of the
+        # gate (Exercise 1.3.19, lost to a single-space regex).
         out["task_universe"] = len(matched)
+        out["task_universe_items"] = sorted(matched, key=item_sort_key)
     return out
 
 
