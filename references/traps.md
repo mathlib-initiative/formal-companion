@@ -119,8 +119,9 @@ in `run.yaml`; never claim tend's budget protects a bridged run.
 **C3 — The host caps concurrent sessions per account.**
 *Presents as:* HTTP 409s once you pass 16 sessions — and the cap is per account, across campaigns,
 so two campaigns cannot both run at full width.
-*Fix:* `plan-run` writes worker+reviewer concurrency into `run.yaml` and refuses a total above the
-configured cap; a second campaign waits.
+*Fix:* `plan-run` writes worker+reviewer concurrency into `run.yaml`, and `cf run` refuses a total
+above `defaults.max_concurrent_sessions` (16) unless `--over-session-cap` is passed; the plan prints
+`<n> sessions, cap <m>` so the number is visible before anything starts. A second campaign waits.
 *Evidence:* `docs/HANDOFF.md` §8.
 
 **C4 — The worktree explosion.**

@@ -47,14 +47,59 @@ def register(subparsers):
                    help="pairs/anchor-check.json (default: the campaign's)")
     p.add_argument("--emit-upstream", default="",
                    help="directory to write the upstream export into (CHALLENGED files only)")
-    p.add_argument("--redact-quotes", action="store_true",
-                   help="replace book_quote with (length, hash) in the upstream export")
+    p.add_argument("--redact-quotes", dest="redact_quotes", action="store_true", default=None,
+                   help="replace book_quote with (length, hash) in the upstream export "
+                        "(default: campaign.yaml policy.redact_quotes_on_export, which is true)")
+    p.add_argument("--no-redact-quotes", dest="redact_quotes", action="store_false",
+                   help="export the verbatim book sentence (overrides the campaign policy)")
     p.add_argument("--no-messages", action="store_true", help="skip the owner-message drafts")
     p.set_defaults(func=run)
     return p
 
 
+def _redact(args) -> bool:
+    """``--redact-quotes`` / ``--no-redact-quotes``, else the campaign's policy.
+
+    ``policy.redact_quotes_on_export: true`` is written into every campaign by
+    ``cf init`` and was read by nothing: the flag defaulted to False, so an
+    operator who read their campaign.yaml and believed quotes were redacted got
+    verbatim book sentences in the file they handed to a repo owner.
+    """
+    if args.redact_quotes is not None:
+        return bool(args.redact_quotes)
+    try:
+        from cflib.campaign import Campaign
+
+        policy = Campaign.load(args.campaign).policy
+    except Exception:  # noqa: BLE001 - a campaign we cannot read gets the safe default
+        return True
+    return bool(policy.get("redact_quotes_on_export", True))
+
+
+def _check_publish_policy(args) -> None:
+    """``policy.publish_unchallenged`` is read, and only ``false`` is accepted.
+
+    SKILL.md hard rule 5 is not negotiable: nothing leaves the campaign
+    directory while ``_meta.status`` is UNCHALLENGED.  The key exists so the
+    campaign states the rule, not so it can be turned off.
+    """
+    try:
+        from cflib.campaign import Campaign
+
+        policy = Campaign.load(args.campaign).policy
+    except Exception:  # noqa: BLE001
+        return
+    if policy.get("publish_unchallenged"):
+        raise SystemExit(
+            "error: campaign.yaml sets policy.publish_unchallenged: true, which this skill "
+            "does not implement.\nhint:  a first-pass finding is wrong about 40% of the time; "
+            "run `cf adjudicate` and set it back to false."
+        )
+
+
 def run(args) -> int:
+    _check_publish_policy(args)
+    redact = _redact(args)
     reports = route_mod.route_campaign(
         args.campaign,
         companions=args.companion,
@@ -84,9 +129,9 @@ def run(args) -> int:
                     rep["routed"], args.emit_upstream,
                     companion=rep["companion"],
                     campaign=os.path.abspath(args.campaign or "."),
-                    redact_quotes=args.redact_quotes,
+                    redact_quotes=redact,
                 )
-                print("  upstream: %s" % out)
+                print("  upstream: %s%s" % (out, "" if redact else "  (quotes NOT redacted)"))
             except route_mod.UpstreamRefused as exc:
                 print("  %s" % exc, file=sys.stderr)
                 rc = 2

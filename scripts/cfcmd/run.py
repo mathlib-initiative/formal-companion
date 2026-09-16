@@ -36,6 +36,11 @@ from run import fleet_local, manifest, remote, status as run_status
 
 DEFAULT_WORKERS = 6
 DEFAULT_REVIEWERS = 4
+#: references/traps.md C3: past this many concurrent sessions the API returns
+#: HTTP 409, per ACCOUNT, across campaigns. It was documentation only: `cf run`
+#: accepted any --workers/--reviewers and planned the `tend-control limits` call
+#: without a word (24 + 12 = 36 sessions planned, no warning).
+DEFAULT_SESSION_CAP = 16
 
 
 def register(subparsers) -> None:
@@ -59,6 +64,9 @@ def register(subparsers) -> None:
                    help="a human watched one task through the pipeline; required for --stage raise")
     p.add_argument("--workers", type=int, help="worker limit when raising (default from run.yaml)")
     p.add_argument("--reviewers", type=int, help="reviewer limit when raising")
+    p.add_argument("--over-session-cap", action="store_true",
+                   help="plan more concurrent sessions than defaults.max_concurrent_sessions "
+                        "(the account-wide limit; past it the API returns 409s)")
     p.add_argument("--execute", action="store_true", help="actually run the commands")
     p.add_argument("--status", action="store_true", dest="show_status",
                    help="report this run's progress instead of planning it")
@@ -340,20 +348,40 @@ def _skill_root() -> Path:
 
 
 def _concurrency(campaign, data: dict, args) -> dict:
-    """run.yaml wins, then campaign defaults, then the audit's 6/4."""
+    """run.yaml wins, then campaign defaults, then the audit's 6/4.
+
+    Also checks the account-wide session cap: workers and reviewers are separate
+    sessions and the limit is per ACCOUNT, across campaigns, so the sum is what
+    matters.  The campaign default (8 + 5 = 13) happens to sit under it, which
+    is why nothing has bitten yet.
+    """
     block = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else {}
-    return {
-        "workers": int(args.workers or block.get("workers")
-                       or campaign.default("max_concurrent_workers", DEFAULT_WORKERS)),
-        "reviewers": int(args.reviewers or block.get("reviewers")
-                         or campaign.default("max_concurrent_reviewers", DEFAULT_REVIEWERS)),
-    }
+    workers = int(args.workers or block.get("workers")
+                  or campaign.default("max_concurrent_workers", DEFAULT_WORKERS))
+    reviewers = int(args.reviewers or block.get("reviewers")
+                    or campaign.default("max_concurrent_reviewers", DEFAULT_REVIEWERS))
+    cap = int(campaign.default("max_concurrent_sessions", DEFAULT_SESSION_CAP) or 0)
+    out = {"workers": workers, "reviewers": reviewers,
+           "sessions": workers + reviewers, "session_cap": cap}
+    if cap and workers + reviewers > cap:
+        if not getattr(args, "over_session_cap", False):
+            raise CfError(
+                f"{workers} workers + {reviewers} reviewers = {workers + reviewers} concurrent "
+                f"sessions, over the account cap of {cap}",
+                hint="the limit is per ACCOUNT and across campaigns; past it the API returns "
+                     "409s and tend loses agents mid-run (references/traps.md C3). Lower "
+                     "--workers/--reviewers, or pass --over-session-cap deliberately")
+        log.warn(f"{workers + reviewers} concurrent sessions is over the account cap of {cap}; "
+                 "--over-session-cap was passed, so expect 409s")
+        out["over_session_cap"] = True
+    return out
 
 
 def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency) -> None:
     log.info(f"run {args.run_id} -> {host['name']} ({host['ssh']}:{host['remote_root']})")
     log.info(f"  tasks: {tasks}   concurrency: {concurrency['workers']} workers / "
-             f"{concurrency['reviewers']} reviewers")
+             f"{concurrency['reviewers']} reviewers "
+             f"({concurrency.get('sessions')} sessions, cap {concurrency.get('session_cap')})")
     log.info("  budget: " + (f"{budget['max_cost']} {budget['currency']}"
                               if budget["max_cost"] is not None else "NONE (acknowledged)"))
     log.info(f"  disk:   {disk['human']}")

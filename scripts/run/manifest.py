@@ -22,11 +22,12 @@ Sources and the book are excluded unless ``--include-sources`` /
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 from pathlib import Path
 from typing import Any
 
-from ._compat import CfError, dir_size, human_bytes
+from ._compat import CfError, human_bytes
 
 #: rsync flags used for every component (archive, no device/special files).
 BASE_RSYNC = ["-a", "--no-D", "--omit-dir-times"]
@@ -92,6 +93,47 @@ def remote_names(run: dict, run_id: str) -> dict:
     }
 
 
+def _exclude_patterns(flags: list[str] | None) -> list[str]:
+    """The ``--exclude=<pat>`` patterns out of a flag list."""
+    out = []
+    for flag in flags or []:
+        if flag.startswith("--exclude="):
+            out.append(flag[len("--exclude="):])
+    return out
+
+
+def _excluded(rel: Path, patterns: list[str]) -> bool:
+    """rsync-ish match: a pattern hits any path component, with globbing."""
+    if not patterns:
+        return False
+    parts = rel.parts
+    for pat in patterns:
+        if any(fnmatch.fnmatch(part, pat) for part in parts):
+            return True
+        if fnmatch.fnmatch(rel.as_posix(), pat):
+            return True
+    return False
+
+
+def _measure(src: Path, patterns: list[str]) -> tuple[int, int]:
+    """``(files, bytes)`` of *src*, skipping excluded directories and files."""
+    files = 0
+    total = 0
+    for root, dirs, names in os.walk(src):
+        rel_root = Path(root).relative_to(src)
+        dirs[:] = [d for d in dirs if not _excluded(rel_root / d, patterns)]
+        for name in names:
+            rel = rel_root / name
+            if _excluded(rel, patterns):
+                continue
+            try:
+                total += os.path.getsize(os.path.join(root, name))
+            except OSError:
+                continue
+            files += 1
+    return files, total
+
+
 def _entry(name: str, src, dest: str, *, required: bool = True,
            flags: list[str] | None = None, note: str = "") -> dict:
     """One manifest row, with its measured size so the plan can be budgeted.
@@ -114,8 +156,15 @@ def _entry(name: str, src, dest: str, *, required: bool = True,
         }
     src = Path(src)
     is_dir = src.is_dir()
-    files = sum(1 for p in src.rglob("*") if p.is_file()) if is_dir else (1 if src.exists() else 0)
-    size = dir_size(src) if is_dir else (src.stat().st_size if src.exists() else 0)
+    if is_dir:
+        # Measure what rsync will actually SEND: the same --exclude patterns are
+        # assembled in `flags` and were never applied to the walk, so the
+        # transfer table an operator reads before consenting overstated the two
+        # companion repos by 30.3 GB / 399,704 files against 100.3 MB / 5,842.
+        files, size = _measure(src, _exclude_patterns(flags))
+    else:
+        files = 1 if src.exists() else 0
+        size = src.stat().st_size if src.exists() else 0
     return {
         "name": name,
         "src": str(src),
