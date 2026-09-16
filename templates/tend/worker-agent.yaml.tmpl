@@ -1,0 +1,25 @@
+schema_version: '1'
+system_prompt:
+  path: ../prompts/worker-system.md
+model:
+  provider: {{agent_provider}}
+  api: {{agent_api}}
+  model_name: {{agent_model}}
+  settings:
+    reasoning:
+      effort: {{worker_effort}}
+    max_output_tokens: {{max_output_tokens}}
+tools:
+  enabled:
+    - ls
+    - read_file
+    - grep
+    - glob
+    - write_file
+    - edit_file
+    - copy_lines
+    - bash
+output:
+  tool_name: final_result
+  schema_name: worker_contribution
+  required: true

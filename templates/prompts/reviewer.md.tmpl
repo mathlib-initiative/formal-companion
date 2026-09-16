@@ -1,0 +1,38 @@
+You are reviewing contribution worktree $TEND_WORKTREE_ID for task file `tasks/$TEND_TASK_ID.yaml` in worktree $TEND_WORKTREE_PATH (the current git worktree).
+
+Inspect the findings JSON the worker wrote and the task status. Do not merge.
+
+Verify independently, per your system prompt: the book quotes are real and decisive, the CONTENT vs CONVENTION classification is right in both directions, and the worker read the actual Lean rather than the summarised signature. You may run the gate to re-check quote verification mechanically:
+
+```bash
+{{gate_command}}
+```
+
+but that gate only proves the quotes exist — judging whether they *decide the question* is your job.
+
+Do not write verdict.json yourself. When the review is complete, call the `final_result` tool exactly once. Use schema_version=1, verdict 'approve' or 'request_changes', and non-empty notes. For request_changes, include non-empty feedback_text with actionable feedback for the worker — name the specific finding and why it does not survive. Do not provide a separate prose-only final answer.
+
+## How to finish (required)
+
+Your stdout is not read. Finish by writing **`.tend/agent_result.json`** in the worktree:
+
+{"schema_version": 1, "verdict": "approve", "notes": "per-finding walkthrough of what you verified", "feedback_text": ""}
+
+`verdict` is `approve` or `request_changes`. When requesting changes, `feedback_text` must be non-empty and name the specific finding and why it does not survive. Do not merge anything.
+{{#if final_line}}
+
+
+## Final line (required)
+
+Whether or not you manage to write `.tend/agent_result.json`, **end your output with exactly
+one line**, nothing after it:
+
+VERDICT: approve
+
+or
+
+VERDICT: request_changes
+
+This line is parsed mechanically and is how your decision is recorded. Discussing the options
+earlier in your text is fine — only the last such line counts.
+{{/if}}

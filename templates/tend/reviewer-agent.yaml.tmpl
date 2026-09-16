@@ -1,0 +1,22 @@
+schema_version: '1'
+system_prompt:
+  path: ../prompts/reviewer-system.md
+model:
+  provider: {{agent_provider}}
+  api: {{agent_api}}
+  model_name: {{reviewer_agent_model}}
+  settings:
+    reasoning:
+      effort: {{reviewer_effort}}
+    max_output_tokens: {{max_output_tokens}}
+tools:
+  enabled:
+    - ls
+    - read_file
+    - grep
+    - glob
+    - bash
+output:
+  tool_name: final_result
+  schema_name: review_verdict
+  required: true

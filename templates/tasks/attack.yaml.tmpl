@@ -1,0 +1,23 @@
+schema_version: 1
+id: {{task_id}}
+title: "{{attack_label}}: {{item}}"
+status: open
+priority: {{priority}}
+depends_on: {{depends_on}}
+summary: "{{attack_label}} probe of {{item}}"
+description: |
+{{probe_block}}
+
+  Write exactly one file `findings/{{task_id}}.json` and change nothing else except your task file.
+  Schema (v2): schema_version 2, run_id "{{run_id}}", book_sha "{{book_sha}}", item, book_located (bool),
+  book_passage_quote (VERBATIM from the book text — machine verified), matches (list; use verdict
+  SINGLE_SOURCE_OK when you find nothing and SINGLE_SOURCE_DELTA when you do), disagreements
+  (list; kind must be {{kinds_inline}} — PAGE_ANCHOR and COVERAGE are NOT accepted in this run),
+  coverage_notes.
+  Every disagreement needs: concept, kind, repos_involved, faithful (LIST of repos),
+  unfaithful_decls ("{{companion}}:declName"), book_quote (VERBATIM), witness
+  ({"object": ..., "why": ...}), reasoning, severity, suggested_fix.
+  Set this task's status to complete when the findings file passes the gate:
+  `{{gate_command}}`
+
+  Book page (printed): {{printed_page}}

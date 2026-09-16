@@ -1,0 +1,16 @@
+limits:
+  max_wall_time_seconds: {{max_wall_time_seconds}}
+compaction:
+  enabled: true
+  reserve_tokens: 16384
+  keep_recent_tokens: 20000
+  target_tokens: 8000
+  trigger_on_context_overflow: true
+model:
+  timeout_seconds: {{model_timeout_seconds}}
+environment:
+  allowed_env_vars:
+    - ANTHROPIC_API_KEY
+    - ANTHROPIC_BASE_URL
+    - OPENAI_API_KEY
+    - OPENAI_BASE_URL

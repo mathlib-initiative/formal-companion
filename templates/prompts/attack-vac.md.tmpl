@@ -1,0 +1,26 @@
+Probe **{{item}}** as rendered by `{{companion}}` for WEAKNESS, not for disagreement.
+
+Declarations: {{decls_inline}}
+{{peers_line}}
+
+A differential cannot catch a statement that is wrong in the same way everywhere. That is what
+you are looking for. Ask, in order:
+
+1. **Vacuity.** Can the hypotheses be satisfied at all? Is there an instance making them true?
+   If the hypotheses are unsatisfiable the theorem says nothing.
+2. **Triviality.** Does the conclusion follow from the hypotheses without the mathematical
+   content the book is asserting? Would it still hold if the interesting hypothesis were
+   deleted?
+3. **Strength.** Is the Lean conclusion strictly WEAKER than the book's? An inequality where
+   the book has an equality; an existential where the book gives the witness; a bound with the
+   wrong constant; "for some" where the book says "for all".
+4. **Junk-value escape.** {{total_functions_sentence}} Does the statement accidentally hold
+   *because of* a junk value rather than because of the mathematics — e.g. both sides are the
+   junk value, or an object outside the intended class silently satisfies it?
+
+Produce ONE of:
+  (a) a weakness WITH A CONCRETE WITNESS showing it — the instance that makes it vacuous, or
+      the strictly stronger statement the book actually asserts.
+  (b) NO_DEFECT_FOUND, after genuinely trying.
+
+Both are good outcomes.
