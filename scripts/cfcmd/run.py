@@ -102,18 +102,27 @@ def _status(campaign, args, data: dict) -> int:
         journal = run_status.journal_counts(Path(args.journal))
     log.info(run_status.render(args.run_id, planned, corpus, journal))
 
+    # `--status` is read-only and answers from the campaign directory, so a run
+    # planned for `local` (or for a host the campaign never allowlisted) must
+    # still print its status instead of failing the allowlist check.
     host_name = args.host or planned.get("host")
-    if host_name:
+    if host_name in (None, "", "local"):
+        return 0
+    try:
         host = manifest.resolve_host(campaign, host_name)
-        names = manifest.remote_names(data, args.run_id)
-        steps = run_status.remote_steps(host, args.run_id, names)
-        log.info("")
-        log.info(f"# remote status on {host_name}"
-                 + ("" if args.execute else "  (add --execute to run these)"))
-        for step in steps:
-            log.info(f"# {step['title']}\n{step['shell']}")
-        if args.execute:
-            remote.execute([{**s, "stage": "monitor"} for s in steps], ["monitor"], dry_run=False)
+    except CfError as exc:
+        log.warn(f"no remote status: {exc}")
+        return 0
+
+    names = manifest.remote_names(data, args.run_id)
+    steps = run_status.remote_steps(host, args.run_id, names)
+    log.info("")
+    log.info(f"# remote status on {host_name}"
+             + ("" if args.execute else "  (add --execute to run these)"))
+    for step in steps:
+        log.info(f"# {step['title']}\n{step['shell']}")
+    if args.execute:
+        remote.execute([{**s, "stage": "monitor"} for s in steps], ["monitor"], dry_run=False)
     return 0
 
 
@@ -155,8 +164,10 @@ def _server(campaign, args, data: dict, run_yaml_path: Path) -> int:
             "refusing to plan a server run without --i-have-consent",
             hint="this transfers private Lean sources and (with --include-book) copyrighted "
                  "book text to a machine you do not own; the box owner must agree first")
-    manifest.check_planned_host(data, args.host)
+    # The allowlist is the hard rule, so it is checked FIRST: a host the campaign
+    # never authorised must be refused as such, not as a planning mismatch.
     host = manifest.resolve_host(campaign, args.host)
+    manifest.check_planned_host(data, args.host)
     names = manifest.remote_names(data, args.run_id)
     planned_consent = manifest.planned_consent(data)
     if planned_consent.get("given"):
@@ -230,7 +241,7 @@ def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency)
     log.info(f"run {args.run_id} -> {host['name']} ({host['ssh']}:{host['remote_root']})")
     log.info(f"  tasks: {tasks}   concurrency: {concurrency['workers']} workers / "
              f"{concurrency['reviewers']} reviewers")
-    log.info(f"  budget: " + (f"{budget['max_cost']} {budget['currency']}"
+    log.info("  budget: " + (f"{budget['max_cost']} {budget['currency']}"
                               if budget["max_cost"] is not None else "NONE (acknowledged)"))
     log.info(f"  disk:   {disk['human']}")
     if disk["over_budget"]:

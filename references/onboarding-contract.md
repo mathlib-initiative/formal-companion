@@ -243,7 +243,7 @@ Measured shape at the audited commit (recomputed from `~/Desktop/tao-diff-run/da
 proof terms), indexed families rather than finite sets of sets, the ambient Euclidean space,
 permanent exercise stubs, and the docstring-tag rule itself — the design rules in its `CLAUDE.md`
 lines 18-40. Its review catalog (`REVIEW_PATTERNS.md`) is mandatory reading before review, which is
-why `cf lint` ships the same detectors.
+why `cf lint` (specified in review-patterns.md, not implemented in v1) ships the same detectors.
 
 ### B. `measure_theory` — `attribution_table`
 

@@ -237,7 +237,9 @@ defaults:
 class TestCampaign(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self.tmp.name)
+        # resolve(): on macOS the temp dir is /var/... but cflib resolves paths,
+        # which gives /private/var/... -- compare like with like.
+        self.root = Path(self.tmp.name).resolve()
         (self.root / CAMPAIGN_FILE).write_text(CAMPAIGN_MIN)
 
     def tearDown(self):
@@ -383,9 +385,12 @@ class TestTemplates(unittest.TestCase):
         text = templates.render_template("campaign.yaml.example", {
             "campaign_name": "t", "created": '"2026-01-01"', "book_id": "t", "book_title": '"T"',
             "edition": '"E"', "pdf_path": "null", "book_sha256": '"' + "a" * 64 + '"',
-            "offset": 16, "errata_url": "null", "kinds": "[Definition, Exercise]"})
+            "offset": 16, "errata_url": "null", "kinds": "[Definition, Exercise]",
+            "chapters": "[1]"})
         data = yamlio.load_yaml_minimal(text)
         self.assertEqual(data["book"]["offset"], 16)
+        # the audited scope every stage narrows to (cf pair, plan-run, detect)
+        self.assertEqual(data["book"]["chapters"], [1])
         self.assertEqual(data["hosts"]["allowlist"], [])
         self.assertEqual(data["companions"], [])
         self.assertIs(data["policy"]["publish_unchallenged"], False)

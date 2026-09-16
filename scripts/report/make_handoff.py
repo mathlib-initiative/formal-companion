@@ -216,6 +216,33 @@ def render_state_table(facts: list[dict]) -> str:
     )
 
 
+def _host_name(cfg: dict) -> str:
+    """`cf plan-run` writes ``host: {name, kind, remote_root, ssh}``, not a string.
+
+    Rendering the mapping put a Python dict repr in the handoff table.
+    """
+    host = cfg.get("host")
+    if isinstance(host, dict):
+        return str(host.get("name") or host.get("ssh") or "local")
+    return str(host or "local")
+
+
+def _book_access(cfg: dict) -> str:
+    """``book_access`` lives under ``book: {access: ...}`` in run.yaml."""
+    book = cfg.get("book")
+    if isinstance(book, dict) and book.get("access"):
+        return str(book["access"])
+    return str(cfg.get("book_access") or "")
+
+
+def _task_count(cfg: dict):
+    """``tasks`` is a mapping whose ``count`` is the number the table wants."""
+    tasks = cfg.get("tasks")
+    if isinstance(tasks, dict):
+        return tasks.get("count")
+    return tasks or cfg.get("task_count")
+
+
 def render_runs_table(runs: dict[str, dict], tallies: list[dict]) -> str:
     """Section 2: one line per run, joining run.yaml with that run's tally."""
     seen: dict[str, dict] = {}
@@ -237,9 +264,9 @@ def render_runs_table(runs: dict[str, dict], tallies: list[dict]) -> str:
                 "`%s`" % run_id,
                 cfg.get("mode") or info.get("mode") or todo("mode", "cf plan-run"),
                 cfg.get("model") or (models or {}).get("worker") or todo("model", "cf plan-run"),
-                cfg.get("book_access") or todo("book access", "cf plan-run"),
-                cfg.get("host") or "local",
-                cfg.get("tasks") or cfg.get("task_count") or todo("tasks", "cf plan-run"),
+                _book_access(cfg) or todo("book access", "cf plan-run"),
+                _host_name(cfg),
+                _task_count(cfg) or todo("tasks", "cf plan-run"),
                 info.get("files", todo("finding files", "cf harvest")),
             ]
         )

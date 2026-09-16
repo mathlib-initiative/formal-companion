@@ -59,7 +59,7 @@ tend (orchestrator)                       entrypoint repo (git, main)
 ## 3. `cf plan-run` — what it writes
 
 ```
-cf plan-run --mode attack:vac --companion ours --host <alias> --book-access text
+cf plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
 ```
 
 - `runs/<run-id>/run.yaml` — mode, companion set, model ids, book access, gate mode, host alias,

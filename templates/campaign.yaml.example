@@ -29,6 +29,12 @@ book:
   errata_url: {{ errata_url }}
   # Item kinds of this book. The strict item grammar accepts only these.
   kinds: {{ kinds }}
+  # The chapters under audit. THIS IS THE SCOPE EVERY STAGE READS: `cf pair`,
+  # `cf plan-run` and `cf detect-proxies` all narrow to it, so def-coverage
+  # means the same thing whichever command wrote it. Empty = the whole book
+  # (Tao ch.1 has 36 Definitions; the whole book has 40, which is why an
+  # unscoped run and a scoped one disagreed by 3 bridge-only + 1 missing).
+  chapters: {{ chapters }}
   # What to do with items nobody formalises: report_coverage | ignore
   remark_policy: report_coverage
 

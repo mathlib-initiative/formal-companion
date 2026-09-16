@@ -82,6 +82,9 @@ def register(subparsers) -> None:
     p.add_argument("--edition", default="", help="edition label, e.g. 'GSM 126 (published)'")
     p.add_argument("--kinds", default=",".join(DEFAULT_KINDS),
                    help="comma-separated item kinds for the strict item grammar")
+    p.add_argument("--chapters", default="",
+                   help="comma-separated chapters under audit (default: the whole book); "
+                        "every stage narrows to this, so the scope is decided once")
     p.add_argument("--name", help="campaign name (default: the book id)")
     p.add_argument("--no-git", action="store_true", help="do not run git init")
     p.add_argument("--force", action="store_true", help="overwrite an existing campaign.yaml")
@@ -113,6 +116,7 @@ def run(args) -> int:
         log.info(f"{CAMPAIGN_FILE} already exists; left untouched (use --force to rewrite)")
     else:
         kinds = [k.strip() for k in args.kinds.split(",") if k.strip()]
+        chapters = [c.strip() for c in args.chapters.split(",") if c.strip()]
         text = render_template("campaign.yaml.example", {
             "campaign_name": args.name or args.book,
             "created": _quote(date.today().isoformat()),
@@ -124,6 +128,7 @@ def run(args) -> int:
             "offset": args.offset,
             "errata_url": args.errata_url or "null",
             "kinds": "[" + ", ".join(kinds) + "]",
+            "chapters": "[" + ", ".join(chapters) + "]",
         })
         atomic_write(campaign_yaml, text)
         log.ok(f"wrote {campaign_yaml}")

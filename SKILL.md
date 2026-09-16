@@ -50,16 +50,18 @@ Cheapest finders first; LLM slots spent only where mechanics cannot decide.
 1. `cf onboard <name>` — adapter, conventions, dry-run counts.
 2. `cf book <id>` — pin the edition, text, page map, items, live errata.
 3. `cf extract` — statement table (`statements.jsonl`).
-4. `cf lint <name>` — mechanical, book-free detectors (no model, no cost).
-5. `cf pair` — coverage, def-coverage, queue, **mechanical page-anchor check**.
+4. `cf pair` — coverage, def-coverage, queue, **mechanical page-anchor check**.
    Def-coverage alone reports missing and bridge-only definitions as COVERAGE
    findings.
-6. `cf plan-run --mode attack:vac` then `--mode attack:hunt` — each attack run
-   found more real defects than all three differentials combined.
-7. `cf plan-run --mode differential` where two or more companions share items —
-   the only stage that sees specialisation and attribution deltas between
-   repos.
-8. `cf run <run-id>` → `cf harvest <run-id>` — receipts, tally, union.
+5. `cf detect-proxies <name>` — mechanical, model-free proxy and coverage
+   detectors (no cost); add `--lean` once the companion has a built `.lake`.
+6. `cf plan-run --preset attack-vac` then `--preset attack-hunt` — each attack
+   run found more real defects than all three differentials combined.
+7. `cf plan-run --preset differential-text` where two or more companions share
+   items — the only stage that sees specialisation and attribution deltas
+   between repos.
+8. `cf run <run-id>` → `cf harvest <run-id>` → `cf tally` — receipts, counts,
+   union. (`cf import-corpus` adopts findings produced before this skill.)
 9. `cf adjudicate` — lenses → reconciler → refute-by-default skeptics. Assume a
    first-pass finding is wrong about 40% of the time.
 10. `cf route` — per-owner files; challenged rows only.
@@ -78,20 +80,22 @@ checkout actually has.
 | `onboard <name> --repo <path> --adapter <kind>` | write `adapter.yaml` + `conventions.md`, dry-run the parser, write `state.json` |
 | `book <id>` | pdftotext + page map + `items.json` + live errata (curl, raw HTML kept) + optional page images |
 | `extract [--companion X]` | adapters → `statements.jsonl`; no-op when (repo commit, adapter key) is unchanged |
-| `curate <name>` | item-level curation for `granularity: node` repos, before extraction means anything |
-| `lint <name>` | mechanical detectors over the repo alone: lost exercise sorries, anchor hygiene, pattern catalogue |
 | `pair` | pairs, coverage, queue, targets, def-coverage, uncovered, page-anchor differential |
-| `plan-run --mode <m> --host <h>` | tasks, prompts, `gate.json`, tend root; reconciles the task count against items ∩ any-repo |
+| `plan-run --preset <p> --host <h>` | tasks, prompts, `gate.json`, tend root; reconciles the task count against items ∩ any-repo |
 | `run <run-id> --i-have-consent` | drive the fleet (server via tend+agentbox, or a local Workflow under ~100 items) |
 | `status [--companion X] [--json]` | print every companion's `state.json`; prints nothing it did not read from state |
-| `harvest <run-id>` | pull findings, write `RECEIPT.json` (count + sha manifest), commit the corpus, tally |
+| `harvest <run-id>` | pull findings, write `RECEIPT.json` (count + sha manifest), tally |
+| `import-corpus --run-id <id> --from <dir>` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt, source never touched |
+| `tally [--union] [--agreed]` | recompute every finding count from `corpus/`; nothing downstream may count by hand |
 | `adjudicate [--companion X]` | lenses → reconciler → skeptics; challenge unchallenged rows; write ledger rows |
 | `detect-proxies <name>` | definition coverage and (with a built Lean env) dependency-stage analysis |
 | `route` | per-companion routed files with `_meta`, plus owner messages |
 | `report` | tally + handoff + claims verification |
 
 Out of scope in v1 (documented, not implemented): `fix`, `review-pr`,
-`camera-ready`, `publish-verdicts`.
+`camera-ready`, `publish-verdicts`, `curate` (item-level curation for
+`granularity: node` repos) and `lint` (repo-only mechanical detectors — the
+model-free checks that exist today live in `detect-proxies` and `pair`).
 
 ## Hard rules
 
