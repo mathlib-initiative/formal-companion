@@ -24,6 +24,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -288,6 +289,53 @@ class TestHarvestSafety(unittest.TestCase):
         self.assertEqual(
             self._cf("harvest", "r1", "--from", str(source), "--no-tally",
                      "--campaign", str(self.campaign), "-q"), 0)
+
+
+class TestExtractSurvivesOneBrokenCompanion(unittest.TestCase):
+    """One unparseable adapter.yaml must not take the whole stage down."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-extract-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.campaign = self.tmp / "campaign"
+        self.repo = self.tmp / "repo"
+        (self.repo / "src").mkdir(parents=True)
+        (self.repo / "src" / "A.lean").write_text(
+            "/-- `Exercise 1.1.1` (a tagged declaration). -/\n"
+            "theorem foo : True := trivial\n", encoding="utf-8")
+        for argv in (["init"], ["add", "-A"],
+                     ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "x"]):
+            subprocess.run(["git", "-C", str(self.repo), *argv],
+                           capture_output=True, check=False)
+        self._cf("init", str(self.campaign), "--book", "b", "--offset", "16",
+                 "--sha256", "a" * 64, "--no-git", "-q")
+
+    def _cf(self, *argv) -> int:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cf_main.main(list(argv))
+        self.out = buf.getvalue()
+        return rc
+
+    def _break(self, name: str) -> None:
+        d = self.campaign / "companions" / name
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "adapter.yaml").write_text(
+            "name: %s\nrepo: %s\nadapter: ledger_nodes\nglob: \"*.json\"\n"
+            "anchor: ledger\ngranularity: node\nwrite_policy: read_only\n"
+            % (name, self.repo), encoding="utf-8")
+
+    def test_the_healthy_companion_is_still_extracted_and_the_command_fails(self):
+        self.assertEqual(self._cf("onboard", "ours", "--repo", str(self.repo),
+                                  "--adapter", "docstring_tags", "--glob", "src/**/*.lean",
+                                  "--campaign", str(self.campaign), "-q"), 0)
+        self._break("broken")
+        rc = self._cf("extract", "--campaign", str(self.campaign))
+        self.assertEqual(rc, 1, self.out)
+        self.assertIn("broken", self.out)
+        table = self.campaign / "companions" / "ours" / "statements.jsonl"
+        self.assertTrue(table.exists(), "a broken peer stopped the healthy companion")
+        self.assertTrue(table.read_text().strip())
 
 
 if __name__ == "__main__":

@@ -125,6 +125,15 @@ KIND_TO_VIEWER = {PROXY: "proxy"}
 
 # --- adapter kinds and policies (Stage 0 contract)
 ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes", "custom"})
+
+#: Adapter kinds v1 actually IMPLEMENTS.  ``ADAPTER_KINDS`` is the vocabulary --
+#: what an adapter.yaml may legally say -- and it is deliberately wider, because
+#: ``references/onboarding-contract.md`` specifies ``ledger_nodes`` and ``custom``
+#: without shipping them.  ``cf onboard`` refuses a kind that is not in this set
+#: BEFORE it writes anything; otherwise it registered a companion nothing could
+#: parse and the next ``cf extract`` failed for the whole campaign.
+#: ``tests/test_cflib`` asserts this equals ``adapters.api.registry()``.
+IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table"})
 GRANULARITIES = frozenset({"item", "node"})
 WRITE_POLICIES = ("read_only", "branch_only", "branch_and_pr")
 WRITE_POLICY_SET = frozenset(WRITE_POLICIES)

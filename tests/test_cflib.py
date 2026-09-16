@@ -649,6 +649,32 @@ class TestOnboardIntegration(unittest.TestCase):
         self.assertEqual(paths.conventions_md("ours").read_text(), "# edited by the owner\n")
         self.assertEqual(len(Campaign.load(self.root).companions), 1)
 
+    def test_an_unimplemented_adapter_kind_is_refused_before_anything_is_written(self):
+        """onboarding-contract.md: `--adapter ledger_nodes` refuses. It used to warn."""
+        with self.assertRaises(CfError) as ctx:
+            self.cf.main(["onboard", "node", "--repo", str(self.repo), "--adapter",
+                          "ledger_nodes", "--campaign", str(self.root), "-q"])
+        self.assertIn("not implemented", str(ctx.exception))
+        self.assertIn("onboarding-contract.md", getattr(ctx.exception, "hint", ""))
+
+        paths = CampaignPaths(root=self.root, book_id="b")
+        self.assertFalse(paths.adapter_yaml("node").exists())
+        self.assertFalse(paths.conventions_md("node").exists())
+        self.assertFalse(paths.state_json("node").exists())
+        self.assertEqual(
+            [c.get("name") for c in Campaign.load(self.root).companions], [])
+
+    def test_the_offered_adapter_kinds_are_the_implemented_ones(self):
+        """Every --adapter choice must either work or be refused with a pointer."""
+        implemented = set(vocab.IMPLEMENTED_ADAPTER_KINDS)
+        for kind in sorted(vocab.ADAPTER_KINDS):
+            if kind in implemented:
+                continue
+            with self.subTest(kind=kind):
+                with self.assertRaises(CfError):
+                    self.cf.main(["onboard", "x", "--repo", str(self.repo), "--adapter",
+                                  kind, "--campaign", str(self.root), "-q"])
+
     def test_zero_tagged_declarations_fails_onboarding(self):
         _FakeAdapter.counts = {"declarations": 10, "tagged": 0, "items": 0}
         try:
