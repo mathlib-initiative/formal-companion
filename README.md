@@ -86,11 +86,12 @@ python3 $CF status
 # 5. a run (server fleets need an allowlisted host and recorded consent)
 python3 $CF plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
 python3 $CF run attack-vac-ours --host <alias> --i-have-consent   # dry run without --execute
-python3 $CF harvest attack-vac-ours
+python3 $CF harvest attack-vac-ours --gate
 python3 $CF tally --union --agreed
 
 # 5b. findings produced before this skill existed
-python3 $CF import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt
+python3 $CF import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt \
+    --allow-edition-mismatch   # v1 rows carry no book_sha until convert_v1 stamps them
 
 # 6. challenge, route, report
 python3 $CF adjudicate --companion ours

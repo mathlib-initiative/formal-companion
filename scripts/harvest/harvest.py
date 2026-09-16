@@ -133,9 +133,14 @@ def edition_audit(dest: Path, book_sha: str) -> dict:
 
     The edition gate belongs to the run's gate, but a corpus can also arrive from
     an older run: batch-1 findings were written against the 2011 draft, and their
-    page anchors are wrong for the published edition.  A mismatch is recorded
-    rather than fatal -- v1 findings carry no ``book_sha`` at all -- but it must
-    be visible, because the tally cannot tell the editions apart.
+    page anchors are wrong for the published edition.
+
+    A **mismatch fails the receipt** (SKILL.md hard rule 3: "a mismatch is
+    refused, not warned about") unless the caller passes
+    ``--allow-edition-mismatch``; an import of an older run says which edition it
+    was judged against with ``--book-sha`` instead.  A *missing* ``book_sha`` is
+    recorded but not fatal: that is what v1 findings look like before
+    ``convert_v1.py`` stamps them.
     """
     matched, missing, mismatched = 0, [], []
     if not book_sha:
@@ -159,12 +164,18 @@ def edition_audit(dest: Path, book_sha: str) -> dict:
 def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: Path,
                   book_sha: str = "", previous: dict | None = None,
                   source_manifest: dict[str, str] | None = None,
-                  run_yaml: str | None = None) -> dict:
+                  run_yaml: str | None = None, allow_edition_mismatch: bool = False,
+                  gate: dict | None = None) -> dict:
     """Reconcile the destination against the expected set.
 
     ``expected`` is the SOURCE listing, never a number someone remembered.  The
-    receipt is complete only when nothing is missing and (when checksums were
-    collected) every file matches the source byte for byte.
+    receipt is complete only when
+
+    * nothing is missing,
+    * every file matches the source byte for byte (when checksums were collected),
+    * no finding was judged against another edition (unless
+      ``allow_edition_mismatch``), and
+    * the schema/quote gate passed, when one was run (``gate``).
     """
     actual_paths = iter_finding_files(dest)
     actual = sorted(p.name for p in actual_paths)
@@ -176,6 +187,11 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         name for name, sha in (source_manifest or {}).items()
         if name in manifest and manifest[name] != sha
     )
+    edition = edition_audit(dest, book_sha)
+    edition_mismatch = list(edition.get("mismatched") or [])
+    edition["allowed_mismatch"] = bool(allow_edition_mismatch)
+    edition["ok"] = not edition_mismatch or bool(allow_edition_mismatch)
+    gate_ok = True if gate is None else bool(gate.get("ok"))
     receipt = {
         "run_id": run_id,
         "harvested_at": iso_now(),
@@ -188,13 +204,14 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "extra": extra,
         "sha_mismatched": mismatched,
         "sha_verified": bool(source_manifest),
-        "complete": not missing and not mismatched,
+        "complete": not missing and not mismatched and edition["ok"] and gate_ok,
         "manifest_algo": "sha256",
         "manifest": manifest,
         "run_yaml": run_yaml or "",
         "run_yaml_sha": (hashing.sha256_file(Path(dest) / run_yaml) if run_yaml
                          and (Path(dest) / run_yaml).exists() else ""),
-        "edition": edition_audit(dest, book_sha),
+        "edition": edition,
+        "gate": gate,
     }
     if previous:
         receipt["previous"] = {
@@ -239,11 +256,19 @@ def describe(receipt: dict) -> str:
     edition = receipt.get("edition") or {}
     if edition.get("checked"):
         if edition.get("mismatched"):
+            verdict = "allowed" if edition.get("allowed_mismatch") else "REFUSED"
             lines.append(f"  EDITION: {len(edition['mismatched'])} findings carry a different "
-                         f"book_sha -- they were judged against another edition")
+                         f"book_sha -- they were judged against another edition ({verdict};"
+                         " --allow-edition-mismatch, or import with --book-sha)")
         if edition.get("no_book_sha"):
             lines.append(f"  edition: {len(edition['no_book_sha'])} findings carry no book_sha "
                          f"(v1 findings; convert_v1.py stamps them)")
+    gate = receipt.get("gate")
+    if gate:
+        lines.append(f"  gate: {'PASSED' if gate.get('ok') else 'FAILED'} "
+                     f"({gate.get('preset') or gate.get('config') or 'schema+quote'})")
+        for problem in (gate.get("problems") or [])[:MAX_NAMED]:
+            lines.append(f"    - {problem}")
     prev = receipt.get("previous")
     if prev:
         lines.append(f"  previous harvest: {prev.get('actual')} files at {prev.get('harvested_at')}"
@@ -259,7 +284,8 @@ def describe(receipt: dict) -> str:
 
 def harvest(*, run_id: str, source: dict, dest: Path, book_sha: str = "",
             run_yaml_src: Path | None = None, verify_sha: bool = False,
-            execute: bool = True) -> dict:
+            execute: bool = True, allow_edition_mismatch: bool = False,
+            gate_runner=None) -> dict:
     """Transfer, reconcile and write RECEIPT.json. Returns the receipt.
 
     ``execute=False`` only makes sense for a remote source: it prints the
@@ -281,9 +307,11 @@ def harvest(*, run_id: str, source: dict, dest: Path, book_sha: str = "",
         shutil.copy2(run_yaml_src, dest / "run.yaml")
         run_yaml_name = "run.yaml"
 
+    gate = gate_runner(dest) if gate_runner else None
     receipt = build_receipt(run_id=run_id, source=source, expected=expected, dest=dest,
                             book_sha=book_sha, previous=previous, source_manifest=shas,
-                            run_yaml=run_yaml_name)
+                            run_yaml=run_yaml_name,
+                            allow_edition_mismatch=allow_edition_mismatch, gate=gate)
     write_json(dest / RECEIPT_NAME, receipt, indent=1, sort_keys=True)
     return receipt
 

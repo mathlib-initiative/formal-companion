@@ -19,6 +19,7 @@ system temp dir.
 from __future__ import annotations
 
 import io
+import re
 import json
 import os
 import shutil
@@ -313,6 +314,94 @@ class TestReceipt(unittest.TestCase):
         self.assertEqual(len(audit["no_book_sha"]), 8)
         self.assertFalse(harvest_mod.edition_audit(self.dest, "")["checked"])
 
+    def test_an_edition_mismatch_fails_the_receipt(self):
+        """SKILL.md hard rule 3: a mismatch is refused, not warned about."""
+        write_findings(self.source, "Exercise 1.1.99", [])
+        harvest_mod.harvest(run_id="run-1", source={"kind": "local", "path": str(self.source)},
+                            dest=self.dest, book_sha="published-sha")
+        victim = self.dest / "exercise-1-1-99.json"
+        payload = json.loads(victim.read_text())
+        payload["book_sha"] = "draft-sha"
+        victim.write_text(json.dumps(payload), encoding="utf-8")
+
+        receipt = harvest_mod.build_receipt(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            expected=[p.name for p in self.source.iterdir()], dest=self.dest,
+            book_sha="published-sha")
+        self.assertFalse(receipt["complete"])
+        self.assertFalse(receipt["edition"]["ok"])
+        self.assertIn("REFUSED", harvest_mod.describe(receipt))
+
+        allowed = harvest_mod.build_receipt(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            expected=[p.name for p in self.source.iterdir()], dest=self.dest,
+            book_sha="published-sha", allow_edition_mismatch=True)
+        self.assertTrue(allowed["complete"])
+        self.assertTrue(allowed["edition"]["ok"])
+        self.assertTrue(allowed["edition"]["allowed_mismatch"])
+
+    def test_a_missing_book_sha_is_recorded_but_not_fatal(self):
+        """v1 rows carry none until convert_v1 stamps them."""
+        receipt = harvest_mod.harvest(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest, book_sha="published-sha")
+        self.assertTrue(receipt["complete"])
+        self.assertEqual(len(receipt["edition"]["no_book_sha"]), 8)
+
+    def test_a_failing_gate_fails_the_receipt(self):
+        gate_result = {"ok": False, "preset": "p", "problems": ["x.json: missing item"]}
+        receipt = harvest_mod.harvest(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest, gate_runner=lambda _dest: gate_result)
+        self.assertFalse(receipt["complete"])
+        self.assertEqual(receipt["gate"], gate_result)
+        self.assertIn("gate: FAILED", harvest_mod.describe(receipt))
+
+    def test_gate_corpus_validates_what_landed(self):
+        """`cf harvest --gate` is the only path on which the gate actually runs."""
+        from harvest import gate_corpus
+
+        book = self.root / "book.txt"
+        book.write_text("Show that the union of two elementary sets is elementary "
+                        "and that the intersection is elementary as well.\n", encoding="utf-8")
+        cfg = self.root / "gate.local.json"
+        cfg.write_text(json.dumps({
+            "schema_version": 2, "preset": "differential-text", "mode": "differential",
+            "run_id": "run-1", "book": {"text": str(book), "sha256": "abc"},
+            "repos": ["ours"], "kinds": ["CONTENT", "COVERAGE"],
+            "verdicts": ["AGREE", "CONTENT_DELTA"], "witness_required": False,
+            "require_book_located": True, "require_book_sha": True,
+            "findings_dir": ".", "kind_rules": {},
+        }), encoding="utf-8")
+
+        good = self.root / "corpus" / "gated"
+        good.mkdir(parents=True)
+        (good / "exercise-1-2-4.json").write_text(json.dumps({
+            "schema_version": 2, "run_id": "run-1", "book_sha": "abc",
+            "item": "Exercise 1.2.4", "book_located": True,
+            "book_passage_quote": "Show that the union of two elementary sets is elementary",
+            "matches": [], "disagreements": [], "coverage_notes": "",
+        }), encoding="utf-8")
+        result = gate_corpus.gate_corpus(good, cfg)
+        self.assertTrue(result["ok"], result["problems"])
+        self.assertEqual(result["files"], 1)
+
+        # ... and the receipt it writes beside the findings is not gated as one
+        (good / harvest_mod.RECEIPT_NAME).write_text(json.dumps({"run_id": "run-1"}),
+                                                     encoding="utf-8")
+        self.assertTrue(gate_corpus.gate_corpus(good, cfg)["ok"])
+
+        (good / "fabricated.json").write_text(json.dumps({
+            "schema_version": 2, "run_id": "run-1", "book_sha": "abc",
+            "item": "Exercise 1.2.5", "book_located": True,
+            "book_passage_quote": "Every bounded function on the unit interval is Riemann "
+                                  "integrable whenever the measure is complete.",
+            "matches": [], "disagreements": [], "coverage_notes": "",
+        }), encoding="utf-8")
+        bad = gate_corpus.gate_corpus(good, cfg)
+        self.assertFalse(bad["ok"])
+        self.assertTrue(any("NOT FOUND" in p for p in bad["problems"]))
+
     def test_remote_source_refuses_without_execute(self):
         source = harvest_mod.parse_source("ffmain:/home/jack/tao-attack-hunt/findings")
         self.assertEqual(source["kind"], "remote")
@@ -585,16 +674,72 @@ class TestRunPlanner(unittest.TestCase):
         results = remote.execute([step], ["monitor"], dry_run=True, stream=io.StringIO())
         self.assertEqual(results, [{"stage": "monitor", "title": "t", "ran": False}])
 
+    FLEET_KW = dict(
+        campaign={"book_id": "b", "book_title": "B", "book_sha": "0" * 64,
+                  "book_layout_txt": "/b/book.txt", "book_pages_dir": "/b/pages",
+                  "pdf_page_offset": 16, "errata": ""},
+        repos=[{"name": "ours", "repo": "/r/ours",
+                "statements": "/c/ours.jsonl", "conventions": "total functions"}],
+        mode="differential",
+        gate={"command": "python3 gate.py", "kinds": ["CONTENT"], "witness_required": False,
+              "quote_min_chars": 25, "scratch_dir": "/tmp/sg"},
+    )
+
     def test_local_fleet_refuses_a_big_run(self):
         from run import fleet_local
 
-        args = fleet_local.build(self.run_dir, "demo", {}, max_items=100)
+        args = fleet_local.build(self.run_dir, "demo", max_items=100, **self.FLEET_KW)
         self.assertEqual(args["count"], 3)
         self.assertEqual(args["model"], "opus")
-        self.assertTrue(args["self_gate"])
         with self.assertRaises(Exception):
-            fleet_local.build(self.run_dir, "demo", {}, max_items=2)
-        self.assertEqual(fleet_local.build(self.run_dir, "demo", {}, max_items=2, force=True)["count"], 3)
+            fleet_local.build(self.run_dir, "demo", max_items=2, **self.FLEET_KW)
+        self.assertEqual(
+            fleet_local.build(self.run_dir, "demo", max_items=2, force=True,
+                              **self.FLEET_KW)["count"], 3)
+
+    def test_local_fleet_args_carry_every_key_the_workflow_reads(self):
+        """The shipped .js dereferences these; the old builder shared none of them."""
+        from run import fleet_local
+
+        args = fleet_local.build(self.run_dir, "demo", max_items=100, **self.FLEET_KW)
+        self.assertEqual(fleet_local.missing_keys(args), [])
+        # and every key the script actually touches is one of ours
+        js = (SCRIPTS.parent / "workflows" / "fleet-local.workflow.js").read_text()
+        for key in re.findall(r"\bA\.([a-z_]+)", js):
+            if key not in ("items",):
+                self.assertIn(key, args, f"workflow reads args.{key}")
+        for key in re.findall(r"\bC\.([a-z_]+)", js):
+            self.assertIn(key, args["campaign"], f"workflow reads args.campaign.{key}")
+        for key in re.findall(r"\bGATE\.([a-z_]+)", js):
+            self.assertIn(key, args["gate"], f"workflow reads args.gate.{key}")
+
+    def test_local_fleet_mode_maps_to_a_workflow_brief(self):
+        from run import fleet_local
+
+        js = (SCRIPTS.parent / "workflows" / "fleet-local.workflow.js").read_text()
+        for mode in ("differential", "single-source", "attack"):
+            self.assertIn(mode, js)
+        self.assertEqual(fleet_local.workflow_mode("attack", []), "attack")
+        self.assertEqual(
+            fleet_local.workflow_mode("differential", [{"repos": ["ours"]}]), "single-source")
+        self.assertEqual(
+            fleet_local.workflow_mode("differential", [{"repos": ["ours", "adam"]}]),
+            "differential")
+
+    def test_local_fleet_items_carry_repos_pages_and_a_note(self):
+        from run import fleet_local
+
+        meta = {t["item"]: {"repos": ["ours", "adam"], "pdf_pages": [21]}
+                for t in fleet_local.task_args(self.run_dir)}
+        items = fleet_local.item_args(self.run_dir, meta)
+        self.assertTrue(items)
+        for it in items:
+            self.assertEqual(it["repos"], ["ours", "adam"])
+            self.assertEqual(it["pdf_pages"], [21])
+            self.assertEqual(it["note"], "")
+        single = fleet_local.item_args(
+            self.run_dir, {t["item"]: {"repos": ["ours"]} for t in items})
+        self.assertIn("only ours formalises", single[0]["note"])
 
 
 if __name__ == "__main__":

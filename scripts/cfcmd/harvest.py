@@ -24,6 +24,7 @@ from cflib.errors import CfError
 from cflib.jsonio import write_json
 from cflib.yamlio import read_yaml
 
+from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, tally as tally_mod
 from run import manifest
@@ -39,6 +40,14 @@ def register(subparsers) -> None:
     p.add_argument("--verify-sha", action="store_true",
                    help="also compare source checksums (catches truncated transfers)")
     p.add_argument("--execute", action="store_true", help="required when the source is remote")
+    p.add_argument("--i-have-consent", action="store_true",
+                   help="required with a remote --from: this moves data between two machines")
+    p.add_argument("--gate", action="store_true",
+                   help="run the findings gate over what landed; a failure fails the receipt")
+    p.add_argument("--gate-config", default=None,
+                   help="with --gate: the gate.json to use (default: runs/<id>/gate.local.json)")
+    p.add_argument("--allow-edition-mismatch", action="store_true",
+                   help="accept findings judged against another edition (they are refused by default)")
     p.add_argument("--no-tally", action="store_true", help="skip recomputing the tally")
 
 
@@ -56,9 +65,16 @@ def run(args) -> int:
         receipt = _from_findings(campaign, args, data, dest, run_yaml_path)
 
     log.info(harvest_mod.describe(receipt))
-    if not receipt["complete"]:
+    if receipt["missing"] or receipt["sha_mismatched"]:
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")
+    if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):
+        log.warn("harvest REFUSED the gate: the findings above do not validate against "
+                 "gate.local.json. Fix or re-run them; the receipt is not complete.")
+    if not (receipt.get("edition") or {}).get("ok", True):
+        log.warn("harvest REFUSED the edition: findings judged against another edition are in "
+                 "this corpus. Re-run them against the pinned edition, or pass "
+                 "--allow-edition-mismatch and say so in the report.")
 
     counts = {} if args.no_tally else _tally(campaign, args.run_id, dest)
     _record_state(campaign, args.run_id, data, receipt, counts)
@@ -66,7 +82,16 @@ def run(args) -> int:
 
 
 def _from_findings(campaign, args, data: dict, dest: Path, run_yaml_path: Path) -> dict:
-    source = harvest_mod.parse_source(args.source) if args.source else _default_source(campaign, args, data)
+    if args.source:
+        source = harvest_mod.parse_source(args.source)
+        # `--from host:/path` used to skip the allowlist entirely -- only the
+        # DEFAULT source went through manifest.resolve_host -- so `cf harvest`
+        # would ssh to any host named on the command line and pull whatever JSON
+        # it found straight into the corpus every tally and ledger is built from.
+        if source["kind"] == "remote":
+            _check_remote_source(campaign, args, source)
+    else:
+        source = _default_source(campaign, args, data)
     if source["kind"] == "remote" and not args.execute:
         log.info(f"# dry run: harvesting {source['host']}:{source['path']} -> {dest}")
         for step in harvest_mod.list_commands(source, dest):
@@ -77,7 +102,46 @@ def _from_findings(campaign, args, data: dict, dest: Path, run_yaml_path: Path) 
         run_id=args.run_id, source=source, dest=dest,
         book_sha=manifest.book_sha(campaign, data),
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
-        verify_sha=args.verify_sha, execute=True)
+        verify_sha=args.verify_sha, execute=True,
+        allow_edition_mismatch=args.allow_edition_mismatch,
+        gate_runner=gate_runner(campaign, args))
+
+
+def _check_remote_source(campaign, args, source: dict) -> None:
+    """A remote ``--from`` obeys the same allowlist and consent rule as ``cf run``."""
+    ssh = str(source.get("host") or "")
+    # hosts.allowlist names campaign aliases; resolve_host maps alias -> ssh name,
+    # so accept either spelling and refuse anything neither matches.
+    for alias in campaign.host_allowlist:
+        try:
+            host = manifest.resolve_host(campaign, alias)
+        except CfError:
+            continue
+        if ssh in (alias, host.get("ssh")):
+            break
+    else:
+        raise CfError(
+            f"host {ssh!r} is not in hosts.allowlist",
+            hint="add it to campaign.yaml hosts.allowlist; harvest ssh/rsyncs from that box "
+                 "and lands whatever it finds in the corpus every number is computed from")
+    if not args.i_have_consent:
+        raise CfError(
+            "refusing a remote harvest without --i-have-consent",
+            hint="this moves data from a machine you may not own onto this one")
+
+
+def gate_runner(campaign, args):
+    """A callable harvest() invokes on the landed corpus, or None when --gate is off."""
+    if not getattr(args, "gate", False):
+        return None
+    config = args.gate_config or Path(campaign.paths.run_dir(args.run_id)) / "gate.local.json"
+
+    def _run_gate(dest: Path) -> dict:
+        result = gate_mod.gate_corpus(dest, config)
+        log.info(gate_mod.render(result))
+        return result
+
+    return _run_gate
 
 
 def _default_source(campaign, args, data: dict) -> dict:
@@ -107,9 +171,12 @@ def _from_journal(campaign, args, dest: Path) -> dict:
         write_json(dest / "queue_remaining.json", todo, indent=1)
         log.info(f"{len(todo)} queue items still to do -> {dest / 'queue_remaining.json'}")
     log.info("journal: " + ", ".join(f"{k}={v}" for k, v in summary.items()))
+    runner = gate_runner(campaign, args)
     receipt = harvest_mod.build_receipt(
         run_id=args.run_id, source={"kind": "journal", "path": str(workflow_dir)},
-        expected=written, dest=dest, book_sha=campaign.book_sha or "")
+        expected=written, dest=dest, book_sha=campaign.book_sha or "",
+        allow_edition_mismatch=args.allow_edition_mismatch,
+        gate=runner(dest) if runner else None)
     # A journal harvest is complete only against ITSELF: the run died, so the
     # expected set is what survived, not what was asked for.
     receipt["expected_from"] = "workflow journal (a killed run: this is what survived)"

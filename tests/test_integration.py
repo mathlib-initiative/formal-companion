@@ -238,5 +238,57 @@ class TestImportCorpus(unittest.TestCase):
         self.assertTrue(receipt["complete"])
 
 
+class TestHarvestSafety(unittest.TestCase):
+    """`cf harvest --from host:/path` must obey the same rules as `cf run`."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-harvest-safety-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.campaign = self.tmp / "campaign"
+        self._cf("init", str(self.campaign), "--book", "b", "--offset", "16",
+                 "--sha256", "a" * 64, "--no-git", "-q")
+
+    def _cf(self, *argv) -> int:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cf_main.main(list(argv))
+        self.out = buf.getvalue()
+        return rc
+
+    def _allow(self, alias: str, ssh: str) -> None:
+        from cflib.yamlio import read_yaml, write_yaml
+
+        path = self.campaign / "campaign.yaml"
+        data = read_yaml(path)
+        data.setdefault("hosts", {})["allowlist"] = [alias]
+        data["hosts"][alias] = {"ssh": ssh, "remote_root": "/home/x"}
+        write_yaml(path, data)
+
+    def test_an_unlisted_host_is_refused_before_anything_runs(self):
+        with self.assertRaises(CfError) as ctx:
+            self._cf("harvest", "r1", "--from", "not-allowlisted.example.net:/findings",
+                     "--execute", "--i-have-consent", "--campaign", str(self.campaign), "-q")
+        self.assertIn("allowlist", str(ctx.exception))
+
+    def test_an_allowlisted_host_still_needs_consent(self):
+        self._allow("ffmain", "ffmain")
+        with self.assertRaises(CfError) as ctx:
+            self._cf("harvest", "r1", "--from", "ffmain:/findings", "--execute",
+                     "--campaign", str(self.campaign), "-q")
+        self.assertIn("consent", str(ctx.exception))
+
+    def test_a_local_source_needs_neither(self):
+        source = self.tmp / "findings"
+        source.mkdir()
+        (source / "exercise-1-1-1.json").write_text(json.dumps({
+            "schema_version": 2, "run_id": "r1", "book_sha": "a" * 64,
+            "item": "Exercise 1.1.1", "book_located": True, "book_passage_quote": "",
+            "matches": [], "disagreements": [], "coverage_notes": "",
+        }), encoding="utf-8")
+        self.assertEqual(
+            self._cf("harvest", "r1", "--from", str(source), "--no-tally",
+                     "--campaign", str(self.campaign), "-q"), 0)
+
+
 if __name__ == "__main__":
     unittest.main()

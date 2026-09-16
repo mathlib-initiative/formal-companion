@@ -36,7 +36,7 @@ from cflib.jsonio import write_json
 from gate import convert_v1
 from harvest import harvest as harvest_mod
 
-from cfcmd.harvest import _record_state, _tally
+from cfcmd.harvest import _record_state, _tally, gate_runner
 
 #: Directory names the baseline used, mapped to (mode, preset).  Only a default:
 #: --mode and --preset always win.
@@ -66,6 +66,13 @@ def register(subparsers) -> None:
                    help="comma-separated companion ids (default: the campaign's)")
     p.add_argument("--no-convert", action="store_true",
                    help="copy verbatim; only for a directory that is already schema v2")
+    p.add_argument("--gate", action="store_true",
+                   help="run the findings gate over the imported corpus; a failure fails the receipt")
+    p.add_argument("--gate-config", default=None,
+                   help="with --gate: the gate.json to use (default: runs/<run-id>/gate.local.json)")
+    p.add_argument("--allow-edition-mismatch", action="store_true",
+                   help="accept findings judged against another edition (refused by default). "
+                        "The batch-1 import needs it, or --book-sha for the draft edition")
     p.add_argument("--no-tally", action="store_true", help="skip recomputing the tally")
     p.add_argument("--force", action="store_true",
                    help="re-import over an existing corpus/<run-id>")
@@ -103,11 +110,14 @@ def run(args) -> int:
         src, dest, expected, args.no_convert,
         run_id=args.run_id, book_sha=book_sha, mode=mode, preset=preset, repos=repos)
 
+    runner = gate_runner(campaign, args)
     receipt = harvest_mod.build_receipt(
         run_id=args.run_id,
         source={"kind": "import", "path": str(src), "mode": mode, "preset": preset,
                 "converted": converted, "already_v2": already_v2},
-        expected=expected, dest=dest, book_sha=book_sha, previous=previous)
+        expected=expected, dest=dest, book_sha=book_sha, previous=previous,
+        allow_edition_mismatch=args.allow_edition_mismatch,
+        gate=runner(dest) if runner else None)
     receipt["expected_from"] = f"the source listing of {src} ({len(expected)} files)"
     write_json(dest / harvest_mod.RECEIPT_NAME, receipt, indent=1, sort_keys=True)
 
@@ -117,6 +127,9 @@ def run(args) -> int:
     log.info(harvest_mod.describe(receipt))
     if not receipt["complete"]:
         log.warn("import INCOMPLETE: every number derived from this corpus is a lower bound.")
+    if not (receipt.get("edition") or {}).get("ok", True):
+        log.warn("import REFUSED the edition: pass --book-sha <the edition these were judged "
+                 "against>, or --allow-edition-mismatch to adopt them as they are.")
 
     counts = {} if args.no_tally else _tally(campaign, args.run_id, dest)
     _record_state(campaign, args.run_id, {"mode": mode, "preset": preset}, receipt, counts)
