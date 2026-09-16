@@ -242,8 +242,11 @@ return {
   // out-of-tree gate has passed them, which happens here:
   next: {
     note: 'Workflow scripts cannot write files. Save this return value, then run the post-hoc harvest -> gate -> requeue loop.',
-    harvest: 'python3 scripts/cf.py harvest --from-journal <transcriptDir>/journal.jsonl --run ' + (A.run_id || '<run-id>'),
-    gate: 'python3 scripts/cf.py harvest --run ' + (A.run_id || '<run-id>') + ' --verify   # runs the gate OUT OF TREE and assigns finding_id',
-    requeue: 'python3 scripts/cf.py plan-run --resume ' + (A.run_id || '<run-id>') + '   # rebuilds args for the items above that are missing or gate-rejected',
+    // These are the REAL command lines; `cf harvest` takes the run id
+    // positionally, `--journal <wf_* directory>`, and `--gate` (there is no
+    // --from-journal, no --run and no --verify).
+    harvest: 'python3 scripts/cf.py harvest ' + (A.run_id || '<run-id>') + ' --journal <transcriptDir> --gate',
+    gate: 'python3 scripts/gate/verify_findings.py --gate-config ' + (GATE.config || '<run>/gate.local.json') + ' --root <campaign>/corpus/' + (A.run_id || '<run-id>') + ' --findings-dir .   # the gate OUT OF TREE',
+    requeue: 'python3 scripts/cf.py plan-run --preset <preset> --run-id ' + (A.run_id || '<run-id>') + ' --force   # rebuilds tasks and args; re-run this script for the items listed in summary.remaining',
   },
 }

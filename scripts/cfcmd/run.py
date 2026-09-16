@@ -248,6 +248,7 @@ def _local(campaign, args, data: dict) -> int:
             # skill's own gate and the run's gate.local.json, never the host copy.
             "command": (f"python3 {gate_script} --gate-config {gate_config} "
                         "--findings " + str(scratch) + "/${TASK_ID}.json"),
+            "config": str(gate_config),
             "kinds": list(gate_block.get("kinds") or []),
             "witness_required": bool(gate_block.get("witness_required")),
             "quote_min_chars": 25,

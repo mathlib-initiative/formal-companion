@@ -165,7 +165,8 @@ WORKFLOW_KEYS: dict[str, tuple[str, ...]] = {
     "campaign": ("book_id", "book_title", "book_sha", "book_layout_txt",
                  "book_pages_dir", "pdf_page_offset", "errata"),
     "repos": ("name", "repo", "statements", "conventions"),
-    "gate": ("command", "kinds", "witness_required", "quote_min_chars", "scratch_dir"),
+    "gate": ("command", "config", "kinds", "witness_required", "quote_min_chars",
+             "scratch_dir"),
     "items": ("item", "repos", "pdf_pages", "note"),
 }
 
