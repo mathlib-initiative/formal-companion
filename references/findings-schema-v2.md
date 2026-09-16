@@ -276,7 +276,9 @@ baseline.**
 3. `witness` extracted from `reasoning` where the text names one, else null with
    `witness_extracted: false` — never fabricated;
 4. `book_sha` stamped: the published edition for the five tend runs, the **2011 draft sha** for the
-   batch-1 rows, whose `PAGE_ANCHOR` rows are imported `withdrawn: true`;
+   batch-1 rows, whose `PAGE_ANCHOR` rows are imported `withdrawn: true`. Passing a `--book-sha`
+   that is not the campaign's is refused unless `--allow-edition-mismatch` is given too, and the
+   receipt records both, so no report can silently mix editions;
 5. `finding_id` computed per `references/vocabulary.md` §3;
 6. bare `repo:decl` names are kept and, where `statements.jsonl` supplies a unique namespace,
    `decl_qualified` is added;

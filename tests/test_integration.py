@@ -210,6 +210,40 @@ class TestImportCorpus(unittest.TestCase):
                      "--campaign", str(self.campaign), "-q")
         self.assertFalse((self.campaign / "corpus" / "r2").exists())
 
+    def test_importing_another_edition_needs_the_override(self):
+        """SKILL.md hard rule 3, at the one place a foreign edition enters."""
+        args = ("import-corpus", "--run-id", "draft", "--from", str(self.source),
+                "--campaign", str(self.campaign), "--no-tally", "-q", "--force",
+                "--book-sha", "d" * 64)
+        with self.assertRaises(CfError) as ctx:
+            self._cf(*args)
+        self.assertIn("another edition", getattr(ctx.exception, "hint", ""))
+        self.assertEqual(self._cf(*args, "--allow-edition-mismatch"), 0)
+        receipt = json.loads(
+            (self.campaign / "corpus" / "draft" / "RECEIPT.json").read_text())
+        self.assertEqual(receipt["book_sha"], "d" * 64)
+        self.assertTrue(receipt["complete"])
+
+    def test_import_gate_validates_what_landed(self):
+        gate = self.tmp / "gate.local.json"
+        book = self.tmp / "book.txt"
+        book.write_text("nothing in here matches any quote\n", encoding="utf-8")
+        gate.write_text(json.dumps({
+            "schema_version": 2, "preset": "differential-text", "mode": "differential",
+            "run_id": "g1", "book": {"text": str(book), "sha256": "a" * 64},
+            "repos": ["ours"], "kinds": ["CONTENT"], "verdicts": ["AGREE"],
+            "witness_required": False, "require_book_located": True,
+            "require_book_sha": True, "findings_dir": ".", "kind_rules": {},
+        }), encoding="utf-8")
+        rc = self._cf("import-corpus", "--run-id", "g1", "--from", str(self.source),
+                      "--campaign", str(self.campaign), "--no-tally", "--force",
+                      "--gate", "--gate-config", str(gate))
+        self.assertEqual(rc, 1, "a corpus that fails the gate must not be complete")
+        receipt = json.loads((self.campaign / "corpus" / "g1" / "RECEIPT.json").read_text())
+        self.assertFalse(receipt["complete"])
+        self.assertFalse(receipt["gate"]["ok"])
+        self.assertTrue(receipt["gate"]["problems"])
+
     def test_the_mode_is_guessed_from_the_baseline_directory_names(self):
         from cfcmd import import_corpus
 
