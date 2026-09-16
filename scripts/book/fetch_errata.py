@@ -7,7 +7,8 @@ fetched with a raw HTTP client (curl), never the summarising fetch tool").
 
 So this module:
 
-* fetches with ``curl`` and stores the bytes verbatim in ``errata.raw.html``;
+* fetches with ``curl`` and stores the page verbatim (markup and all, decoded
+  to UTF-8) in ``errata.raw.html``;
 * renders a deterministic ``errata.md`` from those bytes with a stdlib parser --
   no model, no summary, nothing dropped;
 * stamps the fetch date, the http status, the raw sha256 and the campaign's

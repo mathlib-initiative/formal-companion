@@ -25,7 +25,7 @@ import os
 import re
 from typing import Mapping, Sequence
 
-from .compat import item_sort_key, normalise_item, parse_item, utcnow, write_json
+from .compat import item_sort_key, parse_item, utcnow, write_json
 from .compare import row_item
 
 #: a declaration that STATES a notion (as opposed to proving something about it)
