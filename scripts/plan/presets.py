@@ -70,6 +70,9 @@ class Preset:
     # gate
     kind_rules: dict[str, dict[str, Any]] = field(default_factory=dict)
     require_finding_id: bool = False
+    #: demand a verbatim book_passage_quote on every document.  Off for
+    #: `mechanical`: a detector never read the book's prose.
+    require_passage_quote: bool = True
     #: run the gate's operator pass (a flipped <=/>=/=/!= is refused).  Off only
     #: for the two *-legacy presets: the imported 2011-draft corpus carries
     #: pdftotext artifacts in two of its 3,019 quotes that predate the check.
@@ -214,6 +217,7 @@ PRESETS: dict[str, Preset] = {
         task_style="differential",
         slug_style="underscore",
         require_finding_id=True,
+        require_passage_quote=False,
         note="the gate for machine-produced findings: pair/anchor_check.py and detect/",
     ),
 }
@@ -282,6 +286,7 @@ def gate_config(
         "require_book_sha": True,
         "verify_text_sha": bool(book_text_sha),
         "require_finding_id": preset.require_finding_id,
+        "require_passage_quote": preset.require_passage_quote,
         "check_operators": preset.check_operators,
         "findings_dir": "findings",
         "decl_index": decl_index,

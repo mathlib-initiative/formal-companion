@@ -55,6 +55,9 @@ Cheapest finders first; LLM slots spent only where mechanics cannot decide.
    findings.
 5. `cf detect-proxies <name>` — mechanical, model-free proxy and coverage
    detectors (no cost); add `--lean` once the companion has a built `.lake`.
+   Its rows are published into `corpus/detect-<name>-<tier>/` behind the
+   `mechanical` gate, so they reach the tally, the ledger and the report like
+   any other finding (`--no-emit-corpus` to keep them out).
 6. `cf plan-run --preset attack-vac` then `--preset attack-hunt` — each attack
    run found more real defects than all three differentials combined.
 7. `cf plan-run --preset differential-text` where two or more companions share
@@ -88,7 +91,7 @@ checkout actually has.
 | `import-corpus --run-id <id> --from <dir>` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt, source never touched |
 | `tally [--union] [--agreed]` | recompute every finding count from `corpus/`; nothing downstream may count by hand |
 | `adjudicate [--companion X]` | lenses → reconciler → skeptics; challenge unchallenged rows; write ledger rows |
-| `detect-proxies <name>` | definition coverage and (with a built Lean env) dependency-stage analysis |
+| `detect-proxies <name>` | definition coverage and (with a built Lean env) dependency-stage analysis; publishes PROXY/COVERAGE rows into `corpus/detect-<name>-<tier>/` through the `mechanical` gate |
 | `route` | per-companion routed files with `_meta`, plus owner messages |
 | `report` | tally + handoff + claims verification |
 
