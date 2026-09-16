@@ -1,0 +1,86 @@
+/-
+  DumpDeps -- constant-level dependency dump of one companion's own modules.
+
+  Template. Ported from /Users/jack/Desktop/tao-differential/adam-detector/DumpDeps.lean,
+  which hard-wired `MeasureTheory` (import, importModules and the `MeasureTheory.Tao`
+  module test). Rendered by `cf detect-proxies <name> --lean --render-dump-deps`
+  (or scripts/detect/dump_deps.sh) with:
+
+    {{package}}        display name of the Lake package, recorded in the dump
+    {{root_module}}    the module that imports the whole library, e.g. MeasureTheory
+    {{module_prefix}}  namespace prefix of the companion's own modules, e.g. MeasureTheory.Tao
+    {{output_path}}    ABSOLUTE path for deps.json -- must be OUTSIDE the repo tree
+                       (adam-detector/README.md:12-13: "Move deps.json OUT of the
+                       repo afterwards (the tree must stay clean)")
+
+  Run from the companion root, against a built .lake:
+
+    PATH=/usr/bin:$PATH timeout 900 lake env lean --run <this file>
+
+  It takes ~2 minutes for measure_theory and writes ~3.6 MB.
+-/
+import {{root_module}}
+import Lean
+open Lean
+
+/-- Is this module one of the repo's own modules? -/
+def isRepoModule (m : Name) : Bool :=
+  m == `{{root_module}} || m == `{{root_module}}.Basic || m == `{{module_prefix}} ||
+  (`{{module_prefix}}).isPrefixOf m
+
+def kindOf : ConstantInfo → String
+  | .defnInfo _ => "def"
+  | .thmInfo _ => "theorem"
+  | .axiomInfo _ => "axiom"
+  | .opaqueInfo _ => "opaque"
+  | .quotInfo _ => "quot"
+  | .inductInfo _ => "inductive"
+  | .ctorInfo _ => "ctor"
+  | .recInfo _ => "rec"
+
+unsafe def main : IO Unit := do
+  initSearchPath (← findSysroot)
+  let env ← importModules #[{module := `{{root_module}}}] {} 0
+  let modNames := env.header.moduleNames
+  let modData := env.header.moduleData
+  let mut repoConsts : Array Json := #[]
+  let mut referenced : Std.HashSet Name := {}
+  for h : i in [0:modNames.size] do
+    let m := modNames[i]!
+    if !isRepoModule m then continue
+    let md := modData[i]!
+    for ci in md.constants do
+      let n := ci.name
+      let tdeps := ci.type.getUsedConstants
+      let vdeps := match ci.value? with
+        | some v => v.getUsedConstants
+        | none => #[]
+      for d in tdeps do referenced := referenced.insert d
+      for d in vdeps do referenced := referenced.insert d
+      let isInst := Meta.isInstanceCore env n
+      let isStruct := isStructure env n
+      let isProj := env.isProjectionFn n
+      repoConsts := repoConsts.push <| Json.mkObj [
+        ("name", toString n), ("module", toString m), ("kind", kindOf ci),
+        ("instance", isInst), ("structure", isStruct), ("projection", isProj),
+        ("type_deps", toJson (tdeps.map toString)),
+        ("value_deps", toJson (vdeps.map toString))]
+  -- module table for every referenced constant
+  let mut refTable : Array Json := #[]
+  for n in referenced do
+    let m := match env.getModuleIdxFor? n with
+      | some idx => toString modNames[idx.toNat]!
+      | none => "<none>"
+    let k := match env.find? n with
+      | some ci => kindOf ci
+      | none => "?"
+    refTable := refTable.push <| Json.mkObj [("name", toString n), ("module", m), ("kind", k)]
+  let out := Json.mkObj [
+    ("package", "{{package}}"),
+    ("root_module", "{{root_module}}"),
+    ("module_prefix", "{{module_prefix}}"),
+    ("repo_constants", toJson repoConsts),
+    ("referenced", toJson refTable)]
+  IO.FS.writeFile "{{output_path}}" out.compress
+  IO.println s!"{{package}}: repo constants: {repoConsts.size}; referenced constants: {refTable.size}"
+  IO.println "wrote {{output_path}}"
