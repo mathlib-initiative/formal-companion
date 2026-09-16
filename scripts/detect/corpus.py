@@ -1,4 +1,7 @@
-"""Publish detector rows into ``corpus/<run-id>/`` as gate-shaped documents.
+"""Publish MECHANICAL rows into ``corpus/<run-id>/`` as gate-shaped documents.
+
+Used by ``cf detect-proxies`` (PROXY, COVERAGE) and by ``cf pair``
+(PAGE_ANCHOR, from ``pair/anchor_check.py``).
 
 New code.  design/stage_map.md Stage 8's gate is that each hit is "emitted as a
 finding row of kind ``PROXY`` ... so it joins the corpus and the ledger like any
@@ -32,6 +35,8 @@ SCHEMA_VERSION = 2
 _CARRIED = (
     "finding_id", "concept", "kind", "reasoning", "severity",
     "unfaithful_decls", "bridge", "bridge_decls", "book_sha", "detector",
+    # PAGE_ANCHOR rows from pair/anchor_check.py travel the same road
+    "source", "page", "mechanical", "advisory", "detail",
 )
 
 
@@ -70,6 +75,8 @@ def disagreement(row: dict, companion: str) -> dict:
     if row.get("kind") == vocab.PROXY:
         out["bridge"] = row.get("bridge") or "none"
         out["closure"] = _closure(row)
+    if row.get("repos_involved"):
+        out["repos_involved"] = [str(r) for r in row["repos_involved"]]
     return out
 
 

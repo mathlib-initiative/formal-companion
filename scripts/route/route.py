@@ -42,8 +42,13 @@ from ledger import validate_ledger as vl
 
 #: the one routing rule
 ROUTING_RULE = "row names a declaration of the repo in unfaithful_decls"
-#: provenance value written by pair/anchor_check.py for mechanical anchor rows
+#: The ONE provenance value/key for a mechanical anchor row.  ``pair/anchor_check.py``
+#: writes ``source: "anchor_check"``, the gate reads ``g["source"]`` and this module
+#: reads the same key; the fact used to be spelled three ways (``mechanical: True``,
+#: ``source``, ``provenance``) and nothing matched anything.
 MECHANICAL_SOURCE = "anchor_check"
+#: legacy spelling, still read so an older corpus routes
+_PROVENANCE_KEYS = ("source", "provenance")
 
 STATUS_CHALLENGED = compat.STATUS_CHALLENGED
 STATUS_UNCHALLENGED = compat.STATUS_UNCHALLENGED
@@ -80,26 +85,61 @@ def _anchor_index(anchor_check: Any) -> dict[str, dict]:
     return out
 
 
-def _withdrawal(row: dict, anchors: dict[str, dict]) -> str:
-    """Return a withdrawal reason for *row*, or '' when it should be routed."""
+def provenance(row: dict) -> str:
+    """The row's provenance, whichever of the historical keys carries it."""
+    for key in _PROVENANCE_KEYS:
+        value = row.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _withdrawal(row: dict, anchors: dict[str, dict], checked: set[str]) -> str:
+    """Return a withdrawal reason for *row*, or '' when it should be routed.
+
+    critique.json correction 2: "Route them as mechanical low-severity rows from
+    ``anchor_check.py`` against the pinned edition; **withdraw only rows
+    contradicted by that edition**."  Three cases, all reachable:
+
+    * the row IS an ``anchor_check`` row -- it is the oracle, so it routes;
+    * an LLM row whose item the mechanical check ALSO found mismatched -- the
+      edition confirms it, so it routes (at the mechanical row's low severity);
+    * an LLM row whose item the check examined and found correct -- contradicted,
+      withdrawn.  An item the check never examined cannot be confirmed either
+      way, so it is withdrawn with the re-derive instruction instead.
+
+    The old version tested ``anchor.get("agrees") is True``, a key
+    ``anchor_check.check()`` never writes (it emits mismatches only), so both
+    branches were dead and every non-``anchor_check`` row was withdrawn wholesale.
+    """
     kind = str(row.get("kind") or "")
     if kind not in compat.MECHANICAL_KINDS:
         return ""
-    if str(row.get("provenance") or "") == MECHANICAL_SOURCE:
-        anchor = anchors.get(compat.normalise_item(row.get("item")))
-        if anchor is not None and anchor.get("agrees") is True:
-            return (
-                "the pinned edition agrees with the repo anchor "
-                "(pair/anchor-check.json)"
-            )
+    if provenance(row) == MECHANICAL_SOURCE:
         return ""
-    anchor = anchors.get(compat.normalise_item(row.get("item")))
-    if anchor is not None and anchor.get("agrees") is True:
-        return "contradicted by the pinned edition (pair/anchor-check.json)"
+    item = compat.normalise_item(row.get("item"))
+    if item in anchors:
+        return ""  # the mechanical check found the same mismatch: route it
+    if item in checked:
+        return (
+            "contradicted by the pinned edition: anchor_check examined %s and the "
+            "repo anchor is correct (pairs/anchor-check.json)" % (row.get("item") or item)
+        )
     return (
-        "%s is mechanical-only in vocabulary v2; re-derive with "
-        "`python3 scripts/cf.py pair --anchor-check`" % kind
+        "%s is mechanical-only in vocabulary v2 and anchor_check never examined "
+        "this item; re-derive with `python3 scripts/cf.py pair`" % kind
     )
+
+
+def _checked_items(anchor_check: Any) -> set[str]:
+    """Items ``anchor_check`` actually examined (``summary.checked_items``)."""
+    if not isinstance(anchor_check, dict):
+        return set()
+    summary = anchor_check.get("summary")
+    names = (summary or {}).get("checked_items") if isinstance(summary, dict) else None
+    if names is None:
+        names = anchor_check.get("checked_items")
+    return {compat.normalise_item(n) for n in (names or [])}
 
 
 def route_repo(
@@ -118,6 +158,7 @@ def route_repo(
     rows_in = list(findings)
     mine = findings_mod.rows_naming(rows_in, companion)
     anchors = _anchor_index(anchor_check)
+    checked = _checked_items(anchor_check)
 
     ledger_by_id: dict[str, dict] = {}
     for row in ledger_rows or []:
@@ -156,7 +197,7 @@ def route_repo(
             row["witness"] = f["witness"]
         if f.get("bridge") is not None:
             row["bridge"] = f["bridge"]
-        reason = _withdrawal(f, anchors)
+        reason = _withdrawal(f, anchors, checked)
         if reason:
             row["withdrawn"] = True
             row["withdrawn_reason"] = reason
