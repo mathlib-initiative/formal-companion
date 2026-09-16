@@ -26,7 +26,6 @@ import subprocess
 from typing import Iterable, Sequence
 
 from .compat import (
-    DEFAULT_KINDS,
     item_sort_key,
     normalise_item,
     read_json,

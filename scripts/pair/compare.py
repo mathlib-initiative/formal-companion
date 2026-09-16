@@ -19,7 +19,7 @@ L46-52).  Generalised per design/stage_map.md Stage 3:
 from __future__ import annotations
 
 import os
-from typing import Iterable, Mapping, Sequence
+from typing import Mapping, Sequence
 
 from .compat import (
     DEFAULT_KINDS,
