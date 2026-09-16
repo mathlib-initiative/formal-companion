@@ -192,14 +192,14 @@ def differential_entries(
         if "in_book" in row:
             in_book[item] = bool(row["in_book"]) and in_book.get(item, True)
 
-    for row in queue:
+    for row in _rows(queue):
         item = str(row["item"])
         row_repos = [str(r) for r in (row.get("repos") or [])]
         mapped = _decls_map(row, row_repos, None)
         for repo in row_repos:
             _note(item, repo, row, mapped.get(repo) or [])
     for companion, rows in targets_by_companion.items():
-        for row in rows:
+        for row in _rows(rows):
             item = str(row["item"])
             raw = row.get("decls")
             row_decls = [str(d) for d in raw] if isinstance(raw, list) else list(
@@ -236,10 +236,27 @@ def _parses(item: str, kinds: Sequence[str]) -> bool:
     return parsed is not None
 
 
+def _rows(data) -> list[dict]:
+    """Accept a pairs/ artifact either as a bare row list or as its wrapper.
+
+    ``make_queue`` writes ``{created, book_sha, count, ..., items: [...]}``.
+    Iterating the wrapper yields its KEYS, which fails far from the mistake
+    ("string indices must be integers"), so unwrap it here as well as in the
+    command.
+    """
+    if isinstance(data, Mapping):
+        for key in ("items", "targets", "queue", "rows"):
+            value = data.get(key)
+            if isinstance(value, list):
+                return list(value)
+        return []
+    return list(data or [])
+
+
 def target_entries(targets: Iterable[dict], companion: str, *, offset: int = 0) -> list[Entry]:
     """Normalise ``pairs/targets.<name>.json`` rows into planning entries."""
     out: list[Entry] = []
-    for row in targets:
+    for row in _rows(targets):
         peers = [str(p) for p in (row.get("peers") or [])]
         single = bool(row.get("single_source", not peers))
         out.append(

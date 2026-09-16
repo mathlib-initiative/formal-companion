@@ -80,12 +80,17 @@ python3 $CF onboard adam --repo ~/Desktop/measure_theory  --adapter attribution_
 # 4. tables, pairing, the free findings
 python3 $CF extract
 python3 $CF pair
+python3 $CF detect-proxies ours          # coverage + proxies, no model, no cost
 python3 $CF status
 
 # 5. a run (server fleets need an allowlisted host and recorded consent)
-python3 $CF plan-run --mode attack:vac --companion ours
-python3 $CF run attack-vac-ours --i-have-consent
+python3 $CF plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
+python3 $CF run attack-vac-ours --host <alias> --i-have-consent   # dry run without --execute
 python3 $CF harvest attack-vac-ours
+python3 $CF tally --union --agreed
+
+# 5b. findings produced before this skill existed
+python3 $CF import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt
 
 # 6. challenge, route, report
 python3 $CF adjudicate --companion ours

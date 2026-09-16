@@ -173,6 +173,8 @@ again as a fix-PR invariant.
 
 ## Using the catalog
 
+> **v1 status:** `cf lint` is *not implemented* (SKILL.md lists it as out of scope). The model-free checks that exist today run inside `cf detect-proxies` and `cf pair`; this section is the specification for the command, not a description of one.
+
 1. `cf lint <name>` runs every greppable detector plus the repo's own mechanical checks, before any
    model budget is spent, and again before a fix PR is opened.
 2. The attack prompts are built from the same material: `{{TOTAL_FUNCS}}` drives the vacuity probe

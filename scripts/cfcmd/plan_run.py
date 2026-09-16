@@ -120,9 +120,19 @@ def _read_json(path: Path, what: str):
 
 
 def _queue_rows(data) -> list[dict]:
-    """``queue.json`` is either a list or {items: [...]} (make_queue writes both)."""
+    """Unwrap a pairs/ artifact into its row list.
+
+    ``make_queue`` writes ``queue.json`` and ``targets.<name>.json`` as
+    ``{created, book_sha, count, ..., items: [...]}``; older hand-built files
+    are a bare list.  Both shapes are accepted, and ``len()`` of the unwrapped
+    list is the task count (``len()`` of the wrapper is its key count, which
+    silently made ``expected_n`` 10 instead of 519).
+    """
     if isinstance(data, dict):
-        return list(data.get("items") or [])
+        for key in ("items", "targets", "queue", "rows"):
+            if isinstance(data.get(key), list):
+                return list(data[key])
+        return []
     return list(data or [])
 
 
@@ -195,7 +205,9 @@ def run(args) -> int:
         chapters = [int(c) for c in (camp.book.get("chapters") or [])] or None
     kinds = camp.kinds
     if preset.is_attack:
-        targets = _read_json(p.targets_json(companion), f"targets.{companion}.json")
+        targets = _queue_rows(
+            _read_json(p.targets_json(companion), f"targets.{companion}.json")
+        )
         entries = mt.target_entries(targets, companion, offset=camp.offset)
         expected_n = len(targets)
         universe = f"targets.{companion}.json"
@@ -205,7 +217,9 @@ def run(args) -> int:
         for name in camp.companion_names():
             tp = p.targets_json(name)
             if tp.exists():
-                targets_by[name] = json.loads(tp.read_text(encoding="utf-8"))
+                targets_by[name] = _queue_rows(
+                    json.loads(tp.read_text(encoding="utf-8"))
+                )
         entries = mt.differential_entries(
             queue, targets_by, offset=camp.offset, chapters=chapters, kinds=kinds
         )

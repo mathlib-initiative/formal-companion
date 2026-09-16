@@ -25,6 +25,7 @@ Run:  python3 -m unittest tests.test_book_pair -v
 from __future__ import annotations
 
 import json
+import atexit
 import os
 import re
 import shutil
@@ -73,11 +74,19 @@ def pdf_path() -> str | None:
 
 
 def tmp_dir(prefix: str) -> str:
+    """A scratch directory removed when the interpreter exits.
+
+    Without the atexit hook these accumulate; with CF_TEST_TMP pointing at a
+    campaign directory they accumulated *inside the campaign*.
+    """
     base = os.environ.get("CF_TEST_TMP")
     if base:
         os.makedirs(base, exist_ok=True)
-        return tempfile.mkdtemp(prefix=prefix, dir=base)
-    return tempfile.mkdtemp(prefix=prefix)
+        d = tempfile.mkdtemp(prefix=prefix, dir=base)
+    else:
+        d = tempfile.mkdtemp(prefix=prefix)
+    atexit.register(shutil.rmtree, d, True)
+    return d
 
 
 def load_baseline_tables(names=("ours", "teorth", "adam")) -> dict:

@@ -124,8 +124,10 @@ def run(args) -> int:
         "statements": str(statements),
         "items": str(items_path),
     }
+    chapter = _audited_chapter(campaign, stages)
     summary["cheap"] = _run_cheap(
-        args, paths, detect_dir, name, rows, items_path, stages, kinds, book_sha
+        args, paths, detect_dir, name, rows, items_path, stages, kinds, book_sha,
+        chapter=chapter,
     )
     exit_code = 0
     if args.lean:
@@ -170,14 +172,36 @@ def _load_stages(args, detect_dir: Path, book_id: str | None) -> StageTable:
     return StageTable.for_book(book_id, extra_dirs=[detect_dir / "mathlib_stages"])
 
 
+def _audited_chapter(campaign, stages):
+    """The chapter def-coverage is scoped to.
+
+    ``campaign.yaml book.chapters`` is the single source of scope, because
+    ``cf pair`` writes the SAME ``pairs/def-coverage.<name>.json`` and reads it
+    from there: when the two disagreed, an unscoped ``cf pair`` reported 32
+    stated / 7 bridge-only / 1 missing for the same repo this command scored
+    32 / 4 / 0, and the file meant whichever the last command ran.  The stage
+    table's own chapter is the fallback for a campaign that predates the key.
+    """
+    chapters = (campaign.book or {}).get("chapters")
+    if isinstance(chapters, list) and len(chapters) == 1:
+        try:
+            return int(chapters[0])
+        except (TypeError, ValueError):
+            pass
+    if isinstance(chapters, list) and len(chapters) > 1:
+        return None          # multi-chapter scope: do not narrow to one
+    return stages.chapter
+
+
 # --------------------------------------------------------------------------
 # cheap tier
 # --------------------------------------------------------------------------
-def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, book_sha) -> dict:
+def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, book_sha,
+               *, chapter=None) -> dict:
     """def-coverage + body-proxy candidates; writes pairs/def-coverage.<name>.json."""
-    definitions = def_coverage.load_items(items_path, kind="Definition", chapter=stages.chapter, kinds=kinds)
+    definitions = def_coverage.load_items(items_path, kind="Definition", chapter=chapter, kinds=kinds)
     if not definitions:
-        warn(f"items.json names no Definition items for chapter {stages.chapter}")
+        warn(f"items.json names no Definition items for chapter {chapter}")
     coverage = def_coverage.compute_def_coverage(definitions, rows, kinds=kinds)
     candidates = def_coverage.body_proxy_candidates(rows, stages, kinds=kinds)
     shadowed = def_coverage.shadowed_object_labels(rows, stages)
@@ -191,7 +215,7 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
     out = {
         "book_sha": book_sha,
         "kind": "Definition",
-        "chapter": stages.chapter,
+        "chapter": chapter,
         "keywords": list(def_coverage.DEFINITIONAL_KEYWORDS),
         "book_items": len(definitions),
         "missing": coverage["missing"],

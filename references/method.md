@@ -161,7 +161,7 @@ concept.
   degenerate case excluded, a theorem attributed to the wrong item.
 - The **attack** runs are blind to nothing in principle but see one repo at a time, so they cannot
   produce an `ATTRIBUTION_GAP` verdict that names another repo's faithful rendering.
-- The **mechanical lint** (`cf lint`, the P-detectors and the repo's own audit script) needs
+- The **mechanical lint** (`cf lint`, specified but not implemented in v1; the P-detectors and the repo's own audit script) needs
   neither book nor model and catches P12-class contradictions from inside one file.
 
 A faithfulness program needs all four. Reporting the yield of one as the yield of the program is
