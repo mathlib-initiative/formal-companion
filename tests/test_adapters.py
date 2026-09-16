@@ -550,5 +550,16 @@ class ExtractCommandTest(unittest.TestCase):
         self.assertTrue(all(r["book_sha"] == BOOK_SHA for r in rows))
 
 
+class TestRegistryMatchesTheVocabulary(unittest.TestCase):
+    """`cf onboard` refuses a kind outside IMPLEMENTED_ADAPTER_KINDS, so it must be true."""
+
+    def test_implemented_set_equals_the_registry(self):
+        from adapters.api import registry
+        from cflib import vocab
+
+        self.assertEqual(set(registry()), set(vocab.IMPLEMENTED_ADAPTER_KINDS))
+        self.assertTrue(vocab.IMPLEMENTED_ADAPTER_KINDS <= vocab.ADAPTER_KINDS)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

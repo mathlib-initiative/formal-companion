@@ -53,6 +53,27 @@ def register(subparsers) -> None:
     p.add_argument("--force", action="store_true", help="rewrite adapter.yaml if it exists")
 
 
+def _check_adapter_implemented(kind: str) -> None:
+    """Refuse an adapter kind the vocabulary names but no code implements.
+
+    ``references/onboarding-contract.md`` says ``cf onboard --adapter
+    ledger_nodes`` "refuses with a pointer to this paragraph".  It did not: the
+    AdapterError was swallowed into a warning, the command returned 0 having
+    written adapter.yaml, conventions.md, state.json AND a campaign.yaml entry,
+    and the next ``cf extract`` then aborted for the WHOLE campaign on a
+    companion nothing could parse.  This runs before anything is written.
+    """
+    known = set(vocab.IMPLEMENTED_ADAPTER_KINDS)
+    if kind in known:
+        return
+    raise CfError(
+        f"adapter kind {kind!r} is declared in the vocabulary but not implemented in v1",
+        hint=("implemented kinds: " + ", ".join(sorted(known)) +
+              ". See references/onboarding-contract.md for what ledger_nodes still needs "
+              "(an item-level curation pass) and what `custom` would have to provide."),
+    )
+
+
 def run(args) -> int:
     campaign = from_args(args)
     paths = campaign.paths
@@ -62,6 +83,7 @@ def run(args) -> int:
         raise CfError(f"--repo {repo} is not a directory")
     if repo == campaign.root or campaign.root in repo.parents:
         raise CfError("the companion repo must live outside the campaign directory")
+    _check_adapter_implemented(args.adapter)
 
     defaults = DEFAULTS[args.adapter]
     commit = _commit(repo)

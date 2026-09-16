@@ -61,8 +61,20 @@ def run(args) -> int:
 
     summary: list[tuple] = []
     changed = 0
+    failures: list[tuple[str, Exception]] = []
     for name in names:
-        result = _extract_one(campaign, name, book_sha, args)
+        # One unparseable companion must not take the stage down: `cf extract`
+        # used to let the error propagate, so a single broken adapter.yaml
+        # aborted the whole command with exit 2 and wrote nothing at all for the
+        # healthy companions.
+        try:
+            result = _extract_one(campaign, name, book_sha, args)
+        except Exception as exc:  # noqa: BLE001 - deliberate: see the comment above
+            failures.append((name, exc))
+            label = "" if isinstance(exc, CfError) else f"{exc.__class__.__name__}: "
+            log.warn(f"{name}: {label}{exc}")
+            summary.append((name, "FAILED", "-", "-", "-", "-"))
+            continue
         summary.append((name, result["status"], result.get("rows", "-"),
                         result.get("items", "-"), result.get("sorry", "-"),
                         result.get("untagged", "-")))
@@ -72,7 +84,15 @@ def run(args) -> int:
         ["companion", "status", "rows", "items", "sorry", "untagged"], summary))
     if not args.dry_run:
         log.ok(f"{changed} of {len(names)} companion tables rewritten "
-               f"({len(names) - changed} already up to date)")
+               f"({len(names) - changed - len(failures)} already up to date"
+               + (f", {len(failures)} FAILED" if failures else "") + ")")
+    if failures:
+        log.warn(f"{len(failures)} companion(s) failed: "
+                 + ", ".join(name for name, _ in failures))
+        for name, exc in failures:
+            hint = getattr(exc, "hint", "") or ""
+            log.detail(f"  {name}: {exc}" + (f"\n    hint: {hint}" if hint else ""))
+        return 1
     return 0
 
 

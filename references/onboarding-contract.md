@@ -82,7 +82,10 @@ A source-node → formalization ledger with prose locators. The ledger's granula
 node*, not a book item (2,884 formalization nodes and 77 source nodes in the audited export), so
 the adapter must declare `granularity: node` and the campaign must run an item-level curation pass
 (curator + independent verifier per node) before extraction. **v1 ships the declaration but not the
-curation workflow**; `cf onboard --adapter ledger_nodes` refuses with a pointer to this paragraph.
+curation workflow**; `cf onboard --adapter ledger_nodes` refuses with a pointer to this paragraph,
+*before* it writes anything — the kind is in `vocab.ADAPTER_KINDS` (what an `adapter.yaml` may
+legally say) but not in `vocab.IMPLEMENTED_ADAPTER_KINDS` (what `adapters.api.registry()` actually
+provides, which a test pins). The same holds for `custom`.
 
 Two extra state fields are mandatory for ledger repos, because the ledger is an *export*: it goes
 stale the moment a fix names a new theorem, and `extract` keyed on (repo commit, adapter sha) would
