@@ -982,6 +982,12 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             {"item": "Exercise 1.2.4", "decls": ["union_elem"], "peers": ["ours"],
              "single_source": False, "book_page": 24, "section": "1.2"},
         ]), encoding="utf-8")
+        # `cf pair` writes this; plan-run REFUSES a differential run without it,
+        # because an unreconciled plan is the 382-vs-383 state the gate exists for.
+        (self.root / "pairs" / "reconciliation.json").write_text(json.dumps({
+            "book_sha": BOOK_SHA, "task_universe": 2,
+            "task_universe_items": ["Exercise 1.2.4", "Lemma 1.2.5"],
+        }), encoding="utf-8")
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -1001,6 +1007,7 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             max_cost = None
             i_have_consent = False
             force = False
+            allow_unreconciled = False
 
         for k, v in over.items():
             setattr(A, k, v)
@@ -1073,6 +1080,40 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.assertEqual(doc["tasks"]["differential"], 1)
         self.assertEqual(doc["tasks"]["single_source"], 1)
         self.assertEqual(doc["mode"], "differential")
+
+    def test_a_differential_plan_without_a_reconciliation_is_refused(self):
+        """It used to skip the check entirely, with no warning."""
+        (self.root / "pairs" / "reconciliation.json").unlink()
+        with self.assertRaises(CfError) as cm:
+            self.plan(preset="differential-text", companion=None)
+        self.assertIn("task universe is unknown", str(cm.exception))
+        self.assertEqual(
+            self.plan(preset="differential-text", companion=None,
+                      allow_unreconciled=True), 0)
+
+    def test_an_old_reconciliation_without_the_key_is_refused(self):
+        (self.root / "pairs" / "reconciliation.json").write_text(
+            json.dumps({"book_sha": BOOK_SHA, "pairs": 1}), encoding="utf-8")
+        with self.assertRaises(CfError) as cm:
+            self.plan(preset="differential-text", companion=None)
+        self.assertIn("task_universe", str(cm.exception))
+
+    def test_a_dropped_item_is_NAMED_not_counted(self):
+        """The count-only check could say 382-vs-383 but never which item."""
+        (self.root / "pairs" / "reconciliation.json").write_text(json.dumps({
+            "book_sha": BOOK_SHA, "task_universe": 3,
+            "task_universe_items": ["Exercise 1.2.4", "Lemma 1.2.5", "Exercise 1.3.19"],
+        }), encoding="utf-8")
+        with self.assertRaises(CfError) as cm:
+            self.plan(preset="differential-text", companion=None)
+        self.assertIn("Exercise 1.3.19", str(cm.exception))
+
+    def test_an_attack_plan_reconciles_against_the_target_item_set(self):
+        """`len(entries) == len(targets)` was tautological; the item SET is not."""
+        targets = json.loads((self.root / "pairs" / "targets.ours.json").read_text())
+        self.assertEqual(self.plan(preset="attack-hunt", companion="ours"), 0)
+        names = sorted(p.stem for p in (self.root / "runs" / "r1" / "tasks").glob("*.yaml"))
+        self.assertEqual(len(names), len(targets))
 
     def test_gate_only_preset_cannot_be_planned(self):
         with self.assertRaises(CfError):
