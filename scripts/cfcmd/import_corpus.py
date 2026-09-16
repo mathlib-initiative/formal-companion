@@ -91,6 +91,16 @@ def run(args) -> int:
 
     mode, preset = _mode_and_preset(args, src)
     book_sha = args.book_sha or campaign.book_sha or ""
+    # Adopting a corpus judged against ANOTHER edition into this campaign is
+    # exactly the draft-vs-published confusion the edition gate exists to catch,
+    # so it has to be said out loud (SKILL.md hard rule 3).
+    if book_sha and campaign.book_sha and book_sha != campaign.book_sha \
+            and not args.allow_edition_mismatch:
+        raise CfError(
+            f"--book-sha {book_sha[:12]}… is not this campaign's {campaign.book_sha[:12]}…",
+            hint="these findings were judged against another edition; their page anchors and "
+                 "quotes belong to it. Pass --allow-edition-mismatch to adopt them anyway "
+                 "(the receipt records it, and the report must say so).")
     repos = ([r.strip() for r in args.repos.split(",") if r.strip()]
              if args.repos else list(campaign.companion_names()))
 
