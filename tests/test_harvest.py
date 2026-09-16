@@ -730,7 +730,8 @@ class TestRunPlanner(unittest.TestCase):
         repos=[{"name": "ours", "repo": "/r/ours",
                 "statements": "/c/ours.jsonl", "conventions": "total functions"}],
         mode="differential",
-        gate={"command": "python3 gate.py", "kinds": ["CONTENT"], "witness_required": False,
+        gate={"command": "python3 gate.py", "config": "/c/gate.local.json",
+              "kinds": ["CONTENT"], "witness_required": False,
               "quote_min_chars": 25, "scratch_dir": "/tmp/sg"},
     )
 
