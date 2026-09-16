@@ -1,0 +1,404 @@
+{
+ "book": "tao-measure",
+ "book_title": "Terence Tao, An Introduction to Measure Theory (GSM 126)",
+ "_source": "ported verbatim from /Users/jack/Desktop/tao-differential/adam-detector/analyze2.py (MATHLIB_STAGE L51-120, MOD_SEC L40-43, MATHLIB_MT L279-282, NATIVE L283-284); object stages computed from that repo's deps.json module table",
+ "chapter": 1,
+ "stage_beyond_book": 8,
+ "default_stage": 0,
+ "_default_stage_note": "a Mathlib module matching no prefix is foundations (stage 0), as in analyze2.stage_of_mathlib_module",
+ "_module_stages_note": "ordered; FIRST match wins, exactly as analyze2.py evaluated it. A null stage means 'measure-theory module we have not classified': analyze_stages reports it and fails unless --allow-unclassified.",
+ "module_stages": [
+  [
+   "Mathlib.Analysis.BoxIntegral",
+   1
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Lebesgue",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Haar",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Constructions.Pi",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Constructions.BorelSpace",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Regular",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.OpenPos",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Group",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.MeasureSpaceDef",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.NullMeasurable",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.AEMeasurable",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.MeasureSpace",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Restrict",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Typeclasses",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Map",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Comap",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Count",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Dirac",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Sub",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.WithDensity",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Trim",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Prod",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Stieltjes",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Content",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Hausdorff",
+   8
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Decomposition",
+   8
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Complex",
+   8
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.VectorMeasure",
+   8
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.MeasurableSpace",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.PiSystem",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.SetAlgebra",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.OuterMeasure.Defs",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.OuterMeasure.Basic",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.OuterMeasure.Operations",
+   2
+  ],
+  [
+   "Mathlib.MeasureTheory.OuterMeasure",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.SimpleFunc",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.Lebesgue",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.Bochner",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.SetIntegral",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.IntegrableOn",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.DominatedConvergence",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.Indicator",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.Layercake",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.SetToL1",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.L1Space",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.LpSpace",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.LpSeminorm",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.AEEqFun",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.StronglyMeasurable",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.Measurable",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.EssSup",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.Egorov",
+   5
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.ConvergenceInMeasure",
+   5
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.UniformIntegrable",
+   5
+  ],
+  [
+   "Mathlib.MeasureTheory.Function.LocallyIntegrable",
+   6
+  ],
+  [
+   "Mathlib.MeasureTheory.Covering",
+   6
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.FundThmCalculus",
+   6
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.IntervalIntegral",
+   6
+  ],
+  [
+   "Mathlib.MeasureTheory.Measure.Lebesgue.Integral",
+   6
+  ],
+  [
+   "Mathlib.MeasureTheory.Constructions.Prod",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.Prod",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral.RieszMarkovKakutani",
+   7
+  ],
+  [
+   "Mathlib.MeasureTheory.Constructions",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory.Function",
+   3
+  ],
+  [
+   "Mathlib.MeasureTheory.Integral",
+   3
+  ],
+  [
+   "Mathlib.Probability",
+   4
+  ],
+  [
+   "Mathlib.MeasureTheory",
+   null
+  ]
+ ],
+ "repo_module_stages": [
+  [
+   "MeasureTheory.Tao.Elementary",
+   1
+  ],
+  [
+   "MeasureTheory.Tao.Jordan",
+   1
+  ],
+  [
+   "MeasureTheory.Tao.Riemann",
+   1
+  ],
+  [
+   "MeasureTheory.Tao.Lebesgue",
+   2
+  ],
+  [
+   "MeasureTheory.Tao.Integration",
+   3
+  ],
+  [
+   "MeasureTheory.Tao.Abstract",
+   4
+  ],
+  [
+   "MeasureTheory.Tao.Convergence",
+   5
+  ],
+  [
+   "MeasureTheory.Tao.Differentiation",
+   6
+  ],
+  [
+   "MeasureTheory.Tao.Companion.Differentiation",
+   6
+  ],
+  [
+   "MeasureTheory.Tao.Extension",
+   7
+  ],
+  [
+   "MeasureTheory.Tao.Product",
+   7
+  ]
+ ],
+ "_repo_module_stages_note": "COMPANION-SPECIFIC (measure_theory's MeasureTheory.Tao.* layout), used only by the optional broad scan. A campaign may override this file with detect/mathlib_stages/<book>.json of its own; a published copy of this skill should carry only the book-level module_stages.",
+ "mathlib_objects": {
+  "MeasureTheory.MeasureSpace.volume": {
+   "label": "volume",
+   "module": "Mathlib.MeasureTheory.Measure.MeasureSpaceDef",
+   "stage": 2
+  },
+  "MeasureTheory.NullMeasurableSet": {
+   "label": "NullMeasurableSet",
+   "module": "Mathlib.MeasureTheory.Measure.NullMeasurable",
+   "stage": 2
+  },
+  "MeasurableSet": {
+   "label": "MeasurableSet",
+   "module": "Mathlib.MeasureTheory.MeasurableSpace.Defs",
+   "stage": 2
+  },
+  "MeasureTheory.lintegral": {
+   "label": "lintegral",
+   "module": "Mathlib.MeasureTheory.Integral.Lebesgue.Basic",
+   "stage": 3
+  },
+  "MeasureTheory.integral": {
+   "label": "integral",
+   "module": "Mathlib.MeasureTheory.Integral.Bochner.Basic",
+   "stage": 3
+  },
+  "MeasureTheory.SimpleFunc": {
+   "label": "SimpleFunc",
+   "module": "Mathlib.MeasureTheory.Function.SimpleFunc",
+   "stage": 3
+  },
+  "MeasureTheory.Measure": {
+   "label": "Measure",
+   "module": "Mathlib.MeasureTheory.Measure.MeasureSpaceDef",
+   "stage": 2
+  },
+  "MeasureTheory.OuterMeasure": {
+   "label": "OuterMeasure",
+   "module": "Mathlib.MeasureTheory.OuterMeasure.Defs",
+   "stage": 2
+  },
+  "MeasureTheory.Integrable": {
+   "label": "Integrable",
+   "module": "Mathlib.MeasureTheory.Function.L1Space.Integrable",
+   "stage": 3
+  },
+  "MeasureTheory.Measure.prod": {
+   "label": "Measure.prod",
+   "module": "Mathlib.MeasureTheory.Measure.Prod",
+   "stage": 7
+  },
+  "MeasureTheory.ae": {
+   "label": "ae",
+   "module": "Mathlib.MeasureTheory.OuterMeasure.AE",
+   "stage": 7
+  }
+ },
+ "native_tokens": [
+  "elementaryMeasure",
+  "elementaryContent",
+  "JordanOuter",
+  "JordanInner",
+  "jordanMeasure",
+  "boxCoverCost",
+  "finiteBoxCoverCost",
+  "OpenExcessLebesgueMeasurable",
+  "upperIntegral",
+  "lowerIntegral",
+  "OrderedRiemannCriterion",
+  "DarbouxIntegrableOn",
+  "piecewiseConstantIntegral"
+ ],
+ "_native_tokens_note": "COMPANION-SPECIFIC: identifier fragments of the companion's own constructions, used to tell 'the body still builds the book's object' from 'the body IS the library's object'. Belongs with the companion's conventions.md once onboarding writes one."
+}
