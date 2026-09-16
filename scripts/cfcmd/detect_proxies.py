@@ -24,7 +24,16 @@ Outputs, all inside the campaign directory::
     detect/<name>/report_keydefs.json
     detect/<name>/report_broad_defs.json      (--broad, when the stage table maps the repo's modules)
     detect/<name>/findings.lean.jsonl
+    corpus/detect-<name>-<tier>/<item>.json   (default; --no-emit-corpus to skip)
+    corpus/detect-<name>-<tier>/RECEIPT.json
     companions/<name>/state.json              (counts merged in)
+
+The corpus emission is the join stage_map.md Stage 8 asks for -- "each hit [is]
+emitted as a finding row of kind PROXY ... so it joins the corpus and the ledger
+like any other finding". Without it the rows sat in ``detect/`` and ``cf tally``,
+``cf route`` and ``cf adjudicate``, which all read ``corpus/``, never saw them.
+Every emitted document is validated against the ``mechanical`` gate preset
+before it is written.
 
 Exit codes: 0 fine, 1 the unclassified-modules gate refused the run (Stage 8:
 "``unclassified_modules`` must be empty"), 2 a user error.
@@ -45,7 +54,7 @@ from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_jsonl, write_json, write_jsonl  # noqa: E402
 from cflib.log import info, ok, warn  # noqa: E402
 from cflib.yamlio import read_yaml  # noqa: E402
-from detect import analyze_stages, def_coverage  # noqa: E402
+from detect import analyze_stages, corpus as detect_corpus, def_coverage  # noqa: E402
 from detect import findings as find_rows  # noqa: E402
 from detect._compat import DEFAULT_KINDS, item_base, read_json  # noqa: E402
 from detect.deps import DepsIndex  # noqa: E402
@@ -79,6 +88,11 @@ def register(subparsers) -> object:
     ap.add_argument("--render-dump-deps", action="store_true",
                     help="render DumpDeps.lean outside the repo and print the command to run, then stop")
     ap.add_argument("--no-findings", action="store_true", help="write reports but no finding rows")
+    ap.add_argument("--no-emit-corpus", action="store_true",
+                    help="do not publish the rows into corpus/detect-<name>-<tier>/ "
+                         "(they then reach no tally, route or ledger)")
+    ap.add_argument("--no-gate", action="store_true",
+                    help="with the corpus emission: skip the `mechanical` gate (not recommended)")
     ap.add_argument("--json", action="store_true", dest="as_json", help="print the summary as JSON")
     ap.set_defaults(func=run)
     return ap
@@ -132,7 +146,7 @@ def run(args) -> int:
     exit_code = 0
     if args.lean:
         summary["lean"], exit_code = _run_lean(
-            args, detect_dir, name, rows, stages, kinds, book_sha, entry, adapter
+            args, paths, detect_dir, name, rows, stages, kinds, book_sha, entry, adapter
         )
 
     _write_state(campaign, name, summary)
@@ -258,8 +272,8 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
              "occurrences of the library constant count as evidence for those")
 
     rows_out: list[dict] = []
+    run_id = args.run_id or find_rows.default_run_id(name, "cheap")
     if not args.no_findings:
-        run_id = args.run_id or find_rows.default_run_id(name, "cheap")
         rows_out = def_coverage.build_finding_rows(
             coverage, candidates, companion=name, run_id=run_id,
             book_sha=book_sha, items_pages=_items_pages(items_path, kinds),
@@ -273,7 +287,76 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
             ),
         )
         ok(f"wrote {path} ({len(rows_out)} rows)")
-    return {"counts": counts, "coverage_file": str(coverage_path), "findings": len(rows_out)}
+    result = {"counts": counts, "coverage_file": str(coverage_path), "findings": len(rows_out)}
+    if rows_out:
+        emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="cheap",
+                              book_sha=book_sha, counts=counts,
+                              items_pages=_items_pages(items_path, kinds))
+        if emitted:
+            result["corpus"] = emitted
+    return result
+
+
+def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier: str,
+                 book_sha, counts: dict, items_pages: dict) -> dict | None:
+    """Publish the detector's rows into ``corpus/<run-id>/``, gated.
+
+    Stage 8's own gate (stage_map.md): a hit only counts once it "joins the
+    corpus and the ledger like any other finding".  Every document is validated
+    against the ``mechanical`` preset -- the one that exists for exactly these
+    rows and was applied to nothing before -- and nothing is written when it
+    fails, so a detector bug cannot seed the corpus every report is built from.
+    """
+    if args.no_emit_corpus:
+        return None
+    dest = Path(paths.corpus_run_dir(run_id))
+    docs = detect_corpus.documents(rows, companion=name, run_id=run_id,
+                                   book_sha=book_sha, items_pages=items_pages)
+    gate_result = None
+    if not args.no_gate:
+        gate_result = _gate_documents(paths, docs, run_id=run_id, companion=name,
+                                      book_sha=book_sha)
+        if not gate_result["ok"]:
+            warn(f"the mechanical gate refused {len(gate_result['problems'])} thing(s); "
+                 f"corpus/{run_id} was NOT written")
+            for problem in gate_result["problems"][:8]:
+                warn("  - " + problem)
+            return {"ok": False, "gate": gate_result, "destination": str(dest)}
+
+    receipt = detect_corpus.write_corpus(docs, dest, run_id=run_id, companion=name,
+                                         book_sha=book_sha, counts=counts)
+    stale = detect_corpus.stale_files(dest, receipt["names"])
+    for path in stale:
+        path.unlink()
+    receipt["removed_stale"] = [p.name for p in stale]
+    receipt["gate"] = gate_result
+    receipt["complete"] = True
+    receipt["expected"] = {"count": len(docs), "names": receipt["names"]}
+    receipt["actual"] = {"count": len(receipt["names"])}
+    receipt["expected_from"] = f"cf detect-proxies {name} ({tier} tier): one document per book item"
+    receipt["harvested_at"] = cf_state.now()
+    write_json(dest / "RECEIPT.json", receipt, indent=1, sort_keys=True)
+    ok(f"wrote corpus/{run_id} ({len(docs)} document(s), {len(rows)} row(s))")
+    return {"ok": True, "destination": str(dest), "documents": len(docs),
+            "rows": len(rows), "gate": gate_result}
+
+
+def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str, book_sha) -> dict:
+    """Validate detector documents against the `mechanical` preset, in memory."""
+    from gate import verify_findings as vf
+    from plan import presets as presets_mod
+
+    config = presets_mod.gate_config(
+        presets_mod.get("mechanical"),
+        run_id=run_id, book_text=str(paths.book_txt), book_sha=book_sha or "",
+        repos=[companion],
+    )
+    cfg = vf.GateConfig(config)
+    book, problems = vf.load_book(cfg)
+    for doc in docs:
+        problems.extend(vf.validate_doc(doc, detect_corpus.slug(doc["item"]) + ".json", cfg, book))
+    return {"ok": not problems, "preset": "mechanical", "problems": problems,
+            "documents": len(docs)}
 
 
 def _items_pages(items_source, kinds) -> dict[str, int]:
@@ -317,7 +400,7 @@ def _first_page(entry: dict) -> int | None:
 # --------------------------------------------------------------------------
 # lean tier
 # --------------------------------------------------------------------------
-def _run_lean(args, detect_dir, name, rows, stages, kinds, book_sha, entry, adapter) -> tuple[dict, int]:
+def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, book_sha, entry, adapter) -> tuple[dict, int]:
     """ORDER_VIOLATION / SAME_STAGE_PRIMITIVE over deps.json. Never runs lake."""
     deps_path = Path(args.deps) if args.deps else detect_dir / "deps.json"
     if not deps_path.exists():
@@ -356,8 +439,8 @@ def _run_lean(args, detect_dir, name, rows, stages, kinds, book_sha, entry, adap
         "order_violations": len(report["order_violations"]),
         "same_stage_primitives": len(report["same_stage_primitives"]),
     }
+    run_id = args.run_id or find_rows.default_run_id(name, "lean")
     if not args.no_findings:
-        run_id = args.run_id or find_rows.default_run_id(name, "lean")
         rows_out = analyze_stages.build_finding_rows(
             report, deps, stages, companion=name, run_id=run_id, book_sha=book_sha
         )
@@ -371,6 +454,10 @@ def _run_lean(args, detect_dir, name, rows, stages, kinds, book_sha, entry, adap
         )
         ok(f"wrote {path} ({len(rows_out)} rows)")
 
+    emitted = None
+    if rows_out:
+        emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="lean",
+                               book_sha=book_sha, counts=counts, items_pages={})
     exit_code = _report_unclassified(report, stages, args.allow_unclassified)
     return (
         {
@@ -385,6 +472,7 @@ def _run_lean(args, detect_dir, name, rows, stages, kinds, book_sha, entry, adap
             "report": str(keydefs_path),
             "findings": len(rows_out),
             "deps": str(deps_path),
+            "corpus": emitted,
         },
         exit_code,
     )

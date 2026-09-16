@@ -81,6 +81,7 @@ python3 $CF onboard adam --repo ~/Desktop/measure_theory  --adapter attribution_
 python3 $CF extract
 python3 $CF pair
 python3 $CF detect-proxies ours          # coverage + proxies, no model, no cost
+                                        # -> corpus/detect-ours-cheap/ (gated: `mechanical`)
 python3 $CF status
 
 # 5. a run (server fleets need an allowlisted host and recorded consent)

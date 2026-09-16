@@ -282,6 +282,10 @@ class GateConfig:
         self.severities: set[str] = set(data.get("severities") or ["high", "medium", "low"])
         self.witness_required: bool = bool(data.get("witness_required", False))
         self.require_book_located: bool = bool(data.get("require_book_located", True))
+        # Off only for the `mechanical` preset: pair/anchor_check.py and
+        # detect/ produce findings without ever reading the book's prose, so
+        # demanding a verbatim passage quote of them is demanding a fabrication.
+        self.require_passage_quote: bool = bool(data.get("require_passage_quote", True))
         self.require_book_sha: bool = bool(data.get("require_book_sha", True))
         self.verify_text_sha: bool = bool(data.get("verify_text_sha", False))
         self.require_finding_id: bool = bool(data.get("require_finding_id", False))
@@ -382,9 +386,11 @@ def validate_doc(
         errs.append(
             f"{name}: book_located is false — locate the passage, or raise a COVERAGE finding"
         )
-    ok, why = quote_ok(book, doc.get("book_passage_quote", ""))
-    if not ok:
-        errs.append(f"{name}: book_passage_quote {why}")
+    passage = doc.get("book_passage_quote")
+    if cfg.require_passage_quote or passage:
+        ok, why = quote_ok(book, passage or "")
+        if not ok:
+            errs.append(f"{name}: book_passage_quote {why}")
 
     for i, m in enumerate(doc.get("matches") or []):
         if not isinstance(m, dict):

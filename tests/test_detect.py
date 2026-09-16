@@ -636,9 +636,13 @@ class CommandEndToEndTest(unittest.TestCase):
         (root / "book" / "tao-measure").mkdir(parents=True)
         (root / "companions" / "ours" / "statements.jsonl").write_text(
             (Path(BASELINE_DIFF) / "ours.jsonl").read_text())
-        items = _items_from_book(Path(BOOK_TXT).read_text(errors="ignore"))
+        book_text = Path(BOOK_TXT).read_text(errors="ignore")
+        items = _items_from_book(book_text)
         (root / "book" / "tao-measure" / "items.json").write_text(
             json.dumps({"book": "tao-measure", "items": items}))
+        # the corpus emission gates against the `mechanical` preset, and the gate
+        # fails closed without the pinned book text
+        (root / "book" / "tao-measure" / "book.txt").write_text(book_text)
         (root / "campaign.yaml").write_text(
             "book:\n  id: tao-measure\n  sha256: \"64498329\"\n  offset: 16\n"
             "companions:\n  - name: ours\n    repo: /nonexistent\n")
@@ -681,9 +685,68 @@ class CommandEndToEndTest(unittest.TestCase):
         self._run()
         first = (self.root / "pairs" / "def-coverage.ours.json").read_text()
         firstf = (self.root / "detect" / "ours" / "findings.cheap.jsonl").read_text()
+        corpus = self.root / "corpus" / "detect-ours-cheap"
+        firstc = {p.name: p.read_text() for p in sorted(corpus.glob("*.json"))
+                  if p.name != "RECEIPT.json"}
         self._run()
         self.assertEqual(first, (self.root / "pairs" / "def-coverage.ours.json").read_text())
         self.assertEqual(firstf, (self.root / "detect" / "ours" / "findings.cheap.jsonl").read_text())
+        self.assertEqual(firstc, {p.name: p.read_text() for p in sorted(corpus.glob("*.json"))
+                                  if p.name != "RECEIPT.json"})
+
+    def test_the_rows_join_the_corpus_so_a_tally_can_see_them(self):
+        """Stage 8's own gate: a hit only counts once it joins the corpus."""
+        from harvest import tally as tally_mod
+
+        self.assertEqual(self._run(), 0)
+        corpus = self.root / "corpus" / "detect-ours-cheap"
+        docs = sorted(p for p in corpus.glob("*.json") if p.name != "RECEIPT.json")
+        self.assertEqual(len(docs), 4)          # the four bridge-only Definitions
+        doc = json.loads(docs[0].read_text())
+        self.assertEqual(doc["schema_version"], 2)
+        self.assertEqual(doc["run_id"], "detect-ours-cheap")
+        self.assertEqual(doc["book_sha"], "64498329")
+        self.assertTrue(doc["book_located"])
+        self.assertIsNone(doc["book_passage_quote"])
+        self.assertEqual(len(doc["disagreements"]), 1)
+        self.assertEqual(doc["disagreements"][0]["kind"], vocab.COVERAGE)
+        self.assertEqual(doc["disagreements"][0]["repos_involved"], ["ours"])
+
+        receipt = json.loads((corpus / "RECEIPT.json").read_text())
+        self.assertTrue(receipt["complete"])
+        self.assertTrue(receipt["gate"]["ok"], receipt["gate"]["problems"])
+        self.assertEqual(receipt["expected"]["count"], 4)
+
+        result = tally_mod.tally({"detect-ours-cheap": corpus})
+        self.assertEqual(result["runs"]["detect-ours-cheap"]["files"], 4)
+        self.assertGreaterEqual(result["rows"], 4)
+
+    def test_every_emitted_document_passes_the_mechanical_gate(self):
+        from gate import verify_findings as vf
+        from plan import presets as presets_mod
+
+        self._run()
+        corpus = self.root / "corpus" / "detect-ours-cheap"
+        cfg = vf.GateConfig(presets_mod.gate_config(
+            presets_mod.get("mechanical"), run_id="detect-ours-cheap",
+            book_text=str(self.root / "book" / "tao-measure" / "book.txt"),
+            book_sha="64498329", repos=["ours"]))
+        cfg.findings_dir = "."
+        book, errs = vf.load_book(cfg)
+        self.assertEqual(errs, [])
+        problems = []
+        for path in sorted(corpus.glob("*.json")):
+            if path.name == "RECEIPT.json":
+                continue
+            problems += vf.validate_doc(json.loads(path.read_text()), path.name, cfg, book)
+        self.assertEqual(problems, [])
+
+    def test_no_emit_corpus_writes_nothing_under_corpus(self):
+        # a distinct --run-id, because the class shares one campaign directory
+        self._run("--no-emit-corpus", "--run-id", "detect-quiet")
+        self.assertFalse(list((self.root / "corpus").glob("detect-quiet/*.json")))
+        self._run("--run-id", "detect-loud")
+        self.assertTrue(list((self.root / "corpus").glob("detect-loud/*.json")))
 
     def test_lean_tier_refuses_without_a_dump_and_never_runs_lake(self):
         with self.assertRaises(Exception) as ctx:
