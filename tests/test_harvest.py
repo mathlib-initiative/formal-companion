@@ -299,6 +299,20 @@ class TestReceipt(unittest.TestCase):
         self.assertEqual(receipt["previous"]["actual"], 8)
         self.assertEqual(receipt["previous"]["gained"], ["exercise-1-1-9.json"])
 
+    def test_edition_audit_names_findings_from_another_edition(self):
+        """Batch-1 findings were judged against the 2011 draft; anchors differ."""
+        write_findings(self.source, "Exercise 1.1.99", [])
+        harvest_mod.harvest(run_id="run-1", source={"kind": "local", "path": str(self.source)},
+                            dest=self.dest, book_sha="published-sha")
+        victim = self.dest / "exercise-1-1-99.json"
+        payload = json.loads(victim.read_text())
+        payload["book_sha"] = "draft-sha"
+        victim.write_text(json.dumps(payload), encoding="utf-8")
+        audit = harvest_mod.edition_audit(self.dest, "published-sha")
+        self.assertEqual(audit["mismatched"], ["exercise-1-1-99.json"])
+        self.assertEqual(len(audit["no_book_sha"]), 8)
+        self.assertFalse(harvest_mod.edition_audit(self.dest, "")["checked"])
+
     def test_remote_source_refuses_without_execute(self):
         source = harvest_mod.parse_source("ffmain:/home/jack/tao-attack-hunt/findings")
         self.assertEqual(source["kind"], "remote")
