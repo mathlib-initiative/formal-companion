@@ -5,6 +5,11 @@ book/
 **/crops/
 **/evidence*/
 *.pdf
+# ...but the skill repo's own packages are CODE, not campaign data: the patterns
+# above are written for a campaign directory, and `book/` would otherwise hide
+# scripts/book/ (the Stage 1 package) from git entirely.
+!scripts/book/
+
 # run state and caches
 runs/*/tend-root/
 detect/*/deps.json
