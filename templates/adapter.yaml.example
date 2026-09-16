@@ -1,0 +1,57 @@
+# companions/<name>/adapter.yaml -- how this repo's statements are extracted.
+# Written by `cf onboard <name> --repo <path> --adapter <kind>`; edit by hand
+# afterwards (globs, regexes, owner) and re-run onboard to re-check the parse.
+name: {{ name }}
+repo: {{ repo }}
+commit: {{ commit }}
+
+# docstring_tags     -- a book tag in the declaration docstring (tao-measure-lean,
+#                       teorth/analysis)
+# attribution_table  -- a machine-readable item -> declaration map plus snippets
+#                       (measure_theory pdf-overlay data)
+# ledger_nodes       -- a source-node -> formalization ledger; needs `cf curate`
+#                       first because its granularity is node, not item
+# custom             -- any script emitting row schema v2
+adapter: {{ adapter }}
+granularity: {{ granularity }}      # item | node
+
+# Files to parse (repo-relative globs). Build output and vendored dependencies
+# are excluded by default: a bare **/*.lean over a Lake project reads ~10,000
+# files of Mathlib and reports its declarations as the companion's.
+glob: {{ glob }}
+exclude:
+  - ".lake/**/*.lean"
+  - "**/.lake/**/*.lean"
+
+# Where the book tag lives and how it is spelled.
+tag:
+  position: docstring_start         # docstring_start | docstring_anywhere | table
+  pattern: null                     # optional regex override; null = the kind list
+  # Prefer the item's OWN page over a cross-reference ("previewed on book p. 20"
+  # once gave Exercise 1.2.17 the wrong anchor).
+  page_pattern: "(?:book\\s+)?(?:pp?\\.|pages?)\\s*(\\d+)"
+
+# anchor: docstring (page in the docstring) | ledger (page in an export)
+#       | none (item label only, e.g. teorth)
+anchor: {{ anchor }}
+
+# Keep bodies for defs/abbrevs/instances: proxy definitions are spotted in the
+# body (elementaryMeasure := volume), not in the signature.
+body_for_kinds: [def, abbrev, instance, structure, class]
+
+sorry:
+  # permanent: exercise statements ship with `sorry` on purpose and are NOT gaps
+  exercise_sorry: permanent
+  gap_marker: "sorry -- TODO"
+
+# read_only | branch_only | branch_and_pr. Peers default to read_only; v1 of the
+# skill is findings-only, so nothing writes to a companion repo either way.
+write_policy: {{ write_policy }}
+owner: {{ owner }}
+
+# Commands to run after any future edit (not used by the findings-only v1).
+validators: []
+
+# Files whose sha belongs in the extract key (ledger/table exports). When one of
+# these changes, `cf extract` must re-run even at the same commit.
+key_files: []
