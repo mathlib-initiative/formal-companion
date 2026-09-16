@@ -225,7 +225,10 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
     # artifact is listed under Stage 3 and Stage 8 of design/stage_map.md), so
     # this is a superset of pair/def_coverage.py's schema -- `bridge_only_decls`
     # and the descriptive keys are kept so either writer leaves a file both
-    # readers accept. TODO(cf): collapse the two implementations into this one.
+    # readers accept. Both writers now MERGE (keys they do not own survive) and
+    # both classify with cflib.vocab.DEFINITIONAL_KEYWORDS, so the two agree by
+    # construction rather than by luck.
+    # TODO(cf): collapse the two implementations into this one.
     out = {
         "book_sha": book_sha,
         "kind": "Definition",
@@ -247,9 +250,12 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
             "shadowed_objects": shadowed,
             "generated_by": "cf detect-proxies (cheap tier)",
         },
+        "written_by": "cf detect-proxies",
     }
     coverage_path = paths.def_coverage_json(name)
-    write_json(coverage_path, out)
+    merged = dict(read_json(coverage_path) or {}) if coverage_path.exists() else {}
+    merged.update(out)
+    write_json(coverage_path, merged)
 
     counts = {
         "definitions": len(definitions),

@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import atexit
 import os
+import pathlib
 import re
 import shutil
 import sys
@@ -562,6 +563,58 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(state["book"]["items"], 442)
         # idempotence: a second pass changes nothing it did not have to
         self.assertEqual(self._run(["pair", "--campaign", self.root]), 0)
+
+
+class TestDefCoverageIsOneImplementation(unittest.TestCase):
+    """`cf pair` and `cf detect-proxies` write the same file; they must agree."""
+
+    def test_the_keyword_set_has_one_definition(self):
+        from cflib import vocab
+        from detect import def_coverage as detect_cov
+        from pair import def_coverage as pair_cov
+
+        self.assertEqual(tuple(pair_cov.DEF_KEYWORDS), tuple(vocab.DEFINITIONAL_KEYWORDS))
+        self.assertEqual(tuple(detect_cov.DEFINITIONAL_KEYWORDS),
+                         tuple(vocab.DEFINITIONAL_KEYWORDS))
+        self.assertIn("instance", pair_cov.DEF_KEYWORDS)   # the one that differed
+
+    def test_an_adapter_kind_counts_as_definitional_in_both(self):
+        from detect import def_coverage as detect_cov
+        from pair import def_coverage as pair_cov
+
+        row = {"kind": "instance", "statement": "(truncated)"}
+        pattern = pair_cov.def_regex()
+        self.assertTrue(pair_cov._is_definitional(row, pattern))
+        self.assertTrue(detect_cov.is_definitional(row))
+        theorem = {"kind": "theorem", "statement": "theorem foo : True"}
+        self.assertFalse(pair_cov._is_definitional(theorem, pattern))
+        self.assertFalse(detect_cov.is_definitional(theorem))
+
+    def test_pair_preserves_the_keys_detect_owns(self):
+        """Re-running cf pair used to delete 26 real proxy candidates."""
+        from pair import def_coverage as pair_cov
+
+        out = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out, True)
+        detector_file = out / "def-coverage.adam.json"
+        detector_file.write_text(json.dumps({
+            "stated": ["Definition 1.1.1"], "bridge_only": [], "missing": [],
+            "keywords": ["def", "instance"],
+            "proxy_candidates": [{"item": "Definition 1.3.12", "decl": "Tao.upperIntegral"}],
+            "bridge_only_detail": {"Definition 1.2.2": ["X"]},
+            "_meta": {"generated_by": "cf detect-proxies (cheap tier)"},
+            "written_by": "cf detect-proxies",
+        }), encoding="utf-8")
+
+        pair_cov.write_coverage(str(out), "adam",
+                                {"stated": ["Definition 1.1.1"], "bridge_only": [], "missing": [],
+                                 "keywords": list(pair_cov.DEF_KEYWORDS)},
+                                {"count": 0, "items": []})
+        after = json.loads(detector_file.read_text())
+        self.assertEqual(len(after["proxy_candidates"]), 1)
+        self.assertIn("_meta", after)
+        self.assertEqual(after["bridge_only_detail"], {"Definition 1.2.2": ["X"]})
+        self.assertEqual(after["written_by"], "cf pair")
 
 
 if __name__ == "__main__":  # pragma: no cover

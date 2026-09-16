@@ -25,6 +25,7 @@ import copy
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -485,6 +486,37 @@ class DumpDepsTemplateTest(unittest.TestCase):
             self.assertIn("MeasureTheory.Tao", text)
             self.assertIn("lake env lean --run", res.stdout)
             self.assertFalse(out_path.exists())  # nothing was built or dumped
+
+    def test_it_survives_a_PATH_with_no_timeout_under_bash_3_2(self):
+        """The documented no-timeout fallback used to die on the next line.
+
+        ``runner=()`` expanded as ``"${runner[@]}"`` is an unbound-variable
+        error in bash 3.2 with ``set -u`` -- and bash 3.2 is what
+        ``#!/usr/bin/env bash`` resolves to on a stock macOS.
+        """
+        shell = "/bin/bash"
+        if not Path(shell).exists():
+            self.skipTest("no /bin/bash")
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "companion"
+            (repo / ".lake").mkdir(parents=True)
+            out_path = Path(tmp) / "deps.json"
+            # a PATH with no timeout(1)/gtimeout(1) anywhere on it
+            clean = Path(tmp) / "bin"
+            clean.mkdir()
+            for tool in ("sed", "dirname", "mkdir", "wc", "tr", "git", "python3", "env"):
+                src = shutil.which(tool)
+                if src:
+                    os.symlink(src, clean / tool)
+            res = subprocess.run(
+                [shell, str(self.SCRIPT), "--repo", str(repo), "--out", str(out_path),
+                 "--package", "M", "--root-module", "M", "--module-prefix", "M", "--dry-run"],
+                capture_output=True, text=True, cwd=tmp,
+                env={"HOME": os.environ.get("HOME", tmp), "PATH": str(clean)})
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertIn("no timeout(1) found", res.stderr)
+            self.assertNotIn("unbound variable", res.stderr)
+            self.assertIn("lake env lean --run", res.stdout)
 
 
 # ==========================================================================

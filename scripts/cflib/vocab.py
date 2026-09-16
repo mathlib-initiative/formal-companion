@@ -132,6 +132,19 @@ ANCHOR_CONVENTIONS = frozenset({"docstring", "ledger", "none"})
 SORRY_CLASSES = frozenset({"exercise", "gap", "none"})
 BRIDGE_KINDS = frozenset({"proved", "fiat", "none"})
 
+#: Lean keywords whose declaration STATES a notion, as opposed to asserting
+#: something about one.  The definition-coverage split (stated / bridge-only /
+#: missing) turns on this and nothing else, and it is written down ONCE here
+#: because ``pair/def_coverage.py`` and ``detect/def_coverage.py`` both write
+#: ``pairs/def-coverage.<name>.json``: they used different sets (``instance``
+#: was in one and not the other), so the two agreed only by luck.
+DEFINITIONAL_KEYWORDS: tuple[str, ...] = (
+    "def", "abbrev", "structure", "class", "inductive", "instance",
+)
+
+#: ``kind`` values an adapter may put on a statement row that mean the same thing
+DEFINITIONAL_KINDS = frozenset(set(DEFINITIONAL_KEYWORDS) | {"opaque"})
+
 
 def check(value: str, allowed: Iterable[str], field: str) -> str:
     """Return ``value`` if it is in ``allowed``; otherwise raise CfError."""

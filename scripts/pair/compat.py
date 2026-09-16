@@ -9,6 +9,8 @@ whenever it is importable.
 
 from book.compat import (  # noqa: F401
     DEFAULT_KINDS,
+    DEFINITIONAL_KEYWORDS,
+    DEFINITIONAL_KINDS,
     PAGE_ANCHOR,
     ItemId,
     campaign_paths,
