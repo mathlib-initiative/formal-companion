@@ -1,0 +1,177 @@
+"""Render (and, only on demand, execute) the remote commands of a server run.
+
+New code, but every command here is one the operator ran by hand in
+scratchpad/ffmain/tao-diff-run/RUNBOOK.md:
+
+    uv run tend-control limits --root ... --workers 1 --reviewers 1   # smoke test
+    uv run tend run --root ... --log-level INFO
+    uv run tend-control budget --root ... --max-cost 50               # BEFORE raising
+    uv run tend-control limits --root ... --workers 6 --reviewers 4
+    uv run tend-control status --root ...
+
+The order is the point.  "Smoke-test first -- do not launch 382 tasks blind": the
+model ids in the first run had never been exercised from that machine, and a wrong
+name fails every task immediately and repeatedly.  And the budget ceiling is set
+BEFORE concurrency is raised, because `request_changes` sends a task back for
+another worker turn, so the agent count is a lower bound, not a total.
+
+Nothing in this module runs anything unless ``execute=True`` is passed, and
+cf run only passes it when the operator gave --execute for a host on the
+campaign's allowlist.
+"""
+from __future__ import annotations
+
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any, Iterable
+
+from ._compat import CfError, iso_now
+
+
+def _ssh(host: dict, remote_cmd: str) -> dict:
+    return {"argv": ["ssh", host["ssh"], remote_cmd], "shell": f"ssh {shlex.quote(host['ssh'])} {shlex.quote(remote_cmd)}"}
+
+
+def _rsync(entry: dict, host: dict) -> dict:
+    from .manifest import BASE_RSYNC
+
+    if entry["kind"] == "files":
+        sources = list(entry.get("srcs") or [])
+    else:
+        src = entry["src"]
+        sources = [src + "/" if entry["kind"] == "dir" and not src.endswith("/") else src]
+    argv = ["rsync", *BASE_RSYNC, *entry["rsync_flags"], *sources,
+            f"{host['ssh']}:{entry['dest']}"]
+    return {"argv": argv, "shell": " ".join(shlex.quote(a) for a in argv)}
+
+
+def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
+                  names: dict, budget: dict, concurrency: dict) -> list[dict]:
+    """The ordered command plan: preflight, transfer, verify, smoke, raise, monitor.
+
+    Each step is ``{stage, title, argv, shell, safe}``; ``safe`` marks the
+    read-only steps (`cf run --execute` will run any stage up to the one asked
+    for, but never the 'raise' stage without --smoke-verified).
+    """
+    root = host["remote_root"]
+    tend = host["tend_cmd"]
+    tend_root = f"{root}/{names['tend_root']}"
+    entrypoint = f"{root}/{names['entrypoint']}"
+    steps: list[dict] = []
+
+    def add(stage: str, title: str, cmd: dict, safe: bool = False) -> None:
+        steps.append({"stage": stage, "title": title, "safe": safe, **cmd})
+
+    add("preflight", "host reachable, tend installed, disk free",
+        _ssh(host, f"set -e; uname -sm; df -h {shlex.quote(root)} | tail -1; "
+                   f"command -v agentbox >/dev/null && echo 'agentbox: ok' || echo 'agentbox: MISSING'; "
+                   f"{tend} tend --version"), safe=True)
+
+    dirs = sorted({str(Path(e["dest"]).parent) if e["kind"] == "file" else e["dest"].rstrip("/")
+                   for e in entries})
+    add("transfer", "create remote directories",
+        _ssh(host, "mkdir -p " + " ".join(shlex.quote(d) for d in dirs)))
+    for entry in entries:
+        if not entry["exists"]:
+            continue
+        add("transfer", f"rsync {entry['name']} -> {entry['dest']}", _rsync(entry, host))
+    add("transfer", "make the entrypoint a git repo on main (tend merges into it)",
+        _ssh(host, f"cd {shlex.quote(entrypoint)} && git rev-parse --git-dir >/dev/null 2>&1 || "
+                   f"(git init -b main . && git add -A && git commit -qm 'tasks for {run_id}')"))
+
+    add("verify", "task files and dependency graph",
+        _ssh(host, f"{tend} tend-task verify {shlex.quote(entrypoint + '/tasks')}"), safe=True)
+    add("verify", "orchestrator config",
+        _ssh(host, f"{tend} tend validate-config --root {shlex.quote(tend_root)}"), safe=True)
+    add("verify", "gate runs out of tree against one staged finding (fails closed)",
+        _ssh(host, f"test -f {shlex.quote(root + '/' + names['gate'] + '/verify_findings.py')} "
+                   f"&& echo 'gate present (out of tree)'"), safe=True)
+
+    add("smoke", "hold the fleet at 1 worker / 1 reviewer",
+        _ssh(host, f"{tend} tend-control limits --root {shlex.quote(tend_root)} "
+                   f"--workers 1 --reviewers 1"))
+    # `</dev/null` and both streams redirected: otherwise ssh waits on the detached
+    # run's file descriptors and the command never returns.
+    add("smoke", "start the run (detached; watch ONE task worker -> gate -> reviewer -> merge)",
+        _ssh(host, f"nohup sh -c {shlex.quote(f'{tend} tend run --root {tend_root} --log-level INFO')} "
+                   f"</dev/null >> {shlex.quote(tend_root + '/run.log')} 2>&1 & echo started"))
+    add("smoke", "watch it",
+        _ssh(host, f"{tend} tend-control status --root {shlex.quote(tend_root)}"), safe=True)
+
+    if budget.get("max_cost") is not None:
+        add("raise", f"set the spend ceiling BEFORE raising concurrency "
+                     f"({budget['max_cost']} {budget['currency']})",
+            _ssh(host, f"{tend} tend-control budget --root {shlex.quote(tend_root)} "
+                       f"--max-cost {budget['max_cost']}"))
+    add("raise", f"raise limits to {concurrency['workers']} workers / {concurrency['reviewers']} reviewers",
+        _ssh(host, f"{tend} tend-control limits --root {shlex.quote(tend_root)} "
+                   f"--workers {concurrency['workers']} --reviewers {concurrency['reviewers']}"))
+
+    add("monitor", "progress and spend",
+        _ssh(host, f"{tend} tend-control status --root {shlex.quote(tend_root)}"), safe=True)
+    add("monitor", "merged findings so far",
+        _ssh(host, f"ls -1 {shlex.quote(entrypoint + '/findings')} | wc -l"), safe=True)
+    add("stop", "pause (keeps state) / drain / stop",
+        _ssh(host, f"{tend} tend-control pause --root {shlex.quote(tend_root)}"))
+    return steps
+
+
+STAGE_ORDER = ["preflight", "transfer", "verify", "smoke", "raise", "monitor", "stop"]
+
+
+def stages_upto(stage: str) -> list[str]:
+    """Stage names up to and including *stage* (monitor/stop stand alone)."""
+    if stage in ("monitor", "stop"):
+        return [stage]
+    if stage not in STAGE_ORDER:
+        raise CfError(f"unknown stage {stage!r} (want {', '.join(STAGE_ORDER)})")
+    return STAGE_ORDER[:STAGE_ORDER.index(stage) + 1]
+
+
+def render(steps: Iterable[dict], stages: Iterable[str]) -> str:
+    """The copy-pasteable command block for the chosen stages."""
+    wanted = list(stages)
+    out: list[str] = []
+    current = None
+    for step in steps:
+        if step["stage"] not in wanted:
+            continue
+        if step["stage"] != current:
+            current = step["stage"]
+            out.append(f"\n# ---- {current.upper()} " + "-" * (58 - len(current)))
+        out.append(f"# {step['title']}")
+        out.append(step["shell"])
+    return "\n".join(out).strip()
+
+
+def execute(steps: Iterable[dict], stages: Iterable[str], *, dry_run: bool = True,
+            stream: Any = sys.stdout) -> list[dict]:
+    """Run the chosen stages in order, stopping at the first failure.
+
+    Returns one record per attempted step.  With ``dry_run`` (the default of every
+    caller) nothing is executed and the records say so.
+    """
+    wanted = list(stages)
+    results: list[dict] = []
+    for step in steps:
+        if step["stage"] not in wanted:
+            continue
+        print(f"$ {step['shell']}", file=stream)
+        if dry_run:
+            results.append({"stage": step["stage"], "title": step["title"], "ran": False})
+            continue
+        proc = subprocess.run(step["argv"], text=True, capture_output=True)
+        if proc.stdout:
+            print(proc.stdout.rstrip(), file=stream)
+        if proc.stderr:
+            print(proc.stderr.rstrip(), file=sys.stderr)
+        record = {"stage": step["stage"], "title": step["title"], "ran": True,
+                  "at": iso_now(), "returncode": proc.returncode}
+        results.append(record)
+        if proc.returncode != 0:
+            record["failed"] = True
+            raise CfError(f"remote step failed ({proc.returncode}): {step['title']}",
+                          hint=f"command was: {step['shell']}")
+    return results
