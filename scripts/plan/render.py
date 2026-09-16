@@ -12,12 +12,14 @@ Supported syntax, deliberately tiny:
 * ``{{#unless name}} … {{/unless}}`` — keep the block when it is falsy.
 
 A directive that is alone on its line consumes that whole line, so a dropped
-block leaves no blank line behind. Unknown ``{{name}}`` raises ``KeyError`` with
+block leaves no blank line behind. An unknown ``{{name}}`` raises ``TemplateError`` with
 the template name in the message: a prompt with an unfilled slot must never
 reach a worker.
 
-If the shared library (``cflib.template.render``) is importable it is preferred,
-so that the whole skill has exactly one renderer once ``cflib`` lands.
+``cflib.templates.render`` is deliberately NOT reused: it is the campaign-file
+renderer (plain ``{{ key }}`` substitution, no blocks, different missing-slot
+semantics), and cflib says so in its own docstring. Prompts need the blocks, so
+this is the second and last renderer in the skill.
 """
 
 from __future__ import annotations
@@ -62,12 +64,6 @@ def _strip_directive_lines(text: str, *, opened: str, closed: str) -> str:
 
 def render(template: str, ctx: Mapping[str, Any], *, name: str = "<template>") -> str:
     """Render ``template`` against ``ctx``. Raises ``TemplateError`` on a gap."""
-    try:  # prefer the shared implementation once cflib exists
-        from cflib.template import render as _shared  # type: ignore
-
-        return _shared(template, ctx, name=name)  # pragma: no cover - cflib not present yet
-    except ImportError:
-        pass
 
     def _blocks(text: str) -> str:
         while True:
