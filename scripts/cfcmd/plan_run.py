@@ -37,10 +37,12 @@ if __package__ in (None, ""):  # direct execution
 from pathlib import Path
 
 from cflib import campaign as campaign_mod
+from cflib import log
 from cflib import state as state_mod
 from cflib.errors import CfError
 from cflib.hashing import sha256_text
 from cflib.yamlio import write_yaml
+from plan import decl_index
 from plan import make_tasks as mt
 from plan import presets as presets_mod
 from plan import render_prompts as rp
@@ -325,6 +327,22 @@ def run(args) -> int:
 
     # ---- gate.json (host paths) and gate.local.json ------------------------
     repos = [companion] if preset.is_attack else camp.companion_names()
+    # The phantom-declaration half of the schema gate: it was implemented in
+    # verify_findings.py and exposed by presets.gate_config, but nothing ever
+    # built an index, so every gate.json carried "decl_index": null and the
+    # check was dead. It must be the FULL declaration set (a real finding names
+    # private helpers), which decl_index.build() takes from deps.json or the
+    # Lean sources, never from statements.jsonl unless there is nothing else.
+    index_path, index = decl_index.write(camp, run_id, repos)
+    if decl_index.usable(index, repos):
+        remote_index = f"{host['gate_dir']}/decl-index.json"
+        log.detail(f"decl-index: " + ", ".join(
+            f"{k}={v}" for k, v in sorted(index["_meta"]["counts"].items())))
+    else:
+        remote_index = None
+        print("warn the declaration index does not cover every repo of this run "
+              f"({', '.join(decl_index.usable_repos(index)) or 'none'}); the gate's "
+              "phantom-name check is OFF -- a partial index would reject real findings")
     gate_remote = presets_mod.gate_config(
         preset,
         run_id=run_id,
@@ -333,11 +351,13 @@ def run(args) -> int:
         repos=repos,
         images_dir=host["images_dir"] if preset.needs_images else None,
         page_offset=camp.offset,
+        decl_index=remote_index,
     )
     gate_local = dict(gate_remote)
     gate_local["book"] = dict(gate_remote["book"])
     gate_local["book"]["text"] = str(p.book_txt)
     gate_local["book"]["images_dir"] = str(p.images_dir) if preset.needs_images else None
+    gate_local["decl_index"] = str(index_path) if remote_index else None
     p.gate_json(run_id).write_text(json.dumps(gate_remote, indent=2) + "\n", encoding="utf-8")
     (rd / "gate.local.json").write_text(json.dumps(gate_local, indent=2) + "\n", encoding="utf-8")
 
@@ -357,6 +377,7 @@ def run(args) -> int:
     built = make_tend_root(
         plan, preset, run_id=run_id, gate_config=gate_remote,
         prompts=prompts, agent=agent, task_count=len(tasks),
+        decl_index_src=index_path if remote_index else None,
     )
 
     # ---- run.yaml ----------------------------------------------------------

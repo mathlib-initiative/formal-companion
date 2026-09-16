@@ -88,6 +88,7 @@ def make_tend_root(
     tdir: pathlib.Path | None = None,
     gate_src: pathlib.Path | None = None,
     bridges_src: pathlib.Path | None = None,
+    decl_index_src: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     """Write the tend root. Returns {"files": [...], "warnings": [...]}"""
     import json
@@ -207,5 +208,14 @@ def make_tend_root(
             warnings.append(f"gate file missing: {gate_src / name}")
     (gdir / "gate.json").write_text(json.dumps(gate_config, indent=2) + "\n", encoding="utf-8")
     files.append(gdir / "gate.json")
+    # The declaration index travels WITH the gate: gate.json names it by the
+    # host path <gate_dir>/decl-index.json, and `cf run` rsyncs this directory.
+    if decl_index_src and pathlib.Path(decl_index_src).exists():
+        shutil.copy2(decl_index_src, gdir / "decl-index.json")
+        files.append(gdir / "decl-index.json")
+    elif gate_config.get("decl_index"):
+        warnings.append(
+            f"gate.json names decl_index {gate_config['decl_index']} but no index was staged "
+            "in the gate directory; the phantom-name check will fail closed on the host")
 
     return {"files": [str(p) for p in files], "warnings": warnings}
