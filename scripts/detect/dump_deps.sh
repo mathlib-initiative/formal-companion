@@ -79,7 +79,11 @@ elif command -v gtimeout >/dev/null 2>&1; then runner=(gtimeout "$timeout_s")
 else printf 'warning: no timeout(1) found; running without a time limit\n' >&2
 fi
 
-cmd=(env "PATH=/usr/bin:$PATH" "${runner[@]}" lake env lean --run "$lean_abs")
+# ${runner[@]+"${runner[@]}"} -- NOT "${runner[@]}": under bash 3.2 (what
+# /usr/bin/env bash resolves to on a stock macOS) expanding an EMPTY array with
+# `set -u` is an unbound-variable error, so the no-timeout path this script
+# warns about above died on the very next line.
+cmd=(env "PATH=/usr/bin:$PATH" ${runner[@]+"${runner[@]}"} lake env lean --run "$lean_abs")
 printf 'cd %s && %s\n' "$repo_abs" "${cmd[*]}"
 if [ "$dry_run" -eq 1 ]; then exit 0; fi
 

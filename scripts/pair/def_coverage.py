@@ -25,11 +25,22 @@ import os
 import re
 from typing import Mapping, Sequence
 
-from .compat import item_sort_key, parse_item, utcnow, write_json
+from .compat import (
+    DEFINITIONAL_KEYWORDS,
+    DEFINITIONAL_KINDS,
+    item_sort_key,
+    parse_item,
+    read_json,
+    utcnow,
+    write_json,
+)
 from .compare import row_item
 
-#: a declaration that STATES a notion (as opposed to proving something about it)
-DEF_KEYWORDS = ("def", "abbrev", "structure", "class", "inductive")
+#: a declaration that STATES a notion (as opposed to proving something about it).
+#: ONE definition, in ``cflib.vocab``: ``detect/def_coverage.py`` writes the same
+#: file and carried its own list, which had ``instance`` and this one did not --
+#: so the 32/4/0 agreement between the two commands was luck, not structure.
+DEF_KEYWORDS = DEFINITIONAL_KEYWORDS
 
 _MODIFIERS = r"(?:private |protected |noncomputable |nonrec |partial |unsafe |scoped )*"
 
@@ -60,6 +71,19 @@ def _rows_by_item(rows: Sequence[Mapping], kinds) -> dict[str, list[Mapping]]:
     return by
 
 
+def _is_definitional(row: Mapping, pattern: re.Pattern) -> bool:
+    """A row states its notion: by its adapter ``kind``, else by its signature.
+
+    Same test as ``detect/def_coverage.is_definitional`` -- an adapter that
+    records ``kind: "instance"`` must not be read as bridge-only just because
+    the rendered signature was truncated.
+    """
+    kind = str(row.get("kind") or "").strip().lower()
+    if kind:
+        return kind in DEFINITIONAL_KINDS
+    return bool(pattern.match(str(row.get("statement") or "")))
+
+
 def def_coverage(
     items_json: Mapping,
     rows: Sequence[Mapping],
@@ -80,7 +104,7 @@ def def_coverage(
         rs = by.get(item, [])
         if not rs:
             missing.append(item)
-        elif any(pattern.match(str(r.get("statement") or "")) for r in rs):
+        elif any(_is_definitional(r, pattern) for r in rs):
             stated.append(item)
         else:
             bridge_only.append(item)
@@ -129,9 +153,21 @@ def uncovered(
 def write_coverage(
     out_dir: str, name: str, coverage: Mapping, uncov: Mapping
 ) -> dict:
-    """Write ``def-coverage.<name>.json`` and ``uncovered.<name>.json``."""
+    """Write ``def-coverage.<name>.json`` and ``uncovered.<name>.json``.
+
+    MERGES rather than overwrites: ``cf detect-proxies`` writes the same file
+    with a superset of the keys (``_meta``, ``bridge_only_detail``,
+    ``proxy_candidates``), and a later ``cf pair`` used to drop them -- 26 real
+    proxy candidates for ``adam`` vanished simply because the two commands ran
+    in the other order.  Keys this stage owns are replaced; keys it does not are
+    preserved exactly as the detector left them.
+    """
     os.makedirs(out_dir, exist_ok=True)
-    write_json(os.path.join(out_dir, "def-coverage.%s.json" % name), dict(coverage))
+    path = os.path.join(out_dir, "def-coverage.%s.json" % name)
+    merged = dict(read_json(path) or {}) if os.path.exists(path) else {}
+    merged.update(dict(coverage))
+    merged["written_by"] = "cf pair"
+    write_json(path, merged)
     write_json(os.path.join(out_dir, "uncovered.%s.json" % name), dict(uncov))
     return {
         "def_stated": len(coverage.get("stated", [])),

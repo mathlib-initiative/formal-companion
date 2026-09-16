@@ -34,6 +34,7 @@ from typing import Iterable, Sequence
 from detect import findings as find_rows
 from detect._compat import (
     DEFAULT_KINDS,
+    vocab,
     item_base,
     parse_item,
     read_json,
@@ -42,7 +43,8 @@ from detect._compat import (
 from detect.stages import StageTable
 
 #: Lean declaration keywords that *state* a concept (vs assert something about it).
-DEFINITIONAL_KEYWORDS = ("def", "abbrev", "structure", "class", "inductive", "instance")
+#: ONE definition, in cflib.vocab: pair/def_coverage.py writes the same file.
+DEFINITIONAL_KEYWORDS = vocab.DEFINITIONAL_KEYWORDS
 
 #: The baseline's signature test (recovered L6099 ``DEFKIND``) plus ``instance``
 #: and the remaining Lean modifiers. Applied to ``statement`` when a row has no
@@ -54,7 +56,7 @@ DEF_SIGNATURE = re.compile(
 )
 
 #: row ``kind`` values (adapters emit these) that count as definitional
-DEFINITIONAL_KINDS = {"def", "abbrev", "structure", "class", "inductive", "instance", "opaque"}
+DEFINITIONAL_KINDS = set(vocab.DEFINITIONAL_KINDS)
 
 
 # --------------------------------------------------------------------------

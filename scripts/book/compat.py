@@ -72,6 +72,15 @@ def _clean_item_fallback(raw: str) -> str:
 #: finding kind emitted by pair/anchor_check.py -- mechanical only, never an LLM
 PAGE_ANCHOR = getattr(_cf_vocab, "PAGE_ANCHOR", "PAGE_ANCHOR")
 
+#: Lean keywords that STATE a notion.  ONE definition (cflib.vocab): pair and
+#: detect both write pairs/def-coverage.<name>.json and used to disagree.
+DEFINITIONAL_KEYWORDS: tuple[str, ...] = tuple(getattr(
+    _cf_vocab, "DEFINITIONAL_KEYWORDS",
+    ("def", "abbrev", "structure", "class", "inductive", "instance"),
+))
+DEFINITIONAL_KINDS = frozenset(getattr(
+    _cf_vocab, "DEFINITIONAL_KINDS", set(DEFINITIONAL_KEYWORDS) | {"opaque"}))
+
 #: default item kinds; campaign.yaml (``book.kinds``) overrides per book
 DEFAULT_KINDS: tuple[str, ...] = tuple(
     getattr(
