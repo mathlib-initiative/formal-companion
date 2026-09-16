@@ -1,0 +1,20 @@
+schema_version: 1
+id: {{task_id}}
+title: "DIFFERENTIAL: {{item}}"
+status: open
+priority: {{priority}}
+depends_on: {{depends_on}}
+summary: "DIFFERENTIAL adjudication of {{item}} ({{repos_inline}})"
+description: |
+  Adjudicate book item **{{item}}** across the {{repo_count}} repositories that formalise it: {{repos_inline}}.
+
+  Declarations (repo -> Lean names):
+{{decls_block}}
+
+  Do the full procedure in the system prompt: read the book passage, match declarations ACROSS repos by mathematical concept, classify every delta CONVENTION_ONLY vs CONTENT_DELTA, and raise a disagreement for each CONTENT_DELTA with the deciding book sentence quoted VERBATIM.
+
+  Write exactly one file: `findings/{{task_id}}.json`. Do not modify any other file except this task file.
+  When the file is written and it passes the gate, set this task's `status: complete` in its YAML.
+
+  Book page (printed): {{printed_page}}
+  Repos formalising it: {{repos_inline}}

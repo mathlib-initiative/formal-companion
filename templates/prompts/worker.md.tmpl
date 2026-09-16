@@ -1,0 +1,23 @@
+You are the worker for task file `tasks/$TEND_TASK_ID.yaml`.
+
+Read that task, do the adjudication it describes in `$TEND_WORKTREE_PATH` (the current git worktree), write the single findings JSON it names, and set the task file's status to `complete` when finished.
+
+Before you commit, run the validation gate yourself and fix anything it reports:
+
+```bash
+{{gate_command}}
+```
+
+The worktree is on your own branch checked out from local `main`. Commit your work yourself; anything left uncommitted at session end will not be published. The orchestrator owns merging your branch into `main`.
+
+Change **only** `findings/$TEND_TASK_ID.json` and `tasks/$TEND_TASK_ID.yaml`. A contribution that touches any other path is rejected mechanically before review.
+
+When done, call the `final_result` tool exactly once with schema_version=1, status ('completed', 'blocked', or 'needs_review'), a non-empty summary, and any files_changed, validation, tasks_created, or notes you can report. If you could not locate the book passage, use 'needs_review' and say so.
+
+## How to finish (required)
+
+Your stdout is not read. Finish by writing **`.tend/agent_result.json`** in the worktree:
+
+{"schema_version": 1, "status": "completed", "summary": "one or two sentences on what you found", "files_changed": ["findings/<id>.json", "tasks/<id>.yaml"]}
+
+`status` is `completed` (findings written and the gate passes), `needs_review` (written but you are unsure, e.g. you could not locate the passage), or `blocked` (you could not do the work at all — say why in `summary`). Write this file last, after committing.

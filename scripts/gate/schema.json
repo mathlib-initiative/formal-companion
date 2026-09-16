@@ -1,0 +1,115 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/Deicyde/companion-faithfulness/scripts/gate/schema.json",
+  "title": "Companion faithfulness findings, schema v2",
+  "description": "One findings file per task. v1 (the 2,672-file baseline) differed in four ways: no schema_version/run_id/book_sha, `faithful` was a single string, the witness lived in `reasoning` prose, and there was no finding_id. scripts/gate/convert_v1.py maps v1 to this schema without touching the baseline. The gate that enforces this is scripts/gate/verify_findings.py, which is driven by gate.json (kinds, verdicts, repos, witness requirement, per-kind rules) rather than by this file: no jsonschema dependency is assumed anywhere in the skill.",
+  "type": "object",
+  "required": ["schema_version", "item", "book_located", "book_passage_quote", "matches", "disagreements"],
+  "additionalProperties": true,
+  "properties": {
+    "schema_version": {"const": 2},
+    "run_id": {"type": "string", "description": "the run that produced this file; part of finding_id"},
+    "preset": {"type": "string"},
+    "mode": {"type": "string", "enum": ["differential", "attack"]},
+    "book_sha": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$",
+      "description": "sha256 of the pinned book edition (the PDF), stamped on every artifact that quotes or anchors the book"
+    },
+    "item": {"type": "string", "minLength": 1, "description": "book item id, e.g. 'Exercise 1.3.19' or 'In-text, book p. 35'"},
+    "book_located": {"type": "boolean"},
+    "book_passage_quote": {"type": "string", "description": "verbatim from the book text; machine-verified"},
+    "coverage_notes": {"type": "string"},
+    "matches": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept", "decls", "verdict"],
+        "additionalProperties": true,
+        "properties": {
+          "concept": {"type": "string"},
+          "decls": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["repo", "decl"],
+              "properties": {"repo": {"type": "string"}, "decl": {"type": "string"}},
+              "additionalProperties": true
+            }
+          },
+          "verdict": {
+            "type": "string",
+            "enum": [
+              "AGREE",
+              "CONVENTION_ONLY",
+              "CONTENT_DELTA",
+              "SINGLE_SOURCE_OK",
+              "SINGLE_SOURCE_DELTA",
+              "NO_DEFECT_FOUND"
+            ],
+            "description": "the gate takes the permitted set from gate.json; legacy presets also accept NO_WEAKNESS_FOUND, which convert_v1.py folds into NO_DEFECT_FOUND"
+          },
+          "note": {"type": "string"}
+        }
+      }
+    },
+    "disagreements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["concept", "kind", "repos_involved", "faithful", "unfaithful_decls", "reasoning", "severity"],
+        "additionalProperties": true,
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$",
+            "description": "sha256(run_id, item, kind, sorted(unfaithful_decls)) — stable across runs of the same defect, unlike v1's LLM-written concept"
+          },
+          "concept": {"type": "string"},
+          "kind": {
+            "type": "string",
+            "enum": ["CONTENT", "VACUITY", "PROXY", "SUSPECTED_ERRATA", "COVERAGE", "PAGE_ANCHOR"],
+            "description": "PAGE_ANCHOR is mechanical-only (source: anchor_check); no LLM preset lists it"
+          },
+          "repos_involved": {"type": "array", "items": {"type": "string"}},
+          "faithful": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "v2: a LIST of repos that got it right; [] when none did. v1's 'none'/'all_differ'/'unsure' survive in faithful_note."
+          },
+          "faithful_note": {"type": "string"},
+          "unfaithful_decls": {
+            "type": "array",
+            "items": {"type": "string", "pattern": "^[^:]+:.+"},
+            "description": "'repo:decl'; routing keys on this prefix and nothing else"
+          },
+          "book_quote": {"type": "string"},
+          "witness": {
+            "type": "object",
+            "description": "required on CONTENT/VACUITY in attack mode; presence and non-emptiness are mechanical, judging it is the reviewer's job",
+            "required": ["object", "why"],
+            "additionalProperties": true,
+            "properties": {
+              "d": {"type": ["string", "number", "null"], "description": "the dimension, when the book's objects are dimensional"},
+              "object": {"type": "string", "minLength": 1},
+              "why": {"type": "string", "minLength": 1},
+              "source": {"type": "string", "description": "e.g. v1_reasoning_lift for converted baseline rows"}
+            }
+          },
+          "bridge": {"type": "string", "enum": ["proved", "fiat", "none"], "description": "PROXY findings only"},
+          "closure": {"description": "PROXY findings only: the dependency path that reaches the proxied object"},
+          "page": {
+            "type": "object",
+            "description": "PAGE_ANCHOR findings only",
+            "required": ["claimed", "actual"],
+            "properties": {"claimed": {}, "actual": {}}
+          },
+          "source": {"type": "string", "enum": ["worker", "anchor_check", "detect", "convert_v1"]},
+          "reasoning": {"type": "string"},
+          "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+          "suggested_fix": {"type": "string"}
+        }
+      }
+    }
+  }
+}
