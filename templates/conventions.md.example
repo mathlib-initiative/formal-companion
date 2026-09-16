@@ -1,0 +1,53 @@
+# House conventions -- {{ name }}
+
+Written at onboarding (draft it from the repo's CLAUDE.md, README and module
+headers), then **confirmed by the repo owner**. Every attack and differential
+prompt is rendered with this file inlined, and the adjudication COMMON block
+quotes it. It is the list that decides CONVENTION vs CONTENT, and roughly 40%
+of first-pass findings are wrong because a convention was read as a defect --
+an unconfirmed list is the single biggest source of false positives.
+
+Delete what does not apply; do not leave a section empty and unexplained.
+
+## 1. Total functions and junk values
+
+Lean functions are total, so the formalisation may define a value where the
+book says nothing. List each such case and what the junk value is. A finding
+that a declaration "says something about a case the book excludes" is a
+CONVENTION, not CONTENT, only if the case is listed here.
+
+- (example) `measure` of a non-measurable set is `0` by junk value.
+
+## 2. Standing type and structure conventions
+
+- (example) unsigned quantities live in `ℝ≥0∞`.
+- (example) boxes are `Fin d → Set ℝ`.
+- (example) the ambient space is `EuclideanSpace ℝ (Fin d)`.
+- (example) a bundled subtype replaces a predicate + carrier pair.
+- (example) dimension hypotheses are `1 ≤ d`.
+
+## 3. Scope
+
+- Which chapters/sections the companion covers, and where it deliberately stops.
+- Items it deliberately does not formalise, and why.
+
+## 4. Sorry policy
+
+- Exercise statements that ship with `sorry` on purpose (permanent), and the
+  marker used for a genuine gap.
+
+## 5. Naming and attribution
+
+- How a declaration is tied to a book item (docstring tag, ledger, table).
+- What an anchored page number means (printed page vs PDF page).
+
+## 6. Errata disposition
+
+The live errata page is fetched per campaign. For each erratum touching this
+companion, record one of: already correct, fixed here, book is wrong and we
+follow the erratum, book is wrong and we follow the printed text (with reason).
+
+## 7. Known-and-accepted deltas
+
+Deltas the owner has seen and accepted. A finding that repeats one of these is
+refuted on sight; keep the reason, not just the verdict.
