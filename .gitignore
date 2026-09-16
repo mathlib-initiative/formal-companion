@@ -1,0 +1,13 @@
+# copyrighted book text, page images and rendered crops never enter git
+book/
+**/images/
+**/pages/
+**/crops/
+**/evidence*/
+*.pdf
+# run state and caches
+runs/*/tend-root/
+detect/*/deps.json
+__pycache__/
+*.pyc
+.DS_Store
