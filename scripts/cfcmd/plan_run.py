@@ -40,7 +40,6 @@ from cflib import campaign as campaign_mod
 from cflib import state as state_mod
 from cflib.errors import CfError
 from cflib.hashing import sha256_text
-from cflib.paths import skill_root
 from cflib.yamlio import write_yaml
 from plan import make_tasks as mt
 from plan import presets as presets_mod
