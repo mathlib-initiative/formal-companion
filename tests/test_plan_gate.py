@@ -74,6 +74,15 @@ def normalised_book() -> str:
     return _BOOK_CACHE["book"]
 
 
+def book_with_operators() -> vf.BookText:
+    """The real book in BOTH normalisations, so the operator pass is live."""
+    if "ops" not in _BOOK_CACHE:
+        assert BOOK_TXT is not None
+        raw = BOOK_TXT.read_text(errors="ignore")
+        _BOOK_CACHE["ops"] = vf.BookText(vf.norm(raw), vf.norm_operators(raw))
+    return _BOOK_CACHE["ops"]
+
+
 def gate_cfg(preset_name: str, book: pathlib.Path, **over) -> vf.GateConfig:
     """A GateConfig for a preset, pointed at ``book``."""
     preset = presets_mod.get(preset_name)
@@ -356,6 +365,209 @@ class TestGateNegative(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # the changed-files half of the gate
 # --------------------------------------------------------------------------- #
+class TestFindingIdIsOneDefinition(unittest.TestCase):
+    """``finding_id`` is defined twice on purpose; the two MUST agree.
+
+    ``cflib.hashing.finding_id`` is the canonical implementation and
+    ``gate.verify_findings.finding_id`` inlines it (the gate is rsynced to a run
+    host where ``cflib`` does not exist).  When they drift, the detector stamps
+    ids in one namespace and the gate/ledger/route read another, and no ledger
+    row can ever match its finding — which is exactly what happened.
+    """
+
+    CASES = [
+        ("r1", "Definition 1.2.2", "PROXY", ["ours:Foo", "ours:Bar"]),
+        ("run1", "Exercise 1.3.19", "CONTENT", ["ours:foo", "ours:bar"]),
+        ("run1", "Exercise    1.3.19", "CONTENT", ["ours:bar", "ours:foo"]),
+        ("dt-ff", "In-text p.42", "COVERAGE", []),
+        ("", "", "", []),
+        ("r", "`Lemma 1.2.5`", "VACUITY", ["adam:X", "adam:X", " adam:Y "]),
+    ]
+
+    def test_gate_and_cflib_agree_on_every_digest(self):
+        from cflib.hashing import finding_id as cflib_fid
+
+        for run_id, item, kind, decls in self.CASES:
+            with self.subTest(item=item):
+                self.assertEqual(
+                    cflib_fid(run_id, item, kind, decls),
+                    vf.finding_id(run_id, item, kind, list(decls)),
+                )
+
+    def test_every_call_site_agrees(self):
+        """book/, ledger/ and detect/ must all resolve to the same digest."""
+        from book import compat as book_compat
+        from cflib.hashing import finding_id as cflib_fid
+        from detect._compat import finding_id as detect_fid
+        from ledger import compat as ledger_compat
+
+        args = ("r1", "Definition 1.2.2", "PROXY", ["ours:Foo", "ours:Bar"])
+        want = cflib_fid(*args)
+        self.assertEqual(book_compat.finding_id(*args), want)
+        self.assertEqual(ledger_compat.finding_id(*args), want)
+        self.assertEqual(detect_fid(*args), want)
+        self.assertEqual(vf.finding_id(*args), want)
+
+    def test_whitespace_variant_hashes_to_the_canonical_item(self):
+        """The regression the campaign exists for: ``Exercise    1.3.19``."""
+        from cflib.hashing import finding_id as cflib_fid
+
+        spaced = cflib_fid("r", "Exercise    1.3.19", "CONTENT", ["ours:a"])
+        single = cflib_fid("r", "Exercise 1.3.19", "CONTENT", ["ours:a"])
+        self.assertEqual(spaced, single)
+        self.assertEqual(vf.finding_id("r", "Exercise\t1.3.19", "CONTENT", ["ours:a"]), single)
+
+    def test_gate_clean_item_matches_cflib_items_clean(self):
+        raws = [
+            "Exercise    1.3.19", "  `Lemma 1.2.5`  ", "Definition\u00a01.1.1",
+            "Corollary 1.3.14.", "Theorem 1.2.3 ;", "Exercise 1.1.6(i)", "",
+            "Propo\u2013sition 1.1.1", "In-text p.  42",
+        ]
+        for raw in raws:
+            with self.subTest(raw=raw):
+                self.assertEqual(vf.clean_item(raw), cfitems.clean(raw))
+
+    def test_detector_ids_pass_the_mechanical_gate(self):
+        """A PROXY row the detector stamps must survive ``require_finding_id``."""
+        from detect import findings as detect_findings
+
+        row = detect_findings.proxy_row(
+            run_id="detect-ours-cheap",
+            companion="ours",
+            item="Definition 1.2.2",
+            decl="Foo",
+            rule="mathlib_proxy",
+            severity="medium",
+            concept="uses mathlib's definition",
+            reasoning="the companion's statement is a wrapper",
+            bridge="fiat",
+        )
+        self.assertEqual(
+            row["finding_id"],
+            vf.finding_id("detect-ours-cheap", "Definition 1.2.2", "PROXY", ["ours:Foo"]),
+        )
+
+
+class TestQuoteGateOperators(unittest.TestCase):
+    """The quote gate must not certify a doctored quote.
+
+    ``norm()`` deletes every mathematical symbol before comparison, so the word
+    pass alone accepts an inequality or operator flip — the exact defect class
+    this audit exists to find.  ``norm_operators()`` is the second pass.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        if CORPUS is None or BOOK_TXT is None:
+            raise unittest.SkipTest("needs CF_BASELINE_CORPUS and CF_BOOK_TXT")
+        src = CORPUS / "findings-hunt" / "corollary-1-3-14.json"
+        if not src.exists():
+            raise unittest.SkipTest("baseline corollary-1-3-14 not present")
+        cls.quote = json.loads(src.read_text())["book_passage_quote"]
+        cls.book = book_with_operators()
+
+    def test_the_real_quote_is_accepted(self):
+        ok, why = vf.quote_ok(self.book, self.quote)
+        self.assertTrue(ok, why)
+
+    def test_operator_flips_are_refused(self):
+        flipped = self.quote.replace("+", " - ").replace("=", "\u2260")
+        self.assertNotEqual(flipped, self.quote)
+        ok, why = vf.quote_ok(self.book, flipped)
+        self.assertFalse(ok, f"a flipped +/= was certified: {why}")
+        self.assertIn("OPERATOR", why)
+
+    def test_a_wholly_fabricated_quote_is_still_refused(self):
+        ok, _ = vf.quote_ok(
+            self.book,
+            "This corollary asserts that every bounded function on the unit "
+            "interval admits a unique invariant measure of total mass one.",
+        )
+        self.assertFalse(ok)
+
+    def test_a_partial_match_names_the_unverified_remainder(self):
+        """A 70% genuine prefix with an invented tail passes, but SAYS SO."""
+        words = self.quote.split()
+        doctored = " ".join(words[: int(len(words) * 0.7)]) + (
+            " and therefore the identity FAILS for every measurable function "
+            "whatsoever in this setting"
+        )
+        ok, why = vf.quote_ok(vf.BookText(self.book.words), doctored)
+        if ok:
+            self.assertTrue(why.startswith("partial"), why)
+            self.assertIn("UNVERIFIED", why)
+            self.assertIn("fails", why.lower())
+
+    def test_partial_quotes_reports_what_validate_doc_stayed_silent_about(self):
+        doc = mini_doc(book_passage_quote="Show that the union of two elementary "
+                                          "sets is elementary and pigs can fly here")
+        book = vf.BookText(vf.norm(MINI_BOOK))
+        self.assertEqual(vf.validate_doc(doc, "x.json", gate_cfg("attack-legacy",
+                         BOOK_TXT, repos=["ours"]), book), [])
+        notes = vf.partial_quotes(doc, "x.json", book)
+        self.assertTrue(notes)
+        self.assertIn("UNVERIFIED", notes[0])
+
+    def test_legacy_presets_turn_the_operator_pass_off_and_say_so(self):
+        self.assertFalse(presets_mod.get("attack-legacy").check_operators)
+        self.assertFalse(presets_mod.get("differential-legacy").check_operators)
+        for name in ("differential-text", "attack-vac", "attack-hunt", "mechanical"):
+            self.assertTrue(presets_mod.get(name).check_operators, name)
+        cfg = gate_cfg("attack-vac", BOOK_TXT)
+        self.assertTrue(cfg.check_operators)
+        book, errs = vf.load_book(cfg)
+        self.assertEqual(errs, [])
+        self.assertIsNotNone(book.ops)
+
+    def test_norm_operators_keeps_the_operator_in_the_token_stream(self):
+        self.assertIn("ople", vf.norm_operators("a \u2264 b"))
+        self.assertIn("opne", vf.norm_operators("a != b"))
+        self.assertEqual(vf.norm_operators("a <= b"), vf.norm_operators("a \u2264 b"))
+        self.assertNotEqual(vf.norm_operators("a = b"), vf.norm_operators("a \u2260 b"))
+        self.assertEqual(vf.norm("a \u2264 b"), vf.norm("a \u2265 b"))  # the blindness being fixed
+
+
+class TestGateDirectoryMode(unittest.TestCase):
+    """Directory mode must skip the receipt harvest/import write beside findings."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=TMPDIR)
+        self.root = pathlib.Path(self.tmp.name)
+        self.book = self.root / "book.txt"
+        self.book.write_text(MINI_BOOK, encoding="utf-8")
+        (self.root / "findings").mkdir()
+        (self.root / "findings" / "exercise-1-2-4.json").write_text(
+            json.dumps(mini_doc()), encoding="utf-8")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _gate(self) -> int:
+        data = presets_mod.gate_config(
+            presets_mod.get("attack-legacy"), run_id="test-run",
+            book_text=str(self.book), book_sha=BOOK_SHA, repos=["ours"],
+        )
+        cfgp = self.root / "gate.local.json"
+        cfgp.write_text(json.dumps(data), encoding="utf-8")
+        return vf.main(["--gate-config", str(cfgp), "--root", str(self.root), "--quiet"])
+
+    def test_a_corpus_without_a_receipt_passes(self):
+        self.assertEqual(self._gate(), 0)
+
+    def test_the_receipt_harvest_writes_is_not_a_finding(self):
+        """`cf harvest` writes RECEIPT.json into the findings dir; re-gating must pass."""
+        receipt = {"run_id": "test-run", "complete": True, "expected": 1, "landed": 1}
+        (self.root / "findings" / "RECEIPT.json").write_text(
+            json.dumps(receipt), encoding="utf-8")
+        (self.root / "findings" / "run.yaml").write_text("run_id: test-run\n", encoding="utf-8")
+        self.assertEqual(self._gate(), 0)
+
+    def test_the_two_non_finding_sets_are_identical(self):
+        from harvest._compat import NON_FINDING_FILES as harvest_set
+
+        self.assertEqual(vf.NON_FINDING_FILES, set(harvest_set))
+
+
 class TestChangedFiles(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(dir=TMPDIR)

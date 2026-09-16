@@ -21,7 +21,6 @@ import hashlib
 import json
 import os
 import re
-import sys
 import unicodedata
 from datetime import datetime, timezone
 from pathlib import Path
@@ -60,13 +59,15 @@ try:
 except Exception:  # pragma: no cover
     _cf_vocab = None
 
-try:  # the function that stamps finding ids into the corpus
-    _GATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gate")
-    if _GATE_DIR not in sys.path:
-        sys.path.append(_GATE_DIR)
-    from verify_findings import finding_id as _gate_finding_id  # type: ignore
-except Exception:  # pragma: no cover - the gate stage may not be present yet
-    _gate_finding_id = None  # type: ignore[assignment]
+
+def _clean_item_fallback(raw: str) -> str:
+    """Stand-alone copy of ``cflib.items.clean`` (see :func:`finding_id`)."""
+    s = unicodedata.normalize("NFKC", raw or "")
+    for bad in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212":
+        s = s.replace(bad, "-")
+    s = s.replace("\u00a0", " ")
+    s = re.sub(r"\s+", " ", s).strip().strip("`").strip()
+    return s.rstrip(" .,;:").strip()
 
 #: finding kind emitted by pair/anchor_check.py -- mechanical only, never an LLM
 PAGE_ANCHOR = getattr(_cf_vocab, "PAGE_ANCHOR", "PAGE_ANCHOR")
@@ -182,18 +183,19 @@ def sha256_text(text: str) -> str:
 
 
 def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: Sequence[str]) -> str:
-    """``sha256(run_id, item, kind, sorted unfaithful_decls)`` (critique.json).
+    """``sha256(run_id, clean(item), kind, sorted unfaithful_decls)`` (critique.json).
 
-    Prefers the GATE's implementation (``scripts/gate/verify_findings.py``),
-    because that is the function that stamps ids into the corpus: a PAGE_ANCHOR
-    row must carry an id the gate, the ledger and ``route`` compute the same way.
+    :func:`cflib.hashing.finding_id` is the single definition; the gate inlines
+    the identical algorithm (it runs on a server with no cflib), and the test
+    suite asserts the two agree, so a PAGE_ANCHOR row carries the same id the
+    gate, the ledger and ``route`` compute.
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
-    if _gate_finding_id is not None:
-        return _gate_finding_id(str(run_id or ""), str(item or ""), str(kind or ""), decls)
     if _cf_hashing is not None and hasattr(_cf_hashing, "finding_id"):
         return _cf_hashing.finding_id(run_id, item, kind, decls)
-    payload = "\n".join([str(run_id or ""), str(item or ""), str(kind or ""), *decls])
+    payload = "\n".join(
+        [str(run_id or ""), _clean_item_fallback(str(item or "")), str(kind or ""), *decls]
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 

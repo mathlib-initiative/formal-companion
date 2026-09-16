@@ -54,14 +54,28 @@ def short(digest: str, n: int = 12) -> str:
 
 
 def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: Sequence[str]) -> str:
-    """The stable id every finding carries.
+    """The stable id every finding carries -- the ONE definition.
 
-    ``sha256(run_id, item, kind, sorted(unfaithful_decls))``. Deterministic
-    across runs of the same defect, so union/agreed/adjudication link by id
-    instead of by a 22-character label prefix.
+    ``sha256("\\n".join([run_id, clean(item), kind, *sorted(unfaithful_decls)]))``.
+    Deterministic across runs of the same defect, so union/agreed/adjudication
+    link by id instead of by a 22-character label prefix.
+
+    Two details are load-bearing and must not drift:
+
+    * the parts are joined with a newline, and the declarations are joined in
+      as *separate parts* (not pre-joined with ``|``).  ``scripts/gate/
+      verify_findings.py`` inlines the identical byte-joining because it has to
+      run on a server with no ``cflib`` on the path; ``tests/test_plan_gate.py``
+      asserts the two agree on every digest.
+    * the item label goes through :func:`cflib.items.clean` first, so
+      ``Exercise    1.3.19`` and ``Exercise 1.3.19`` -- the whitespace variant
+      the baseline lost -- hash to the same id.
     """
-    decls = sorted({str(d).strip() for d in unfaithful_decls if str(d).strip()})
-    return sha256_parts([run_id, item, kind, "|".join(decls)])
+    from .items import clean  # local import: items imports nothing from here
+
+    decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
+    payload = "\n".join([str(run_id or ""), clean(str(item or "")), str(kind or ""), *decls])
+    return sha256_text(payload)
 
 
 def manifest(paths: Iterable[str | Path], root: str | Path | None = None) -> dict[str, str]:

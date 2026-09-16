@@ -6,7 +6,10 @@ importable; the fallback parser covers the subset the skill writes itself
 mappings, block sequences, flow `[]`/`{}` collections of scalars, quoted and
 bare scalars, `|`/`>` block scalars, comments and blank lines.  Anchors,
 aliases, tags, multi-document streams and complex keys are NOT supported and
-raise CfError rather than silently returning the wrong thing.
+raise CfError rather than silently returning the wrong thing -- but only when
+they appear in a *value* position outside a block scalar: prose inside a
+``description: |`` body (which is most of what a tend task file is) is taken
+verbatim, markdown emphasis and all.
 
 One documented divergence: PyYAML resolves an unquoted ``2026-09-16`` to a
 ``datetime.date`` while the fallback returns the string, so the skill's own
@@ -146,19 +149,48 @@ def _split_flow(text: str) -> list[str]:
     return parts
 
 
+#: an anchor (``&name``) or alias (``*name``) in a *value* position
+_ANCHOR_RE = re.compile(r"(?:^|:\s+|-\s+)[&*][A-Za-z_]")
+
+#: a value that opens a literal/folded block scalar: ``|``, ``|-``, ``>2+``, ...
+_BLOCK_OPEN_RE = re.compile(r"(?:^|:\s*|-\s+)[|>][0-9]*[-+]?$")
+
+
 def load_yaml_minimal(text: str, where: str = "<yaml>") -> Any:
-    """Parse the YAML subset the skill writes. Stdlib only."""
+    """Parse the YAML subset the skill writes. Stdlib only.
+
+    The scanner tracks literal/folded block scalars (``description: |``) so that
+    their bodies are taken verbatim: no comment stripping, no anchor check and
+    no key grammar.  Without that, one line of the skill's own prose --
+    ``*because of* a junk value`` in ``templates/prompts/attack-vac.md.tmpl`` --
+    read as an alias and aborted the parse of every attack-vac task file.
+    """
     lines: list[tuple[int, str, int]] = []  # (indent, content, lineno)
+    block_indent: int | None = None  # indent of the key that opened a block scalar
     for n, raw in enumerate(text.splitlines(), 1):
+        indent = len(raw) - len(raw.lstrip())
+        if block_indent is not None:
+            if not raw.strip():
+                continue  # blank lines belong to the block body
+            if indent > block_indent:
+                # Inside the block scalar. The value itself is re-read from the
+                # raw text by _block_scalar(); these rows exist only so the
+                # parser can skip past them by indent.
+                lines.append((indent, raw.strip(), n))
+                continue
+            block_indent = None  # dedent ends the block
         if raw.lstrip().startswith("%") or raw.strip() == "---":
             continue
         stripped = _strip_comment(raw)
         if not stripped.strip():
             continue
-        if re.search(r"(?:^|:\s+|-\s+)[&*][A-Za-z_]", stripped.strip()):
+        content = stripped.strip()
+        if _ANCHOR_RE.search(content):
             raise CfError(f"{where}:{n}: YAML anchors/aliases are not supported by the fallback reader",
                           hint="install PyYAML (pip install pyyaml) or simplify the file")
-        lines.append((len(raw) - len(raw.lstrip()), stripped.strip(), n))
+        lines.append((indent, content, n))
+        if _BLOCK_OPEN_RE.search(content):
+            block_indent = indent
     if not lines:
         return None
     value, idx = _parse_block(lines, 0, lines[0][0], where, text)

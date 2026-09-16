@@ -222,7 +222,8 @@ the worktree the worker can edit — and the pre-merge pass additionally checks
 |---|---|---|
 | schema | every file | required keys; enums from `vocab.py`; `repo:decl` validated against `declindex.jsonl`, not the item table |
 | edition | every file | `book_sha` == campaign's, else refuse |
-| quote | `book_passage_quote`, and `book_quote` on `CONTENT`/`VACUITY`/`SUSPECTED_ERRATA` | ≥25 normalised characters; verbatim, or a ≥60%-word window present in `book.txt`. Normalisation: NFKC, ligatures `ﬁ`/`ﬂ`, curly quotes, all dashes → `-`, non-alphanumerics → space, casefold |
+| quote (words) | `book_passage_quote`, and `book_quote` on `CONTENT`/`VACUITY`/`SUSPECTED_ERRATA` | ≥25 normalised characters; verbatim, or a ≥60%-word window present in `book.txt`. Normalisation: NFKC, ligatures `ﬁ`/`ﬂ`, curly quotes, all dashes → `-`, non-alphanumerics → space, casefold. **See §7.1 for what this does NOT catch.** |
+| quote (operators) | the same quotes, when `check_operators` is on (every preset except the two `*-legacy` ones) | the quote re-normalised with `≤ ≥ < > = ≠ + - ∈ ⊆ ∪ ∩ → ¬` mapped to word tokens must match a ≥50%-token window too, so an inequality or operator flip is refused |
 | witness | `CONTENT`/`VACUITY` in attack mode | `witness` present and non-empty. *Whether the reasoning actually uses it is a reviewer (LLM) check, not this gate* |
 | kinds | per mode, from `gate.json` | differential/single-source: `{CONTENT, VACUITY, SUSPECTED_ERRATA, COVERAGE}`; attack: `{CONTENT, VACUITY, SUSPECTED_ERRATA}`; `PAGE_ANCHOR` only from `anchor_check`; `PROXY` only from `detect-proxies` |
 | proxy evidence | `PROXY` | `bridge ∈ {proved, fiat, none}` and a closure path or bridge-theorem name; **no** book quote or witness demanded |
@@ -231,6 +232,34 @@ the worktree the worker can edit — and the pre-merge pass additionally checks
 | `book_located: false` | any | not a failure — emitted as a `COVERAGE` finding with the search performed. The v1 gate failed the task while the prompt told workers to set the flag |
 | completeness | harvest | §4 |
 | count-from-corpus | report | every published number re-derived by `tally.py` |
+
+
+### 7.1 What the quote gate does and does not prove
+
+The word pass is **lossy by design**: `norm()` replaces every non-alphanumeric run with a space, so
+`a ≤ b` and `a ≥ b` normalise identically. That tolerance exists because a `pdftotext` extraction
+spells the same displayed formula a dozen ways, and without it real quotes fail. Two consequences
+follow, and neither is a bug in the implementation — they are the price of the tolerance:
+
+* **Operators.** Under the word pass alone, flipping `=` → `≠` or `+` → `-` is invisible. This is
+  the defect class the audit exists to find, so a second pass, `norm_operators()`, keeps those
+  operators as word tokens and requires them to match in position. It runs at a 50% window (looser
+  than the word pass, because display mathematics breaks across lines): measured over the 3,019
+  quotes of the baseline corpus, 2 fail at 50% and 11 at 60%. The two `*-legacy` presets — which
+  exist only to validate the imported 2011-draft corpus — set `check_operators: false`, and the
+  gate prints `OPERATORS NOT CHECKED (legacy preset)` when they do.
+* **The unmatched remainder.** A ≥60% *window* match leaves up to 40% of the quote unverified, so a
+  quote that is 70% genuine and 30% invented passes. Rejecting those would reject 25 of the 3,019
+  real baseline quotes, so instead the gate **names the remainder**: `quote_ok()` returns
+  `partial (…) UNVERIFIED: '<the words nobody checked>'` and `verify_findings.py` prints one `~`
+  line per partially-matched quote before its `OK:` summary. It does not claim "all book quotes
+  verified"; it says how many matched only in part. A reviewer reads those lines.
+
+What the gate does prove: the quote is ≥25 characters, a long contiguous run of it is really in the
+pinned edition, and (outside legacy) its operators are the book's. What it cannot prove is that a
+single word in the middle was not swapped — `Finite` → `Countable` survives both passes. That is a
+**reviewer** check, which is why adjudication reads the quote against the book rather than trusting
+this exit code.
 
 ---
 

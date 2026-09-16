@@ -21,7 +21,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+SKILL = Path(__file__).resolve().parents[1]
+SCRIPTS = SKILL / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
@@ -351,6 +352,61 @@ block: |
     def test_anchors_are_refused_not_mangled(self):
         with self.assertRaises(CfError):
             yamlio.load_yaml_minimal("a: &anchor 1\nb: *anchor\n")
+
+    def test_markdown_emphasis_in_a_block_scalar_is_not_an_alias(self):
+        """The regression: every attack-vac task failed the fallback reader.
+
+        ``templates/prompts/attack-vac.md.tmpl`` writes ``*because of* a junk
+        value`` into ``description: |``; the anchor guard used to run during
+        line collection, before any block-scalar context existed, and aborted
+        the parse of all 697 task files the skill had just written.
+        """
+        text = (
+            "schema_version: 1\n"
+            "id: definition-1-1-1\n"
+            "description: |\n"
+            "  4. **Junk-value escape.** Does the statement accidentally hold\n"
+            "     *because of* a junk value rather than because of the mathematics\n"
+            "     — e.g. both sides are the junk value? A & B are both fine here.\n"
+            "\n"
+            "  Not a # comment, and `key: value` inside prose is not a key.\n"
+            "status: open\n"
+        )
+        got = yamlio.load_yaml_minimal(text)
+        self.assertEqual(got["schema_version"], 1)
+        self.assertEqual(got["status"], "open")
+        self.assertIn("*because of*", got["description"])
+        self.assertIn("Not a # comment", got["description"])
+        if yamlio.HAVE_PYYAML:
+            import yaml
+            self.assertEqual(got, yaml.safe_load(text))
+
+    def test_generated_task_files_parse_identically_under_both_readers(self):
+        """Every ``runs/*/tasks/*.yaml`` the skill writes must survive the fallback."""
+        if not yamlio.HAVE_PYYAML:
+            self.skipTest("needs PyYAML as the oracle")
+        import yaml
+
+        from plan import make_tasks as mt  # noqa: F401  (import check only)
+
+        tmpl = (SKILL / "templates" / "tasks" / "attack.yaml.tmpl").read_text(encoding="utf-8")
+        probe = (SKILL / "templates" / "prompts" / "attack-vac.md.tmpl").read_text(encoding="utf-8")
+        for key, value in {
+            "item": "Definition 1.1.1", "companion": "ours", "decls_inline": "ours:Foo, ours:Bar",
+            "peers_line": "Peers: adam", "total_functions_sentence": "Lean functions are total.",
+        }.items():
+            probe = probe.replace("{{" + key + "}}", value)
+        body = "\n".join(("  " + ln) if ln.strip() else "" for ln in probe.splitlines())
+        rendered = tmpl
+        for key, value in {
+            "task_id": "definition-1-1-1", "attack_label": "vacuity", "item": "Definition 1.1.1",
+            "priority": "50", "depends_on": "[]", "probe_block": body, "run_id": "attack-vac-ours",
+            "book_sha": "0" * 64, "kinds_inline": "CONTENT|VACUITY", "companion": "ours",
+            "gate_command": "python3 /gate/verify_findings.py", "printed_page": "12",
+        }.items():
+            rendered = rendered.replace("{{" + key + "}}", value)
+        self.assertNotIn("{{", rendered)
+        self.assertEqual(yamlio.load_yaml_minimal(rendered), yaml.safe_load(rendered))
 
 
 class TestHashing(unittest.TestCase):

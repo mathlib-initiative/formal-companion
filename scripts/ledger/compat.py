@@ -11,10 +11,12 @@ Delete this file once every call site has been switched to cflib directly.
 
 Two deliberate choices worth knowing about:
 
-* ``finding_id`` prefers ``gate.verify_findings.finding_id`` -- the function that
-  actually stamped the ids into the corpus -- over ``cflib.hashing.finding_id``.
-  The two disagree on the join byte today (newline vs NUL/'|'), and a ledger row
-  must link to the id its corpus file carries.
+* ``finding_id`` is ``cflib.hashing.finding_id``, the ONE definition.  It used
+  to prefer ``gate.verify_findings.finding_id`` because the two disagreed on the
+  join byte (newline vs NUL/'|') and a ledger row must link to the id its corpus
+  file carries; they now agree byte for byte (the gate inlines the same
+  algorithm because it must run with no cflib on the path) and the test suite
+  asserts it, so the preference is gone.
 * ``LedgerPaths`` wraps ``cflib.paths.CampaignPaths`` and adds the short
   accessors this stage uses (``accepted``/``refuted``/``routed_findings``);
   every cflib accessor still passes through untouched.
@@ -46,15 +48,15 @@ except Exception:  # pragma: no cover - stand-alone use only
     _read_yaml = None  # type: ignore[assignment]
     _HAVE_CFLIB = False
 
-try:  # the function that stamped the ids into the corpus
-    import sys as _sys
 
-    _GATE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "gate")
-    if _GATE_DIR not in _sys.path:
-        _sys.path.append(_GATE_DIR)
-    from verify_findings import finding_id as _gate_finding_id  # type: ignore
-except Exception:  # pragma: no cover
-    _gate_finding_id = None  # type: ignore[assignment]
+def _clean_item_fallback(raw: str) -> str:
+    """Stand-alone copy of ``cflib.items.clean`` (see finding_id below)."""
+    s = unicodedata.normalize("NFKC", raw or "")
+    for bad in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212":
+        s = s.replace(bad, "-")
+    s = s.replace("\u00a0", " ")
+    s = re.sub(r"\s+", " ", s).strip().strip("`").strip()
+    return s.rstrip(" .,;:").strip()
 
 
 # --------------------------------------------------------------------------
@@ -148,17 +150,17 @@ def decl_repo(decl: Any) -> str:
 
 
 def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: Iterable[str]) -> str:
-    """``sha256(run_id, item, kind, sorted(unfaithful_decls))``.
+    """``sha256(run_id, clean(item), kind, sorted(unfaithful_decls))``.
 
-    Delegates to the gate's implementation (which stamps the corpus), else to
-    cflib, else to a local copy of the gate's formula.
+    Delegates to :func:`cflib.hashing.finding_id`, the single definition; the
+    fallback below inlines the identical algorithm for stand-alone use.
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
-    if _gate_finding_id is not None:
-        return _gate_finding_id(str(run_id or ""), str(item or ""), str(kind or ""), decls)
     if _hashing is not None:
         return _hashing.finding_id(str(run_id or ""), str(item or ""), str(kind or ""), decls)
-    payload = "\n".join([str(run_id or ""), str(item or ""), str(kind or ""), *decls])
+    payload = "\n".join(
+        [str(run_id or ""), _clean_item_fallback(str(item or "")), str(kind or ""), *decls]
+    )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
