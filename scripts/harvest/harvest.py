@@ -128,6 +128,34 @@ def transfer(source: dict, dest: Path) -> None:
             shutil.copy2(path, dest / path.name)
 
 
+def edition_audit(dest: Path, book_sha: str) -> dict:
+    """Which harvested findings were judged against which edition.
+
+    The edition gate belongs to the run's gate, but a corpus can also arrive from
+    an older run: batch-1 findings were written against the 2011 draft, and their
+    page anchors are wrong for the published edition.  A mismatch is recorded
+    rather than fatal -- v1 findings carry no ``book_sha`` at all -- but it must
+    be visible, because the tally cannot tell the editions apart.
+    """
+    matched, missing, mismatched = 0, [], []
+    if not book_sha:
+        return {"book_sha": "", "checked": False}
+    for path in iter_finding_files(dest):
+        payload = read_json(path, default=None)
+        if not isinstance(payload, dict):
+            continue
+        meta = payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {}
+        sha = payload.get("book_sha") or meta.get("book_sha")
+        if not sha:
+            missing.append(path.name)
+        elif str(sha) != book_sha:
+            mismatched.append(path.name)
+        else:
+            matched += 1
+    return {"book_sha": book_sha, "checked": True, "matched": matched,
+            "no_book_sha": missing, "mismatched": mismatched}
+
+
 def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: Path,
                   book_sha: str = "", previous: dict | None = None,
                   source_manifest: dict[str, str] | None = None,
@@ -166,6 +194,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "run_yaml": run_yaml or "",
         "run_yaml_sha": (hashing.sha256_file(Path(dest) / run_yaml) if run_yaml
                          and (Path(dest) / run_yaml).exists() else ""),
+        "edition": edition_audit(dest, book_sha),
     }
     if previous:
         receipt["previous"] = {
@@ -207,6 +236,14 @@ def describe(receipt: dict) -> str:
     if receipt["sha_mismatched"]:
         lines.append(f"  SHA MISMATCH {len(receipt['sha_mismatched'])}: "
                      f"{', '.join(receipt['sha_mismatched'][:MAX_NAMED])}")
+    edition = receipt.get("edition") or {}
+    if edition.get("checked"):
+        if edition.get("mismatched"):
+            lines.append(f"  EDITION: {len(edition['mismatched'])} findings carry a different "
+                         f"book_sha -- they were judged against another edition")
+        if edition.get("no_book_sha"):
+            lines.append(f"  edition: {len(edition['no_book_sha'])} findings carry no book_sha "
+                         f"(v1 findings; convert_v1.py stamps them)")
     prev = receipt.get("previous")
     if prev:
         lines.append(f"  previous harvest: {prev.get('actual')} files at {prev.get('harvested_at')}"
