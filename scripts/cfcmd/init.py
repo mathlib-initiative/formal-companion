@@ -87,12 +87,20 @@ def register(subparsers) -> None:
                         "every stage narrows to this, so the scope is decided once")
     p.add_argument("--name", help="campaign name (default: the book id)")
     p.add_argument("--no-git", action="store_true", help="do not run git init")
+    p.add_argument("--allow-nested", action="store_true",
+                   help="create the campaign inside an existing git repo anyway; the pre-push "
+                        "hook and the ignore rules are then installed in THAT repo. Refused "
+                        "outright when the enclosing repo has a remote")
     p.add_argument("--force", action="store_true", help="overwrite an existing campaign.yaml")
 
 
 def run(args) -> int:
     root = Path(args.directory).expanduser().resolve()
     _refuse_unsafe_location(root)
+    # BEFORE anything is written: the refusal is worthless once the campaign's
+    # .gitignore and campaign.yaml are already untracked content of the outer repo.
+    if not args.no_git:
+        _refuse_nested_git(root, allow_nested=args.allow_nested)
     root.mkdir(parents=True, exist_ok=True)
 
     book_sha = args.sha256
@@ -133,10 +141,10 @@ def run(args) -> int:
         atomic_write(campaign_yaml, text)
         log.ok(f"wrote {campaign_yaml}")
 
-    if not args.no_git:
-        _init_git(root)
-
     campaign = Campaign.load(root)  # validates what we just wrote
+    if not args.no_git:
+        _init_git(root, allow_nested=args.allow_nested,
+                  allow_remote=bool(campaign.policy.get("allow_remote", False)))
     log.info("")
     log.info(f"campaign : {campaign.root}")
     log.info(f"book     : {campaign.book_id}"
@@ -176,13 +184,82 @@ def _refuse_unsafe_location(root: Path) -> None:
                       hint="the campaign directory lives outside every companion repo")
 
 
-def _init_git(root: Path) -> None:
-    """git init with no remote; install the pre-push guard."""
+def _nearest_existing(path: Path) -> Path:
+    """The closest ancestor of *path* that exists (git needs a real -C)."""
+    cur = path
+    while not cur.exists() and cur != cur.parent:
+        cur = cur.parent
+    return cur
+
+
+def _refuse_nested_git(root: Path, *, allow_nested: bool) -> None:
+    """Refuse a campaign nested inside an existing repository.
+
+    `cf init` refuses the skill repo and a Lean companion, but a directory
+    *inside* some other repository only warned "not running git init" and exited
+    0.  No pre-push hook was installed anywhere -- the campaign had no .git of
+    its own and the enclosing repo was untouched -- so corpus/ (1-3 verbatim book
+    sentences per finding), ledger/, companions/*/statements.jsonl and
+    runs/*/tasks/ became ordinary untracked content of a repo that may have a
+    public remote.
+    """
+    if (root / ".git").exists():
+        return
+    top = _git_toplevel(_nearest_existing(root))
+    if not top or top == root:
+        return
+    remotes = _remotes(top)
+    if remotes:
+        raise CfError(
+            f"{root} is inside the git repo {top}, which has a remote ({remotes[0]})",
+            hint="a campaign holds verbatim book quotes and UNCHALLENGED findings; put it "
+                 "outside that repo. --allow-nested does NOT override this.")
+    if not allow_nested:
+        raise CfError(
+            f"{root} is inside the git repo {top}",
+            hint="campaign repos are standalone and have no remote; put the campaign outside "
+                 "that repo, or pass --allow-nested to install the pre-push guard and the "
+                 "campaign's ignore rules in the enclosing repo instead")
+
+
+def _remotes(repo: Path) -> list[str]:
+    res = subprocess.run(["git", "-C", str(repo), "remote"], capture_output=True, text=True)
+    return res.stdout.split() if res.returncode == 0 else []
+
+
+def _install_hook(repo: Path) -> None:
+    """Install the pre-push guard in *repo* (never overwrites an existing hook)."""
+    hook = repo / ".git" / "hooks" / "pre-push"
+    if not hook.parent.is_dir():
+        log.warn(f"{hook.parent} does not exist; no pre-push guard installed")
+        return
+    if hook.exists():
+        log.detail(f"{hook} exists; left untouched")
+        return
+    atomic_write(hook, PRE_PUSH_HOOK)
+    hook.chmod(0o755)
+    log.ok(f"installed {hook}")
+
+
+def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False) -> None:
+    """git init with no remote; install the pre-push guard.
+
+    The nested case -- a campaign created INSIDE an existing repository -- used
+    to warn and return, leaving no hook anywhere and no .git of its own.  The
+    campaign's deliberately-not-ignored content (corpus/, ledger/,
+    companions/*/statements.jsonl, runs/*/tasks/) then became ordinary untracked
+    content of the outer repo, which may have a public remote, and the "campaign
+    repos have no remote" invariant the whole copyright story rests on was
+    silently never established.
+    """
     git_dir = root / ".git"
     if not git_dir.exists():
         top = _git_toplevel(root)
         if top and top != root:
-            log.warn(f"{root} is inside the git repo {top}; not running git init")
+            # _refuse_nested_git() already refused the cases that must not happen.
+            log.warn(f"{root} is inside {top}: guarding THAT repo instead of running git init")
+            _install_hook(top)
+            _append_ignore(top, root)
             return
         res = subprocess.run(["git", "init", "-q", str(root)], capture_output=True, text=True)
         if res.returncode != 0:
@@ -191,15 +268,37 @@ def _init_git(root: Path) -> None:
         log.ok(f"git init {root} (no remote)")
     else:
         log.detail("git repo already present")
-    remotes = subprocess.run(["git", "-C", str(root), "remote"], capture_output=True, text=True)
-    if remotes.returncode == 0 and remotes.stdout.strip():
-        log.warn(f"this campaign repo has a remote ({remotes.stdout.split()[0]}): "
-                 "book quotes and unchallenged findings must not be pushed")
-    hook = root / ".git" / "hooks" / "pre-push"
-    if hook.parent.is_dir() and not hook.exists():
-        atomic_write(hook, PRE_PUSH_HOOK)
-        hook.chmod(0o755)
-        log.ok(f"installed {hook}")
+    remotes = _remotes(root)
+    if remotes and not allow_remote:
+        # campaign.yaml policy.allow_remote (false by default) is the rule; the
+        # hook is the enforcement. Both, or the policy block is decoration.
+        raise CfError(
+            f"this campaign repo has a remote ({remotes[0]}) and campaign.yaml sets "
+            "policy.allow_remote: false",
+            hint="book quotes and UNCHALLENGED findings live here; run "
+                 f"`git -C {root} remote remove {remotes[0]}`, or set policy.allow_remote: true "
+                 "in campaign.yaml and take responsibility for every push")
+    if remotes:
+        log.warn(f"this campaign repo has a remote ({remotes[0]}) and policy.allow_remote is "
+                 "true: book quotes and unchallenged findings must not be pushed")
+    _install_hook(root)
+
+
+def _append_ignore(outer: Path, campaign: Path) -> None:
+    """Ignore the nested campaign from the enclosing repo's .gitignore."""
+    rel = campaign.relative_to(outer).as_posix().rstrip("/")
+    marker = f"/{rel}/"
+    path = outer / ".gitignore"
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    if marker in existing.splitlines():
+        log.detail(f"{path} already ignores {marker}")
+        return
+    block = (("" if existing.endswith("\n") or not existing else "\n")
+             + f"\n# Added by `cf init --allow-nested`: campaign data (verbatim book quotes,\n"
+               f"# UNCHALLENGED findings) must never be committed or pushed from this repo.\n"
+               f"{marker}\n")
+    path.write_text(existing + block, encoding="utf-8")
+    log.ok(f"ignored {marker} in {path}")
 
 
 def _git_toplevel(path: Path) -> Path | None:

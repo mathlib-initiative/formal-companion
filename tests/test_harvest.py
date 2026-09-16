@@ -666,6 +666,55 @@ class TestRunPlanner(unittest.TestCase):
         self.assertIn("budget", raise_steps[0]["shell"])          # ceiling before concurrency
         self.assertIn("--workers 5 --reviewers 3", raise_steps[-1]["shell"])
 
+    def test_the_transfer_table_measures_what_rsync_will_send(self):
+        """It walked the whole tree while rsync excludes .git/.lake/build/*.olean."""
+        from run import manifest
+
+        repo = self.root / "companion"
+        (repo / "Src").mkdir(parents=True)
+        (repo / "Src" / "A.lean").write_text("x" * 1000, encoding="utf-8")
+        for skip in (".git", ".lake", "build", "__pycache__"):
+            d = repo / skip / "deep"
+            d.mkdir(parents=True)
+            (d / "junk.bin").write_text("y" * 100000, encoding="utf-8")
+        (repo / "Src" / "A.olean").write_text("z" * 50000, encoding="utf-8")
+
+        flags = [f"--exclude={p}" for p in manifest.SOURCE_EXCLUDES]
+        entry = manifest._entry("source:x", repo, "/dest/", flags=flags)
+        self.assertEqual(entry["files"], 1, "only Src/A.lean is actually sent")
+        self.assertEqual(entry["bytes"], 1000)
+
+        unfiltered = manifest._entry("source:x", repo, "/dest/")
+        self.assertGreater(unfiltered["files"], entry["files"])
+
+    def test_the_session_cap_is_enforced_not_documented(self):
+        """traps.md C3: past 16 concurrent sessions the API returns 409s."""
+        from cfcmd import run as run_cmd
+        from cflib.errors import CfError
+
+        class A:
+            workers = 24
+            reviewers = 12
+            over_session_cap = False
+
+        with self.assertRaises(CfError) as ctx:
+            run_cmd._concurrency(self.campaign, {}, A())
+        self.assertIn("account cap", str(ctx.exception))
+
+        A.over_session_cap = True
+        loud = run_cmd._concurrency(self.campaign, {}, A())
+        self.assertEqual(loud["sessions"], 36)
+        self.assertTrue(loud["over_session_cap"])
+
+        class B:
+            workers = 8
+            reviewers = 5
+            over_session_cap = False
+
+        fine = run_cmd._concurrency(self.campaign, {}, B())
+        self.assertEqual(fine["sessions"], 13)
+        self.assertNotIn("over_session_cap", fine)
+
     def test_execute_is_opt_in(self):
         """A dry run must not spawn a process, whatever the step says."""
         from run import remote

@@ -66,6 +66,10 @@ defaults:
   book_access: text            # text | text+images
   max_concurrent_workers: 8
   max_concurrent_reviewers: 5
+  # HARD account limit (references/traps.md C3): past 16 concurrent sessions the
+  # API returns 409s, per ACCOUNT, across campaigns. workers + reviewers must
+  # stay under it; `cf run` refuses more without --over-session-cap.
+  max_concurrent_sessions: 16
   max_repos_per_task: 4        # k>4 companions split into reference + peers
   local_fleet_max_items: 100   # above this, the run belongs on the server
   gate_out_of_tree: true       # the gate never runs from the tree the worker edits

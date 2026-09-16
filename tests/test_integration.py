@@ -338,5 +338,144 @@ class TestExtractSurvivesOneBrokenCompanion(unittest.TestCase):
         self.assertTrue(table.read_text().strip())
 
 
+class TestInitGitGuard(unittest.TestCase):
+    """The "campaign repos have no remote" invariant must actually be established."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-init-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _git(self, *argv, cwd=None):
+        return subprocess.run(["git", *argv], cwd=str(cwd or self.tmp),
+                              capture_output=True, text=True, check=False)
+
+    def _cf(self, *argv) -> int:
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cf_main.main(list(argv))
+        self.out = buf.getvalue()
+        return rc
+
+    def _init_args(self, target):
+        return ["init", str(target), "--book", "b", "--offset", "16",
+                "--sha256", "a" * 64, "-q"]
+
+    def test_a_fresh_directory_gets_its_own_repo_and_the_hook(self):
+        target = self.tmp / "campaign"
+        self.assertEqual(self._cf(*self._init_args(target)), 0)
+        self.assertTrue((target / ".git").is_dir())
+        hook = target / ".git" / "hooks" / "pre-push"
+        self.assertTrue(hook.exists())
+        self.assertIn("CF_ALLOW_PUSH", hook.read_text())
+        self.assertEqual(self._git("remote", cwd=target).stdout.strip(), "")
+
+    def test_nested_inside_a_repo_with_a_remote_is_refused_outright(self):
+        outer = self.tmp / "outer"
+        outer.mkdir()
+        self._git("init", "-q", cwd=outer)
+        self._git("remote", "add", "origin", "git@github.com:example/public.git", cwd=outer)
+        target = outer / "campaign"
+        with self.assertRaises(CfError) as ctx:
+            self._cf(*self._init_args(target))
+        self.assertIn("has a remote", str(ctx.exception))
+        self.assertFalse(target.exists(), "nothing may be written before the refusal")
+        # --allow-nested does NOT override a remote
+        with self.assertRaises(CfError):
+            self._cf(*self._init_args(target), "--allow-nested")
+        self.assertFalse(target.exists())
+
+    def test_nested_inside_a_remoteless_repo_is_refused_without_allow_nested(self):
+        outer = self.tmp / "inner"
+        outer.mkdir()
+        self._git("init", "-q", cwd=outer)
+        target = outer / "campaign"
+        with self.assertRaises(CfError) as ctx:
+            self._cf(*self._init_args(target))
+        self.assertIn("--allow-nested", getattr(ctx.exception, "hint", ""))
+        self.assertFalse(target.exists())
+
+    def test_allow_nested_guards_the_enclosing_repo(self):
+        outer = self.tmp / "inner"
+        outer.mkdir()
+        self._git("init", "-q", cwd=outer)
+        target = outer / "campaign"
+        self.assertEqual(self._cf(*self._init_args(target), "--allow-nested"), 0)
+        self.assertTrue((outer / ".git" / "hooks" / "pre-push").exists())
+        self.assertIn("/campaign/", (outer / ".gitignore").read_text())
+        status = self._git("status", "--porcelain", "-uall", cwd=outer).stdout
+        self.assertNotIn("campaign/campaign.yaml", status)
+
+    def test_a_campaign_repo_with_a_remote_is_refused_by_the_policy(self):
+        target = self.tmp / "campaign"
+        target.mkdir()
+        self._git("init", "-q", cwd=target)
+        self._git("remote", "add", "origin", "git@github.com:example/public.git", cwd=target)
+        with self.assertRaises(CfError) as ctx:
+            self._cf(*self._init_args(target))
+        self.assertIn("allow_remote", str(ctx.exception))
+
+
+class TestExportPolicyIsRead(unittest.TestCase):
+    """campaign.yaml's policy block was written by cf init and read by nothing."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-policy-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.campaign = self.tmp / "campaign"
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            cf_main.main(["init", str(self.campaign), "--book", "b", "--offset", "16",
+                          "--sha256", "a" * 64, "--no-git", "-q"])
+
+    def _policy(self, **over):
+        from cflib.yamlio import read_yaml, write_yaml
+
+        path = self.campaign / "campaign.yaml"
+        data = read_yaml(path)
+        data.setdefault("policy", {}).update(over)
+        write_yaml(path, data)
+
+    def test_redaction_defaults_to_the_campaign_policy(self):
+        from cfcmd import route as route_cmd
+
+        class A:
+            campaign = str(self.campaign)
+            redact_quotes = None
+
+        self.assertTrue(route_cmd._redact(A), "policy.redact_quotes_on_export is true")
+        A.redact_quotes = False
+        self.assertFalse(route_cmd._redact(A))
+        A.redact_quotes = None
+        self._policy(redact_quotes_on_export=False)
+        self.assertFalse(route_cmd._redact(A))
+
+    def test_an_unreadable_campaign_still_redacts(self):
+        from cfcmd import route as route_cmd
+
+        class A:
+            campaign = str(self.tmp / "nope")
+            redact_quotes = None
+
+        self.assertTrue(route_cmd._redact(A))
+
+    def test_publish_unchallenged_true_is_refused(self):
+        from cfcmd import route as route_cmd
+
+        class A:
+            campaign = str(self.campaign)
+
+        route_cmd._check_publish_policy(A)      # false: fine
+        self._policy(publish_unchallenged=True)
+        with self.assertRaises(SystemExit):
+            route_cmd._check_publish_policy(A)
+
+    def test_the_template_keys_are_all_read_somewhere(self):
+        from cflib.campaign import Campaign
+
+        policy = Campaign.load(self.campaign).policy
+        self.assertEqual(set(policy),
+                         {"publish_unchallenged", "redact_quotes_on_export", "allow_remote"})
+
+
 if __name__ == "__main__":
     unittest.main()
