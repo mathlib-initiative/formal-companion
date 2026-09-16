@@ -41,7 +41,18 @@ CARRY = (
 
 
 def row_item(row: Mapping) -> str:
-    """The raw item label of a statement row (v2 ``item_raw`` wins over v1 ``item``)."""
+    """The label a statement row is keyed on.
+
+    A v2 row carries both the adapter's canonical ``item`` and the verbatim
+    ``item_raw`` tag; the canonical one wins, so this stage never re-derives a
+    key the adapter already resolved.  A v1 row has only ``item`` (the raw tag),
+    which parses to the same key.
+    """
+    return normalise_item(row.get("item") or row.get("item_raw") or "")
+
+
+def row_item_raw(row: Mapping) -> str:
+    """The verbatim tag as written in the repo (for reject lists and prompts)."""
     return normalise_item(row.get("item_raw") or row.get("item") or "")
 
 
@@ -60,8 +71,10 @@ def index_tables(
     rejected: list[dict] = []
     for repo, rows in tables.items():
         for row in rows:
-            raw = row_item(row)
-            parsed, reason = parse_item_reject(raw, kinds)
+            raw = row_item_raw(row)
+            parsed, reason = parse_item_reject(row_item(row), kinds)
+            if parsed is None and raw != row_item(row):
+                parsed, reason = parse_item_reject(raw, kinds)
             if parsed is None:
                 rejected.append(
                     {"repo": repo, "item_raw": raw, "reason": reason, "decl": row.get("decl"),
