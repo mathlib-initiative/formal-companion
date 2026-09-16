@@ -599,6 +599,12 @@ def main(argv: list[str] | None = None) -> int:
         help="gate.json written by cf plan-run (default: next to this script)",
     )
     ap.add_argument("--root", default=".", help="worktree root holding findings/ (default: cwd)")
+    ap.add_argument(
+        "--findings-dir",
+        default=None,
+        help="subdirectory of --root holding the findings (default: gate.json findings_dir). "
+             "Use '.' to gate a harvested corpus, where the files sit directly in corpus/<run-id>/",
+    )
     ap.add_argument("--findings", action="append", default=[], help="validate this file only (repeatable)")
     ap.add_argument("--book", default=None, help="override gate.json book.text")
     ap.add_argument(
@@ -623,6 +629,8 @@ def main(argv: list[str] | None = None) -> int:
     cfg = GateConfig.load(gate_path)
     if args.book:
         cfg.book_text = pathlib.Path(args.book).expanduser()
+    if args.findings_dir:
+        cfg.findings_dir = args.findings_dir
 
     book, errs = load_book(cfg)
     if errs:

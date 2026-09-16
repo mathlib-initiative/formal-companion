@@ -130,23 +130,136 @@ def _status(campaign, args, data: dict) -> int:
 # local fallback
 
 
+#: how much of conventions.md travels into the workflow prompt (it is inlined,
+#: not read from disk: a Workflow script has no filesystem access)
+CONVENTIONS_CHARS = 4000
+
+
+def _conventions_text(paths, name: str) -> str:
+    """The companion's conventions.md, inlined for the workflow prompt."""
+    path = paths.conventions_md(name)
+    if not path.exists():
+        return ""
+    text = path.read_text(encoding="utf-8").strip()
+    if len(text) > CONVENTIONS_CHARS:
+        text = text[:CONVENTIONS_CHARS].rstrip() + "\n[...truncated; full text: " + str(path) + "]"
+    return text
+
+
+def _local_repos(campaign, data: dict) -> list[dict]:
+    """``args.repos``: {name, repo, statements, conventions} per companion."""
+    paths = campaign.paths
+    names = [str(r) for r in (data.get("repos") or [])] or campaign.companion_names()
+    out = []
+    for name in names:
+        entry = {}
+        try:
+            entry = campaign.companion(name)
+        except CfError:
+            pass
+        out.append({
+            "name": name,
+            "repo": str(entry.get("repo") or entry.get("path") or ""),
+            "statements": str(paths.statements_jsonl(name)),
+            "conventions": _conventions_text(paths, name),
+        })
+    return out
+
+
+def _local_item_meta(campaign, data: dict) -> tuple[dict[str, dict], str | None]:
+    """``{item: {repos, pdf_pages}}`` from the same universe ``plan-run`` used.
+
+    ``pairs/queue.json`` rows carry ``repos`` outright; ``pairs/targets.<name>.json``
+    rows carry ``peers`` and the file records whose targets they are, so the owning
+    companion has to be put back.  Without this every item reached the workflow with
+    ``repos: []`` and the prompt could not say which repositories formalise it.
+    """
+    import json
+
+    paths = campaign.paths
+    companion = data.get("companion")
+    sources: list[Path] = []
+    if str(data.get("mode") or "").startswith("attack") and companion:
+        sources.append(paths.targets_json(str(companion)))
+    else:
+        sources.append(paths.queue_json)
+        sources += [paths.targets_json(n) for n in campaign.companion_names()]
+
+    attack = str(data.get("mode") or "").startswith("attack")
+    meta: dict[str, dict] = {}
+    for src in sources:
+        if not Path(src).exists():
+            continue
+        doc = json.loads(Path(src).read_text(encoding="utf-8"))
+        rows = doc.get("items") if isinstance(doc, dict) else doc
+        owner = str(doc.get("companion") or "") if isinstance(doc, dict) else ""
+        for row in rows or []:
+            if not isinstance(row, dict) or not row.get("item"):
+                continue
+            slot = meta.setdefault(str(row["item"]), {"repos": [], "pdf_pages": []})
+            # An attack audits ONE companion: naming its peers here would put
+            # repositories in the prompt that the run is not allowed to judge.
+            found = ([str(companion)] if attack
+                     else [owner] + list(row.get("repos") or []) + list(row.get("peers") or []))
+            for repo in found:
+                if repo and repo not in slot["repos"]:
+                    slot["repos"].append(str(repo))
+            for page in row.get("pdf_pages") or []:
+                if page not in slot["pdf_pages"]:
+                    slot["pdf_pages"].append(page)
+    pairs = paths.pairs_jsonl
+    return meta, (str(pairs) if pairs.exists() else None)
+
+
 def _local(campaign, args, data: dict) -> int:
     paths = campaign.paths
     run_dir = paths.run_dir(args.run_id)
-    context = {
-        "campaign": str(campaign.root),
-        "book_txt": str(paths.book_txt),
-        "book_sha": campaign.book_sha,
-        "mode": data.get("mode"),
-        "gate_json": str(paths.gate_json(args.run_id)),
-        "prompts": str(paths.prompts_dir(args.run_id)),
-        "corpus": str(paths.corpus_run_dir(args.run_id)),
-    }
-    fleet = fleet_local.build(run_dir, args.run_id, context, force=args.force,
-                              max_items=int(campaign.default("local_fleet_max_items",
-                                                             fleet_local.DEFAULT_MAX_ITEMS)))
+    item_meta, pairs = _local_item_meta(campaign, data)
+    gate_block = data.get("gate") if isinstance(data.get("gate"), dict) else {}
+    gate_config = gate_block.get("local_config") or str(run_dir / "gate.local.json")
+    scratch = run_dir / "self-gate"
+    scratch.mkdir(parents=True, exist_ok=True)
+    gate_script = _skill_root() / "scripts" / "gate" / "verify_findings.py"
+    book = data.get("book") if isinstance(data.get("book"), dict) else {}
+    fleet = fleet_local.build(
+        run_dir,
+        args.run_id,
+        campaign={
+            "book_id": campaign.book_id,
+            "book_title": str(campaign.book.get("title") or campaign.book_id),
+            "book_sha": campaign.book_sha,
+            "book_layout_txt": str(paths.book_txt),
+            "book_pages_dir": str(paths.pages_dir),
+            "pdf_page_offset": campaign.offset,
+            "errata": str(paths.errata_md) if paths.errata_md.exists() else "",
+        },
+        repos=_local_repos(campaign, data),
+        mode=data.get("mode"),
+        gate={
+            # The local fleet gates on THIS machine, so the command points at the
+            # skill's own gate and the run's gate.local.json, never the host copy.
+            "command": (f"python3 {gate_script} --gate-config {gate_config} "
+                        "--findings " + str(scratch) + "/${TASK_ID}.json"),
+            "kinds": list(gate_block.get("kinds") or []),
+            "witness_required": bool(gate_block.get("witness_required")),
+            "quote_min_chars": 25,
+            "scratch_dir": str(scratch),
+        },
+        pairs=pairs,
+        item_meta=item_meta,
+        force=args.force,
+        max_items=int(campaign.default("local_fleet_max_items",
+                                       fleet_local.DEFAULT_MAX_ITEMS)),
+    )
+    if book.get("sha256") and campaign.book_sha:
+        campaign.require_book_sha(str(book["sha256"]), f"runs/{args.run_id}/run.yaml")
     path = fleet_local.write(run_dir, fleet)
-    log.info(fleet_local.instructions(path, fleet["count"]))
+    missing = fleet_local.missing_keys(fleet)
+    if missing:
+        log.warn("fleet args are missing keys the workflow reads: " + ", ".join(missing[:8]))
+    log.info(fleet_local.instructions(
+        path, fleet["count"], run_id=args.run_id, gate_config=str(gate_config),
+        corpus_dir=str(paths.corpus_run_dir(args.run_id))))
     return 0
 
 

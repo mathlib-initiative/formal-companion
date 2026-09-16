@@ -109,7 +109,10 @@ model-free checks that exist today live in `detect-proxies` and `pair`).
    finding.
 3. **Edition gate.** Every artifact that quotes the book or judges an anchor
    carries `book_sha`. A mismatch is refused, not warned about: batch-1 anchor
-   findings were judged against a draft edition.
+   findings were judged against a draft edition. `cf harvest` and
+   `cf import-corpus` fail the receipt on a mismatch; the ONE documented
+   override is `--allow-edition-mismatch` (or `--book-sha <that edition>` on an
+   import), which the receipt records so the report can say so.
 4. **Count from the corpus.** Every number in every report is emitted by the
    tally over `corpus/`, never by reading files and counting by hand. "Nothing
    open" ships with the command that recomputes it. Counting errors have run
