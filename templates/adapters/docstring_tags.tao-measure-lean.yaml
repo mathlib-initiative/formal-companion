@@ -1,0 +1,73 @@
+# companions/ours/adapter.yaml -- worked example: the docstring-tag convention.
+#
+# Copy into a campaign as companions/<name>/adapter.yaml and edit `repo`.
+# This is the tao-measure-lean convention (CLAUDE.md:32-34): every declaration
+# that formalises a book item opens its docstring with the item's tag inside
+# backticks, e.g.
+#
+#     /-- `Definition 1.1.1` (intervals).  An *interval* is ... -/
+#     def IsInterval (I : Set ℝ) : Prop := ...
+#     /-- `In-text, book p. 24` (subdivision observation ...). -/
+#
+# Measured against tao-measure-lean at 250b856: 35 files, 1,544 declarations,
+# 1,169 tagged (375 untagged infrastructure, 130 private), 1,168 rows over 519
+# items, 516 sorries (508 exercise, 8 gap), 561 own page anchors, 1 crossref
+# anchor refused, 1 tag refused by the strict item grammar.
+name: ours
+repo: /Users/jack/Desktop/tao-measure-lean
+adapter: docstring_tags
+granularity: item
+
+# Only the section files: everything else in the repo is infrastructure, and a
+# bare **/*.lean over a Lake project would read Mathlib as well.
+glob: "TaoMeasure/Section_*.lean"
+exclude:
+  - ".lake/**/*.lean"
+  - "**/.lake/**/*.lean"
+
+tag:
+  # docstring_start: the LEADING tag wins; when a docstring does not open with
+  # a tag, the first backticked tag is the documented fallback ("Every box is
+  # elementary (`In-text, book p. 5`)."). docstring_anywhere drops the leading
+  # preference — the original extract_ours.py rule.
+  position: docstring_start
+  # How far into a docstring the fallback may look. 0 = no limit; five
+  # declarations here carry their tag past the first sentence, and a 160-char
+  # window silently dropped them.
+  inline_window: 0
+  # The tao-measure-lean convention backticks the tag; keeping this true is
+  # what stops a prose mention of "Lemma 1.2.5" from tagging a declaration.
+  require_backticks: true
+  # Optional regex override (group `tag` or group 1). null = the kind list.
+  pattern: null
+  # A page counts as this item's OWN anchor when it sits inside the tag or in
+  # the clause right after it; anything further is a cross-reference and the
+  # row gets anchor_source: crossref with page_anchor: null. This is the
+  # "previewed on book p. 20" trap that mis-anchored Exercise 1.2.17.
+  page_pattern: "(?:book\\s+)?(?:pp?\\.|pages?)\\s*(\\d+)(?:\\s*[-–—]\\s*(\\d+))?"
+  clause_window: 140
+
+anchor: docstring
+
+# Lean keywords that open a declaration.
+decl_kinds: [theorem, lemma, def, abbrev, structure, class, inductive, instance, example, opaque]
+# Kinds whose BODY is captured into the row: the `elementaryMeasure := volume`
+# proxy was spotted from a body, never from a signature.
+body_for_kinds: [def, abbrev, instance, structure, class, inductive]
+max_body_lines: 40
+
+sorry:
+  # permanent: `Exercise`-tagged statements ship with `sorry` on purpose, so a
+  # bare sorry is classified `exercise`, not reported as a gap.
+  exercise_sorry: permanent
+  # A literal marker, not a regex; matches `sorry -- TODO(autoform)` too.
+  gap_marker: "sorry -- TODO"
+
+# This convention has no notion of a primary declaration per item, so every
+# tagged declaration is a key row ("first" would mark only the first).
+key_flag: all
+
+write_policy: read_only
+owner: jack
+validators: []
+key_files: []

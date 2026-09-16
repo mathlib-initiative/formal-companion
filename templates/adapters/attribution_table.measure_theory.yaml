@@ -1,0 +1,51 @@
+# companions/adam/adapter.yaml -- worked example: the attribution-table convention.
+#
+# Copy into a campaign as companions/<name>/adapter.yaml and edit `repo`.
+# measure_theory carries no book tags in its docstrings; the item -> declaration
+# map is an exported artifact produced by a curation pass, and the statements
+# come from a snippets export:
+#
+#   geometry-batch-{a..d}.json  region_id -> item label + PDF page (visually signed off)
+#   target-refinement.json      region_id -> formalization_ids (+ key_formalization_ids)
+#   declaration-snippets.json   id -> {file, line, text}
+#   source-formalization-ledger.json  id -> {kind, module, file}
+#
+# Measured against measure_theory at 9afe70f: 390 geometry items, 211 curated
+# entries, 562 rows over 178 items, 414 key rows, 0 missing snippets.
+#
+# COVERAGE IS BOUNDED BY CURATION. Items with no curated entry are absent (212
+# of 390 here), and declarations that exist only as anonymous `example`s are
+# absent by construction. `cf extract` reports both numbers; do not read this
+# table as "everything this repo formalises".
+name: adam
+repo: /Users/jack/Desktop/measure_theory
+adapter: attribution_table
+granularity: item
+
+# The exported artifacts, repo-relative. Defaults match measure_theory's layout.
+target_refinement: pdf-overlay/data/target-refinement.json
+declaration_snippets: pdf-overlay/data/declaration-snippets.json
+geometry_glob: "pdf-overlay/data/geometry-batch-*.json"
+ledger: source-formalization-ledger.json
+
+# Page anchors come from the overlay geometry, not from the source: the item's
+# own region page, converted with the campaign's offset
+# (printed page = PDF page - 16). campaign.yaml's book.offset wins; page_offset
+# is the fallback when this adapter is used outside a campaign.
+anchor: ledger
+page_offset: 16
+
+# Every file whose sha must force a re-extract at an unchanged commit. The
+# adapter already hashes the four exports above; list anything else here.
+# Without this, a fix that renames a theorem is invisible until the external
+# pipeline re-exports, and `cf extract` would replay the pre-fix table.
+key_files: []
+
+sorry:
+  # This repo has no permanent exercise sorries: a `sorry` in an exported
+  # snippet is an unfinished gap, and is classified as one.
+  exercise_sorry: none
+
+write_policy: read_only
+owner: external
+validators: []
