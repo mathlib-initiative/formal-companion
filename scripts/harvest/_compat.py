@@ -45,9 +45,13 @@ SUBSTANTIVE_KINDS = frozenset(getattr(
     frozenset(vocab.FINDING_KINDS) - {vocab.COVERAGE, vocab.PAGE_ANCHOR},
 ))
 
-#: files that live beside findings in a corpus directory and are not findings
+#: files that live beside findings in a corpus directory and are not findings.
+#: ``scripts/gate/verify_findings.py`` carries an identical literal (it runs on
+#: a server with nothing on the path) -- keep the two in sync, or a re-gate of a
+#: harvested corpus fails on the receipt this module wrote.
 NON_FINDING_FILES = {"RECEIPT.json", "run.yaml", "run.json", "manifest.json",
-                     "tally.json", "journal-harvest.json"}
+                     "tally.json", "journal-harvest.json", "gate.json",
+                     "gate.local.json"}
 
 
 def iter_finding_files(directory: str | Path) -> list[Path]:

@@ -37,9 +37,27 @@ import sys
 import unicodedata
 from typing import Any
 
+#: Files that live beside findings in a corpus directory and are NOT findings.
+#: ``cf harvest`` and ``cf import-corpus`` write RECEIPT.json into the findings
+#: directory, so a directory-mode re-gate of a landed corpus used to report
+#: eight fabricated failures against it.  Duplicated from
+#: ``scripts/harvest/_compat.py`` (NON_FINDING_FILES) on purpose: this file runs
+#: on a server with no cflib and no harvest package on the path.  Keep in sync.
+NON_FINDING_FILES = {
+    "RECEIPT.json", "run.yaml", "run.json", "manifest.json",
+    "tally.json", "journal-harvest.json", "gate.json", "gate.local.json",
+}
+
 MIN_QUOTE_CHARS = 25
 WINDOW_FRACTION = 0.6
 MIN_WINDOW_WORDS = 6
+#: the operator pass tolerates more mangling than the word pass: pdftotext
+#: breaks display mathematics across lines, so a run of 50% of the quote's
+#: operator-bearing tokens is enough.  Measured against the 3,019 quotes of the
+#: baseline corpus: at 0.5, two legacy quotes fail; at 0.6, eleven do.
+OPERATOR_WINDOW_FRACTION = 0.5
+#: how many unmatched words the gate prints back when a quote matched only in part
+REMAINDER_WORDS = 12
 
 DEFAULT_KIND_RULES: dict[str, dict[str, Any]] = {
     "CONTENT": {"quote": True, "witness": True, "decls": True},
@@ -60,38 +78,183 @@ DEFAULT_KIND_RULES: dict[str, dict[str, Any]] = {
 # --------------------------------------------------------------------------- #
 # quote normalisation — ported verbatim (norm L22-27, quote_ok L29-39)
 # --------------------------------------------------------------------------- #
-def norm(s: str) -> str:
-    """Normalise text for quote comparison: pdftotext mangles mathematics."""
+#: mathematical operators the operator pass keeps.  Flipping any of these is the
+#: defect class this audit exists to find, and the word pass below deletes them
+#: all, so they are checked separately.
+_OPERATOR_TOKENS: dict[str, str] = {
+    "\u2264": "ople", "\u2265": "opge", "<": "oplt", ">": "opgt",
+    "=": "opeq", "\u2260": "opne", "+": "opplus", "-": "opminus",
+    "\u2208": "opin", "\u2282": "opsub", "\u2286": "opsub",
+    "\u222a": "opcup", "\u2229": "opcap", "\u2192": "oparr", "\u00ac": "opnot",
+}
+#: ASCII spellings pdftotext and Lean sources use for the same operators
+_OPERATOR_DIGRAPHS: tuple[tuple[str, str], ...] = (
+    ("<=", "\u2264"), (">=", "\u2265"), ("!=", "\u2260"),
+    ("/=", "\u2260"), ("->", "\u2192"),
+)
+
+
+def _fold(s: str) -> str:
+    """The shared prefix of both normalisations: NFKC, ligatures, one dash."""
     s = unicodedata.normalize("NFKC", s or "")
-    s = s.replace("ﬁ", "fi").replace("ﬂ", "fl").replace("’", "'").replace("“", '"').replace("”", '"')
-    s = re.sub(r"[−–—]", "-", s)
+    s = s.replace("\ufb01", "fi").replace("\ufb02", "fl")
+    s = s.replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
+    return re.sub(r"[\u2212\u2013\u2014]", "-", s)
+
+
+def norm(s: str) -> str:
+    """Normalise text for quote comparison: pdftotext mangles mathematics.
+
+    LOSSY BY DESIGN and therefore blind by design: every non-alphanumeric — so
+    every ``=``, ``\u2264``, ``\u2208``, ``\u222a`` — becomes a space, because a
+    pdftotext extraction spells the same formula a dozen ways.  A quote whose
+    operators have been flipped is word-identical to the real one under this
+    normalisation, which is why :func:`norm_operators` exists and why
+    ``check_operators`` is on for every non-legacy preset.
+    """
+    s = _fold(s)
     s = re.sub(r"[^0-9A-Za-z]+", " ", s)  # compare on words, not symbols
     return re.sub(r"\s+", " ", s).strip().lower()
 
 
-def quote_ok(book: str, q: str) -> tuple[bool, str]:
-    """True when ``q`` occurs in the normalised ``book`` text (or a 60% window)."""
+def norm_operators(s: str) -> str:
+    """Like :func:`norm`, but the operators survive as words.
+
+    ``a \u2264 b`` becomes ``a ople b``, so an operator keeps its position in the
+    token stream and a flipped ``=`` \u2192 ``\u2260`` no longer matches the book.
+    """
+    s = _fold(s)
+    for ascii_form, unicode_form in _OPERATOR_DIGRAPHS:
+        s = s.replace(ascii_form, unicode_form)
+    for ch, token in _OPERATOR_TOKENS.items():
+        s = s.replace(ch, " " + token + " ")
+    s = re.sub(r"[^0-9A-Za-z]+", " ", s)
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
+def has_operators(q: str) -> bool:
+    """True when the raw quote contains one of the operators worth checking."""
+    folded = _fold(q)
+    return any(ch in folded for ch in _OPERATOR_TOKENS) or any(
+        a in folded for a, _ in _OPERATOR_DIGRAPHS
+    )
+
+
+class BookText:
+    """The pinned book text in the normalisations the quote gate compares against.
+
+    ``words`` is the lossy :func:`norm` form (the historical one).  ``ops`` is
+    the :func:`norm_operators` form, or ``None`` when the caller handed in a
+    plain string — in which case the operator pass is skipped and says so.
+    """
+
+    def __init__(self, words: str, ops: str | None = None):
+        self.words = words
+        self.ops = ops
+
+    @classmethod
+    def coerce(cls, book: "BookText | str") -> "BookText":
+        return book if isinstance(book, BookText) else cls(str(book))
+
+
+def _window_match(book: str, words: list[str], fraction: float) -> int:
+    """Index of the first >=``fraction`` contiguous window found, else -1."""
+    k = max(MIN_WINDOW_WORDS, int(len(words) * fraction))
+    for i in range(0, len(words) - k + 1):
+        if " ".join(words[i : i + k]) in book:
+            return i
+    return -1
+
+
+def unmatched_words(book: str, words: list[str], start: int, length: int) -> list[str]:
+    """The quote words OUTSIDE the window that matched — what nobody verified."""
+    return words[:start] + words[start + length :]
+
+
+def quote_ok(book: "BookText | str", q: str) -> tuple[bool, str]:
+    """True when ``q`` occurs in the book text (verbatim, or a 60% window).
+
+    Two passes:
+
+    1. the **word** pass (historical): operators deleted, a contiguous window of
+       >=60% of the quote's words must occur in the book.  When only a window
+       matched, the reason string names the words that were NOT verified —
+       previously a quote that was 70% genuine and 30% invented passed with the
+       gate saying nothing at all about the invented 30%.
+    2. the **operator** pass: when the quote carries operators and the book was
+       loaded with an operator normalisation, the operator-bearing token stream
+       must match too, so an inequality or operator flip is refused.
+    """
+    bk = BookText.coerce(book)
     n = norm(q)
     if len(n) < MIN_QUOTE_CHARS:
         return False, f"quote too short to verify (need >={MIN_QUOTE_CHARS} normalised chars)"
-    if n in book:
-        return True, "verbatim"
     w = n.split()
-    k = max(MIN_WINDOW_WORDS, int(len(w) * WINDOW_FRACTION))
-    for i in range(0, len(w) - k + 1):
-        if " ".join(w[i : i + k]) in book:
-            return True, "partial (>=60% window matched; pdftotext mangling tolerated)"
-    return False, "NOT FOUND in the book text"
+    if n in bk.words:
+        why = "verbatim"
+    else:
+        i = _window_match(bk.words, w, WINDOW_FRACTION)
+        if i < 0:
+            return False, "NOT FOUND in the book text"
+        k = max(MIN_WINDOW_WORDS, int(len(w) * WINDOW_FRACTION))
+        rest = unmatched_words(bk.words, w, i, k)
+        shown = " ".join(rest[:REMAINDER_WORDS]) + ("…" if len(rest) > REMAINDER_WORDS else "")
+        why = (
+            f"partial ({k}/{len(w)} words matched as one window; pdftotext mangling "
+            f"tolerated). UNVERIFIED: {shown!r}"
+        )
+    if bk.ops is not None and has_operators(q):
+        o = norm_operators(q)
+        ow = o.split()
+        if o not in bk.ops and _window_match(bk.ops, ow, OPERATOR_WINDOW_FRACTION) < 0:
+            return False, (
+                "words match the book but the OPERATORS do not — an inequality, "
+                "equality or set operator has been changed (or the quote splices "
+                "two passages together)"
+            )
+    return True, why
+
+
+#: characters pdftotext and LaTeX produce for a hyphen (mirrors cflib.items._DASHES)
+_DASHES = "\u2010\u2011\u2012\u2013\u2014\u2015\u2212"
+
+
+def clean_item(raw: str) -> str:
+    """Canonicalise an item label before hashing it.
+
+    Byte-for-byte the same transformation as ``cflib.items.clean`` (NFKC, one
+    dash, non-breaking space to space, whitespace collapsed, wrapping backticks
+    and trailing punctuation stripped).  Duplicated here rather than imported
+    because this file is rsynced to a run host with no ``cflib`` on the path;
+    ``tests/test_plan_gate.py`` asserts the two stay identical.
+
+    Without it ``Exercise    1.3.19`` and ``Exercise 1.3.19`` -- the whitespace
+    variant the baseline lost -- would hash to different finding ids.
+    """
+    s = unicodedata.normalize("NFKC", raw or "")
+    for bad in _DASHES:
+        s = s.replace(bad, "-")
+    s = s.replace("\u00a0", " ")
+    s = re.sub(r"\s+", " ", s).strip()
+    s = s.strip("`").strip()
+    return s.rstrip(" .,;:").strip()
 
 
 def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: list[str]) -> str:
-    """Stable content address of a finding.
+    """Stable content address of a finding — the ONE definition.
 
-    ``sha256(run_id, item, kind, sorted(unfaithful_decls))`` — the critique
-    rejected the original ``concept``-based id because ``concept`` is
-    LLM-written prose, so the same defect got a different id in every run.
+    ``sha256("\\n".join([run_id, clean_item(item), kind, *sorted(decls)]))`` —
+    the critique rejected the original ``concept``-based id because ``concept``
+    is LLM-written prose, so the same defect got a different id in every run.
+
+    This is inlined from :func:`cflib.hashing.finding_id`; the two MUST produce
+    identical digests, or the detector's ids and the gate's live in different
+    namespaces and no ledger row can ever match a finding.  The gate cannot
+    import ``cflib`` (it runs on a server with nothing installed), so equality
+    is enforced by a test instead of by sharing code.
     """
-    payload = "\n".join([run_id, item, kind, *sorted(unfaithful_decls)])
+    decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
+    payload = "\n".join([str(run_id or ""), clean_item(str(item or "")), str(kind or ""), *decls])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -122,6 +285,10 @@ class GateConfig:
         self.require_book_sha: bool = bool(data.get("require_book_sha", True))
         self.verify_text_sha: bool = bool(data.get("verify_text_sha", False))
         self.require_finding_id: bool = bool(data.get("require_finding_id", False))
+        # The operator pass is on everywhere except the two *-legacy presets that
+        # validate the imported 2011-draft corpus, whose quotes carry pdftotext
+        # artifacts predating the check (two of 3,019 fail it).
+        self.check_operators: bool = bool(data.get("check_operators", True))
         self.findings_dir: str = data.get("findings_dir", "findings")
         self.decl_index: str | None = data.get("decl_index")
         rules = dict(DEFAULT_KIND_RULES)
@@ -187,7 +354,7 @@ def validate_doc(
     doc: Any,
     name: str,
     cfg: GateConfig,
-    book: str,
+    book: "BookText | str",
     decl_index: set[str] | None = None,
 ) -> list[str]:
     """Return the list of gate errors for one findings document."""
@@ -239,7 +406,7 @@ def _validate_disagreement(
     i: int,
     name: str,
     cfg: GateConfig,
-    book: str,
+    book: "BookText | str",
     decl_index: set[str] | None,
     run_id: str,
     doc: dict[str, Any],
@@ -324,6 +491,30 @@ def _validate_disagreement(
     return errs
 
 
+def partial_quotes(doc: Any, name: str, book: "BookText | str") -> list[str]:
+    """Quotes in ``doc`` that matched only as a window — what nobody verified.
+
+    The gate prints these on success.  A quote that is 70% genuine and 30%
+    invented passes the word pass; refusing it outright would reject 25 of the
+    3,019 real quotes in the baseline corpus, so the gate names the unverified
+    remainder instead of staying silent about it.
+    """
+    out: list[str] = []
+    if not isinstance(doc, dict):
+        return out
+    todo = [("book_passage_quote", doc.get("book_passage_quote"))]
+    for i, g in enumerate(doc.get("disagreements") or []):
+        if isinstance(g, dict) and g.get("book_quote"):
+            todo.append((f"disagreement[{i}].book_quote", g["book_quote"]))
+    for where, q in todo:
+        if not q:
+            continue
+        ok, why = quote_ok(book, q)
+        if ok and why.startswith("partial"):
+            out.append(f"{name}: {where} {why}")
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # changed-files check (kept in this file on purpose: only verify_findings.py and
 # gate.json are transferred to the run host, so the check must travel with them)
@@ -375,12 +566,17 @@ def check_changed(paths: set[str], *, allow_empty: bool = False) -> list[str]:
     return problems
 
 
-def load_book(cfg: GateConfig) -> tuple[str, list[str]]:
-    """Read and normalise the book text; returns (normalised text, errors)."""
+def load_book(cfg: GateConfig) -> tuple[BookText, list[str]]:
+    """Read and normalise the book text; returns (BookText, errors).
+
+    Both normalisations are built up front: the word form every quote is matched
+    against, and — unless ``check_operators`` is off — the operator-bearing form.
+    """
+    empty = BookText("")
     if cfg.book_text is None:
-        return "", ["gate.json has no book.text path"]
+        return empty, ["gate.json has no book.text path"]
     if not cfg.book_text.exists():
-        return "", [f"book text missing at {cfg.book_text} (the gate fails closed)"]
+        return empty, [f"book text missing at {cfg.book_text} (the gate fails closed)"]
     raw = cfg.book_text.read_bytes()
     errs: list[str] = []
     if cfg.verify_text_sha and cfg.book_text_sha:
@@ -390,7 +586,9 @@ def load_book(cfg: GateConfig) -> tuple[str, list[str]]:
                 f"book text sha256 {got[:12]}… != gate.json book.text_sha256 "
                 f"{cfg.book_text_sha[:12]}… — wrong extraction"
             )
-    return norm(raw.decode("utf-8", errors="ignore")), errs
+    text = raw.decode("utf-8", errors="ignore")
+    ops = norm_operators(text) if cfg.check_operators else None
+    return BookText(norm(text), ops), errs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -444,12 +642,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.findings:
         files = [pathlib.Path(f) for f in args.findings]
     else:
-        files = sorted((root / cfg.findings_dir).glob("*.json"))
+        files = [
+            f for f in sorted((root / cfg.findings_dir).glob("*.json"))
+            if f.name not in NON_FINDING_FILES and not f.name.startswith(".")
+        ]
     if not files and not problems:
         if not args.quiet:
             print("no findings files here; nothing to validate")
         return 0
 
+    partial: list[str] = []
     for f in files:
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
@@ -457,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
             problems.append(f"{f.name}: not valid JSON ({exc})")
             continue
         problems.extend(validate_doc(doc, f.name, cfg, book, decl_index))
+        partial.extend(partial_quotes(doc, f.name, book))
 
     if problems:
         print(f"VALIDATION FAILED ({len(problems)} problem(s)):", file=sys.stderr)
@@ -464,9 +667,12 @@ def main(argv: list[str] | None = None) -> int:
             print("  - " + p, file=sys.stderr)
         return 1
     if not args.quiet:
+        for note in partial:
+            print("  ~ " + note)
+        ops = "operators checked" if cfg.check_operators else "OPERATORS NOT CHECKED (legacy preset)"
         print(
             f"OK: {len(files)} findings file(s) validated against gate {cfg.preset or cfg.mode}; "
-            "all book quotes verified against the text"
+            f"every book quote matched the text ({len(partial)} only in part, listed above; {ops})"
         )
     return 0
 

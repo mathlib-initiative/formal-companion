@@ -70,6 +70,10 @@ class Preset:
     # gate
     kind_rules: dict[str, dict[str, Any]] = field(default_factory=dict)
     require_finding_id: bool = False
+    #: run the gate's operator pass (a flipped <=/>=/=/!= is refused).  Off only
+    #: for the two *-legacy presets: the imported 2011-draft corpus carries
+    #: pdftotext artifacts in two of its 3,019 quotes that predate the check.
+    check_operators: bool = True
     legacy: bool = False
     note: str = ""
 
@@ -176,6 +180,7 @@ PRESETS: dict[str, Preset] = {
         bridge="none",
         model=None,
         kind_rules=_LEGACY_RULES,
+        check_operators=False,
         legacy=True,
         note="validates the converted v1 differential corpus (findings/, -pdf, -gpt); "
              "keeps PAGE_ANCHOR in KINDS because those runs emitted it",
@@ -191,6 +196,7 @@ PRESETS: dict[str, Preset] = {
         model=None,
         attack_label="hunt",
         kind_rules=_LEGACY_RULES,
+        check_operators=False,
         legacy=True,
         note="validates the converted v1 attack corpus (findings-vac/, findings-hunt/); "
              "the witness is the one convert_v1 lifted out of `reasoning`",
@@ -276,6 +282,7 @@ def gate_config(
         "require_book_sha": True,
         "verify_text_sha": bool(book_text_sha),
         "require_finding_id": preset.require_finding_id,
+        "check_operators": preset.check_operators,
         "findings_dir": "findings",
         "decl_index": decl_index,
         "kind_rules": preset.kind_rules or {},
