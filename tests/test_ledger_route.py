@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -345,16 +346,85 @@ class TestRoutingRules(unittest.TestCase):
         self.assertEqual(routed["meta"]["counts"]["withdrawn"], 1)
         self.assertIn("mechanical-only", routed["rows"][0]["withdrawn_reason"])
 
-    def test_mechanical_anchor_rows_are_routed_unless_the_edition_contradicts_them(self):
+    def test_a_mechanical_anchor_row_is_the_oracle_and_always_routes(self):
+        """critique.json correction 2: route anchor_check rows, do not withdraw them."""
+        for key in ("source", "provenance"):   # the new spelling and the legacy one
+            rows, _ = self._findings([
+                finding_doc("Exercise 1.1.19", kind="PAGE_ANCHOR", severity="low",
+                            unfaithful_decls=["adam:Jordan.split"], **{key: "anchor_check"}),
+            ])
+            check = {"rows": [{"item": "Exercise 1.1.19"}],
+                     "summary": {"checked_items": ["Exercise 1.1.19"]}}
+            routed = route_mod.route_repo(rows, "adam", anchor_check=check)
+            self.assertEqual(routed["meta"]["counts"]["rows"], 1, key)
+            self.assertEqual(routed["meta"]["counts"]["withdrawn"], 0, key)
+
+    def test_an_llm_anchor_row_the_edition_confirms_is_routed(self):
         rows, _ = self._findings([
             finding_doc("Exercise 1.1.19", kind="PAGE_ANCHOR", severity="low",
-                        unfaithful_decls=["adam:Jordan.split"], provenance="anchor_check"),
+                        unfaithful_decls=["adam:Jordan.split"]),
         ])
-        routed = route_mod.route_repo(rows, "adam")
-        self.assertEqual(routed["meta"]["counts"]["rows"], 1)
-        contradicted = route_mod.route_repo(
-            rows, "adam", anchor_check={"rows": [{"item": "Exercise 1.1.19", "agrees": True}]})
-        self.assertEqual(contradicted["meta"]["counts"]["withdrawn"], 1)
+        check = {"rows": [{"item": "Exercise 1.1.19"}],
+                 "summary": {"checked_items": ["Exercise 1.1.19"]}}
+        routed = route_mod.route_repo(rows, "adam", anchor_check=check)
+        self.assertEqual(routed["meta"]["counts"]["withdrawn"], 0)
+
+    def test_an_llm_anchor_row_the_edition_contradicts_is_withdrawn(self):
+        """Examined by anchor_check and NOT mismatched -> the LLM row is wrong."""
+        rows, _ = self._findings([
+            finding_doc("Exercise 1.1.19", kind="PAGE_ANCHOR", severity="low",
+                        unfaithful_decls=["adam:Jordan.split"]),
+        ])
+        check = {"rows": [], "summary": {"checked_items": ["Exercise 1.1.19"]}}
+        routed = route_mod.route_repo(rows, "adam", anchor_check=check)
+        self.assertEqual(routed["meta"]["counts"]["withdrawn"], 1)
+        self.assertIn("contradicted by the pinned edition",
+                      routed["rows"][0]["withdrawn_reason"])
+
+    def test_an_llm_anchor_row_on_an_unexamined_item_says_so(self):
+        rows, _ = self._findings([
+            finding_doc("Exercise 1.1.19", kind="PAGE_ANCHOR", severity="low",
+                        unfaithful_decls=["adam:Jordan.split"]),
+        ])
+        routed = route_mod.route_repo(rows, "adam", anchor_check={"rows": [], "summary": {}})
+        self.assertEqual(routed["meta"]["counts"]["withdrawn"], 1)
+        self.assertIn("never examined", routed["rows"][0]["withdrawn_reason"])
+
+    def test_anchor_check_writes_the_keys_the_gate_and_route_read(self):
+        """One provenance key and a structured page, or the gate refuses its own output."""
+        from gate import verify_findings as vf
+        from pair import anchor_check as ac
+        from plan import presets as presets_mod
+
+        items = {"Exercise 1.1.19": {"page": 40, "pdf_page": 56, "occurrences": []}}
+        tables = {"adam": [{"item": "Exercise 1.1.19", "decl": "Jordan.split",
+                            "page_anchor": "23", "file": "A.lean", "line": 1}]}
+        result = ac.check(items, tables, book_sha=OFFICIAL_SHA, offset=16, run_id="anchor-check")
+        self.assertEqual(len(result["rows"]), 1)
+        row = result["rows"][0]
+        self.assertEqual(row["source"], ac.SOURCE)
+        self.assertEqual(route_mod.provenance(row), route_mod.MECHANICAL_SOURCE)
+        self.assertEqual(row["page"], {"claimed": [23], "actual": 40, "actual_pdf_page": 56})
+        self.assertEqual(result["summary"]["checked_items"], ["Exercise 1.1.19"])
+
+        # ... and the row, wrapped as a corpus document, passes the mechanical gate
+        from detect import corpus as mech_corpus
+
+        root = pathlib.Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, root, True)
+        book = root / "book.txt"
+        book.write_text("Exercise 1.1.19 is on this page.\n", encoding="utf-8")
+        cfg = vf.GateConfig(presets_mod.gate_config(
+            presets_mod.get("mechanical"), run_id="anchor-check", book_text=str(book),
+            book_sha=OFFICIAL_SHA, repos=["adam"]))
+        text, errs = vf.load_book(cfg)
+        self.assertEqual(errs, [])
+        docs = mech_corpus.documents(result["rows"], companion="adam", run_id="anchor-check",
+                                     book_sha=OFFICIAL_SHA)
+        problems = []
+        for doc in docs:
+            problems += vf.validate_doc(doc, "x.json", cfg, text)
+        self.assertEqual(problems, [])
 
     def test_status_becomes_challenged_once_every_row_has_a_ledger_verdict(self):
         rows, root = self._findings([

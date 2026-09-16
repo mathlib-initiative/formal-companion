@@ -27,6 +27,11 @@ from .compare import row_item
 
 KIND = "PAGE_ANCHOR"
 SEVERITY = "low"
+#: the ONE provenance key.  The gate reads ``g["source"] == SOURCE`` (PAGE_ANCHOR
+#: is mechanical-only) and ``route`` reads the same key; the row used to spell
+#: the one fact three ways (``mechanical: True`` here, ``source`` in the gate,
+#: ``provenance`` in route) and none of them matched.
+SOURCE = "anchor_check"
 
 
 def claimed_pages(anchor) -> list[int]:
@@ -69,7 +74,13 @@ def check(
         "offset": offset,
         "tolerance": tolerance,
         "repos": {},
+        # Items this check actually examined.  route needs the difference between
+        # "examined and the edition agreed" (withdraw a contradicting LLM row)
+        # and "never examined" (nothing to say), and a mismatch-only row list
+        # cannot express it -- which is why route's `agrees` branches were dead.
+        "checked_items": [],
     }
+    checked_items: set[str] = set()
     for repo, statements in tables.items():
         checked = anchored = ok = unknown = intext = 0
         grouped: dict[str, list[dict]] = {}
@@ -92,6 +103,7 @@ def check(
             if official is None:
                 unknown += 1
                 continue
+            checked_items.add(parsed.key)
             if any(abs(p - official) <= tolerance for p in pages):
                 ok += 1
                 continue
@@ -120,10 +132,18 @@ def check(
                     "kind": KIND,
                     "severity": SEVERITY,
                     "repo": repo,
+                    "repos_involved": [repo],
                     "faithful": [],
                     "unfaithful_decls": decls,
+                    "source": SOURCE,
                     "mechanical": True,
                     "advisory": advisory,
+                    # the gate's PAGE_ANCHOR rule: page {claimed, actual}
+                    "page": {
+                        "claimed": sorted({p for h in hits for p in h["claimed_pages"]}),
+                        "actual": official,
+                        "actual_pdf_page": entry["pdf_page"],
+                    },
                     "concept": "page anchor",
                     "reasoning": (
                         "%s anchors %s at printed page(s) %s; the pinned edition prints it on "
@@ -162,6 +182,7 @@ def check(
         }
     summary["findings"] = len(rows)
     summary["advisory"] = sum(1 for r in rows if r["advisory"])
+    summary["checked_items"] = sorted(checked_items)
     return {"summary": summary, "rows": rows}
 
 

@@ -33,11 +33,24 @@ listed is invalid and the schema gate rejects it.
 | `PROXY` | `detect-proxies` only | `bridge: proved \| fiat \| none` + the closure path; no book quote, no witness |
 | `SUSPECTED_ERRATA` | worker (any mode) | `book_quote` + the errata entry, cited by date and URL |
 | `COVERAGE` | worker (differential / single-source modes) or `def-coverage` | the item id and its page in `items.json`; no witness |
-| `PAGE_ANCHOR` | **mechanical only** — `pair/anchor_check.py` | the pinned edition's `book_sha` and the located page |
+| `PAGE_ANCHOR` | **mechanical only** — `pair/anchor_check.py` | `source: "anchor_check"`, `page: {claimed, actual}` and the pinned edition's `book_sha` |
 
 `PAGE_ANCHOR` is never an LLM kind. The attack gate rejects `PAGE_ANCHOR` and `COVERAGE` outright,
 which is why an attack run's 100% substantive ratio is partly definitional
 (`references/method.md` §1).
+
+**Provenance has ONE key: `source`.** `pair/anchor_check.py` writes it, the gate's
+mechanical-only rule reads it, and `route.provenance()` reads it (accepting the legacy
+`provenance` spelling for an older corpus). `cf pair` publishes the rows into
+`corpus/<run-id>/` through the `mechanical` gate, so they are routed like any other
+finding rather than living only in `pairs/anchor-check.json`.
+
+**Withdrawal.** A PAGE_ANCHOR row that did NOT come from `anchor_check` is judged against
+the pinned edition, three ways: the mechanical check found the same mismatch → routed; it
+examined the item and the repo anchor is correct → withdrawn as *contradicted by the pinned
+edition*; it never examined the item → withdrawn with the re-derive instruction. Only the
+first two were ever meant to exist as one branch, and before this the code tested a key
+`anchor_check` never writes, so every non-mechanical row was withdrawn wholesale.
 
 ### 1.3 Severity
 

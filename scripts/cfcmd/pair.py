@@ -48,6 +48,9 @@ def register(subparsers):
     p.add_argument("--run-id", default="anchor-check", help="run id stamped into PAGE_ANCHOR ids")
     p.add_argument("--tolerance", type=int, default=0, help="accepted page-anchor slack")
     p.add_argument("--no-anchors", action="store_true", help="skip the page-anchor check")
+    p.add_argument("--no-emit-corpus", action="store_true",
+                   help="do not publish the PAGE_ANCHOR rows into corpus/<run-id>/ "
+                        "(they then reach no tally, route or ledger)")
     p.add_argument("--no-coverage", action="store_true", help="skip def-coverage/uncovered")
     p.add_argument("--max-page-hints", type=int, default=6)
     p.set_defaults(func=run)
@@ -163,6 +166,9 @@ def run(args) -> int:
             "anchors: %d PAGE_ANCHOR rows (%d advisory +/-1 page) against sha %s"
             % (anchors["summary"]["findings"], anchors["summary"]["advisory"], book_sha[:12])
         )
+        if anchors["rows"] and not args.no_emit_corpus:
+            _emit_anchor_corpus(paths, anchors, run_id=args.run_id, book_sha=book_sha,
+                                index_by_item=index_by_item)
 
     for name in tables:
         stats = qsummary["targets"].get(name, {})
@@ -183,6 +189,55 @@ def run(args) -> int:
         }
         state_merge(campaign, name, "coverage", payload)
     return 0
+
+
+def _emit_anchor_corpus(paths, anchors, *, run_id: str, book_sha: str, index_by_item) -> None:
+    """Publish the mechanical PAGE_ANCHOR rows into ``corpus/<run-id>/``.
+
+    critique.json correction 2: "Route them as mechanical low-severity rows from
+    anchor_check.py against the pinned edition."  They could not be routed while
+    they lived only in ``pairs/anchor-check.json``, which ``route`` reads as a
+    withdrawal oracle and never as a source (its sources are ``corpus/<run>/``).
+
+    Each document is validated against the ``mechanical`` preset first -- the
+    gate that refused anchor_check's own output until its rows carried
+    ``source`` and ``page``.
+    """
+    from detect import corpus as mech_corpus
+    from gate import verify_findings as vf
+    from plan import presets as presets_mod
+
+    rows = anchors["rows"]
+    repos = sorted({str(r.get("repo") or "") for r in rows if r.get("repo")})
+    pages = {item: (entry.get("page") if isinstance(entry, dict) else None)
+             for item, entry in (index_by_item or {}).items()}
+    docs = mech_corpus.documents(rows, companion=repos[0] if repos else "",
+                                 run_id=run_id, book_sha=book_sha,
+                                 items_pages={k: v for k, v in pages.items() if v})
+    cfg = vf.GateConfig(presets_mod.gate_config(
+        presets_mod.get("mechanical"), run_id=run_id, book_text=str(paths.book_txt),
+        book_sha=book_sha, repos=repos))
+    book, problems = vf.load_book(cfg)
+    for doc in docs:
+        problems += vf.validate_doc(doc, mech_corpus.slug(doc["item"]) + ".json", cfg, book)
+    if problems:
+        print("warn: the mechanical gate refused the anchor rows; corpus/%s not written" % run_id)
+        for problem in problems[:8]:
+            print("  - " + problem)
+        return
+    dest = paths.corpus_run_dir(run_id)
+    receipt = mech_corpus.write_corpus(docs, dest, run_id=run_id,
+                                       companion=",".join(repos), book_sha=book_sha,
+                                       counts=anchors["summary"].get("repos", {}))
+    for stale in mech_corpus.stale_files(dest, receipt["names"]):
+        stale.unlink()
+    receipt["complete"] = True
+    receipt["gate"] = {"ok": True, "preset": "mechanical", "problems": []}
+    receipt["expected"] = {"count": len(docs), "names": receipt["names"]}
+    receipt["actual"] = {"count": len(receipt["names"])}
+    receipt["expected_from"] = "cf pair --anchor-check: one document per mismatched item"
+    mech_corpus.write_json(dest / "RECEIPT.json", receipt, indent=1, sort_keys=True)
+    print("anchors: wrote corpus/%s (%d document(s))" % (run_id, len(docs)))
 
 
 def main(argv=None) -> int:

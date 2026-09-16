@@ -254,6 +254,17 @@ class _FallbackPaths:
     def pairs_dir(self):
         return self.root / "pairs"
 
+    @property
+    def book_txt(self):
+        return self.book_dir / "book.txt"
+
+    @property
+    def corpus_dir(self):
+        return self.root / "corpus"
+
+    def corpus_run_dir(self, run_id: str):
+        return self.corpus_dir / run_id
+
     def list_companions(self) -> list[str]:
         if not self.companions_dir.is_dir():
             return []
