@@ -948,6 +948,17 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         (self.root / "book" / "mini").mkdir(parents=True)
         (self.root / "book" / "mini" / "book.txt").write_text(MINI_BOOK, encoding="utf-8")
         (self.root / "pairs").mkdir()
+        # Real (tiny) Lean repos: plan-run builds the gate's declaration index
+        # from the companion sources, and an index that does not cover every
+        # repo of the run is deliberately not used at all.
+        self.repos = pathlib.Path(self.tmp.name) / "repos"
+        decls = {"ours": ["elem_union", "lemma5"], "peer": ["union_elem"]}
+        for name, names in decls.items():
+            src = self.repos / name / "Src"
+            src.mkdir(parents=True)
+            body = "".join(f"theorem {n} : True := trivial\n" for n in names)
+            (src / "A.lean").write_text(body + "private theorem helper : True := trivial\n",
+                                        encoding="utf-8")
         for name in ("ours", "peer"):
             d = self.root / "companions" / name
             d.mkdir(parents=True)
@@ -961,8 +972,8 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             "book:\n  id: mini\n  title: A Book\n  offset: 16\n"
             f"  sha256: {BOOK_SHA}\n  chapters: [1]\n"
             "companions:\n"
-            "  - name: ours\n    repo: /repos/ours\n    glob: Src/*.lean\n"
-            "  - name: peer\n    repo: /repos/peer\n    glob: Peer/*.lean\n"
+            f"  - name: ours\n    repo: {self.repos / 'ours'}\n    glob: Src/*.lean\n"
+            f"  - name: peer\n    repo: {self.repos / 'peer'}\n    glob: Peer/*.lean\n"
             "hosts:\n  allowlist: [ffbox]\n  agentbox_profile: someone\n"
             "  ffbox:\n    ssh: someone@ffbox\n    remote_root: /home/someone\n"
             "models:\n  worker: claude-sonnet-5\n  reviewer: claude-opus-5\n"
@@ -1114,6 +1125,80 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.assertEqual(self.plan(preset="attack-hunt", companion="ours"), 0)
         names = sorted(p.stem for p in (self.root / "runs" / "r1" / "tasks").glob("*.yaml"))
         self.assertEqual(len(names), len(targets))
+
+    def test_the_gate_gets_a_declaration_index(self):
+        """It was plumbed end to end but never switched on: decl_index was always null."""
+        self.plan()
+        rd = self.root / "runs" / "r1"
+        index = json.loads((rd / "decl-index.json").read_text())
+        self.assertEqual(index["_meta"]["sources"]["ours"], "lean-source")
+        self.assertIn("elem_union", index["ours"])
+        self.assertIn("helper", index["ours"])          # untagged private helper
+        gate = json.loads((rd / "gate.json").read_text())
+        local = json.loads((rd / "gate.local.json").read_text())
+        self.assertTrue(gate["decl_index"], "gate.json still carries a null decl_index")
+        self.assertTrue((rd / "tend-root" / "gate" / "decl-index.json").exists(),
+                        "the index must travel with the gate to the host")
+        self.assertEqual(os.path.realpath(local["decl_index"]),
+                         os.path.realpath(rd / "decl-index.json"))
+
+    def test_a_partial_index_is_not_used_at_all(self):
+        """An index missing one repo would reject every finding naming that repo."""
+        import shutil as _shutil
+
+        _shutil.rmtree(self.repos / "peer")
+        self.plan(preset="differential-text", companion=None)
+        rd = self.root / "runs" / "r1"
+        self.assertIsNone(json.loads((rd / "gate.json").read_text())["decl_index"])
+        self.assertFalse((rd / "tend-root" / "gate" / "decl-index.json").exists())
+
+    def test_statements_jsonl_is_never_the_index(self):
+        from plan import decl_index as di
+
+        names, source = di.for_companion(
+            type("P", (), {"detect_companion_dir": lambda _s, n: self.root / "nope",
+                           "statements_jsonl": lambda _s, n: self.root / "companions" / n
+                           / "statements.jsonl"})(),
+            "ours", None)
+        self.assertEqual(names, [])
+        self.assertIn("no deps.json", source)
+
+    def test_the_index_is_the_full_declaration_set_not_statements_jsonl(self):
+        from plan import decl_index as di
+
+        repo = pathlib.Path(self.tmp.name) / "lean-repo"
+        (repo / "Src").mkdir(parents=True)
+        (repo / ".lake" / "packages").mkdir(parents=True)
+        (repo / "Src" / "A.lean").write_text(
+            "namespace Demo\n"
+            "private theorem helper_not_tagged : True := trivial\n"
+            "/-- `Exercise 1.2.4` -/\ntheorem tagged : True := trivial\n"
+            "end Demo\n", encoding="utf-8")
+        (repo / ".lake" / "packages" / "Mathlib.lean").write_text(
+            "theorem should_not_be_indexed : True := trivial\n", encoding="utf-8")
+        names = di._from_lean(repo)
+        self.assertIn("Demo.helper_not_tagged", names)   # untagged private helper
+        self.assertIn("Demo.tagged", names)
+        self.assertNotIn("should_not_be_indexed", names)  # .lake is excluded
+
+    def test_a_phantom_declaration_is_rejected_and_a_real_one_is_not(self):
+        idx = pathlib.Path(self.tmp.name) / "decls.json"
+        idx.write_text(json.dumps({"ours": ["Real.name", "Private.helper"]}), encoding="utf-8")
+        loaded = vf._load_decl_index(str(idx))
+        self.assertEqual(loaded, {"ours:Real.name", "ours:Private.helper"})
+        cfg = gate_cfg("attack-vac", BOOK_TXT or (self.root / "book" / "mini" / "book.txt"),
+                       repos=["ours"], decl_index=str(idx))
+        book = vf.BookText(vf.norm(MINI_BOOK))
+        good = mini_doc()
+        good["disagreements"][0]["unfaithful_decls"] = ["ours:Private.helper"]
+        good["disagreements"][0]["witness"] = {"object": "o", "why": "w"}
+        self.assertEqual(
+            [e for e in vf.validate_doc(good, "x", cfg, book, loaded) if "index" in e], [])
+        bad = mini_doc()
+        bad["disagreements"][0]["unfaithful_decls"] = ["ours:Nope.at.all"]
+        bad["disagreements"][0]["witness"] = {"object": "o", "why": "w"}
+        self.assertTrue(any("names no declaration" in e
+                            for e in vf.validate_doc(bad, "x", cfg, book, loaded)))
 
     def test_gate_only_preset_cannot_be_planned(self):
         with self.assertRaises(CfError):
