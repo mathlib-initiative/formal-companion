@@ -292,6 +292,11 @@ class TestGateNegative(unittest.TestCase):
     def test_wrong_edition_fails(self):
         self.assertTrue(any("wrong edition" in e for e in self.errs(mini_doc(book_sha=DRAFT_SHA))))
 
+    def test_missing_required_disagreement_key_fails(self):
+        doc = mini_doc()
+        doc["disagreements"][0].pop("reasoning")
+        self.assertTrue(any("missing required key 'reasoning'" in e for e in self.errs(doc)))
+
     def test_faithful_must_be_a_list(self):
         doc = mini_doc()
         doc["disagreements"][0]["faithful"] = "ours"
@@ -860,6 +865,26 @@ class TestPlanRunEndToEnd(unittest.TestCase):
     def test_gate_only_preset_cannot_be_planned(self):
         with self.assertRaises(CfError):
             self.plan(preset="differential-legacy")
+
+    def test_the_out_of_tree_gate_copy_runs_as_a_subprocess(self):
+        """The copy in tend-root/gate/ is what the tend config invokes."""
+        self.plan()
+        rd = self.root / "runs" / "r1"
+        gate_dir = rd / "tend-root" / "gate"
+        wt = self.root / "wt"
+        (wt / "findings").mkdir(parents=True)
+        doc = mini_doc(run_id="r1")
+        doc["disagreements"][0]["repos_involved"] = ["ours"]
+        (wt / "findings" / "exercise-1-2-4.json").write_text(json.dumps(doc), encoding="utf-8")
+        cmd = [sys.executable, str(gate_dir / "verify_findings.py"),
+               "--gate-config", str(gate_dir / "gate.json"), "--root", str(wt)]
+        ok = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(ok.returncode, 0, ok.stderr)
+        doc["disagreements"][0]["book_quote"] = "a sentence that is not in this little book at all"
+        (wt / "findings" / "exercise-1-2-4.json").write_text(json.dumps(doc), encoding="utf-8")
+        bad = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(bad.returncode, 1)
+        self.assertIn("NOT FOUND in the book text", bad.stderr)
 
     def test_generated_findings_pass_the_run_s_own_gate(self):
         self.plan()

@@ -249,6 +249,10 @@ def _validate_disagreement(
     if not isinstance(g, dict):
         return [f"{where} is not an object"]
 
+    for key in ("concept", "kind", "repos_involved", "faithful", "reasoning", "severity"):
+        if key not in g:
+            errs.append(f"{where}: missing required key {key!r}")
+
     kind = g.get("kind")
     if kind not in cfg.kinds:
         errs.append(f"{where}.kind {kind!r} not in {sorted(cfg.kinds)}")
