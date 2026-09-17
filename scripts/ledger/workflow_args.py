@@ -7,7 +7,7 @@ the three statement tables, and wrote a scratchpad path into the workflow).
 
 Generalised here:
 
-* nothing points at a session scratchpad -- every path is a campaign path;
+* nothing points at a session scratchpad -- every path is a workspace path;
 * the finding rows carry their stable ``finding_id`` so the workflow's result
   links back to the corpus without matching on a concept prefix;
 * declaration bodies come from ``companions/<name>/statements.jsonl`` (any
@@ -92,20 +92,38 @@ def _peer_rows(indexes: dict[str, dict], item: str, exclude: str, cap: int) -> d
     return out
 
 
-def campaign_block(cfg: Any) -> dict:
-    """The campaign paths every workflow prompt quotes (no scratchpad paths)."""
+def source_block(cfg: Any, source_id: str) -> dict:
+    """One source's paths and identity, as a workflow prompt quotes them."""
     paths = cfg.paths
+    src = cfg.source(source_id)
+    return {
+        "source_id": src.id,
+        "title": src.title or src.id,
+        "edition": src.edition,
+        "source_sha": src.sha256,
+        "page_offset": src.offset,
+        "pages_dir": str(paths.source_pages_dir(src.id)),
+        "text": str(paths.source_text(src.id)),
+        "items_json": str(paths.source_items(src.id)),
+        "errata": str(paths.source_errata_md(src.id)),
+        "errata_url": src.errata_url,
+    }
+
+
+def workspace_block(cfg: Any, source_ids: Iterable[str] = ()) -> dict:
+    """The workspace paths every workflow prompt quotes (no scratchpad paths).
+
+    ``sources`` is a LIST: a companion is audited against a list of sources, and
+    an adjudicator told only about "the book" cannot know which of two editions
+    a finding read.  Each finding row carries its own ``source_id``, and this
+    block is what turns that id into a path the agent can actually open.
+    """
+    paths = cfg.paths
+    ids = [str(s) for s in source_ids] or cfg.source_ids()
     return {
         "dir": paths.root,
-        "book_id": cfg.book_id,
-        "book_title": cfg.title,
-        "book_sha": cfg.book_sha,
-        "pdf_page_offset": cfg.offset,
-        "book_pages_dir": str(getattr(paths, "pages_dir", "")),
-        "book_layout_txt": str(getattr(paths, "book_txt", "")),
-        "items_json": str(getattr(paths, "items_json", "")),
-        "errata": str(getattr(paths, "errata_md", "")),
-        "errata_url": cfg.errata_url,
+        "name": cfg.title,
+        "sources": [source_block(cfg, sid) for sid in ids],
     }
 
 
@@ -114,6 +132,7 @@ def companion_block(cfg: Any, name: str) -> dict:
     paths = cfg.paths
     state = compat.read_state(paths, name)
     entry = cfg.companion(name)
+    sources = cfg.sources_of(name) or cfg.source_ids()
     conventions_path = paths.conventions(name)
     conventions = ""
     if os.path.exists(conventions_path):
@@ -125,7 +144,12 @@ def companion_block(cfg: Any, name: str) -> dict:
         "commit": str(state.get("commit") or ""),
         "owner": str(entry.get("owner") or ""),
         "write_policy": str(entry.get("write_policy") or "read_only"),
-        "anchor": str(entry.get("anchor") or ""),
+        # The sources this companion is audited against, and the one whose
+        # PAGINATION its page anchors follow -- which is not always one it
+        # ships (tao-measure-lean bundles the 2011 draft and anchors to the
+        # published book).
+        "sources": list(sources),
+        "anchor_source": cfg.anchor_source(name),
         "statements": paths.statements(name),
         "conventions": conventions,
         "conventions_file": conventions_path,
@@ -175,6 +199,8 @@ def finding_blocks(
         block = {
             "finding_id": f.get("finding_id", ""),
             "run_id": f.get("run_id", ""),
+            "source_id": f.get("source_id", ""),
+            "source_sha": f.get("source_sha", ""),
             "item": f.get("item", ""),
             "kind": f.get("kind", ""),
             "severity": f.get("severity", ""),
@@ -199,6 +225,23 @@ def finding_blocks(
     return out
 
 
+def _sources_in(cfg: Any, companion: str, findings: Iterable[dict]) -> list:
+    """Which sources a workflow must be told about.
+
+    Every source the findings actually name, plus the companion's own list, so
+    an agent can always open the text a row quotes.  ``findings`` may be a
+    generator in principle, so it is materialised by the callers before this is
+    reached.
+    """
+    named = {str(f.get("source_id") or "") for f in findings}
+    named.discard("")
+    out = list(cfg.sources_of(companion))
+    for sid in sorted(named):
+        if sid not in out:
+            out.append(sid)
+    return out or cfg.source_ids()
+
+
 def build_adjudicate_args(
     cfg: Any,
     companion: str,
@@ -210,11 +253,14 @@ def build_adjudicate_args(
     contested_threshold: float = 0.7,
     notes: str = "",
     model: str = "opus",
+    source_ids: Iterable[str] = (),
 ) -> dict:
     """args for workflows/adjudicate.workflow.js."""
+    findings = list(findings)
+    ids = [str(s) for s in source_ids] or _sources_in(cfg, companion, findings)
     return {
         "workflow": "adjudicate",
-        "campaign": campaign_block(cfg),
+        "workspace": workspace_block(cfg, ids),
         "companion": companion_block(cfg, companion),
         "peers": peer_blocks(cfg, companion),
         "findings": finding_blocks(cfg, companion, findings),
@@ -235,11 +281,14 @@ def build_challenge_args(
     refuters: int = 2,
     notes: str = "",
     model: str = "opus",
+    source_ids: Iterable[str] = (),
 ) -> dict:
     """args for workflows/challenge.workflow.js."""
+    findings = list(findings)
+    ids = [str(s) for s in source_ids] or _sources_in(cfg, companion, findings)
     return {
         "workflow": "challenge",
-        "campaign": campaign_block(cfg),
+        "workspace": workspace_block(cfg, ids),
         "companion": companion_block(cfg, companion),
         "peers": peer_blocks(cfg, companion),
         "findings": finding_blocks(cfg, companion, findings),

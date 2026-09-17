@@ -17,7 +17,7 @@ another worker turn, so the agent count is a lower bound, not a total.
 
 Nothing in this module runs anything unless ``execute=True`` is passed, and
 cf run only passes it when the operator gave --execute for a host on the
-campaign's allowlist.
+workspace's allowlist.
 """
 from __future__ import annotations
 

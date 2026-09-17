@@ -7,9 +7,9 @@ path, the bridge path and the concurrency limits.
 
 Three controls the original had no place for (design/critique.json, risks):
 
-* **host allowlist** -- `cf run` automates rsync of private sources and
-  copyrighted book text to a machine the operator does not own, so the host must
-  be named in ``campaign.yaml: hosts.allowlist`` or the command refuses;
+* **host allowlist** -- `cf run` automates rsync of private Lean repos and
+  copyrighted source text to a machine the operator does not own, so the host
+  must be named in ``workspace.yaml: hosts.allowlist`` or the command refuses;
 * **consent** -- ``--i-have-consent`` is recorded in run.yaml with the operator
   and timestamp, so a run can always be traced to a person who agreed to it;
 * **out-of-tree gate** -- the gate used to live at ``scripts/verify_findings.py``
@@ -17,8 +17,15 @@ Three controls the original had no place for (design/critique.json, risks):
   passed the gate twice" proved nothing.  The gate is transferred to its own
   directory beside the entrypoint, never into it.
 
-Sources and the book are excluded unless ``--include-sources`` /
-``--include-book`` are given, and both facts are recorded in run.yaml.
+Companion repos and source text are excluded unless ``--include-sources`` /
+``--include-source-text`` are given, and both facts are recorded in run.yaml.
+
+A run transfers ONLY the sources it needs: ``source_shas(workspace, run)`` reads
+``run.yaml``'s ``sources`` list, so a workspace holding two editions of one work
+does not ship the edition this run never reads.  The companion repos go to
+``<root>/repos/<name>/`` and the source texts to ``<root>/sources/<source_id>/``
+-- two directories, because one ``sources/`` holding both would let a companion
+named after a source overwrite it.
 """
 from __future__ import annotations
 
@@ -47,20 +54,20 @@ def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def resolve_host(campaign, host: str) -> dict:
-    """Resolve *host* against ``campaign.yaml: hosts`` or raise.
+def resolve_host(workspace, host: str) -> dict:
+    """Resolve *host* against ``workspace.yaml: hosts`` or raise.
 
-    ``Campaign.check_host`` is the enforcement point (it refuses anything not in
+    ``Workspace.check_host`` is the enforcement point (it refuses anything not in
     ``hosts.allowlist``); this adds the connection facts the commands need:
     ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes}``.
     """
-    campaign.check_host(host)
-    hosts = _as_dict(campaign.hosts)
+    workspace.check_host(host)
+    hosts = _as_dict(workspace.hosts)
     entry = _as_dict(hosts.get(host)) or _as_dict(_as_dict(hosts.get("entries")).get(host))
     ssh = entry.get("ssh") or entry.get("target") or host
     remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
                       or f"/home/{os.environ.get('USER', 'jack')}").rstrip("/")
-    budget_gb = campaign.default("worktree_budget_gb", None)
+    budget_gb = workspace.default("worktree_budget_gb", None)
     return {
         "name": host,
         "ssh": str(ssh),
@@ -88,8 +95,12 @@ def remote_names(run: dict, run_id: str) -> dict:
         "entrypoint": str(entry),
         "tend_root": str(tend_root),
         "gate": str(remote.get("gate") or f"{run_id}-gate"),
-        "book": str(remote.get("book") or "book"),
+        # Two distinct roots on purpose: `sources/<source_id>/` is COPYRIGHTED
+        # source text, `repos/<companion>/` is the read-only Lean. One shared
+        # directory would let a companion whose name matched a source_id land on
+        # top of the text every quote is checked against.
         "sources": str(remote.get("sources") or "sources"),
+        "repos": str(remote.get("repos") or "repos"),
     }
 
 
@@ -180,25 +191,27 @@ def _entry(name: str, src, dest: str, *, required: bool = True,
     }
 
 
-def build_manifest(*, campaign_dir: Path, skill_dir: Path, run_id: str, run: dict,
-                   host: dict, include_sources: bool, include_book: bool,
+def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: dict,
+                   host: dict, include_sources: bool = False, include_texts: bool = False,
                    companions: dict[str, str] | None = None) -> tuple[list[dict], list[str]]:
     """Build the rsync manifest for one run.
 
-    The sources are what ``cf plan-run`` staged under ``runs/<run-id>/``:
+    The pieces are what ``cf plan-run`` staged under ``runs/<run-id>/``:
     ``tasks/`` and ``data/`` are the entrypoint repo, ``tend-root/`` is the
     orchestration root (config.yaml, .tend/, bin/ wrappers, prompts/), and
     ``tend-root/gate/`` is the gate -- which goes to its OWN remote directory,
     never inside the entrypoint the worker commits to.
 
     ``companions`` maps companion name -> repo path; it is only consulted when
-    ``include_sources`` is set.  Returns (entries, warnings); a missing REQUIRED
-    component is a warning here and an error in ``cf run --execute``, so the dry
-    run can still show the whole plan.
+    ``include_sources`` is set.  ``include_texts`` ships the COPYRIGHTED text of
+    every source ``run.yaml`` names -- and only those: a workspace holding two
+    editions of one work sends the one this run reads, never both.  Returns
+    (entries, warnings); a missing REQUIRED component is a warning here and an
+    error in ``cf run --execute``, so the dry run can still show the whole plan.
     """
     names = remote_names(run, run_id)
     root = host["remote_root"]
-    rd = campaign_dir / "runs" / run_id
+    rd = workspace_dir / "runs" / run_id
     tend_root = rd / "tend-root"
     entries: list[dict] = []
     warnings: list[str] = []
@@ -235,7 +248,7 @@ def build_manifest(*, campaign_dir: Path, skill_dir: Path, run_id: str, run: dic
                               f"{root}/{names['gate']}/verify_findings.py",
                               note="OUT OF TREE: the worktree must never contain the gate"))
         entries.append(_entry("gate-config", rd / "gate.json", f"{root}/{names['gate']}/gate.json",
-                              note="kinds/verdicts/witness/book_sha for this run's mode"))
+                              note="kinds/verdicts/witness/sources for this run's mode"))
 
     if not _bridges_staged(tend_root):
         entries.append(_entry("bridges", [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES],
@@ -244,31 +257,37 @@ def build_manifest(*, campaign_dir: Path, skill_dir: Path, run_id: str, run: dic
 
     if include_sources:
         for name, repo in sorted((companions or {}).items()):
-            entries.append(_entry(f"source:{name}", Path(repo).expanduser(),
-                                  f"{root}/{names['sources']}/{name}/",
+            entries.append(_entry(f"repo:{name}", Path(repo).expanduser(),
+                                  f"{root}/{names['repos']}/{name}/",
                                   flags=READONLY_CHMOD + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
-                                  note="companion sources, transferred read-only"))
+                                  note="companion Lean sources, transferred read-only"))
         if not companions:
-            warnings.append("--include-sources was given but campaign.yaml lists no companion repos")
-    if include_book:
-        book_id = str(_as_dict(run.get("book")).get("id") or run.get("book_id") or "")
-        if not book_id:
-            warnings.append("--include-book was given but run.yaml names no book id")
-        else:
-            book_dir = campaign_dir / "book" / book_id
-            dest = f"{root}/{names['book']}/{book_id}"
-            entries.append(_entry("book-text", book_dir / "book.txt", f"{dest}/book.txt",
-                                  note="COPYRIGHTED: leaves this machine only with --include-book"))
-            if (book_dir / "errata.md").exists():
-                entries.append(_entry("book-errata", book_dir / "errata.md", f"{dest}/errata.md",
+            warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
+    wants_images = "image" in source_access(run).lower()
+    if include_texts:
+        source_ids = run_source_ids(run)
+        if not source_ids:
+            warnings.append("--include-source-text was given but run.yaml names no sources")
+        for source_id in source_ids:
+            sdir = workspace_dir / "sources" / source_id
+            dest = f"{root}/{names['sources']}/{source_id}"
+            entries.append(_entry(f"source-text:{source_id}", sdir / "text.txt",
+                                  f"{dest}/text.txt",
+                                  note="COPYRIGHTED: leaves this machine only with "
+                                       "--include-source-text"))
+            if (sdir / "errata.md").exists():
+                entries.append(_entry(f"source-errata:{source_id}", sdir / "errata.md",
+                                      f"{dest}/errata.md",
                                       note="live errata, as fetched (never a summary)"))
-            if "image" in book_access(run).lower():
-                entries.append(_entry("book-images", book_dir / "images", f"{dest}/images/",
+            if wants_images:
+                entries.append(_entry(f"source-images:{source_id}", sdir / "images",
+                                      f"{dest}/images/",
                                       note="COPYRIGHTED page images (the hunt run reads notation "
                                            "pdftotext drops)"))
-    elif "image" in book_access(run).lower():
-        warnings.append("this run's book_access asks for page images but --include-book was not "
-                        "given: the workers will have no book on the host")
+    elif wants_images:
+        warnings.append("this run's source access asks for page images but "
+                        "--include-source-text was not given: the workers will have no source "
+                        "text on the host")
 
     for entry in entries:
         if entry["required"] and not entry["exists"]:
@@ -305,15 +324,19 @@ def planned_consent(run: dict) -> dict:
     return _as_dict(run.get("consent"))
 
 
-def book_access(run: dict) -> str:
-    """'text' or 'text+images' -- what the workers may read of the book."""
-    book = _as_dict(run.get("book"))
-    return str(book.get("access") or run.get("book_access") or "text")
+def source_access(run: dict) -> str:
+    """'text' or 'text+images' -- what the workers may read of the source."""
+    access = _as_dict(run.get("source_access"))
+    return str(access.get("access") if access else None
+               or run.get("source_access")
+               or _as_dict(run.get("book")).get("access")
+               or run.get("book_access")
+               or "text")
 
 
-def task_count(campaign_dir: Path, run_id: str, run: dict) -> int:
+def task_count(workspace_dir: Path, run_id: str, run: dict) -> int:
     """Number of task files actually staged (falls back to run.yaml's count)."""
-    tasks = campaign_dir / "runs" / run_id / "tasks"
+    tasks = workspace_dir / "runs" / run_id / "tasks"
     if tasks.is_dir():
         return sum(1 for p in tasks.iterdir() if p.suffix in (".yaml", ".yml"))
     value = run.get("tasks")
@@ -354,7 +377,7 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
     return out
 
 
-def check_budget_cap(campaign, run: dict, max_cost: float | None,
+def check_budget_cap(workspace, run: dict, max_cost: float | None,
                      no_budget_cap: bool) -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
@@ -364,7 +387,7 @@ def check_budget_cap(campaign, run: dict, max_cost: float | None,
     the gateway; tend's own --max-cost counts tend-agent sessions only.
     """
     run_budget = _as_dict(run.get("budget"))
-    budget = _as_dict(getattr(campaign, "budget", {}))
+    budget = _as_dict(getattr(workspace, "budget", {}))
     currency = str(run_budget.get("currency") or budget.get("currency") or "USD")
     value = max_cost
     if value is None:
@@ -377,7 +400,7 @@ def check_budget_cap(campaign, run: dict, max_cost: float | None,
                 break
     if value is None and not no_budget_cap:
         raise CfError(
-            "no spend ceiling: pass --max-cost N, set budget.max_cost in campaign.yaml, "
+            "no spend ceiling: pass --max-cost N, set budget.max_cost in workspace.yaml, "
             "or acknowledge the risk with --no-budget-cap",
             hint="agentbox hides token usage from tend (aggregate usage: input=0), so an "
                  "uncapped run's only limit is the subscription session limit",
@@ -392,27 +415,76 @@ def check_budget_cap(campaign, run: dict, max_cost: float | None,
     }
 
 
-def companion_repos(campaign) -> dict[str, str]:
-    """{companion name: repo path} from campaign.yaml."""
+def companion_repos(workspace, names: Any = None) -> dict[str, str]:
+    """{companion name: repo path} from workspace.yaml (all, or just ``names``)."""
+    wanted = {str(n) for n in names} if names is not None else None
     out: dict[str, str] = {}
-    for entry in campaign.companions:
-        if isinstance(entry, dict) and entry.get("name") and entry.get("repo"):
-            out[str(entry["name"])] = str(entry["repo"])
+    for name, ref in workspace.companions.items():
+        if wanted is not None and name not in wanted:
+            continue
+        if ref.repo:
+            out[str(name)] = str(ref.repo)
     return out
 
 
-def book_sha(campaign, run: dict) -> str:
-    """The pinned edition sha -- run.yaml's when present, else the campaign's."""
-    book = _as_dict(run.get("book"))
-    for key in ("sha256", "sha", "book_sha"):
-        if book.get(key):
-            return str(book[key])
-    if run.get("book_sha"):
-        return str(run["book_sha"])
-    return str(campaign.book_sha or "")
+def run_source_ids(run: dict) -> list[str]:
+    """The source ids one run reads, in ``run.yaml`` order.
+
+    ``sources`` is a LIST of ids (or a map of id -> body); a run plans against
+    one source today, but the manifest must not assume it, because the thing
+    that decides what leaves this machine has to be the run's own record.
+    """
+    value = run.get("sources")
+    if isinstance(value, dict):
+        return [str(k) for k in value]
+    if isinstance(value, (list, tuple)):
+        out = []
+        for entry in value:
+            out.append(str(entry.get("id") or entry.get("source_id") or "")
+                       if isinstance(entry, dict) else str(entry))
+        return [v for v in out if v]
+    if run.get("source_id"):
+        return [str(run["source_id"])]
+    return []
 
 
-def gate_config_warnings(campaign_dir: Path, run_id: str, host: dict, run: dict) -> list[str]:
+def source_shas(workspace, run: dict) -> dict[str, str]:
+    """``{source_id: sha256}`` for the sources this run reads (was ``book_sha``).
+
+    run.yaml's own record wins, so a landed corpus is always checked against the
+    edition the run was PLANNED with; the workspace fills a gap.  A source the
+    workspace does not know is left out rather than guessed at -- the harvest
+    audit then reports it as unexpected instead of silently accepting it.
+    """
+    declared = run.get("sources")
+    out: dict[str, str] = {}
+    if isinstance(declared, dict):
+        for sid, body in declared.items():
+            if isinstance(body, dict):
+                sha = body.get("sha256") or body.get("sha") or body.get("source_sha")
+            else:
+                sha = body
+            if sha:
+                out[str(sid)] = str(sha)
+    elif isinstance(declared, (list, tuple)):
+        for entry in declared:
+            if isinstance(entry, dict) and entry.get("id"):
+                sha = entry.get("sha256") or entry.get("sha") or entry.get("source_sha")
+                if sha:
+                    out[str(entry["id"])] = str(sha)
+    for sid in run_source_ids(run):
+        if sid in out:
+            continue
+        try:
+            ref = workspace.source(sid)
+        except Exception:  # noqa: BLE001 - an unknown source is reported, not fatal here
+            continue
+        if ref.sha256:
+            out[sid] = str(ref.sha256)
+    return out
+
+
+def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict) -> list[str]:
     """Check the staged tend config actually calls the OUT-OF-TREE gate.
 
     The defect this catches (design/critique.json, gaps): both
@@ -424,7 +496,7 @@ def gate_config_warnings(campaign_dir: Path, run_id: str, host: dict, run: dict)
     """
     names = remote_names(run, run_id)
     gate_path = f"{host['remote_root']}/{names['gate']}/verify_findings.py"
-    config = campaign_dir / "runs" / run_id / "tend-root" / "config.yaml"
+    config = workspace_dir / "runs" / run_id / "tend-root" / "config.yaml"
     if not config.exists():
         return [f"runs/{run_id}/tend-root/config.yaml is missing; `cf plan-run` writes it"]
     text = config.read_text(encoding="utf-8", errors="replace")

@@ -16,7 +16,7 @@ block leaves no blank line behind. An unknown ``{{name}}`` raises ``TemplateErro
 the template name in the message: a prompt with an unfilled slot must never
 reach a worker.
 
-``cflib.templates.render`` is deliberately NOT reused: it is the campaign-file
+``cflib.templates.render`` is deliberately NOT reused: it is the workspace-file
 renderer (plain ``{{ key }}`` substitution, no blocks, different missing-slot
 semantics), and cflib says so in its own docstring. Prompts need the blocks, so
 this is the second and last renderer in the skill.

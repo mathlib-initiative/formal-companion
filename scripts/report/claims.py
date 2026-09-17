@@ -3,7 +3,7 @@
 Ported from: the hand-written lens list and source list in
 recovered/verify-audit-summary-wf_9da8dddd-e4b.js, which hard-coded five audit
 corpora, two repo checkouts, six note files and a PR list.  Here the same lenses
-are generated from the campaign's own paths, and the numbers lens is generated
+are generated from the workspace's own paths, and the numbers lens is generated
 from the verification commands the handoff already prints -- so the verifier
 re-derives figures with the commands the report claims produce them.
 """
@@ -20,9 +20,9 @@ def _exists(path: str) -> bool:
     return bool(path) and os.path.exists(path)
 
 
-def build_sources(campaign: str, companions: Iterable[str], campaign_cfg: Any) -> list[dict]:
-    """The primary sources a verifier is allowed to re-derive claims from."""
-    paths = campaign_cfg.paths
+def build_sources(workspace: str, companions: Iterable[str], cfg: Any) -> list[dict]:
+    """The primary artifacts a verifier is allowed to re-derive claims from."""
+    paths = cfg.paths
     out: list[dict] = []
     corpus = paths.corpus()
     if _exists(corpus):
@@ -70,22 +70,33 @@ def build_sources(campaign: str, companions: Iterable[str], campaign_cfg: Any) -
             )
         if _exists(paths.state(name)):
             out.append({"label": "state.json for `%s`" % name, "path": paths.state(name), "note": ""})
-    book_dir = str(getattr(paths, "book_dir", ""))
-    if book_dir and _exists(book_dir):
+    # One entry per SOURCE. A workspace can hold two editions of one work, and a
+    # verifier told about "the book" would check a quote against whichever it
+    # opened first.
+    for source_id in cfg.source_ids():
+        src = cfg.source(source_id)
+        sdir = str(paths.source_dir(source_id))
+        if not _exists(sdir):
+            continue
         out.append(
             {
-                "label": "book text and page map (gitignored, never leaves the campaign dir)",
-                "path": book_dir,
-                "note": "sha256 %s" % campaign_cfg.book_sha,
+                "label": "source `%s` -- text and page map "
+                         "(gitignored, never leaves the workspace dir)" % source_id,
+                "path": sdir,
+                "note": "sha256 %s; printed page = PDF page - %d%s"
+                        % (src.sha256 or "(unknown)", src.offset,
+                           "; errata %s" % src.errata_url if src.errata_url else ""),
             }
         )
     return out
 
 
-def default_lenses(campaign: str, companions: Iterable[str]) -> list[dict]:
+def default_lenses(workspace: str, companions: Iterable[str], cfg: Any = None) -> list[dict]:
     """The claim lenses, generalised from the six that found 19 wrong claims."""
-    paths = compat.load_campaign(campaign).paths
+    cfg = cfg if cfg is not None else compat.load_workspace(workspace)
+    paths = cfg.paths
     names = ", ".join("`%s`" % n for n in companions) or "(none)"
+    source_names = ", ".join("`%s`" % s for s in cfg.source_ids()) or "(none)"
     return [
         {
             "key": "corpus-numbers",
@@ -106,9 +117,10 @@ def default_lenses(campaign: str, companions: Iterable[str]) -> list[dict]:
                 "Verify the routing rule actually used ('row names a declaration of the repo in "
                 "unfaithful_decls') by re-running it yourself over the corpus and comparing your count with "
                 "the routed file's `_meta.counts`. Verify that every ledger row's finding_id appears in the "
-                "corpus, that CONVENTION rows carry a recovery argument, and that book_sha matches the pinned "
-                "edition everywhere. If the draft presents any finding as confirmed while its routed status is "
-                "UNCHALLENGED, that claim is WRONG." % names
+                "corpus, that CONVENTION rows carry a recovery argument, and that every row's source_id is "
+                "one of %s with the source_sha that workspace.yaml pins for it. If the draft presents any "
+                "finding as confirmed while its routed status is UNCHALLENGED, that claim is WRONG."
+                % (names, source_names)
             ),
         },
         {
@@ -120,7 +132,9 @@ def default_lenses(campaign: str, companions: Iterable[str]) -> list[dict]:
                 "finding rests on a fabricated quote. Check these against run.yaml, the workflow scripts in "
                 "the skill's workflows/ directory and the ledger's `method` fields, not against prose. Also "
                 "check the scope disclaimer: this version of the pipeline produces FINDINGS ONLY -- if the "
-                "draft claims a fix, a PR review or a camera-ready audit as work this pipeline did, it is WRONG."
+                "draft claims a fix, a PR review or a camera-ready audit as work this pipeline did, it is WRONG. "
+                "Also check every claim about WHICH SOURCE was read: a run audits one source, and a number "
+                "that pools two editions of one work is WRONG even when both editions were audited."
             ),
         },
         {
@@ -129,7 +143,7 @@ def default_lenses(campaign: str, companions: Iterable[str]) -> list[dict]:
                 "CLAIMS ABOUT OTHER PEOPLE'S REPOSITORIES. List every sentence that asserts something about a "
                 "companion repository (that it is unfaithful somewhere, that it is clean, that it stops at a "
                 "section, that a defect was fixed). For each, check the evidence actually present in the "
-                "campaign: a ledger row with a verdict, a routed row with status CHALLENGED, or a computed "
+                "workspace: a ledger row with a verdict, a routed row with status CHALLENGED, or a computed "
                 "coverage figure. An adjudicated-but-unchallenged finding does not support a claim about "
                 "someone else's repository. Mark anything stronger than its evidence WRONG and give the "
                 "weaker wording the evidence does support."
@@ -138,7 +152,8 @@ def default_lenses(campaign: str, companions: Iterable[str]) -> list[dict]:
     ]
 
 
-def numbers_block(campaign: str, verification_commands: str, extra_checks: Iterable[str] = ()) -> dict:
+def numbers_block(workspace: str, verification_commands: str,
+                  extra_checks: Iterable[str] = ()) -> dict:
     """The independent second vote on the numbers."""
     commands = [
         line.strip()
@@ -149,29 +164,30 @@ def numbers_block(campaign: str, verification_commands: str, extra_checks: Itera
         "every count and every denominator in the draft",
         "that any 'nothing is open' claim ships with the command that recomputes it",
         "that counts taken over the corpus name the runs they cover",
-        "that the book edition sha256 in the draft is the pinned one",
+        "that every source_id and source_sha in the draft is one workspace.yaml pins",
     ]
     return {"enabled": True, "commands": commands, "checks": checks}
 
 
 def build_args(
-    campaign: str,
+    workspace: str,
     *,
     draft: str,
     companions: Iterable[str],
-    campaign_cfg: Any = None,
+    workspace_cfg: Any = None,
     verification_commands: str = "",
     appendix: str = "",
     lenses: Iterable[dict] | None = None,
 ) -> dict:
     """Assemble the full args object for verify-claims.workflow.js."""
     companions = list(companions)
-    cfg = campaign_cfg if campaign_cfg is not None else compat.load_campaign(campaign)
+    cfg = workspace_cfg if workspace_cfg is not None else compat.load_workspace(workspace)
     return {
         "draft": draft,
-        "sources": build_sources(campaign, companions, cfg),
-        "lenses": list(lenses) if lenses is not None else default_lenses(campaign, companions),
-        "numbers": numbers_block(campaign, verification_commands),
+        "sources": build_sources(workspace, companions, cfg),
+        "lenses": (list(lenses) if lenses is not None
+                   else default_lenses(workspace, companions, cfg)),
+        "numbers": numbers_block(workspace, verification_commands),
         "extra": {"appendix": appendix} if appendix else {},
         "model": "opus",
     }

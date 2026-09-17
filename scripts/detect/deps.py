@@ -11,7 +11,7 @@ statement closure L241-252 / L285-295 and the generated-name filter L213.
      "referenced":     [{"name", "module", "kind"}]}
 
 The file is ~3.6 MB for measure_theory and is *never* committed: it is written
-outside the companion tree and lives in the campaign's ``detect/<name>/``.
+outside the companion tree and lives in the workspace's ``detect/<name>/``.
 """
 from __future__ import annotations
 

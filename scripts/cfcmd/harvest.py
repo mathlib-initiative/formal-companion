@@ -19,7 +19,7 @@ from pathlib import Path
 
 from cflib import log
 from cflib import state as state_mod
-from cflib.campaign import from_args
+from cflib.workspace import from_args
 from cflib.errors import CfError
 from cflib.jsonio import write_json
 from cflib.yamlio import read_yaml
@@ -48,21 +48,26 @@ def register(subparsers) -> None:
                    help="with --gate: the gate.json to use (default: runs/<id>/gate.local.json)")
     p.add_argument("--allow-edition-mismatch", action="store_true",
                    help="accept findings judged against another edition (they are refused by default)")
+    # NOT `--source`: that dest already belongs to `--from` above, and argparse
+    # would silently make the two the same option.
+    p.add_argument("--source-id", dest="source_id", default=None,
+                   help="with --journal: the source_id the recovered findings read "
+                        "(default: the run's single source)")
     p.add_argument("--no-tally", action="store_true", help="skip recomputing the tally")
 
 
 def run(args) -> int:
-    campaign = from_args(args)
-    paths = campaign.paths
+    workspace = from_args(args)
+    paths = workspace.paths
     dest = Path(paths.corpus_run_dir(args.run_id))
     run_yaml_path = Path(paths.run_yaml(args.run_id))
     data = read_yaml(run_yaml_path) if run_yaml_path.exists() else {}
     data = data if isinstance(data, dict) else {}
 
     if args.journal:
-        receipt = _from_journal(campaign, args, dest)
+        receipt = _from_journal(workspace, args, dest, data)
     else:
-        receipt = _from_findings(campaign, args, data, dest, run_yaml_path)
+        receipt = _from_findings(workspace, args, data, dest, run_yaml_path)
 
     log.info(harvest_mod.describe(receipt))
     if receipt["missing"] or receipt["sha_mismatched"]:
@@ -76,12 +81,12 @@ def run(args) -> int:
                  "this corpus. Re-run them against the pinned edition, or pass "
                  "--allow-edition-mismatch and say so in the report.")
 
-    counts = {} if args.no_tally else _tally(campaign, args.run_id, dest)
-    _record_state(campaign, args.run_id, data, receipt, counts)
+    counts = {} if args.no_tally else _tally(workspace, args.run_id, dest)
+    _record_state(workspace, args.run_id, data, receipt, counts)
     return 0 if receipt["complete"] else 1
 
 
-def _from_findings(campaign, args, data: dict, dest: Path, run_yaml_path: Path) -> dict:
+def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path) -> dict:
     if args.source:
         source = harvest_mod.parse_source(args.source)
         # `--from host:/path` used to skip the allowlist entirely -- only the
@@ -89,9 +94,9 @@ def _from_findings(campaign, args, data: dict, dest: Path, run_yaml_path: Path) 
         # would ssh to any host named on the command line and pull whatever JSON
         # it found straight into the corpus every tally and ledger is built from.
         if source["kind"] == "remote":
-            _check_remote_source(campaign, args, source)
+            _check_remote_source(workspace, args, source)
     else:
-        source = _default_source(campaign, args, data)
+        source = _default_source(workspace, args, data)
     if source["kind"] == "remote" and not args.execute:
         log.info(f"# dry run: harvesting {source['host']}:{source['path']} -> {dest}")
         for step in harvest_mod.list_commands(source, dest):
@@ -100,21 +105,21 @@ def _from_findings(campaign, args, data: dict, dest: Path, run_yaml_path: Path) 
                       hint="the commands above are exactly what it will run")
     return harvest_mod.harvest(
         run_id=args.run_id, source=source, dest=dest,
-        book_sha=manifest.book_sha(campaign, data),
+        sources=manifest.source_shas(workspace, data),
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate_runner=gate_runner(campaign, args))
+        gate_runner=gate_runner(workspace, args))
 
 
-def _check_remote_source(campaign, args, source: dict) -> None:
+def _check_remote_source(workspace, args, source: dict) -> None:
     """A remote ``--from`` obeys the same allowlist and consent rule as ``cf run``."""
     ssh = str(source.get("host") or "")
-    # hosts.allowlist names campaign aliases; resolve_host maps alias -> ssh name,
+    # hosts.allowlist names workspace aliases; resolve_host maps alias -> ssh name,
     # so accept either spelling and refuse anything neither matches.
-    for alias in campaign.host_allowlist:
+    for alias in workspace.host_allowlist:
         try:
-            host = manifest.resolve_host(campaign, alias)
+            host = manifest.resolve_host(workspace, alias)
         except CfError:
             continue
         if ssh in (alias, host.get("ssh")):
@@ -122,7 +127,7 @@ def _check_remote_source(campaign, args, source: dict) -> None:
     else:
         raise CfError(
             f"host {ssh!r} is not in hosts.allowlist",
-            hint="add it to campaign.yaml hosts.allowlist; harvest ssh/rsyncs from that box "
+            hint="add it to workspace.yaml hosts.allowlist; harvest ssh/rsyncs from that box "
                  "and lands whatever it finds in the corpus every number is computed from")
     if not args.i_have_consent:
         raise CfError(
@@ -130,11 +135,11 @@ def _check_remote_source(campaign, args, source: dict) -> None:
             hint="this moves data from a machine you may not own onto this one")
 
 
-def gate_runner(campaign, args):
+def gate_runner(workspace, args):
     """A callable harvest() invokes on the landed corpus, or None when --gate is off."""
     if not getattr(args, "gate", False):
         return None
-    config = args.gate_config or Path(campaign.paths.run_dir(args.run_id)) / "gate.local.json"
+    config = args.gate_config or Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
 
     def _run_gate(dest: Path) -> dict:
         result = gate_mod.gate_corpus(dest, config)
@@ -144,7 +149,7 @@ def gate_runner(campaign, args):
     return _run_gate
 
 
-def _default_source(campaign, args, data: dict) -> dict:
+def _default_source(workspace, args, data: dict) -> dict:
     """The findings directory on the host run.yaml recorded."""
     block = data.get("run") if isinstance(data.get("run"), dict) else {}
     planned = data.get("host") if isinstance(data.get("host"), dict) else {}
@@ -152,18 +157,24 @@ def _default_source(campaign, args, data: dict) -> dict:
     if not host_name or host_name == "local":
         raise CfError(f"run.yaml for {args.run_id!r} records no host",
                       hint="pass --from <host:/path> or --from <local dir>")
-    host = manifest.resolve_host(campaign, host_name)
+    host = manifest.resolve_host(workspace, host_name)
     names = manifest.remote_names(data, args.run_id)
     return {"kind": "remote", "host": host["ssh"],
             "path": f"{host['remote_root']}/{names['entrypoint']}/findings"}
 
 
-def _from_journal(campaign, args, dest: Path) -> dict:
+def _from_journal(workspace, args, dest: Path, data: dict | None = None) -> dict:
     """Recover a local Workflow run, then receipt what was recovered."""
     workflow_dir = Path(args.journal)
+    sources = manifest.source_shas(workspace, data or {})
+    source_id = getattr(args, "source_id", None) or ""
+    if not source_id and len(sources) == 1:
+        source_id = next(iter(sources))
+    source_sha = sources.get(source_id, "")
     items, challenge_rows = harvest_journal.read_journal(workflow_dir)
     challenges = harvest_journal.link_challenges(items, challenge_rows)
-    written = harvest_journal.write_corpus(items, challenges, dest, args.run_id)
+    written = harvest_journal.write_corpus(items, challenges, dest, args.run_id,
+                                           source_id=source_id, source_sha=source_sha)
     summary = harvest_journal.summarise(items, challenges)
     if args.queue:
         todo = harvest_journal.remaining(Path(args.queue), items)
@@ -171,10 +182,10 @@ def _from_journal(campaign, args, dest: Path) -> dict:
         write_json(dest / "queue_remaining.json", todo, indent=1)
         log.info(f"{len(todo)} queue items still to do -> {dest / 'queue_remaining.json'}")
     log.info("journal: " + ", ".join(f"{k}={v}" for k, v in summary.items()))
-    runner = gate_runner(campaign, args)
+    runner = gate_runner(workspace, args)
     receipt = harvest_mod.build_receipt(
         run_id=args.run_id, source={"kind": "journal", "path": str(workflow_dir)},
-        expected=written, dest=dest, book_sha=campaign.book_sha or "",
+        expected=written, dest=dest, sources=sources,
         allow_edition_mismatch=args.allow_edition_mismatch,
         gate=runner(dest) if runner else None)
     # A journal harvest is complete only against ITSELF: the run died, so the
@@ -184,10 +195,15 @@ def _from_journal(campaign, args, dest: Path) -> dict:
     return receipt
 
 
-def _tally(campaign, run_id: str, dest: Path) -> dict:
-    """Recompute this run's tally from the corpus and write reports/tally.<run>.json."""
-    result = tally_mod.tally({run_id: dest}, kinds=campaign.kinds, book_sha=campaign.book_sha or "")
-    out = Path(campaign.paths.tally_json(run_id))
+def _tally(workspace, run_id: str, dest: Path) -> dict:
+    """Recompute this run's tally from the corpus and write reports/tally.<run>.json.
+
+    The kinds map is per source: the grammar that decides which labels collapse
+    onto one item belongs to the source, not to the workspace.
+    """
+    kinds = {sid: list(workspace.kinds(sid)) for sid in workspace.source_ids()}
+    result = tally_mod.tally({run_id: dest}, kinds=kinds)
+    out = Path(workspace.paths.tally_json(run_id))
     out.parent.mkdir(parents=True, exist_ok=True)
     write_json(out, result, indent=1, sort_keys=True)
     log.info("")
@@ -207,13 +223,13 @@ def _companions(data: dict) -> list[str]:
     return []
 
 
-def _record_state(campaign, run_id: str, data: dict, receipt: dict, counts: dict) -> None:
+def _record_state(workspace, run_id: str, data: dict, receipt: dict, counts: dict) -> None:
     """Record findings/receipt counts against every companion the run covers."""
-    names = _companions(data) or campaign.companion_names()
+    names = _companions(data) or workspace.companion_names()
     repos = (counts.get("repos") or {}) if counts else {}
     for name in names:
         try:
-            with state_mod.update(campaign, str(name)) as state:
+            with state_mod.update(workspace, str(name)) as state:
                 values = {
                     "findings": receipt["actual"]["count"],
                     "expected": receipt["expected"]["count"],

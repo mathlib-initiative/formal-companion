@@ -11,9 +11,9 @@ turned into a command that cannot skip its own safety steps:
 
 Three refusals are the point of the command:
 
-* a host that is not in ``campaign.yaml hosts.allowlist``;
+* a host that is not in ``workspace.yaml hosts.allowlist``;
 * a run without ``--i-have-consent`` (recorded in run.yaml with who and when),
-  because this rsyncs private Lean sources and copyrighted book text to a box
+  because this rsyncs private Lean sources and copyrighted source text to a box
   the operator does not own;
 * raising concurrency before a human watched one task go worker -> gate ->
   reviewer -> merge (``--smoke-verified``), and before a spend ceiling exists.
@@ -28,7 +28,7 @@ from pathlib import Path
 
 from cflib import log
 from cflib import state as state_mod
-from cflib.campaign import from_args
+from cflib.workspace import from_args
 from cflib.errors import CfError
 from cflib.yamlio import read_yaml, write_yaml
 
@@ -37,7 +37,7 @@ from run import fleet_local, manifest, remote, status as run_status
 DEFAULT_WORKERS = 6
 DEFAULT_REVIEWERS = 4
 #: references/traps.md C3: past this many concurrent sessions the API returns
-#: HTTP 409, per ACCOUNT, across campaigns. It was documentation only: `cf run`
+#: HTTP 409, per ACCOUNT, across workspaces. It was documentation only: `cf run`
 #: accepted any --workers/--reviewers and planned the `tend-control limits` call
 #: without a word (24 + 12 = 36 sessions planned, no warning).
 DEFAULT_SESSION_CAP = 16
@@ -47,13 +47,13 @@ def register(subparsers) -> None:
     p = subparsers.add_parser(
         "run", help="transfer a planned run to a host and drive tend (dry run by default)")
     p.add_argument("run_id")
-    p.add_argument("--host", help="a host named in campaign.yaml hosts.allowlist")
+    p.add_argument("--host", help="a host named in workspace.yaml hosts.allowlist")
     p.add_argument("--i-have-consent", action="store_true",
                    help="the owner of that host agreed to this run; recorded in run.yaml")
     p.add_argument("--include-sources", action="store_true",
                    help="also transfer the companion repos (read-only)")
-    p.add_argument("--include-book", action="store_true",
-                   help="also transfer the book text/images (COPYRIGHTED)")
+    p.add_argument("--include-source-text", action="store_true", dest="include_source_text",
+                   help="also transfer this run's source text/images (COPYRIGHTED)")
     p.add_argument("--max-cost", type=float, help="spend ceiling for this run")
     p.add_argument("--no-budget-cap", action="store_true",
                    help="acknowledge running without a ceiling")
@@ -77,8 +77,8 @@ def register(subparsers) -> None:
 
 
 def run(args) -> int:
-    campaign = from_args(args)
-    paths = campaign.paths
+    workspace = from_args(args)
+    paths = workspace.paths
     run_yaml_path = paths.run_yaml(args.run_id)
     if not run_yaml_path.exists():
         raise CfError(f"no run.yaml for run {args.run_id!r} ({run_yaml_path})",
@@ -88,21 +88,21 @@ def run(args) -> int:
         raise CfError(f"{run_yaml_path} is not a YAML mapping")
 
     if args.show_status:
-        return _status(campaign, args, data)
+        return _status(workspace, args, data)
     planned_host = data.get("host") if isinstance(data.get("host"), dict) else {}
     if args.local or (not args.host and planned_host.get("kind") == "local"):
         # A run planned with `--host local` carries this machine's absolute paths;
         # it can only be run by the local Workflow fleet.
-        return _local(campaign, args, data)
-    return _server(campaign, args, data, run_yaml_path)
+        return _local(workspace, args, data)
+    return _server(workspace, args, data, run_yaml_path)
 
 
 # ---------------------------------------------------------------------------
 # status
 
 
-def _status(campaign, args, data: dict) -> int:
-    paths = campaign.paths
+def _status(workspace, args, data: dict) -> int:
+    paths = workspace.paths
     planned = run_status.planned_status(paths, args.run_id)
     corpus = run_status.corpus_status(paths, args.run_id)
     journal = None
@@ -110,14 +110,14 @@ def _status(campaign, args, data: dict) -> int:
         journal = run_status.journal_counts(Path(args.journal))
     log.info(run_status.render(args.run_id, planned, corpus, journal))
 
-    # `--status` is read-only and answers from the campaign directory, so a run
-    # planned for `local` (or for a host the campaign never allowlisted) must
+    # `--status` is read-only and answers from the workspace directory, so a run
+    # planned for `local` (or for a host the workspace never allowlisted) must
     # still print its status instead of failing the allowlist check.
     host_name = args.host or planned.get("host")
     if host_name in (None, "", "local"):
         return 0
     try:
-        host = manifest.resolve_host(campaign, host_name)
+        host = manifest.resolve_host(workspace, host_name)
     except CfError as exc:
         log.warn(f"no remote status: {exc}")
         return 0
@@ -154,15 +154,15 @@ def _conventions_text(paths, name: str) -> str:
     return text
 
 
-def _local_repos(campaign, data: dict) -> list[dict]:
+def _local_repos(workspace, data: dict) -> list[dict]:
     """``args.repos``: {name, repo, statements, conventions} per companion."""
-    paths = campaign.paths
-    names = [str(r) for r in (data.get("repos") or [])] or campaign.companion_names()
+    paths = workspace.paths
+    names = [str(r) for r in (data.get("repos") or [])] or workspace.companion_names()
     out = []
     for name in names:
         entry = {}
         try:
-            entry = campaign.companion(name)
+            entry = workspace.companion(name)
         except CfError:
             pass
         out.append({
@@ -174,28 +174,39 @@ def _local_repos(campaign, data: dict) -> list[dict]:
     return out
 
 
-def _local_item_meta(campaign, data: dict) -> tuple[dict[str, dict], str | None]:
-    """``{item: {repos, pdf_pages}}`` from the same universe ``plan-run`` used.
+def _run_source(workspace, data: dict) -> str:
+    """The source_id this run was planned for (run.yaml is the record)."""
+    ids = manifest.run_source_ids(data)
+    if ids:
+        return ids[0]
+    listed = workspace.source_ids()
+    return listed[0] if len(listed) == 1 else ""
 
-    ``pairs/queue.json`` rows carry ``repos`` outright; ``pairs/targets.<name>.json``
-    rows carry ``peers`` and the file records whose targets they are, so the owning
-    companion has to be put back.  Without this every item reached the workflow with
-    ``repos: []`` and the prompt could not say which repositories formalise it.
+
+def _local_item_meta(workspace, data: dict) -> tuple[dict[str, dict], str | None]:
+    """``{item: {repos, pdf_pages, source_id}}`` from the universe ``plan-run`` used.
+
+    ``pairs/<source>/queue.json`` rows carry ``repos`` outright;
+    ``pairs/<source>/targets.<name>.json`` rows carry ``peers`` and the file
+    records whose targets they are, so the owning companion has to be put back.
+    Without this every item reached the workflow with ``repos: []`` and the
+    prompt could not say which repositories formalise it.
     """
     import json
 
-    paths = campaign.paths
+    paths = workspace.paths
     companion = data.get("companion")
-    sources: list[Path] = []
+    source_id = _run_source(workspace, data)
+    files: list[Path] = []
     if str(data.get("mode") or "").startswith("attack") and companion:
-        sources.append(paths.targets_json(str(companion)))
+        files.append(paths.targets_json(source_id, str(companion)))
     else:
-        sources.append(paths.queue_json)
-        sources += [paths.targets_json(n) for n in campaign.companion_names()]
+        files.append(paths.queue_json(source_id))
+        files += [paths.targets_json(source_id, n) for n in workspace.companion_names()]
 
     attack = str(data.get("mode") or "").startswith("attack")
     meta: dict[str, dict] = {}
-    for src in sources:
+    for src in files:
         if not Path(src).exists():
             continue
         doc = json.loads(Path(src).read_text(encoding="utf-8"))
@@ -204,7 +215,9 @@ def _local_item_meta(campaign, data: dict) -> tuple[dict[str, dict], str | None]
         for row in rows or []:
             if not isinstance(row, dict) or not row.get("item"):
                 continue
-            slot = meta.setdefault(str(row["item"]), {"repos": [], "pdf_pages": []})
+            slot = meta.setdefault(str(row["item"]),
+                                   {"repos": [], "pdf_pages": [],
+                                    "source_id": str(row.get("source_id") or source_id)})
             # An attack audits ONE companion: naming its peers here would put
             # repositories in the prompt that the run is not allowed to judge.
             found = ([str(companion)] if attack
@@ -215,33 +228,39 @@ def _local_item_meta(campaign, data: dict) -> tuple[dict[str, dict], str | None]
             for page in row.get("pdf_pages") or []:
                 if page not in slot["pdf_pages"]:
                     slot["pdf_pages"].append(page)
-    pairs = paths.pairs_jsonl
+    pairs = paths.pairs_jsonl(source_id)
     return meta, (str(pairs) if pairs.exists() else None)
 
 
-def _local(campaign, args, data: dict) -> int:
-    paths = campaign.paths
+def _local(workspace, args, data: dict) -> int:
+    paths = workspace.paths
     run_dir = paths.run_dir(args.run_id)
-    item_meta, pairs = _local_item_meta(campaign, data)
+    item_meta, pairs = _local_item_meta(workspace, data)
     gate_block = data.get("gate") if isinstance(data.get("gate"), dict) else {}
     gate_config = gate_block.get("local_config") or str(run_dir / "gate.local.json")
     scratch = run_dir / "self-gate"
     scratch.mkdir(parents=True, exist_ok=True)
     gate_script = _skill_root() / "scripts" / "gate" / "verify_findings.py"
-    book = data.get("book") if isinstance(data.get("book"), dict) else {}
+    source_id = _run_source(workspace, data)
+    if not source_id:
+        raise CfError(f"runs/{args.run_id}/run.yaml names no source",
+                      hint="re-plan with `cf plan-run --source <id>`")
+    src = workspace.source(source_id)
+    errata = paths.source_errata_md(source_id)
     fleet = fleet_local.build(
         run_dir,
         args.run_id,
-        campaign={
-            "book_id": campaign.book_id,
-            "book_title": str(campaign.book.get("title") or campaign.book_id),
-            "book_sha": campaign.book_sha,
-            "book_layout_txt": str(paths.book_txt),
-            "book_pages_dir": str(paths.pages_dir),
-            "pdf_page_offset": campaign.offset,
-            "errata": str(paths.errata_md) if paths.errata_md.exists() else "",
+        source={
+            "source_id": source_id,
+            "title": src.title or source_id,
+            "edition": src.edition,
+            "source_sha": src.sha256,
+            "text": str(paths.source_text(source_id)),
+            "pages_dir": str(paths.source_pages_dir(source_id)),
+            "page_offset": src.offset,
+            "errata": str(errata) if errata.exists() else "",
         },
-        repos=_local_repos(campaign, data),
+        repos=_local_repos(workspace, data),
         mode=data.get("mode"),
         gate={
             # The local fleet gates on THIS machine, so the command points at the
@@ -257,11 +276,14 @@ def _local(campaign, args, data: dict) -> int:
         pairs=pairs,
         item_meta=item_meta,
         force=args.force,
-        max_items=int(campaign.default("local_fleet_max_items",
+        max_items=int(workspace.default("local_fleet_max_items",
                                        fleet_local.DEFAULT_MAX_ITEMS)),
     )
-    if book.get("sha256") and campaign.book_sha:
-        campaign.require_book_sha(str(book["sha256"]), f"runs/{args.run_id}/run.yaml")
+    # The SOURCE GATE: run.yaml records the sha the run was planned against, and
+    # a workspace whose source has since been re-pinned must not be handed to a
+    # fleet that will stamp findings with the old edition.
+    for sid, sha in manifest.source_shas(workspace, data).items():
+        workspace.require_source_sha(sid, sha, f"runs/{args.run_id}/run.yaml")
     path = fleet_local.write(run_dir, fleet)
     missing = fleet_local.missing_keys(fleet)
     if missing:
@@ -276,39 +298,39 @@ def _local(campaign, args, data: dict) -> int:
 # server
 
 
-def _server(campaign, args, data: dict, run_yaml_path: Path) -> int:
+def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
     if not args.host:
         raise CfError("--host is required (or use --local / --status)",
                       hint="allowlisted hosts: "
-                           + (", ".join(campaign.host_allowlist) or "(none in campaign.yaml)"))
+                           + (", ".join(workspace.host_allowlist) or "(none in workspace.yaml)"))
     if not args.i_have_consent:
         raise CfError(
             "refusing to plan a server run without --i-have-consent",
-            hint="this transfers private Lean sources and (with --include-book) copyrighted "
-                 "book text to a machine you do not own; the box owner must agree first")
-    # The allowlist is the hard rule, so it is checked FIRST: a host the campaign
+            hint="this transfers private Lean sources and (with --include-source-text) copyrighted "
+                 "source text to a machine you do not own; the box owner must agree first")
+    # The allowlist is the hard rule, so it is checked FIRST: a host the workspace
     # never authorised must be refused as such, not as a planning mismatch.
-    host = manifest.resolve_host(campaign, args.host)
+    host = manifest.resolve_host(workspace, args.host)
     manifest.check_planned_host(data, args.host)
     names = manifest.remote_names(data, args.run_id)
     planned_consent = manifest.planned_consent(data)
     if planned_consent.get("given"):
         log.detail(f"run.yaml already records consent at {planned_consent.get('at')}")
 
-    sha = manifest.book_sha(campaign, data)
-    if sha and campaign.book_sha:
-        campaign.require_book_sha(sha, f"runs/{args.run_id}/run.yaml")
+    for sid, sha in manifest.source_shas(workspace, data).items():
+        workspace.require_source_sha(sid, sha, f"runs/{args.run_id}/run.yaml")
 
     entries, warnings = manifest.build_manifest(
-        campaign_dir=Path(campaign.root), skill_dir=_skill_root(), run_id=args.run_id,
+        workspace_dir=Path(workspace.root), skill_dir=_skill_root(), run_id=args.run_id,
         run=data, host=host, include_sources=args.include_sources,
-        include_book=args.include_book, companions=manifest.companion_repos(campaign))
-    warnings += manifest.gate_config_warnings(Path(campaign.root), args.run_id, host, data)
+        include_texts=args.include_source_text,
+        companions=manifest.companion_repos(workspace, data.get("repos")))
+    warnings += manifest.gate_config_warnings(Path(workspace.root), args.run_id, host, data)
 
-    tasks = manifest.task_count(Path(campaign.root), args.run_id, data)
-    budget = manifest.check_budget_cap(campaign, data, args.max_cost, args.no_budget_cap)
+    tasks = manifest.task_count(Path(workspace.root), args.run_id, data)
+    budget = manifest.check_budget_cap(workspace, data, args.max_cost, args.no_budget_cap)
     disk = manifest.disk_budget(entries, tasks, host)
-    concurrency = _concurrency(campaign, data, args)
+    concurrency = _concurrency(workspace, data, args)
 
     steps = remote.plan_commands(host=host, run_id=args.run_id, run=data, entries=entries,
                                  names=names, budget=budget, concurrency=concurrency)
@@ -334,7 +356,7 @@ def _server(campaign, args, data: dict, run_yaml_path: Path) -> int:
 
     _record(run_yaml_path, data, args=args, host=host, entries=entries, budget=budget,
             disk=disk, concurrency=concurrency, names=names, stages=stages, executed=executed)
-    _record_state(campaign, args.run_id, data, tasks, host, budget)
+    _record_state(workspace, args.run_id, data, tasks, host, budget)
 
     if not args.execute:
         log.info("")
@@ -348,20 +370,20 @@ def _skill_root() -> Path:
     return skill_root()
 
 
-def _concurrency(campaign, data: dict, args) -> dict:
-    """run.yaml wins, then campaign defaults, then the audit's 6/4.
+def _concurrency(workspace, data: dict, args) -> dict:
+    """run.yaml wins, then workspace defaults, then the audit's 6/4.
 
     Also checks the account-wide session cap: workers and reviewers are separate
-    sessions and the limit is per ACCOUNT, across campaigns, so the sum is what
-    matters.  The campaign default (8 + 5 = 13) happens to sit under it, which
+    sessions and the limit is per ACCOUNT, across workspaces, so the sum is what
+    matters.  The workspace default (8 + 5 = 13) happens to sit under it, which
     is why nothing has bitten yet.
     """
     block = data.get("concurrency") if isinstance(data.get("concurrency"), dict) else {}
     workers = int(args.workers or block.get("workers")
-                  or campaign.default("max_concurrent_workers", DEFAULT_WORKERS))
+                  or workspace.default("max_concurrent_workers", DEFAULT_WORKERS))
     reviewers = int(args.reviewers or block.get("reviewers")
-                    or campaign.default("max_concurrent_reviewers", DEFAULT_REVIEWERS))
-    cap = int(campaign.default("max_concurrent_sessions", DEFAULT_SESSION_CAP) or 0)
+                    or workspace.default("max_concurrent_reviewers", DEFAULT_REVIEWERS))
+    cap = int(workspace.default("max_concurrent_sessions", DEFAULT_SESSION_CAP) or 0)
     out = {"workers": workers, "reviewers": reviewers,
            "sessions": workers + reviewers, "session_cap": cap}
     if cap and workers + reviewers > cap:
@@ -369,7 +391,7 @@ def _concurrency(campaign, data: dict, args) -> dict:
             raise CfError(
                 f"{workers} workers + {reviewers} reviewers = {workers + reviewers} concurrent "
                 f"sessions, over the account cap of {cap}",
-                hint="the limit is per ACCOUNT and across campaigns; past it the API returns "
+                hint="the limit is per ACCOUNT and across workspaces; past it the API returns "
                      "409s and tend loses agents mid-run (references/traps.md C3). Lower "
                      "--workers/--reviewers, or pass --over-session-cap deliberately")
         log.warn(f"{workers + reviewers} concurrent sessions is over the account cap of {cap}; "
@@ -395,8 +417,8 @@ def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency)
                  f"{entry['bytes']:>10} B  -> {entry['dest']}")
     if not args.include_sources:
         log.info("     (companion sources NOT transferred; --include-sources)")
-    if not args.include_book:
-        log.info("     (book text NOT transferred; --include-book)")
+    if not args.include_source_text:
+        log.info("     (source text NOT transferred; --include-source-text)")
     for warning in warnings:
         log.warn(warning)
 
@@ -414,8 +436,13 @@ def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, dis
         "consent": {"i_have_consent": True, "operator": getpass.getuser(),
                     "recorded_at": state_mod.now()},
         "include_sources": bool(args.include_sources),
-        "include_book": bool(args.include_book),
-        "book_access": manifest.book_access(data),
+        "include_source_text": bool(args.include_source_text),
+        # WHAT LEFT THIS MACHINE: the consent record names the exact source ids,
+        # not "the book", because a workspace can hold two editions of one work
+        # and this run transferred at most the ones it reads.
+        "sources_transferred": (manifest.run_source_ids(data)
+                                if args.include_source_text else []),
+        "source_access": manifest.source_access(data),
         "budget": budget,
         "disk_budget": disk,
         "concurrency": concurrency,
@@ -442,12 +469,12 @@ def _companions(data: dict) -> list[str]:
     return []
 
 
-def _record_state(campaign, run_id: str, data: dict, tasks: int, host, budget) -> None:
+def _record_state(workspace, run_id: str, data: dict, tasks: int, host, budget) -> None:
     """Record the run against every companion it covers."""
     names = _companions(data)
     for name in names:
         try:
-            with state_mod.update(campaign, str(name)) as state:
+            with state_mod.update(workspace, str(name)) as state:
                 state_mod.record_run(state, run_id, {
                     "mode": data.get("mode"),
                     "tasks": tasks,

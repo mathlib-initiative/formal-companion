@@ -1,7 +1,7 @@
 """The cflib names the run stage uses, plus the few helpers only it needs.
 
-New code.  Everything shared lives in ``scripts/cflib`` (campaign.yaml,
-CampaignPaths, state.json, the vocabulary); this module re-exports what the run
+New code.  Everything shared lives in ``scripts/cflib`` (workspace.yaml,
+WorkspacePaths, state.json, the vocabulary); this module re-exports what the run
 stage uses so a reader of run/*.py can see its whole dependency surface in one
 place, and adds three things cflib has no reason to own: a byte formatter and a
 directory sizer for the disk budget, and the substantive-kind set used when a
@@ -21,13 +21,13 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from cflib import hashing, log, paths as cf_paths, state as cf_state, vocab  # noqa: E402
-from cflib.campaign import Campaign, from_args  # noqa: E402
+from cflib.workspace import Workspace, from_args  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_json, write_json  # noqa: E402
 from cflib.yamlio import read_yaml, write_yaml  # noqa: E402
 
 __all__ = [
-    "Campaign", "CfError", "from_args", "hashing", "log", "cf_paths", "cf_state",
+    "Workspace", "CfError", "from_args", "hashing", "log", "cf_paths", "cf_state",
     "vocab", "read_json", "write_json", "read_yaml", "write_yaml",
     "iso_now", "dir_size", "human_bytes", "skill_root",
 ]
@@ -37,7 +37,7 @@ iso_now = cf_state.now
 
 
 def skill_root() -> Path:
-    """The companion-faithfulness checkout (never a campaign directory)."""
+    """The companion-faithfulness checkout (never a workspace directory)."""
     return cf_paths.skill_root()
 
 

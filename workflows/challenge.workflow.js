@@ -1,7 +1,7 @@
 export const meta = {
   name: 'cf-challenge',
   description: 'Refute-by-default adversarial challenge of unchallenged faithfulness findings: two independent refuters per finding, a finding survives only if both fail to refute it',
-  whenToUse: 'Before any finding leaves the campaign directory. `cf route` refuses to emit an upstream report while a routed file is UNCHALLENGED; this is the run that changes that. Build args with `cf adjudicate --companion <name> --challenge-only --emit-args`.',
+  whenToUse: 'Before any finding leaves the workspace directory. `cf route` refuses to emit an upstream report while a routed file is UNCHALLENGED; this is the run that changes that. Build args with `cf adjudicate --companion <name> --challenge-only --emit-args`.',
   phases: [
     { title: 'Challenge', detail: 'two independent opus refuters per finding', model: 'opus' },
   ],
@@ -21,7 +21,16 @@ export const meta = {
 // house convention a content bug.
 
 const A = args || {}
-const C = A.campaign || {}
+const W = A.workspace || {}
+const SOURCES = W.sources || []
+// A companion is audited against a LIST of sources; every finding row names the
+// one it read. `srcOf` is how an agent gets from that id to a path it can open.
+const srcOf = id => SOURCES.filter(s => s.source_id === id)[0] || SOURCES[0] || {}
+const sourceLines = SOURCES.map(s =>
+  '  ' + s.source_id + ' -- ' + (s.title || s.source_id) + (s.edition ? ' (' + s.edition + ')' : '') +
+  '\n    text: ' + s.text + '  (sha256 ' + s.source_sha + ')' +
+  '\n    pages: ' + s.pages_dir + '/pNNN.txt   (PDF page = printed page + ' + s.page_offset + ')' +
+  '\n    errata: ' + s.errata).join('\n')
 const COMP = A.companion || {}
 const PEERS = A.peers || []
 const FINDINGS = A.findings || []
@@ -31,18 +40,19 @@ const MODEL = A.model || 'opus'
 const peerLines = PEERS.map(p => '  ' + p.name + ' = ' + p.repo).join('\n')
 
 const CTX = `A first-pass adjudicator (UNCHALLENGED) ruled that the Lean 4 companion "${COMP.name}" (${COMP.repo}) is
-UNFAITHFUL to ${C.book_title || C.book_id} on a point. YOUR JOB IS TO REFUTE THAT RULING.
+UNFAITHFUL to ${(SOURCES[0] || {}).title || 'the source(s) listed below'} on a point. YOUR JOB IS TO REFUTE THAT RULING.
 
 READ-ONLY: edit nothing, build nothing, change no git state.
 
 Sources:
-- The book text: ${C.book_layout_txt} (pdftotext of the pinned edition, sha256 ${C.book_sha}; pages separated by
-  form feed) and one file per page at ${C.book_pages_dir}/pNNN.txt (PDF page = printed page + ${C.pdf_page_offset}).
+- The SOURCES, one block each. A finding names its source_id; read THAT text and no other -- an item number can sit
+  on a different printed page in a different edition, so the wrong edition refutes nothing.
+${sourceLines}
   READ THE ACTUAL PASSAGE -- never work from memory of the book.
 - The companion's statement table: ${COMP.statements}
 ${peerLines ? '- Peer formalizations of the same item:\n' + peerLines : ''}
-- The published errata: ${C.errata}. An erratum may explain a deviation from the printed text; check it before ruling
-  either side wrong.
+- Each source's published errata (listed above). An erratum may explain a deviation from the printed text; check it
+  before ruling either side wrong.
 
 CONVENTION deltas are NOT unfaithfulness. For this companion they are:
 ${COMP.conventions || '(none supplied)'}
@@ -123,7 +133,7 @@ log('challenged ' + results.length + ' findings: ' + survived + ' survived, ' +
 return {
   schema: 'cf-challenge-v2',
   companion: COMP.name,
-  book_sha: C.book_sha,
+  sources: SOURCES.map(s => ({ source_id: s.source_id, source_sha: s.source_sha })),
   challenged: results.length,
   survived,
   findings: results,

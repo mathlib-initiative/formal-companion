@@ -1,4 +1,4 @@
-"""Cheap-tier proxy detection: does a book Definition have a native definition?
+"""Cheap-tier proxy detection: does a source Definition have a native definition?
 
 Ported from the def-coverage cell of transcript b174aa13 (recovered/
 b174aa13_L6099_Bash.txt), which produced
@@ -64,12 +64,16 @@ DEFINITIONAL_KINDS = set(vocab.DEFINITIONAL_KINDS)
 # --------------------------------------------------------------------------
 def load_items(source, kind: str | None = None, chapter: int | None = None,
                kinds: Sequence[str] = DEFAULT_KINDS) -> list[str]:
-    """Read ``items.json`` and return canonical item ids, in book order.
+    """Read ONE source's ``sources/<source_id>/items.json`` -- canonical ids, in order.
+
+    ``kinds`` is that source's kinds list, not a workspace default: the grammar
+    that decides which labels parse belongs to the source, so a label this
+    source's grammar does not accept is not an item of it.
 
     Tolerant of the shapes Stage 1 may write: a list of strings, a list of
     objects (``item``/``id``/``label``), ``{"items": [...]}``, or a mapping of
     id -> record. Unparseable entries are dropped (they are reported by the
-    book stage, not here); ``kind`` filters to e.g. ``"Definition"`` and
+    source stage, not here); ``kind`` filters to e.g. ``"Definition"`` and
     ``chapter`` to the chapter the stage table covers.
     """
     data = read_json(source) if isinstance(source, (str, Path)) else source
@@ -397,7 +401,8 @@ def build_finding_rows(
     *,
     companion: str,
     run_id: str,
-    book_sha: str | None = None,
+    source_id: str,
+    source_sha: str | None = None,
     items_pages: dict[str, int] | None = None,
 ) -> list[dict]:
     """COVERAGE rows for missing/bridge-only definitions, PROXY rows for bodies."""
@@ -408,15 +413,16 @@ def build_finding_rows(
             find_rows.coverage_row(
                 run_id=run_id,
                 companion=companion,
+                source_id=source_id,
+                source_sha=source_sha,
                 item=item,
                 rule="DEFINITION_NOT_STATED",
                 severity="medium",
                 reasoning=(
-                    f"The book states {item} but {companion} tags no declaration to it: the concept is "
+                    f"The source states {item} but {companion} tags no declaration to it: the concept is "
                     "neither defined nor used under the book's name."
                 ),
                 evidence={"printed_page": pages.get(item)},
-                book_sha=book_sha,
             )
         )
     detail = coverage.get("bridge_only_detail", {})
@@ -426,6 +432,8 @@ def build_finding_rows(
             find_rows.coverage_row(
                 run_id=run_id,
                 companion=companion,
+                source_id=source_id,
+                source_sha=source_sha,
                 item=item,
                 rule="DEFINITION_BRIDGE_ONLY",
                 severity="low",
@@ -436,7 +444,6 @@ def build_finding_rows(
                 ),
                 decls=decls,
                 evidence={"printed_page": pages.get(item), "citing_decls": decls},
-                book_sha=book_sha,
             )
         )
     for cand in candidates:
@@ -445,6 +452,8 @@ def build_finding_rows(
             find_rows.proxy_row(
                 run_id=run_id,
                 companion=companion,
+                source_id=source_id,
+                source_sha=source_sha,
                 item=cand["item"],
                 decl=cand["decl"],
                 rule="BODY_PROXY",
@@ -471,7 +480,6 @@ def build_finding_rows(
                     "file": cand.get("file"),
                     "line": cand.get("line"),
                 },
-                book_sha=book_sha,
             )
         )
     return out

@@ -7,12 +7,16 @@ re-adjudication").  The rules it enforces are the Stage 7 gate from
 design/stage_map.md plus the critique's corrections:
 
   * every row answers a REAL finding, linked by ``finding_id``
-    (sha256(run_id, item, kind, sorted unfaithful_decls)) -- not by a 22-char
-    label prefix, which is how challenge results were mislinked in batch 1;
+    (sha256(run_id, source_id, item, kind, sorted unfaithful_decls)) -- not by a
+    22-char label prefix, which is how challenge results were mislinked in
+    batch 1;
   * one vocabulary (references/vocabulary.md): verdict, severity, kind,
     resolution grammar;
-  * ``book_sha`` is stamped and matches the campaign's pinned edition -- the
-    batch-1 PAGE_ANCHOR findings were judged against the 2011 draft;
+  * ``source_id`` and ``source_sha`` are stamped, the workspace knows that
+    source, and the sha is the one it pinned for it -- this is the SOURCE GATE
+    at the ledger boundary; the batch-1 PAGE_ANCHOR findings were judged against
+    the 2011 draft, and with two editions of one work in a workspace a row that
+    does not say which it read cannot be checked at all;
   * a CONVENTION verdict must carry a written recovery argument (refuted.adam
     row 2 is the model: the recovery was machine-checked in a scratch file);
   * sub-threshold dissent is data, not noise: it must be present and
@@ -32,7 +36,7 @@ from typing import Any, Iterable
 from ledger import compat
 
 #: rows must carry these
-REQUIRED_FIELDS = ("finding_id", "item", "repo", "verdict", "reason", "book_sha")
+REQUIRED_FIELDS = ("finding_id", "item", "source_id", "repo", "verdict", "reason", "source_sha")
 #: a CONVENTION row's recovery argument has to actually argue something
 MIN_RECOVERY_CHARS = 40
 #: severity token allowed in a ledger row on top of the finding severities
@@ -73,10 +77,17 @@ def validate_row(
     row: dict,
     *,
     index: dict[str, dict] | None = None,
-    book_sha: str = "",
+    sources: Any = None,
     file: str = "",
 ) -> list[LedgerError]:
-    """Validate one ledger row. Returns a (possibly empty) list of errors."""
+    """Validate one ledger row. Returns a (possibly empty) list of errors.
+
+    ``sources`` is the workspace's ``{source_id: sha256}`` map (a bare sha
+    string is accepted for a one-source workspace).  A row with no
+    ``source_id``, or with a ``source_sha`` the workspace does not know, is an
+    ERROR: that is the source gate at the ledger boundary, and it refuses rather
+    than warns.
+    """
     errs: list[LedgerError] = []
     if not isinstance(row, dict):
         return [_err("row_type", "ledger row is not an object", None, file)]
@@ -155,18 +166,42 @@ def validate_row(
                 )
             )
 
-    sha = str(row.get("book_sha") or "").strip()
+    known = _source_map(sources)
+    source_id = str(row.get("source_id") or "").strip()
+    sha = str(row.get("source_sha") or "").strip()
     if sha and not _SHA_RE.match(sha):
-        errs.append(_err("book_sha", "book_sha is not a sha256 hex digest", row, file))
-    if book_sha and sha and sha != book_sha:
-        errs.append(
-            _err(
-                "book_sha",
-                "book_sha %s is not the campaign edition %s" % (sha[:12], book_sha[:12]),
-                row,
-                file,
+        errs.append(_err("source_sha", "source_sha is not a sha256 hex digest", row, file))
+    if known:
+        if source_id and source_id not in known:
+            errs.append(
+                _err(
+                    "source_id",
+                    "source_id %r is not a source of this workspace (known: %s)"
+                    % (source_id, ", ".join(sorted(known)) or "none"),
+                    row,
+                    file,
+                )
             )
-        )
+        want = known.get(source_id) if source_id else None
+        if want and sha and sha != want:
+            errs.append(
+                _err(
+                    "source_sha",
+                    "source_sha %s is not %s's pinned edition %s"
+                    % (sha[:12], source_id, want[:12]),
+                    row,
+                    file,
+                )
+            )
+        if sha and not source_id and sha not in set(known.values()):
+            errs.append(
+                _err(
+                    "source_sha",
+                    "source_sha %s belongs to no source of this workspace" % sha[:12],
+                    row,
+                    file,
+                )
+            )
 
     repo = str(row.get("repo") or "").strip()
     decls = [compat.normalise_decl(d) for d in (row.get("unfaithful_decls") or []) if d]
@@ -219,11 +254,32 @@ def validate_row(
     return errs
 
 
+def _source_map(sources: Any) -> dict[str, str]:
+    """Normalise the ``sources`` argument into ``{source_id: sha256}``.
+
+    A bare sha string is the one-source shorthand; it maps to ``{}`` with the
+    sha kept under every id, which is deliberately NOT accepted as an id check
+    (there is no id to check against) but still catches a wrong sha.
+    """
+    if not sources:
+        return {}
+    if isinstance(sources, str):
+        return {}
+    out: dict[str, str] = {}
+    for sid, value in dict(sources).items():
+        if isinstance(value, dict):
+            sha = value.get("sha256") or value.get("sha") or value.get("source_sha")
+        else:
+            sha = value
+        out[str(sid)] = str(sha or "")
+    return out
+
+
 def validate_rows(
     rows: Iterable[dict],
     *,
     index: dict[str, dict] | None = None,
-    book_sha: str = "",
+    sources: Any = None,
     file: str = "",
 ) -> list[LedgerError]:
     """Validate a set of rows, including cross-row consistency.
@@ -234,7 +290,8 @@ def validate_rows(
     rows = list(rows)
     errs: list[LedgerError] = []
     for row in rows:
-        errs.extend(validate_row(row, index=index, book_sha=book_sha, file=row.get("_file", file)))
+        errs.extend(validate_row(row, index=index, sources=sources,
+                                 file=row.get("_file", file)))
 
     by_id: dict[str, list[dict]] = {}
     for row in rows:
@@ -258,18 +315,30 @@ def ledger_coverage(rows: Iterable[dict], findings: Iterable[dict]) -> dict:
     """Which findings have a ledger row and which do not.
 
     ``route`` uses this to decide CHALLENGED vs UNCHALLENGED: a routed file may
-    only leave the campaign directory when every row it carries was adjudicated.
+    only leave the workspace directory when every row it carries was adjudicated.
+
+    The join is on ``(source_id, finding_id)``.  The id already contains the
+    source, so the pair is belt and braces -- but a row imported from a v1
+    ledger can carry a stale four-part id, and joining on the pair makes that
+    show up as an uncovered finding rather than as a false match.
     """
-    answered = {str(r.get("finding_id") or "") for r in rows}
+    def _key(row: dict) -> tuple:
+        return (str(row.get("source_id") or ""), str(row.get("finding_id") or ""))
+
+    answered = {_key(r) for r in rows}
     findings = list(findings)
-    covered = [f for f in findings if f["finding_id"] in answered]
-    missing = [f for f in findings if f["finding_id"] not in answered]
+    covered = [f for f in findings if _key(f) in answered]
+    missing = [f for f in findings if _key(f) not in answered]
     return {
         "findings": len(findings),
         "covered": len(covered),
         "missing": len(missing),
         "missing_ids": [f["finding_id"] for f in missing],
         "missing_items": sorted({f["item"] for f in missing}),
+        "missing_by_source": {
+            sid: sorted({f["item"] for f in missing if str(f.get("source_id") or "") == sid})
+            for sid in sorted({str(f.get("source_id") or "") for f in missing})
+        },
     }
 
 
@@ -297,16 +366,16 @@ def validate_ledger_dir(
     companion: str,
     *,
     index: dict[str, dict] | None = None,
-    book_sha: str = "",
+    sources: Any = None,
 ) -> dict:
-    """Validate a campaign's ledger files for one companion.
+    """Validate a workspace's ledger files for one companion.
 
     Adds the file-partition rule on top of ``validate_rows``: accepted.* holds
     verdicts that keep the finding open, refuted.* holds the ones that close it.
     """
     loaded = load_ledger_dir(paths, companion)
     accepted, refuted = loaded["rows"]["accepted"], loaded["rows"]["refuted"]
-    errs = validate_rows(accepted + refuted, index=index, book_sha=book_sha)
+    errs = validate_rows(accepted + refuted, index=index, sources=sources)
     for row in accepted:
         v = str(row.get("verdict") or "")
         if v and v not in compat.OPEN_VERDICTS:
@@ -326,9 +395,9 @@ def validate_ledger_dir(
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI: validate one companion's ledger inside a campaign directory."""
+    """CLI: validate one companion's ledger inside a workspace directory."""
     ap = argparse.ArgumentParser(description="Validate ledger rows against findings.")
-    ap.add_argument("--campaign", required=True, help="campaign directory")
+    ap.add_argument("--workspace", required=True, help="workspace directory")
     ap.add_argument("--companion", required=True, help="companion name (ledger suffix)")
     ap.add_argument(
         "--corpus",
@@ -336,23 +405,23 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="corpus run directory or findings file to link against (repeatable)",
     )
-    ap.add_argument("--book-sha", default="", help="override the campaign's pinned book sha")
+    ap.add_argument("--source", default="", help="restrict to one source_id")
     args = ap.parse_args(argv)
 
     from ledger import findings as findings_mod
 
-    campaign = compat.load_campaign(args.campaign)
-    paths = campaign.paths
-    book_sha = args.book_sha or campaign.book_sha
-    sources = args.corpus or (
+    workspace = compat.load_workspace(args.workspace)
+    paths = workspace.paths
+    shas = workspace.source_shas()
+    if args.source:
+        shas = {args.source: shas.get(args.source, "")}
+    corpora = args.corpus or (
         [paths.corpus()] if os.path.isdir(paths.corpus()) else []
     )
     index = None
-    if sources:
-        index = findings_mod.index_by_id(
-            findings_mod.load_findings(sources, book_sha=book_sha)
-        )
-    report = validate_ledger_dir(paths, args.companion, index=index, book_sha=book_sha)
+    if corpora:
+        index = findings_mod.index_by_id(findings_mod.load_findings(corpora))
+    report = validate_ledger_dir(paths, args.companion, index=index, sources=shas)
     for err in report["errors"]:
         print(str(err), file=sys.stderr)
     print(

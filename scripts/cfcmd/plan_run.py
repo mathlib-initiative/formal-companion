@@ -3,13 +3,13 @@
     python3 scripts/cf.py plan-run --preset attack-hunt --companion ours \\
         --host ffmain --model claude-sonnet-5 --i-have-consent
 
-Writes ``<campaign>/runs/<run-id>/``:
+Writes ``<workspace>/runs/<run-id>/``:
 
     run.yaml        preset, mode, host, consent, models, counts, prompt shas
     tasks/*.yaml    one tend task per item (title carries the evidence class)
     prompts/*.md    the five rendered prompts
     data/*.jsonl    the statement tables the workers read
-    gate.json       kinds/verdicts/witness/book_sha, with the RUN HOST's paths
+    gate.json       kinds/verdicts/witness/sources, with the RUN HOST's paths
     gate.local.json the same gate with local paths, for harvest-time re-checks
     tend-root/      config.yaml, .tend/*.yaml, bin/ wrappers, gate/ (out of tree)
 
@@ -36,7 +36,7 @@ if __package__ in (None, ""):  # direct execution
 
 from pathlib import Path
 
-from cflib import campaign as campaign_mod
+from cflib import workspace as workspace_mod
 from cflib import log
 from cflib import state as state_mod
 from cflib.errors import CfError
@@ -57,11 +57,14 @@ LOCAL = "local"
 def register(subparsers):
     """cf.py discovery hook."""
     p = subparsers.add_parser(NAME, help=HELP, description=__doc__)
-    p.add_argument("--campaign", help="campaign directory (default: $CF_CAMPAIGN or cwd upward)")
+    p.add_argument("--workspace", help="workspace directory (default: $CF_WORKSPACE or cwd upward)")
     p.add_argument("--preset", required=True, help="one of: " + ", ".join(sorted(presets_mod.PRESETS)))
-    p.add_argument("--host", default=LOCAL, help="run host; must be in campaign.yaml hosts.allowlist")
+    p.add_argument("--host", default=LOCAL, help="run host; must be in workspace.yaml hosts.allowlist")
     p.add_argument("--model", default=None, help="model id to record and pass to the bridge")
     p.add_argument("--companion", help="the audited companion (required for attack presets)")
+    p.add_argument("--source", dest="source_id", default=None,
+                   help="the source this run audits; required only when the selected "
+                        "companions share more than one")
     p.add_argument("--run-id", help="default: <preset>-<YYYY-MM-DD>")
     p.add_argument("--chapters", default=None, help="comma-separated chapters for the differential universe")
     p.add_argument("--max-open-tasks", type=int, default=None,
@@ -80,10 +83,16 @@ def register(subparsers):
 # --------------------------------------------------------------------------- #
 # helpers
 # --------------------------------------------------------------------------- #
-def _host_paths(camp, host: str, run_id: str, book_id: str) -> dict:
-    """Resolve where this run's pieces live on the run host."""
+def _host_paths(ws, host: str, run_id: str, source_id: str) -> dict:
+    """Resolve where this run's pieces live on the run host.
+
+    ``repos`` is the companion Lean; ``source_text``/``images_dir``/``errata``
+    are THIS run's source.  The two live under different remote roots
+    (``repos/<name>/`` and ``sources/<source_id>/``) so a companion named after
+    a source cannot land on top of the text the gate checks quotes against.
+    """
     if host == LOCAL:
-        p = camp.paths
+        p = ws.paths
         rd = p.run_dir(run_id)
         return {
             "kind": LOCAL,
@@ -92,16 +101,17 @@ def _host_paths(camp, host: str, run_id: str, book_id: str) -> dict:
             "tend_root": str(rd / "tend-root"),
             "gate_dir": str(rd / "tend-root" / "gate"),
             "prompts_dir": str(rd / "tend-root" / "prompts"),
-            "book_text": str(p.book_txt),
-            "images_dir": str(p.images_dir),
-            "errata": str(p.errata_md),
-            "sources": {c["name"]: str(c.get("repo", "")) for c in camp.companions},
+            "source_text": str(p.source_text(source_id)),
+            "pages_dir": str(p.source_pages_dir(source_id)),
+            "images_dir": str(p.source_images_dir(source_id)),
+            "errata": str(p.source_errata_md(source_id)),
+            "repos": {name: str(ref.repo or "") for name, ref in ws.companions.items()},
         }
-    camp.check_host(host)
-    entry = camp.hosts.get(host) or {}
+    ws.check_host(host)
+    entry = ws.hosts.get(host) or {}
     if not isinstance(entry, dict):
         entry = {}
-    root = str(entry.get("remote_root") or camp.hosts.get("remote_root")
+    root = str(entry.get("remote_root") or ws.hosts.get("remote_root")
                or f"/home/{os.environ.get('USER', 'jack')}").rstrip("/")
     return {
         "kind": "remote",
@@ -111,10 +121,11 @@ def _host_paths(camp, host: str, run_id: str, book_id: str) -> dict:
         "tend_root": f"{root}/{run_id}-tend",
         "gate_dir": f"{root}/{run_id}-gate",
         "prompts_dir": f"{root}/{run_id}-tend/prompts",
-        "book_text": f"{root}/book/{book_id}/book.txt",
-        "images_dir": f"{root}/book/{book_id}/images",
-        "errata": f"{root}/book/{book_id}/errata.md",
-        "sources": {c["name"]: f"{root}/sources/{c['name']}" for c in camp.companions},
+        "source_text": f"{root}/sources/{source_id}/text.txt",
+        "pages_dir": f"{root}/sources/{source_id}/pages",
+        "images_dir": f"{root}/sources/{source_id}/images",
+        "errata": f"{root}/sources/{source_id}/errata.md",
+        "repos": {name: f"{root}/repos/{name}" for name in ws.companions},
     }
 
 
@@ -128,7 +139,7 @@ def _queue_rows(data) -> list[dict]:
     """Unwrap a pairs/ artifact into its row list.
 
     ``make_queue`` writes ``queue.json`` and ``targets.<name>.json`` as
-    ``{created, book_sha, count, ..., items: [...]}``; older hand-built files
+    ``{created, source_sha, count, ..., items: [...]}``; older hand-built files
     are a bare list.  Both shapes are accepted, and ``len()`` of the unwrapped
     list is the task count (``len()`` of the wrapper is its key count, which
     silently made ``expected_n`` 10 instead of 519).
@@ -141,23 +152,29 @@ def _queue_rows(data) -> list[dict]:
     return list(data or [])
 
 
-def _stage_data(camp, rd: Path, companions: list[str]) -> list[str]:
-    """Copy the statement tables into ``runs/<id>/data/`` (what cf run rsyncs)."""
+def _stage_data(ws, rd: Path, companions: list[str], source_id: str) -> list[str]:
+    """Copy the statement tables into ``runs/<id>/data/`` (what cf run rsyncs).
+
+    The pairs table staged is THIS source's (``pairs/<source_id>/pairs.jsonl``):
+    a worker grepping one merged table would read another edition's rows for the
+    same item label.
+    """
     ddir = rd / "data"
     ddir.mkdir(parents=True, exist_ok=True)
     staged = []
     for name in companions:
-        src = camp.paths.statements_jsonl(name)
+        src = ws.paths.statements_jsonl(name)
         if src.exists():
             shutil.copy2(src, ddir / f"{name}.jsonl")
             staged.append(f"{name}.jsonl")
-    if camp.paths.pairs_jsonl.exists():
-        shutil.copy2(camp.paths.pairs_jsonl, ddir / "pairs.jsonl")
+    pairs = ws.paths.pairs_jsonl(source_id)
+    if pairs.exists():
+        shutil.copy2(pairs, ddir / "pairs.jsonl")
         staged.append("pairs.jsonl")
     return staged
 
 
-def _task_universe(p, args) -> tuple[list[str] | None, int | None]:
+def _task_universe(p, args, source_id: str) -> tuple[list[str] | None, int | None]:
     """The reconciled item set a differential run's tasks must equal.
 
     ``pairs/reconciliation.json`` is written by ``cf pair``; an absent file or
@@ -167,7 +184,7 @@ def _task_universe(p, args) -> tuple[list[str] | None, int | None]:
     this gate exists to prevent, so it is refused instead.
     """
     allow = bool(getattr(args, "allow_unreconciled", False))
-    recon_path = p.pairs_dir / "reconciliation.json"
+    recon_path = p.reconciliation_json(source_id)
     if not recon_path.exists():
         if allow:
             return None, None
@@ -202,19 +219,56 @@ def _task_universe(p, args) -> tuple[list[str] | None, int | None]:
     return names, len(names)
 
 
-def _companion_rows(camp, host_paths: dict) -> list[dict]:
+def _companion_rows(ws, host_paths: dict, names: list[str] | None = None) -> list[dict]:
     rows = []
-    for c in camp.companions:
-        name = str(c["name"])
+    for name, ref in ws.companions.items():
+        if names is not None and name not in names:
+            continue
         rows.append(
             {
                 "name": name,
-                "path": host_paths["sources"].get(name, str(c.get("repo", ""))),
-                "files": c.get("glob") or "",
-                "conventions_md": camp.paths.conventions_md(name),
+                "path": host_paths["repos"].get(name, str(ref.repo or "")),
+                "files": "",
+                "conventions_md": ws.paths.conventions_md(name),
             }
         )
     return rows
+
+
+def _select_source(ws, companions: list[str], requested: str | None) -> str:
+    """Which source this run audits.
+
+    A run is scoped to ONE source: the gate picks a text by source_id, and a
+    task set spanning two editions cannot be reconciled against one universe.
+    ``--source`` is required only when the selected companions share more than
+    one -- otherwise there is nothing to choose and asking would be noise.
+    """
+    if requested:
+        ws.source(requested)  # raises when unknown
+        for name in companions:
+            listed = ws.sources_of(name)
+            if listed and requested not in listed:
+                raise CfError(
+                    f"companion {name!r} is not audited against source {requested!r}",
+                    hint="its sources are: " + (", ".join(listed) or "(none)"))
+        return requested
+    shared: list[str] | None = None
+    for name in companions:
+        listed = ws.sources_of(name)
+        shared = list(listed) if shared is None else [s for s in shared if s in listed]
+    candidates = shared if shared is not None else ws.source_ids()
+    candidates = [s for s in candidates if s]
+    if not candidates:
+        raise CfError(
+            "the selected companions share no source",
+            hint="a run audits one source; `cf sources list` shows which companion has which, "
+                 "and `cf onboard` sets them")
+    if len(candidates) > 1:
+        raise CfError(
+            f"the selected companions share {len(candidates)} sources "
+            f"({', '.join(candidates)})",
+            hint="a run is scoped to one source; pass --source <id>")
+    return candidates[0]
 
 
 def _dir_bytes(path: Path) -> int:
@@ -225,7 +279,7 @@ def _dir_bytes(path: Path) -> int:
 # the command
 # --------------------------------------------------------------------------- #
 def run(args) -> int:
-    camp = campaign_mod.from_args(args)
+    camp = workspace_mod.from_args(args)
     preset = presets_mod.get(args.preset)
     if preset.bridge == "none":
         raise CfError(
@@ -238,48 +292,63 @@ def run(args) -> int:
     if rd.exists() and not args.force and any(rd.iterdir()):
         print(f"replanning {rd} (idempotent; pass --force to allow stale files to be replaced)")
 
-    book_sha = camp.book_sha
-    if not book_sha:
-        raise CfError("campaign.yaml has no book.sha256", hint="run `cf book <id> --pdf <path>`")
-    host = _host_paths(camp, args.host, run_id, camp.book_id)
-
     companion = args.companion
     if preset.is_attack and not companion:
         raise CfError("an attack run audits ONE companion", hint="pass --companion <name>")
     if companion:
         camp.companion(companion)  # raises when unknown
+    names = [companion] if companion else camp.companion_names()
+    if not names:
+        raise CfError("this workspace has no companions",
+                      hint="run `cf onboard <repo>` first")
+
+    source_id = _select_source(camp, names, args.source_id)
+    source = camp.source(source_id)
+    source_sha = source.sha256
+    if not source_sha:
+        raise CfError(
+            f"source {source_id!r} has no sha256",
+            hint="`cf sources show %s` says what is known about it; re-run "
+                 "`cf onboard <repo>` or `cf sources add <pdf>` so the bytes are "
+                 "fingerprinted -- a run cannot stamp findings with an edition nobody pinned"
+            % source_id)
+    host = _host_paths(camp, args.host, run_id, source_id)
 
     # ---- entries -----------------------------------------------------------
     chapters = [int(c) for c in args.chapters.split(",")] if args.chapters else None
     if chapters is None:
-        chapters = [int(c) for c in (camp.book.get("chapters") or [])] or None
-    kinds = camp.kinds
+        chapters = [int(c) for c in camp.chapters(source_id)] or None
+    kinds = camp.kinds(source_id)
     if preset.is_attack:
         targets = _queue_rows(
-            _read_json(p.targets_json(companion), f"targets.{companion}.json")
+            _read_json(p.targets_json(source_id, companion),
+                       f"pairs/{source_id}/targets.{companion}.json")
         )
-        entries = mt.target_entries(targets, companion, offset=camp.offset)
+        entries = mt.target_entries(targets, companion, source_id=source_id,
+                                    offset=source.offset)
         # The ITEM SET, not its length: comparing len(entries) to len(targets)
         # is tautological (entries is built from targets), so it could only ever
         # catch a drop inside make_tasks, never one between the companion's item
         # set and targets.<name>.json.
         expected_items = sorted({str(r.get("item")) for r in targets if r.get("item")})
         expected_n = len(expected_items)
-        universe = f"targets.{companion}.json"
+        universe = f"pairs/{source_id}/targets.{companion}.json"
     else:
-        queue = _queue_rows(_read_json(p.queue_json, "queue.json"))
+        queue = _queue_rows(_read_json(p.queue_json(source_id),
+                                       f"pairs/{source_id}/queue.json"))
         targets_by = {}
         for name in camp.companion_names():
-            tp = p.targets_json(name)
+            tp = p.targets_json(source_id, name)
             if tp.exists():
                 targets_by[name] = _queue_rows(
                     json.loads(tp.read_text(encoding="utf-8"))
                 )
         entries = mt.differential_entries(
-            queue, targets_by, offset=camp.offset, chapters=chapters, kinds=kinds
+            queue, targets_by, source_id=source_id, offset=source.offset,
+            chapters=chapters, kinds=kinds
         )
-        expected_items, expected_n = _task_universe(p, args)
-        universe = "queue.json + targets.*.json (items ∩ any-repo)"
+        expected_items, expected_n = _task_universe(p, args, source_id)
+        universe = f"pairs/{source_id}/: queue.json + targets.*.json (items ∩ any-repo)"
 
     # ---- prompts -----------------------------------------------------------
     gate_command = (
@@ -288,10 +357,12 @@ def run(args) -> int:
     ctx = rp.build_context(
         preset,
         run_id=run_id,
-        book_citation=str(camp.book.get("title") or camp.book_id),
-        book_text=host["book_text"],
-        book_sha=book_sha,
-        page_offset=camp.offset,
+        source_id=source_id,
+        book_citation=source.title or source_id,
+        book_text=host["source_text"],
+        source_sha=source_sha,
+        source_edition=source.edition,
+        page_offset=source.offset,
         companions=_companion_rows(camp, host),
         gate_command=gate_command,
         errata_path=host["errata"],
@@ -306,7 +377,8 @@ def run(args) -> int:
         preset,
         {
             "run_id": run_id,
-            "book_sha": book_sha,
+            "source_id": source_id,
+            "source_sha": source_sha,
             "gate_command": gate_command,
             "companion": companion or (camp.companion_names()[0] if camp.companion_names() else ""),
             "total_functions_sentence": ctx["total_functions_sentence"],
@@ -323,7 +395,7 @@ def run(args) -> int:
             hint="re-run `cf pair`; a silently shorter run is exactly what this gate exists to stop",
         )
     mt.write_tasks(tasks, p.tasks_dir(run_id))
-    staged = _stage_data(camp, rd, camp.companion_names())
+    staged = _stage_data(camp, rd, camp.companion_names(), source_id)
 
     # ---- gate.json (host paths) and gate.local.json ------------------------
     repos = [companion] if preset.is_attack else camp.companion_names()
@@ -346,17 +418,23 @@ def run(args) -> int:
     gate_remote = presets_mod.gate_config(
         preset,
         run_id=run_id,
-        book_text=host["book_text"],
-        book_sha=book_sha,
+        sources={source_id: {
+            "text": host["source_text"],
+            "sha256": source_sha,
+            "text_sha256": source.text_sha256,
+            "images_dir": host["images_dir"] if preset.needs_images else None,
+            "page_offset": source.offset,
+        }},
         repos=repos,
-        images_dir=host["images_dir"] if preset.needs_images else None,
-        page_offset=camp.offset,
         decl_index=remote_index,
     )
     gate_local = dict(gate_remote)
-    gate_local["book"] = dict(gate_remote["book"])
-    gate_local["book"]["text"] = str(p.book_txt)
-    gate_local["book"]["images_dir"] = str(p.images_dir) if preset.needs_images else None
+    gate_local["sources"] = {
+        source_id: dict(gate_remote["sources"][source_id],
+                        text=str(p.source_text(source_id)),
+                        images_dir=(str(p.source_images_dir(source_id))
+                                    if preset.needs_images else None))
+    }
     gate_local["decl_index"] = str(index_path) if remote_index else None
     p.gate_json(run_id).write_text(json.dumps(gate_remote, indent=2) + "\n", encoding="utf-8")
     (rd / "gate.local.json").write_text(json.dumps(gate_local, indent=2) + "\n", encoding="utf-8")
@@ -393,14 +471,21 @@ def run(args) -> int:
         "attack_label": preset.attack_label or None,
         "companion": companion,
         "repos": repos,
-        "book": {
-            "id": camp.book_id,
-            "sha256": book_sha,
-            "offset": camp.offset,
-            "access": preset.book_access,
-            "text": host["book_text"],
+        # A LIST, because `cf run` decides what leaves this machine from it and
+        # `cf harvest` checks the landed corpus against it. One source today;
+        # the shape does not assume it.
+        "sources": [{
+            "id": source_id,
+            "sha256": source_sha,
+            "title": source.title,
+            "edition": source.edition,
+            "offset": source.offset,
+            "text": host["source_text"],
+            "pages_dir": host["pages_dir"],
             "images_dir": host["images_dir"] if preset.needs_images else None,
-        },
+            "errata": host["errata"],
+        }],
+        "source_access": preset.book_access,
         "host": {
             "name": args.host,
             "kind": host["kind"],
@@ -411,8 +496,8 @@ def run(args) -> int:
             "entrypoint": run_id,
             "tend_root": f"{run_id}-tend",
             "gate": f"{run_id}-gate",
-            "book": "book",
             "sources": "sources",
+            "repos": "repos",
         },
         "consent": {
             "given": consent_given,
@@ -464,6 +549,8 @@ def run(args) -> int:
         with state_mod.update(camp, name) as st:
             state_mod.record_run(st, run_id, {
                 "preset": preset.name,
+                "source_id": source_id,
+                "source_sha": source_sha,
                 "planned_tasks": len(tasks),
                 "host": args.host,
                 "gate": "out-of-tree",
@@ -471,6 +558,7 @@ def run(args) -> int:
             })
 
     print(f"planned run {run_id}: {len(tasks)} task(s) [{preset.name}] -> {rd}")
+    print(f"  source   : {source_id} ({source_sha[:8]}), offset {source.offset}")
     print(f"  universe : {universe}" + (f" (expected {expected_n})" if expected_n else ""))
     print(f"  gate     : {gate_command}")
     print(f"  tend root: {plan.tend_root} (entrypoint {plan.entrypoint})")

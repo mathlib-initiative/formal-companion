@@ -2,19 +2,24 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://github.com/Deicyde/companion-faithfulness/scripts/gate/schema.json",
   "title": "Companion faithfulness findings, schema v2",
-  "description": "One findings file per task. v1 (the 2,672-file baseline) differed in four ways: no schema_version/run_id/book_sha, `faithful` was a single string, the witness lived in `reasoning` prose, and there was no finding_id. scripts/gate/convert_v1.py maps v1 to this schema without touching the baseline. The gate that enforces this is scripts/gate/verify_findings.py, which is driven by gate.json (kinds, verdicts, repos, witness requirement, per-kind rules) rather than by this file: no jsonschema dependency is assumed anywhere in the skill.",
+  "description": "One findings file per task. v1 (the 2,672-file baseline) differed in four ways: no schema_version/run_id/source_sha, `faithful` was a single string, the witness lived in `reasoning` prose, and there was no finding_id. v1 also predates the multi-source model: it had one implicit book, so its `book_sha` slot becomes `source_sha` and scripts/gate/convert_v1.py stamps the run's single `source_id` on the document and on every disagreement (--source is required). `book_quote`/`book_passage_quote`/`book_located` deliberately keep their names — they are still quotes from a book; what changed is WHICH text they are verified against, which `source_id` decides. scripts/gate/convert_v1.py maps v1 to this schema without touching the baseline. The gate that enforces this is scripts/gate/verify_findings.py, which is driven by gate.json (kinds, verdicts, repos, witness requirement, per-kind rules) rather than by this file: no jsonschema dependency is assumed anywhere in the skill.",
   "type": "object",
-  "required": ["schema_version", "item", "book_located", "book_passage_quote", "matches", "disagreements"],
+  "required": ["schema_version", "item", "source_id", "book_located", "book_passage_quote", "matches", "disagreements"],
   "additionalProperties": true,
   "properties": {
     "schema_version": {"const": 2},
     "run_id": {"type": "string", "description": "the run that produced this file; part of finding_id"},
     "preset": {"type": "string"},
     "mode": {"type": "string", "enum": ["differential", "attack"]},
-    "book_sha": {
+    "source_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "which source this file read: the key in workspace.yaml `sources:`. An item is the pair (source_id, item), so a bare item is never a cross-source key, and the gate picks the text a quote is matched against by this field."
+    },
+    "source_sha": {
       "type": "string",
       "pattern": "^[0-9a-f]{64}$",
-      "description": "sha256 of the pinned book edition (the PDF), stamped on every artifact that quotes or anchors the book"
+      "description": "sha256 of that source's PDF bytes (was `book_sha`), stamped on every artifact that quotes or anchors a source"
     },
     "item": {"type": "string", "minLength": 1, "description": "book item id, e.g. 'Exercise 1.3.19' or 'In-text, book p. 35'"},
     "book_located": {"type": "boolean"},
@@ -60,10 +65,12 @@
         "required": ["concept", "kind", "repos_involved", "faithful", "unfaithful_decls", "reasoning", "severity"],
         "additionalProperties": true,
         "properties": {
+          "source_id": {"type": "string", "description": "the source this row is about; inherited from the document when absent"},
+          "source_sha": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "that source's sha256, inherited from the document when absent"},
           "finding_id": {
             "type": "string",
             "pattern": "^[0-9a-f]{64}$",
-            "description": "sha256(run_id, item, kind, sorted(unfaithful_decls)) — stable across runs of the same defect, unlike v1's LLM-written concept"
+            "description": "sha256(run_id, source_id, item, kind, sorted(unfaithful_decls)) — stable across runs of the same defect, unlike v1's LLM-written concept. source_id is a part because `Exercise 1.3.19` of two sources is two different items."
           },
           "concept": {"type": "string"},
           "kind": {

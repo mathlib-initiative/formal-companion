@@ -16,6 +16,14 @@ The four v1 defects this fixes (design decision "adopt findings schema v2"):
 * findings had no id, so challenge/adjudication linked by 22-char label prefix;
 * nothing recorded which edition of the book the quote came from.
 
+v1 also predates the multi-source model: it had ONE implicit book, so there is
+no ``source_id`` in the corpus to recover.  ``--source`` supplies the run's
+single source and the converter stamps it on the document and on every
+disagreement; ``--source-sha`` fills the slot v1 called ``book_sha``.  The ids
+are recomputed under the five-part rule of docs/design/multi-source-model.md
+S6.1, which is exactly why they must be recomputed: a four-part id computed
+without a source collides across sources.
+
 The baseline is **never** modified: the converter reads it and writes elsewhere
 (it refuses an output directory that is also an input directory).
 
@@ -78,6 +86,8 @@ def convert_disagreement(
     *,
     item: str,
     run_id: str,
+    source_id: str,
+    source_sha: str,
     repos: list[str],
     lift_witness: bool,
 ) -> dict[str, Any]:
@@ -90,7 +100,13 @@ def convert_disagreement(
     if note:
         out["faithful_note"] = note
     kind = str(g.get("kind") or "")
-    out["finding_id"] = finding_id(run_id, str(out.get("source_id") or ""), item, kind, decls)
+    # The row's OWN source, never the document's `get(...) or ""`: a v1 row has
+    # no source at all, and an empty source_id would hash a different id from
+    # the one the document is stamped with.
+    out["source_id"] = source_id
+    if source_sha:
+        out["source_sha"] = source_sha
+    out["finding_id"] = finding_id(run_id, source_id, item, kind, decls)
     out.setdefault("source", "convert_v1")
     if lift_witness and kind in {"CONTENT", "VACUITY"} and not isinstance(g.get("witness"), dict):
         out["witness"] = {
@@ -105,7 +121,8 @@ def convert_doc(
     doc: dict[str, Any],
     *,
     run_id: str,
-    book_sha: str,
+    source_id: str,
+    source_sha: str,
     mode: str = "differential",
     preset: str = "",
     repos: Iterable[str] = (),
@@ -116,10 +133,15 @@ def convert_doc(
     repos = list(repos)
     if lift_witness is None:
         lift_witness = mode == "attack"
+    if not source_id:
+        raise ValueError(
+            "convert_doc needs a source_id: a v1 document has no source, and a "
+            "finding_id computed without one collides across sources")
     out = dict(doc)
     out["schema_version"] = 2
     out["run_id"] = run_id
-    out["book_sha"] = book_sha
+    out["source_id"] = source_id
+    out["source_sha"] = source_sha
     out["mode"] = mode
     if preset:
         out["preset"] = preset
@@ -134,7 +156,8 @@ def convert_doc(
     out["matches"] = matches
     out["disagreements"] = [
         convert_disagreement(
-            g, item=item, run_id=run_id, repos=repos, lift_witness=lift_witness
+            g, item=item, run_id=run_id, source_id=source_id, source_sha=source_sha,
+            repos=repos, lift_witness=lift_witness
         )
         if isinstance(g, dict)
         else g
@@ -170,7 +193,11 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("src", help="directory of v1 findings JSON (read-only)")
     ap.add_argument("--out", required=True, help="output directory (must differ from src)")
     ap.add_argument("--run-id", required=True, help="run id these findings belong to")
-    ap.add_argument("--book-sha", required=True, help="sha256 of the edition they were judged against")
+    ap.add_argument("--source", required=True, dest="source_id",
+                    help="the workspace source_id these v1 findings read (v1 had one "
+                         "implicit book and recorded no id, so it must be supplied)")
+    ap.add_argument("--source-sha", required=True,
+                    help="sha256 of the edition they were judged against")
     ap.add_argument("--mode", default="differential", choices=["differential", "attack"])
     ap.add_argument("--preset", default="")
     ap.add_argument("--repos", default="", help="comma-separated known repo ids")
@@ -181,13 +208,15 @@ def main(argv: list[str] | None = None) -> int:
         pathlib.Path(args.src).expanduser(),
         pathlib.Path(args.out).expanduser(),
         run_id=args.run_id,
-        book_sha=args.book_sha,
+        source_id=args.source_id,
+        source_sha=args.source_sha,
         mode=args.mode,
         preset=args.preset,
         repos=[r for r in args.repos.split(",") if r],
         fold_no_weakness=not args.no_fold_no_weakness,
     )
-    print(f"converted {n} file(s) from {args.src} to {args.out} (v1 -> v2, run {args.run_id})")
+    print(f"converted {n} file(s) from {args.src} to {args.out} "
+          f"(v1 -> v2, run {args.run_id}, source {args.source_id})")
     return 0
 
 

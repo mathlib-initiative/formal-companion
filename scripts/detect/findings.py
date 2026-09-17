@@ -11,8 +11,10 @@ page"). The quote and witness keys are written as ``null`` so a reader can see
 the absence is deliberate rather than a dropped field.
 
 ``run_id`` is deterministic (``detect-<companion>-<tier>`` by default) so
-``finding_id`` -- sha256(run_id, item, kind, sorted(unfaithful_decls)) -- is
-stable across re-runs and the corpus stays idempotent.
+``finding_id`` -- sha256(run_id, source_id, item, kind, sorted(unfaithful_decls))
+-- is stable across re-runs and the corpus stays idempotent.  Every row carries
+``source_id`` and ``source_sha``: a detector reads ONE source's items.json, and
+a row that did not say which would be gated against the wrong text.
 """
 from __future__ import annotations
 
@@ -43,7 +45,8 @@ def proxy_row(
     *,
     run_id: str,
     companion: str,
-    source_id: str = "",
+    source_id: str,
+    source_sha: str | None = None,
     item: str,
     decl: str,
     rule: str,
@@ -53,10 +56,9 @@ def proxy_row(
     bridge: str,
     bridge_decls: Sequence[dict] | None = None,
     evidence: dict | None = None,
-    book_sha: str | None = None,
     tier: str = "cheap",
 ) -> dict:
-    """One PROXY finding: a book concept carried by a foreign object.
+    """One PROXY finding: a source concept carried by a foreign object.
 
     ``bridge`` is ``proved`` (a theorem ties the repo's object to the foreign
     one and is not a ``sorry``), ``fiat`` (only asserted) or ``none``.
@@ -69,6 +71,8 @@ def proxy_row(
     return {
         "finding_id": finding_id(run_id, source_id, item, vocab.PROXY, unfaithful),
         "run_id": run_id,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "item": item,
         "kind": vocab.PROXY,
         "severity": severity,
@@ -82,7 +86,6 @@ def proxy_row(
         "evidence": {"rule": rule, "tier": tier, **(evidence or {})},
         "book_quote": None,
         "witness": None,
-        "book_sha": book_sha,
         "detector": f"cf-detect-proxies/{tier}",
     }
 
@@ -91,27 +94,29 @@ def coverage_row(
     *,
     run_id: str,
     companion: str,
-    source_id: str = "",
+    source_id: str,
+    source_sha: str | None = None,
     item: str,
     rule: str,
     severity: str,
     reasoning: str,
     decls: Sequence[str] = (),
     evidence: dict | None = None,
-    book_sha: str | None = None,
     tier: str = "cheap",
 ) -> dict:
-    """One COVERAGE finding: the book states a concept the companion does not.
+    """One COVERAGE finding: the source states a concept the companion does not.
 
     ``decls`` is empty for a wholly missing item -- there is nothing to name --
     and Stage 9 routes only on ``unfaithful_decls``, so such rows stay in the
-    campaign report rather than reaching an owner.
+    workspace report rather than reaching an owner.
     """
     _checked(vocab.COVERAGE, severity, None)
     unfaithful = _decl_ids(companion, decls)
     return {
         "finding_id": finding_id(run_id, source_id, item, vocab.COVERAGE, unfaithful),
         "run_id": run_id,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "item": item,
         "kind": vocab.COVERAGE,
         "severity": severity,
@@ -125,18 +130,19 @@ def coverage_row(
         "evidence": {"rule": rule, "tier": tier, **(evidence or {})},
         "book_quote": None,
         "witness": None,
-        "book_sha": book_sha,
         "detector": f"cf-detect-proxies/{tier}",
     }
 
 
-def meta(*, run_id: str, companion: str, tier: str, book_sha: str | None, counts: dict, inputs: dict) -> dict:
+def meta(*, run_id: str, companion: str, tier: str, source_id: str,
+         source_sha: str | None, counts: dict, inputs: dict) -> dict:
     """The ``_meta`` row written at the head of a findings jsonl file."""
     return {
         "run_id": run_id,
         "repo": companion,
         "tier": tier,
-        "book_sha": book_sha,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "kinds": [vocab.PROXY, vocab.COVERAGE],
         "status": vocab.UNCHALLENGED,
         "counts": counts,

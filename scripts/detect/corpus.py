@@ -13,13 +13,13 @@ step 5 of the default program contributed zero rows to the report -- and the
 nothing.
 
 This module is the join.  A detector row is FLAT (one defect, one declaration);
-a corpus document is per book ITEM and carries ``disagreements``.  So the rows
+a corpus document is per source ITEM and carries ``disagreements``.  So the rows
 are grouped by item and each becomes one disagreement, with the per-kind
 evidence the gate demands: PROXY needs ``bridge`` and a ``closure`` path,
 COVERAGE needs neither.
 
 These documents deliberately carry no ``book_passage_quote``: a mechanical
-detector never read the book.  The ``mechanical`` preset sets
+detector never read the source's prose.  The ``mechanical`` preset sets
 ``require_passage_quote: false`` for that reason, and no other preset does.
 """
 from __future__ import annotations
@@ -34,7 +34,7 @@ SCHEMA_VERSION = 2
 #: keys of a detector row that become disagreement keys unchanged
 _CARRIED = (
     "finding_id", "concept", "kind", "reasoning", "severity",
-    "unfaithful_decls", "bridge", "bridge_decls", "book_sha", "detector",
+    "unfaithful_decls", "bridge", "bridge_decls", "source_id", "source_sha", "detector",
     # PAGE_ANCHOR rows from pair/anchor_check.py travel the same road
     "source", "page", "mechanical", "advisory", "detail",
 )
@@ -81,20 +81,29 @@ def disagreement(row: dict, companion: str) -> dict:
 
 
 def documents(rows: Iterable[dict], *, companion: str, run_id: str,
-              book_sha: str | None, items_pages: dict[str, int] | None = None) -> list[dict]:
-    """Group flat detector rows into one gate-shaped document per book item."""
+              source_id: str, source_sha: str | None = None,
+              items_pages: dict[str, int] | None = None) -> list[dict]:
+    """Group flat detector rows into one gate-shaped document per source item.
+
+    Grouped on ``(source_id, item)``: one document per item PER SOURCE, because
+    two sources' ``Definition 1.2.2`` are two items and one merged document
+    would be gated against whichever text it happened to name.
+    """
     pages = items_pages or {}
-    by_item: dict[str, list[dict]] = {}
+    by_item: dict[tuple[str, str], list[dict]] = {}
     for row in rows:
         if not isinstance(row, dict) or not row.get("item"):
             continue
-        by_item.setdefault(str(row["item"]), []).append(row)
+        key = (str(row.get("source_id") or source_id), str(row["item"]))
+        by_item.setdefault(key, []).append(row)
     out: list[dict] = []
-    for item in sorted(by_item):
+    for (row_source, item) in sorted(by_item):
+        rows_here = by_item[(row_source, item)]
         out.append({
             "schema_version": SCHEMA_VERSION,
             "run_id": run_id,
-            "book_sha": book_sha,
+            "source_id": row_source,
+            "source_sha": str(rows_here[0].get("source_sha") or source_sha or "") or None,
             "item": item,
             # The detector located the item in items.json, not in the prose: it
             # knows the item exists and on which page, and never read the text.
@@ -102,24 +111,35 @@ def documents(rows: Iterable[dict], *, companion: str, run_id: str,
             "book_passage_quote": None,
             "printed_page": pages.get(item),
             "matches": [],
-            "disagreements": [disagreement(r, companion) for r in by_item[item]],
+            "disagreements": [disagreement(r, companion) for r in rows_here],
             "coverage_notes": "",
             "produced_by": "cf detect-proxies",
         })
     return out
 
 
-def slug(item: str) -> str:
-    """``Definition 1.2.2`` -> ``definition-1-2-2`` (the corpus filename)."""
-    keep = [c.lower() if c.isalnum() else "-" for c in item]
-    name = "".join(keep)
-    while "--" in name:
-        name = name.replace("--", "-")
-    return name.strip("-") or "item"
+def slug(item: str, source_id: str = "") -> str:
+    """``Definition 1.2.2`` -> ``definition-1-2-2`` (the corpus filename).
+
+    With a ``source_id`` the name is qualified
+    (``tao-measure-gsm126-published--definition-1-2-2``): two sources' documents
+    share a corpus directory, and an unqualified name would let the second
+    written silently replace the first.
+    """
+    def _dashes(text: str) -> str:
+        name = "".join(c.lower() if c.isalnum() else "-" for c in text)
+        while "--" in name:
+            name = name.replace("--", "-")
+        return name.strip("-")
+
+    tail = _dashes(item) or "item"
+    head = _dashes(source_id)
+    return f"{head}--{tail}" if head else tail
 
 
 def write_corpus(docs: Sequence[dict], dest: str | Path, *, run_id: str,
-                 companion: str, book_sha: str | None, counts: dict | None = None) -> dict:
+                 companion: str, source_id: str = "", source_sha: str | None = None,
+                 counts: dict | None = None) -> dict:
     """Write one JSON per item into *dest* and return the names written.
 
     Idempotent: the same detector input rewrites the same bytes, so re-running
@@ -129,13 +149,15 @@ def write_corpus(docs: Sequence[dict], dest: str | Path, *, run_id: str,
     dest.mkdir(parents=True, exist_ok=True)
     written: list[str] = []
     for doc in docs:
-        name = slug(str(doc["item"])) + ".json"
+        name = slug(str(doc["item"]), str(doc.get("source_id") or source_id)) + ".json"
         write_json(dest / name, doc, indent=1, sort_keys=True)
         written.append(name)
     return {
         "run_id": run_id,
         "repo": companion,
-        "book_sha": book_sha,
+        "source_id": source_id,
+        "source_sha": source_sha,
+        "sources": sorted({str(d.get("source_id") or source_id) for d in docs}),
         "destination": str(dest),
         "documents": len(written),
         "names": sorted(written),

@@ -37,41 +37,42 @@ def register(subparsers):
         NAME, help=HELP, description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--campaign", help="campaign directory (default: $CF_CAMPAIGN or cwd upward)")
+    p.add_argument("--workspace", help="workspace directory (default: $CF_WORKSPACE or cwd upward)")
     p.add_argument("--companion", action="append", default=[],
                    help="companion to route for (repeatable; default: all)")
     p.add_argument("--corpus", action="append", default=[],
                    help="corpus run directory or findings file (default: every corpus/<run>/)")
-    p.add_argument("--book-sha", default="", help="override the campaign's pinned edition")
     p.add_argument("--anchor-check", default="",
-                   help="pairs/anchor-check.json (default: the campaign's)")
+                   help="one pairs/<source_id>/anchor-check.json to use for EVERY source "
+                        "(default: each source's own, which is the only one that examined "
+                        "its items)")
     p.add_argument("--emit-upstream", default="",
                    help="directory to write the upstream export into (CHALLENGED files only)")
     p.add_argument("--redact-quotes", dest="redact_quotes", action="store_true", default=None,
                    help="replace book_quote with (length, hash) in the upstream export "
-                        "(default: campaign.yaml policy.redact_quotes_on_export, which is true)")
+                        "(default: workspace.yaml policy.redact_quotes_on_export, which is true)")
     p.add_argument("--no-redact-quotes", dest="redact_quotes", action="store_false",
-                   help="export the verbatim book sentence (overrides the campaign policy)")
+                   help="export the verbatim book sentence (overrides the workspace policy)")
     p.add_argument("--no-messages", action="store_true", help="skip the owner-message drafts")
     p.set_defaults(func=run)
     return p
 
 
 def _redact(args) -> bool:
-    """``--redact-quotes`` / ``--no-redact-quotes``, else the campaign's policy.
+    """``--redact-quotes`` / ``--no-redact-quotes``, else the workspace's policy.
 
-    ``policy.redact_quotes_on_export: true`` is written into every campaign by
+    ``policy.redact_quotes_on_export: true`` is written into every workspace by
     ``cf init`` and was read by nothing: the flag defaulted to False, so an
-    operator who read their campaign.yaml and believed quotes were redacted got
+    operator who read their workspace.yaml and believed quotes were redacted got
     verbatim book sentences in the file they handed to a repo owner.
     """
     if args.redact_quotes is not None:
         return bool(args.redact_quotes)
     try:
-        from cflib.campaign import Campaign
+        from cflib.workspace import Workspace
 
-        policy = Campaign.load(args.campaign).policy
-    except Exception:  # noqa: BLE001 - a campaign we cannot read gets the safe default
+        policy = Workspace.load(args.workspace).policy
+    except Exception:  # noqa: BLE001 - a workspace we cannot read gets the safe default
         return True
     return bool(policy.get("redact_quotes_on_export", True))
 
@@ -79,19 +80,19 @@ def _redact(args) -> bool:
 def _check_publish_policy(args) -> None:
     """``policy.publish_unchallenged`` is read, and only ``false`` is accepted.
 
-    SKILL.md hard rule 5 is not negotiable: nothing leaves the campaign
+    SKILL.md hard rule 5 is not negotiable: nothing leaves the workspace
     directory while ``_meta.status`` is UNCHALLENGED.  The key exists so the
-    campaign states the rule, not so it can be turned off.
+    workspace states the rule, not so it can be turned off.
     """
     try:
-        from cflib.campaign import Campaign
+        from cflib.workspace import Workspace
 
-        policy = Campaign.load(args.campaign).policy
+        policy = Workspace.load(args.workspace).policy
     except Exception:  # noqa: BLE001
         return
     if policy.get("publish_unchallenged"):
         raise SystemExit(
-            "error: campaign.yaml sets policy.publish_unchallenged: true, which this skill "
+            "error: workspace.yaml sets policy.publish_unchallenged: true, which this skill "
             "does not implement.\nhint:  a first-pass finding is wrong about 40% of the time; "
             "run `cf adjudicate` and set it back to false."
         )
@@ -100,11 +101,10 @@ def _check_publish_policy(args) -> None:
 def run(args) -> int:
     _check_publish_policy(args)
     redact = _redact(args)
-    reports = route_mod.route_campaign(
-        args.campaign,
+    reports = route_mod.route_workspace(
+        args.workspace,
         companions=args.companion,
         corpus=args.corpus,
-        book_sha=args.book_sha,
         anchor_check_path=args.anchor_check,
         write_messages=not args.no_messages,
     )
@@ -120,7 +120,7 @@ def run(args) -> int:
                  (", %d withdrawn" % counts["withdrawn"]) if counts["withdrawn"] else ""))
         print("  %s" % rep["file"])
         if counts.get("unchallenged"):
-            print("  %d row(s) unchallenged; challenge them before anything leaves the campaign dir:"
+            print("  %d row(s) unchallenged; challenge them before anything leaves the workspace dir:"
                   % counts["unchallenged"])
             print("    %s" % meta.get("challenge_command", ""))
         if args.emit_upstream:
@@ -128,7 +128,7 @@ def run(args) -> int:
                 out = route_mod.emit_upstream(
                     rep["routed"], args.emit_upstream,
                     companion=rep["companion"],
-                    campaign=os.path.abspath(args.campaign or "."),
+                    workspace=os.path.abspath(args.workspace or "."),
                     redact_quotes=redact,
                 )
                 print("  upstream: %s%s" % (out, "" if redact else "  (quotes NOT redacted)"))

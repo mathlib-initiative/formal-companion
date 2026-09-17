@@ -16,7 +16,7 @@ export const meta = {
 //     command were constants in the original;
 //   * the worker SELF-GATES: a Workflow script has no filesystem access, so the
 //     quote gate cannot run "inside the script after each agent" (the design's
-//     original wording). The worker runs the campaign's own gate command on its
+//     original wording). The worker runs the workspace's own gate command on its
 //     own draft and reports the result; the authoritative gate runs afterwards,
 //     out of tree, at harvest.
 //   * the return value carries the post-hoc recovery recipe (harvest_journal ->
@@ -24,7 +24,7 @@ export const meta = {
 //     journal is the durable artifact, not the script's return value.
 
 const A = args || {}
-const C = A.campaign || {}
+const C = A.source || {}
 const ITEMS = A.items || []
 const REPOS = A.repos || []
 const MODE = A.mode || 'differential'
@@ -50,7 +50,7 @@ or a way the statement is trivially true (vacuity). Every disagreement you repor
 NO_DEFECT_FOUND for the item: that is a successful attack run, not a failure.`,
 }
 
-const CONTEXT = `Lean 4 formalizations of ${C.book_title || C.book_id} are on this machine:
+const CONTEXT = `Lean 4 formalizations of ${C.title || C.source_id} are on this machine:
 ${repoLines}
 
 READ-ONLY. Do NOT edit any file in any repository, do not run a build, do not change git state. You produce findings only.
@@ -61,8 +61,9 @@ DATA
 - Statement tables (one JSON row per declaration, with file:line and the signature):
 ${REPOS.map(r => '    ' + r.name + ': ' + r.statements).join('\n')}
 ${A.pairs ? '- Paired rows for this item: grep -F \'"item": "<ITEM>"\' ' + A.pairs : ''}
-- The book: ${C.book_layout_txt} (pdftotext of the pinned edition, sha256 ${C.book_sha}; pages separated by form feed)
-  and one file per page at ${C.book_pages_dir}/pNNN.txt (PDF page = printed page + ${C.pdf_page_offset}).
+- The source: ${C.text} -- `${C.source_id}` (pdftotext of the pinned edition, sha256 ${C.source_sha}; pages separated by form feed)
+  and one file per page at ${C.pages_dir}/pNNN.txt (PDF page = printed page + ${C.page_offset}).
+  Another edition of the same work may exist; every quote is checked against THIS text and no other.
   Locate the item (e.g. grep -n 'Exercise 1.2.4') and READ THE ACTUAL PASSAGE; never work from memory of the book.
 ${C.errata ? '- The published errata: ' + C.errata + '. A statement that differs from the printed text may be following an erratum.' : ''}
 
@@ -89,7 +90,7 @@ dots replaced by '-', as TASK_ID), then run:
     ${GATE.command}
 It checks: every book_quote is at least ${GATE.quote_min_chars || 25} normalised characters and actually occurs in the
 book text; every named declaration exists; kinds and severities are in the vocabulary${GATE.witness_required ? '; every disagreement carries a witness' : ''};
-book_sha matches ${C.book_sha}. Fix whatever it rejects and run it again. Report the command you ran and its final
+source_sha matches ${C.source_sha} and source_id is `${C.source_id}`. Fix whatever it rejects and run it again. Report the command you ran and its final
 output in the \`gate\` field. If you cannot make a finding pass the gate, DROP the finding and say so in coverage_notes
 -- a finding that cannot be evidenced does not exist. The authoritative gate runs again, out of tree, at harvest.` : ''
 
@@ -201,8 +202,14 @@ found even when the ruling stands.`,
   }
 ).then(rs => rs.filter(Boolean))
 
+// Which source each item belongs to. A run is planned for one source, but the
+// journal has to say so per row: a finding that names only `Exercise 1.3.19` is
+// not addressable, because that label means a different item in another source.
+const SRC_OF = ITEMS.reduce((m, t) => (m[t.item] = t.source_id || C.source_id, m), {})
+const srcOf = it => SRC_OF[it] || C.source_id
+
 const findings = results.flatMap(r => (r.adj.disagreements || []).map(d => Object.assign(
-  { item: r.adj.item, run_id: A.run_id || '', book_sha: C.book_sha },
+  { item: r.adj.item, run_id: A.run_id || '', source_id: srcOf(r.adj.item), source_sha: C.source_sha },
   d,
   { challenge_verdicts: r.challenges
       .filter(c => c.concept === d.concept || r.challenges.length <= 2)
@@ -222,7 +229,8 @@ return {
   schema: 'cf-fleet-local-v2',
   mode: MODE,
   run_id: A.run_id || '',
-  book_sha: C.book_sha,
+  source_id: C.source_id,
+  source_sha: C.source_sha,
   summary: {
     items_in: ITEMS.length,
     items_done: results.length,
@@ -234,9 +242,9 @@ return {
     remaining,
   },
   findings,
-  quotes: results.map(r => ({ item: r.adj.item, quote: r.adj.book_passage_quote, located: r.adj.book_located })),
-  coverage: results.map(r => ({ item: r.adj.item, notes: r.adj.coverage_notes })),
-  gate_reports: results.map(r => ({ item: r.adj.item, gate: r.adj.gate || null })),
+  quotes: results.map(r => ({ item: r.adj.item, source_id: srcOf(r.adj.item), quote: r.adj.book_passage_quote, located: r.adj.book_located })),
+  coverage: results.map(r => ({ item: r.adj.item, source_id: srcOf(r.adj.item), notes: r.adj.coverage_notes })),
+  gate_reports: results.map(r => ({ item: r.adj.item, source_id: srcOf(r.adj.item), gate: r.adj.gate || null })),
   // This substrate dies mid-run (the session limit killed batch 1 at 129/225).
   // The journal is the durable artifact; findings are only real once the
   // out-of-tree gate has passed them, which happens here:
@@ -246,7 +254,7 @@ return {
     // positionally, `--journal <wf_* directory>`, and `--gate` (there is no
     // --from-journal, no --run and no --verify).
     harvest: 'python3 scripts/cf.py harvest ' + (A.run_id || '<run-id>') + ' --journal <transcriptDir> --gate',
-    gate: 'python3 scripts/gate/verify_findings.py --gate-config ' + (GATE.config || '<run>/gate.local.json') + ' --root <campaign>/corpus/' + (A.run_id || '<run-id>') + ' --findings-dir .   # the gate OUT OF TREE',
+    gate: 'python3 scripts/gate/verify_findings.py --gate-config ' + (GATE.config || '<run>/gate.local.json') + ' --root <workspace>/corpus/' + (A.run_id || '<run-id>') + ' --findings-dir .   # the gate OUT OF TREE',
     requeue: 'python3 scripts/cf.py plan-run --preset <preset> --run-id ' + (A.run_id || '<run-id>') + ' --force   # rebuilds tasks and args; re-run this script for the items listed in summary.remaining',
   },
 }

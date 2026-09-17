@@ -30,7 +30,7 @@ import collections
 import re
 import sys
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 if __package__ in (None, ""):  # `python3 scripts/harvest/tally.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -74,7 +74,12 @@ def _kind_alternation(kinds: Sequence[str]) -> re.Pattern:
 
 
 def collapse_to_book_item(label: str, kinds: Sequence[str] | None = None) -> str:
-    """The book item a finding label belongs to.
+    """The source item a finding label belongs to.
+
+    ``kinds`` is ONE SOURCE's kinds list.  It has to be, because the kinds decide
+    which labels collapse at all: a source whose grammar has no ``Proposition``
+    would silently keep ``Proposition 1.2.3`` as a raw label if it were handed a
+    sibling edition's kinds, and the two would tally as two items.
 
     ``Exercise 1.6.27(iii)`` -> ``Exercise 1.6.27``;
     ``In-text definition, Exercise 1.4.24`` -> ``Exercise 1.4.24``;
@@ -119,18 +124,38 @@ def _decl_repos(defect: dict) -> dict[str, list[str]]:
     return dict(out)
 
 
+def _kinds_for(kinds, source_id: str) -> Sequence[str] | None:
+    """``kinds`` may be one list or ``{source_id: kinds}`` -- pick this source's."""
+    if isinstance(kinds, Mapping):
+        return kinds.get(source_id) or kinds.get("") or None
+    return kinds
+
+
 def rows_for_run(run_id: str, directory: str | Path,
-                 kinds: Sequence[str] | None = None,
-                 mode: str | None = None) -> list[dict]:
-    """One row per (defect, repo it names) across every findings file in *directory*."""
+                 kinds=None,
+                 mode: str | None = None,
+                 sources: Sequence[str] | None = None) -> list[dict]:
+    """One row per (defect, repo it names) across every findings file in *directory*.
+
+    Every row carries ``source_id`` and ``source_sha``.  ``kinds`` may be one
+    list or a ``{source_id: kinds}`` map, because the item grammar is per source.
+    ``sources`` filters to the named source ids -- a corpus directory can hold
+    two sources' files, and a tally of one of them must not count the other's.
+    """
     directory = Path(directory)
     mode = mode or run_mode(run_id, directory)
+    wanted = {str(s) for s in sources} if sources else None
     rows: list[dict] = []
     for path in iter_finding_files(directory):
         payload = read_json(path, default=None)
         if not isinstance(payload, dict):
             continue
+        source_id = str(payload.get("source_id") or "")
+        if wanted is not None and source_id not in wanted:
+            continue
+        source_sha = str(payload.get("source_sha") or payload.get("book_sha") or "")
         item_raw = str(payload.get("item") or path.stem)
+        item = collapse_to_book_item(item_raw, _kinds_for(kinds, source_id))
         for defect in _defects(payload):
             by_repo = _decl_repos(defect) or {UNATTRIBUTED: []}
             for repo, decls in sorted(by_repo.items()):
@@ -139,8 +164,10 @@ def rows_for_run(run_id: str, directory: str | Path,
                     "mode": mode,
                     "file": path.name,
                     "repo": repo,
+                    "source_id": str(defect.get("source_id") or source_id),
+                    "source_sha": str(defect.get("source_sha") or source_sha),
                     "item_raw": item_raw,
-                    "item": collapse_to_book_item(item_raw, kinds),
+                    "item": item,
                     "kind": defect.get("kind"),
                     "severity": defect.get("severity"),
                     "concept": defect.get("concept"),
@@ -151,13 +178,14 @@ def rows_for_run(run_id: str, directory: str | Path,
     return rows
 
 
-def collect(runs: dict[str, str | Path], kinds: Sequence[str] | None = None,
-            modes: dict[str, str] | None = None) -> list[dict]:
+def collect(runs: dict[str, str | Path], kinds=None,
+            modes: dict[str, str] | None = None,
+            sources: Sequence[str] | None = None) -> list[dict]:
     """Rows for several runs; ``runs`` maps run id -> corpus directory."""
     out: list[dict] = []
     for run_id, directory in runs.items():
         out.extend(rows_for_run(run_id, directory, kinds,
-                                (modes or {}).get(run_id)))
+                                (modes or {}).get(run_id), sources=sources))
     return out
 
 
@@ -220,53 +248,97 @@ def _classify_items(rows: Iterable[dict], key: str) -> dict:
     }
 
 
-def tally(runs: dict[str, str | Path], kinds: Sequence[str] | None = None,
-          modes: dict[str, str] | None = None, book_sha: str = "") -> dict:
-    """The full tally over a set of runs, per repo prefix.
+#: how a group key is spelled in ``tally()["groups"]``
+GROUP_SEP = "::"
+#: the default grouping (docs/design/multi-source-model.md S0.2 rule 4)
+DEFAULT_GROUP_BY: tuple[str, ...] = ("source_id", "repo")
 
-    Returns ``{generated_at, runs, repos: {repo: {...}}}`` where each repo has
-    row counts by kind and severity, raw and collapsed item statistics, per-run
-    counts, and the attack-only / differential-only item sets.
+
+def group_key(row: Mapping, group_by: Sequence[str] = DEFAULT_GROUP_BY) -> str:
+    """``"<source_id>::<repo>"`` for one row."""
+    return GROUP_SEP.join(str(row.get(field) or "") for field in group_by)
+
+
+def _block(rows: Sequence[dict], runs: Mapping) -> dict:
+    """The per-group tally block (counts, classes, per-run)."""
+    per_run = {}
+    for run_id in runs:
+        run_rows = [r for r in rows if r["run"] == run_id]
+        per_run[run_id] = {
+            "rows": len(run_rows),
+            "items": len({r["item_raw"] for r in run_rows}),
+            "collapsed_items": len({r["item"] for r in run_rows}),
+        }
+    return {
+        "rows": len(rows),
+        "by_kind": dict(collections.Counter(r["kind"] for r in rows if r["kind"])),
+        "by_severity": {s: sum(1 for r in rows if r["severity"] == s) for s in SEVERITIES},
+        "raw": _classify_items(rows, "item_raw"),
+        "collapsed": _classify_items(rows, "item"),
+        "per_run": per_run,
+    }
+
+
+def tally(runs: dict[str, str | Path], kinds=None,
+          modes: dict[str, str] | None = None,
+          sources: Sequence[str] | None = None,
+          group_by: Sequence[str] = DEFAULT_GROUP_BY) -> dict:
+    """The full tally over a set of runs, grouped by ``(source_id, repo)``.
+
+    Returns ``{generated_at, runs, groups: {...}, repos: {repo: {...}}}``.
+    ``groups`` is the primary output -- an item id means a different item in a
+    different source, so collapsing two sources' rows onto one repo total is a
+    count nobody can act on.  ``repos`` is the per-repo rollup the state block
+    and the human table read, and each repo entry names its sources so the
+    rollup is never mistaken for a single-source number.
     """
-    rows = collect(runs, kinds, modes)
+    group_by = tuple(group_by) or DEFAULT_GROUP_BY
+    rows = collect(runs, kinds, modes, sources=sources)
+    by_group: dict[str, list[dict]] = collections.defaultdict(list)
     by_repo: dict[str, list[dict]] = collections.defaultdict(list)
     for row in rows:
+        by_group[group_key(row, group_by)].append(row)
         by_repo[row["repo"]].append(row)
+
+    groups = {}
+    for key, group_rows in sorted(by_group.items()):
+        block = _block(group_rows, runs)
+        for field in group_by:
+            block[field] = str(group_rows[0].get(field) or "")
+        groups[key] = block
 
     out_repos = {}
     for repo, repo_rows in sorted(by_repo.items()):
-        per_run = {}
-        for run_id in runs:
-            run_rows = [r for r in repo_rows if r["run"] == run_id]
-            per_run[run_id] = {
-                "rows": len(run_rows),
-                "items": len({r["item_raw"] for r in run_rows}),
-                "collapsed_items": len({r["item"] for r in run_rows}),
-            }
-        out_repos[repo] = {
-            "rows": len(repo_rows),
-            "by_kind": dict(collections.Counter(r["kind"] for r in repo_rows if r["kind"])),
-            "by_severity": {s: sum(1 for r in repo_rows if r["severity"] == s) for s in SEVERITIES},
-            "raw": _classify_items(repo_rows, "item_raw"),
-            "collapsed": _classify_items(repo_rows, "item"),
-            "per_run": per_run,
-        }
+        block = _block(repo_rows, runs)
+        block["sources"] = {}
+        for sid in sorted({str(r.get("source_id") or "") for r in repo_rows}):
+            sid_rows = [r for r in repo_rows if str(r.get("source_id") or "") == sid]
+            block["sources"][sid] = _block(sid_rows, runs)
+        out_repos[repo] = block
     return {
         "generated_at": iso_now(),
-        "book_sha": book_sha,
+        "group_by": list(group_by),
+        "sources": {sid: sha for sid, sha in sorted(
+            {str(r.get("source_id") or ""): str(r.get("source_sha") or "") for r in rows}.items())},
         "runs": {run_id: {"dir": str(directory),
                           "mode": (modes or {}).get(run_id) or run_mode(run_id, Path(directory)),
                           "files": len(iter_finding_files(directory))}
                  for run_id, directory in runs.items()},
         "rows": len(rows),
+        "groups": groups,
         "repos": out_repos,
     }
 
 
 def state_counts(repo_tally: dict) -> dict:
-    """The ``tally`` block of companions/<name>/state.json (architecture.md section 2)."""
+    """The ``tally`` block of companions/<name>/state.json (architecture.md section 2).
+
+    Accepts either a repo rollup or one ``(source_id, repo)`` group; a rollup
+    additionally carries ``by_source`` so `cf status` can say which source a
+    number came from instead of printing one figure over two editions.
+    """
     raw = repo_tally["raw"]
-    return {
+    out = {
         "rows": repo_tally["rows"],
         "items": raw["items"],
         "collapsed_items": repo_tally["collapsed"]["items"],
@@ -277,6 +349,14 @@ def state_counts(repo_tally: dict) -> dict:
         "coverage": raw["classes"]["coverage"],
         "page_anchor": raw["classes"]["page_anchor"],
     }
+    if repo_tally.get("sources"):
+        out["by_source"] = {sid: {"rows": blk["rows"], "items": blk["raw"]["items"],
+                                  "substantive": blk["raw"]["substantive"],
+                                  "high": blk["raw"]["high"]}
+                            for sid, blk in repo_tally["sources"].items()}
+    if repo_tally.get("source_id"):
+        out["source_id"] = repo_tally["source_id"]
+    return out
 
 
 def render(result: dict, repos: Sequence[str] | None = None) -> str:
@@ -284,13 +364,15 @@ def render(result: dict, repos: Sequence[str] | None = None) -> str:
     lines = [f"runs: " + ", ".join(f"{r} ({v['mode']}, {v['files']} files)"
                                    for r, v in result["runs"].items()),
              f"rows: {result['rows']}"]
-    for repo, data in result["repos"].items():
+    for key, data in result.get("groups", {}).items():
+        repo = data.get("repo", key)
         if repos and repo not in repos:
             continue
+        source_id = data.get("source_id") or "(unstamped)"
         raw, col = data["raw"], data["collapsed"]
         lines.append("")
-        lines.append(f"[{repo}] {data['rows']} rows over {raw['items']} raw items "
-                     f"({col['items']} book items)")
+        lines.append(f"[{source_id} / {repo}] {data['rows']} rows over {raw['items']} raw items "
+                     f"({col['items']} source items)")
         lines.append("  kinds:      " + ", ".join(f"{k}={v}" for k, v in sorted(data["by_kind"].items())))
         lines.append("  severity:   " + ", ".join(f"{k}={v}" for k, v in data["by_severity"].items()))
         lines.append(f"  substantive: {raw['substantive']} raw / {col['substantive']} book items "

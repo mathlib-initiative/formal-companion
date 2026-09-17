@@ -56,9 +56,10 @@ def todo(name: str, how: str = "") -> str:
 def load_tallies(paths: Any, explicit: Iterable[str] = ()) -> list[dict]:
     """Load ``reports/tally.<run>.json`` files written by harvest/tally.py.
 
-    Shape (harvest/tally.py:tally): ``{generated_at, book_sha, rows,
-    runs: {run_id: {dir, mode, files}}, repos: {repo: {rows, by_kind,
-    by_severity, raw, collapsed, per_run}}}``.
+    Shape (harvest/tally.py:tally): ``{generated_at, sources, rows,
+    runs: {run_id: {dir, mode, files}}, groups: {"<source_id>::<repo>": {...}},
+    repos: {repo: {rows, by_kind, by_severity, raw, collapsed, per_run,
+    sources}}}``.
     """
     files = [str(f) for f in explicit]
     if not files and os.path.isdir(paths.reports):
@@ -72,18 +73,21 @@ def load_tallies(paths: Any, explicit: Iterable[str] = ()) -> list[dict]:
         try:
             doc = compat.read_json(path)
         except Exception as exc:  # an unreadable tally is a hole, not a crash
-            out.append({"file": path, "error": str(exc), "runs": {}, "repos": {}, "rows": None})
+            out.append({"file": path, "error": str(exc), "runs": {}, "repos": {},
+                        "groups": {}, "sources": {}, "rows": None})
             continue
         if not isinstance(doc, dict):
-            out.append({"file": path, "error": "not a JSON object", "runs": {}, "repos": {}, "rows": None})
+            out.append({"file": path, "error": "not a JSON object", "runs": {}, "repos": {},
+                        "groups": {}, "sources": {}, "rows": None})
             continue
         out.append(
             {
                 "file": path,
                 "generated_at": str(doc.get("generated_at") or ""),
-                "book_sha": str(doc.get("book_sha") or ""),
+                "sources": doc.get("sources") or {},
                 "rows": doc.get("rows"),
                 "runs": doc.get("runs") or {},
+                "groups": doc.get("groups") or {},
                 "repos": doc.get("repos") or {},
             }
         )
@@ -139,7 +143,7 @@ def load_gh(files: Iterable[str]) -> list[dict]:
 def companion_facts(paths: Any, name: str, entry: dict | None = None) -> dict:
     """Everything the report knows about one companion, all of it computed.
 
-    ``entry`` is the companion's campaign.yaml block, used only to fill the repo
+    ``entry`` is the companion's workspace.yaml block, used only to fill the repo
     path when ``cf onboard`` has not written state.json yet.
     """
     state = compat.read_state(paths, name)
@@ -227,12 +231,27 @@ def _host_name(cfg: dict) -> str:
     return str(host or "local")
 
 
-def _book_access(cfg: dict) -> str:
-    """``book_access`` lives under ``book: {access: ...}`` in run.yaml."""
+def _source_access(cfg: dict) -> str:
+    """What the workers could read of the source (run.yaml ``source_access``)."""
+    if cfg.get("source_access"):
+        return str(cfg["source_access"])
     book = cfg.get("book")
     if isinstance(book, dict) and book.get("access"):
         return str(book["access"])
     return str(cfg.get("book_access") or "")
+
+
+def _run_sources(cfg: dict) -> str:
+    """The source ids a run.yaml names, for the runs table."""
+    value = cfg.get("sources")
+    ids: list[str] = []
+    if isinstance(value, dict):
+        ids = [str(k) for k in value]
+    elif isinstance(value, (list, tuple)):
+        for entry in value:
+            ids.append(str(entry.get("id") or entry.get("source_id") or "")
+                       if isinstance(entry, dict) else str(entry))
+    return ", ".join("`%s`" % i for i in ids if i)
 
 
 def _task_count(cfg: dict):
@@ -264,13 +283,15 @@ def render_runs_table(runs: dict[str, dict], tallies: list[dict]) -> str:
                 "`%s`" % run_id,
                 cfg.get("mode") or info.get("mode") or todo("mode", "cf plan-run"),
                 cfg.get("model") or (models or {}).get("worker") or todo("model", "cf plan-run"),
-                _book_access(cfg) or todo("book access", "cf plan-run"),
+                _run_sources(cfg) or todo("source", "cf plan-run"),
+                _source_access(cfg) or todo("source access", "cf plan-run"),
                 _host_name(cfg),
                 _task_count(cfg) or todo("tasks", "cf plan-run"),
                 info.get("files", todo("finding files", "cf harvest")),
             ]
         )
-    return _table(["run", "mode", "model", "book access", "host", "tasks", "finding files"], rows)
+    return _table(["run", "mode", "model", "source", "source access", "host", "tasks",
+                   "finding files"], rows)
 
 
 def _classes(entry: dict) -> str:
@@ -291,30 +312,39 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
             entry = (tally.get("repos") or {}).get(name)
             if not isinstance(entry, dict):
                 continue
-            for run_id, counts in sorted((entry.get("per_run") or {}).items()):
-                if not counts.get("rows"):
-                    continue
-                per_run_rows.append(
-                    ["`%s`" % run_id, counts.get("rows"), counts.get("items"),
-                     counts.get("collapsed_items")]
+            # One totals row per (tally, source). The item sets of two sources are
+            # disjoint, so a single row summing them is a number about nothing.
+            per_source = entry.get("sources") or {"": entry}
+            for source_id, block in sorted(per_source.items()):
+                for run_id, counts in sorted((block.get("per_run") or {}).items()):
+                    if not counts.get("rows"):
+                        continue
+                    per_run_rows.append(
+                        ["`%s`" % (source_id or "(unstamped)"), "`%s`" % run_id,
+                         counts.get("rows"), counts.get("items"),
+                         counts.get("collapsed_items")]
+                    )
+                raw = block.get("raw") or {}
+                totals.append(
+                    [
+                        os.path.basename(tally["file"]),
+                        "`%s`" % (source_id or "(unstamped)"),
+                        block.get("rows"),
+                        raw.get("items"),
+                        raw.get("substantive"),
+                        raw.get("high"),
+                        ", ".join("%s %s" % (v, k)
+                                  for k, v in sorted((block.get("by_kind") or {}).items())),
+                        _classes(block),
+                    ]
                 )
-            raw = entry.get("raw") or {}
-            totals.append(
-                [
-                    os.path.basename(tally["file"]),
-                    entry.get("rows"),
-                    raw.get("items"),
-                    raw.get("substantive"),
-                    raw.get("high"),
-                    ", ".join("%s %s" % (v, k) for k, v in sorted((entry.get("by_kind") or {}).items())),
-                    _classes(entry),
-                ]
-            )
         if per_run_rows:
-            blocks += [_table(["run", "rows", "raw items", "book items"], per_run_rows), ""]
+            blocks += [_table(["source", "run", "rows", "raw items", "source items"],
+                              per_run_rows), ""]
         if totals:
             blocks += [
-                _table(["tally", "rows", "items", "substantive", "high", "by kind", "classes"], totals),
+                _table(["tally", "source", "rows", "items", "substantive", "high",
+                        "by kind", "classes"], totals),
                 "",
             ]
         if not per_run_rows and not totals:
@@ -324,12 +354,15 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
         if meta:
             counts = meta.get("counts") or {}
             blocks += [
-                "Routed: **%s** — %s row(s) over %s item(s); %s challenged, %s unchallenged, "
+                "Routed: **%s** — %s row(s) over %s item(s)%s; %s challenged, %s unchallenged, "
                 "%s withdrawn. Rule: %s."
                 % (
                     meta.get("status", ""),
                     counts.get("rows", "?"),
                     counts.get("items", "?"),
+                    (" (" + ", ".join("%s: %s" % (sid, n) for sid, n
+                                      in sorted((counts.get("by_source") or {}).items())) + ")")
+                    if counts.get("by_source") else "",
                     counts.get("challenged", "?"),
                     counts.get("unchallenged", "?"),
                     counts.get("withdrawn", "?"),
@@ -412,16 +445,21 @@ def render_owner_actions(facts: list[dict], gh: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def render_paths_list(paths: Any, facts: list[dict]) -> str:
+def render_paths_list(paths: Any, facts: list[dict], source_ids: Iterable[str] = ()) -> str:
     """Section 6."""
     lines = [
-        "- Campaign directory (private git repo, no remote): `%s`" % paths.root,
+        "- Workspace directory (private git repo, no remote): `%s`" % paths.root,
         "- Corpus, append-only per run: `%s`" % paths.corpus(),
         "- Ledger: `%s`" % paths.ledger,
         "- Routed files and owner-message drafts: `%s`" % paths.routed,
         "- Reports: `%s`" % paths.reports,
-        "- Book text, page images and crops are gitignored and never leave the campaign directory.",
     ]
+    for source_id in source_ids:
+        lines.append("- Source `%s`: text and page map `%s`; pairing `%s`"
+                     % (source_id, paths.source_dir(source_id), paths.pairs(source_id)))
+    lines.append(
+        "- Source text, page images and crops are gitignored and never leave the "
+        "workspace directory.")
     for f in facts:
         repo = (f["state"] or {}).get("repo")
         if repo:
@@ -430,8 +468,9 @@ def render_paths_list(paths: Any, facts: list[dict]) -> str:
 
 
 DEFAULT_TRAPS = [
-    "Two PDF editions: a page anchor is only meaningful against the pinned sha256. A finding judged "
-    "against another printing is not a finding.",
+    "Two editions of one work are two SOURCES: a page anchor is only meaningful against the "
+    "source_id and source_sha the row carries, and the edition a companion's anchors follow is not "
+    "always one it ships. A finding judged against another printing is not a finding.",
     "The quote gate runs OUT OF TREE. A gate living inside the tree a worker can edit proves nothing.",
     "Counts come from the corpus, and the corpus can be short: check the harvest receipt (one run "
     "landed 762 of 763 files, and the missing one was a real CONTENT finding).",
@@ -448,11 +487,11 @@ def render_traps(extra: Iterable[str] = ()) -> str:
 def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: list[dict]) -> str:
     """Section 8: the commands that recompute every number above."""
     lines = ["```bash", "# routing counts (sections 1 and 3)",
-             "python3 scripts/cf.py route --campaign %s" % paths.root,
+             "python3 scripts/cf.py route --workspace %s" % paths.root,
              "# ledger counts, and that every row answers a real finding",
-             "python3 scripts/cf.py adjudicate --campaign %s --validate" % paths.root,
-             "# the tally every finding number comes from",
-             "python3 scripts/cf.py harvest --campaign %s --tally" % paths.root]
+             "python3 scripts/cf.py adjudicate --workspace %s --validate" % paths.root,
+             "# the tally every finding number comes from, grouped by (source_id, repo)",
+             "python3 scripts/cf.py tally --workspace %s" % paths.root]
     for tally in tallies:
         lines.append("#   -> %s" % tally["file"])
     if not tallies:
@@ -469,8 +508,30 @@ def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: 
 # --------------------------------------------------------------------------
 
 
+def render_sources_table(cfg: Any, tallies: list[dict]) -> str:
+    """The handoff's sources table: one row per source, with its companions."""
+    rows = []
+    for source_id in cfg.source_ids():
+        src = cfg.source(source_id)
+        bound = [n for n in cfg.companion_names() if source_id in (cfg.sources_of(n) or [])]
+        anchors = [n for n in bound if cfg.anchor_source(n) == source_id]
+        rows.append([
+            "`%s`" % source_id,
+            (src.sha256 or todo("source_sha", "cf onboard"))[:12],
+            src.edition or src.title or "",
+            src.offset,
+            ", ".join("`%s`" % n for n in bound) or "(none)",
+            ", ".join("`%s`" % n for n in anchors) or "—",
+            "yes" if src.confirmed else "**no**",
+        ])
+    if not rows:
+        return todo("sources", "cf onboard <repo>")
+    return _table(["source", "sha256", "edition", "offset", "companions", "anchored by",
+                   "confirmed"], rows)
+
+
 def build_context(
-    campaign: str,
+    workspace: str,
     *,
     tally_files: Iterable[str] = (),
     gh_files: Iterable[str] = (),
@@ -480,14 +541,14 @@ def build_context(
     traps: Iterable[str] = (),
 ) -> dict:
     """Compute every substitution for templates/handoff.md."""
-    cfg = compat.load_campaign(campaign)
+    cfg = compat.load_workspace(workspace)
     paths = cfg.paths
     names = cfg.companion_names()
     facts = [companion_facts(paths, n, cfg.companion(n)) for n in names]
     tallies = load_tallies(paths, tally_files)
     runs = load_runs(paths)
     gh = load_gh(gh_files)
-    book_sha = cfg.book_sha
+    source_ids = cfg.source_ids()
 
     unchallenged = [
         f for f in facts
@@ -501,10 +562,12 @@ def build_context(
     )
     open_total = sum(len(f["open_rows"]) for f in facts)
     default_tldr = (
-        "%d companion(s) audited against `%s`; %d open ledger row(s) across %d routed file(s); %s"
+        "%d companion(s) audited against %d source(s) (%s); %d open ledger row(s) across "
+        "%d routed file(s); %s"
         % (
             len(facts),
-            (book_sha or "")[:12] or todo("book_sha", "cf book"),
+            len(source_ids),
+            ", ".join("`%s`" % s for s in source_ids) or todo("sources", "cf onboard"),
             open_total,
             sum(1 for f in facts if f["routed_meta"]),
             "no upstream report may be produced yet." if unchallenged
@@ -512,11 +575,9 @@ def build_context(
         )
     )
     return {
-        "campaign": cfg.title or os.path.basename(paths.root),
+        "workspace": cfg.title or os.path.basename(paths.root),
         "date": date or _dt.date.today().isoformat(),
-        "book_id": cfg.book_id or todo("book_id", "cf book"),
-        "book_sha": book_sha or todo("book_sha", "cf book"),
-        "book_note": (", printed page = PDF page - %d" % cfg.offset) if cfg.offset else "",
+        "sources_table": render_sources_table(cfg, tallies),
         "tldr": tldr or default_tldr,
         "state_table": render_state_table(facts),
         "status_note": status_note,
@@ -531,7 +592,7 @@ def build_context(
             "_%s — this section is written by the person who ran the pass. It is the transferable "
             "part of the report and no script can fill it._" % todo("what went wrong")
         ),
-        "paths_list": render_paths_list(paths, facts),
+        "paths_list": render_paths_list(paths, facts, source_ids),
         "traps_list": render_traps(traps),
         "verification_commands": render_verification(paths, facts, tallies, gh),
         "provenance": "_Generated by `cf report` from %d tally file(s), %d run.yaml file(s) and %d "
@@ -540,7 +601,7 @@ def build_context(
         "_facts": facts,
         "_tallies": tallies,
         "_paths": paths,
-        "_campaign": cfg,
+        "_workspace": cfg,
     }
 
 
@@ -568,7 +629,7 @@ def render(context: dict, template: str = "") -> str:
 
 
 def make_handoff(
-    campaign: str,
+    workspace: str,
     *,
     out_path: str = "",
     tally_files: Iterable[str] = (),
@@ -580,7 +641,7 @@ def make_handoff(
 ) -> dict:
     """Render ``reports/handoff.<date>.md``. Returns {path, todos, context, text}."""
     ctx = build_context(
-        campaign,
+        workspace,
         tally_files=tally_files,
         gh_files=gh_files,
         date=date,
@@ -597,8 +658,8 @@ def make_handoff(
 
 def main(argv: list[str] | None = None) -> int:
     """CLI mirror of ``cf report`` (see scripts/cfcmd/report.py)."""
-    ap = argparse.ArgumentParser(description="Render the campaign handoff from computed artifacts.")
-    ap.add_argument("--campaign", required=True)
+    ap = argparse.ArgumentParser(description="Render the workspace handoff from computed artifacts.")
+    ap.add_argument("--workspace", required=True)
     ap.add_argument("--tally", action="append", default=[])
     ap.add_argument("--gh-json", action="append", default=[])
     ap.add_argument("--out", default="")
@@ -606,7 +667,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--tldr", default="")
     args = ap.parse_args(argv)
     report = make_handoff(
-        args.campaign,
+        args.workspace,
         out_path=args.out,
         tally_files=args.tally,
         gh_files=args.gh_json,

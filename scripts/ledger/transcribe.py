@@ -64,7 +64,8 @@ def _base_row(
     item: str,
     companion: str,
     finding: dict | None,
-    book_sha: str,
+    source_id: str,
+    source_sha: str,
     method: str,
     at: str,
 ) -> dict:
@@ -77,13 +78,18 @@ def _base_row(
     return {
         "finding_id": finding_id,
         "run_id": fields["run_id"],
+        # The finding's OWN source wins: a run adjudicates one source, but a
+        # ledger file accumulates rows from several runs, and stamping them all
+        # with the caller's default would file a 2011-draft row under the
+        # published edition.
+        "source_id": str((finding or {}).get("source_id") or source_id or ""),
+        "source_sha": str((finding or {}).get("source_sha") or source_sha or ""),
         "item": compat.normalise_item(item or (finding or {}).get("item")),
         "repo": companion,
         "kind": fields["kind"],
         "unfaithful_decls": decls,
         "contested": False,
         "dissent": [],
-        "book_sha": book_sha,
         "method": method,
         "schema": "ledger-v2",
         "at": at,
@@ -94,7 +100,8 @@ def rows_from_adjudication(
     result: dict,
     *,
     companion: str,
-    book_sha: str,
+    source_id: str = "",
+    source_sha: str = "",
     index: dict[str, dict] | None = None,
     method: str = "workflow:adjudicate",
     at: str = "",
@@ -114,7 +121,8 @@ def rows_from_adjudication(
             item=entry.get("item") or reconciled.get("item") or "",
             companion=companion,
             finding=finding,
-            book_sha=book_sha,
+            source_id=source_id,
+            source_sha=source_sha,
             method=method,
             at=at,
         )
@@ -176,7 +184,8 @@ def rows_from_challenge(
     result: dict,
     *,
     companion: str,
-    book_sha: str,
+    source_id: str = "",
+    source_sha: str = "",
     index: dict[str, dict] | None = None,
     method: str = "workflow:challenge",
     at: str = "",
@@ -196,7 +205,8 @@ def rows_from_challenge(
             item=entry.get("item") or "",
             companion=companion,
             finding=finding,
-            book_sha=book_sha,
+            source_id=source_id,
+            source_sha=source_sha,
             method=method,
             at=at,
         )
@@ -265,38 +275,54 @@ def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: di
     lines.append("# %s — adjudication record (%s)" % (companion, meta.get("at", "")))
     lines.append("")
     lines.append(
-        "Source: `%s`, book edition `%s`, method `%s`."
-        % (meta.get("result_file", ""), (meta.get("book_sha") or "")[:16], meta.get("method", ""))
+        "Result file: `%s`, method `%s`."
+        % (meta.get("result_file", ""), meta.get("method", ""))
+    )
+    by_source: dict[str, list[dict]] = {}
+    for row in rows:
+        by_source.setdefault(str(row.get("source_id") or "(unstamped)"), []).append(row)
+    lines.append(
+        "Sources adjudicated: "
+        + "; ".join("`%s` (%s…, %d row%s)"
+                    % (sid, str((rs[0].get("source_sha") or ""))[:12], len(rs),
+                       "" if len(rs) == 1 else "s")
+                    for sid, rs in sorted(by_source.items()))
     )
     lines.append(
         "Process per row: three independent lenses (book-literal, Lean-semantics, "
         "convention-policy) → reconciler → two opposing skeptics; dissent below the "
         "contested threshold is recorded in the row."
     )
-    lines.append("")
-    lines.append("| item | verdict | severity | contested | outcome |")
-    lines.append("|---|---|---|---|---|")
-    for row in rows:
-        outcome = str(
-            row.get("resolution")
-            or row.get("pr_plan")
-            or row.get("refutation_text")
-            or row.get("summary")
-            or ""
-        )
-        outcome = outcome.replace("|", "\\|").replace("\n", " ")
-        if len(outcome) > 180:
-            outcome = outcome[:177] + "..."
-        lines.append(
-            "| %s | %s | %s | %s | %s |"
-            % (
-                row.get("item", ""),
-                row.get("verdict", ""),
-                row.get("severity", ""),
-                "yes" if row.get("contested") else "",
-                outcome,
+    # One table per source. An item label means a different item in a different
+    # source, so a single table sorted by item would interleave two books'
+    # `Exercise 1.3.19` rows as though they were the same row twice.
+    for sid, group in sorted(by_source.items()):
+        lines.append("")
+        lines.append("### %s" % sid)
+        lines.append("")
+        lines.append("| item | verdict | severity | contested | outcome |")
+        lines.append("|---|---|---|---|---|")
+        for row in group:
+            outcome = str(
+                row.get("resolution")
+                or row.get("pr_plan")
+                or row.get("refutation_text")
+                or row.get("summary")
+                or ""
             )
-        )
+            outcome = outcome.replace("|", "\\|").replace("\n", " ")
+            if len(outcome) > 180:
+                outcome = outcome[:177] + "..."
+            lines.append(
+                "| %s | %s | %s | %s | %s |"
+                % (
+                    row.get("item", ""),
+                    row.get("verdict", ""),
+                    row.get("severity", ""),
+                    "yes" if row.get("contested") else "",
+                    outcome,
+                )
+            )
     lines.append("")
     verdicts = ", ".join(
         "%d %s" % (n, v) for v, n in sorted(counts["by_verdict"].items()) if v
@@ -359,36 +385,54 @@ def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: di
 def transcribe(
     result_path: str,
     *,
-    campaign: str,
+    workspace: str,
     companion: str,
-    book_sha: str = "",
+    source_id: str = "",
+    source_sha: str = "",
     index: dict[str, dict] | None = None,
-    source: str = "adjudicate",
+    kind: str = "adjudicate",
     at: str = "",
     validate: bool = True,
+    sources: Any = None,
 ) -> dict:
-    """Read a workflow result file and write the companion's ledger files."""
+    """Read a workflow result file and write the companion's ledger files.
+
+    ``kind`` is which workflow produced the file (``adjudicate``/``challenge``);
+    it used to be called ``source``, which now means something else entirely.
+    ``source_id``/``source_sha`` are the fallbacks for rows whose finding does
+    not carry its own.
+    """
     result = compat.read_json(result_path)
     if isinstance(result, dict) and "result" in result and isinstance(result["result"], dict):
         result = result["result"]
-    paths = compat.load_campaign(campaign).paths
+    ws = compat.load_workspace(workspace)
+    paths = ws.paths
     if not at:
         stamp = _dt.datetime.fromtimestamp(os.path.getmtime(result_path), _dt.timezone.utc)
         at = stamp.strftime("%Y-%m-%d")
-    book_sha = book_sha or str(result.get("book_sha") or "")
-    method = "workflow:%s" % source
-    if source == "challenge":
+    source_id = source_id or str(result.get("source_id") or "")
+    source_sha = source_sha or str(result.get("source_sha") or result.get("book_sha") or "")
+    if source_id and not source_sha:
+        source_sha = ws.source_sha(source_id)
+    if sources is None:
+        sources = ws.source_shas()
+    method = "workflow:%s" % kind
+    if kind == "challenge":
         rows = rows_from_challenge(
-            result, companion=companion, book_sha=book_sha, index=index, method=method, at=at
+            result, companion=companion, source_id=source_id, source_sha=source_sha,
+            index=index, method=method, at=at
         )
     else:
         rows = rows_from_adjudication(
-            result, companion=companion, book_sha=book_sha, index=index, method=method, at=at
+            result, companion=companion, source_id=source_id, source_sha=source_sha,
+            index=index, method=method, at=at
         )
     accepted, refuted = split_rows(rows)
     meta_common = {
         "companion": companion,
-        "book_sha": book_sha,
+        "sources": sorted({str(r.get("source_id") or "") for r in rows if r.get("source_id")}),
+        "source_shas": {str(r.get("source_id")): str(r.get("source_sha") or "")
+                        for r in rows if r.get("source_id")},
         "method": method,
         "at": at,
         "result_file": os.path.abspath(result_path),
@@ -420,40 +464,42 @@ def transcribe(
         "errors": [],
     }
     if validate:
-        errs = vl.validate_rows(rows, index=index, book_sha=book_sha)
+        errs = vl.validate_rows(rows, index=index, sources=sources)
         report["errors"] = errs
         report["ok"] = not errs
     return report
 
 
 def main(argv: list[str] | None = None) -> int:
-    """CLI: transcribe a saved workflow result into the campaign ledger."""
+    """CLI: transcribe a saved workflow result into the workspace ledger."""
     ap = argparse.ArgumentParser(description="Transcribe a workflow result into ledger rows.")
     ap.add_argument("result", help="JSON file holding the Workflow tool's return value")
-    ap.add_argument("--campaign", required=True)
+    ap.add_argument("--workspace", required=True)
     ap.add_argument("--companion", required=True)
-    ap.add_argument("--source", choices=("adjudicate", "challenge"), default="adjudicate")
+    ap.add_argument("--from", dest="kind", choices=("adjudicate", "challenge"),
+                    default="adjudicate", help="which workflow produced the result file")
     ap.add_argument("--corpus", action="append", default=[])
-    ap.add_argument("--book-sha", default="")
+    ap.add_argument("--source", dest="source_id", default="",
+                    help="source_id for rows whose finding does not carry one")
     ap.add_argument("--at", default="", help="date stamp (default: the result file's mtime)")
     args = ap.parse_args(argv)
 
     from ledger import findings as findings_mod
 
-    campaign_cfg = compat.load_campaign(args.campaign)
-    book_sha = args.book_sha or campaign_cfg.book_sha
+    ws = compat.load_workspace(args.workspace)
     index = None
     if args.corpus:
         index = findings_mod.index_by_id(
-            findings_mod.load_findings(args.corpus, book_sha=book_sha)
+            findings_mod.load_findings(args.corpus, source_id=args.source_id)
         )
     report = transcribe(
         args.result,
-        campaign=args.campaign,
+        workspace=args.workspace,
         companion=args.companion,
-        book_sha=book_sha,
+        source_id=args.source_id,
+        source_sha=ws.source_sha(args.source_id) if args.source_id else "",
         index=index,
-        source=args.source,
+        kind=args.kind,
         at=args.at,
     )
     for err in report.get("errors") or []:

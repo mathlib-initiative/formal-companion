@@ -57,7 +57,7 @@ exec "$ROOT/bin/{bridge}" {role} "$@"
 class TendRootPlan:
     """Where a run's tend root lives locally and on the run host."""
 
-    local: pathlib.Path          # <campaign>/runs/<id>/tend-root
+    local: pathlib.Path          # <workspace>/runs/<id>/tend-root
     tend_root: str               # host path of that same directory
     entrypoint: str              # host path of the entrypoint repo
     gate_dir: str                # host path of the out-of-tree gate
@@ -125,6 +125,7 @@ def make_tend_root(
         "bridge": preset.bridge,
         "model": preset.model or "(bridge default)",
         "book_access": preset.book_access,
+        "sources_inline": ", ".join(sorted(gate_config.get("sources") or {})) or "(none)",
         "task_count": task_count,
         **agent,
     }
