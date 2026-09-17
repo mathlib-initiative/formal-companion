@@ -1123,7 +1123,8 @@ block: |
     TASK_VALUES = {
         "task_id": "definition-1-1-1", "attack_label": "vacuity",
         "item": "Definition 1.1.1", "priority": "50", "depends_on": "[]",
-        "run_id": "attack-vac-ours", "book_sha": "0" * 64,
+        "run_id": "attack-vac-ours",
+        "source_id": PUBLISHED_ID, "source_sha": "0" * 64,
         "kinds_inline": "CONTENT|VACUITY", "companion": "ours",
         "gate_command": "python3 /gate/verify_findings.py", "printed_page": "12",
         "repos_inline": "ours, adam", "repo_count": "2",
@@ -1332,7 +1333,14 @@ class TestCli(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class _FakeAdapter:
-    """Stands in for scripts/adapters/ while exercising the onboard path."""
+    """Stands in for scripts/adapters/ while exercising the onboard path.
+
+    It is a DUCK, not a subclass, on purpose: ``cflib.adapters_api.load`` is a
+    seam a third-party adapter may fill, so the stub asserts what the seam
+    actually requires -- ``bind_default_source`` (which source unmapped rows
+    belong to), ``dry_run(repo, sources=)`` and ``extract(repo, sources=)``
+    yielding rows that already carry their own ``source_id`` / ``source_sha``.
+    """
 
     counts = {"declarations": 2207, "tagged": 1496, "items": 519,
               "rejects": [{"raw": "Corollary (Lemma 1.2.5)", "reason": "no_number"}]}
@@ -1342,18 +1350,24 @@ class _FakeAdapter:
 
     def __init__(self, workspace=None):
         self.workspace = workspace
+        self.default_source_id = None
 
-    def dry_run(self, repo=None):
-        return dict(self.counts)
+    def bind_default_source(self, source_id):
+        self.default_source_id = source_id
 
-    def extract(self, repo=None, sources=None, **kwargs):
-        sha = None
-        if isinstance(sources, dict) and sources:
-            sha = next(iter(sources.values()))
+    def _bind(self, sources):
+        bound = dict(sources or {})
+        source_id = self.default_source_id or (next(iter(bound)) if bound else None)
+        return source_id, bound.get(source_id)
+
+    def dry_run(self, repo=None, *, sources=None):
+        source_id, _sha = self._bind(sources)
+        return {**self.counts, "sources": [], "rows_by_source": {source_id: len(self.rows)}}
+
+    def extract(self, repo=None, *, sources=None):
+        source_id, sha = self._bind(sources)
         for row in self.rows:
-            out = dict(row)
-            out["book_sha"] = sha
-            yield out
+            yield {**row, "source_id": source_id, "source_sha": sha}
 
     def key_inputs(self):
         return {"adapter_kind": "docstring_tags"}

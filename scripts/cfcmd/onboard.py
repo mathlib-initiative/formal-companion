@@ -22,6 +22,7 @@ the one command that settles it -- never a default.
 from __future__ import annotations
 
 import subprocess
+import traceback
 from pathlib import Path
 
 from cflib import discovery, inference, log, state as state_mod, vocab
@@ -164,7 +165,7 @@ def run(args) -> int:
     log.ok(f"wrote {conventions}") if written else log.info(f"{conventions} exists; left untouched")
 
     # ---- extract -----------------------------------------------------
-    counts, problem = _dry_run(adapter_yaml, repo, workspace, anchor)
+    counts, problem = _dry_run(adapter_yaml, repo, workspace, audited, anchor)
     rows: list = []
     if not args.no_extract:
         rows = _extract(workspace, name, adapter_yaml, repo, audited, anchor)
@@ -451,33 +452,28 @@ def _commit(repo: Path) -> str | None:
     return res.stdout.strip() if res.returncode == 0 else None
 
 
-class _SourceView:
-    """What an adapter needs to know about the ONE source it is extracting for.
+def _bind(workspace, adapter_yaml: Path, sources, anchor: str):
+    """Load the companion's adapter, bound to the sources it is audited against.
 
-    The shipped adapters still read ``kinds`` / ``offset`` / ``book_sha`` off the
-    object they are handed.  A Workspace cannot answer those without being told
-    WHICH source, so onboarding hands them this view of a single source instead.
-    The ADAPTERS package replaces it with ``Adapter.extract(sources=...)``.
+    The adapter is handed the WHOLE workspace and the ``{source_id: sha}`` map:
+    an item is the pair (source_id, item), so the adapter resolves the kinds,
+    the page offset and the sha per source rather than being handed one source's
+    parameters and told to assume.  The anchor is pinned separately because
+    onboarding re-decides it against the rows it is about to extract, which makes
+    it fresher than the ``sources.default`` already written into adapter.yaml.
     """
-
-    def __init__(self, workspace, source_id: str):
-        self.workspace = workspace
-        self.source_id = source_id
-        ref = workspace.source(source_id)
-        self.kinds = tuple(ref.kinds)
-        self.offset = ref.offset
-        self.book_sha = ref.sha256
-        self.source_sha = ref.sha256
-        self.root = workspace.root
-        self.paths = workspace.paths
+    from cflib.adapters_api import load as load_adapter
+    adapter = load_adapter(adapter_yaml, workspace=workspace)
+    if anchor:
+        adapter.bind_default_source(anchor)
+    return adapter, {sid: workspace.source(sid).sha256 for sid in (sources or [anchor]) if sid}
 
 
-def _dry_run(adapter_yaml: Path, repo: Path, workspace, source_id: str):
+def _dry_run(adapter_yaml: Path, repo: Path, workspace, sources, anchor: str):
     """Run the adapter's parser without writing a statement table."""
     try:
-        from cflib.adapters_api import load as load_adapter
-        adapter = load_adapter(adapter_yaml, workspace=_SourceView(workspace, source_id))
-        counts = dict(adapter.dry_run(repo))
+        adapter, shas = _bind(workspace, adapter_yaml, sources, anchor)
+        counts = dict(adapter.dry_run(repo, sources=shas))
     except AdapterError as exc:
         log.warn(str(exc))
         return None, str(exc)
@@ -487,30 +483,50 @@ def _dry_run(adapter_yaml: Path, repo: Path, workspace, source_id: str):
     missing = [k for k in DRY_RUN_REQUIRED_KEYS if k not in counts]
     if missing:
         log.warn(f"adapter dry_run() omitted {', '.join(missing)}")
+    _print_discovered_sources(counts)
     return counts, None
+
+
+def _print_discovered_sources(counts: dict) -> None:
+    """What the ADAPTER says the repo's sources are, next to what discovery said.
+
+    The two readings come from the same files but through different eyes: a
+    disagreement here is the cheapest place to see a repo that names an edition
+    it does not tag.
+    """
+    claims = counts.get("sources") or []
+    if not claims:
+        return
+    log.info("")
+    log.info(f"the adapter reads {len(claims)} source signal(s) in this repo:")
+    for claim in claims[:8]:
+        sha = claim.get("sha256") or claim.get("sha256_prefix", "")
+        head = f"  {claim.get('signal', '?'):<20s} {claim.get('path', '')}"
+        log.info(head + (f"   sha {sha[:8]}…" if sha else ""))
+        if claim.get("title"):
+            log.detail(f"      title  {claim['title']}")
+        if claim.get("kinds"):
+            log.detail(f"      kinds  {' '.join(claim['kinds'])}   (from this repo's own tags)")
+    for sid, rows in (counts.get("rows_by_source") or {}).items():
+        log.info(f"  rows attributed to {sid}: {rows}")
 
 
 def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anchor: str) -> list:
     """statements.jsonl, every row stamped with its source_id and source_sha."""
     try:
-        from cflib.adapters_api import load as load_adapter
-        view = _SourceView(workspace, anchor)
-        adapter = load_adapter(adapter_yaml, workspace=view)
-        try:
-            produced = adapter.extract(repo, sources={anchor: view.source_sha})
-        except TypeError:
-            # the shipped adapters still take extract(repo, book_sha); the
-            # ADAPTERS package unifies this on the S8 signature.
-            produced = adapter.extract(repo, view.source_sha)
-        rows = []
-        for row in produced:
-            row = dict(row)
-            row["source_id"] = row.get("source_id") or anchor
-            row["source_sha"] = row.pop("book_sha", None) or view.source_sha
-            rows.append(row)
-    except Exception as exc:  # noqa: BLE001
-        log.warn(f"extraction failed: {exc.__class__.__name__}: {exc}")
+        adapter, shas = _bind(workspace, adapter_yaml, sources, anchor)
+        rows = [dict(row) for row in adapter.extract(repo, sources=shas)]
+    except (AdapterError, CfError) as exc:
+        # A companion whose adapter cannot parse it must not lose the workspace
+        # entry, the prepared sources and the errata already written above: the
+        # files stay, the table does not, and the message says which.
+        log.warn(f"{name}: extraction failed: {exc}")
         return []
+    except Exception as exc:  # noqa: BLE001 - an adapter bug is reported, not raised through
+        log.warn(f"{name}: extraction failed: {exc.__class__.__name__}: {exc}")
+        log.detail(traceback.format_exc())
+        return []
+    _report_schema_problems(workspace, name, rows, anchor)
     path = workspace.paths.statements_jsonl(name)
     write_jsonl(path, rows, meta={
         "companion": name, "repo": str(repo), "sources": list(sources),
@@ -518,13 +534,54 @@ def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anch
     })
     log.ok(f"extracted {path.relative_to(workspace.root)}   {len(rows)} rows")
     with state_mod.update(workspace, name) as st:
-        state_mod.set_section(st, "extract", {"rows": len(rows),
-                                              "items": len({r.get("item") for r in rows})})
-        state_mod.source_section(st, anchor, {"sha": workspace.source(anchor).sha256,
-                                              "rows": len(rows),
-                                              "items": len({r.get("item") for r in rows})})
-    _infer_scope(workspace, anchor, rows)
+        state_mod.set_section(st, "extract", {
+            "rows": len(rows),
+            "items": len({(r.get("source_id"), r.get("item")) for r in rows}),
+            "source_ids": sorted({str(r.get("source_id") or "") for r in rows} - {""}),
+        })
+        for sid in sorted({str(r.get("source_id") or "") for r in rows} - {""}):
+            per_source = [r for r in rows if r.get("source_id") == sid]
+            state_mod.source_section(st, sid, {"sha": workspace.source(sid).sha256,
+                                               "rows": len(per_source),
+                                               "items": len({r.get("item") for r in per_source})})
+    for sid in sorted({str(r.get("source_id") or "") for r in rows} - {""}):
+        _infer_scope(workspace, sid, rows)
     return rows
+
+
+def _report_schema_problems(workspace, name: str, rows, anchor: str) -> None:
+    """Say NOW what `cf extract` will refuse later.
+
+    Onboarding writes its table before the schema gate runs, because the anchor
+    edition is decided from these rows and an empty table decides nothing.  That
+    is exactly why the problems have to be printed here: a companion whose
+    `glob:` reaches a generated mirror of its own modules produces two rows per
+    declaration, and finding that out at `cf extract` is three stages too late.
+    """
+    if not rows:
+        return
+    cap = 10
+    try:
+        from adapters.base import validate_rows
+        kinds = (tuple(workspace.source(anchor).kinds) + ("In-text",)) if anchor else None
+        problems = validate_rows(rows, kinds=kinds, require_source_sha=False, max_problems=cap)
+    except Exception as exc:  # noqa: BLE001 - a reporting aid must never be fatal
+        log.detail(f"schema check skipped: {exc.__class__.__name__}: {exc}")
+        return
+    if not problems:
+        return
+    # validate_rows stops at `cap`, so this is a floor, not a total: saying "10"
+    # of a table with 142 collisions would read as "nearly clean".
+    at_least = "at least " if len(problems) > cap else ""
+    log.warn(f"{name}: {at_least}{min(len(problems), cap)} of these rows will NOT pass "
+             f"`cf extract`'s schema gate:")
+    for problem in problems[:5]:
+        log.info(f"    {problem}")
+    if any("duplicate" in p for p in problems):
+        log.info("    two files define the same declaration: narrow `glob:` in "
+                 f"{workspace.paths.adapter_yaml(name)} to the companion's own modules "
+                 "(a generated mirror of them is inside the glob), then "
+                 f"`cf extract --companion {name} --force`")
 
 
 def _infer_scope(workspace, source_id: str, rows) -> None:

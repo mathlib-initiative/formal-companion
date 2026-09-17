@@ -1,6 +1,6 @@
 # companions/adam/adapter.yaml -- worked example: the attribution-table convention.
 #
-# Copy into a campaign as companions/<name>/adapter.yaml and edit `repo`.
+# Copy into a workspace as companions/<name>/adapter.yaml and edit `repo`.
 # measure_theory carries no book tags in its docstrings; the item -> declaration
 # map is an exported artifact produced by a curation pass, and the statements
 # come from a snippets export:
@@ -22,6 +22,14 @@ repo: /Users/jack/Desktop/measure_theory
 adapter: attribution_table
 granularity: item
 
+# Which SOURCE a row belongs to. This repo names exactly one -- the ledger's
+# source block pins sha 64498329 -- so `default` is the whole story and `map` is
+# empty. With two, the first matching rule would win and an unmatchable row
+# would be an error naming the file, never a silent default.
+sources:
+  default: tao-measure-gsm126-published
+  map: []
+
 # The exported artifacts, repo-relative. Defaults match measure_theory's layout.
 target_refinement: pdf-overlay/data/target-refinement.json
 declaration_snippets: pdf-overlay/data/declaration-snippets.json
@@ -29,9 +37,10 @@ geometry_glob: "pdf-overlay/data/geometry-batch-*.json"
 ledger: source-formalization-ledger.json
 
 # Page anchors come from the overlay geometry, not from the source: the item's
-# own region page, converted with the campaign's offset
-# (printed page = PDF page - 16). campaign.yaml's book.offset wins; page_offset
-# is the fallback when this adapter is used outside a campaign.
+# own region page, converted with the bound source's offset
+# (printed page = PDF page - 16). workspace.yaml's sources.<id>.offset wins --
+# it was INFERRED from the running heads, at confidence 0.996 over 265 pages --
+# and page_offset is the fallback when this adapter is used outside a workspace.
 anchor: ledger
 page_offset: 16
 

@@ -1,6 +1,6 @@
 # companions/ours/adapter.yaml -- worked example: the docstring-tag convention.
 #
-# Copy into a campaign as companions/<name>/adapter.yaml and edit `repo`.
+# Copy into a workspace as companions/<name>/adapter.yaml and edit `repo`.
 # This is the tao-measure-lean convention (CLAUDE.md:32-34): every declaration
 # that formalises a book item opens its docstring with the item's tag inside
 # backticks, e.g.
@@ -17,6 +17,15 @@ name: ours
 repo: /Users/jack/Desktop/tao-measure-lean
 adapter: docstring_tags
 granularity: item
+
+# Which SOURCE a row belongs to. An item is the pair (source_id, item), so every
+# row carries both. tao-measure-lean BUNDLES the 2011 draft but its docstring
+# page anchors follow the PUBLISHED pagination, so the default is the published
+# edition and the draft is a reference, audited by nobody: `cf onboard` decides
+# that mechanically (agreement 0.89 vs 0.66) and re-pins it here.
+sources:
+  default: tao-measure-gsm126-published
+  map: []
 
 # Only the section files: everything else in the repo is infrastructure, and a
 # bare **/*.lean over a Lake project would read Mathlib as well.

@@ -35,14 +35,14 @@ from __future__ import annotations
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 
 from cflib import items as cf_items
 
 from . import leanparse
 from .api import Adapter, AdapterError, register, sha_of_files
 from .base import make_row
-from .itemtag import find_page_anchor, find_tag
+from .itemtag import find_page_anchor, find_tag, kinds_from_labels
 
 #: tao-measure-lean's in-progress marker; `sorry` under it is a gap, not an
 #: exercise left for the reader (make_verso_tables.py TODO_SORRY_RE).
@@ -50,12 +50,46 @@ DEFAULT_GAP_MARKER = r"\bsorry\b\s*--\s*TODO"
 BARE_SORRY = re.compile(r"\bsorry\b")
 DEFAULT_GLOBS = ("**/*.lean",)
 
+#: The opening of a Lean docstring -- enough of it to hold a tag. Used only by
+#: :meth:`DocstringTagsAdapter.observed_kinds`, which reads the repo's grammar
+#: before any kind list exists to parse it with.
+#:
+#: The head is a LOOKAHEAD, not a capture: a consuming ``/--(.{0,120})`` swallows
+#: the next docstring whenever two declarations sit within 120 characters of each
+#: other, and the kinds only those declarations use then never appear.
+DOCSTRING_HEAD_RE = re.compile(r"/--(?=(.{0,120}))", re.S)
+
+
+def _declaration_collisions(rows: list[dict]) -> list[dict]:
+    """Declarations that appear in more than one file, with the files.
+
+    Two files defining the same fully qualified name are two modules that are
+    never imported together -- a generated mirror of the real ones.  Which is
+    the audited copy is not decidable here: picking by path order would happily
+    audit a blueprint stub instead of the proof it mirrors.
+    """
+    by_decl: dict[str, list[dict]] = {}
+    for row in rows:
+        by_decl.setdefault(row["decl"], []).append(row)
+    out = []
+    for decl, group in sorted(by_decl.items()):
+        files = sorted({r["file"] for r in group})
+        if len(files) > 1:
+            out.append({"decl": decl, "item": group[0]["item"], "files": files})
+    return out
+
 
 @register
 class DocstringTagsAdapter(Adapter):
     """Companions whose declarations carry a book tag in their docstring."""
 
     kind = "docstring_tags"
+
+    #: The repo signals this convention owns (design S4.3): the
+    #: mathlib-initiative ``formalization.yaml`` sources list, and the Autoform
+    #: ``graph.json`` metadata a docstring-tagged repo is usually built from.
+    #: Ranked first by :meth:`discover_sources`; the rest still run.
+    PRIMARY_SIGNALS = ("formalization_yaml", "graph_json")
 
     # -- config ------------------------------------------------------------
     def validate_config(self) -> None:
@@ -120,8 +154,44 @@ class DocstringTagsAdapter(Adapter):
     def source_files(self, repo: Path) -> list[Path]:
         return self.matching_files(repo, DEFAULT_GLOBS)
 
+    # -- discovery ---------------------------------------------------------
+    def observed_kinds(self, repo: str | Path | None = None,
+                       min_count: int = 2) -> tuple[str, ...]:
+        """The item kinds this repo's docstring tags actually use.
+
+        Read, not declared: every docstring head is matched against
+        :data:`adapters.itemtag.TAG_KIND_RE`, so a companion that writes
+        ``Problem 2.3.1`` reports ``Problem`` and one that writes
+        ``Exercise 1.3.19`` reports ``Exercise``, with no kind list anywhere in
+        the loop.  ``min_count`` is the noise floor.
+        """
+        heads: list[str] = []
+        for path in self.source_files(self.resolve_repo(repo)):
+            try:
+                text = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:                              # pragma: no cover - unreadable file
+                continue
+            heads += [m.group(1).strip() for m in DOCSTRING_HEAD_RE.finditer(text)]
+        return kinds_from_labels(heads, min_count=min_count)
+
     # -- parsing -----------------------------------------------------------
-    def _tag_of(self, doc: str | None):
+    def _tag_keywords(self, binding) -> tuple[str, ...]:
+        """The kinds used to FIND a tag: the union over every bound source.
+
+        Finding a tag and parsing it are two steps with two kind lists.  The
+        grammar is per source (design S6.1), so the item is parsed against the
+        kinds of the source the row is attributed to; but a companion bound to
+        two sources must be able to SEE a tag belonging to either before it can
+        say which, so the search uses the union.
+        """
+        out: list[str] = []
+        for sid in binding.ids() or [None]:
+            for kind in self.item_kinds(sid):
+                if kind not in out:
+                    out.append(kind)
+        return tuple(out)
+
+    def _tag_of(self, doc: str | None, keywords=None):
         if not doc:
             return None
         # position: docstring_start (the tag opens the docstring, with a
@@ -134,15 +204,20 @@ class DocstringTagsAdapter(Adapter):
         anywhere = str(self.get("tag.position", "docstring_start")) == "docstring_anywhere"
         return find_tag(
             doc,
-            keywords=self.item_kinds(),
+            keywords=keywords or self.item_kinds(),
             require_backticks=bool(self.get("tag.require_backticks", True)),
             inline_window=0 if anywhere else int(self.get("tag.inline_window", 0)),
             pattern=self.tag_pattern(),
         )
 
-    def _parse_item(self, tag_text: str):
-        """(item id, sub, book kind, reject reason) via the strict grammar."""
-        item, reject = cf_items.try_parse(tag_text, self.numbered_kinds())
+    def _parse_item(self, tag_text: str, source_id: str | None = None):
+        """(item id, sub, book kind, reject reason) via the strict grammar.
+
+        The kind list is the one belonging to ``source_id``: a book with
+        ``Problem 2.3.1`` and a book with ``Exercise 2.3.1`` do not share a
+        grammar, and an item is the pair (source_id, item).
+        """
+        item, reject = cf_items.try_parse(tag_text, self.numbered_kinds(source_id))
         if item is None:
             return None, "", None, reject.reason
         return item.id, item.sub, item.kind, None
@@ -157,7 +232,7 @@ class DocstringTagsAdapter(Adapter):
             return True, "exercise" if exercise_permanent else "gap"
         return False, "none"
 
-    def _rows(self, repo: Path, book_sha: str | None):
+    def _rows(self, repo: Path, binding):
         decl_kinds = self.decl_kinds()
         body_kinds = self.body_kinds()
         gap_re = self.gap_marker()
@@ -168,10 +243,12 @@ class DocstringTagsAdapter(Adapter):
         clause_window = int(self.get("tag.clause_window", 140))
         granularity = str(self.config.get("granularity") or "item")
 
+        keywords = self._tag_keywords(binding)
+
         counts: Counter[str] = Counter()
         rejects: list[dict] = []
         rows: list[dict] = []
-        seen_items: set[str] = set()
+        seen_items: set[tuple[str, str]] = set()
 
         for path in self.source_files(repo):
             rel = str(path.relative_to(repo))
@@ -183,16 +260,21 @@ class DocstringTagsAdapter(Adapter):
                     counts["private"] += 1
                 if decl.anonymous:
                     counts["anonymous_declarations"] += 1
-                tag = self._tag_of(decl.doc)
+                tag = self._tag_of(decl.doc, keywords)
                 if tag is None:
                     counts["untagged"] += 1
                     continue
                 counts["tagged"] += 1
-                item_id, sub, item_kind, reason = self._parse_item(tag.tag)
+                # WHICH source before WHICH item: the tag may name another
+                # source (sources.map tag_prefix), and the item grammar that
+                # parses it belongs to that source.
+                source_id, source_sha = binding.resolve(file=rel, tag=tag.tag,
+                                                        decl=decl.full_name)
+                item_id, sub, item_kind, reason = self._parse_item(tag.tag, source_id)
                 if item_id is None:
                     counts["rejected"] += 1
                     rejects.append({"raw": tag.tag, "reason": reason, "decl": decl.full_name,
-                                    "file": rel, "line": decl.line})
+                                    "file": rel, "line": decl.line, "source_id": source_id})
                     continue
                 anchor = find_page_anchor(decl.doc, tag, clause_window=clause_window,
                                           page_re=page_re)
@@ -202,13 +284,17 @@ class DocstringTagsAdapter(Adapter):
                 if has_sorry:
                     counts["sorry"] += 1
                     counts[f"sorry_{sorry_class}"] += 1
-                is_key = key_flag == "all" or (key_flag == "first" and item_id not in seen_items)
-                seen_items.add(item_id)
+                # "first" is per (source, item): the same label in two sources
+                # is two items, and each deserves its own key row.
+                is_key = key_flag == "all" or (key_flag == "first"
+                                               and (source_id, item_id) not in seen_items)
+                seen_items.add((source_id, item_id))
                 rows.append(make_row(
                     item_raw=tag.tag,
                     item=item_id,
                     sub=sub,
                     item_kind=item_kind,
+                    source_id=source_id,
                     decl=decl.full_name,
                     kind=decl.kind,
                     namespace=decl.namespace,
@@ -226,20 +312,24 @@ class DocstringTagsAdapter(Adapter):
                     anonymous=decl.anonymous,
                     private=decl.private,
                     granularity=granularity,
-                    book_sha=self.book_sha(book_sha),
+                    source_sha=source_sha,
                 ))
         counts["rows"] = len(rows)
-        counts["items"] = len({r["item"] for r in rows})
+        counts["items"] = len({(r["source_id"], r["item"]) for r in rows})
         return rows, counts, rejects
 
     # -- interface ---------------------------------------------------------
-    def extract(self, repo: str | Path | None = None, book_sha: str | None = None) -> Iterator[dict]:
-        rows, _counts, _rejects = self._rows(self.resolve_repo(repo), book_sha)
+    def extract(self, repo: str | Path | None = None, *,
+                sources: "Mapping[str, str] | None" = None) -> Iterator[dict]:
+        rows, _counts, _rejects = self._rows(self.resolve_repo(repo), self.bind(sources))
         yield from rows
 
-    def dry_run(self, repo: str | Path | None = None) -> dict:
+    def dry_run(self, repo: str | Path | None = None, *,
+                sources: "Mapping[str, str] | None" = None) -> dict:
         path = self.resolve_repo(repo)
-        rows, counts, rejects = self._rows(path, None)
+        binding = self.bind(sources)
+        rows, counts, rejects = self._rows(path, binding)
+        collisions = _declaration_collisions(rows)
         return {
             "adapter": self.kind,
             "name": self.name,
@@ -262,7 +352,26 @@ class DocstringTagsAdapter(Adapter):
             "item_kinds": dict(sorted(Counter(r["item_kind"] for r in rows).items())),
             "rejected": counts["rejected"],
             "rejects": rejects[:50],
+            # The same fully qualified declaration read from two files: a
+            # generated mirror of the companion's own modules is inside the
+            # glob (tao-measure-lean's Blueprint/Gen/S_*.lean mirror
+            # TaoMeasure/Section_*.lean). Neither copy can be preferred
+            # mechanically -- a stub and a proof look the same from here -- so
+            # this is REPORTED, at the stage where narrowing `glob:` is still
+            # one edit, rather than dropped or discovered by the schema gate.
+            "duplicate_declarations": len(collisions),
+            "duplicates": collisions[:20],
             "samples": rows[:3],
+            # What this repo says its sources ARE, and which of them the rows
+            # were attributed to. `cf onboard` prints both, so a repo that names
+            # two editions and tags only one is visible at onboarding rather
+            # than three stages later.
+            "sources": self.source_report(path),
+            # ROWS, not tags: a tag the strict grammar refuses is counted under
+            # `rejected`, and reporting it here as an attributed row would make
+            # the two numbers disagree by exactly the rejects.
+            "rows_by_source": {sid: sum(1 for r in rows if r["source_id"] == sid)
+                               for sid in binding.ids()},
         }
 
     def key_inputs(self) -> dict:
