@@ -28,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -179,6 +179,57 @@ class TestHandoffRunTable(unittest.TestCase):
         self.assertIn("TODO(", table)           # never invent a model or a host
 
 
+class TestStatusSourceColumn(unittest.TestCase):
+    """`cf status` must not contradict its own source table.
+
+    The companion row counted the sources the last EXTRACT touched, so a source
+    just bound by `cf sources add` was listed in the table above (companions:
+    this one) and absent from the row below (sources: 1). The row now says what
+    the companion is BOUND to, and names the gap.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-status-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        self.ws = self.tmp / "ws"
+        repo = self.tmp / "repo"
+        repo.mkdir(parents=True)
+        write_workspace(
+            self.ws,
+            companions=(f"  ours:\n    repo: {repo}\n    adapter: docstring_tags\n"
+                        f"    sources: [{PUBLISHED_ID}, {DRAFT_ID}]\n"
+                        f"    anchor_source: {PUBLISHED_ID}\n"),
+            sources=tao_source() + tao_source(DRAFT_ID, DRAFT_SHA, "2011 draft"))
+        # state.json remembers only the source the last extract read
+        (self.ws / "companions" / "ours").mkdir(parents=True)
+        (self.ws / "companions" / "ours" / "state.json").write_text(json.dumps({
+            "name": "ours", "anchor_source": PUBLISHED_ID,
+            "sources": {PUBLISHED_ID: {"sha": PUBLISHED_SHA, "rows": 3, "items": 3}},
+            "extract": {"rows": 3, "items": 3},
+        }), encoding="utf-8")
+
+    def _status(self) -> str:
+        """stdout AND stderr: the table is printed, the warnings are logged."""
+        buf = io.StringIO()
+        with redirect_stdout(buf), redirect_stderr(buf):
+            cf_main.main(["status", "--workspace", str(self.ws)])
+        return buf.getvalue()
+
+    def test_the_row_counts_what_the_companion_is_bound_to(self):
+        out = self._status()
+        self.assertIn("2 (1 extracted)", out)
+        self.assertIn(f"bound to {DRAFT_ID} but no rows extracted", out)
+
+    def test_no_annotation_when_the_two_agree(self):
+        state = self.ws / "companions" / "ours" / "state.json"
+        data = json.loads(state.read_text())
+        data["sources"][DRAFT_ID] = {"sha": DRAFT_SHA, "rows": 1, "items": 1}
+        state.write_text(json.dumps(data), encoding="utf-8")
+        out = self._status()
+        self.assertNotIn("extracted)", out)
+        self.assertNotIn("no rows extracted", out)
+
+
 class TestImportCorpus(unittest.TestCase):
     """`cf import-corpus` adopts a foreign findings directory, read-only."""
 
@@ -318,6 +369,59 @@ class TestImportCorpus(unittest.TestCase):
         self.assertFalse(receipt["complete"])
         self.assertFalse(receipt["gate"]["ok"])
         self.assertTrue(receipt["gate"]["problems"])
+
+    def test_the_gate_needs_no_planned_run(self):
+        """`--gate` used to be unreachable for the corpora it exists to check.
+
+        The two presets written for imported v1 corpora are gate-only, so
+        `cf plan-run` refuses to write a gate.json for them, and `--gate`
+        defaulted to `runs/<id>/gate.local.json` -- a file an imported run never
+        has.  The importer knows the preset, the source and the repos, so it
+        builds the config and leaves it next to the corpus it judged.
+        """
+        sentence = ("Show that the union of two elementary sets is elementary, "
+                    "and that the intersection is elementary as well.")
+        text = self.workspace / "sources" / PUBLISHED_ID / "text.txt"
+        text.parent.mkdir(parents=True, exist_ok=True)
+        text.write_text("Exercise 1.1.1 (Boolean closure). " + sentence + "\n",
+                        encoding="utf-8")
+        for name in ("exercise-1-1-1.json", "exercise-1-1-2.json"):
+            (self.source / name).write_text(
+                json.dumps(dict(self.V1_DOC, book_passage_quote=sentence)),
+                encoding="utf-8")
+        rc = self._cf("import-corpus", "--run-id", "leg", "--from", str(self.source),
+                      "--workspace", str(self.workspace), "--no-tally",
+                      "--preset", "differential-legacy", "--repos", "ours,teorth",
+                      "--gate")
+        self.assertEqual(rc, 0, self.out)
+        dest = self.workspace / "corpus" / "leg"
+        receipt = json.loads((dest / "RECEIPT.json").read_text())
+        self.assertTrue(receipt["gate"]["ok"], receipt["gate"]["problems"])
+        self.assertEqual(receipt["gate"]["preset"], "differential-legacy")
+        self.assertTrue(receipt["complete"])
+
+        # the config it used is on disk, named by the receipt, and re-runnable
+        built = json.loads((dest / "gate.local.json").read_text())
+        self.assertEqual(receipt["gate"]["config"], str(dest / "gate.local.json"))
+        self.assertEqual(built["preset"], "differential-legacy")
+        self.assertEqual(built["sources"][PUBLISHED_ID]["text"], str(text))
+        self.assertEqual(built["sources"][PUBLISHED_ID]["sha256"], PUBLISHED_SHA)
+        # the repos of the CORPUS, not of the workspace: a baseline run's
+        # ours/teorth/adam are not this workspace's companions, and gating
+        # against the workspace's names would reject every row.
+        self.assertEqual(built["repos"], ["ours", "teorth"])
+        # and it is not mistaken for a finding
+        self.assertEqual(receipt["actual"]["count"], 2)
+
+    def test_the_gate_says_what_it_needs_when_it_cannot_build_one(self):
+        """No preset and no config: name both ways out, do not gate nothing."""
+        with self.assertRaises(CfError) as ctx:
+            self._cf("import-corpus", "--run-id", "nop", "--from", str(self.source),
+                     "--workspace", str(self.workspace), "--no-tally",
+                     "--preset", "", "--gate")
+        said = str(ctx.exception) + str(getattr(ctx.exception, "hint", ""))
+        self.assertIn("--preset", said)
+        self.assertIn("--gate-config", said)
 
     def test_the_mode_is_guessed_from_the_baseline_directory_names(self):
         from cfcmd import import_corpus

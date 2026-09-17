@@ -120,9 +120,27 @@ def run(args) -> int:
         if st is None:
             rows.append([name] + ["-"] * (len(COLUMNS) - 2) + ["not onboarded"])
             continue
-        rows.append([state_mod.summary_row(st).get(c) for c in COLUMNS])
+        row = state_mod.summary_row(st)
+        # summary_row counts the sources the last EXTRACT touched. The workspace
+        # is what the companion is BOUND to, and the two differ the moment a
+        # source is added and nothing has re-extracted yet -- printing only the
+        # first contradicts the source table directly above, which already lists
+        # this companion against the new source.
+        bound = len(workspace.sources_of(name))
+        done = row.get("sources") or 0
+        row["sources"] = str(bound) if bound == done else f"{bound} ({done} extracted)"
+        rows.append([row.get(c) for c in COLUMNS])
     log.info("")
     log.info(format_table(COLUMNS, rows))
+
+    for name in names:
+        bound = set(workspace.sources_of(name))
+        done = set((states.get(name) or {}).get("sources") or {})
+        missing = sorted(bound - done)
+        if missing:
+            log.warn(f"{name}: bound to {', '.join(missing)} but no rows extracted against "
+                     f"{'it' if len(missing) == 1 else 'them'} -- run "
+                     f"`cf extract --companion {name}`")
 
     for name in names:
         st = states.get(name)

@@ -63,6 +63,7 @@ from cflib.yamlio import read_yaml  # noqa: E402
 from detect import analyze_stages, corpus as detect_corpus, def_coverage  # noqa: E402
 from detect import findings as find_rows  # noqa: E402
 from detect._compat import DEFAULT_KINDS, item_base, read_json  # noqa: E402
+from cfcmd.harvest import _tally  # noqa: E402
 from detect.deps import DepsIndex  # noqa: E402
 from detect.stages import StageTable  # noqa: E402
 
@@ -101,6 +102,8 @@ def register(subparsers) -> object:
                          "(they then reach no tally, route or ledger)")
     ap.add_argument("--no-gate", action="store_true",
                     help="with the corpus emission: skip the `mechanical` gate (not recommended)")
+    ap.add_argument("--no-tally", action="store_true",
+                    help="skip recomputing reports/tally.<run>.json for the emitted corpus")
     ap.add_argument("--json", action="store_true", dest="as_json", help="print the summary as JSON")
     ap.set_defaults(func=run)
     return ap
@@ -161,9 +164,30 @@ def run(args) -> int:
         )
 
     _write_state(workspace, name, summary)
+    _retally(workspace, summary, args)
     if args.as_json:
         print(json.dumps(summary, indent=1))
     return exit_code
+
+
+def _retally(workspace, summary: dict, args) -> None:
+    """Recompute the tally for every corpus run this command just wrote.
+
+    ``cf harvest`` and ``cf import-corpus`` both re-tally what they land, and
+    ``cf report`` reads nothing but ``reports/tally.*.json``.  Without this a
+    detector run left its corpus invisible to the report -- the documented order
+    is tally, detect-proxies, route, report, so the tally always predated the
+    detector's rows and the handoff printed ``TODO(tally for <companion>)`` for a
+    companion whose findings were sitting in ``corpus/``.
+    """
+    if getattr(args, "no_tally", False):
+        return
+    for tier in ("cheap", "lean"):
+        corpus = ((summary.get(tier) or {}).get("corpus") or {})
+        if not corpus.get("ok", True) or not corpus.get("destination"):
+            continue
+        run_id = corpus.get("run_id") or f"detect-{summary['companion']}-{tier}"
+        _tally(workspace, run_id, Path(corpus["destination"]))
 
 
 def _select_source(workspace, companion: str, requested: str | None) -> str:
@@ -400,8 +424,8 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
     receipt["harvested_at"] = cf_state.now()
     write_json(dest / "RECEIPT.json", receipt, indent=1, sort_keys=True)
     ok(f"wrote corpus/{run_id} ({len(docs)} document(s), {len(rows)} row(s))")
-    return {"ok": True, "destination": str(dest), "documents": len(docs),
-            "rows": len(rows), "gate": gate_result}
+    return {"ok": True, "run_id": run_id, "destination": str(dest),
+            "documents": len(docs), "rows": len(rows), "gate": gate_result}
 
 
 def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,

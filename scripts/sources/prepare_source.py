@@ -65,8 +65,13 @@ def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3) -> re.Pat
     """
     alt = "|".join(re.escape(k) for k in kinds)
     num = r"\d+(?:\.\d+)" + ("{1,2}" if parts >= 3 else "")
+    # `\f` as well as `\n`: pdftotext puts the form feed BETWEEN the pages, so an
+    # item that begins a page has `\f` and not a newline immediately before it and
+    # was invisible to the index -- a heading nothing can pair, nothing can put in
+    # a task universe and nothing reports as missing. Tao's text happens to start
+    # no item that way (442 labels either way), so this changes no pinned count.
     return re.compile(
-        r"(?:^|\n)[ \t]*(?P<label>(?P<kind>" + alt + r")[ \t]+(?P<num>" + num + r"))"
+        r"(?:^|[\n\f])[ \t]*(?P<label>(?P<kind>" + alt + r")[ \t]+(?P<num>" + num + r"))"
         + _SUB_RE
         + r"(?=[ \t.,:;()]|$)"
     )
@@ -247,11 +252,25 @@ def prepare(
     txt_path = os.path.join(out_dir, "text.txt")
     items_path = os.path.join(out_dir, "items.json")
     previous = read_json(meta_json, default=None)
+    # A cached run is only equivalent if it reached the offset the SAME WAY.
+    # `prepare` writes meta.json before its caller decides whether to accept the
+    # confidence, so a weak inference ("offset 1, 0.67") is on disk even when the
+    # caller refused it.  Keying reuse on the value alone then made a human's
+    # `cf sources set <id> offset=1` unreachable: the declaration agrees with the
+    # guess it was meant to replace, the cached payload comes back with the
+    # guess's 0.67 confidence, and the caller refuses it again.  A DECLARED offset
+    # therefore never reuses an INFERRED one.
+    declared_over_guess = (
+        offset is not None
+        and str(previous.get("offset_method") or "") not in ("declared", "manual")
+        if previous else False
+    )
     unchanged = (
         previous
         and not force
         and previous.get("sha256") == sha
         and (offset is None or previous.get("offset") == offset)
+        and not declared_over_guess
         and (kinds is None or list(previous.get("kinds") or []) == list(kinds))
         and os.path.exists(txt_path)
         and os.path.exists(items_path)

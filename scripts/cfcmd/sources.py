@@ -280,7 +280,7 @@ def _set(workspace, args) -> int:
         write_json(meta_path, meta)
         log.detail(f"recorded the override in {meta_path}")
     if "offset" in changes or "kinds" in changes:
-        log.info(f"re-prepare so items.json follows: cf sources refresh {ref.id} --force")
+        log.info(f"re-prepare so items.json follows: cf sources refresh {ref.id}")
     return 0
 
 

@@ -128,7 +128,10 @@ def run(args) -> int:
         run_id=args.run_id, source_id=source_id, source_sha=source_sha,
         mode=mode, preset=preset, repos=repos)
 
-    runner = gate_runner(workspace, args)
+    # The preset and the source are known here, so `--gate` needs no planned
+    # run: gate_runner builds the config from them when there is none.
+    runner = gate_runner(workspace, args, preset=preset, repos=repos,
+                         sources={source_id: source_sha} if source_sha else {source_id: ""})
     receipt = harvest_mod.build_receipt(
         run_id=args.run_id,
         source={"kind": "import", "path": str(src), "mode": mode, "preset": preset,

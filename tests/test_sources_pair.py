@@ -313,6 +313,80 @@ class PrepareSourceInfersTests(unittest.TestCase):
         self.assertIn("Exercise 1.3.19", prepare_source.items_index(items))
 
 
+class HeadingRegexTests(unittest.TestCase):
+    """An item that BEGINS a page is still an item.
+
+    pdftotext puts the form feed between the pages, so the character before the
+    first heading of a page is ``\f`` and not a newline.  The index anchored on
+    ``^|\n`` alone, which made such an item invisible: it could not be paired,
+    could not enter a task universe, and was reported by nothing -- the exact
+    defect class this audit exists to find, inside the audit's own index.
+    """
+
+    PAGE_BREAK = (
+        "Chapter 1. Sets\n\nDefinition 1.1.1 (Box). A box is a product.\n"
+        "\fTheorem 1.1.4 (Additivity). If E and F are disjoint,\n"
+        "then m(E) + m(F).\n\nRemark 1.1.5. By refinement.\n"
+    )
+
+    def _labels(self, text, **kw):
+        return [m.group("label")
+                for m in prepare_source.heading_regex(**kw).finditer(text)]
+
+    def test_an_item_at_a_page_boundary_is_found(self):
+        labels = self._labels(self.PAGE_BREAK)
+        self.assertIn("Theorem 1.1.4", labels)
+        self.assertEqual(labels,
+                         ["Definition 1.1.1", "Theorem 1.1.4", "Remark 1.1.5"])
+
+    def test_find_items_pages_it_to_the_page_it_starts(self):
+        items = {r["item"]: r for r in prepare_source.find_items(self.PAGE_BREAK, offset=0)}
+        self.assertEqual(items["Definition 1.1.1"]["pdf_page"], 1)
+        self.assertEqual(items["Theorem 1.1.4"]["pdf_page"], 2)
+        self.assertEqual(items["Remark 1.1.5"]["pdf_page"], 2)
+
+    def test_a_mid_line_mention_is_still_not_a_heading(self):
+        """The fix widens the anchor by one character, not by dropping it."""
+        self.assertEqual(
+            self._labels("as shown in Theorem 1.1.4 above, the sum is finite.\n"), [])
+
+
+@unittest.skipUnless(pdf_path() and shutil.which("pdftotext"), "needs CF_MT and pdftotext")
+class PrepareDeclaredOffsetTests(unittest.TestCase):
+    """A human's offset must survive the guess it was written to replace.
+
+    ``prepare`` writes meta.json before its caller judges the confidence, so a
+    refused weak inference is on disk anyway.  Reuse keyed on the offset VALUE
+    then made ``cf sources set <id> offset=N`` unreachable whenever the human
+    agreed with the low-confidence guess: the cached payload came back carrying
+    the guess's confidence and the caller refused it again, for ever.
+    """
+
+    def setUp(self):
+        # a fresh directory per test: these cases are ABOUT what is cached on
+        # disk, so sharing one would make them depend on their own order
+        self.out = tmp_dir("cf-declared-")
+        self.addCleanup(shutil.rmtree, self.out, True)
+        # first: infer, and accept whatever confidence the text supports
+        self.first = prepare_source.prepare(
+            pdf_path(), self.out, source_id=SOURCE_ID, expect_sha=SOURCE_SHA,
+            write_pages=False)
+
+    def test_declaring_the_same_offset_re_runs_and_reports_it_as_declared(self):
+        self.assertEqual(self.first["offset_method"], "running_head_mode")
+        again = prepare_source.prepare(
+            pdf_path(), self.out, source_id=SOURCE_ID, offset=self.first["offset"],
+            expect_sha=SOURCE_SHA, write_pages=False)
+        self.assertFalse(again.get("skipped"))
+        self.assertEqual(again["offset_method"], "declared")
+        self.assertGreaterEqual(again["offset_confidence"], 0.95)
+
+    def test_a_second_declared_run_is_a_no_op(self):
+        kw = dict(source_id=SOURCE_ID, offset=16, expect_sha=SOURCE_SHA, write_pages=False)
+        prepare_source.prepare(pdf_path(), self.out, **kw)
+        self.assertTrue(prepare_source.prepare(pdf_path(), self.out, **kw).get("skipped"))
+
+
 @unittest.skipUnless(pdf_path() and shutil.which("pdftoppm"), "needs CF_MT and pdftoppm")
 class RenderPagesTests(unittest.TestCase):
     def test_one_page_renders_to_a_stable_name(self):
