@@ -1,5 +1,8 @@
 # House conventions -- {{ name }}
 
+Sources: _(list this companion's `sources` from workspace.yaml, and say which
+one its page anchors follow -- `cf status` prints both)_
+
 Written at onboarding (draft it from the repo's CLAUDE.md, README and module
 headers), then **confirmed by the repo owner**. Every attack and differential
 prompt is rendered with this file inlined, and the adjudication COMMON block
@@ -29,6 +32,9 @@ CONVENTION, not CONTENT, only if the case is listed here.
 ## 3. Scope
 
 - Which chapters/sections the companion covers, and where it deliberately stops.
+  (`sources.<id>.chapters` is derived from what this repo actually tags; this is
+  where a human says what that list *means*.)
+- Which source each part is audited against, if more than one.
 - Items it deliberately does not formalise, and why.
 
 ## 4. Sorry policy
@@ -43,9 +49,11 @@ CONVENTION, not CONTENT, only if the case is listed here.
 
 ## 6. Errata disposition
 
-The live errata page is fetched per campaign. For each erratum touching this
-companion, record one of: already correct, fixed here, book is wrong and we
-follow the erratum, book is wrong and we follow the printed text (with reason).
+The live errata page is fetched per source, from the URL discovery found
+(`cf sources show <id>` prints it and its confidence). For each erratum
+touching this companion, record one of: already correct, fixed here, book is
+wrong and we follow the erratum, book is wrong and we follow the printed text
+(with reason).
 
 ## 7. Known-and-accepted deltas
 

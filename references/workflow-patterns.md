@@ -27,13 +27,14 @@ distilled from are named per section.
 5. **A killed run's results are still on disk.** `journal.jsonl` in the run directory holds every
    `result` event; `scripts/harvest/harvest_journal.py` reconstructs the outputs and writes the
    remaining work list. Agent labels are the only link between a result and its item, so **encode
-   the item in the label** (`adj:Exercise_1_2_4`) and keep the label format stable.
+   the item in the label** — and the item is the pair, so the label carries both halves
+   (`adj:<source_id>::Exercise 1.2.4`, `cflib.items.qualified_item`). Keep the format stable.
 6. **A null vote is missing, not a pass.** Filter `Boolean` on every `parallel()` result and count
    what returned; a refusal or a session death must never read as agreement.
 7. **Schemas everywhere.** Every `agent()` that feeds a downstream step declares a JSON schema with
    `required` fields; prose answers cannot be tallied.
 8. **The script is read-only toward every repository.** The COMMON preamble says so, and the
-   campaign's hard rules back it: no edits, no `git` state changes, no builds.
+   skill's hard rules back it: no edits, no `git` state changes, no builds.
 
 Script shape:
 
@@ -200,7 +201,7 @@ argument is valid. No concrete evidence ⇒ overturned=false.\n\nVERDICT: ${JSON
       { label:`${f.finding_id.slice(0,8)}:sk-convention`, phase:'Skeptics', schema:SKEPTIC, model:'opus' }),
   ]).then(sk => {
     const s = sk.filter(Boolean)
-    return { finding_id: f.finding_id, item: f.item, reconciled, lenses, skeptics: s,
+    return { finding_id: f.finding_id, item: f.item, source_id: f.source_id, reconciled, lenses, skeptics: s,
              contested: s.some(x => x.overturned && x.confidence >= 0.7),
              dissent:   s.filter(x => x.overturned && x.confidence <  0.7) }
   }))
@@ -225,7 +226,7 @@ the ruling survives the refuter's own independent reading
 
 ## 4. Claims-verify, with an independent second vote on the numbers
 
-Before any report leaves the campaign, every claim in it is re-derived from primary sources by
+Before any report leaves the workspace, every claim in it is re-derived from primary sources by
 lenses that are told to **refute**. Distilled from `verify-audit-summary-wf_9da8dddd-e4b.js`,
 which found 19 wrong claims of 173 in one pass, and 36 in an earlier draft.
 
@@ -250,7 +251,7 @@ Non-negotiable properties:
 - **A second, independent numbers lens** re-derives the same counts with its own script and pastes
   the output. One lens computing the numbers is one reading.
 - **"Be exhaustive for your lens: list every distinct claim, not a sample."**
-- **Tell the verifier the bias:** every counting error in this campaign ran toward "cleaner".
+- **Tell the verifier the bias:** every counting error in the audited campaign ran toward "cleaner".
 - **A completeness critic** runs beside the verifiers: what is missing, what is over-detailed, what
   is misleading (ratios without denominators, "100% signal"), what is jargon, plus a plain-prose
   TL;DR. It is told not to re-verify numbers.

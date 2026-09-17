@@ -1,11 +1,13 @@
-# Handoff — {{campaign}} faithfulness audit ({{date}})
+# Handoff — {{workspace}} faithfulness audit ({{date}})
 
 > Scope of this report: **findings only**. No fix PRs were authored, no PR was reviewed and no
 > camera-ready audit was run by this pipeline; those stages exist as extension points, not as work
 > that happened. Nothing below is an upstream report for a repository whose routed file still says
 > UNCHALLENGED.
 
-Book edition under audit: `{{book_id}}` — sha256 `{{book_sha}}`{{book_note}}.
+Sources under audit — one row per source, with the companions bound to it:
+
+{{sources_table}}
 
 **TL;DR.** {{tldr}}
 

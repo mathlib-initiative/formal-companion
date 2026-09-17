@@ -46,7 +46,7 @@ required keys `item, book_located, matches, disagreements`, `book_located` must 
 `gate.json.repos`).
 
 Note what the original gate did **not** do, and what v2 adds: no witness check (the attack runs'
-witness requirement was prompt- and reviewer-enforced only), no `book_sha`, no per-kind rules, no
+witness requirement was prompt- and reviewer-enforced only), no edition stamp, no per-kind rules, no
 declaration-name check, no changed-files check, and the gate ran from `scripts/` **inside the
 worktree the worker may commit to**.
 
@@ -139,14 +139,18 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
    absolute path outside every worktree, so a worker that commits an edited `scripts/` cannot
    weaken its own gate. A second command, `check_changed_files.py`, refuses any contribution that
    touches anything but `findings/<task>.json` and `tasks/<task>.yaml`.
-2. **`gate.json` replaces the hard-wired constants**: book path, `book_sha`, repo list, KINDS,
-   VERDICTS, severities, witness requirement and the per-kind rule matrix.
+2. **`gate.json` replaces the hard-wired constants**: a `sources` block (one entry per source the
+   run touches: text path, `sha256`, `text_sha256`, page offset, images dir), the repo list,
+   KINDS, VERDICTS, severities, witness requirement and the per-kind rule matrix. The gate picks
+   the text by the document's `source_id`, so one run can span more than one source without ever
+   checking a quote against the wrong book.
 3. **Per-kind gate matrix.** CONTENT/VACUITY need a quote *and* (in attack mode) a witness;
    SUSPECTED_ERRATA needs a quote; COVERAGE needs an item and no quote; PROXY needs `bridge` and
    `closure` evidence and no quote; PAGE_ANCHOR is mechanical-only (`source: anchor_check`) and
    is not offered to any LLM preset.
-4. **`faithful` is a list**, `witness` is an object, `book_sha` is stamped, and
-   `finding_id = sha256(run_id, item, kind, sorted(unfaithful_decls))`.
+4. **`faithful` is a list**, `witness` is an object, `source_id` + `source_sha` are stamped, and
+   `finding_id = sha256(run_id, source_id, item, kind, sorted(unfaithful_decls))` — five parts,
+   because an item is the pair `(source_id, item)`.
 5. **`NO_WEAKNESS_FOUND` is folded into `NO_DEFECT_FOUND`** by `convert_v1.py`; the v2 vocabulary
    has one no-defect verdict. The gate still accepts `NO_WEAKNESS_FOUND` when a legacy preset
    lists it, so the baseline corpus validates unchanged.
@@ -156,7 +160,7 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
    one. New runs never use them.
 7. **Worktree budgeting**: `--max-open-tasks N` chains `depends_on` so tend holds at most N
    worktrees at once (the original run created 382 worktrees / 1.1 GB in 11 minutes).
-8. **Host allowlist and consent**: `plan-run` refuses a host absent from `campaign.yaml`'s
+8. **Host allowlist and consent**: `plan-run` refuses a host absent from `workspace.yaml`'s
    allowlist and records `consent.given` (from `--i-have-consent`) in `run.yaml`; `run` refuses to
    start without it.
 
@@ -170,7 +174,7 @@ repositories are private, and an unconfirmed convention list is the single bigge
 | conventions.md section | prompt slot |
 |---|---|
 | `1. Total functions and junk values` | the per-repo `CONVENTION_ONLY` bullet, and the junk-value question in the **vac** probe (`total_functions_sentence`) |
-| `2. Standing type and structure conventions` | the per-repo bullet, and the shared "Any repo:" line (de-duplicated union across companions, unless the campaign overrides it) |
+| `2. Standing type and structure conventions` | the per-repo bullet, and the shared "Any repo:" line (de-duplicated union across companions of the same source) |
 | `3. Scope` | the per-repo bullet ("stops at §1.4" style notes) |
 | `4. Sorry policy` | the per-repo bullet (permanent exercise sorries) |
 | `7. Known-and-accepted deltas` | reserved for the adjudication COMMON block |

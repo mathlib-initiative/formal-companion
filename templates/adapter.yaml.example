@@ -63,5 +63,8 @@ owner: {{ owner }}
 validators: []
 
 # Files whose sha belongs in the extract key (ledger/table exports). When one of
-# these changes, `cf extract` must re-run even at the same commit.
+# these changes, `cf extract` must re-run even at the same commit. The shas of
+# the sources above are in the key too, so re-pinning an edition re-extracts:
+# every row carries source_id AND source_sha, and a row built against other
+# bytes is refused by the gate rather than quietly compared to the wrong book.
 key_files: []

@@ -1,0 +1,120 @@
+# The source registry
+
+`registry/sources.yaml` is what the skill **remembers about an edition** so that
+nobody has to type it again. It is the reason `cf onboard <repo>` needs no
+flags: a repo names a book, discovery fingerprints the PDF, and the sha256 of
+those bytes is looked up here — title, authors, edition label, page offset, item
+kinds, errata URL, licence, and how this edition's printed pages map onto its
+siblings.
+
+Two files, one schema, different authority:
+
+| file | authority | committed | written by |
+|---|---|---|---|
+| `<skill>/registry/sources.yaml` | curated, shipped with the skill | yes, in this repo | humans. **No command writes it** |
+| `<workspace>/registry.yaml` | that workspace's overlay | yes, in the workspace repo | `cf onboard`, `cf sources add` — always with `confirmed: false` |
+
+Lookup is **overlay first, then the skill**, merged field by field: an overlay
+entry with the same `source_id` shadows the shipped one, the overlay's non-null
+keys winning (`cflib/registry.py` `Registry.load`). A command never writes
+`confirmed: true` into an overlay. A human promotes an entry by copying it into
+this file with `confirmed: true` and deleting the overlay row.
+
+## Metadata only — never a line of the book
+
+Shas, URLs, page maps, offsets and licence notes are *facts about* an edition.
+The prose is copyrighted and lives, gitignored, in a workspace's
+`sources/<source_id>/`. That boundary is what makes it safe to commit this file
+to a repo that may be shared, and it is a hard rule, not a convention:
+
+- no book text, no quotations, no extracted page snippets, no items list;
+- `download_url` is recorded **only** where the author publishes the file on his
+  own site, and only alongside a `licence.note` saying so;
+- `licence.redistribute` is `false` for every entry, and `Registry.validate()`
+  reports an entry that says otherwise as a problem. Nothing this skill fetches
+  is ever re-served, committed or copied to a host that did not already have it.
+
+A download happens only when all three hold: `--download` was passed to
+`cf onboard`, the workspace's `policy.allow_download` is not false, and the
+entry's `licence.fetch` is `author_site` or `open` (`RegistryEntry.may_fetch`).
+`fetch: none` refuses even with the flag.
+
+## What an entry holds
+
+```yaml
+version: 1
+sources:
+  <source_id>:                  # the slug rule is docs/design/multi-source-model.md S3
+    title: …                    # required
+    authors: [ … ]
+    edition: …                  # required: the label that distinguishes it from its siblings
+    isbn: … | null
+    sha256: <64 hex>            # identity: the sha of the PDF BYTES
+    bytes: <int>
+    pages: <int>
+    download_url: … | null      # only when the author publishes it himself
+    book_page_url: …            # the page that describes the book
+    errata_url: …               # usually the same page; this is what `cf sources refresh` fetches
+    licence: {note: …, fetch: none|author_site|open, redistribute: false}
+    offset: <int>               # printed page = PDF page - offset
+    offset_confidence: <0..1>   # how the number was arrived at, and how sure
+    offset_method: running_head_mode | declared | manual
+    kinds: [Definition, Lemma, … ]
+    same_work: [<source_id>, …] # other editions of the same book
+    page_map_to:                # how printed pages map onto a sibling
+      <other_source_id>:
+        default_shift: <int>    # other_page = this_page + default_shift for most items
+        exception_shift: <int>  # …and + exception_shift for the items in `exceptions`
+        exceptions: [<item>, …] # empty means "see the note"
+        note: …                 # REQUIRED when `exceptions` is empty
+        confirmed_by: …         # who established it, and where they wrote it down
+    aliases:                    # the extra keys discovery matches on
+      sha256_prefixes: [ … ]    # truncated shas quoted in a repo's prose
+      urls: [ … ]
+      filenames: [ … ]
+      titles: [ … ]
+    confirmed: true|false
+    notes: …
+```
+
+`page_map_to` is **not symmetric by construction** — both directions are written
+out, and `Registry.validate()` checks that they agree: `a→b.default_shift ==
+-(b→a.default_shift)`, likewise `exception_shift`, plus a `note` whenever
+`exceptions` is empty, plus `same_work` naming its partner back.
+
+## What ships today
+
+Two editions of one book, both fingerprinted on the machine this skill was
+written on:
+
+| `source_id` | sha256 (first 8) | bytes | offset | measured |
+|---|---|---|---|---|
+| `tao-measure-gsm126-published` | `64498329` | 1,338,765 | 16 | mode 16 on 244 of the 245 pages carrying a running-head number → 0.9959 |
+| `tao-measure-2011-draft` | `62d95658` | 1,218,984 | 16 | mode 16 on 248 of 249 → 0.9960 |
+
+They are `same_work`, and their page map is the whole reason this file exists:
+roughly 65 numbered items, nearly all in one section, print **one printed page
+earlier** in the published book than in the draft. Both editions satisfy
+`pdf_page = printed_page + 16`, so a companion anchored to the wrong one is off
+by exactly one page, never by sixteen — which is precisely the error that is
+invisible to a spot check and produced a wave of page-anchor findings that all
+had to be withdrawn.
+
+## Adding an edition
+
+1. Onboard the repo that names it. Discovery derives a `source_id`, writes what
+   it learned to the workspace overlay with `confirmed: false`, and `cf status`
+   lists it under **unconfirmed sources** with the command that fixes it.
+2. Check the entry: `cf sources show <id>`. Is the edition label the one a
+   reader would use? Is the offset's confidence above 0.9 and its method
+   `running_head_mode` rather than `manual`? Does the errata URL actually carry
+   errata?
+3. If it is right and other workspaces will meet the same edition, copy the
+   overlay row into this file, set `confirmed: true`, add `aliases` for the
+   filenames and URLs it travels under, and delete the row from the overlay.
+   Where it is another edition of something already listed, write **both**
+   directions of `page_map_to` and say in `confirmed_by` who established the
+   shift and where.
+4. Never add a `sha256` you did not compute from the bytes yourself. A
+   truncated sha quoted in a repo's prose belongs in `aliases.sha256_prefixes`,
+   which is a matching hint; it is not an identity.

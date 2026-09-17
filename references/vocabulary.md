@@ -33,7 +33,7 @@ listed is invalid and the schema gate rejects it.
 | `PROXY` | `detect-proxies` only | `bridge: proved \| fiat \| none` + the closure path; no book quote, no witness |
 | `SUSPECTED_ERRATA` | worker (any mode) | `book_quote` + the errata entry, cited by date and URL |
 | `COVERAGE` | worker (differential / single-source modes) or `def-coverage` | the item id and its page in `items.json`; no witness |
-| `PAGE_ANCHOR` | **mechanical only** — `pair/anchor_check.py` | `source: "anchor_check"`, `page: {claimed, actual}` and the pinned edition's `book_sha` |
+| `PAGE_ANCHOR` | **mechanical only** — `pair/anchor_check.py` | `source: "anchor_check"`, `page: {claimed, actual}` and the anchor edition's `source_id` + `source_sha` |
 
 `PAGE_ANCHOR` is never an LLM kind. The attack gate rejects `PAGE_ANCHOR` and `COVERAGE` outright,
 which is why an attack run's 100% substantive ratio is partly definitional
@@ -41,14 +41,15 @@ which is why an attack run's 100% substantive ratio is partly definitional
 
 **Provenance has ONE key: `source`.** `pair/anchor_check.py` writes it, the gate's
 mechanical-only rule reads it, and `route.provenance()` reads it (accepting the legacy
-`provenance` spelling for an older corpus). `cf pair` publishes the rows into
-`corpus/<run-id>/` through the `mechanical` gate, so they are routed like any other
-finding rather than living only in `pairs/anchor-check.json`.
+`provenance` spelling for an older corpus). Note the collision of words and not of keys: this
+`source` is *who produced the row*, while `source_id` is *which book it is about*. `cf pair`
+publishes the rows into `corpus/<run-id>/` through the `mechanical` gate, so they are routed like
+any other finding rather than living only in `pairs/<source_id>/anchor-check.json`.
 
 **Withdrawal.** A PAGE_ANCHOR row that did NOT come from `anchor_check` is judged against
-the pinned edition, three ways: the mechanical check found the same mismatch → routed; it
-examined the item and the repo anchor is correct → withdrawn as *contradicted by the pinned
-edition*; it never examined the item → withdrawn with the re-derive instruction. Only the
+the companion's **anchor edition**, three ways: the mechanical check found the same mismatch →
+routed; it examined the item and the repo anchor is correct → withdrawn as *contradicted by the
+anchor edition*; it never examined the item → withdrawn with the re-derive instruction. Only the
 first two were ever meant to exist as one branch, and before this the code tested a key
 `anchor_check` never writes, so every non-mechanical row was withdrawn wholesale.
 
@@ -84,7 +85,29 @@ to be re-surfaced by hand).
 reads `refuted; binder dropped in PR#10` — which is exactly the drift this enum removes; the
 converter maps such a row to `refuted` and moves the prose into `reason`.
 
-### 1.6 Viewer layer (only for companions with a viewer contract)
+### 1.6 The source model
+
+These came with the multi-source model (`docs/design/multi-source-model.md`); they describe
+*sources*, not findings, but they are enums and they live in the same file.
+
+| enum | values | what it decides |
+|---|---|---|
+| `SOURCE_ROLES` | `audited` \| `reference` | `audited`: at least one companion is checked against it. `reference`: prepared only so the page map to a sibling edition can be checked, and audited by nobody — the disposition for an edition a repo bundles but does not anchor to |
+| `LICENCE_FETCH` | `none` \| `author_site` \| `open` | what a registry licence note permits. `none` refuses a download even with `--download`. **Nothing is ever redistributed, whatever this says** |
+| `DISCOVERY_SIGNALS` | `formalization_yaml` `ledger_source` `official_source_json` `graph_json` `prose` `filesystem` `citation` | S1–S7: which repo signal produced a claim. All seven run for every adapter kind |
+| `PDF_FOUND_IN` | `repo_declared` `repo_cache` `workspace_store` `library_path` `download` `none` | which step of the search order located the bytes — in search order, so it doubles as a provenance ranking |
+| `OFFSET_METHODS` | `running_head_mode` `declared` `manual` `registry` `unknown` | how a page offset was arrived at. `manual` means a human typed it through `cf sources set`, and the confidence beside it is not an inference |
+| `ADAPTER_KINDS` | `docstring_tags` `attribution_table` `ledger_nodes` `custom` | what an `adapter.yaml` may legally say |
+| `IMPLEMENTED_ADAPTER_KINDS` | `docstring_tags` `attribution_table` | what v1 can actually parse. `cf onboard` refuses the difference **before** writing anything |
+| `WRITE_POLICIES` | `read_only` `branch_only` `branch_and_pr` | v1 is findings-only; peers stay `read_only` either way |
+| `ANCHOR_CONVENTIONS` | `docstring` `ledger` `none` | where a page anchor comes from, and whether anchor-agreement can decide an edition at all |
+
+Also here, and load-bearing: `DEFINITIONAL_KEYWORDS` — `def`, `abbrev`, `structure`, `class`,
+`inductive`, `instance`. The definition-coverage split (stated / bridge-only / missing) turns on
+that set and nothing else, and it is written down once because two stages both write
+`pairs/<source_id>/def-coverage.<name>.json` and used to disagree about `instance`.
+
+### 1.7 Viewer layer (only for companions with a viewer contract)
 
 `verdict` ∈ `faithful` | `convention` | `attribution_gap` | `proxy` | `deviation`;
 `severity` ∈ `none` | `low` | `medium` | `high`;
@@ -108,9 +131,12 @@ Source: the batch-1 fleet schema (recovered transcript `b174aa13` L5600) and the
 | `severity` | `high`, `medium`, `low` | same |
 | `_meta.status` | free text beginning `UNCHALLENGED` | `_meta.status: "UNCHALLENGED"` plus the prose in `_meta.note` |
 
-Batch-1 rows were produced against the **2011 draft** PDF, so the converter stamps them with the
-draft's `book_sha`, not the campaign's, and marks their `PAGE_ANCHOR` rows `withdrawn: true`
-(the wholesale withdrawal is recorded in `findings.adam.jsonl`'s `_meta.withdrawn`).
+Batch-1 rows were produced against the **2011 draft** PDF, so the converter stamps them with that
+edition's `source_id` and `source_sha` — `tao-measure-2011-draft`, `62d95658…` — not the audited
+edition's, and marks their `PAGE_ANCHOR` rows `withdrawn: true` (the wholesale withdrawal is
+recorded in `findings.adam.jsonl`'s `_meta.withdrawn`). That is the whole point of stamping the
+source rather than assuming one: the rows stay importable and stay honest about what they were
+judged against.
 
 ### 2.2 Corpus v1 (the five tend runs; `verify_findings.py` L18-20 and its attack variant)
 
@@ -120,7 +146,7 @@ draft's `book_sha`, not the campaign's, and marks their `PAGE_ANCHOR` rows `with
 | attack additions `NO_DEFECT_FOUND`, `NO_WEAKNESS_FOUND` | both → `NO_DEFECT_FOUND` |
 | differential `KINDS = {CONTENT, PAGE_ANCHOR, VACUITY, SUSPECTED_ERRATA, COVERAGE}` | same, minus `PAGE_ANCHOR` (converted rows keep the kind and gain `mechanical: false`, `withdrawn` decided by `anchor_check`) |
 | attack `KINDS = {CONTENT, VACUITY, SUSPECTED_ERRATA}` | same |
-| `book_passage_quote`, `book_quote` | unchanged; `book_sha` added |
+| `book_passage_quote`, `book_quote` | unchanged — still a quote from a book; `source_id` + `source_sha` added, and they decide *which* text the quote gate checks it against |
 | `faithful` (enum) | list, as in §2.1 |
 | witness in prose inside `reasoning` | `witness: {d?, object, why}` — extracted where the text names one, else `witness: null` and `witness_extracted: false` |
 | `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace |
@@ -191,17 +217,26 @@ part of the publish cascade.
 
 ## 3. `finding_id` — the rule
 
-```
-finding_id = sha256(
-    run_id + "\x1f" +
-    item    + "\x1f" +          # normalised item id, sub-part included
-    kind    + "\x1f" +
-    "\x1e".join(sorted(unfaithful_decls))
+```python
+finding_id(run_id, source_id, item, kind, unfaithful_decls) = sha256(
+    "\n".join([run_id, source_id, items.clean(item), kind, *sorted(unfaithful_decls)])
 ).hexdigest()
 ```
 
+Five parts, joined with a newline, and the declarations go in as **separate parts** rather than
+pre-joined. `cflib.hashing.finding_id` is the definition; four other files inline it byte-for-byte
+because they run where `cflib` is not importable (`gate/verify_findings.py`, `sources/compat.py`,
+`ledger/compat.py`, `detect/_compat.py`), and
+`tests/test_plan_gate.py::TestFindingIdIsOneDefinition` asserts all five agree on every digest.
+
 Rules and reasons:
 
+- **`source_id` is a part.** An item is the pair `(source_id, item)`: without it, `Exercise 1.3.19`
+  of one source and `Exercise 1.3.19` of another produce the same id, and a workspace auditing two
+  books would silently merge their findings. This is why v2 digests differ from the four-part ones
+  the earlier corpus carried — correctly, because those ids collide.
+- **The item is passed through `items.clean()` first**, so `Exercise    1.3.19` and
+  `Exercise 1.3.19` — the whitespace variant the baseline lost — hash the same.
 - **`concept` is not in the hash.** It is LLM-written prose, so the same defect in two runs would
   hash differently and cross-run linking (`union`, `agreed_high`, re-adjudication) would fail.
 - **`unfaithful_decls` is sorted** and compared as `repo:decl` strings exactly as the gate accepts
@@ -223,10 +258,25 @@ launching.
 
 ## 4. Item ids
 
-Grammar: `"<Kind> <c>.<s>.<n>"` with an optional sub-part suffix `(iv)` / `(3)`, where `<Kind>`
-comes from `campaign.yaml`'s kind list (`Definition`, `Lemma`, `Theorem`, `Proposition`,
-`Corollary`, `Exercise`, `Example`, `Remark`, plus per-book extras such as `Claim`, `Strategy`).
-Non-numbered items use `In-text p.<printed page>`.
+**An item is the pair `(source_id, item)`.** Two sources may legitimately both have an
+`Exercise 1.3.19`, and they are different items; nothing keys on the item half alone.
+
+| context | representation |
+|---|---|
+| a JSON/JSONL row | two fields: `"source_id": "<id>"`, `"item": "Exercise 1.3.19"` |
+| an in-memory dict key | the tuple `(source_id, item)` |
+| one string (task id, log line, finding payload) | `qualified_item(source_id, item)` → `<source_id>::<item>` |
+| a filename or slug | `qualified_slug(source_id, item)` → `<source-slug>--exercise-1-3-19` |
+
+`::` is the one separator (`cflib.items.QUALIFIED_SEP`); `split_qualified()` is its inverse and
+raises on a string without it. A function that takes a bare item string takes a `source_id` too.
+
+Grammar for the item half: `"<Kind> <c>.<s>.<n>"` with an optional sub-part suffix `(iv)` / `(3)`,
+where `<Kind>` comes from **that source's** kind list — inferred from the source's own headings and
+stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definition`, `Lemma`, `Theorem`,
+`Proposition`, `Corollary`, `Exercise`, `Example`, `Remark`, plus per-source extras such as
+`Claim`, `Strategy`). Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and
+reported but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
 
 - Parsing is **whitespace-tolerant**: `Exercise    1.3.19` is the same item as `Exercise 1.3.19`.
   A single-space regex in the legacy task generator dropped exactly that item and published a
@@ -236,4 +286,7 @@ Non-numbered items use `In-text p.<printed page>`.
   correctly when items are counted.
 - Junk keys are rejected, not normalised: the legacy `norm()` passed strings like
   `Corollary (Lemma 1.2.5 + Exercise 1.2.4)` through as item ids. The strict grammar plus a reject
-  list is in `scripts/cflib/` and every rejected string is reported, never dropped silently.
+  list is in `scripts/cflib/items.py` and every rejected string is reported with its reason, its
+  declaration and its file:line, never dropped silently. That exact string is still the one reject
+  in `tao-measure-lean` (reason `no_number`, 2026-09-16), and an onboarding that reports one
+  reject is telling you something true about the repo.

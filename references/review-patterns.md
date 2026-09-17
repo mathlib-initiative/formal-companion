@@ -1,15 +1,17 @@
 # Review patterns — a portable catalog
 
 Recurring faithfulness defects, each with a **detector** and a **standard fix**, written so they
-apply to any Lean book companion. Placeholders in `{{…}}` are filled from the campaign:
+apply to any Lean book companion. Placeholders in `{{…}}` are filled from the workspace — per
+(companion, source), since a companion may be audited against more than one:
 
 | placeholder | filled from |
 |---|---|
 | `{{SRC}}` | `adapter.yaml.glob` — the companion's source glob (e.g. `Lib/Section_*.lean`) |
-| `{{BOOK}}` | `book/<id>/book.txt`, with `book.json.offset` for page arithmetic |
+| `{{SOURCE}}` | `sources/<source_id>/text.txt`, with `meta.json.offset` for page arithmetic |
 | `{{TOTAL_FUNCS}}` / `{{TOTAL_FUNCS_ALT}}` | `conventions.md` §2 — the repo's list of total functions with junk values, as a list and as a regex alternation |
 | `{{CONVENTIONS}}` | `conventions.md` §3 — the repo's standing conventions and excluded cases |
-| `{{ERRATA_URL}}` | `campaign.yaml.errata_url` — the **live** page, never a local summary |
+| `{{ERRATA_URL}}` | `workspace.yaml` `sources.<id>.errata_url` — the **live** page, discovered not
+typed, never a local summary |
 | `{{CLASSIFIER}}` | `adapter.yaml.sorry.classifier` — the repo's authoritative `sorry` split |
 
 Provenance: P1–P6 are distilled from a 32-finding audit of a second companion of the same book;
@@ -55,7 +57,7 @@ again as a fix-PR invariant.
 - **Symptom:** "equivalent-ish" but not the book's: half-open vs closed intervals, a changed
   normalisation, a dropped dimension or nonemptiness hypothesis.
 - **Detect:** not fully greppable. `rg -n "Ioc|Ico|Icc|Ioo" <file>` and compare every interval
-  constructor and every numeric hypothesis against `{{BOOK}}`.
+  constructor and every numeric hypothesis against `{{SOURCE}}`.
 - **Fix:** match the book exactly; when a deviation is deliberate, say so in the docstring **at the
   definition site** — and see P11 about the reason you give.
 
@@ -181,6 +183,6 @@ again as a fix-PR invariant.
    (P9) and `{{CONVENTIONS}}` drives the internal-consistency probe (P12). A companion whose
    `conventions.md` lists neither gets a weaker run — which is why onboarding treats both lists as
    required (`references/onboarding-contract.md` §5).
-3. Extend the catalog per campaign: a pattern earns a number when it has recurred **twice** with a
-   detector someone can run. Record the prior art as a finding id in the campaign ledger, not as
+3. Extend the catalog per workspace: a pattern earns a number when it has recurred **twice** with a
+   detector someone can run. Record the prior art as a finding id in the workspace ledger, not as
    book text.

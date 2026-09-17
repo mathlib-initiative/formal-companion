@@ -2,8 +2,14 @@
 
 What actually finds statement-level faithfulness defects in a Lean 4 book companion, with the
 evidence for each claim. Every number here was recomputed from a file named beside it; nothing is
-estimated. Read this before choosing what to run: the design of a campaign is settled by §1–§3,
-and §9 is the rule that stops a campaign reporting a number it cannot recompute.
+estimated. Read this before choosing what to run: the design of an audit is settled by §1–§3,
+and §9 is the rule that stops a report quoting a number it cannot recompute.
+
+One vocabulary note, because the shape of the work changed underneath this file: there is no
+"one campaign per book" any more. A **workspace** holds N companions and M sources, a companion
+is audited against a *list* of sources, and a differential is possible exactly where two
+companions' source lists overlap. Everything below about evidence classes, yields and
+calibration is unchanged by that — it is measured per (source, companion) pair either way.
 
 Primary sources, all read for this document:
 
