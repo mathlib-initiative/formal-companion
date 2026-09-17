@@ -17,7 +17,7 @@ Every adapter subclasses ``cflib.adapters_api.Adapter`` through
 ``load`` re-exported here, so a command only ever writes:
 
     from cflib.adapters_api import load
-    adapter = load(paths.adapter_yaml(name), campaign=campaign)
+    adapter = load(paths.adapter_yaml(name), workspace=source_view)
 """
 
 from .api import Adapter, AdapterError, from_config, load, registry  # noqa: F401

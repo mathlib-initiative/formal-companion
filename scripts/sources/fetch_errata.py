@@ -11,8 +11,8 @@ So this module:
   to UTF-8) in ``errata.raw.html``;
 * renders a deterministic ``errata.md`` from those bytes with a stdlib parser --
   no model, no summary, nothing dropped;
-* stamps the fetch date, the http status, the raw sha256 and the campaign's
-  ``book_sha`` into ``errata.json`` so a stale errata file is visible.
+* stamps the fetch date, the http status, the raw sha256 and the workspace's
+  ``source_sha`` into ``errata.json`` so a stale errata file is visible.
 
 Idempotent: an unchanged page leaves the files alone and reports ``changed:
 false``; a changed page rewrites them and records ``previous_sha256``.
@@ -185,12 +185,13 @@ def fetch(
     url: str,
     out_dir: str,
     *,
-    book_sha: str = "",
+    source_id: str = "",
+    source_sha: str = "",
     offset: int | None = None,
     timeout: int = 60,
     force: bool = False,
 ) -> dict:
-    """Fetch the errata page into ``<book dir>/errata.{raw.html,md,json}``."""
+    """Fetch the errata page into ``sources/<id>/errata.{raw.html,md,json}``."""
     os.makedirs(out_dir, exist_ok=True)
     raw_path = os.path.join(out_dir, "errata.raw.html")
     md_path = os.path.join(out_dir, "errata.md")
@@ -216,13 +217,14 @@ def fetch(
         "sha256": digest,
         "content_sha256": content_digest,
         "bytes": len(body),
-        "book_sha": book_sha,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "printed_page_offset": offset,
         "changed": changed,
         "previous_sha256": previous.get("sha256", ""),
         "previous_content_sha256": previous.get("content_sha256", ""),
         "entries": None,
-        "renderer": "book/fetch_errata.py html_to_markdown (stdlib; never a summarising fetch)",
+        "renderer": "sources/fetch_errata.py html_to_markdown (stdlib; never a summarising fetch)",
         "first_fetched_at": previous.get("first_fetched_at") or utcnow(),
     }
     if changed:
@@ -235,7 +237,8 @@ def fetch(
             "- fetched: %s" % meta["fetched_at"],
             "- raw sha256: %s" % digest,
             "- content sha256 (comments stripped): %s" % content_digest,
-            "- book sha256: %s" % (book_sha or "(unpinned)"),
+            "- source: %s" % (source_id or "(unnamed)"),
+            "- source sha256: %s" % (source_sha or "(unpinned)"),
         ]
         if offset is not None:
             header.append("- page numbers below are PRINTED pages; pdf page = printed + %d" % offset)

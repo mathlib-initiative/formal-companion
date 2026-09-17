@@ -43,6 +43,7 @@ def proxy_row(
     *,
     run_id: str,
     companion: str,
+    source_id: str = "",
     item: str,
     decl: str,
     rule: str,
@@ -66,7 +67,7 @@ def proxy_row(
         raise CfError(f"PROXY finding for {item} names no declaration",
                       hint="vocab.EVIDENCE_BY_KIND requires unfaithful_decls on PROXY rows")
     return {
-        "finding_id": finding_id(run_id, item, vocab.PROXY, unfaithful),
+        "finding_id": finding_id(run_id, source_id, item, vocab.PROXY, unfaithful),
         "run_id": run_id,
         "item": item,
         "kind": vocab.PROXY,
@@ -90,6 +91,7 @@ def coverage_row(
     *,
     run_id: str,
     companion: str,
+    source_id: str = "",
     item: str,
     rule: str,
     severity: str,
@@ -108,7 +110,7 @@ def coverage_row(
     _checked(vocab.COVERAGE, severity, None)
     unfaithful = _decl_ids(companion, decls)
     return {
-        "finding_id": finding_id(run_id, item, vocab.COVERAGE, unfaithful),
+        "finding_id": finding_id(run_id, source_id, item, vocab.COVERAGE, unfaithful),
         "run_id": run_id,
         "item": item,
         "kind": vocab.COVERAGE,

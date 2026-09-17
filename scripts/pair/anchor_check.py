@@ -54,6 +54,7 @@ def check(
     items_index: Mapping[str, Mapping],
     tables: Mapping[str, Sequence[Mapping]],
     *,
+    source_id: str = "",
     book_sha: str,
     offset: int = 0,
     run_id: str = "anchor-check",
@@ -126,8 +127,9 @@ def check(
             advisory = all(abs(d) <= 1 for d in deltas)
             rows.append(
                 {
-                    "finding_id": finding_id(run_id, item, KIND, decls),
+                    "finding_id": finding_id(run_id, source_id, item, KIND, decls),
                     "run_id": run_id,
+                    "source_id": source_id,
                     "item": item,
                     "kind": KIND,
                     "severity": SEVERITY,

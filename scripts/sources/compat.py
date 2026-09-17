@@ -1,18 +1,19 @@
-"""Thin adapter over ``scripts/cflib`` for the book/ and pair/ stages.
+"""Thin adapter over ``scripts/cflib`` for the sources/ and pair/ stages.
 
 Ported from: nothing directly -- this is the glue the recovered cells never had
 (they inlined ``/Users/jack/Desktop/tao-differential`` and the ``+16`` offset,
 e.g. recovered/b174aa13_L5589_Bash.txt, b174aa13_L6099_Bash.txt).
 
-Everything here PREFERS ``cflib`` (the shared library: campaign.yaml loading,
+Everything here PREFERS ``cflib`` (the shared library: workspace.yaml loading,
 state.json, paths, jsonl io, sha256, the strict item grammar) and keeps a small
-fallback so the book and pair stages stay runnable and testable on their own --
-``python3 -m unittest tests.test_book_pair`` must not need a campaign directory.
+fallback so the sources and pair stages stay runnable and testable on their own --
+``python3 -m unittest tests.test_sources_pair`` must not need a workspace.
 The fallbacks mirror cflib's API names, so callers do not care which is in use.
 
 The item grammar is cflib's ``items.try_parse``; :class:`ItemId` is a tiny
 view over it (``key`` = the canonical id, ``sub`` = ``(iv)``) that keeps the
-book/pair code readable.
+sources/pair code readable.  The grammar is per SOURCE: the kind list comes from
+``sources.<id>.kinds``, so every entry point here takes one.
 """
 
 from __future__ import annotations
@@ -47,9 +48,9 @@ try:
 except Exception:  # pragma: no cover
     _cf_paths = None
 try:
-    from cflib import campaign as _cf_campaign  # type: ignore
+    from cflib import workspace as _cf_workspace  # type: ignore
 except Exception:  # pragma: no cover
-    _cf_campaign = None
+    _cf_workspace = None
 try:
     from cflib import state as _cf_state  # type: ignore
 except Exception:  # pragma: no cover
@@ -81,7 +82,7 @@ DEFINITIONAL_KEYWORDS: tuple[str, ...] = tuple(getattr(
 DEFINITIONAL_KINDS = frozenset(getattr(
     _cf_vocab, "DEFINITIONAL_KINDS", set(DEFINITIONAL_KEYWORDS) | {"opaque"}))
 
-#: default item kinds; campaign.yaml (``book.kinds``) overrides per book
+#: default item kinds; workspace.yaml (``sources.<id>.kinds``) overrides per source
 DEFAULT_KINDS: tuple[str, ...] = tuple(
     getattr(
         _cf_items,
@@ -191,8 +192,9 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: Sequence[str]) -> str:
-    """``sha256(run_id, clean(item), kind, sorted unfaithful_decls)`` (critique.json).
+def finding_id(run_id: str, source_id: str, item: str, kind: str,
+               unfaithful_decls: Sequence[str]) -> str:
+    """``sha256(run_id, source_id, clean(item), kind, sorted unfaithful_decls)``.
 
     :func:`cflib.hashing.finding_id` is the single definition; the gate inlines
     the identical algorithm (it runs on a server with no cflib), and the test
@@ -201,15 +203,16 @@ def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: Sequence[str
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
     if _cf_hashing is not None and hasattr(_cf_hashing, "finding_id"):
-        return _cf_hashing.finding_id(run_id, item, kind, decls)
+        return _cf_hashing.finding_id(run_id, source_id, item, kind, decls)
     payload = "\n".join(
-        [str(run_id or ""), _clean_item_fallback(str(item or "")), str(kind or ""), *decls]
+        [str(run_id or ""), str(source_id or ""), _clean_item_fallback(str(item or "")),
+         str(kind or ""), *decls]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 # --------------------------------------------------------------------------
-# yaml / campaign / paths / state
+# yaml / workspace / paths / state
 # --------------------------------------------------------------------------
 
 
@@ -224,27 +227,30 @@ def load_yaml(path) -> Any:
 
 
 class _FallbackPaths:
-    """Mirror of ``cflib.paths.CampaignPaths`` (only what book/pair need)."""
+    """Mirror of ``cflib.paths.WorkspacePaths`` (only what sources/pair need)."""
 
-    def __init__(self, root, book_id: str = ""):
+    def __init__(self, root):
         self.root = Path(str(root)).resolve()
-        self.book_id = book_id
 
     @property
-    def campaign_yaml(self):
-        return self.root / "campaign.yaml"
+    def workspace_yaml(self):
+        return self.root / "workspace.yaml"
 
     @property
-    def book_dir(self):
-        return self.root / "book" / self.book_id
+    def sources_dir(self):
+        return self.root / "sources"
 
-    @property
-    def items_json(self):
-        return self.book_dir / "items.json"
+    def source_dir(self, source_id: str):
+        return self.sources_dir / source_id
 
-    @property
-    def book_json(self):
-        return self.book_dir / "book.json"
+    def source_items(self, source_id: str):
+        return self.source_dir(source_id) / "items.json"
+
+    def source_meta(self, source_id: str):
+        return self.source_dir(source_id) / "meta.json"
+
+    def source_text(self, source_id: str):
+        return self.source_dir(source_id) / "text.txt"
 
     @property
     def companions_dir(self):
@@ -260,12 +266,11 @@ class _FallbackPaths:
         return self.companion_dir(name) / "state.json"
 
     @property
-    def pairs_dir(self):
+    def pairs_root(self):
         return self.root / "pairs"
 
-    @property
-    def book_txt(self):
-        return self.book_dir / "book.txt"
+    def pairs_dir(self, source_id: str):
+        return self.pairs_root / source_id
 
     @property
     def corpus_dir(self):
@@ -280,15 +285,15 @@ class _FallbackPaths:
         return sorted(p.name for p in self.companions_dir.iterdir() if p.is_dir())
 
 
-def campaign_paths(root, book_id: str = ""):
-    """``CampaignPaths`` for a campaign root (cflib's when available)."""
-    if _cf_paths is not None:
-        return _cf_paths.CampaignPaths(Path(str(root)), book_id)
-    return _FallbackPaths(root, book_id)
+def workspace_paths(root):
+    """``WorkspacePaths`` for a workspace root (cflib's when available)."""
+    if _cf_paths is not None and hasattr(_cf_paths, "WorkspacePaths"):
+        return _cf_paths.WorkspacePaths(Path(str(root)))
+    return _FallbackPaths(root)
 
 
-class _FallbackCampaign:
-    """Mirror of ``cflib.campaign.Campaign`` for standalone use."""
+class _FallbackWorkspace:
+    """Mirror of ``cflib.workspace.Workspace`` for standalone use."""
 
     def __init__(self, root, data: dict):
         self.root = Path(str(root)).resolve()
@@ -296,81 +301,76 @@ class _FallbackCampaign:
 
     @property
     def paths(self):
-        return campaign_paths(self.root, self.book_id)
+        return workspace_paths(self.root)
 
     @property
-    def book(self) -> dict:
-        book = self.data.get("book")
-        return dict(book) if isinstance(book, dict) else {}
+    def sources(self) -> dict:
+        sources = self.data.get("sources")
+        return dict(sources) if isinstance(sources, dict) else {}
 
-    @property
-    def book_id(self) -> str:
-        return str(self.book.get("id") or "")
+    def source(self, source_id: str) -> dict:
+        return dict(self.sources.get(source_id) or {})
 
-    @property
-    def book_sha(self):
-        return self.book.get("sha256") or None
+    def source_ids(self) -> list[str]:
+        return list(self.sources)
 
-    @property
-    def offset(self) -> int:
-        return int(self.book.get("offset") or 0)
+    def source_sha(self, source_id: str):
+        return self.source(source_id).get("sha256") or None
 
-    @property
-    def errata_url(self):
-        return self.book.get("errata_url") or None
+    def offset(self, source_id: str) -> int:
+        return int(self.source(source_id).get("offset") or 0)
 
-    @property
-    def pdf_path(self):
-        p = self.book.get("pdf")
-        return Path(str(p)).expanduser() if p else None
+    def errata_url(self, source_id: str):
+        return self.source(source_id).get("errata_url") or None
 
-    @property
-    def kinds(self) -> tuple[str, ...]:
-        return tuple(str(k) for k in (self.book.get("kinds") or DEFAULT_KINDS))
+    def kinds(self, source_id: str) -> tuple:
+        return tuple(str(k) for k in (self.source(source_id).get("kinds") or DEFAULT_KINDS))
 
     def companion_names(self) -> list[str]:
         comps = self.data.get("companions")
         names: list[str] = []
-        if isinstance(comps, list):
-            names = [str(c.get("name")) for c in comps if isinstance(c, dict) and c.get("name")]
-        elif isinstance(comps, dict):
+        if isinstance(comps, dict):
             names = [str(k) for k in comps]
+        elif isinstance(comps, list):
+            names = [str(c.get("name")) for c in comps if isinstance(c, dict) and c.get("name")]
         for name in self.paths.list_companions():
             if name not in names:
                 names.append(name)
         return names
 
-    def require_book_sha(self, sha, where: str) -> None:
-        if self.book_sha and sha != self.book_sha:
-            raise ValueError("%s: book_sha %r != campaign book.sha256 %r" % (where, sha, self.book_sha))
+    def require_source_sha(self, source_id: str, sha, where: str) -> None:
+        want = self.source_sha(source_id)
+        if want and sha != want:
+            raise ValueError("%s: source_sha %r != workspace sources.%s.sha256 %r"
+                             % (where, sha, source_id, want))
 
 
-def load_campaign(start=None):
-    """Load the campaign at/above ``start`` (or $CF_CAMPAIGN, or cwd)."""
-    if _cf_campaign is not None:
-        return _cf_campaign.Campaign.load(start)
-    root = _find_campaign_root(start)
-    return _FallbackCampaign(root, load_yaml(os.path.join(str(root), "campaign.yaml")) or {})
+def load_workspace(start=None):
+    """Load the workspace at/above ``start`` (or $CF_WORKSPACE, or cwd)."""
+    if _cf_workspace is not None:
+        return _cf_workspace.Workspace.load(start)
+    root = _find_workspace_root(start)
+    return _FallbackWorkspace(root, load_yaml(os.path.join(str(root), "workspace.yaml")) or {})
 
 
-def _find_campaign_root(start=None) -> Path:
-    cur = Path(str(start or os.environ.get("CF_CAMPAIGN") or os.getcwd())).expanduser().resolve()
+def _find_workspace_root(start=None) -> Path:
+    cur = Path(str(start or os.environ.get("CF_WORKSPACE") or os.getcwd())).expanduser().resolve()
     for cand in [cur] + list(cur.parents):
-        if (cand / "campaign.yaml").exists():
+        if (cand / "workspace.yaml").exists():
             return cand
     raise FileNotFoundError(
-        "no campaign.yaml at or above %s (pass --campaign or set CF_CAMPAIGN)" % cur
+        "no workspace.yaml at or above %s (pass --workspace or set CF_WORKSPACE)" % cur
     )
 
 
-def state_merge(campaign, name: str, section: str, values: dict, top: dict | None = None) -> None:
+def state_merge(workspace, name: str, section: str, values: dict, top: dict | None = None) -> None:
     """Merge ``values`` into ``state.json[section]`` (and ``top`` at the root)."""
     if _cf_state is not None:
-        with _cf_state.update(campaign, name) as st:
+        with _cf_state.update(workspace, name) as st:
             _cf_state.merge_section(st, section, values)
             st.update(top or {})
         return
-    path = str(campaign.paths.state_json(name))
+    path = str(workspace.paths.state_json(name))
     st = read_json(path, default=None) or {"name": name}
     body = dict(st.get(section) or {})
     body.update(values)
@@ -390,7 +390,7 @@ _SUBPART = re.compile(r"^\(\s*(?:(?P<roman>[ivxlcdm]+)|(?P<num>\d{1,3})|(?P<alph
 
 
 def normalise_item(item: Any) -> str:
-    """Collapse whitespace / NBSP / dashes in a raw book item id.
+    """Collapse whitespace / NBSP / dashes in a raw source item id.
 
     ``"Exercise\\u00a0   1.3.19."`` -> ``"Exercise 1.3.19"``.
     """
@@ -404,7 +404,7 @@ def normalise_item(item: Any) -> str:
 
 
 class ItemId:
-    """A parsed book item: ``key`` is what N codebases pair on.
+    """A parsed source item: ``key`` is what N codebases pair on.
 
     A view over ``cflib.items.Item``: ``key`` = ``Item.id`` ("Exercise 1.3.19",
     "In-text p.23"), ``sub`` = ``Item.sub`` ("(iv)"), ``number`` the dotted
@@ -483,8 +483,8 @@ def parse_item_reject(raw: Any, kinds: Sequence[str] = DEFAULT_KINDS):
     """``(ItemId | None, reason)``: the reason names WHY a label was rejected.
 
     ``unknown_kind`` is the actionable one -- it means a companion tags a kind
-    the campaign does not list (``Strategy 2.1.1``), which is a campaign.yaml
-    fix, not junk.
+    the SOURCE does not list (``Strategy 2.1.1``), which is a
+    ``cf sources set <id> kinds=...`` fix, not junk.
     """
     if _cf_items is not None:
         obj, reject = _cf_items.try_parse(str(raw or ""), tuple(kinds))

@@ -2,7 +2,7 @@
 
 New code. PyYAML is present on this machine (6.0.3) and is used when
 importable; the fallback parser covers the subset the skill writes itself
-(campaign.yaml, adapter.yaml, run.yaml, tend task yaml): nested block
+(workspace.yaml, registry.yaml, adapter.yaml, run.yaml, tend task yaml): nested block
 mappings, block sequences, flow `[]`/`{}` collections of scalars, quoted and
 bare scalars, `|`/`>` block scalars, comments and blank lines.  Anchors,
 aliases, tags, multi-document streams and complex keys are NOT supported and
@@ -331,9 +331,12 @@ def _fmt_scalar(v: Any) -> str:
     if isinstance(v, (list, dict)):
         return "[]" if isinstance(v, list) else "{}"
     s = str(v)
+    #: an ISO date is quoted too: PyYAML types `2026-09-16` as a datetime.date
+    #: while the fallback reader keeps a string, so an unquoted one makes
+    #: workspace.yaml mean two different things depending on what is installed.
     if s == "" or re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`]", s) or s.lower() in {
         "true", "false", "null", "yes", "no", "on", "off", "~"
-    } or re.fullmatch(r"[+-]?[\d.]+", s):
+    } or re.fullmatch(r"[+-]?[\d.]+", s) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
         return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return s
 

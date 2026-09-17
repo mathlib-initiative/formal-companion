@@ -1,14 +1,15 @@
-# copyrighted book text, page images and rendered crops never enter git
-book/
+# copyrighted source text, page images and rendered crops never enter git
+sources/
 **/images/
 **/pages/
 **/crops/
 **/evidence*/
 *.pdf
-# ...but the skill repo's own packages are CODE, not campaign data: the patterns
-# above are written for a campaign directory, and `book/` would otherwise hide
-# scripts/book/ (the Stage 1 package) from git entirely.
-!scripts/book/
+# ...but the skill repo's own packages are CODE, not workspace data: the patterns
+# above are written for a WORKSPACE directory, and `sources/` would otherwise hide
+# scripts/sources/ (the Stage 1 package) from git entirely. This negation and the
+# `sources/` line above must always move together -- see references/traps.md.
+!scripts/sources/
 
 # run state and caches
 runs/*/tend-root/

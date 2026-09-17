@@ -1,6 +1,6 @@
-"""Rendering for the skill's own templates (campaign.yaml, adapter.yaml, ...).
+"""Rendering for the skill's own templates (workspace.yaml, adapter.yaml, ...).
 
-New code.  A deliberately tiny ``{{ key }}`` substitution: the campaign files
+New code.  A deliberately tiny ``{{ key }}`` substitution: the workspace files
 must keep their comments, which a YAML dump would destroy, and the skill must
 not depend on Jinja for its core commands.  (plan/render_prompts.py may use a
 richer renderer for prompt templates.)

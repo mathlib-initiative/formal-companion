@@ -1,8 +1,18 @@
-"""Every path in a campaign directory, in one place.
+"""Every path in a workspace directory, in one place.
 
-New code. The layout is design/architecture.md S2; no stage may invent a path
-of its own, because `cf status`, the gate and harvest all have to agree on
-where an artifact lives.
+New code. The layout is docs/design/multi-source-model.md S6.2; no stage may
+invent a path of its own, because `cf status`, the gate and harvest all have to
+agree on where an artifact lives.
+
+A workspace holds N companions and M sources, so the two directories that used
+to be singular are now keyed:
+
+    book/<book-id>/...   ->  sources/<source_id>/...   (text.txt, meta.json, ...)
+    pairs/...            ->  pairs/<source_id>/...     (one pairing per source)
+
+``WorkspacePaths`` therefore has no ``book_id`` field: a path that depends on a
+source takes the ``source_id`` as an argument, which is what makes it impossible
+to write an artifact without saying which source it is about.
 """
 from __future__ import annotations
 
@@ -27,54 +37,69 @@ def workflows_dir() -> Path:
     return skill_root() / "workflows"
 
 
+def registry_dir() -> Path:
+    """The skill's own source registry directory (``registry/sources.yaml``)."""
+    return skill_root() / "registry"
+
+
 @dataclass(frozen=True)
-class CampaignPaths:
-    """Resolved paths inside one campaign directory."""
+class WorkspacePaths:
+    """Resolved paths inside one workspace directory."""
 
     root: Path
-    book_id: str = ""
 
     # -- top level -----------------------------------------------------
     @property
-    def campaign_yaml(self) -> Path:
-        return self.root / "campaign.yaml"
+    def workspace_yaml(self) -> Path:
+        return self.root / "workspace.yaml"
+
+    @property
+    def registry_yaml(self) -> Path:
+        """The workspace's registry overlay (metadata only, never book text)."""
+        return self.root / "registry.yaml"
 
     @property
     def gitignore(self) -> Path:
         return self.root / ".gitignore"
 
-    # -- book (gitignored: copyrighted) --------------------------------
+    # -- sources (gitignored: copyrighted) -----------------------------
     @property
-    def book_dir(self) -> Path:
-        return self.root / "book" / self.book_id
+    def sources_dir(self) -> Path:
+        return self.root / "sources"
 
-    @property
-    def book_txt(self) -> Path:
-        return self.book_dir / "book.txt"
+    def source_dir(self, source_id: str) -> Path:
+        return self.sources_dir / source_id
 
-    @property
-    def book_json(self) -> Path:
-        return self.book_dir / "book.json"
+    def source_text(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "text.txt"
 
-    @property
-    def items_json(self) -> Path:
-        return self.book_dir / "items.json"
+    def source_meta(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "meta.json"
 
-    @property
-    def pages_dir(self) -> Path:
-        return self.book_dir / "pages"
+    def source_items(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "items.json"
 
-    @property
-    def images_dir(self) -> Path:
-        return self.book_dir / "images"
+    def source_pages_dir(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "pages"
 
-    @property
-    def errata_md(self) -> Path:
-        return self.book_dir / "errata.md"
+    def source_images_dir(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "images"
 
-    @property
-    def errata_raw(self) -> Path:
-        return self.book_dir / "errata.raw.html"
+    def source_errata_md(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "errata.md"
+
+    def source_errata_raw(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "errata.raw.html"
+
+    def source_errata_json(self, source_id: str) -> Path:
+        return self.source_dir(source_id) / "errata.json"
+
+    def list_sources(self) -> list[str]:
+        """Source ids prepared on disk (a directory holding meta.json)."""
+        if not self.sources_dir.is_dir():
+            return []
+        return sorted(p.name for p in self.sources_dir.iterdir()
+                      if p.is_dir() and (p / "meta.json").exists())
 
     # -- companions ----------------------------------------------------
     @property
@@ -99,35 +124,55 @@ class CampaignPaths:
     def lint_json(self, name: str) -> Path:
         return self.companion_dir(name) / "lint.json"
 
-    # -- pairing -------------------------------------------------------
+    def list_companions(self) -> list[str]:
+        """Companion names present on disk (a directory with adapter.yaml)."""
+        if not self.companions_dir.is_dir():
+            return []
+        return sorted(p.name for p in self.companions_dir.iterdir()
+                      if p.is_dir() and (p / "adapter.yaml").exists())
+
+    # -- pairing, one tree per source ----------------------------------
     @property
-    def pairs_dir(self) -> Path:
+    def pairs_root(self) -> Path:
         return self.root / "pairs"
 
-    @property
-    def pairs_jsonl(self) -> Path:
-        return self.pairs_dir / "pairs.jsonl"
+    def pairs_dir(self, source_id: str) -> Path:
+        return self.pairs_root / source_id
 
-    @property
-    def coverage_md(self) -> Path:
-        return self.pairs_dir / "coverage.md"
+    def pairs_jsonl(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "pairs.jsonl"
 
-    @property
-    def queue_json(self) -> Path:
-        return self.pairs_dir / "queue.json"
+    def coverage_md(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "coverage.md"
 
-    def targets_json(self, name: str) -> Path:
-        return self.pairs_dir / f"targets.{name}.json"
+    def index_json(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "index.json"
 
-    def def_coverage_json(self, name: str) -> Path:
-        return self.pairs_dir / f"def-coverage.{name}.json"
+    def reconciliation_json(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "reconciliation.json"
 
-    def uncovered_json(self, name: str) -> Path:
-        return self.pairs_dir / f"uncovered.{name}.json"
+    def rejected_json(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "rejected.json"
 
-    @property
-    def anchor_check_json(self) -> Path:
-        return self.pairs_dir / "anchor-check.json"
+    def queue_json(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "queue.json"
+
+    def targets_json(self, source_id: str, name: str) -> Path:
+        return self.pairs_dir(source_id) / f"targets.{name}.json"
+
+    def def_coverage_json(self, source_id: str, name: str) -> Path:
+        return self.pairs_dir(source_id) / f"def-coverage.{name}.json"
+
+    def uncovered_json(self, source_id: str, name: str) -> Path:
+        return self.pairs_dir(source_id) / f"uncovered.{name}.json"
+
+    def anchor_check_json(self, source_id: str) -> Path:
+        return self.pairs_dir(source_id) / "anchor-check.json"
+
+    def list_paired_sources(self) -> list[str]:
+        if not self.pairs_root.is_dir():
+            return []
+        return sorted(p.name for p in self.pairs_root.iterdir() if p.is_dir())
 
     # -- runs and corpus -----------------------------------------------
     @property
@@ -150,7 +195,7 @@ class CampaignPaths:
         return self.run_dir(run_id) / "prompts"
 
     def tend_root(self, run_id: str) -> Path:
-        """Gitignored: tend logs and sessions quote the book verbatim."""
+        """Gitignored: tend logs and sessions quote the source verbatim."""
         return self.run_dir(run_id) / "tend-root"
 
     @property
@@ -216,9 +261,9 @@ class CampaignPaths:
 
     # -- helpers -------------------------------------------------------
     def ensure_skeleton(self) -> list[Path]:
-        """Create the directories a fresh campaign needs. Idempotent."""
+        """Create the directories a fresh workspace needs. Idempotent."""
         made = []
-        dirs = [self.book_dir, self.companions_dir, self.pairs_dir, self.runs_dir,
+        dirs = [self.sources_dir, self.companions_dir, self.pairs_root, self.runs_dir,
                 self.corpus_dir, self.ledger_dir, self.routed_dir, self.detect_dir,
                 self.reports_dir, self.fixes_dir, self.reviews_dir]
         for d in dirs:
@@ -226,13 +271,6 @@ class CampaignPaths:
                 d.mkdir(parents=True, exist_ok=True)
                 made.append(d)
         return made
-
-    def list_companions(self) -> list[str]:
-        """Companion names present on disk (a directory with adapter.yaml)."""
-        if not self.companions_dir.is_dir():
-            return []
-        return sorted(p.name for p in self.companions_dir.iterdir()
-                      if p.is_dir() and (p / "adapter.yaml").exists())
 
     def list_runs(self) -> list[str]:
         if not self.runs_dir.is_dir():

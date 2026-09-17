@@ -5,9 +5,10 @@ notation ``pdftotext`` drops (findings-hunt/exercise-1-1-14.json) and
 adam-detector/README.md:43-44 (per-page splitting).
 
 LOCAL ONLY.  Page images are copyrighted book content: they live in
-``<campaign>/book/<id>/images/`` (gitignored by the campaign template), never in
-the skill repo, and ``cf run`` is the only thing allowed to copy them anywhere
-else -- and only to an allowlisted host with recorded consent.
+``<workspace>/sources/<source_id>/images/`` (gitignored by the workspace
+template), never in the skill repo, and ``cf run`` is the only thing allowed to
+copy them anywhere else -- and only to an allowlisted host with recorded
+consent.
 """
 
 from __future__ import annotations

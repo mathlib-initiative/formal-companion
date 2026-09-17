@@ -8,9 +8,11 @@ from these files.
 
 Layout (sections are created on demand; unknown sections are preserved):
 
-    {"version": 1, "name": "ours", "repo": "...", "commit": "7dccce1",
+    {"version": 2, "name": "ours", "repo": "...", "commit": "7dccce1",
      "adapter": {"kind": "docstring_tags", "key": "sha256:...", "sha": "..."},
-     "book_sha": "64498329...", "ledger_sha": null, "stale_since_commit": null,
+     "sources": {"<source_id>": {"sha": "64498329...", "rows": 1157, "items": 763}},
+     "anchor_source": "<source_id>",
+     "ledger_sha": null, "stale_since_commit": null,
      "extract": {...}, "coverage": {...}, "lint": {...},
      "runs": {"<run-id>": {...}}, "tally": {...}, "adjudication": {...},
      "routed": {...}, "detect": {...}, "fixes": {...},
@@ -21,12 +23,12 @@ from __future__ import annotations
 import contextlib
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any, Iterator, Sequence
 
 from .errors import StateError
 from .jsonio import read_json, write_json
 
-STATE_VERSION = 1
+STATE_VERSION = 2
 
 #: Sections `cf status` knows how to summarise, in pipeline order.
 SECTIONS = ("extract", "lint", "coverage", "runs", "tally", "adjudication",
@@ -41,15 +43,23 @@ def now() -> str:
 
 
 def new_state(name: str, repo: str | None = None, commit: str | None = None,
-              adapter: dict | None = None, book_sha: str | None = None) -> dict:
-    """A fresh state document (written by `cf onboard`)."""
+              adapter: dict | None = None, sources: Sequence[str] = (),
+              anchor_source: str | None = None) -> dict:
+    """A fresh state document (written by `cf onboard`).
+
+    v2 drops the single top-level ``book_sha`` for a ``sources`` map: a companion
+    is audited against a LIST of sources, so the sha it was extracted against is
+    per source, and ``anchor_source`` records whose pagination its page anchors
+    follow (which is not always a source it ships).
+    """
     return {
         "version": STATE_VERSION,
         "name": name,
         "repo": repo,
         "commit": commit,
         "adapter": adapter or {},
-        "book_sha": book_sha,
+        "sources": {sid: {"sha": None, "rows": None, "items": None} for sid in sources},
+        "anchor_source": anchor_source,
         "ledger_sha": None,          # ledger_nodes repos: their export's sha
         "stale_since_commit": None,  # set when the repo moved past the export
         "extract": {},
@@ -68,20 +78,20 @@ def new_state(name: str, repo: str | None = None, commit: str | None = None,
     }
 
 
-def state_path(campaign, name: str) -> Path:
-    """companions/<name>/state.json for a Campaign (or a CampaignPaths)."""
-    paths = getattr(campaign, "paths", campaign)
+def state_path(workspace, name: str) -> Path:
+    """companions/<name>/state.json for a Workspace (or a WorkspacePaths)."""
+    paths = getattr(workspace, "paths", workspace)
     return paths.state_json(name)
 
 
-def read_state(campaign, name: str, missing_ok: bool = False) -> dict:
+def read_state(workspace, name: str, missing_ok: bool = False) -> dict:
     """Read state.json. With ``missing_ok`` an absent file yields a skeleton."""
-    p = state_path(campaign, name)
+    p = state_path(workspace, name)
     if not p.exists():
         if missing_ok:
             return new_state(name)
         raise StateError(f"{p} does not exist",
-                         hint=f"run `cf onboard {name} --repo <path> --adapter <kind>` first")
+                         hint=f"run `cf onboard <repo> --name {name}` first")
     data = read_json(p)
     if not isinstance(data, dict):
         raise StateError(f"{p}: expected a JSON object")
@@ -90,22 +100,37 @@ def read_state(campaign, name: str, missing_ok: bool = False) -> dict:
     return data
 
 
-def write_state(campaign, name: str, state: dict) -> Path:
+def write_state(workspace, name: str, state: dict) -> Path:
     """Write state.json atomically, stamping updated_at."""
     state["updated_at"] = now()
-    return write_json(state_path(campaign, name), state)
+    return write_json(state_path(workspace, name), state)
 
 
 @contextlib.contextmanager
-def update(campaign, name: str, missing_ok: bool = True) -> Iterator[dict]:
+def update(workspace, name: str, missing_ok: bool = True) -> Iterator[dict]:
     """Read-modify-write state.json; nothing is written if the body raises.
 
-        with state.update(campaign, "ours") as st:
+        with state.update(workspace, "ours") as st:
             state.set_section(st, "extract", {"rows": 1157, "items": 763})
     """
-    st = read_state(campaign, name, missing_ok=missing_ok)
+    st = read_state(workspace, name, missing_ok=missing_ok)
     yield st
-    write_state(campaign, name, st)
+    write_state(workspace, name, st)
+
+
+def source_section(state: dict, source_id: str, values: dict) -> dict:
+    """Merge counts into ``state["sources"][source_id]`` (sha, rows, items).
+
+    This is where the source gate reads the sha a table was actually built
+    against: `cf status` compares it to workspace.yaml and says "re-run extract"
+    rather than letting two editions' counts sit in one file.
+    """
+    table = state.setdefault("sources", {})
+    body = dict(table.get(source_id) or {})
+    body.update({k: v for k, v in values.items() if v is not None})
+    body["at"] = now()
+    table[source_id] = body
+    return body
 
 
 def set_section(state: dict, section: str, values: dict, stamp: bool = True) -> dict:
@@ -153,10 +178,13 @@ def summary_row(state: dict) -> dict:
     adj = state.get("adjudication") or {}
     routed = state.get("routed") or {}
     runs = state.get("runs") or {}
+    sources = state.get("sources") or {}
     return {
         "companion": state.get("name"),
         "commit": (state.get("commit") or "")[:7] or None,
         "adapter": (state.get("adapter") or {}).get("kind"),
+        "sources": len(sources) or None,
+        "anchor": state.get("anchor_source"),
         "rows": extract.get("rows"),
         "items": extract.get("items"),
         "single_source": coverage.get("single_source"),

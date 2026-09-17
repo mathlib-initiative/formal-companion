@@ -1,6 +1,6 @@
 """Atomic JSON / JSONL io.
 
-New code. Every campaign artifact is rewritten in place by idempotent
+New code. Every workspace artifact is rewritten in place by idempotent
 commands, so every write goes through a temp file + os.replace: a killed
 `cf harvest` must never leave a half-written state.json behind.
 """
@@ -58,7 +58,7 @@ def iter_jsonl(path: str | Path, skip_meta: bool = False) -> Iterator[dict]:
     """Yield objects from a .jsonl file.
 
     ``skip_meta`` drops a leading ``_meta`` row (the routed-findings
-    convention: line 1 carries status/book_sha/routing rule).
+    convention: line 1 carries status/source_sha/routing rule).
     """
     p = Path(path)
     if not p.exists():

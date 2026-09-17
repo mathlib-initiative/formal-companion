@@ -123,6 +123,29 @@ LEDGER_TO_VIEWER = {
 }
 KIND_TO_VIEWER = {PROXY: "proxy"}
 
+# --- sources (docs/design/multi-source-model.md S1, S2)
+#: audited = a companion is checked against it; reference = prepared only so the
+#: page map to a sibling edition can be checked, and audited by nobody.
+SOURCE_AUDITED = "audited"
+SOURCE_REFERENCE = "reference"
+SOURCE_ROLES = frozenset({SOURCE_AUDITED, SOURCE_REFERENCE})
+
+#: What a registry licence note permits. `none` means a download is refused even
+#: with --download; nothing is EVER redistributed, whatever this says.
+LICENCE_FETCH = frozenset({"none", "author_site", "open"})
+
+#: The repo signals `cf onboard` reads (cflib.discovery, S4.3). All of them run
+#: for every adapter kind: a repo may carry a signal that "belongs" to another.
+DISCOVERY_SIGNALS = ("formalization_yaml", "ledger_source", "official_source_json",
+                     "graph_json", "prose", "filesystem", "citation")
+
+#: Where a located PDF was found, in search order (S4.4).
+PDF_FOUND_IN = ("repo_declared", "repo_cache", "workspace_store", "library_path",
+                "download", "none")
+
+#: How a page offset was arrived at.
+OFFSET_METHODS = frozenset({"running_head_mode", "declared", "manual", "registry", "unknown"})
+
 # --- adapter kinds and policies (Stage 0 contract)
 ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes", "custom"})
 
@@ -131,7 +154,7 @@ ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes"
 #: ``references/onboarding-contract.md`` specifies ``ledger_nodes`` and ``custom``
 #: without shipping them.  ``cf onboard`` refuses a kind that is not in this set
 #: BEFORE it writes anything; otherwise it registered a companion nothing could
-#: parse and the next ``cf extract`` failed for the whole campaign.
+#: parse and the next ``cf extract`` failed for the whole workspace.
 #: ``tests/test_cflib`` asserts this equals ``adapters.api.registry()``.
 IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table"})
 GRANULARITIES = frozenset({"item", "node"})
@@ -145,8 +168,8 @@ BRIDGE_KINDS = frozenset({"proved", "fiat", "none"})
 #: something about one.  The definition-coverage split (stated / bridge-only /
 #: missing) turns on this and nothing else, and it is written down ONCE here
 #: because ``pair/def_coverage.py`` and ``detect/def_coverage.py`` both write
-#: ``pairs/def-coverage.<name>.json``: they used different sets (``instance``
-#: was in one and not the other), so the two agreed only by luck.
+#: ``pairs/<source_id>/def-coverage.<name>.json``: they used different sets
+#: (``instance`` was in one and not the other), so the two agreed only by luck.
 DEFINITIONAL_KEYWORDS: tuple[str, ...] = (
     "def", "abbrev", "structure", "class", "inductive", "instance",
 )

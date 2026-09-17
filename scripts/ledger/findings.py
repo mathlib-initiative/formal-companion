@@ -54,7 +54,8 @@ def normalise_finding(
     kind = str(raw.get("kind") or "").strip()
     decls = [compat.normalise_decl(d) for d in (raw.get("unfaithful_decls") or []) if d]
     rid = str(raw.get("run_id") or run_id or "")
-    fid = raw.get("finding_id") or compat.finding_id(rid, it, kind, decls)
+    fid = raw.get("finding_id") or compat.finding_id(
+        rid, str(raw.get("source_id") or ""), it, kind, decls)
     row = {
         "finding_id": fid,
         "run_id": rid,

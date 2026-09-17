@@ -13,9 +13,9 @@ in one place:
     sorry:          {exercise_sorry, gap_marker}
     key_files:      extra files whose sha belongs in the extract key
 
-Item kinds and the printed/PDF page offset come from campaign.yaml when the
-loader is given a campaign, so no adapter hard-codes the Tao kind list or the
-``+16`` offset.
+Item kinds and the printed/PDF page offset come from the WORKSPACE's record of
+the source being extracted (``sources.<id>.kinds`` / ``.offset``) when the loader
+is given one, so no adapter hard-codes the Tao kind list or the ``+16`` offset.
 
 ``key()`` (inherited) hashes ``key_inputs()``; every adapter here extends it
 with the sha of the content it actually reads, so ``cf extract`` is a no-op
@@ -63,9 +63,9 @@ class Adapter(CoreAdapter):
     #: adapter kind as written in adapter.yaml (``adapter:``)
     kind: str = ""
 
-    def __init__(self, config: dict, name: str | None = None, campaign: Any | None = None,
+    def __init__(self, config: dict, name: str | None = None, workspace: Any | None = None,
                  source: str | None = None):
-        super().__init__(config, name=name, campaign=campaign)
+        super().__init__(config, name=name, workspace=workspace)
         self.source = source or f"adapter({self.kind})"
         if not self.name:
             raise AdapterError(f"{self.source}: 'name' is required (the companion's short name)")
@@ -126,9 +126,9 @@ class Adapter(CoreAdapter):
 
     # -- book parameters ---------------------------------------------------
     def item_kinds(self) -> tuple[str, ...]:
-        """Book item kinds: campaign.yaml's list, else the adapter's own."""
-        campaign_kinds = getattr(self.campaign, "kinds", None) if self.campaign else None
-        kinds = list(campaign_kinds) if campaign_kinds else list(self.config.get("item_kinds") or [])
+        """Item kinds: the bound source's list, else the adapter's own."""
+        source_kinds = getattr(self.workspace, "kinds", None) if self.workspace else None
+        kinds = list(source_kinds) if source_kinds else list(self.config.get("item_kinds") or [])
         if not kinds:
             from .itemtag import DEFAULT_KEYWORDS
             return DEFAULT_KEYWORDS
@@ -141,21 +141,21 @@ class Adapter(CoreAdapter):
         return tuple(k for k in self.item_kinds() if k != "In-text")
 
     def page_offset(self) -> int:
-        """printed page = PDF page - offset (campaign.yaml, else adapter.yaml)."""
-        if self.campaign is not None and getattr(self.campaign, "offset", None) is not None:
-            return int(self.campaign.offset)
+        """printed page = PDF page - offset (the bound source, else adapter.yaml)."""
+        if self.workspace is not None and getattr(self.workspace, "offset", None) is not None:
+            return int(self.workspace.offset)
         offset = self.config.get("page_offset")
         if offset is None:
             raise AdapterError(
                 f"{self.source}: no page offset",
-                hint="set book.offset in campaign.yaml (16 for the published GSM 126) "
+                hint="set the source's offset in workspace.yaml (16 for the published GSM 126) "
                      "or page_offset in adapter.yaml")
         return int(offset)
 
     def book_sha(self, book_sha: str | None = None) -> str | None:
         if book_sha:
             return book_sha
-        return getattr(self.campaign, "book_sha", None) if self.campaign else None
+        return getattr(self.workspace, "book_sha", None) if self.workspace else None
 
     # -- the interface -----------------------------------------------------
     def dry_run(self, repo: str | Path | None = None) -> dict:
@@ -186,7 +186,7 @@ class Adapter(CoreAdapter):
 
 # -- loading ---------------------------------------------------------------
 
-def from_config(config: dict, name: str | None = None, campaign: Any | None = None,
+def from_config(config: dict, name: str | None = None, workspace: Any | None = None,
                 source: str | None = None) -> Adapter:
     """Build an adapter from an already-parsed ``adapter.yaml`` mapping."""
     if not isinstance(config, dict):
@@ -200,10 +200,10 @@ def from_config(config: dict, name: str | None = None, campaign: Any | None = No
         raise AdapterError(
             f"{source or 'adapter'}: unknown adapter kind {kind!r}",
             hint=f"implemented kinds: {', '.join(sorted(kinds))}")
-    return kinds[kind](config, name=name, campaign=campaign, source=source)
+    return kinds[kind](config, name=name, workspace=workspace, source=source)
 
 
-def load(adapter_yaml: str | Path, campaign: Any | None = None) -> Adapter:
+def load(adapter_yaml: str | Path, workspace: Any | None = None) -> Adapter:
     """Build an adapter from a companion's ``adapter.yaml``.
 
     ``cflib.adapters_api.load`` delegates here, so this is what every command
@@ -222,7 +222,7 @@ def load(adapter_yaml: str | Path, campaign: Any | None = None) -> Adapter:
         repo_path = Path(str(repo)).expanduser()
         config["repo"] = str(repo_path if repo_path.is_absolute()
                              else (path.parent / repo_path).resolve())
-    return from_config(config, name=str(config.get("name")), campaign=campaign, source=str(path))
+    return from_config(config, name=str(config.get("name")), workspace=workspace, source=str(path))
 
 
 def sha_of_files(paths: Sequence[Path], root: Path) -> str:
