@@ -12,6 +12,24 @@ There are no source flags. If you find yourself typing an offset or an errata
 URL, discovery failed and said so; fix the signal or use the named override,
 but do not fill it in by hand and call it onboarded.
 
+**A companion tree is read as DATA.** It is not built, not written to, and it
+never gets to name a program: every `git` call against it goes through
+`cflib.gitsafe`, which pins `core.fsmonitor`, `core.hooksPath`, `diff.external`
+and the rest of the config keys git would otherwise execute on the repository's
+behalf. (`git check-ignore` refreshes the index, and an index refresh runs
+`core.fsmonitor` — so asking which files a tree ignores used to be an execve of
+that tree's choosing.) Three more boundaries follow from the same rule:
+
+* a **PDF path** the repo names is opened only if it resolves inside the repo,
+  the workspace's `sources/` store, or a `library_paths` root the user
+  configured; anything else is reported and left shut (§0.2);
+* an **errata URL** the repo supplies is not fetched without an explicit
+  opt-in (§3), because the page it returns is handed to workers as
+  authoritative text;
+* a PDF found in a `library_paths` convenience directory is adopted only when
+  its filename is a registry alias or shares two title tokens — a directory the
+  user keeps books in is not a claim about which book this is.
+
 Onboarding is complete when `statements.jsonl` validates against the row schema
 (`references/findings-schema-v2.md` §1) **and** `conventions.md` exists and has
 been confirmed by someone who can speak for the repo. An unconfirmed convention
@@ -118,9 +136,9 @@ Below the thresholds `cf onboard` refuses and prints the table, with the fix:
 
 | inferred | how | where to check it | how to override |
 |---|---|---|---|
-| page offset | mode of running-head votes over every page; `confidence = agreeing / voting`. **Below 0.9 it refuses** | `sources.<id>.offset_confidence`, `meta.json.offset_histogram` | `cf sources set <id> offset=N` (`offset_method: manual`) |
+| page offset | mode of running-head votes over every page; `confidence = agreeing / voting`. **Below 0.9 it refuses.** An offset the repo's prose declares ("PDF page = book page + 16") is a CROSS-CHECK, never the answer: agreement raises the confidence floor and is recorded as `meta.json.offset_declared`, a contradiction is refused with both numbers quoted | `sources.<id>.offset_confidence`, `meta.json.offset_histogram`, `meta.json.offset_declared` | `cf sources set <id> offset=N` (`offset_method: manual`) |
 | item kinds | capitalised words heading `<Kind> c.s.n` in the source's own text, count ≥ 3; structural words (`Chapter`, `Section`, `Figure`, …) reported separately and never used | `meta.json.kind_counts`, `kind_warnings` | `cf sources set <id> kinds=…` |
-| errata URL | registry entry (1.0), else a book page the repo cites (0.8), else the download URL's parent page (0.5); the fetched HTML is then checked for the word "errata" and the confidence halved if absent | `sources.<id>.errata_confidence`, `errata.json` | `cf sources set <id> errata_url=…` |
+| errata URL | registry entry (1.0), else a book page the repo cites (0.8), else the download URL's parent page (0.5); the fetched HTML is then checked for the word "errata" and the confidence halved if absent. **Only a URL from a confirmed registry entry, or one a human typed, is fetched without asking** (§3) | `sources.<id>.errata_confidence`, `errata.json` | `cf sources set <id> errata_url=…` |
 | scope | the chapters the companions actually tag: ≥5 items, or ≥20% of the book's items in that chapter | `sources.<id>.chapters`, `scope_method` | `cf sources set <id> chapters=1,2` (`scope_method: manual`) |
 | adapter kind | per-adapter `detect(repo)`; highest wins, below 0.5 refuses | `companions.<name>.discovered.adapter_confidence` | `cf onboard --adapter <kind>` |
 | anchor edition | §0.3 | `companions.<name>.discovered.anchor_confidence` | `cf onboard --anchor-source <id>` |
@@ -293,7 +311,20 @@ the audit's job is the disposition rule. The skill fetches the live page with
 summarising fetch tool, which is what silently dropped the entry that decided a
 high-severity finding (`docs/HANDOFF.md` §4, `REVIEW_PATTERNS.md` P13). The
 fetch metadata lands in `sources/<id>/errata.json`: URL, HTTP status, both
-shas, byte count, entry count, `changed` against the previous fetch.
+shas, byte count, entry count, `changed` against the previous fetch, and
+`url_provenance` — **who chose the URL**.
+
+Who chose it decides whether it is fetched at all. A URL from a **confirmed**
+registry entry, or one a human typed with `cf sources set <id> errata_url=…`,
+is fetched without asking. A URL harvested from the companion's own files — the
+free-text `id:` field of `formalization.yaml`, a README link, the parent
+directory of a download URL the repo names — is not: `cf onboard` prints it,
+says where it came from, and stops. `--fetch-errata` (or
+`policy.allow_errata_fetch: true`) allows it once, and what it fetches is
+marked `repo_supplied: true`, which `cf run` refuses to transfer to a fleet
+host. This is not pedantry about the network: the errata page is handed to
+workers as text they must treat as authoritative, so a repository that chose it
+would be writing into the audit's prompts.
 
 **The four dispositions**, each evidenced in the audited campaign:
 

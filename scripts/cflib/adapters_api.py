@@ -18,6 +18,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, ClassVar, Iterator, Mapping
 
+from . import gitsafe
 from .errors import AdapterError
 from .hashing import sha256_json
 
@@ -249,8 +250,9 @@ class Adapter(ABC):
         if not repo:
             return None
         try:
-            out = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                                 capture_output=True, text=True, timeout=30)
+            # gitsafe, not a bare `git -C`: a companion repo is read as data, and
+            # even `rev-parse` must not become an execve for `core.fsmonitor`.
+            out = gitsafe.run(repo, ["rev-parse", "HEAD"], timeout=30)
         except (OSError, subprocess.SubprocessError):
             return None
         return out.stdout.strip() or None if out.returncode == 0 else None

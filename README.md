@@ -172,6 +172,7 @@ cf sources set <id> confirmed=true         # you checked a discovered entry
 cf onboard <repo> --anchor-source <id>     # two editions scored too close to call
 cf onboard <repo> --adapter docstring_tags # no adapter scored above 0.5
 cf sources add <pdf> --for <companion>     # the repo names a source it does not identify
+cf sources remove <id>                    # undo one that should not be here (loads a broken workspace)
 cf onboard <repo> --download               # fetch from the author's own site (licence permitting)
 ```
 

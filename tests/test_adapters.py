@@ -584,6 +584,105 @@ class IgnoredFilesTest(unittest.TestCase):
         kept = [repo / "Src" / "Sample.lean"]
         self.assertEqual(api.Adapter.ignored_files(repo, kept), [])
 
+    def test_asking_git_does_not_run_a_program_the_repo_named(self):
+        """`check-ignore` refreshes the index, and that runs `core.fsmonitor`.
+
+        So the question "which files does this tree ignore?" was an execve of a
+        command the audited tree had chosen, on the flagless onboarding path.
+        """
+        repo = self._repo(git=True)
+        marker = repo.parent / "PWNED-fsmonitor"
+        hook = repo.parent / "fsmon.sh"
+        hook.write_text(f'#!/bin/sh\ntouch "{marker}"\necho ""\n')
+        hook.chmod(0o755)
+        subprocess.run(["git", "-C", str(repo), "config", "core.fsmonitor", str(hook)],
+                       check=True)
+        marker.unlink(missing_ok=True)
+        api.Adapter.ignored_files(repo, [repo / "Src" / "Sample.lean"])
+        self.assertFalse(marker.exists(), "the companion repo's fsmonitor ran")
+
+
+class SourceAttributionTest(unittest.TestCase):
+    """Which source a row belongs to when a companion formalises TWO books.
+
+    `cf onboard` writes the `sources.map` rules commented out, so every row fell
+    through to `sources.default` -- the anchor -- and a second book's items were
+    namespaced under the first book's id.  With no map, the attribution now asks
+    each bound source's items.json.
+    """
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-attr-")).resolve()
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+        (self.tmp / "Src").mkdir()
+        (self.tmp / "Src" / "Sample.lean").write_text(SAMPLE, encoding="utf-8")
+        self.ws = _ItemsWorkspace(self.tmp / "ws", {
+            SOURCE_ID: ["Exercise 1.1.3", "Definition 1.1.1", "Lemma 1.2.5", "Example 1.1.9"],
+            "other-book-1e": ["Exercise 1.2.17", "Definition 1.1.1"],
+        })
+        self.adapter = from_config(
+            {"adapter": "docstring_tags", "name": "demo", "repo": str(self.tmp),
+             "glob": "Src/*.lean", "item_kinds": list(KINDS)},
+            workspace=self.ws, source="<attribution>")
+        # what `cf onboard` / `cf extract` do: pin the anchor as the default for
+        # rows no rule and no items.json can place.
+        self.adapter.bind_default_source(SOURCE_ID)
+
+    def test_each_row_goes_to_the_source_that_numbers_its_item(self):
+        rows = list(self.adapter.extract(sources={SOURCE_ID: SOURCE_SHA,
+                                                  "other-book-1e": "b" * 64}))
+        by_item = {r["item"]: r["source_id"] for r in rows}
+        self.assertEqual(by_item["Exercise 1.1.3"], SOURCE_ID)
+        self.assertEqual(by_item["Exercise 1.2.17"], "other-book-1e")
+        self.assertEqual({r["source_sha"] for r in rows if r["source_id"] == "other-book-1e"},
+                         {"b" * 64})
+
+    def test_an_item_both_books_number_is_reported_not_guessed(self):
+        list(self.adapter.extract(sources={SOURCE_ID: SOURCE_SHA, "other-book-1e": "b" * 64}))
+        binding = self.adapter.last_binding
+        self.assertIn("Definition 1.1.1", binding.ambiguous)
+        self.assertNotIn("Definition 1.1.1", binding.unattributed)
+
+    def test_one_bound_source_still_takes_every_row(self):
+        rows = list(self.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
+        self.assertEqual({r["source_id"] for r in rows}, {SOURCE_ID})
+        self.assertEqual(self.adapter.last_binding.ambiguous, [])
+
+    def test_an_explicit_map_still_wins(self):
+        adapter = from_config(
+            {**self.adapter.config,
+             "sources": {"default": SOURCE_ID,
+                         "map": [{"source": "other-book-1e", "tag_prefix": "Exercise 1.1"}]}},
+            workspace=self.ws, source="<attribution-map>")
+        rows = list(adapter.extract(sources={SOURCE_ID: SOURCE_SHA, "other-book-1e": "b" * 64}))
+        by_item = {r["item"]: r["source_id"] for r in rows}
+        self.assertEqual(by_item["Exercise 1.1.3"], "other-book-1e")
+
+
+class _ItemsWorkspace:
+    """The slice of a Workspace an adapter reads: kinds, sha and items.json."""
+
+    def __init__(self, root: Path, items_by_source: dict):
+        from cflib.paths import WorkspacePaths
+        from cflib.workspace import SourceRef
+
+        self.root = root
+        self.paths = WorkspacePaths(root=root)
+        self._refs = {}
+        for sid, items in items_by_source.items():
+            self._refs[sid] = SourceRef(id=sid, title=sid, edition="1e", kinds=tuple(KINDS),
+                                        sha256=(SOURCE_SHA if sid == SOURCE_ID else "b" * 64))
+            path = self.paths.source_items(sid)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"source_id": sid,
+                                        "items": [{"item": i} for i in items]}))
+
+    def source(self, source_id):
+        from cflib.errors import SourceError
+        if source_id not in self._refs:
+            raise SourceError(f"unknown source {source_id!r}")
+        return self._refs[source_id]
+
 
 @unittest.skipUnless(env_path("CF_TML"), "set CF_TML to the tao-measure-lean checkout")
 class DocstringTagsBaselineTest(unittest.TestCase):

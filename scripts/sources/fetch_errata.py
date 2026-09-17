@@ -190,8 +190,16 @@ def fetch(
     offset: int | None = None,
     timeout: int = 60,
     force: bool = False,
+    provenance: str = "unknown",
 ) -> dict:
-    """Fetch the errata page into ``sources/<id>/errata.{raw.html,md,json}``."""
+    """Fetch the errata page into ``sources/<id>/errata.{raw.html,md,json}``.
+
+    ``provenance`` says WHO chose this URL: ``registry`` (a curated entry),
+    ``manual`` (``cf sources set``), or ``repo`` (harvested from the companion's
+    own files).  A repo-supplied page is attacker-choosable text that ends up in
+    worker prompts, so the provenance travels in ``errata.json`` and
+    ``run/manifest.py`` refuses to ship one nobody has confirmed.
+    """
     os.makedirs(out_dir, exist_ok=True)
     raw_path = os.path.join(out_dir, "errata.raw.html")
     md_path = os.path.join(out_dir, "errata.md")
@@ -212,6 +220,8 @@ def fetch(
     )
     meta = {
         "url": url,
+        "url_provenance": provenance,
+        "repo_supplied": provenance == "repo",
         "fetched_at": utcnow(),
         "http_status": status,
         "sha256": digest,
@@ -237,6 +247,7 @@ def fetch(
             "- fetched: %s" % meta["fetched_at"],
             "- raw sha256: %s" % digest,
             "- content sha256 (comments stripped): %s" % content_digest,
+            "- url chosen by: %s" % provenance,
             "- source: %s" % (source_id or "(unnamed)"),
             "- source sha256: %s" % (source_sha or "(unpinned)"),
         ]

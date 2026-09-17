@@ -433,6 +433,50 @@ class TestWorkspace(unittest.TestCase):
         ws = Workspace.load(self.root)
         self.assertEqual([s.id for s in ws.unconfirmed_sources()], [DRAFT_ID])
 
+    def test_save_refuses_a_file_its_own_loader_would_reject(self):
+        """Two ids on one sha256 wedged the whole directory: no command could load it.
+
+        `validate()` ran only in `load`, so a command could persist a
+        contradiction and every later `cf` in that workspace died reading it
+        back -- including the ones that would have repaired it.
+        """
+        ws = Workspace.load(self.root)
+        ws.upsert_source("a-second-id", title="T", edition="E", sha256=PUBLISHED_SHA)
+        with self.assertRaises(CfError) as ctx:
+            ws.save()
+        self.assertIn("the same bytes are one source", str(ctx.exception))
+        # and the file on disk is untouched: it still loads
+        self.assertEqual(sorted(Workspace.load(self.root).sources), [DRAFT_ID, PUBLISHED_ID])
+
+    def test_save_tolerates_a_half_written_command(self):
+        """Only the STRUCTURAL rules bind a save: a source is registered before
+        the companion that lists it, in one command, over two saves."""
+        ws = Workspace.load(self.root)
+        ws.upsert_source("smith-analysis-2e", title="Analysis", edition="2e", role="audited")
+        ws.save()
+        self.assertIn("smith-analysis-2e", Workspace(self.root, ws.data).sources)
+
+    def test_a_broken_workspace_can_still_be_loaded_for_repair(self):
+        ws = Workspace.load(self.root)
+        ws.data["sources"]["a-second-id"] = {"title": "T", "edition": "E",
+                                             "sha256": PUBLISHED_SHA}
+        # written past save()'s gate, the way a hand-edit or an older cf would
+        (self.root / WORKSPACE_FILE).write_text(yamlio.dump_yaml(ws.data))
+        with self.assertRaises(CfError):
+            Workspace.load(self.root)
+        repaired = Workspace.load(self.root, validate=False)
+        repaired.remove_source("a-second-id")
+        repaired.save()
+        self.assertEqual(sorted(Workspace.load(self.root).sources), [DRAFT_ID, PUBLISHED_ID])
+
+    def test_removing_a_source_takes_it_out_of_every_companion(self):
+        ws = Workspace.load(self.root)
+        ws.remove_source(DRAFT_ID)
+        self.assertNotIn(DRAFT_ID, ws.data["sources"])
+        for body in ws.data["companions"].values():
+            self.assertNotIn(DRAFT_ID, body.get("sources") or [])
+            self.assertNotIn(DRAFT_ID, body.get("bundled_sources") or [])
+
     def test_unknown_companion_and_source_raise(self):
         ws = Workspace.load(self.root)
         with self.assertRaises(CfError):
@@ -588,6 +632,61 @@ class TestRegistry(unittest.TestCase):
             registry.append_overlay(root, RegistryEntry(id=PUBLISHED_ID, title="T", edition="E",
                                                         offset=99))
             self.assertEqual(Registry.load(root).get(PUBLISHED_ID).offset, 99)
+
+    def test_an_overlay_row_cannot_demote_a_confirmed_skill_entry(self):
+        """`confirmed` is asymmetric, and the shadow itself is reported.
+
+        `append_overlay` always writes `confirmed: false`, so a workspace that
+        had discovered a source before the skill catalogued it reported the
+        curated entry as unconfirmed for ever -- the exact state the documented
+        promotion step (and any skill upgrade) passes through.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            Registry.load().append_overlay(
+                root, RegistryEntry(id=PUBLISHED_ID, title="T", edition="E"))
+            again = Registry.load(root)
+            entry = again.get(PUBLISHED_ID)
+            self.assertTrue(entry.confirmed)                 # the skill's word stands
+            self.assertEqual(entry.sha256, PUBLISHED_SHA)    # curated facts still there
+            self.assertNotIn(PUBLISHED_ID, [e.id for e in again.unconfirmed()])
+            self.assertEqual(again.shadowed, (PUBLISHED_ID,))
+            problems = again.validate()
+            self.assertTrue(any(PUBLISHED_ID in p and "shadows" in p for p in problems),
+                            problems)
+
+    def test_the_overlay_remembers_what_preparing_the_source_taught_us(self):
+        """R3: the registry is the memory of what is known about a source."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry = Registry.load()
+            registry.append_overlay(root, RegistryEntry(id="smith-analysis-2e", title="Analysis",
+                                                        edition="2e"))
+            path = registry.update_overlay(root, "smith-analysis-2e", sha256="b" * 64,
+                                           offset=12, offset_confidence=0.99,
+                                           offset_method="running_head_mode",
+                                           kinds=("Definition", "Exercise"),
+                                           errata_url="https://example.org/errata/")
+            self.assertIsNotNone(path)
+            entry = Registry.load(root).get("smith-analysis-2e")
+            self.assertEqual((entry.sha256, entry.offset, entry.offset_method),
+                             ("b" * 64, 12, "running_head_mode"))
+            self.assertEqual(entry.kinds, ("Definition", "Exercise"))
+            self.assertEqual(entry.errata_url, "https://example.org/errata/")
+            self.assertFalse(entry.confirmed)     # still nobody's word but ours
+            self.assertIsNone(registry.update_overlay(root, "not-in-the-overlay", offset=1))
+
+    def test_an_entry_built_from_a_claim_records_the_bytes_it_was_built_from(self):
+        """Without the sha it just computed, the row cannot be matched by content."""
+        from cflib.registry import entry_from_claim
+        claim = discovery.SourceClaim(signal="formalization_yaml", path="formalization.yaml",
+                                      title="Elementary Notes on Sets")
+        located = discovery.LocatedPdf(path=Path("/tmp/elementary-notes.pdf"), sha256="c" * 64,
+                                       bytes=5675, pages=12)
+        entry = entry_from_claim("anonymous-elementary-sets", claim, pdf=located)
+        self.assertEqual((entry.sha256, entry.bytes, entry.pages), ("c" * 64, 5675, 12))
+        self.assertIn("elementary-notes.pdf", entry.aliases["filenames"])
+        self.assertTrue(entry.edition)            # never "" -- validate() requires one
 
 
 class TestSourceIdRule(unittest.TestCase):
@@ -1020,6 +1119,228 @@ class TestDiscovery(unittest.TestCase):
         self.assertEqual(evidence["reason"], "prose_hint_only")
 
 
+class TestDiscoveryBoundaries(unittest.TestCase):
+    """The rules that decide what discovery may OPEN and what it may ADOPT.
+
+    Each of these was a real defect: one PDF registered as two sources (which
+    wedged the workspace its own validator then refused to load), an unrelated
+    document adopted out of a library directory as the audited source, and a
+    path in the repo's prose followed anywhere on the machine.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self.registry = Registry.load()
+        self.repo = self.root / "notes"
+        (self.repo / "sources").mkdir(parents=True)
+        self.pdf = self.repo / "sources" / "elementary-notes.pdf"
+        self.pdf.write_bytes(b"%PDF-1.4 elementary notes")
+        (self.repo / "formalization.yaml").write_text(
+            "version: v0.3\n"
+            "sources:\n"
+            "- title: Elementary Notes on Sets\n"
+            "  authors:\n"
+            "  - Anonymous\n"
+            "  id: 'public-domain booklet'\n")
+        (self.repo / "README.md").write_text(
+            "A companion to *Elementary Notes on Sets* (`sources/elementary-notes.pdf`).\n")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_one_pdf_named_twice_is_one_source(self):
+        """formalization.yaml names the WORK, the filesystem names the FILE.
+
+        Nothing in the registry knows this booklet, so nothing supplied the two
+        claims with a common id; they used to become two source ids on one
+        sha256, which `Workspace.validate` rejects -- after `cf onboard` had
+        already written it.
+        """
+        ws = _fresh_workspace(self.root / "ws")
+        result = discovery.resolve_claims(
+            discovery.discover_sources(self.repo), repo=self.repo, workspace=ws,
+            registry=self.registry, library_paths=[])
+        self.assertEqual(len(result.sources), 1, result.source_ids())
+        body = result.sources[0]
+        self.assertEqual(body["title"], "Elementary Notes on Sets")
+        self.assertTrue(str(body["pdf"]).endswith("elementary-notes.pdf"))
+        self.assertIn("formalization.yaml#sources", body["discovered"]["from"])
+
+    def test_a_committed_pdf_unrelated_to_the_title_stays_a_separate_claim(self):
+        """The join above is guarded: the filename must echo the title."""
+        (self.repo / "sources" / "sunflower-rao.pdf").write_bytes(b"%PDF-1.4 sunflower")
+        merged = discovery.merge_claims(discovery.discover_sources(self.repo), self.registry)
+        names = {tuple(c.pdf_hints) for c in merged}
+        self.assertIn(("sources/sunflower-rao.pdf",), names)
+
+    def test_two_claims_that_land_on_the_same_bytes_are_folded(self):
+        """The safety net under the join: the fingerprint is the identity."""
+        ws = _fresh_workspace(self.root / "ws-fold")
+        claims = [
+            discovery.SourceClaim(signal="formalization_yaml", path="formalization.yaml",
+                                  title="Alpha Notes", confidence=0.9),
+            discovery.SourceClaim(signal="ledger_source", path="ledger.json",
+                                  title="Beta Book", pdf_hints=("sources/elementary-notes.pdf",),
+                                  confidence=0.8),
+        ]
+        self.assertFalse(claims[0].matches(claims[1]))       # two different titles
+        result = discovery.resolve_claims(claims, repo=self.repo, workspace=ws,
+                                          registry=self.registry, library_paths=[])
+        self.assertEqual(len(result.sources), 1, result.source_ids())
+        self.assertEqual(len({b["sha256"] for b in result.sources}), 1)
+
+    def test_a_library_pdf_matching_neither_alias_nor_title_is_not_adopted(self):
+        """A convenience directory is not a claim about which file this is."""
+        library = self.root / "library"
+        library.mkdir()
+        (library / "aaa-sunflower-rao.pdf").write_bytes(b"%PDF-1.4 a paper on sunflowers")
+        claim = discovery.SourceClaim(signal="formalization_yaml", path="formalization.yaml",
+                                      title="An Introduction to Measure Theory")
+        warnings: list[str] = []
+        found = discovery.locate_pdf(claim, repo=self.root / "empty", workspace=None,
+                                     registry=self.registry, library_paths=[str(library)],
+                                     warnings=warnings)
+        self.assertIsNone(found)
+        self.assertTrue(any("match neither a registry filename nor the title" in w
+                            for w in warnings), warnings)
+
+    def test_a_path_outside_every_search_root_is_reported_not_opened(self):
+        outside = self.root / "private" / "secret-dossier.pdf"
+        outside.parent.mkdir(parents=True)
+        outside.write_bytes(b"%PDF-1.4 PRIVATE BANK STATEMENT")
+        claim = discovery.SourceClaim(signal="ledger_source", path="ledger.json",
+                                      pdf_hints=(str(outside),))
+        rejected: list[str] = []
+        order = discovery.search_order(claim, repo=self.repo, workspace=None,
+                                       library_paths=[], rejected=rejected)
+        self.assertNotIn(outside.resolve(), [p for p, _w, _r in order])
+        self.assertEqual(len(rejected), 1, rejected)
+        self.assertIn("outside the repo", rejected[0])
+        self.assertIn("cf sources add", rejected[0])
+
+    def test_a_relative_path_that_climbs_out_of_the_repo_is_refused_too(self):
+        outside = self.root / "escape.pdf"
+        outside.write_bytes(b"%PDF-1.4 outside")
+        claim = discovery.SourceClaim(signal="prose", path="README.md",
+                                      pdf_hints=("../escape.pdf",))
+        rejected: list[str] = []
+        order = discovery.search_order(claim, repo=self.repo, workspace=None,
+                                       library_paths=[], rejected=rejected)
+        # the repo's own sources/ cache is still searched; the escape is not
+        self.assertNotIn(outside.resolve(), [p for p, _w, _r in order])
+        self.assertTrue(rejected)
+
+    def test_a_library_path_the_user_configured_is_still_reachable(self):
+        """Confinement is to the declared roots, not to the repo."""
+        library = self.root / "library"
+        library.mkdir()
+        target = library / "elementary-notes.pdf"
+        target.write_bytes(b"%PDF-1.4 elementary notes")
+        claim = discovery.SourceClaim(signal="prose", path="README.md",
+                                      pdf_hints=(str(target),), title="Elementary Notes on Sets")
+        rejected: list[str] = []
+        order = discovery.search_order(claim, repo=self.root / "empty", workspace=None,
+                                       library_paths=[str(library)], rejected=rejected)
+        self.assertIn(target.resolve(), [p for p, _w, _r in order])
+        self.assertEqual(rejected, [])
+
+    def test_the_search_stops_at_the_first_candidate_it_accepts(self):
+        """Fingerprinting is sha256 + a full pdftotext run, per candidate."""
+        library = self.root / "library"
+        library.mkdir()
+        for i in range(5):
+            (library / f"elementary-notes-{i}.pdf").write_bytes(f"%PDF-1.4 copy {i}".encode())
+        seen: list[str] = []
+        real = discovery.fingerprint
+
+        def counting(path):
+            seen.append(str(path))
+            return real(path)
+
+        claim = discovery.SourceClaim(signal="prose", path="README.md",
+                                      title="Elementary Notes on Sets",
+                                      pdf_hints=("sources/elementary-notes.pdf",))
+        discovery.fingerprint = counting
+        try:
+            found = discovery.locate_pdf(claim, repo=self.repo, workspace=None,
+                                         registry=self.registry,
+                                         library_paths=[str(library)])
+        finally:
+            discovery.fingerprint = real
+        self.assertIsNotNone(found)
+        self.assertEqual(len(seen), 1, seen)
+        self.assertTrue(seen[0].endswith("sources/elementary-notes.pdf"))
+
+
+class TestGitSafe(unittest.TestCase):
+    """A companion tree is read as DATA -- it never gets to name a program.
+
+    `git check-ignore` refreshes the index, and an index refresh runs
+    `core.fsmonitor`, a command out of the repository's own .git/config.  That
+    made the first thing `cf onboard <repo>` did to an untrusted tree an execve
+    of that tree's choosing.
+    """
+
+    def test_every_config_key_that_is_an_execve_is_pinned(self):
+        from cflib import gitsafe
+
+        argv = gitsafe.argv("/tmp/x", "check-ignore", "--stdin")
+        self.assertEqual(argv[:3], ["git", "-C", "/tmp/x"])
+        self.assertEqual(argv[-2:], ["check-ignore", "--stdin"])
+        for key in ("core.fsmonitor=", "core.hooksPath=/dev/null", "diff.external="):
+            self.assertIn(key, argv)
+        self.assertLess(argv.index("core.fsmonitor="), argv.index("check-ignore"))
+        env = gitsafe.env()
+        self.assertEqual(env["GIT_CONFIG_NOSYSTEM"], "1")
+        self.assertEqual(env["GIT_OPTIONAL_LOCKS"], "0")
+
+    def test_a_repo_named_program_does_not_run(self):
+        import shutil
+        import subprocess
+
+        from cflib import gitsafe
+
+        if shutil.which("git") is None:                      # pragma: no cover
+            self.skipTest("git is not installed")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "companion"
+            repo.mkdir()
+            (repo / "a.lean").write_text("theorem a : True := trivial\n")
+            marker = root / "PWNED"
+            hook = root / "fsmon.sh"
+            hook.write_text(f'#!/bin/sh\ntouch "{marker}"\necho ""\n')
+            hook.chmod(0o755)
+            for args in (["init", "-q", "."], ["add", "-A"]):
+                subprocess.run(["git", "-C", str(repo), *args], capture_output=True, check=False)
+            subprocess.run(["git", "-C", str(repo), "config", "core.fsmonitor", str(hook)],
+                           capture_output=True, check=False)
+            subprocess.run(["git", "-C", str(repo), "-c", "user.email=t@t", "-c", "user.name=t",
+                            "-c", "core.fsmonitor=", "commit", "-qm", "x"],
+                           capture_output=True, check=False)
+            marker.unlink(missing_ok=True)
+
+            # the unsafe spelling is what the exposure looked like
+            subprocess.run(["git", "-C", str(repo), "check-ignore", "--stdin"],
+                           input="a.lean\n", capture_output=True, text=True, check=False)
+            unsafe_ran = marker.exists()
+            marker.unlink(missing_ok=True)
+
+            gitsafe.run(repo, ["check-ignore", "--stdin"], input="a.lean\n")
+            self.assertFalse(marker.exists(), "the repo's fsmonitor ran through gitsafe")
+            if not unsafe_ran:                               # pragma: no cover - git build
+                self.skipTest("this git does not run core.fsmonitor on check-ignore")
+
+    def test_the_adapters_read_a_companion_through_it(self):
+        from adapters.api import Adapter as AdapterBase
+        import inspect
+
+        source = inspect.getsource(AdapterBase.ignored_files)
+        self.assertIn("gitsafe.run", source)
+        self.assertNotIn('"git", "-C"', source)
+
+
 def _fresh_workspace(root: Path) -> Workspace:
     """A minimal valid workspace on disk (no companions, no sources yet)."""
     root.mkdir(parents=True, exist_ok=True)
@@ -1357,9 +1678,15 @@ class _FakeAdapter:
 
     counts = {"declarations": 2207, "tagged": 1496, "items": 519,
               "rejects": [{"raw": "Corollary (Lemma 1.2.5)", "reason": "no_number"}]}
-    rows = [{"item": "Definition 1.1.1", "item_raw": "Definition 1.1.1", "decl": "Foo",
-             "file": "A.lean", "line": 3, "statement": "theorem foo", "repo": "ours",
-             "page_anchor": 5}]
+    # A full schema-v2 row on purpose: `cf onboard` now applies the same gate
+    # `cf extract` does and keeps a table that fails it out of the companion
+    # directory, so a stub that yielded half a row would be testing the refusal.
+    rows = [{"item": "Definition 1.1.1", "item_raw": "Definition 1.1.1", "sub": "",
+             "item_kind": "Definition", "decl": "Foo", "kind": "def", "namespace": "",
+             "file": "A.lean", "line": 3, "statement": "theorem foo", "body": None,
+             "sorry": False, "sorry_class": "none", "page_anchor": 5,
+             "page_anchor_raw": "book p. 5", "anchor_source": "own", "repo": "ours",
+             "key": True, "anonymous": False, "private": False, "granularity": "item"}]
 
     def __init__(self, workspace=None):
         self.workspace = workspace
@@ -1461,6 +1788,231 @@ class TestAdapterApi(unittest.TestCase):
 # cf onboard, end to end (fixture repo, fake adapter, no PDF, no network)
 # ---------------------------------------------------------------------------
 
+class TestOnboardDecisions(unittest.TestCase):
+    """The decisions `cf onboard` makes between discovery and extraction.
+
+    These run against stubs rather than a real PDF: what is under test is the
+    WIRING (which value reaches which checker), and every one of these was wired
+    to nothing at some point -- the declared offset was round-tripped through a
+    key that was never written, the errata URL was fetched whoever supplied it,
+    and two different books were made to compete for one anchor.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self.ws = _fresh_workspace(self.root / "ws")
+        self.pdf = self.root / "book.pdf"
+        self.pdf.write_bytes(b"%PDF-1.4 a book")
+        self.ws.upsert_source("a-book-1e", title="A Book", edition="1e", pdf=str(self.pdf),
+                              sha256="d" * 64, role="audited", registry="skill", confirmed=True)
+        self.ws.save()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    @staticmethod
+    def _payload(**over):
+        payload = {"offset": 2, "offset_confidence": 1.0, "offset_method": "running_head_mode",
+                   "pages": 12, "text_sha256": "e" * 64, "text_bytes": 100, "items": 28,
+                   "kinds": ["Definition", "Exercise"], "kind_warnings": []}
+        payload.update(over)
+        return payload
+
+    def _prepare(self, payload, **kwargs):
+        """Run `_prepare_source` with prepare() stubbed; returns its kwargs."""
+        from unittest import mock
+
+        from cfcmd import onboard as onboard_cmd
+        from sources import prepare_source
+
+        seen: dict = {}
+
+        def stub(pdf, out_dir, **kw):
+            seen.update(kw)
+            return payload
+
+        with mock.patch.object(prepare_source, "prepare", stub):
+            onboard_cmd._prepare_source(self.ws, "a-book-1e", force=False, no_errata=True,
+                                        **kwargs)
+        return seen
+
+    def test_the_declared_offset_reaches_the_cross_check(self):
+        """`infer_offset(declared=…)` refuses when the prose contradicts the pages.
+
+        It was handed None on every run: the hint was written onto the discovery
+        body, excluded from what was saved, and then read back from the saved
+        data.
+        """
+        seen = self._prepare(self._payload(), declared_offset=9)
+        self.assertEqual(seen["declared"], 9)
+        self.assertIsNone(seen["offset"], "a repo's prose is a cross-check, not an override")
+        self.assertEqual(self.ws.source("a-book-1e").offset, 2)
+
+    def test_no_declaration_means_infer(self):
+        seen = self._prepare(self._payload())
+        self.assertIsNone(seen["offset"])
+        self.assertIsNone(seen["declared"])
+
+    def test_a_human_override_supersedes_the_repos_prose(self):
+        self.ws.upsert_source("a-book-1e", offset=17, offset_method="manual",
+                              offset_confidence=1.0)
+        seen = self._prepare(self._payload(offset=17, offset_method="declared"),
+                             declared_offset=9)
+        self.assertEqual(seen["offset"], 17)
+        self.assertEqual(seen["declared"], 9)
+
+    def test_a_source_with_no_items_is_refused(self):
+        """0 items means this is not the document the companion formalises."""
+        with self.assertRaises(SourceError) as ctx:
+            self._prepare(self._payload(items=0, kinds=["Definition"],
+                                        kind_warnings=["kinds_not_in_text: Definition"]))
+        self.assertIn("0 numbered items", str(ctx.exception))
+        self.assertIn("cf sources add", getattr(ctx.exception, "hint", ""))
+
+    # -- the errata URL ------------------------------------------------
+    def test_only_a_confirmed_url_is_fetched_without_being_asked(self):
+        from cfcmd import onboard as onboard_cmd
+
+        ref = self.ws.source("a-book-1e")
+        curated = RegistryEntry(id="a-book-1e", title="A Book", edition="1e",
+                                errata_url="https://example.org/errata/", confirmed=True)
+        unconfirmed = RegistryEntry(id="a-book-1e", title="A Book", edition="1e",
+                                    errata_url="https://example.org/errata/", confirmed=False)
+        self.assertEqual(onboard_cmd._errata_provenance(curated, ref, "registry"), "registry")
+        self.assertEqual(onboard_cmd._errata_provenance(unconfirmed, ref, "registry"), "repo")
+        self.assertEqual(onboard_cmd._errata_provenance(None, ref, "download_url_parent"), "repo")
+
+    def test_a_url_a_human_typed_counts_as_confirmed(self):
+        from cfcmd import onboard as onboard_cmd
+
+        self.ws.upsert_source("a-book-1e", errata_url="https://example.org/e/",
+                              errata_method="manual")
+        self.assertEqual(
+            onboard_cmd._errata_provenance(None, self.ws.source("a-book-1e"), "workspace"),
+            "manual")
+
+    def test_a_repo_supplied_url_is_not_fetched_and_says_how_to_confirm_it(self):
+        from unittest import mock
+
+        from cfcmd import onboard as onboard_cmd
+        from sources import fetch_errata, prepare_source
+
+        self.ws.upsert_source("a-book-1e", book_page_url="http://127.0.0.1:9/pwned/")
+        entry = RegistryEntry(id="a-book-1e", title="A Book", edition="1e",
+                              book_page_url="http://127.0.0.1:9/pwned/", confirmed=False)
+        fetched: list[str] = []
+
+        with mock.patch.object(prepare_source, "prepare", lambda *a, **k: self._payload()), \
+             mock.patch.object(fetch_errata, "fetch",
+                               lambda url, *a, **k: fetched.append(url) or {}), \
+             mock.patch.object(Registry, "load", classmethod(lambda cls, ws=None: Registry(
+                 {"a-book-1e": entry}))):
+            onboard_cmd._prepare_source(self.ws, "a-book-1e", force=False, no_errata=False)
+        self.assertEqual(fetched, [])
+        self.assertEqual(self.ws.source("a-book-1e").errata_method, "repo_unconfirmed")
+
+    def test_the_fetch_happens_once_the_user_opts_in(self):
+        from unittest import mock
+
+        from cfcmd import onboard as onboard_cmd
+        from sources import fetch_errata, prepare_source
+
+        entry = RegistryEntry(id="a-book-1e", title="A Book", edition="1e",
+                              book_page_url="http://127.0.0.1:9/pwned/", confirmed=False)
+        fetched: list[tuple] = []
+
+        def fake_fetch(url, out_dir, **kw):
+            fetched.append((url, kw.get("provenance")))
+            return {"http_status": 200, "entries": 0}
+
+        with mock.patch.object(prepare_source, "prepare", lambda *a, **k: self._payload()), \
+             mock.patch.object(fetch_errata, "fetch", fake_fetch), \
+             mock.patch.object(Registry, "load", classmethod(lambda cls, ws=None: Registry(
+                 {"a-book-1e": entry}))):
+            onboard_cmd._prepare_source(self.ws, "a-book-1e", force=False, no_errata=False,
+                                        fetch_errata_ok=True)
+        self.assertEqual(fetched, [("http://127.0.0.1:9/pwned/", "repo")])
+
+    def test_the_opt_in_is_a_flag_or_a_policy(self):
+        from cfcmd import onboard as onboard_cmd
+
+        class Args:
+            fetch_errata = False
+
+        self.assertFalse(onboard_cmd._errata_allowed(self.ws, Args))
+        Args.fetch_errata = True
+        self.assertTrue(onboard_cmd._errata_allowed(self.ws, Args))
+        Args.fetch_errata = False
+        self.ws.data["policy"] = {"allow_errata_fetch": True}
+        self.assertTrue(onboard_cmd._errata_allowed(self.ws, Args))
+
+    def test_a_refusal_does_not_strand_the_workspace(self):
+        """Sources are saved before they are prepared; a refusal freezes that.
+
+        `role: audited` claims a companion is audited against this source, and
+        until the companion entry exists that is false -- which the loader
+        rejects, so the next cf command in the directory would die on the state
+        the refusal left behind.
+        """
+        from cfcmd import onboard as onboard_cmd
+
+        self.ws.upsert_companion("other", repo=str(self.root), adapter="docstring_tags",
+                                 sources=["some-other-1e"], anchor_source="some-other-1e")
+        self.ws.upsert_source("some-other-1e", title="Other", edition="1e", role="audited")
+        self.ws.save()
+        result = discovery.DiscoveryResult(repo=self.root, name="notes", adapter="docstring_tags")
+        result.sources = [{"id": "a-book-1e"}]
+        onboard_cmd._park_unlisted_sources(self.ws, result)
+        self.assertEqual(self.ws.source("a-book-1e").role, "reference")
+        self.assertEqual(self.ws.source("some-other-1e").role, "audited")
+        Workspace.load(self.root / "ws")            # loads: the point of parking
+
+    def test_a_declaration_is_kept_even_when_the_registry_disagrees(self):
+        """That disagreement is the case the cross-check exists for."""
+        from cfcmd import onboard as onboard_cmd
+
+        result = discovery.DiscoveryResult(repo=self.root, name="notes", adapter="docstring_tags")
+        result.sources = [{"id": "a-book-1e", "offset": 2, "offset_hint": 9, "anchor_hint": "x"}]
+        onboard_cmd._fold_offset_hints(result)
+        self.assertEqual(result.sources[0]["declared_offset"], 9)
+        self.assertNotIn("offset_hint", result.sources[0])
+
+    # -- two books are not two editions --------------------------------
+    def test_two_different_works_do_not_compete_for_one_anchor(self):
+        """R1: a companion's list may hold two books; only EDITIONS are rivals."""
+        from cfcmd import onboard as onboard_cmd
+
+        result = discovery.DiscoveryResult(repo=Path("/tmp/notes-c"), name="notes-c",
+                                           adapter="docstring_tags")
+        result.sources = [
+            {"id": "anonymous-elementary-sets", "same_work": []},
+            {"id": PUBLISHED_ID, "same_work": [DRAFT_ID]},
+            {"id": DRAFT_ID, "same_work": [PUBLISHED_ID]},
+        ]
+        clusters = onboard_cmd._same_work_clusters(result, result.source_ids())
+        self.assertEqual([sorted(c) for c in clusters],
+                         [["anonymous-elementary-sets"], sorted([PUBLISHED_ID, DRAFT_ID])])
+
+    def test_a_first_onboard_of_a_two_book_companion_is_not_refused(self):
+        from cfcmd import onboard as onboard_cmd
+
+        result = discovery.DiscoveryResult(repo=Path("/tmp/notes-c"), name="notes-c",
+                                           adapter="docstring_tags")
+        result.sources = [{"id": "anonymous-elementary-sets", "same_work": []},
+                          {"id": "smith-analysis-2e", "same_work": []}]
+
+        class Args:
+            anchor_source = None
+
+        audited, bundled, anchor, conf, _evidence = onboard_cmd._decide_sources(
+            self.ws, Path("/tmp/notes-c"), "notes-c", result, Args)
+        self.assertEqual(sorted(audited), ["anonymous-elementary-sets", "smith-analysis-2e"])
+        self.assertEqual(bundled, [])
+        self.assertIn(anchor, audited)
+        self.assertEqual(conf, 1.0)
+
+
 class TestOnboardIntegration(unittest.TestCase):
     """`cf onboard <repo>` with NO flags must discover, register and extract."""
 
@@ -1526,6 +2078,30 @@ class TestOnboardIntegration(unittest.TestCase):
         self.assertEqual(st["sources"][PUBLISHED_ID]["sha"], PUBLISHED_SHA)
         self.assertEqual(st["adapter"]["kind"], "attribution_table")
         self.assertEqual(st["adapter"]["dry_run"]["tagged"], 1496)
+
+    def test_a_table_that_fails_the_schema_gate_is_not_published(self):
+        """One answer to "is this companion's table valid".
+
+        `cf extract` refuses to write when `validate_rows` reports problems;
+        onboarding printed the same problems and wrote the table anyway, so
+        `cf pair` and the anchor decision then read a table the gate had
+        rejected.
+        """
+        import types
+
+        class _HalfRow(_FakeAdapter):
+            rows = [dict(_FakeAdapter.rows[0], item_kind=None, granularity=None)]
+
+        fake = types.ModuleType("adapters")
+        fake.load = lambda adapter_yaml, workspace=None: _HalfRow(workspace)
+        sys.modules["adapters"] = fake
+        self.assertEqual(self._onboard(), 0)
+        ws = Workspace.load(self.ws)
+        table = ws.paths.statements_jsonl("measure-theory")
+        self.assertFalse(table.exists(), "an invalid table was published")
+        rejected = table.parent / (table.name + ".rejected")
+        self.assertTrue(rejected.exists(), "the rows were not kept for inspection")
+        self.assertIn("item_kind", rejected.read_text())
 
     def test_dry_run_writes_nothing(self):
         self.assertEqual(self._onboard("--dry-run"), 0)
@@ -1673,6 +2249,62 @@ class TestSourcesCommand(unittest.TestCase):
         self.cf.main(["sources", "set", "smith-analysis-2e", "confirmed=true",
                       "--workspace", str(self.ws_dir), "-q"])
         self.assertEqual(Workspace.load(self.ws_dir).unconfirmed_sources(), [])
+
+    def test_setting_an_errata_url_by_hand_marks_it_confirmed(self):
+        """Only a URL somebody vouched for is fetched without being asked."""
+        self.cf.main(["sources", "set", PUBLISHED_ID, "errata_url=https://example.org/e/",
+                      "--workspace", str(self.ws_dir), "-q"])
+        source = Workspace.load(self.ws_dir).source(PUBLISHED_ID)
+        self.assertEqual(source.errata_url, "https://example.org/e/")
+        self.assertEqual(source.errata_method, "manual")
+        self.assertEqual(source.errata_confidence, 1.0)
+
+    def test_remove_undoes_a_source_that_should_never_have_been_registered(self):
+        """The recovery command: before it, a wedged workspace needed a hand-edit
+        of two YAML files, and no `cf` command could even load it."""
+        ws = Workspace.load(self.ws_dir)
+        ws.upsert_source("smith-analysis-2e", title="Analysis", edition="2e", role="reference")
+        ws.upsert_companion("ours", bundled_sources=["smith-analysis-2e"])
+        ws.save()
+        Registry.load().append_overlay(
+            ws, RegistryEntry(id="smith-analysis-2e", title="Analysis", edition="2e"))
+        prepared = ws.paths.source_dir("smith-analysis-2e")
+        prepared.mkdir(parents=True, exist_ok=True)
+        (prepared / "text.txt").write_text("some text")
+
+        rc = self.cf.main(["sources", "remove", "smith-analysis-2e",
+                           "--workspace", str(self.ws_dir), "-q"])
+        self.assertEqual(rc, 0)
+        after = Workspace.load(self.ws_dir)
+        self.assertNotIn("smith-analysis-2e", after.sources)
+        self.assertEqual(after.companion("ours").bundled_sources, ())
+        self.assertFalse(prepared.exists())
+        self.assertNotIn("smith-analysis-2e", (self.ws_dir / "registry.yaml").read_text())
+
+    def test_remove_loads_a_workspace_its_own_validator_rejects(self):
+        ws = Workspace.load(self.ws_dir)
+        ws.data["sources"]["a-duplicate"] = dict(ws.data["sources"][PUBLISHED_ID])
+        (self.ws_dir / WORKSPACE_FILE).write_text(yamlio.dump_yaml(ws.data))
+        with self.assertRaises(CfError):
+            self.cf.main(["sources", "list", "--workspace", str(self.ws_dir), "-q"])
+        self.assertEqual(self.cf.main(["sources", "remove", "a-duplicate",
+                                       "--workspace", str(self.ws_dir), "-q"]), 0)
+        self.assertEqual(self.cf.main(["sources", "list",
+                                       "--workspace", str(self.ws_dir), "-q"]), 0)
+
+    def test_removing_a_companions_last_source_removes_the_companion(self):
+        """The repair must leave a workspace that LOADS: a companion with an
+        empty source list is exactly the state `remove` exists to undo."""
+        rc = self.cf.main(["sources", "remove", PUBLISHED_ID,
+                           "--workspace", str(self.ws_dir), "-q"])
+        self.assertEqual(rc, 0)
+        after = Workspace.load(self.ws_dir)          # loads: the point of the command
+        self.assertEqual(after.source_ids(), [])
+        self.assertEqual(after.companion_names(), [])
+
+    def test_remove_refuses_an_unknown_source(self):
+        with self.assertRaises(CfError):
+            self.cf.main(["sources", "remove", "ghost", "--workspace", str(self.ws_dir), "-q"])
 
 
 class TestOnboardDefaults(unittest.TestCase):
