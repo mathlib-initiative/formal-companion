@@ -200,7 +200,7 @@ def analyze(
         "items_without_stage": without_stage,
         "decls_not_in_deps": unknown_decls,
         "source_id": stages.source_id,
-        "stage_table": str(stages.source) if stages.source else None,
+        "stage_table": str(stages.path) if stages.path else None,
         "deps": str(deps.source) if deps.source else None,
     }
 

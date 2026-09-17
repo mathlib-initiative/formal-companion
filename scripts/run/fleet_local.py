@@ -74,23 +74,35 @@ def item_args(run_dir: Path, item_meta: dict[str, dict] | None = None,
               name_source: bool = False) -> list[dict]:
     """The workflow's ``items``: the task rows plus the per-item context it reads.
 
-    ``workflows/fleet-local.workflow.js`` dereferences ``t.item``, ``t.repos``,
-    ``t.pdf_pages`` and ``t.note`` on every element, so every one is written
-    here even when the value is empty.  ``item_meta`` maps an item label to the
-    ``{repos, pdf_pages, note}`` row ``pairs/queue.json`` (differential) or
-    ``pairs/targets.<companion>.json`` (attack) carries for it.
+    ``workflows/fleet-local.workflow.js`` dereferences ``t.item``,
+    ``t.source_id``, ``t.repos``, ``t.pdf_pages`` and ``t.note`` on every
+    element, so every one is written here even when the value is empty.
+    ``item_meta`` maps an item label to the ``{repos, pdf_pages, note}`` row
+    ``pairs/<source_id>/queue.json`` (differential) or
+    ``pairs/<source_id>/targets.<companion>.json`` (attack) carries for it.
+
+    ``source_id`` is the run's source, used for any item whose own row does not
+    name one; the item's own wins, so a run spanning two editions still says per
+    item which one it means.  ``name_source`` prefixes the item note with that
+    edition, because "Exercise 1.3.19" alone does not tell a worker whose page
+    to open.
     """
     meta = item_meta or {}
     out: list[dict] = []
     for task in task_args(run_dir):
         row = meta.get(task["item"]) or {}
         repos = [str(r) for r in (row.get("repos") or row.get("peers_and_self") or [])]
+        sid = str(row.get("source_id") or source_id or "")
+        note = _item_note(repos, row, note_single_source)
+        if name_source and sid:
+            note = f"this item is from source `{sid}`" + (f"; {note}" if note else "")
         out.append({
             **task,
             "item": task["item"],
+            "source_id": sid,
             "repos": repos,
             "pdf_pages": [int(x) for x in (row.get("pdf_pages") or []) if str(x).isdigit()],
-            "note": _item_note(repos, row, note_single_source),
+            "note": note,
         })
     return out
 

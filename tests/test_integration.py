@@ -44,6 +44,43 @@ from report import make_handoff                               # noqa: E402
 
 BASELINE_CORPUS = os.environ.get("CF_BASELINE_CORPUS")
 
+#: the two Tao editions, by the ids registry/sources.yaml gives them
+PUBLISHED_ID = "tao-measure-gsm126-published"
+DRAFT_ID = "tao-measure-2011-draft"
+PUBLISHED_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+DRAFT_SHA = "62d95658" + "0" * 56
+
+
+def write_workspace(root: Path, *, companions: str = "", sources: str = "",
+                    extra: str = "") -> Path:
+    """A valid v2 workspace.yaml on disk, for fixtures `cf init` cannot build.
+
+    `cf init` writes an EMPTY workspace by design (no flags: R2), so a test that
+    needs a source already pinned writes one here rather than inventing flags
+    the CLI does not have.
+    """
+    root.mkdir(parents=True, exist_ok=True)
+    text = ("version: 2\n"
+            f"workspace:\n  name: {root.name}\n"
+            + ("companions:\n" + companions if companions else "companions: {}\n")
+            + ("sources:\n" + sources if sources else "sources: {}\n")
+            + extra)
+    path = root / "workspace.yaml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def tao_source(source_id: str = PUBLISHED_ID, sha: str = PUBLISHED_SHA,
+               edition: str = "AMS GSM 126 (published pagination)",
+               role: str = "audited") -> str:
+    return (f"  {source_id}:\n"
+            f'    sha256: "{sha}"\n'
+            "    title: An Introduction to Measure Theory\n"
+            f'    edition: "{edition}"\n'
+            "    offset: 16\n"
+            "    chapters: [1]\n"
+            f"    role: {role}\n")
+
 
 class TestCommandDiscovery(unittest.TestCase):
     """Every command module must import; a broken one is invisible, not loud."""
@@ -76,7 +113,8 @@ class TestCommandDiscovery(unittest.TestCase):
 class TestPairsArtifactsAreWrappers(unittest.TestCase):
     """``cf pair`` writes {..., items: [...]}; planning must unwrap it."""
 
-    QUEUE = {"created": "x", "book_sha": "a" * 64, "offset": 16, "count": 2,
+    QUEUE = {"created": "x", "source_id": PUBLISHED_ID, "source_sha": PUBLISHED_SHA,
+             "offset": 16, "count": 2,
              "items": [{"item": "Definition 1.1.1", "repos": ["ours"], "book_page": 5},
                        {"item": "Exercise 1.1.2", "repos": ["ours", "adam"], "book_page": 6}]}
     TARGETS = {"created": "x", "companion": "ours", "count": 1,
@@ -97,11 +135,13 @@ class TestPairsArtifactsAreWrappers(unittest.TestCase):
     def test_entry_builders_accept_the_wrapper(self):
         kinds = ("Definition", "Exercise")
         entries = mt.differential_entries(
-            self.QUEUE, {"ours": self.TARGETS}, kinds=kinds)
+            self.QUEUE, {"ours": self.TARGETS}, source_id=PUBLISHED_ID, kinds=kinds)
         self.assertEqual([e.item for e in entries],
                          ["Definition 1.1.1", "Exercise 1.1.2"])
-        targets = mt.target_entries(self.TARGETS, "ours")
+        self.assertEqual({e.source_id for e in entries}, {PUBLISHED_ID})
+        targets = mt.target_entries(self.TARGETS, "ours", source_id=PUBLISHED_ID)
         self.assertEqual([e.item for e in targets], ["Definition 1.1.1"])
+        self.assertEqual(targets[0].qualified, f"{PUBLISHED_ID}::Definition 1.1.1")
 
 
 class TestHandoffRunTable(unittest.TestCase):
@@ -110,7 +150,8 @@ class TestHandoffRunTable(unittest.TestCase):
     RUN_YAML = {
         "mode": "attack", "model": "claude-sonnet-5",
         "host": {"name": "ffmain", "kind": "remote", "remote_root": "/home/x", "ssh": "x@y"},
-        "book": {"id": "tao-measure", "access": "text+images"},
+        "sources": [{"id": PUBLISHED_ID, "sha256": PUBLISHED_SHA, "offset": 16}],
+        "source_access": "text+images",
         "tasks": {"count": 519, "universe": "targets.ours.json", "expected": 519},
     }
 
@@ -124,7 +165,7 @@ class TestHandoffRunTable(unittest.TestCase):
 
     def test_a_flat_run_yaml_still_works(self):
         table = make_handoff.render_runs_table(
-            {"r1": {"host": "ffmain", "book_access": "text", "tasks": 12}}, [])
+            {"r1": {"host": "ffmain", "source_access": "text", "tasks": 12}}, [])
         self.assertIn("ffmain", table)
         self.assertIn("text", table)
         self.assertIn("12", table)
@@ -153,13 +194,15 @@ class TestImportCorpus(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cf-integration-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.campaign = self.tmp / "campaign"
-        self.source = self.tmp / "source"
+        self.workspace = self.tmp / "ws"
+        self.source = self.tmp / "v1-findings"
         self.source.mkdir(parents=True)
         for name in ("exercise-1-1-1.json", "exercise-1-1-2.json"):
             (self.source / name).write_text(json.dumps(self.V1_DOC), encoding="utf-8")
-        self._cf("init", str(self.campaign), "--book", "b", "--offset", "16",
-                 "--sha256", "a" * 64, "--no-git", "-q")
+        # `cf init` takes no flags (R2), so the source is pinned by writing the
+        # workspace the way `cf onboard` would have.
+        self._cf("init", str(self.workspace), "--no-git", "-q")
+        write_workspace(self.workspace, sources=tao_source())
 
     def _cf(self, *argv) -> int:
         buf = io.StringIO()
@@ -172,33 +215,58 @@ class TestImportCorpus(unittest.TestCase):
         before = {p.name: (p.stat().st_mtime_ns, p.read_bytes())
                   for p in self.source.glob("*.json")}
         rc = self._cf("import-corpus", "--run-id", "r1", "--from", str(self.source),
-                      "--campaign", str(self.campaign), "--no-tally", "-q")
+                      "--workspace", str(self.workspace), "--no-tally", "-q")
         self.assertEqual(rc, 0)
 
-        dest = self.campaign / "corpus" / "r1"
+        dest = self.workspace / "corpus" / "r1"
         receipt = json.loads((dest / "RECEIPT.json").read_text())
         self.assertTrue(receipt["complete"])
         self.assertEqual(receipt["expected"]["count"], 2)
         self.assertEqual(receipt["actual"]["count"], 2)
         self.assertEqual(receipt["missing"], [])
         self.assertEqual(receipt["source"]["kind"], "import")
+        # the receipt records which source the adopted corpus is about
+        self.assertEqual(receipt["sources"], {PUBLISHED_ID: PUBLISHED_SHA})
 
+        # A v1 document records no source at all; the importer stamps the
+        # workspace's, and recomputes the five-part ids from it.
         doc = json.loads((dest / "exercise-1-1-1.json").read_text())
         self.assertEqual(doc["schema_version"], 2)
         self.assertEqual(doc["run_id"], "r1")
-        self.assertEqual(doc["book_sha"], "a" * 64)
+        self.assertEqual(doc["source_id"], PUBLISHED_ID)
+        self.assertEqual(doc["source_sha"], PUBLISHED_SHA)
+        self.assertNotIn("book_sha", doc)
 
         after = {p.name: (p.stat().st_mtime_ns, p.read_bytes())
                  for p in self.source.glob("*.json")}
         self.assertEqual(before, after, "the source corpus was modified")
 
+    def test_a_two_source_workspace_makes_the_importer_ask_which(self):
+        """A v1 corpus says nothing about its edition, so nobody may guess."""
+        write_workspace(self.workspace,
+                        sources=tao_source() + tao_source(
+                            DRAFT_ID, DRAFT_SHA, "2011-01-24 draft", "reference"))
+        with self.assertRaises(CfError) as ctx:
+            self._cf("import-corpus", "--run-id", "amb", "--from", str(self.source),
+                     "--workspace", str(self.workspace), "--no-tally", "-q")
+        self.assertIn("--source", str(ctx.exception) +
+                      str(getattr(ctx.exception, "hint", "")))
+        self.assertEqual(
+            self._cf("import-corpus", "--run-id", "amb", "--from", str(self.source),
+                     "--source", DRAFT_ID, "--workspace", str(self.workspace),
+                     "--no-tally", "-q"), 0)
+        doc = json.loads(
+            (self.workspace / "corpus" / "amb" / "exercise-1-1-1.json").read_text())
+        self.assertEqual(doc["source_id"], DRAFT_ID)
+        self.assertEqual(doc["source_sha"], DRAFT_SHA)
+
     def test_import_is_idempotent(self):
         args = ("import-corpus", "--run-id", "r1", "--from", str(self.source),
-                "--campaign", str(self.campaign), "--no-tally", "-q", "--force")
+                "--workspace", str(self.workspace), "--no-tally", "-q", "--force")
         self._cf(*args)
-        first = (self.campaign / "corpus" / "r1" / "exercise-1-1-1.json").read_bytes()
+        first = (self.workspace / "corpus" / "r1" / "exercise-1-1-1.json").read_bytes()
         self._cf(*args)
-        second = (self.campaign / "corpus" / "r1" / "exercise-1-1-1.json").read_bytes()
+        second = (self.workspace / "corpus" / "r1" / "exercise-1-1-1.json").read_bytes()
         self.assertEqual(first, second)
 
     def test_import_refuses_an_empty_or_missing_directory(self):
@@ -208,24 +276,25 @@ class TestImportCorpus(unittest.TestCase):
         empty.mkdir()
         with self.assertRaises(CfError):
             self._cf("import-corpus", "--run-id", "r2", "--from", str(empty),
-                     "--campaign", str(self.campaign), "-q")
+                     "--workspace", str(self.workspace), "-q")
         with self.assertRaises(CfError):
             self._cf("import-corpus", "--run-id", "r3", "--from", str(self.tmp / "nope"),
-                     "--campaign", str(self.campaign), "-q")
-        self.assertFalse((self.campaign / "corpus" / "r2").exists())
+                     "--workspace", str(self.workspace), "-q")
+        self.assertFalse((self.workspace / "corpus" / "r2").exists())
 
     def test_importing_another_edition_needs_the_override(self):
         """SKILL.md hard rule 3, at the one place a foreign edition enters."""
         args = ("import-corpus", "--run-id", "draft", "--from", str(self.source),
-                "--campaign", str(self.campaign), "--no-tally", "-q", "--force",
-                "--book-sha", "d" * 64)
+                "--workspace", str(self.workspace), "--no-tally", "-q", "--force",
+                "--source-sha", DRAFT_SHA)
         with self.assertRaises(CfError) as ctx:
             self._cf(*args)
         self.assertIn("another edition", getattr(ctx.exception, "hint", ""))
         self.assertEqual(self._cf(*args, "--allow-edition-mismatch"), 0)
         receipt = json.loads(
-            (self.campaign / "corpus" / "draft" / "RECEIPT.json").read_text())
-        self.assertEqual(receipt["book_sha"], "d" * 64)
+            (self.workspace / "corpus" / "draft" / "RECEIPT.json").read_text())
+        self.assertEqual(receipt["sources"], {PUBLISHED_ID: DRAFT_SHA})
+        self.assertTrue(receipt["edition"]["allowed_mismatch"])
         self.assertTrue(receipt["complete"])
 
     def test_import_gate_validates_what_landed(self):
@@ -234,16 +303,18 @@ class TestImportCorpus(unittest.TestCase):
         book.write_text("nothing in here matches any quote\n", encoding="utf-8")
         gate.write_text(json.dumps({
             "schema_version": 2, "preset": "differential-text", "mode": "differential",
-            "run_id": "g1", "book": {"text": str(book), "sha256": "a" * 64},
+            "run_id": "g1",
+            "sources": {PUBLISHED_ID: {"text": str(book), "sha256": PUBLISHED_SHA,
+                                       "page_offset": 16}},
             "repos": ["ours"], "kinds": ["CONTENT"], "verdicts": ["AGREE"],
             "witness_required": False, "require_book_located": True,
-            "require_book_sha": True, "findings_dir": ".", "kind_rules": {},
+            "require_source_sha": True, "findings_dir": ".", "kind_rules": {},
         }), encoding="utf-8")
         rc = self._cf("import-corpus", "--run-id", "g1", "--from", str(self.source),
-                      "--campaign", str(self.campaign), "--no-tally", "--force",
+                      "--workspace", str(self.workspace), "--no-tally", "--force",
                       "--gate", "--gate-config", str(gate))
         self.assertEqual(rc, 1, "a corpus that fails the gate must not be complete")
-        receipt = json.loads((self.campaign / "corpus" / "g1" / "RECEIPT.json").read_text())
+        receipt = json.loads((self.workspace / "corpus" / "g1" / "RECEIPT.json").read_text())
         self.assertFalse(receipt["complete"])
         self.assertFalse(receipt["gate"]["ok"])
         self.assertTrue(receipt["gate"]["problems"])
@@ -267,11 +338,11 @@ class TestImportCorpus(unittest.TestCase):
         if not src.is_dir():
             self.skipTest(f"{src} missing")
         rc = self._cf("import-corpus", "--run-id", "findings-hunt", "--from", str(src),
-                      "--repos", "ours,teorth,adam", "--campaign", str(self.campaign),
+                      "--repos", "ours,teorth,adam", "--workspace", str(self.workspace),
                       "--no-tally", "-q")
         self.assertEqual(rc, 0)
         receipt = json.loads(
-            (self.campaign / "corpus" / "findings-hunt" / "RECEIPT.json").read_text())
+            (self.workspace / "corpus" / "findings-hunt" / "RECEIPT.json").read_text())
         self.assertEqual(receipt["expected"]["count"], 763)
         self.assertEqual(receipt["actual"]["count"], 763)
         self.assertTrue(receipt["complete"])
@@ -283,9 +354,8 @@ class TestHarvestSafety(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cf-harvest-safety-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.campaign = self.tmp / "campaign"
-        self._cf("init", str(self.campaign), "--book", "b", "--offset", "16",
-                 "--sha256", "a" * 64, "--no-git", "-q")
+        self.workspace = self.tmp / "ws"
+        self._cf("init", str(self.workspace), "--no-git", "-q")
 
     def _cf(self, *argv) -> int:
         buf = io.StringIO()
@@ -297,7 +367,7 @@ class TestHarvestSafety(unittest.TestCase):
     def _allow(self, alias: str, ssh: str) -> None:
         from cflib.yamlio import read_yaml, write_yaml
 
-        path = self.campaign / "campaign.yaml"
+        path = self.workspace / "workspace.yaml"
         data = read_yaml(path)
         data.setdefault("hosts", {})["allowlist"] = [alias]
         data["hosts"][alias] = {"ssh": ssh, "remote_root": "/home/x"}
@@ -306,27 +376,28 @@ class TestHarvestSafety(unittest.TestCase):
     def test_an_unlisted_host_is_refused_before_anything_runs(self):
         with self.assertRaises(CfError) as ctx:
             self._cf("harvest", "r1", "--from", "not-allowlisted.example.net:/findings",
-                     "--execute", "--i-have-consent", "--campaign", str(self.campaign), "-q")
+                     "--execute", "--i-have-consent", "--workspace", str(self.workspace), "-q")
         self.assertIn("allowlist", str(ctx.exception))
 
     def test_an_allowlisted_host_still_needs_consent(self):
         self._allow("ffmain", "ffmain")
         with self.assertRaises(CfError) as ctx:
             self._cf("harvest", "r1", "--from", "ffmain:/findings", "--execute",
-                     "--campaign", str(self.campaign), "-q")
+                     "--workspace", str(self.workspace), "-q")
         self.assertIn("consent", str(ctx.exception))
 
     def test_a_local_source_needs_neither(self):
         source = self.tmp / "findings"
         source.mkdir()
         (source / "exercise-1-1-1.json").write_text(json.dumps({
-            "schema_version": 2, "run_id": "r1", "book_sha": "a" * 64,
+            "schema_version": 2, "run_id": "r1", "source_id": PUBLISHED_ID,
+            "source_sha": PUBLISHED_SHA,
             "item": "Exercise 1.1.1", "book_located": True, "book_passage_quote": "",
             "matches": [], "disagreements": [], "coverage_notes": "",
         }), encoding="utf-8")
         self.assertEqual(
             self._cf("harvest", "r1", "--from", str(source), "--no-tally",
-                     "--campaign", str(self.campaign), "-q"), 0)
+                     "--workspace", str(self.workspace), "-q"), 0)
 
 
 class TestExtractSurvivesOneBrokenCompanion(unittest.TestCase):
@@ -335,7 +406,7 @@ class TestExtractSurvivesOneBrokenCompanion(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cf-extract-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.campaign = self.tmp / "campaign"
+        self.workspace = self.tmp / "ws"
         self.repo = self.tmp / "repo"
         (self.repo / "src").mkdir(parents=True)
         (self.repo / "src" / "A.lean").write_text(
@@ -345,8 +416,7 @@ class TestExtractSurvivesOneBrokenCompanion(unittest.TestCase):
                      ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "x"]):
             subprocess.run(["git", "-C", str(self.repo), *argv],
                            capture_output=True, check=False)
-        self._cf("init", str(self.campaign), "--book", "b", "--offset", "16",
-                 "--sha256", "a" * 64, "--no-git", "-q")
+        self._cf("init", str(self.workspace), "--no-git", "-q")
 
     def _cf(self, *argv) -> int:
         buf = io.StringIO()
@@ -355,29 +425,61 @@ class TestExtractSurvivesOneBrokenCompanion(unittest.TestCase):
         self.out = buf.getvalue()
         return rc
 
-    def _break(self, name: str) -> None:
-        d = self.campaign / "companions" / name
+    def _adapter(self, name: str, *, kind: str = "docstring_tags",
+                 glob: str = "src/**/*.lean", anchor: str = "docstring",
+                 granularity: str = "item") -> None:
+        """The adapter.yaml `cf onboard` writes, without running discovery.
+
+        This test is about `cf extract` surviving one broken companion, so the
+        workspace is built directly: onboarding the toy repo would exercise
+        discovery, which is a different package's subject.
+        """
+        d = self.workspace / "companions" / name
         d.mkdir(parents=True, exist_ok=True)
         (d / "adapter.yaml").write_text(
-            "name: %s\nrepo: %s\nadapter: ledger_nodes\nglob: \"*.json\"\n"
-            "anchor: ledger\ngranularity: node\nwrite_policy: read_only\n"
-            % (name, self.repo), encoding="utf-8")
+            f"name: {name}\nrepo: {self.repo}\nadapter: {kind}\n"
+            f"glob: \"{glob}\"\nanchor: {anchor}\ngranularity: {granularity}\n"
+            f"write_policy: read_only\nsources:\n  default: {PUBLISHED_ID}\n  map: []\n",
+            encoding="utf-8")
+
+    def _break(self, name: str) -> None:
+        """An adapter.yaml `load_adapter` cannot make sense of.
+
+        workspace.yaml's own validation refuses an unimplemented adapter kind
+        outright, so the broken companion is declared correctly THERE and its
+        adapter.yaml names a kind nothing implements -- which is what a
+        hand-edited file actually looks like when it goes wrong.
+        """
+        self._adapter(name, kind="no_such_adapter_kind")
 
     def test_the_healthy_companion_is_still_extracted_and_the_command_fails(self):
-        self.assertEqual(self._cf("onboard", "ours", "--repo", str(self.repo),
-                                  "--adapter", "docstring_tags", "--glob", "src/**/*.lean",
-                                  "--campaign", str(self.campaign), "-q"), 0)
+        write_workspace(
+            self.workspace,
+            companions=(f"  ours:\n    repo: {self.repo}\n    adapter: docstring_tags\n"
+                        f"    sources: [{PUBLISHED_ID}]\n"
+                        f"    anchor_source: {PUBLISHED_ID}\n"
+                        f"  broken:\n    repo: {self.repo}\n    adapter: docstring_tags\n"
+                        f"    sources: [{PUBLISHED_ID}]\n"
+                        f"    anchor_source: {PUBLISHED_ID}\n"),
+            sources=tao_source())
+        self._adapter("ours")
         self._break("broken")
-        rc = self._cf("extract", "--campaign", str(self.campaign))
+        rc = self._cf("extract", "--workspace", str(self.workspace))
         self.assertEqual(rc, 1, self.out)
         self.assertIn("broken", self.out)
-        table = self.campaign / "companions" / "ours" / "statements.jsonl"
+        table = self.workspace / "companions" / "ours" / "statements.jsonl"
         self.assertTrue(table.exists(), "a broken peer stopped the healthy companion")
-        self.assertTrue(table.read_text().strip())
+        rows = [json.loads(l) for l in table.read_text().splitlines()
+                if l.strip() and not l.startswith('{"_meta"')]
+        self.assertTrue(rows)
+        # and the rows the healthy companion wrote say which source they are about
+        for row in rows:
+            self.assertEqual(row.get("source_id"), PUBLISHED_ID)
+            self.assertEqual(row.get("source_sha"), PUBLISHED_SHA)
 
 
 class TestInitGitGuard(unittest.TestCase):
-    """The "campaign repos have no remote" invariant must actually be established."""
+    """The "workspace repos have no remote" invariant must actually be established."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cf-init-")).resolve()
@@ -395,11 +497,10 @@ class TestInitGitGuard(unittest.TestCase):
         return rc
 
     def _init_args(self, target):
-        return ["init", str(target), "--book", "b", "--offset", "16",
-                "--sha256", "a" * 64, "-q"]
+        return ["init", str(target), "-q"]
 
     def test_a_fresh_directory_gets_its_own_repo_and_the_hook(self):
-        target = self.tmp / "campaign"
+        target = self.tmp / "ws"
         self.assertEqual(self._cf(*self._init_args(target)), 0)
         self.assertTrue((target / ".git").is_dir())
         hook = target / ".git" / "hooks" / "pre-push"
@@ -412,7 +513,7 @@ class TestInitGitGuard(unittest.TestCase):
         outer.mkdir()
         self._git("init", "-q", cwd=outer)
         self._git("remote", "add", "origin", "git@github.com:example/public.git", cwd=outer)
-        target = outer / "campaign"
+        target = outer / "ws"
         with self.assertRaises(CfError) as ctx:
             self._cf(*self._init_args(target))
         self.assertIn("has a remote", str(ctx.exception))
@@ -426,7 +527,7 @@ class TestInitGitGuard(unittest.TestCase):
         outer = self.tmp / "inner"
         outer.mkdir()
         self._git("init", "-q", cwd=outer)
-        target = outer / "campaign"
+        target = outer / "ws"
         with self.assertRaises(CfError) as ctx:
             self._cf(*self._init_args(target))
         self.assertIn("--allow-nested", getattr(ctx.exception, "hint", ""))
@@ -436,15 +537,15 @@ class TestInitGitGuard(unittest.TestCase):
         outer = self.tmp / "inner"
         outer.mkdir()
         self._git("init", "-q", cwd=outer)
-        target = outer / "campaign"
+        target = outer / "ws"
         self.assertEqual(self._cf(*self._init_args(target), "--allow-nested"), 0)
         self.assertTrue((outer / ".git" / "hooks" / "pre-push").exists())
-        self.assertIn("/campaign/", (outer / ".gitignore").read_text())
+        self.assertIn("/ws/", (outer / ".gitignore").read_text())
         status = self._git("status", "--porcelain", "-uall", cwd=outer).stdout
-        self.assertNotIn("campaign/campaign.yaml", status)
+        self.assertNotIn("ws/workspace.yaml", status)
 
-    def test_a_campaign_repo_with_a_remote_is_refused_by_the_policy(self):
-        target = self.tmp / "campaign"
+    def test_a_workspace_repo_with_a_remote_is_refused_by_the_policy(self):
+        target = self.tmp / "ws"
         target.mkdir()
         self._git("init", "-q", cwd=target)
         self._git("remote", "add", "origin", "git@github.com:example/public.git", cwd=target)
@@ -454,30 +555,29 @@ class TestInitGitGuard(unittest.TestCase):
 
 
 class TestExportPolicyIsRead(unittest.TestCase):
-    """campaign.yaml's policy block was written by cf init and read by nothing."""
+    """workspace.yaml's policy block was written by cf init and read by nothing."""
 
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp(prefix="cf-policy-")).resolve()
         self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.campaign = self.tmp / "campaign"
+        self.workspace = self.tmp / "ws"
         buf = io.StringIO()
         with redirect_stdout(buf):
-            cf_main.main(["init", str(self.campaign), "--book", "b", "--offset", "16",
-                          "--sha256", "a" * 64, "--no-git", "-q"])
+            cf_main.main(["init", str(self.workspace), "--no-git", "-q"])
 
     def _policy(self, **over):
         from cflib.yamlio import read_yaml, write_yaml
 
-        path = self.campaign / "campaign.yaml"
+        path = self.workspace / "workspace.yaml"
         data = read_yaml(path)
         data.setdefault("policy", {}).update(over)
         write_yaml(path, data)
 
-    def test_redaction_defaults_to_the_campaign_policy(self):
+    def test_redaction_defaults_to_the_workspace_policy(self):
         from cfcmd import route as route_cmd
 
         class A:
-            campaign = str(self.campaign)
+            workspace = str(self.workspace)
             redact_quotes = None
 
         self.assertTrue(route_cmd._redact(A), "policy.redact_quotes_on_export is true")
@@ -487,11 +587,11 @@ class TestExportPolicyIsRead(unittest.TestCase):
         self._policy(redact_quotes_on_export=False)
         self.assertFalse(route_cmd._redact(A))
 
-    def test_an_unreadable_campaign_still_redacts(self):
+    def test_an_unreadable_workspace_still_redacts(self):
         from cfcmd import route as route_cmd
 
         class A:
-            campaign = str(self.tmp / "nope")
+            workspace = str(self.tmp / "nope")
             redact_quotes = None
 
         self.assertTrue(route_cmd._redact(A))
@@ -500,7 +600,7 @@ class TestExportPolicyIsRead(unittest.TestCase):
         from cfcmd import route as route_cmd
 
         class A:
-            campaign = str(self.campaign)
+            workspace = str(self.workspace)
 
         route_cmd._check_publish_policy(A)      # false: fine
         self._policy(publish_unchallenged=True)
@@ -508,11 +608,42 @@ class TestExportPolicyIsRead(unittest.TestCase):
             route_cmd._check_publish_policy(A)
 
     def test_the_template_keys_are_all_read_somewhere(self):
-        from cflib.campaign import Campaign
+        from cflib.workspace import Workspace
 
-        policy = Campaign.load(self.campaign).policy
+        policy = Workspace.load(self.workspace).policy
         self.assertEqual(set(policy),
-                         {"publish_unchallenged", "redact_quotes_on_export", "allow_remote"})
+                         {"publish_unchallenged", "redact_quotes_on_export", "allow_remote",
+                          "allow_download", "require_confirmed_sources"})
+
+    def test_require_confirmed_sources_is_enforced_by_plan_run(self):
+        """Discovery appends a new source with confirmed: false (R3).
+
+        A workspace that sets this key is saying no run may be planned against a
+        source nobody has signed off, and the one place to enforce it is where a
+        run picks its source -- everything downstream is stamped with it.
+        """
+        from cfcmd import plan_run as plan_cmd
+        from cflib.workspace import Workspace
+
+        write_workspace(self.workspace,
+                        sources=tao_source(),
+                        extra="policy:\n  require_confirmed_sources: true\n")
+        ws = Workspace.load(self.workspace)
+        source = ws.source(PUBLISHED_ID)
+        self.assertFalse(source.confirmed)
+        with self.assertRaises(CfError) as ctx:
+            plan_cmd._check_confirmed(ws, source)
+        self.assertIn("not confirmed", str(ctx.exception))
+        self.assertIn("cf sources confirm", getattr(ctx.exception, "hint", ""))
+
+        # confirmed, or the policy off, and it plans
+        ws.upsert_source(PUBLISHED_ID, confirmed=True)
+        ws.save()
+        reloaded = Workspace.load(self.workspace)
+        plan_cmd._check_confirmed(reloaded, reloaded.source(PUBLISHED_ID))
+        write_workspace(self.workspace, sources=tao_source())
+        off = Workspace.load(self.workspace)
+        plan_cmd._check_confirmed(off, off.source(PUBLISHED_ID))
 
 
 if __name__ == "__main__":

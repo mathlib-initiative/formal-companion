@@ -10,9 +10,9 @@ skip cleanly when they are unset:
     CF_BASELINE_CORPUS=/Users/jack/Desktop/tao-diff-run      the 2,672-file corpus
     CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential    batch 1 + the adam ledger
 
-Scratch campaigns are created under ``$CF_TEST_TMP`` when it is set (point it at
-a scratch directory), else under the system temp directory.  Nothing in here
-writes to a baseline, a companion repository or a campaign that exists.
+Scratch workspaces are created under ``$CF_TEST_TMP`` when it is set (point it
+at a scratch directory), else under the system temp directory.  Nothing in here
+writes to a baseline, a companion repository or a workspace that exists.
 
 The two load-bearing facts they pin, both recomputed from the baseline:
 
@@ -49,12 +49,47 @@ from route import route as route_mod  # noqa: E402
 BASELINE_CORPUS = os.environ.get("CF_BASELINE_CORPUS", "")
 BASELINE_DIFF = os.environ.get("CF_BASELINE_DIFF", "")
 BASELINE_RUNS = ("findings", "findings-pdf", "findings-gpt", "findings-vac", "findings-hunt")
+#: the two Tao editions, by the ids registry/sources.yaml gives them
+PUBLISHED_ID = "tao-measure-gsm126-published"
+DRAFT_ID = "tao-measure-2011-draft"
 #: the edition every batch-1 ledger row was judged against
 OFFICIAL_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+DRAFT_SHA = "62d95658" + "0" * 56
+#: what the workspace knows, as validate_row/route want it
+SOURCES = {PUBLISHED_ID: OFFICIAL_SHA, DRAFT_ID: DRAFT_SHA}
+
+
+def workspace_yaml(*, companions: str, name: str = "tao") -> str:
+    """A v2 workspace.yaml holding BOTH Tao editions.
+
+    Every stage fixture uses the same two sources, so a test that means "the
+    other edition" has one to name.
+    """
+    return (
+        "version: 2\n"
+        "workspace:\n  name: %s\n"
+        "companions:\n%s"
+        "sources:\n"
+        "  %s:\n"
+        '    sha256: "%s"\n'
+        "    title: An Introduction to Measure Theory\n"
+        '    edition: "AMS GSM 126 (published pagination)"\n'
+        "    offset: 16\n"
+        "    errata_url: https://example.invalid/errata\n"
+        "    role: audited\n"
+        "  %s:\n"
+        '    sha256: "%s"\n'
+        "    title: An Introduction to Measure Theory\n"
+        '    edition: "2011-01-24 draft"\n'
+        "    offset: 16\n"
+        "    role: reference\n"
+        "hosts:\n  allowlist: []\n"
+        % (name, companions, PUBLISHED_ID, OFFICIAL_SHA, DRAFT_ID, DRAFT_SHA)
+    )
 
 
 def scratch_dir() -> str:
-    """A throwaway campaign directory (under $CF_TEST_TMP when set)."""
+    """A throwaway workspace directory (under $CF_TEST_TMP when set)."""
     base = os.environ.get("CF_TEST_TMP") or None
     if base:
         os.makedirs(base, exist_ok=True)
@@ -86,7 +121,7 @@ def finding_doc(item: str, **row) -> dict:
     row.setdefault("faithful", ["ours"])
     row.setdefault("reasoning", "because the binder differs")
     row.setdefault("book_quote", "Let [a, b] be an interval.")
-    return {"item": item, "book_located": True, "book_sha": OFFICIAL_SHA,
+    return {"item": item, "book_located": True, "source_id": PUBLISHED_ID, "source_sha": OFFICIAL_SHA,
             "matches": [], "coverage_notes": "", "disagreements": [row]}
 
 
@@ -119,7 +154,7 @@ def ledger_row(**over) -> dict:
         "dissent": [],
         "reason": "the Lean statement excludes the degenerate interval the book admits",
         "method": "workflow:adjudicate",
-        "book_sha": OFFICIAL_SHA,
+        "source_id": PUBLISHED_ID, "source_sha": OFFICIAL_SHA,
     }
     row.update(over)
     return row
@@ -135,14 +170,23 @@ class TestLedgerValidationOnBaseline(unittest.TestCase):
         harvest = os.path.join(BASELINE_DIFF, "harvest.partial.json")
         if not os.path.exists(harvest):
             raise unittest.SkipTest("no harvest.partial.json in CF_BASELINE_DIFF")
-        cls.findings = findings_mod.load_findings([harvest], run_id="batch1-local")
+        # The corpus is stamped with the source at load: `ledger_coverage` joins
+        # on (source_id, finding_id), so findings loaded without a source and
+        # rows migrated with one would never meet.
+        cls.findings = findings_mod.load_findings(
+            [harvest], run_id="batch1-local",
+            source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA)
         cls.index = findings_mod.index_by_id(cls.findings)
         accepted, _ = migrate.map_v1_file(
             os.path.join(BASELINE_DIFF, "accepted.adam.jsonl"),
-            repo="adam", book_sha=OFFICIAL_SHA, findings=cls.findings, run_id="batch1-local")
+            repo="adam", source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA,
+            findings=cls.findings, run_id="batch1-local")
+        # no source_sha here on purpose: refuted.adam.jsonl records the pinned
+        # edition in its own _meta.official_pdf.sha256, and the migration reads it
         refuted, meta = migrate.map_v1_file(
             os.path.join(BASELINE_DIFF, "refuted.adam.jsonl"),
-            repo="adam", findings=cls.findings, run_id="batch1-local")
+            repo="adam", source_id=PUBLISHED_ID, findings=cls.findings,
+            run_id="batch1-local")
         cls.meta = meta
         cls.rows = migrate.merge_rows(accepted + refuted)
 
@@ -150,7 +194,7 @@ class TestLedgerValidationOnBaseline(unittest.TestCase):
         self.assertEqual(len(self.rows), 11, "10 accepted + 5 refuted v1 rows, 4 overlapping")
         for row in self.rows:
             self.assertIn(row["finding_id"], self.index, "row %s is unlinked" % row["item"])
-            self.assertEqual(row["book_sha"], OFFICIAL_SHA)
+            self.assertEqual(row["source_sha"], OFFICIAL_SHA)
             self.assertEqual(row["repo"], "adam")
         verdicts = {}
         for row in self.rows:
@@ -161,7 +205,7 @@ class TestLedgerValidationOnBaseline(unittest.TestCase):
         self.assertEqual(verdicts["REFUTED"], 1)
 
     def test_baseline_ledger_validates_with_no_errors(self):
-        errs = vl.validate_rows(self.rows, index=self.index, book_sha=OFFICIAL_SHA)
+        errs = vl.validate_rows(self.rows, index=self.index, sources=SOURCES)
         self.assertEqual(errs, [], "\n".join(str(e) for e in errs))
 
     def test_every_convention_row_carries_its_recovery_argument(self):
@@ -191,7 +235,7 @@ class TestLedgerValidationOnBaseline(unittest.TestCase):
         self.fail("no %s row in the baseline ledger" % verdict)
 
     def _codes(self, row: dict) -> set:
-        errs = vl.validate_rows([row], index=self.index, book_sha=OFFICIAL_SHA)
+        errs = vl.validate_rows([row], index=self.index, sources=SOURCES)
         return {e["code"] for e in errs}
 
     def test_corrupted_verdict_fails(self):
@@ -211,8 +255,8 @@ class TestLedgerValidationOnBaseline(unittest.TestCase):
 
     def test_wrong_edition_fails(self):
         row = self._first("CONFIRMED_CONTENT")
-        row["book_sha"] = "62d95658" + "0" * 56  # the 2011 draft
-        self.assertIn("book_sha", self._codes(row))
+        row["source_sha"] = DRAFT_SHA  # the 2011 draft
+        self.assertIn("source_sha", self._codes(row))
 
     def test_declaration_the_finding_never_named_fails(self):
         row = self._first("CONFIRMED_CONTENT")
@@ -234,7 +278,7 @@ class TestLedgerValidationOnBaseline(unittest.TestCase):
         other = dict(row)
         other["verdict"] = "REFUTED"
         other["severity"] = "none"
-        errs = vl.validate_rows([row, other], index=self.index, book_sha=OFFICIAL_SHA)
+        errs = vl.validate_rows([row, other], index=self.index, sources=SOURCES)
         self.assertIn("contradiction", {e["code"] for e in errs})
 
     def test_severity_none_on_an_open_verdict_fails(self):
@@ -259,14 +303,15 @@ class TestRoutingTheBaselineCorpus(unittest.TestCase):
         missing = [d for d in corpus_dirs() if not os.path.isdir(d)]
         if missing:
             raise unittest.SkipTest("missing baseline runs: %s" % ", ".join(missing))
-        cls.findings = findings_mod.load_findings(corpus_dirs(), book_sha=OFFICIAL_SHA)
+        cls.findings = findings_mod.load_findings(
+            corpus_dirs(), source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA)
 
     def test_corpus_row_count(self):
         self.assertEqual(len(self.findings), 347)
 
     def test_adam_routes_to_seven_rows_over_five_items(self):
-        routed = route_mod.route_repo(self.findings, "adam", book_sha=OFFICIAL_SHA,
-                                      campaign="/nonexistent")
+        routed = route_mod.route_repo(self.findings, "adam", source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA,
+                                      workspace="/nonexistent")
         counts = routed["meta"]["counts"]
         self.assertEqual(counts["rows"], 7)
         self.assertEqual(counts["items"], 5)
@@ -282,7 +327,8 @@ class TestRoutingTheBaselineCorpus(unittest.TestCase):
         # LLM-emitted PAGE_ANCHOR rows (22 of ours' 40 items were pagination),
         # so rows + withdrawn is what has to match 72/40 and 147/71.
         for repo, rows, items, open_rows in (("ours", 72, 40, 31), ("teorth", 147, 71, 140)):
-            routed = route_mod.route_repo(self.findings, repo, book_sha=OFFICIAL_SHA)
+            routed = route_mod.route_repo(self.findings, repo, source_id=PUBLISHED_ID,
+                                       source_sha=OFFICIAL_SHA)
             counts = routed["meta"]["counts"]
             self.assertEqual(len(routed["rows"]), rows, repo)
             self.assertEqual(len({r["item"] for r in routed["rows"]}), items, repo)
@@ -293,12 +339,12 @@ class TestRoutingTheBaselineCorpus(unittest.TestCase):
                     self.assertEqual(row["kind"], "PAGE_ANCHOR", repo)
 
     def test_upstream_export_is_refused_while_unchallenged(self):
-        routed = route_mod.route_repo(self.findings, "adam", book_sha=OFFICIAL_SHA,
-                                      campaign="/camp")
+        routed = route_mod.route_repo(self.findings, "adam", source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA,
+                                      workspace="/camp")
         out = scratch_dir()
         try:
             with self.assertRaises(route_mod.UpstreamRefused) as ctx:
-                route_mod.emit_upstream(routed, out, companion="adam", campaign="/camp")
+                route_mod.emit_upstream(routed, out, companion="adam", workspace="/camp")
             message = str(ctx.exception)
             self.assertIn("UNCHALLENGED", message)
             self.assertIn("--challenge-only", message, "the refusal must print the next command")
@@ -307,7 +353,8 @@ class TestRoutingTheBaselineCorpus(unittest.TestCase):
             shutil.rmtree(out, ignore_errors=True)
 
     def test_owner_message_is_a_draft_that_names_the_status(self):
-        routed = route_mod.route_repo(self.findings, "adam", book_sha=OFFICIAL_SHA, campaign="/c")
+        routed = route_mod.route_repo(self.findings, "adam", source_id=PUBLISHED_ID,
+                                      source_sha=OFFICIAL_SHA, workspace="/c")
         text = route_mod.owner_message(routed, "adam", owner="external")
         self.assertIn("DRAFT", text)
         self.assertIn("UNCHALLENGED", text)
@@ -324,7 +371,8 @@ class TestRoutingRules(unittest.TestCase):
         root = scratch_dir()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         directory = write_corpus(root, "synthetic", docs)
-        return findings_mod.load_findings([directory], book_sha=OFFICIAL_SHA), root
+        return findings_mod.load_findings(
+            [directory], source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA), root
 
     def test_the_fallback_branch_is_gone(self):
         # ours is "involved" and is not the faithful repo, but is named nowhere:
@@ -399,7 +447,8 @@ class TestRoutingRules(unittest.TestCase):
         items = {"Exercise 1.1.19": {"page": 40, "pdf_page": 56, "occurrences": []}}
         tables = {"adam": [{"item": "Exercise 1.1.19", "decl": "Jordan.split",
                             "page_anchor": "23", "file": "A.lean", "line": 1}]}
-        result = ac.check(items, tables, book_sha=OFFICIAL_SHA, offset=16, run_id="anchor-check")
+        result = ac.check(items, tables, source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA,
+                          offset=16, run_id="anchor-check")
         self.assertEqual(len(result["rows"]), 1)
         row = result["rows"][0]
         self.assertEqual(row["source"], ac.SOURCE)
@@ -415,15 +464,19 @@ class TestRoutingRules(unittest.TestCase):
         book = root / "book.txt"
         book.write_text("Exercise 1.1.19 is on this page.\n", encoding="utf-8")
         cfg = vf.GateConfig(presets_mod.gate_config(
-            presets_mod.get("mechanical"), run_id="anchor-check", book_text=str(book),
-            book_sha=OFFICIAL_SHA, repos=["adam"]))
-        text, errs = vf.load_book(cfg)
+            presets_mod.get("mechanical"), run_id="anchor-check",
+            sources={PUBLISHED_ID: {"text": str(book), "sha256": OFFICIAL_SHA,
+                                    "page_offset": 16}},
+            repos=["adam"]))
+        books, errs = vf.load_sources(cfg)
         self.assertEqual(errs, [])
         docs = mech_corpus.documents(result["rows"], companion="adam", run_id="anchor-check",
-                                     book_sha=OFFICIAL_SHA)
+                                     source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA)
         problems = []
         for doc in docs:
-            problems += vf.validate_doc(doc, "x.json", cfg, text)
+            self.assertEqual(doc["source_id"], PUBLISHED_ID)
+            self.assertEqual(doc["source_sha"], OFFICIAL_SHA)
+            problems += vf.validate_doc(doc, "x.json", cfg, books)
         self.assertEqual(problems, [])
 
     def test_status_becomes_challenged_once_every_row_has_a_ledger_verdict(self):
@@ -432,7 +485,8 @@ class TestRoutingRules(unittest.TestCase):
         ])
         ledger = [ledger_row(finding_id=rows[0]["finding_id"], item=rows[0]["item"],
                              unfaithful_decls=["adam:Some.decl"])]
-        routed = route_mod.route_repo(rows, "adam", book_sha=OFFICIAL_SHA, ledger_rows=ledger)
+        routed = route_mod.route_repo(rows, "adam", source_id=PUBLISHED_ID,
+                                      source_sha=OFFICIAL_SHA, ledger_rows=ledger)
         self.assertEqual(routed["meta"]["status"], route_mod.STATUS_CHALLENGED)
         out = os.path.join(root, "outbox")
         path = route_mod.emit_upstream(routed, out, companion="adam", redact_quotes=True)
@@ -447,25 +501,51 @@ class TestRoutingRules(unittest.TestCase):
         ])
         ledger = [ledger_row(finding_id=rows[0]["finding_id"], item=rows[0]["item"],
                              unfaithful_decls=["adam:Some.decl"], verdict="UNSURE")]
-        routed = route_mod.route_repo(rows, "adam", book_sha=OFFICIAL_SHA, ledger_rows=ledger)
+        routed = route_mod.route_repo(rows, "adam", source_id=PUBLISHED_ID,
+                                      source_sha=OFFICIAL_SHA, ledger_rows=ledger)
         self.assertEqual(routed["meta"]["status"], route_mod.STATUS_CHALLENGED)
         path = route_mod.emit_upstream(routed, os.path.join(root, "out"), companion="adam")
         raw = compat.read_jsonl(path)
         self.assertEqual(compat.data_rows(raw), [])
         self.assertEqual(compat.meta_row(raw)["counts"]["held"], 1)
 
-    def test_export_refuses_a_file_judged_against_two_editions(self):
+    def test_export_refuses_one_source_id_carrying_two_shas(self):
+        """That means two editions were routed as if they were one source.
+
+        It is how batch 1's anchor findings ended up judged against the 2011
+        draft while claiming to be about the published book.
+        """
         rows, root = self._findings([
             finding_doc("Exercise 1.2.4", unfaithful_decls=["adam:Some.decl"]),
         ])
-        rows[0]["book_sha"] = "62d95658" + "0" * 56  # the 2011 draft
-        rows.append(dict(rows[0], book_sha=OFFICIAL_SHA, finding_id="b" * 64))
+        rows[0]["source_sha"] = DRAFT_SHA                      # ... under the published id
+        rows.append(dict(rows[0], source_sha=OFFICIAL_SHA, finding_id="b" * 64))
         ledger = [ledger_row(finding_id=r["finding_id"], item=r["item"],
                              unfaithful_decls=["adam:Some.decl"]) for r in rows]
         routed = route_mod.route_repo(rows, "adam", ledger_rows=ledger)
-        self.assertIn("book_sha_conflict", routed["meta"])
-        with self.assertRaises(route_mod.UpstreamRefused):
+        self.assertEqual(routed["meta"]["source_sha_conflict"], [PUBLISHED_ID])
+        with self.assertRaises(route_mod.UpstreamRefused) as cm:
             route_mod.emit_upstream(routed, os.path.join(root, "out"), companion="adam")
+        self.assertIn(PUBLISHED_ID, str(cm.exception))
+
+    def test_export_allows_rows_from_two_DIFFERENT_sources(self):
+        """They say which is which, so nothing is being laundered."""
+        rows, root = self._findings([
+            finding_doc("Exercise 1.2.4", unfaithful_decls=["adam:Some.decl"]),
+        ])
+        rows.append(dict(rows[0], source_id=DRAFT_ID, source_sha=DRAFT_SHA,
+                         finding_id="b" * 64))
+        ledger = [ledger_row(finding_id=r["finding_id"], item=r["item"],
+                             unfaithful_decls=["adam:Some.decl"]) for r in rows]
+        routed = route_mod.route_repo(rows, "adam", ledger_rows=ledger)
+        self.assertNotIn("source_sha_conflict", routed["meta"])
+        self.assertEqual(routed["meta"]["sources"],
+                         {PUBLISHED_ID: OFFICIAL_SHA, DRAFT_ID: DRAFT_SHA})
+        self.assertEqual(routed["meta"]["counts"]["by_source"],
+                         {PUBLISHED_ID: 1, DRAFT_ID: 1})
+        path = route_mod.emit_upstream(routed, os.path.join(root, "out"), companion="adam")
+        out = compat.data_rows(compat.read_jsonl(path))
+        self.assertEqual(sorted(r["source_id"] for r in out), sorted([DRAFT_ID, PUBLISHED_ID]))
 
     def test_refuted_rows_are_not_exported_upstream(self):
         rows, root = self._findings([
@@ -474,7 +554,8 @@ class TestRoutingRules(unittest.TestCase):
         ledger = [ledger_row(finding_id=rows[0]["finding_id"], item=rows[0]["item"],
                              unfaithful_decls=["adam:Some.decl"], verdict="REFUTED",
                              severity="none")]
-        routed = route_mod.route_repo(rows, "adam", book_sha=OFFICIAL_SHA, ledger_rows=ledger)
+        routed = route_mod.route_repo(rows, "adam", source_id=PUBLISHED_ID,
+                                      source_sha=OFFICIAL_SHA, ledger_rows=ledger)
         path = route_mod.emit_upstream(routed, os.path.join(root, "out"), companion="adam")
         self.assertEqual(compat.data_rows(compat.read_jsonl(path)), [])
 
@@ -482,8 +563,9 @@ class TestRoutingRules(unittest.TestCase):
         rows, root = self._findings([
             finding_doc("Exercise 1.2.4", unfaithful_decls=["adam:Some.decl"]),
         ])
-        paths = compat.campaign_paths(root)
-        routed = route_mod.route_repo(rows, "adam", book_sha=OFFICIAL_SHA, campaign=root)
+        paths = compat.workspace_paths(root)
+        routed = route_mod.route_repo(rows, "adam", source_id=PUBLISHED_ID,
+                                      source_sha=OFFICIAL_SHA, workspace=root)
         path = route_mod.write_routed(paths, "adam", routed)
         again = route_mod.read_routed(path)
         self.assertEqual(again["meta"]["status"], route_mod.STATUS_UNCHALLENGED)
@@ -501,7 +583,8 @@ class TestTranscription(unittest.TestCase):
             finding_doc("Exercise 1.3.12", unfaithful_decls=["adam:Tao.witness"]),
             finding_doc("Exercise 1.1.22", unfaithful_decls=["adam:Tao.darboux"]),
         ])
-        self.findings = findings_mod.load_findings([self.dir], book_sha=OFFICIAL_SHA)
+        self.findings = findings_mod.load_findings(
+            [self.dir], source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA)
         self.index = findings_mod.index_by_id(self.findings)
         self.by_item = {f["item"]: f for f in self.findings}
 
@@ -511,7 +594,7 @@ class TestTranscription(unittest.TestCase):
         return {
             "schema": "cf-adjudicate-v2",
             "companion": "adam",
-            "book_sha": OFFICIAL_SHA,
+            "source_id": PUBLISHED_ID, "source_sha": OFFICIAL_SHA,
             "findings": [
                 {
                     "finding_id": a["finding_id"], "item": a["item"],
@@ -553,14 +636,14 @@ class TestTranscription(unittest.TestCase):
     def test_adjudication_result_becomes_two_files_and_a_record(self):
         result_path = os.path.join(self.root, "result.json")
         compat.write_json(result_path, self._result())
-        report = transcribe.transcribe(result_path, campaign=self.root, companion="adam",
-                                       book_sha=OFFICIAL_SHA, index=self.index, at="2026-09-16")
+        report = transcribe.transcribe(result_path, workspace=self.root, companion="adam",
+                                       source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA, index=self.index, at="2026-09-16")
         self.assertEqual(report["errors"], [], "\n".join(str(e) for e in report["errors"]))
         self.assertEqual(report["accepted"], 1)
         self.assertEqual(report["refuted"], 1)
         self.assertEqual(report["contested"], 1, "a skeptic at 0.8 is above the threshold")
 
-        paths = compat.campaign_paths(self.root)
+        paths = compat.workspace_paths(self.root)
         accepted = compat.data_rows(compat.read_jsonl(paths.accepted("adam")))
         refuted = compat.data_rows(compat.read_jsonl(paths.refuted("adam")))
         self.assertEqual(accepted[0]["verdict"], "CONFIRMED_CONTENT")
@@ -580,10 +663,10 @@ class TestTranscription(unittest.TestCase):
     def test_transcription_is_idempotent(self):
         result_path = os.path.join(self.root, "result.json")
         compat.write_json(result_path, self._result())
-        kwargs = dict(campaign=self.root, companion="adam", book_sha=OFFICIAL_SHA,
+        kwargs = dict(workspace=self.root, companion="adam", source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA,
                       index=self.index, at="2026-09-16")
         transcribe.transcribe(result_path, **kwargs)
-        paths = compat.campaign_paths(self.root)
+        paths = compat.workspace_paths(self.root)
         with open(paths.accepted("adam"), encoding="utf-8") as fh:
             first = fh.read()
         transcribe.transcribe(result_path, **kwargs)
@@ -594,7 +677,7 @@ class TestTranscription(unittest.TestCase):
         a = self.by_item["Exercise 1.3.12"]
         b = self.by_item["Exercise 1.1.22"]
         result = {
-            "schema": "cf-challenge-v2", "companion": "adam", "book_sha": OFFICIAL_SHA,
+            "schema": "cf-challenge-v2", "companion": "adam", "source_id": PUBLISHED_ID, "source_sha": OFFICIAL_SHA,
             "findings": [
                 {"finding_id": a["finding_id"], "item": a["item"], "survives_all": True,
                  "verdicts": [{"ruling_survives": True, "classification": "CONTENT",
@@ -611,11 +694,11 @@ class TestTranscription(unittest.TestCase):
         }
         path = os.path.join(self.root, "challenge.json")
         compat.write_json(path, result)
-        report = transcribe.transcribe(path, campaign=self.root, companion="adam",
-                                       book_sha=OFFICIAL_SHA, index=self.index,
-                                       source="challenge", at="2026-09-16")
+        report = transcribe.transcribe(path, workspace=self.root, companion="adam",
+                                       source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA, index=self.index,
+                                       kind="challenge", at="2026-09-16")
         self.assertEqual(report["errors"], [], "\n".join(str(e) for e in report["errors"]))
-        paths = compat.campaign_paths(self.root)
+        paths = compat.workspace_paths(self.root)
         accepted = compat.data_rows(compat.read_jsonl(paths.accepted("adam")))
         refuted = compat.data_rows(compat.read_jsonl(paths.refuted("adam")))
         self.assertEqual([r["verdict"] for r in accepted], ["CONFIRMED_CONTENT"])
@@ -630,17 +713,17 @@ class TestTranscription(unittest.TestCase):
                            "survives_all": False, "missing_votes": 1,
                            "verdicts": [{"ruling_survives": True, "classification": "CONTENT",
                                          "evidence": "only one refuter answered"}]}]},
-            companion="adam", book_sha=OFFICIAL_SHA, index=self.index)
+            companion="adam", source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA, index=self.index)
         self.assertEqual(rows[0]["verdict"], "REFUTED")
 
 
 class TestWorkflowArgs(unittest.TestCase):
-    """`cf adjudicate --emit-args` must produce campaign-only, id-linked inputs."""
+    """`cf adjudicate --emit-args` must produce workspace-only, id-linked inputs."""
 
     def setUp(self):
         self.root = scratch_dir()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
-        paths = compat.campaign_paths(self.root, "tao-measure")
+        paths = compat.workspace_paths(self.root)
         compat.write_jsonl(paths.statements("adam"), [
             {"item": "Exercise 1.1.22", "decl": "Tao.darboux", "file": "Riemann/Basic.lean",
              "line": 2979, "statement": "theorem Tao.darboux (hab : a < b) : ...", "sorry": False},
@@ -653,31 +736,43 @@ class TestWorkflowArgs(unittest.TestCase):
         with open(paths.conventions("adam"), "w", encoding="utf-8") as fh:
             fh.write("- elementary sets are a subtype\n- 1 <= d is a standing hypothesis\n")
         compat.write_text(
-            os.path.join(self.root, "campaign.yaml"),
-            "version: 1\n"
-            "book:\n  id: tao-measure\n  title: An Introduction to Measure Theory\n"
-            "  sha256: %s\n  offset: 16\n  errata_url: https://example.invalid/errata\n"
-            "companions:\n  - name: adam\n    repo: /repos/measure_theory\n    owner: external\n"
-            "  - name: ours\n    repo: /repos/tao-measure-lean\n"
-            "hosts:\n  allowlist: []\n" % OFFICIAL_SHA)
+            os.path.join(self.root, "workspace.yaml"),
+            workspace_yaml(companions=(
+                "  adam:\n    repo: /repos/measure_theory\n    owner: external\n"
+                "    adapter: attribution_table\n"
+                f"    sources: [{PUBLISHED_ID}]\n"
+                f"    anchor_source: {PUBLISHED_ID}\n"
+                "  ours:\n    repo: /repos/tao-measure-lean\n"
+                "    adapter: docstring_tags\n"
+                f"    sources: [{PUBLISHED_ID}, {DRAFT_ID}]\n"
+                f"    anchor_source: {PUBLISHED_ID}\n")))
         self.dir = write_corpus(self.root, "synthetic", [
             finding_doc("Exercise 1.1.22", unfaithful_decls=["adam:Tao.darboux"],
                         witness={"object": "a = b", "why": "the book admits it"}),
         ])
-        self.findings = findings_mod.load_findings([self.dir], book_sha=OFFICIAL_SHA)
-        self.cfg = compat.load_campaign(self.root)
+        self.findings = findings_mod.load_findings(
+            [self.dir], source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA)
+        self.cfg = compat.load_workspace(self.root)
 
-    def test_adjudicate_args_carry_campaign_paths_and_bodies(self):
+    def test_adjudicate_args_carry_workspace_paths_and_bodies(self):
         payload = workflow_args.build_adjudicate_args(self.cfg, "adam", self.findings)
-        # every absolute path in the args must be a campaign path or a repo
-        # named in campaign.yaml -- never a session scratchpad path
+        # every absolute path in the args must be a workspace path or a repo
+        # named in workspace.yaml -- never a session scratchpad path
         for path in _abs_paths(payload):
             self.assertTrue(path.startswith(self.root) or path.startswith("/repos/"),
                             "stray path in workflow args: %s" % path)
-        self.assertEqual(payload["campaign"]["book_sha"], OFFICIAL_SHA)
-        self.assertEqual(payload["campaign"]["pdf_page_offset"], 16)
-        self.assertTrue(payload["campaign"]["book_pages_dir"].startswith(self.root))
+        # `sources` is a LIST: an adjudicator told only about "the book" cannot
+        # know which of two editions a finding read.
+        source = payload["workspace"]["sources"][0]
+        self.assertEqual(source["source_id"], PUBLISHED_ID)
+        self.assertEqual(source["source_sha"], OFFICIAL_SHA)
+        self.assertEqual(source["page_offset"], 16)
+        self.assertTrue(source["pages_dir"].startswith(self.root))
+        self.assertTrue(source["text"].endswith(f"sources/{PUBLISHED_ID}/text.txt"))
         self.assertIn("standing hypothesis", payload["companion"]["conventions"])
+        # the companion names its sources and the edition its anchors follow
+        self.assertEqual(payload["companion"]["sources"], [PUBLISHED_ID])
+        self.assertEqual(payload["companion"]["anchor_source"], PUBLISHED_ID)
         self.assertEqual([p["name"] for p in payload["peers"]], ["ours"])
         finding = payload["findings"][0]
         self.assertEqual(finding["finding_id"], self.findings[0]["finding_id"])
@@ -696,7 +791,7 @@ class TestWorkflowArgs(unittest.TestCase):
 
     def test_emit_args_through_the_cli(self):
         cmd = [sys.executable, os.path.join(SCRIPTS, "cf.py"), "adjudicate",
-               "--campaign", self.root, "--companion", "adam", "--emit-args"]
+               "--workspace", self.root, "--companion", "adam", "--emit-args"]
         proc = subprocess.run(cmd, capture_output=True, text=True)
         self.assertEqual(proc.returncode, 0, proc.stderr)
         out = os.path.join(self.root, "ledger", "args", "adjudicate.adam.json")
@@ -714,53 +809,73 @@ class TestHandoff(unittest.TestCase):
         self.root = scratch_dir()
         self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         compat.write_text(
-            os.path.join(self.root, "campaign.yaml"),
-            "version: 1\nbook:\n  id: tao-measure\n  title: Measure Theory\n"
-            "  sha256: %s\n  offset: 16\ncompanions:\n  - name: adam\n    repo: /repos/mt\n"
-            "hosts:\n  allowlist: []\n" % OFFICIAL_SHA)
+            os.path.join(self.root, "workspace.yaml"),
+            workspace_yaml(companions=(
+                "  adam:\n    repo: /repos/mt\n    adapter: attribution_table\n"
+                f"    sources: [{PUBLISHED_ID}]\n"
+                f"    anchor_source: {PUBLISHED_ID}\n")))
         self.dir = write_corpus(self.root, "hunt", [
             finding_doc("Exercise 1.1.22", unfaithful_decls=["adam:Tao.darboux"], severity="high"),
         ])
-        self.findings = findings_mod.load_findings([self.dir], book_sha=OFFICIAL_SHA)
-        paths = compat.campaign_paths(self.root, "tao-measure")
+        self.findings = findings_mod.load_findings(
+            [self.dir], source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA)
+        paths = compat.workspace_paths(self.root)
         route_mod.write_routed(
             paths, "adam",
-            route_mod.route_repo(self.findings, "adam", book_sha=OFFICIAL_SHA, campaign=self.root))
+            route_mod.route_repo(self.findings, "adam", source_id=PUBLISHED_ID,
+                                source_sha=OFFICIAL_SHA, workspace=self.root))
+        # The shape `cf tally` writes: grouped by (source_id, repo), with the
+        # per-repo rollup naming its sources.
+        block = {"rows": 1, "by_kind": {"CONTENT": 1},
+                 "by_severity": {"low": 0, "medium": 0, "high": 1},
+                 "raw": {"items": 1, "substantive": 1, "high": 1,
+                         "classes": {"content_vac": 1, "suspected_errata": 0,
+                                     "coverage": 0, "page_anchor": 0}},
+                 "collapsed": {"items": 1, "substantive": 1, "high": 1, "classes": {}},
+                 "per_run": {"hunt": {"rows": 1, "items": 1, "collapsed_items": 1}}}
         compat.write_json(os.path.join(self.root, "reports", "tally.hunt.json"), {
-            "generated_at": "2026-09-16T00:00:00Z", "book_sha": OFFICIAL_SHA, "rows": 1,
+            "generated_at": "2026-09-16T00:00:00Z",
+            "group_by": ["source_id", "repo"],
+            "sources": {PUBLISHED_ID: OFFICIAL_SHA}, "rows": 1,
             "runs": {"hunt": {"dir": self.dir, "mode": "attack", "files": 1}},
-            "repos": {"adam": {"rows": 1, "by_kind": {"CONTENT": 1},
-                               "by_severity": {"low": 0, "medium": 0, "high": 1},
-                               "raw": {"items": 1, "substantive": 1, "high": 1,
-                                       "classes": {"content_vac": 1, "suspected_errata": 0,
-                                                   "coverage": 0, "page_anchor": 0}},
-                               "collapsed": {"items": 1, "substantive": 1, "high": 1,
-                                             "classes": {}},
-                               "per_run": {"hunt": {"rows": 1, "items": 1, "collapsed_items": 1}}}},
+            "groups": {"%s::adam" % PUBLISHED_ID: dict(block, source_id=PUBLISHED_ID,
+                                                       repo="adam")},
+            "repos": {"adam": dict(block, sources={PUBLISHED_ID: block})},
         })
 
     def test_handoff_reports_the_unchallenged_status_and_the_tally(self):
         report = handoff_mod.make_handoff(self.root, date="2026-09-16")
         text = report["text"]
         self.assertIn("findings only", text.lower())
-        self.assertIn(OFFICIAL_SHA, text)
+        # A sources table, one row per source, naming the companions bound to it
+        # -- the report may never say "the book".
+        self.assertIn(PUBLISHED_ID, text)
+        self.assertIn(DRAFT_ID, text)
+        self.assertIn(OFFICIAL_SHA[:12], text)
+        self.assertIn("AMS GSM 126 (published pagination)", text)
         self.assertIn("UNCHALLENGED", text)
         self.assertIn("`hunt`", text)
+        # the findings tables are PER SOURCE: never one number over two editions
+        self.assertNotIn("(unstamped)", text)
+        self.assertIn("| `%s` | `hunt` | 1 |" % PUBLISHED_ID, text)
         self.assertIn("unchallenged row", text)
+        # and the paths section names each source's own directories
+        self.assertIn("sources/%s" % PUBLISHED_ID, text)
+        self.assertIn("pairs/%s" % DRAFT_ID, text)
         self.assertIn("python3 scripts/cf.py route", text)
         self.assertTrue(os.path.exists(report["path"]))
 
     def test_missing_artifacts_become_visible_todos(self):
         report = handoff_mod.make_handoff(self.root, date="2026-09-16")
-        self.assertTrue(report["todos"], "an empty campaign must not look complete")
+        self.assertTrue(report["todos"], "an empty workspace must not look complete")
         self.assertIn("TODO(what went wrong)", report["text"])
 
-    def test_verify_claims_args_reference_only_campaign_sources(self):
+    def test_verify_claims_args_reference_only_workspace_sources(self):
         report = handoff_mod.make_handoff(self.root, date="2026-09-16")
         ctx = report["context"]
         payload = claims_mod.build_args(
             self.root, draft=report["text"], companions=["adam"],
-            campaign_cfg=ctx["_campaign"],
+            workspace_cfg=ctx["_workspace"],
             verification_commands=ctx["verification_commands"])
         keys = [l["key"] for l in payload["lenses"]]
         self.assertIn("corpus-numbers", keys)

@@ -47,6 +47,9 @@ from plan import presets as presets_mod  # noqa: E402
 from plan import render_prompts as rp  # noqa: E402
 from plan.render import TemplateError, render  # noqa: E402
 
+#: the two Tao editions, by the ids registry/sources.yaml gives them
+PUBLISHED_ID = "tao-measure-gsm126-published"
+DRAFT_ID = "tao-measure-2011-draft"
 BOOK_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
 DRAFT_SHA = "0" * 64
 
@@ -84,17 +87,36 @@ def book_with_operators() -> vf.BookText:
 
 
 def gate_cfg(preset_name: str, book: pathlib.Path, **over) -> vf.GateConfig:
-    """A GateConfig for a preset, pointed at ``book``."""
+    """A GateConfig for a preset, with ``book`` as its single source's text."""
     preset = presets_mod.get(preset_name)
+    sources = over.pop("sources", None) or {
+        over.pop("source_id", PUBLISHED_ID): {
+            "text": str(book),
+            "sha256": over.pop("source_sha", BOOK_SHA),
+        }
+    }
     data = presets_mod.gate_config(
         preset,
         run_id=over.pop("run_id", "test-run"),
-        book_text=str(book),
-        book_sha=over.pop("book_sha", BOOK_SHA),
+        sources=sources,
         repos=over.pop("repos", ["ours", "teorth", "adam"]),
     )
     data.update(over)
     return vf.GateConfig(data)
+
+
+def two_source_cfg(preset_name: str, published: pathlib.Path, draft: pathlib.Path,
+                   **over) -> vf.GateConfig:
+    """A gate carrying BOTH Tao editions, as a differential across them would.
+
+    This is the shape the quote gate has to get right: the same item label
+    exists in both, and a quote is only verified against the text its own
+    document names.
+    """
+    return gate_cfg(preset_name, published, sources={
+        PUBLISHED_ID: {"text": str(published), "sha256": BOOK_SHA},
+        DRAFT_ID: {"text": str(draft), "sha256": DRAFT_SHA},
+    }, **over)
 
 
 # --------------------------------------------------------------------------- #
@@ -184,7 +206,8 @@ class TestGateOnBaseline(unittest.TestCase):
                 doc = convert_v1.convert_doc(
                     json.loads(p.read_text()),
                     run_id=f"baseline-{d}",
-                    book_sha=BOOK_SHA,
+                    source_id=PUBLISHED_ID,
+                    source_sha=BOOK_SHA,
                     mode=mode,
                     preset=preset,
                     repos=["ours", "teorth", "adam"],
@@ -206,10 +229,23 @@ class TestGateOnBaseline(unittest.TestCase):
     def test_unconverted_v1_is_refused(self):
         cfg = gate_cfg("differential-legacy", BOOK_TXT)
         p = sorted((CORPUS / "findings").glob("*.json"))[0]
-        errs = vf.validate_doc(json.loads(p.read_text()), p.name, cfg, normalised_book())
-        joined = " ".join(errs)
+        doc = json.loads(p.read_text())
+        joined = " ".join(vf.validate_doc(doc, p.name, cfg, normalised_book()))
         self.assertIn("schema_version", joined)
-        self.assertIn("book_sha", joined)
+        self.assertIn("source_sha", joined)
+
+    def test_an_unstamped_v1_file_cannot_be_placed_in_a_two_source_run(self):
+        """A v1 document does not say which source it read.
+
+        One source is unambiguous, so an unstamped document inherits it; a run
+        spanning two editions has nothing to inherit and refuses rather than
+        checking the quotes against whichever text sorts first.
+        """
+        cfg = two_source_cfg("differential-legacy", BOOK_TXT, BOOK_TXT)
+        p = sorted((CORPUS / "findings").glob("*.json"))[0]
+        books = {PUBLISHED_ID: normalised_book(), DRAFT_ID: normalised_book()}
+        joined = " ".join(vf.validate_doc(json.loads(p.read_text()), p.name, cfg, books))
+        self.assertIn("missing source_id", joined)
 
 
 # --------------------------------------------------------------------------- #
@@ -226,7 +262,8 @@ def mini_doc(**over) -> dict:
     doc = {
         "schema_version": 2,
         "run_id": "test-run",
-        "book_sha": BOOK_SHA,
+        "source_id": PUBLISHED_ID,
+        "source_sha": BOOK_SHA,
         "item": "Exercise 1.2.4",
         "book_located": True,
         "book_passage_quote": "Show that the union of two elementary sets is elementary",
@@ -299,7 +336,43 @@ class TestGateNegative(unittest.TestCase):
         self.assertTrue(any("witness" in e for e in self.errs(doc)))
 
     def test_wrong_edition_fails(self):
-        self.assertTrue(any("wrong edition" in e for e in self.errs(mini_doc(book_sha=DRAFT_SHA))))
+        self.assertTrue(any("wrong edition" in e
+                            for e in self.errs(mini_doc(source_sha=DRAFT_SHA))))
+
+    def test_an_unknown_source_is_a_gate_failure(self):
+        """A document naming a source this run does not carry was judged elsewhere."""
+        errs = self.errs(mini_doc(source_id="some-other-book"))
+        self.assertTrue(any("not one of this run's sources" in e for e in errs), errs)
+
+    def test_a_missing_source_id_is_refused_when_the_gate_carries_two(self):
+        """With one source an unstamped document inherits it; with two, never."""
+        doc = mini_doc()
+        doc.pop("source_id")
+        self.assertEqual(self.errs(doc), [])          # one source: unambiguous
+        other = pathlib.Path(self.tmp.name) / "draft.txt"
+        other.write_text(MINI_BOOK, encoding="utf-8")
+        cfg = two_source_cfg("attack-vac", self.book, other, repos=["ours"])
+        errs = vf.validate_doc(doc, "x.json", cfg, {PUBLISHED_ID: self.norm,
+                                                    DRAFT_ID: self.norm})
+        self.assertTrue(any("missing source_id" in e for e in errs), errs)
+
+    def test_a_quote_is_checked_against_the_source_the_document_names(self):
+        """The whole point of the sources map: one text per source, never merged."""
+        draft = pathlib.Path(self.tmp.name) / "draft.txt"
+        draft.write_text(
+            "Exercise 1.2.4 (Boolean closure). In the draft this exercise reads "
+            "entirely differently and shares no sentence with the published book.\n",
+            encoding="utf-8")
+        cfg = two_source_cfg("attack-vac", self.book, draft, repos=["ours"])
+        books, errs = vf.load_sources(cfg)
+        self.assertEqual(errs, [])
+        # The published quote passes against the published source ...
+        self.assertEqual(vf.validate_doc(mini_doc(), "x.json", cfg, books), [])
+        # ... and fails against the draft, although both texts are loaded.
+        moved = mini_doc(source_id=DRAFT_ID, source_sha=DRAFT_SHA)
+        problems = vf.validate_doc(moved, "x.json", cfg, books)
+        self.assertTrue(any("book_passage_quote" in e and "NOT FOUND" in e for e in problems),
+                        problems)
 
     def test_missing_required_disagreement_key_fails(self):
         doc = mini_doc()
@@ -322,7 +395,8 @@ class TestGateNegative(unittest.TestCase):
         d = doc["disagreements"][0]
         d["kind"] = "PAGE_ANCHOR"
         d["page"] = {"claimed": 165, "actual": 164}
-        d["finding_id"] = vf.finding_id("test-run", doc["item"], "PAGE_ANCHOR", d["unfaithful_decls"])
+        d["finding_id"] = vf.finding_id("test-run", doc["source_id"], doc["item"], "PAGE_ANCHOR",
+                                        d["unfaithful_decls"])
         self.assertTrue(any("mechanical-only" in e for e in vf.validate_doc(doc, "x", cfg, self.norm)))
         d["source"] = "anchor_check"
         self.assertEqual(vf.validate_doc(doc, "x", cfg, self.norm), [])
@@ -332,7 +406,8 @@ class TestGateNegative(unittest.TestCase):
         doc = mini_doc()
         d = doc["disagreements"][0]
         d["kind"] = "PROXY"
-        d["finding_id"] = vf.finding_id("test-run", doc["item"], "PROXY", d["unfaithful_decls"])
+        d["finding_id"] = vf.finding_id("test-run", doc["source_id"], doc["item"], "PROXY",
+                                        d["unfaithful_decls"])
         errs = vf.validate_doc(doc, "x", cfg, self.norm)
         self.assertTrue(any("bridge" in e for e in errs))
         self.assertTrue(any("closure" in e for e in errs))
@@ -346,8 +421,15 @@ class TestGateNegative(unittest.TestCase):
 
     def test_gate_fails_closed_without_the_book(self):
         cfg = gate_cfg("attack-vac", pathlib.Path(self.tmp.name) / "nope.txt", repos=["ours"])
-        _book, errs = vf.load_book(cfg)
+        _books, errs = vf.load_sources(cfg)
         self.assertTrue(errs and "fails closed" in errs[0])
+
+    def test_a_gate_with_no_sources_fails_closed(self):
+        """A gate that cannot find a text would otherwise approve every quote."""
+        data = dict(self.attack.data)
+        data["sources"] = {}
+        _books, errs = vf.load_sources(vf.GateConfig(data))
+        self.assertTrue(errs and "fails closed" in errs[0], errs)
 
     def test_cli_reports_and_exits_nonzero(self):
         root = pathlib.Path(self.tmp.name) / "wt"
@@ -376,46 +458,63 @@ class TestFindingIdIsOneDefinition(unittest.TestCase):
     """
 
     CASES = [
-        ("r1", "Definition 1.2.2", "PROXY", ["ours:Foo", "ours:Bar"]),
-        ("run1", "Exercise 1.3.19", "CONTENT", ["ours:foo", "ours:bar"]),
-        ("run1", "Exercise    1.3.19", "CONTENT", ["ours:bar", "ours:foo"]),
-        ("dt-ff", "In-text p.42", "COVERAGE", []),
-        ("", "", "", []),
-        ("r", "`Lemma 1.2.5`", "VACUITY", ["adam:X", "adam:X", " adam:Y "]),
+        ("r1", PUBLISHED_ID, "Definition 1.2.2", "PROXY", ["ours:Foo", "ours:Bar"]),
+        ("run1", PUBLISHED_ID, "Exercise 1.3.19", "CONTENT", ["ours:foo", "ours:bar"]),
+        ("run1", PUBLISHED_ID, "Exercise    1.3.19", "CONTENT", ["ours:bar", "ours:foo"]),
+        ("dt-ff", DRAFT_ID, "In-text p.42", "COVERAGE", []),
+        ("", "", "", "", []),
+        ("r", DRAFT_ID, "`Lemma 1.2.5`", "VACUITY", ["adam:X", "adam:X", " adam:Y "]),
     ]
 
     def test_gate_and_cflib_agree_on_every_digest(self):
         from cflib.hashing import finding_id as cflib_fid
 
-        for run_id, item, kind, decls in self.CASES:
+        for run_id, source_id, item, kind, decls in self.CASES:
             with self.subTest(item=item):
                 self.assertEqual(
-                    cflib_fid(run_id, item, kind, decls),
-                    vf.finding_id(run_id, item, kind, list(decls)),
+                    cflib_fid(run_id, source_id, item, kind, decls),
+                    vf.finding_id(run_id, source_id, item, kind, list(decls)),
                 )
 
     def test_every_call_site_agrees(self):
-        """book/, ledger/ and detect/ must all resolve to the same digest."""
-        from book import compat as book_compat
+        """sources/, ledger/ and detect/ must all resolve to the same digest."""
         from cflib.hashing import finding_id as cflib_fid
         from detect._compat import finding_id as detect_fid
         from ledger import compat as ledger_compat
+        from sources import compat as source_compat
 
-        args = ("r1", "Definition 1.2.2", "PROXY", ["ours:Foo", "ours:Bar"])
+        args = ("r1", PUBLISHED_ID, "Definition 1.2.2", "PROXY", ["ours:Foo", "ours:Bar"])
         want = cflib_fid(*args)
-        self.assertEqual(book_compat.finding_id(*args), want)
+        self.assertEqual(source_compat.finding_id(*args), want)
         self.assertEqual(ledger_compat.finding_id(*args), want)
         self.assertEqual(detect_fid(*args), want)
         self.assertEqual(vf.finding_id(*args), want)
 
-    def test_whitespace_variant_hashes_to_the_canonical_item(self):
-        """The regression the campaign exists for: ``Exercise    1.3.19``."""
+    def test_the_source_is_part_of_the_address(self):
+        """The reason the digest is five-part: one label, two sources, two defects.
+
+        ``Exercise 1.3.19`` of the published book and of the 2011 draft are
+        different items (S6.1); on the four-part id they shared one finding_id,
+        so a ledger verdict about one silently answered for the other.
+        """
         from cflib.hashing import finding_id as cflib_fid
 
-        spaced = cflib_fid("r", "Exercise    1.3.19", "CONTENT", ["ours:a"])
-        single = cflib_fid("r", "Exercise 1.3.19", "CONTENT", ["ours:a"])
+        published = cflib_fid("r", PUBLISHED_ID, "Exercise 1.3.19", "CONTENT", ["ours:a"])
+        draft = cflib_fid("r", DRAFT_ID, "Exercise 1.3.19", "CONTENT", ["ours:a"])
+        self.assertNotEqual(published, draft)
+        self.assertEqual(vf.finding_id("r", DRAFT_ID, "Exercise 1.3.19", "CONTENT",
+                                       ["ours:a"]), draft)
+
+    def test_whitespace_variant_hashes_to_the_canonical_item(self):
+        """The regression this workspace exists for: ``Exercise    1.3.19``."""
+        from cflib.hashing import finding_id as cflib_fid
+
+        spaced = cflib_fid("r", PUBLISHED_ID, "Exercise    1.3.19", "CONTENT", ["ours:a"])
+        single = cflib_fid("r", PUBLISHED_ID, "Exercise 1.3.19", "CONTENT", ["ours:a"])
         self.assertEqual(spaced, single)
-        self.assertEqual(vf.finding_id("r", "Exercise\t1.3.19", "CONTENT", ["ours:a"]), single)
+        self.assertEqual(
+            vf.finding_id("r", PUBLISHED_ID, "Exercise\t1.3.19", "CONTENT", ["ours:a"]),
+            single)
 
     def test_gate_clean_item_matches_cflib_items_clean(self):
         raws = [
@@ -434,6 +533,8 @@ class TestFindingIdIsOneDefinition(unittest.TestCase):
         row = detect_findings.proxy_row(
             run_id="detect-ours-cheap",
             companion="ours",
+            source_id=PUBLISHED_ID,
+            source_sha=BOOK_SHA,
             item="Definition 1.2.2",
             decl="Foo",
             rule="mathlib_proxy",
@@ -442,9 +543,11 @@ class TestFindingIdIsOneDefinition(unittest.TestCase):
             reasoning="the companion's statement is a wrapper",
             bridge="fiat",
         )
+        self.assertEqual(row["source_id"], PUBLISHED_ID)
         self.assertEqual(
             row["finding_id"],
-            vf.finding_id("detect-ours-cheap", "Definition 1.2.2", "PROXY", ["ours:Foo"]),
+            vf.finding_id("detect-ours-cheap", PUBLISHED_ID, "Definition 1.2.2", "PROXY",
+                          ["ours:Foo"]),
         )
 
 
@@ -515,9 +618,9 @@ class TestQuoteGateOperators(unittest.TestCase):
             self.assertTrue(presets_mod.get(name).check_operators, name)
         cfg = gate_cfg("attack-vac", BOOK_TXT)
         self.assertTrue(cfg.check_operators)
-        book, errs = vf.load_book(cfg)
+        books, errs = vf.load_sources(cfg)
         self.assertEqual(errs, [])
-        self.assertIsNotNone(book.ops)
+        self.assertIsNotNone(books[PUBLISHED_ID].ops)
 
     def test_norm_operators_keeps_the_operator_in_the_token_stream(self):
         self.assertIn("ople", vf.norm_operators("a \u2264 b"))
@@ -545,7 +648,8 @@ class TestGateDirectoryMode(unittest.TestCase):
     def _gate(self) -> int:
         data = presets_mod.gate_config(
             presets_mod.get("attack-legacy"), run_id="test-run",
-            book_text=str(self.book), book_sha=BOOK_SHA, repos=["ours"],
+            sources={PUBLISHED_ID: {"text": str(self.book), "sha256": BOOK_SHA}},
+            repos=["ours"],
         )
         cfgp = self.root / "gate.local.json"
         cfgp.write_text(json.dumps(data), encoding="utf-8")
@@ -643,7 +747,7 @@ class TestConvertV1(unittest.TestCase):
     def test_no_weakness_found_folds(self):
         doc = convert_v1.convert_doc(
             {"item": "x", "matches": [{"verdict": "NO_WEAKNESS_FOUND"}], "disagreements": []},
-            run_id="r", book_sha=BOOK_SHA, mode="attack",
+            run_id="r", source_id=PUBLISHED_ID, source_sha=BOOK_SHA, mode="attack",
         )
         self.assertEqual(doc["matches"][0]["verdict"], "NO_DEFECT_FOUND")
         self.assertEqual(doc["matches"][0]["v1_verdict"], "NO_WEAKNESS_FOUND")
@@ -653,23 +757,24 @@ class TestConvertV1(unittest.TestCase):
             {"item": "Exercise 1.1.1", "matches": [], "disagreements": [
                 {"kind": "CONTENT", "faithful": "none", "unfaithful_decls": ["ours:a"],
                  "reasoning": "at `d = 0` the statement is vacuous", "severity": "low"}]},
-            run_id="r", book_sha=BOOK_SHA, mode="attack",
+            run_id="r", source_id=PUBLISHED_ID, source_sha=BOOK_SHA, mode="attack",
         )
         w = doc["disagreements"][0]["witness"]
         self.assertEqual(w["object"], "d = 0")
         self.assertEqual(w["source"], "v1_reasoning_lift")
 
     def test_finding_id_is_stable_and_order_independent(self):
-        a = vf.finding_id("run", "Exercise 1.1.1", "CONTENT", ["ours:b", "ours:a"])
-        b = vf.finding_id("run", "Exercise 1.1.1", "CONTENT", ["ours:a", "ours:b"])
+        a = vf.finding_id("run", PUBLISHED_ID, "Exercise 1.1.1", "CONTENT", ["ours:b", "ours:a"])
+        b = vf.finding_id("run", PUBLISHED_ID, "Exercise 1.1.1", "CONTENT", ["ours:a", "ours:b"])
         self.assertEqual(a, b)
-        self.assertNotEqual(a, vf.finding_id("run2", "Exercise 1.1.1", "CONTENT", ["ours:a"]))
+        self.assertNotEqual(
+            a, vf.finding_id("run2", PUBLISHED_ID, "Exercise 1.1.1", "CONTENT", ["ours:a"]))
 
     def test_refuses_in_place_conversion(self):
         with tempfile.TemporaryDirectory(dir=TMPDIR) as d:
             with self.assertRaises(SystemExit):
-                convert_v1.convert_tree(pathlib.Path(d), pathlib.Path(d),
-                                        run_id="r", book_sha=BOOK_SHA)
+                convert_v1.convert_tree(pathlib.Path(d), pathlib.Path(d), run_id="r",
+                                        source_id=PUBLISHED_ID, source_sha=BOOK_SHA)
 
     @unittest.skipIf(CORPUS is None, "CF_BASELINE_CORPUS unset")
     def test_baseline_is_not_modified(self):
@@ -677,7 +782,8 @@ class TestConvertV1(unittest.TestCase):
         before = {p.name: p.stat().st_mtime_ns for p in src.glob("*.json")}
         with tempfile.TemporaryDirectory(dir=TMPDIR) as d:
             n = convert_v1.convert_tree(src, pathlib.Path(d) / "out",
-                                        run_id="baseline-findings", book_sha=BOOK_SHA)
+                                        run_id="baseline-findings",
+                                        source_id=PUBLISHED_ID, source_sha=BOOK_SHA)
         self.assertEqual(n, 382)
         after = {p.name: p.stat().st_mtime_ns for p in src.glob("*.json")}
         self.assertEqual(before, after)
@@ -724,40 +830,90 @@ def baseline_universe():
     return queue, targets
 
 
+#: every task id of a source-qualified plan starts with this
+SLUG_PREFIX = cfitems.source_slug(PUBLISHED_ID) + "--"
+
+
+def unqualified(ids):
+    """Task ids with the source prefix removed, for comparison with the 2026 run.
+
+    The original run predates the model: it had one implicit book and its task
+    filenames carry no source. The prefix is asserted separately; what is
+    compared here is the item half.
+    """
+    out = set()
+    for i in ids:
+        assert i.startswith(SLUG_PREFIX), i
+        out.add(i[len(SLUG_PREFIX):])
+    return out
+
+
 @unittest.skipIf(CORPUS is None or BOOK_TXT is None, "CF_BASELINE_CORPUS/CF_BOOK_TXT unset")
 class TestMakeTasksBaseline(unittest.TestCase):
     def test_differential_universe_is_383_not_382(self):
         queue, targets = baseline_universe()
-        entries = mt.differential_entries(queue, targets, chapters=[1])
+        entries = mt.differential_entries(queue, targets, source_id=PUBLISHED_ID, chapters=[1])
         self.assertEqual(len(entries), 383)
         ids = {e.item for e in entries}
         self.assertIn("Exercise 1.3.19", ids)          # the single-space-regex casualty
         self.assertNotIn("Definition 1.1.15", ids)     # a repo label the book does not have
         self.assertEqual(sum(1 for e in entries if not e.single_source), 225)
         self.assertEqual(sum(1 for e in entries if e.single_source), 158)
+        self.assertEqual({e.source_id for e in entries}, {PUBLISHED_ID})
+        self.assertIn(f"{PUBLISHED_ID}::Exercise 1.3.19", {e.qualified for e in entries})
 
     def test_differential_tasks_render_and_reconcile(self):
         queue, targets = baseline_universe()
-        entries = mt.differential_entries(queue, targets, chapters=[1])
+        entries = mt.differential_entries(queue, targets, source_id=PUBLISHED_ID, chapters=[1])
         preset = presets_mod.get("differential-text")
-        tasks = mt.make_tasks(entries, preset, {"run_id": "t", "book_sha": BOOK_SHA,
-                                                "gate_command": "python3 gate.py"},
-                              expected_items={e.item for e in entries})
+        tasks = mt.make_tasks(entries, preset,
+                              {"run_id": "t", "source_id": PUBLISHED_ID,
+                               "source_sha": BOOK_SHA, "gate_command": "python3 gate.py"},
+                              expected_items={e.qualified for e in entries})
         self.assertEqual(len(tasks), 383)
         by_id = {t.id: t for t in tasks}
-        self.assertIn("exercise-1_3_19", by_id)          # the recovered task
-        self.assertIn("corollary-1_3_14", by_id)         # the original run's spelling
-        self.assertTrue(by_id["corollary-1_3_14"].text.startswith("schema_version: 1\n"))
-        self.assertIn('title: "DIFFERENTIAL: Corollary 1.3.14"', by_id["corollary-1_3_14"].text)
-        self.assertIn('title: "SINGLE-SOURCE: Corollary 1.5.10"', by_id["corollary-1_5_10"].text)
+        self.assertIn(SLUG_PREFIX + "exercise-1_3_19", by_id)   # the recovered task
+        one = by_id[SLUG_PREFIX + "corollary-1_3_14"]           # the original run's spelling
+        self.assertTrue(one.text.startswith("schema_version: 1\n"))
+        self.assertIn('title: "DIFFERENTIAL: Corollary 1.3.14"', one.text)
+        # the findings filename is qualified too, so two sources' findings
+        # cannot overwrite each other in one findings/ directory
+        self.assertIn(f"findings/{SLUG_PREFIX}corollary-1_3_14.json", one.text)
+        self.assertIn('title: "SINGLE-SOURCE: Corollary 1.5.10"',
+                      by_id[SLUG_PREFIX + "corollary-1_5_10"].text)
         self.assertEqual({t.priority for t in tasks}, {"default"})
+
+    def test_two_sources_can_share_one_tasks_directory(self):
+        """The reason a task id is qualified: one label, two sources, two files.
+
+        On the bare slug the draft's ``Exercise 1.3.19`` and the published
+        book's wrote the same ``exercise-1_3_19.yaml``, so one silently
+        replaced the other and the run audited 383 items believing it audited
+        384.
+        """
+        entries = [
+            mt.Entry(item="Exercise 1.3.19", repos=["ours"], decls={"ours": ["a"]},
+                     source_id=PUBLISHED_ID),
+            mt.Entry(item="Exercise 1.3.19", repos=["ours"], decls={"ours": ["a"]},
+                     source_id=DRAFT_ID),
+        ]
+        tasks = mt.make_tasks(entries, presets_mod.get("differential-text"),
+                              {"run_id": "t", "gate_command": "g"})
+        self.assertEqual(sorted(t.id for t in tasks), [
+            cfitems.source_slug(DRAFT_ID) + "--exercise-1_3_19",
+            cfitems.source_slug(PUBLISHED_ID) + "--exercise-1_3_19",
+        ])
+        with tempfile.TemporaryDirectory(dir=TMPDIR) as d:
+            written = mt.write_tasks(tasks, pathlib.Path(d))
+            self.assertEqual(len({p.name for p in written}), 2)
 
     def test_original_382_task_ids_are_a_subset(self):
         queue, targets = baseline_universe()
-        entries = mt.differential_entries(queue, targets, chapters=[1])
+        entries = mt.differential_entries(queue, targets, source_id=PUBLISHED_ID, chapters=[1])
         tasks = mt.make_tasks(entries, presets_mod.get("differential-text"),
-                              {"run_id": "t", "book_sha": BOOK_SHA, "gate_command": "g"})
-        got = {t.id for t in tasks}
+                              {"run_id": "t", "source_id": PUBLISHED_ID,
+                               "source_sha": BOOK_SHA, "gate_command": "g"})
+        got = unqualified(t.id for t in tasks)
         original = {p.stem for p in (CORPUS / "tasks").glob("*.yaml")}
         self.assertEqual(len(original), 382)
         self.assertEqual(original - got, set())
@@ -766,20 +922,21 @@ class TestMakeTasksBaseline(unittest.TestCase):
     def test_attack_tasks_are_763_for_ours(self):
         targets = json.loads((CORPUS / "targets.ours.json").read_text())
         self.assertEqual(len(targets), 763)
-        entries = mt.target_entries(targets, "ours")
+        entries = mt.target_entries(targets, "ours", source_id=PUBLISHED_ID)
         preset = presets_mod.get("attack-hunt")
         tasks = mt.make_tasks(entries, preset, {
-            "run_id": "t", "book_sha": BOOK_SHA, "gate_command": "g", "companion": "ours",
+            "run_id": "t", "source_id": PUBLISHED_ID, "source_sha": BOOK_SHA,
+            "gate_command": "g", "companion": "ours",
             "total_functions_sentence": "This repo: measures are total.",
         })
         self.assertEqual(len(tasks), 763)
         self.assertEqual(len({t.id for t in tasks}), 763)
-        ids = {t.id for t in tasks}
+        ids = unqualified(t.id for t in tasks)
         self.assertIn("corollary-1-3-14", ids)                      # dash slugs
         self.assertIn("corollary-lemma-1-2-5-exercise-1-2-4", ids)  # ungrammatical label kept
         self.assertTrue(any(i.startswith("in-text") for i in ids))
         self.assertEqual({t.priority for t in tasks}, {"default", "high", "max"})
-        one = next(t for t in tasks if t.id == "corollary-1-3-14")
+        one = next(t for t in tasks if t.id == SLUG_PREFIX + "corollary-1-3-14")
         self.assertIn('title: "hunt: Corollary 1.3.14"', one.text)
         self.assertIn("NO_DEFECT_FOUND", one.text)
 
@@ -796,9 +953,10 @@ class TestMakeTasksBaseline(unittest.TestCase):
 
     def test_max_open_tasks_chains_dependencies(self):
         targets = json.loads((CORPUS / "targets.ours.json").read_text())[:10]
-        tasks = mt.make_tasks(mt.target_entries(targets, "ours"),
+        tasks = mt.make_tasks(mt.target_entries(targets, "ours", source_id=PUBLISHED_ID),
                               presets_mod.get("attack-hunt"),
-                              {"run_id": "t", "book_sha": BOOK_SHA, "gate_command": "g",
+                              {"run_id": "t", "source_id": PUBLISHED_ID,
+                               "source_sha": BOOK_SHA, "gate_command": "g",
                                "companion": "ours", "total_functions_sentence": "x"},
                               max_open_tasks=4)
         self.assertEqual(tasks[0].depends_on, [])
@@ -807,8 +965,9 @@ class TestMakeTasksBaseline(unittest.TestCase):
 
 
 class TestMakeTasksGuards(unittest.TestCase):
-    def entries(self, items):
-        return [mt.Entry(item=i, repos=["ours"], decls={"ours": ["d"]}) for i in items]
+    def entries(self, items, source_id=""):
+        return [mt.Entry(item=i, repos=["ours"], decls={"ours": ["d"]}, source_id=source_id)
+                for i in items]
 
     def test_colliding_items_fall_back_to_the_raw_slug(self):
         e = self.entries(["In-text, book p. 18", "In-text convention, book p. 18"])
@@ -825,10 +984,26 @@ class TestMakeTasksGuards(unittest.TestCase):
     def test_reconcile_names_the_missing_item(self):
         e = self.entries(["Exercise 1.1.1"])
         tasks = mt.make_tasks(e, presets_mod.get("differential-text"),
-                              {"run_id": "t", "book_sha": BOOK_SHA, "gate_command": "g"})
+                              {"run_id": "t", "source_sha": BOOK_SHA, "gate_command": "g"})
         with self.assertRaises(CfError) as cm:
             mt.reconcile(e, tasks, expected_items={"Exercise 1.1.1", "Exercise 1.1.2"})
         self.assertIn("Exercise 1.1.2", str(cm.exception))
+
+    def test_two_sources_missing_items_do_not_cancel_out(self):
+        """The reconciliation key is (source_id, item), never the bare label.
+
+        One missing item of the draft and one unexpected item of the published
+        book net to zero on the label; the run then reports a reconciled plan
+        over a task set that audits the wrong edition of one of them.
+        """
+        e = self.entries(["Exercise 1.1.1"], source_id=PUBLISHED_ID)
+        tasks = mt.make_tasks(e, presets_mod.get("differential-text"),
+                              {"run_id": "t", "source_sha": BOOK_SHA, "gate_command": "g"})
+        with self.assertRaises(CfError) as cm:
+            mt.reconcile(e, tasks, expected_items={f"{DRAFT_ID}::Exercise 1.1.1"})
+        msg = str(cm.exception)
+        self.assertIn(f"{DRAFT_ID}::Exercise 1.1.1", msg)          # missing
+        self.assertIn(f"{PUBLISHED_ID}::Exercise 1.1.1", msg)      # unexpected
 
     def test_unknown_priority_is_refused(self):
         self.assertEqual(mt.tend_priority("medium"), "default")
@@ -843,11 +1018,12 @@ class TestMakeTasksGuards(unittest.TestCase):
             self.skipTest("PyYAML not installed")
         e = [mt.Entry(item="Exercise 1.1.1", repos=["ours", "teorth"],
                       decls={"ours": ["a"], "teorth": ["b"]}, printed_page=12,
-                      single_source=False, peers=["teorth"])]
+                      single_source=False, peers=["teorth"], source_id=PUBLISHED_ID)]
         t = mt.make_tasks(e, presets_mod.get("differential-text"),
-                          {"run_id": "t", "book_sha": BOOK_SHA, "gate_command": "g"})[0]
+                          {"run_id": "t", "source_id": PUBLISHED_ID,
+                           "source_sha": BOOK_SHA, "gate_command": "g"})[0]
         doc = yaml.safe_load(t.text)
-        self.assertEqual(doc["id"], "exercise-1_1_1")
+        self.assertEqual(doc["id"], SLUG_PREFIX + "exercise-1_1_1")
         self.assertEqual(doc["status"], "open")
         self.assertEqual(doc["priority"], "default")
         self.assertEqual(doc["depends_on"], [])
@@ -881,11 +1057,13 @@ class TestPrompts(unittest.TestCase):
         preset = presets_mod.get(preset_name)
         kw = dict(
             run_id="r1",
+            source_id=PUBLISHED_ID,
+            source_sha=BOOK_SHA,
+            source_edition="AMS GSM 126 (published pagination)",
             book_citation="A Book (GSM 126)",
-            book_text="/home/x/book/book.txt",
-            book_sha=BOOK_SHA,
+            book_text=f"/home/x/sources/{PUBLISHED_ID}/text.txt",
             page_offset=16,
-            companions=[{"name": "ours", "path": "/home/x/sources/ours", "files": "Src/*.lean"}],
+            companions=[{"name": "ours", "path": "/home/x/repos/ours", "files": "Src/*.lean"}],
             gate_command="python3 /home/x/gate/verify_findings.py",
         )
         kw.update(over)
@@ -937,17 +1115,67 @@ class TestPrompts(unittest.TestCase):
             for fname, text in rp.render_prompts(preset, ctx).items():
                 self.assertNotIn("{{", text, f"{name}/{fname} has an unfilled slot")
 
+    def test_the_prompt_names_the_source_not_the_book(self):
+        """A worker on a host carrying two editions must know which it reads.
+
+        The header carries the source_id, its edition label and the first eight
+        characters of its sha, and the worker writes `source_id` into every
+        finding -- the gate then checks the quote against that source's text and
+        no other.
+        """
+        preset, ctx = self.ctx("attack-hunt")
+        system = rp.render_prompts(preset, ctx)["worker-system.md"]
+        self.assertIn(PUBLISHED_ID, system)
+        self.assertIn("AMS GSM 126 (published pagination)", system)
+        self.assertIn(f"sha256 `{BOOK_SHA[:8]}`", system)   # sha8 in the header
+        self.assertIn(f"/home/x/sources/{PUBLISHED_ID}/text.txt", system)
+        # ... and the shape the worker must emit, stamped with the full digest
+        self.assertIn('"source_id": "%s"' % PUBLISHED_ID, system)
+        self.assertIn('"source_sha": "%s"' % BOOK_SHA, system)
+        self.assertNotIn('"book_sha"', system)
+
+    def test_a_second_source_changes_every_slot_that_names_one(self):
+        """Two runs over two editions must not render the same system prompt."""
+        published = rp.render_prompts(*self.ctx("attack-hunt"))["worker-system.md"]
+        draft = rp.render_prompts(*self.ctx(
+            "attack-hunt", source_id=DRAFT_ID, source_sha=DRAFT_SHA,
+            source_edition="2011-01-24 draft",
+            book_text=f"/home/x/sources/{DRAFT_ID}/text.txt"))["worker-system.md"]
+        self.assertNotEqual(published, draft)
+        self.assertIn(DRAFT_ID, draft)
+        self.assertNotIn(PUBLISHED_ID, draft)
+
 
 # --------------------------------------------------------------------------- #
-# plan-run end to end, on a synthetic campaign
+# plan-run end to end, on a synthetic TWO-SOURCE workspace
 # --------------------------------------------------------------------------- #
 class TestPlanRunEndToEnd(unittest.TestCase):
+    """A workspace with two companions and two sources, one of them shared.
+
+    ``ours`` and ``peer`` both audit the published edition; ``ours`` also
+    carries the 2011 draft.  So exactly one source is shared, a differential is
+    possible over that one alone, and ``--source`` decides which edition an
+    attack run on ``ours`` audits (S1.3, S7.2).  ``pairs/`` is per source, so
+    ``Exercise 1.2.4`` exists twice on disk and the two task sets must not
+    overwrite each other.
+    """
+
     def setUp(self):
+        from cflib.workspace import Workspace
+
         self.tmp = tempfile.TemporaryDirectory(dir=TMPDIR)
-        self.root = pathlib.Path(self.tmp.name) / "campaign"
-        (self.root / "book" / "mini").mkdir(parents=True)
-        (self.root / "book" / "mini" / "book.txt").write_text(MINI_BOOK, encoding="utf-8")
-        (self.root / "pairs").mkdir()
+        self.root = pathlib.Path(self.tmp.name) / "ws"
+        self.root.mkdir(parents=True)
+        (self.root / "workspace.yaml").write_text(
+            "version: 2\nworkspace:\n  name: mini\ncompanions: {}\nsources: {}\n",
+            encoding="utf-8")
+        ws = Workspace.load(self.root)
+        p = ws.paths
+        for sid in (PUBLISHED_ID, DRAFT_ID):
+            p.source_dir(sid).mkdir(parents=True, exist_ok=True)
+            p.source_text(sid).write_text(MINI_BOOK, encoding="utf-8")
+            p.source_errata_md(sid).write_text("# errata\n", encoding="utf-8")
+
         # Real (tiny) Lean repos: plan-run builds the gate's declaration index
         # from the companion sources, and an index that does not cover every
         # repo of the run is deliberately not used at all.
@@ -960,43 +1188,67 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             (src / "A.lean").write_text(body + "private theorem helper : True := trivial\n",
                                         encoding="utf-8")
         for name in ("ours", "peer"):
-            d = self.root / "companions" / name
+            d = p.companion_dir(name)
             d.mkdir(parents=True)
             (d / "adapter.yaml").write_text(f"name: {name}\n", encoding="utf-8")
             (d / "conventions.md").write_text(CONVENTIONS, encoding="utf-8")
             (d / "statements.jsonl").write_text(
-                json.dumps({"item": "Exercise 1.2.4", "decl": "a", "repo": name}) + "\n",
+                json.dumps({"item": "Exercise 1.2.4", "decl": "a", "repo": name,
+                            "source_id": PUBLISHED_ID, "source_sha": BOOK_SHA}) + "\n",
                 encoding="utf-8")
-        (self.root / "campaign.yaml").write_text(
-            "version: 1\n"
-            "book:\n  id: mini\n  title: A Book\n  offset: 16\n"
-            f"  sha256: {BOOK_SHA}\n  chapters: [1]\n"
-            "companions:\n"
-            f"  - name: ours\n    repo: {self.repos / 'ours'}\n    glob: Src/*.lean\n"
-            f"  - name: peer\n    repo: {self.repos / 'peer'}\n    glob: Peer/*.lean\n"
-            "hosts:\n  allowlist: [ffbox]\n  agentbox_profile: someone\n"
-            "  ffbox:\n    ssh: someone@ffbox\n    remote_root: /home/someone\n"
-            "models:\n  worker: claude-sonnet-5\n  reviewer: claude-opus-5\n"
-            "budget:\n  billing_path: subscription\n  max_cost_usd: 50\n",
-            encoding="utf-8")
-        (self.root / "pairs" / "queue.json").write_text(json.dumps([
+
+        ws.upsert_source(PUBLISHED_ID, sha256=BOOK_SHA, title="A Book",
+                         edition="AMS GSM 126 (published pagination)", offset=16,
+                         offset_confidence=0.99, offset_method="running_head_mode",
+                         kinds=["Definition", "Lemma", "Exercise"], chapters=[1],
+                         role="audited", confirmed=True)
+        ws.upsert_source(DRAFT_ID, sha256=DRAFT_SHA, title="A Book",
+                         edition="2011-01-24 draft", offset=16, offset_confidence=0.99,
+                         offset_method="running_head_mode",
+                         kinds=["Definition", "Lemma", "Exercise"], chapters=[1],
+                         role="audited", confirmed=False)
+        ws.upsert_companion("ours", repo=str(self.repos / "ours"),
+                            adapter="docstring_tags",
+                            sources=[PUBLISHED_ID, DRAFT_ID],
+                            anchor_source=PUBLISHED_ID, write_policy="read_only")
+        ws.upsert_companion("peer", repo=str(self.repos / "peer"),
+                            adapter="docstring_tags", sources=[PUBLISHED_ID],
+                            anchor_source=PUBLISHED_ID, write_policy="read_only")
+        ws.data["hosts"] = {"allowlist": ["ffbox"], "agentbox_profile": "someone",
+                            "ffbox": {"ssh": "someone@ffbox",
+                                      "remote_root": "/home/someone"}}
+        ws.data["models"] = {"worker": "claude-sonnet-5", "reviewer": "claude-opus-5"}
+        ws.data["budget"] = {"billing_path": "subscription", "max_cost_usd": 50}
+        ws.save()
+        self.ws = Workspace.load(self.root)
+        self.assertEqual(self.ws.validate(), [])
+
+        for sid in (PUBLISHED_ID, DRAFT_ID):
+            self._write_pairs(p, sid)
+
+    def _write_pairs(self, p, source_id: str) -> None:
+        """One pairs/<source_id>/ tree: the same labels under a different source."""
+        p.pairs_dir(source_id).mkdir(parents=True, exist_ok=True)
+        p.queue_json(source_id).write_text(json.dumps([
             {"item": "Exercise 1.2.4", "repos": ["ours", "peer"],
              "decls": {"ours": ["elem_union"], "peer": ["union_elem"]}, "book_page": 24},
         ]), encoding="utf-8")
-        (self.root / "pairs" / "targets.ours.json").write_text(json.dumps([
+        p.targets_json(source_id, "ours").write_text(json.dumps([
             {"item": "Exercise 1.2.4", "decls": ["elem_union"], "peers": ["peer"],
              "single_source": False, "book_page": 24, "section": "1.2"},
             {"item": "Lemma 1.2.5", "decls": ["lemma5"], "peers": [], "single_source": True,
              "book_page": 25, "section": "1.2"},
         ]), encoding="utf-8")
-        (self.root / "pairs" / "targets.peer.json").write_text(json.dumps([
+        p.targets_json(source_id, "peer").write_text(json.dumps([
             {"item": "Exercise 1.2.4", "decls": ["union_elem"], "peers": ["ours"],
              "single_source": False, "book_page": 24, "section": "1.2"},
         ]), encoding="utf-8")
         # `cf pair` writes this; plan-run REFUSES a differential run without it,
         # because an unreconciled plan is the 382-vs-383 state the gate exists for.
-        (self.root / "pairs" / "reconciliation.json").write_text(json.dumps({
-            "book_sha": BOOK_SHA, "task_universe": 2,
+        p.reconciliation_json(source_id).write_text(json.dumps({
+            "source_id": source_id,
+            "source_sha": BOOK_SHA if source_id == PUBLISHED_ID else DRAFT_SHA,
+            "task_universe": 2,
             "task_universe_items": ["Exercise 1.2.4", "Lemma 1.2.5"],
         }), encoding="utf-8")
 
@@ -1007,11 +1259,12 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         from cfcmd import plan_run
 
         class A:
-            campaign = str(self.root)
+            workspace = str(self.root)
             preset = "attack-hunt"
             host = "local"
             model = None
             companion = "ours"
+            source_id = PUBLISHED_ID
             run_id = "r1"
             chapters = None
             max_open_tasks = None
@@ -1023,6 +1276,9 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         for k, v in over.items():
             setattr(A, k, v)
         return plan_run.run(A())
+
+    def slug(self, source_id: str, tail: str) -> str:
+        return f"{cfitems.source_slug(source_id)}--{tail}"
 
     def read_run(self):
         import yaml
@@ -1037,12 +1293,18 @@ class TestPlanRunEndToEnd(unittest.TestCase):
                     "tend-root/bin/worker-agent.sh", "tend-root/gate/verify_findings.py",
                     "tend-root/gate/gate.json", "prompts/worker-system.md"):
             self.assertTrue((rd / rel).exists(), rel)
-        self.assertEqual(sorted(p.name for p in (rd / "tasks").glob("*.yaml")),
-                         ["exercise-1-2-4.yaml", "lemma-1-2-5.yaml"])
+        self.assertEqual(
+            sorted(p.name for p in (rd / "tasks").glob("*.yaml")),
+            [self.slug(PUBLISHED_ID, "exercise-1-2-4.yaml"),
+             self.slug(PUBLISHED_ID, "lemma-1-2-5.yaml")])
         gate = json.loads((rd / "gate.json").read_text())
         self.assertEqual(gate["mode"], "attack")
         self.assertTrue(gate["witness_required"])
-        self.assertEqual(gate["book"]["sha256"], BOOK_SHA)
+        # gate.json carries a MAP of sources, and this run audits exactly one.
+        self.assertEqual(list(gate["sources"]), [PUBLISHED_ID])
+        self.assertEqual(gate["sources"][PUBLISHED_ID]["sha256"], BOOK_SHA)
+        self.assertEqual(gate["sources"][PUBLISHED_ID]["page_offset"], 16)
+        self.assertNotIn("book", gate)
         self.assertNotIn("PAGE_ANCHOR", gate["kinds"])
 
     def test_run_yaml_records_prompt_shas_and_consent(self):
@@ -1057,11 +1319,13 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.assertEqual(doc["disk"]["concurrent_worktrees"], 2)
 
     def test_idempotent(self):
+        task = (self.root / "runs" / "r1" / "tasks"
+                / self.slug(PUBLISHED_ID, "exercise-1-2-4.yaml"))
         self.plan()
-        first = (self.root / "runs" / "r1" / "tasks" / "exercise-1-2-4.yaml").read_text()
+        first = task.read_text()
         shas = self.read_run()["prompts"]
         self.plan()
-        self.assertEqual((self.root / "runs" / "r1" / "tasks" / "exercise-1-2-4.yaml").read_text(), first)
+        self.assertEqual(task.read_text(), first)
         self.assertEqual(self.read_run()["prompts"], shas)
 
     def test_remote_host_paths_and_consent_recorded(self):
@@ -1075,8 +1339,12 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.assertNotIn("scripts/verify_findings.py", config)
         self.assertIn("entrypoint: /home/someone/r1", config)
         prompt = (self.root / "runs" / "r1" / "prompts" / "worker-system.md").read_text()
-        self.assertIn("/home/someone/book/mini/book.txt", prompt)
-        self.assertIn("/home/someone/sources/ours", prompt)
+        # The source text lives under sources/<id>/ and the companion Lean under
+        # repos/<name>/: a companion named after a source cannot land on top of
+        # the text the gate checks quotes against.
+        self.assertIn(f"/home/someone/sources/{PUBLISHED_ID}/text.txt", prompt)
+        self.assertIn("/home/someone/repos/ours", prompt)
+        self.assertNotIn("/home/someone/sources/ours", prompt)
 
     def test_unknown_host_is_refused(self):
         with self.assertRaises(CfError) as cm:
@@ -1086,15 +1354,70 @@ class TestPlanRunEndToEnd(unittest.TestCase):
     def test_differential_preset_uses_the_merged_universe(self):
         self.assertEqual(self.plan(preset="differential-text", companion=None), 0)
         names = sorted(p.stem for p in (self.root / "runs" / "r1" / "tasks").glob("*.yaml"))
-        self.assertEqual(names, ["exercise-1_2_4", "lemma-1_2_5"])
+        self.assertEqual(names, [self.slug(PUBLISHED_ID, "exercise-1_2_4"),
+                                 self.slug(PUBLISHED_ID, "lemma-1_2_5")])
         doc = self.read_run()
         self.assertEqual(doc["tasks"]["differential"], 1)
         self.assertEqual(doc["tasks"]["single_source"], 1)
         self.assertEqual(doc["mode"], "differential")
+        # run.yaml records the sources as a LIST: `cf run` decides from it what
+        # leaves this machine, and `cf harvest` checks the landed corpus.
+        self.assertEqual([s["id"] for s in doc["sources"]], [PUBLISHED_ID])
+        self.assertEqual(doc["sources"][0]["sha256"], BOOK_SHA)
+
+    def test_a_differential_run_is_scoped_to_the_SHARED_source(self):
+        """A differential is possible exactly where two source lists overlap.
+
+        ``ours`` audits both editions and ``peer`` only the published one, so
+        ``--source`` is not needed: the intersection is a single source, and
+        naming the draft -- which ``peer`` does not audit -- is refused.
+        """
+        self.assertEqual(self.ws.shared_sources(), {PUBLISHED_ID: ["ours", "peer"]})
+        self.assertEqual(self.plan(preset="differential-text", companion=None,
+                                   source_id=None), 0)
+        self.assertEqual([s["id"] for s in self.read_run()["sources"]], [PUBLISHED_ID])
+        with self.assertRaises(CfError) as cm:
+            self.plan(preset="differential-text", companion=None, source_id=DRAFT_ID,
+                      run_id="r2")
+        self.assertIn("peer", str(cm.exception))
+        self.assertIn("not audited against", str(cm.exception))
+
+    def test_a_companion_auditing_two_sources_must_say_which(self):
+        """An attack run on `ours` alone shares two sources, so --source decides."""
+        with self.assertRaises(CfError) as cm:
+            self.plan(companion="ours", source_id=None)
+        self.assertIn("share 2 sources", str(cm.exception))
+        self.assertIn(DRAFT_ID, str(cm.exception))
+        self.assertIn("--source", cm.exception.hint or "")
+        # naming one settles it
+        self.assertEqual(self.plan(companion="ours", source_id=DRAFT_ID), 0)
+
+    def test_the_two_sources_task_sets_do_not_overwrite_each_other(self):
+        """`Exercise 1.2.4` exists in both editions; one tasks/ holds both runs.
+
+        The task id is qualified by the source, so planning the same labels
+        against the draft writes different files -- and their task bodies name
+        different editions.
+        """
+        self.assertEqual(self.plan(run_id="pub", source_id=PUBLISHED_ID), 0)
+        self.assertEqual(self.plan(run_id="dft", source_id=DRAFT_ID), 0)
+        pub = self.root / "runs" / "pub" / "tasks"
+        dft = self.root / "runs" / "dft" / "tasks"
+        self.assertEqual(sorted(p.name for p in pub.glob("*.yaml")),
+                         [self.slug(PUBLISHED_ID, "exercise-1-2-4.yaml"),
+                          self.slug(PUBLISHED_ID, "lemma-1-2-5.yaml")])
+        self.assertEqual(sorted(p.name for p in dft.glob("*.yaml")),
+                         [self.slug(DRAFT_ID, "exercise-1-2-4.yaml"),
+                          self.slug(DRAFT_ID, "lemma-1-2-5.yaml")])
+        self.assertEqual(set(p.name for p in pub.glob("*.yaml"))
+                         & set(p.name for p in dft.glob("*.yaml")), set())
+        body = (dft / self.slug(DRAFT_ID, "exercise-1-2-4.yaml")).read_text()
+        self.assertIn(DRAFT_ID, body)
+        self.assertNotIn(PUBLISHED_ID, body)
 
     def test_a_differential_plan_without_a_reconciliation_is_refused(self):
         """It used to skip the check entirely, with no warning."""
-        (self.root / "pairs" / "reconciliation.json").unlink()
+        self.ws.paths.reconciliation_json(PUBLISHED_ID).unlink()
         with self.assertRaises(CfError) as cm:
             self.plan(preset="differential-text", companion=None)
         self.assertIn("task universe is unknown", str(cm.exception))
@@ -1102,17 +1425,25 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             self.plan(preset="differential-text", companion=None,
                       allow_unreconciled=True), 0)
 
+    def test_the_other_source_s_reconciliation_does_not_stand_in(self):
+        """pairs/ is per source: the draft's reconciliation says nothing here."""
+        self.ws.paths.reconciliation_json(PUBLISHED_ID).unlink()
+        self.assertTrue(self.ws.paths.reconciliation_json(DRAFT_ID).exists())
+        with self.assertRaises(CfError) as cm:
+            self.plan(preset="differential-text", companion=None)
+        self.assertIn(PUBLISHED_ID, str(cm.exception))
+
     def test_an_old_reconciliation_without_the_key_is_refused(self):
-        (self.root / "pairs" / "reconciliation.json").write_text(
-            json.dumps({"book_sha": BOOK_SHA, "pairs": 1}), encoding="utf-8")
+        self.ws.paths.reconciliation_json(PUBLISHED_ID).write_text(
+            json.dumps({"source_sha": BOOK_SHA, "pairs": 1}), encoding="utf-8")
         with self.assertRaises(CfError) as cm:
             self.plan(preset="differential-text", companion=None)
         self.assertIn("task_universe", str(cm.exception))
 
     def test_a_dropped_item_is_NAMED_not_counted(self):
         """The count-only check could say 382-vs-383 but never which item."""
-        (self.root / "pairs" / "reconciliation.json").write_text(json.dumps({
-            "book_sha": BOOK_SHA, "task_universe": 3,
+        self.ws.paths.reconciliation_json(PUBLISHED_ID).write_text(json.dumps({
+            "source_id": PUBLISHED_ID, "source_sha": BOOK_SHA, "task_universe": 3,
             "task_universe_items": ["Exercise 1.2.4", "Lemma 1.2.5", "Exercise 1.3.19"],
         }), encoding="utf-8")
         with self.assertRaises(CfError) as cm:
@@ -1121,7 +1452,8 @@ class TestPlanRunEndToEnd(unittest.TestCase):
 
     def test_an_attack_plan_reconciles_against_the_target_item_set(self):
         """`len(entries) == len(targets)` was tautological; the item SET is not."""
-        targets = json.loads((self.root / "pairs" / "targets.ours.json").read_text())
+        targets = json.loads(
+            self.ws.paths.targets_json(PUBLISHED_ID, "ours").read_text())
         self.assertEqual(self.plan(preset="attack-hunt", companion="ours"), 0)
         names = sorted(p.stem for p in (self.root / "runs" / "r1" / "tasks").glob("*.yaml"))
         self.assertEqual(len(names), len(targets))
@@ -1131,7 +1463,8 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.plan()
         rd = self.root / "runs" / "r1"
         index = json.loads((rd / "decl-index.json").read_text())
-        self.assertEqual(index["_meta"]["sources"]["ours"], "lean-source")
+        # `origins`, not `sources`: in this model `sources` means the books.
+        self.assertEqual(index["_meta"]["origins"]["ours"], "lean-source")
         self.assertIn("elem_union", index["ours"])
         self.assertIn("helper", index["ours"])          # untagged private helper
         gate = json.loads((rd / "gate.json").read_text())
@@ -1144,9 +1477,10 @@ class TestPlanRunEndToEnd(unittest.TestCase):
 
     def test_a_partial_index_is_not_used_at_all(self):
         """An index missing one repo would reject every finding naming that repo."""
-        import shutil as _shutil
-
-        _shutil.rmtree(self.repos / "peer")
+        # Empty the repo rather than delete it: workspace.yaml validation refuses
+        # a companion whose repo is not a directory, so the partial-index case has
+        # to be a repo with no readable Lean, which is what it is in practice.
+        (self.repos / "peer" / "Src" / "A.lean").unlink()
         self.plan(preset="differential-text", companion=None)
         rd = self.root / "runs" / "r1"
         self.assertIsNone(json.loads((rd / "gate.json").read_text())["decl_index"])
@@ -1186,7 +1520,8 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         idx.write_text(json.dumps({"ours": ["Real.name", "Private.helper"]}), encoding="utf-8")
         loaded = vf._load_decl_index(str(idx))
         self.assertEqual(loaded, {"ours:Real.name", "ours:Private.helper"})
-        cfg = gate_cfg("attack-vac", BOOK_TXT or (self.root / "book" / "mini" / "book.txt"),
+        cfg = gate_cfg("attack-vac",
+                       BOOK_TXT or self.ws.paths.source_text(PUBLISHED_ID),
                        repos=["ours"], decl_index=str(idx))
         book = vf.BookText(vf.norm(MINI_BOOK))
         good = mini_doc()
@@ -1230,9 +1565,27 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         cfg = vf.GateConfig(json.loads((rd / "gate.local.json").read_text()))
         doc = mini_doc(run_id="r1")
         doc["disagreements"][0]["repos_involved"] = ["ours"]
-        book, errs = vf.load_book(cfg)
+        books, errs = vf.load_sources(cfg)
         self.assertEqual(errs, [])
-        self.assertEqual(vf.validate_doc(doc, "x", cfg, book), [])
+        self.assertEqual(list(books), [PUBLISHED_ID])
+        self.assertEqual(vf.validate_doc(doc, "x", cfg, books), [])
+
+    def test_the_run_s_own_gate_refuses_a_finding_stamped_with_the_other_edition(self):
+        """The draft is in this workspace but not in this run: a document
+        carrying its id or its sha was judged against a text this gate does not
+        hold, and passing it would launder one edition's quote as another's."""
+        self.plan()
+        cfg = vf.GateConfig(json.loads(
+            (self.root / "runs" / "r1" / "gate.local.json").read_text()))
+        books, _ = vf.load_sources(cfg)
+        wrong_id = mini_doc(run_id="r1", source_id=DRAFT_ID, source_sha=DRAFT_SHA)
+        wrong_id["disagreements"][0]["repos_involved"] = ["ours"]
+        errs = vf.validate_doc(wrong_id, "x", cfg, books)
+        self.assertTrue(any("not one of this run's sources" in e for e in errs), errs)
+        wrong_sha = mini_doc(run_id="r1", source_sha=DRAFT_SHA)
+        wrong_sha["disagreements"][0]["repos_involved"] = ["ours"]
+        self.assertTrue(any("wrong edition" in e
+                            for e in vf.validate_doc(wrong_sha, "x", cfg, books)))
 
 
 @unittest.skipIf(TEND is None, "CF_TEND unset (no tend checkout to verify against)")
@@ -1242,20 +1595,21 @@ class TestTendTaskVerify(unittest.TestCase):
     def test_generated_tasks_pass_tend_task_verify(self):
         entries = [
             mt.Entry(item="Exercise 1.1.1", repos=["ours", "teorth"],
-                     decls={"ours": ["a"], "teorth": ["b"]}, printed_page=12,
-                     single_source=False, peers=["teorth"]),
+                     decls={"ours": ["a"], "teorth": ["b"]}, source_id=PUBLISHED_ID,
+                     printed_page=12, single_source=False, peers=["teorth"]),
             mt.Entry(item="Corollary 1.5.10", repos=["ours"], decls={"ours": ["c"]},
-                     printed_page=124),
+                     source_id=PUBLISHED_ID, printed_page=124),
             mt.Entry(item="In-text, book p. 18", repos=["ours"], decls={"ours": ["d"]},
-                     printed_page=18),
+                     source_id=PUBLISHED_ID, printed_page=18),
         ]
         with tempfile.TemporaryDirectory(dir=TMPDIR) as d:
             out = pathlib.Path(d) / "tasks"
             for preset_name in ("differential-text", "attack-hunt", "attack-vac"):
                 preset = presets_mod.get(preset_name)
                 tasks = mt.make_tasks(entries, preset, {
-                    "run_id": "t", "book_sha": BOOK_SHA, "gate_command": "python3 g.py",
-                    "companion": "ours", "total_functions_sentence": "This repo: totals.",
+                    "run_id": "t", "source_id": PUBLISHED_ID, "source_sha": BOOK_SHA,
+                    "gate_command": "python3 g.py", "companion": "ours",
+                    "total_functions_sentence": "This repo: totals.",
                 }, max_open_tasks=2)
                 if out.exists():
                     for p in out.glob("*.yaml"):
