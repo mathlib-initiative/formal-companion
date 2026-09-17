@@ -865,6 +865,36 @@ class TestHandoff(unittest.TestCase):
         self.assertIn("python3 scripts/cf.py route", text)
         self.assertTrue(os.path.exists(report["path"]))
 
+    def test_one_run_gets_one_row_even_when_two_tallies_cover_it(self):
+        """`cf tally` writes tally.all.json; harvest and detect-proxies write
+        tally.<run>.json. Both cover the same run, and section 3 printed the
+        run once per file -- the same numbers twice, for the reader to
+        reconcile. A run is one run.
+        """
+        with open(os.path.join(self.root, "reports", "tally.hunt.json")) as fh:
+            data = json.load(fh)
+        compat.write_json(os.path.join(self.root, "reports", "tally.all.json"), data)
+        text = handoff_mod.make_handoff(self.root, date="2026-09-16")["text"]
+        row = "| `%s` | `hunt` | 1 |" % PUBLISHED_ID
+        self.assertEqual(text.count(row), 1, "the same run was printed twice")
+        # the per-TALLY totals table still shows both files: that one is about
+        # the files, and it names them
+        self.assertIn("tally.all.json", text)
+        self.assertIn("tally.hunt.json", text)
+        self.assertNotIn("Stale tally", text)
+
+    def test_two_tallies_that_disagree_are_named_not_merged(self):
+        """A disagreement means one of them is stale, and that is a fact."""
+        with open(os.path.join(self.root, "reports", "tally.hunt.json")) as fh:
+            data = json.load(fh)
+        data["repos"]["adam"]["sources"][PUBLISHED_ID]["per_run"]["hunt"] = {
+            "rows": 9, "items": 9, "collapsed_items": 9}
+        compat.write_json(os.path.join(self.root, "reports", "tally.all.json"), data)
+        text = handoff_mod.make_handoff(self.root, date="2026-09-16")["text"]
+        self.assertIn("Stale tally", text)
+        self.assertIn("tally.all.json", text)
+        self.assertIn("cf tally", text)
+
     def test_missing_artifacts_become_visible_todos(self):
         report = handoff_mod.make_handoff(self.root, date="2026-09-16")
         self.assertTrue(report["todos"], "an empty workspace must not look complete")

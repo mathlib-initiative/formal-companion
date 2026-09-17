@@ -780,6 +780,29 @@ class CommandEndToEndTest(unittest.TestCase):
         self.assertEqual(state["coverage"]["def_bridge_only"], 4)
         self.assertEqual(state["detect"]["cheap"]["stated"], 32)
 
+    def test_the_emitted_corpus_reaches_the_tally(self):
+        """`cf report` reads reports/tally.*.json and nothing else.
+
+        The documented order is tally, detect-proxies, route, report, so the
+        tally always predated the detector's rows: a companion whose only
+        findings came from the detector printed `TODO(tally for <name>)` in the
+        handoff while its corpus sat on disk.  `cf harvest` and
+        `cf import-corpus` both re-tally what they land; so does this now.
+        """
+        self.assertEqual(self._run("--run-id", "d-tally"), 0)
+        tally = self.root / "reports" / "tally.d-tally.json"
+        self.assertTrue(tally.exists(), "the emitted corpus was never tallied")
+        data = json.loads(tally.read_text())
+        self.assertIn("d-tally", data["runs"])
+        entry = data["repos"]["ours"]["sources"][PUBLISHED_ID]
+        self.assertEqual(entry["rows"], 4)      # the four bridge-only Definitions
+        self.assertEqual(entry["by_kind"], {vocab.COVERAGE: 4})
+
+    def test_no_tally_skips_it(self):
+        self.assertEqual(self._run("--run-id", "d-quiet", "--no-tally"), 0)
+        self.assertTrue((self.root / "corpus" / "d-quiet").is_dir())
+        self.assertFalse((self.root / "reports" / "tally.d-quiet.json").exists())
+
     def test_the_other_source_gets_its_own_tree_and_its_own_stamp(self):
         """One companion, two editions: two detector runs that never collide."""
         self.assertEqual(self._run("--source", PUBLISHED_ID, "--run-id", "d-pub"), 0)

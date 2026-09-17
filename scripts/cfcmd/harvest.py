@@ -135,18 +135,78 @@ def _check_remote_source(workspace, args, source: dict) -> None:
             hint="this moves data from a machine you may not own onto this one")
 
 
-def gate_runner(workspace, args):
-    """A callable harvest() invokes on the landed corpus, or None when --gate is off."""
+def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
+    """A callable harvest() invokes on the landed corpus, or None when --gate is off.
+
+    ``--gate-config`` always wins.  Otherwise a run this workspace PLANNED has a
+    ``runs/<id>/gate.local.json`` and that is used.  A run it did not plan -- an
+    imported v1 corpus -- has none, and the two presets written for imported
+    corpora (``differential-legacy``, ``attack-legacy``) are gate-only, so
+    ``cf plan-run`` refuses to write one for them either.  ``--gate`` was
+    therefore unreachable for exactly the corpora it exists to check.  When the
+    caller says which preset and which sources the import was attributed to, the
+    config is built from those and written next to the corpus it judged, so the
+    receipt names a file a human can re-run.
+    """
     if not getattr(args, "gate", False):
         return None
-    config = args.gate_config or Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
+    explicit = getattr(args, "gate_config", None)
+    planned = Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
+    config = Path(explicit).expanduser() if explicit else planned
 
     def _run_gate(dest: Path) -> dict:
-        result = gate_mod.gate_corpus(dest, config)
+        cfg = config
+        if not explicit and not cfg.exists():
+            cfg = write_local_gate(workspace, dest, run_id=args.run_id,
+                                   preset=preset, sources=sources, repos=repos)
+        result = gate_mod.gate_corpus(dest, cfg)
         log.info(gate_mod.render(result))
         return result
 
     return _run_gate
+
+
+def write_local_gate(workspace, dest: Path, *, run_id: str, preset: str, sources,
+                     repos=None) -> Path:
+    """Write a gate.local.json for a corpus nothing planned, and return its path.
+
+    Every path in it is LOCAL: the source text this workspace prepared, and its
+    own page images when the preset reads them.  ``gate.local.json`` is already
+    in ``NON_FINDING_FILES``, so leaving it in the corpus directory does not make
+    it look like a finding.
+    """
+    from plan import presets as presets_mod
+
+    if not preset:
+        raise CfError(
+            f"--gate has no gate config for run {run_id!r}",
+            hint="`cf plan-run` writes runs/<id>/gate.local.json for a run it planned; "
+                 "for an imported corpus pass --preset (so the gate knows which rules "
+                 "to apply) or --gate-config <file>")
+    obj = presets_mod.get(preset)
+    blocks = {}
+    for source_id in sorted(sources or {}):
+        source = workspace.source(source_id)
+        images = workspace.paths.source_images_dir(source_id)
+        blocks[source_id] = {
+            "text": str(workspace.paths.source_text(source_id)),
+            "sha256": (sources or {}).get(source_id) or source.sha256 or "",
+            "text_sha256": source.text_sha256,
+            "images_dir": str(images) if obj.needs_images and images.is_dir() else None,
+            "page_offset": source.offset,
+        }
+    # The repos of the CORPUS, not of the workspace: an imported corpus names the
+    # repos it was judged over, and a baseline run's `ours`/`teorth`/`adam` are not
+    # this workspace's companions.  Gating it against the workspace's names would
+    # reject every row for naming a repo the gate had not been told about.
+    config = presets_mod.gate_config(
+        obj, run_id=run_id, sources=blocks,
+        repos=list(repos) if repos else list(workspace.companion_names()))
+    path = Path(dest) / "gate.local.json"
+    write_json(path, config, indent=2)
+    log.detail(f"  gate: built {preset} config for {', '.join(blocks) or '(no source)'} "
+               f"-> {path}")
+    return path
 
 
 def _default_source(workspace, args, data: dict) -> dict:

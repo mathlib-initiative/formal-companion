@@ -308,6 +308,14 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
         blocks += ["### `%s`" % name, ""]
         per_run_rows: list[list[Any]] = []
         totals: list[list[Any]] = []
+        # A run is counted by every tally file that covers it -- `cf harvest` and
+        # `cf detect-proxies` write reports/tally.<run>.json, `cf tally` writes
+        # tally.all.json over every run -- so the same (source, run) arrives more
+        # than once. It is ONE run and gets ONE row; two tallies that disagree
+        # about it mean one of them is stale, which is said out loud below rather
+        # than printed as two rows the reader has to reconcile.
+        seen_runs: dict[tuple[str, str], tuple[list[Any], str]] = {}
+        stale: list[str] = []
         for tally in tallies:
             entry = (tally.get("repos") or {}).get(name)
             if not isinstance(entry, dict):
@@ -319,11 +327,21 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
                 for run_id, counts in sorted((block.get("per_run") or {}).items()):
                     if not counts.get("rows"):
                         continue
-                    per_run_rows.append(
-                        ["`%s`" % (source_id or "(unstamped)"), "`%s`" % run_id,
-                         counts.get("rows"), counts.get("items"),
-                         counts.get("collapsed_items")]
-                    )
+                    row = ["`%s`" % (source_id or "(unstamped)"), "`%s`" % run_id,
+                           counts.get("rows"), counts.get("items"),
+                           counts.get("collapsed_items")]
+                    key = (source_id or "", run_id)
+                    previous = seen_runs.get(key)
+                    if previous is None:
+                        seen_runs[key] = (row, os.path.basename(tally["file"]))
+                        per_run_rows.append(row)
+                    elif previous[0][2:] != row[2:]:
+                        stale.append(
+                            "`%s` / `%s`: %s says %s row(s), %s says %s -- one of them is "
+                            "stale; re-run `cf tally`."
+                            % (source_id or "(unstamped)", run_id, previous[1],
+                               previous[0][2], os.path.basename(tally["file"]), row[2])
+                        )
                 raw = block.get("raw") or {}
                 totals.append(
                     [
@@ -341,6 +359,8 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
         if per_run_rows:
             blocks += [_table(["source", "run", "rows", "raw items", "source items"],
                               per_run_rows), ""]
+        for note in stale:
+            blocks += ["> **Stale tally.** " + note, ""]
         if totals:
             blocks += [
                 _table(["tally", "source", "rows", "items", "substantive", "high",

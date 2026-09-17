@@ -353,9 +353,9 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
     repos = sorted({str(r.get("repo") or "") for r in rows if r.get("repo")})
     pages = {item: (entry.get("page") if isinstance(entry, dict) else None)
              for item, entry in (index_by_item or {}).items()}
-    docs = _documents(mech_corpus, rows, companion=repos[0] if repos else "",
-                      run_id=run_id, source_id=source_id, source_sha=source_sha,
-                      items_pages={k: v for k, v in pages.items() if v})
+    docs = mech_corpus.documents(rows, companion=repos[0] if repos else "",
+                                 run_id=run_id, source_id=source_id, source_sha=source_sha,
+                                 items_pages={k: v for k, v in pages.items() if v})
     images = paths.source_images_dir(source_id)
     cfg = vf.GateConfig(presets_mod.gate_config(
         presets_mod.get("mechanical"), run_id=run_id, repos=repos,
@@ -373,9 +373,10 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
             log.info("      - " + problem)
         return
     dest = paths.corpus_run_dir(run_id)
-    receipt = _write_corpus(mech_corpus, docs, dest, run_id=run_id,
-                            companion=",".join(repos), source_sha=source_sha,
-                            counts=anchors["summary"].get("repos", {}))
+    receipt = mech_corpus.write_corpus(docs, dest, run_id=run_id,
+                                       companion=",".join(repos), source_id=source_id,
+                                       source_sha=source_sha,
+                                       counts=anchors["summary"].get("repos", {}))
     for stale in mech_corpus.stale_files(dest, receipt["names"]):
         stale.unlink()
     receipt["source_id"] = source_id
@@ -387,36 +388,6 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
     receipt["expected_from"] = "cf pair: one document per mismatched item of one source"
     mech_corpus.write_json(dest / "RECEIPT.json", receipt, indent=1, sort_keys=True)
     log.info("    anchors: wrote corpus/%s (%d document(s))" % (run_id, len(docs)))
-
-
-# SEAM (design S8, package STAGES-B): ``detect/corpus`` still spells the pinned
-# edition ``book_sha``.  These two wrappers call it by whichever name it takes
-# and stamp ``source_id`` / ``source_sha`` on the document either way -- the gate
-# recomputes finding_id as sha256(run_id, source_id, item, kind, decls) and reads
-# both off the DOCUMENT, so an unstamped one is refused.  Delete them once
-# ``detect.corpus.documents`` takes ``source_id=``/``source_sha=``.
-
-def _documents(mech_corpus, rows, *, companion, run_id, source_id, source_sha, items_pages):
-    try:
-        docs = mech_corpus.documents(rows, companion=companion, run_id=run_id,
-                                     source_id=source_id, source_sha=source_sha,
-                                     items_pages=items_pages)
-    except TypeError:
-        docs = mech_corpus.documents(rows, companion=companion, run_id=run_id,
-                                     book_sha=source_sha, items_pages=items_pages)
-    for doc in docs:
-        doc["source_id"] = source_id
-        doc["source_sha"] = source_sha
-    return docs
-
-
-def _write_corpus(mech_corpus, docs, dest, *, run_id, companion, source_sha, counts):
-    try:
-        return mech_corpus.write_corpus(docs, dest, run_id=run_id, companion=companion,
-                                        source_sha=source_sha, counts=counts)
-    except TypeError:
-        return mech_corpus.write_corpus(docs, dest, run_id=run_id, companion=companion,
-                                        book_sha=source_sha, counts=counts)
 
 
 def main(argv=None) -> int:
