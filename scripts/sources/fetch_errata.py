@@ -135,8 +135,8 @@ def stable_text(source: str) -> str:
 
     HTML comments are dropped and whitespace collapsed: WordPress appends a
     batcache footer ("generated 17 seconds ago", "expires in 283 seconds") that
-    differs on every fetch, and without this every ``cf book`` run would rewrite
-    errata.md and claim the errata had changed.
+    differs on every fetch, and without this every ``cf sources refresh`` would
+    rewrite errata.md and claim the errata had changed.
     """
     return re.sub(r"\s+", " ", _COMMENT.sub("", source)).strip()
 
