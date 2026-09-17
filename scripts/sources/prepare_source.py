@@ -214,6 +214,7 @@ def prepare(
     *,
     source_id: str,
     offset: int | None = None,
+    declared: int | None = None,
     kinds: Sequence[str] | None = None,
     edition: str = "",
     parts: int = 3,
@@ -226,7 +227,15 @@ def prepare(
 
     ``offset=None`` and ``kinds=None`` mean INFER (docs/design/multi-source-model.md
     S5): the offset is the mode of ``pdf_page - running_head`` and the kinds are
-    the capitalised words the source's own numbered headings use.  The returned
+    the capitalised words the source's own numbered headings use.
+
+    ``offset`` is an OVERRIDE (a human's ``cf sources set offset=…``); ``declared``
+    is the number the companion repo's own prose claims, and it is a CROSS-CHECK,
+    never the answer: the running heads still decide, agreement raises the
+    confidence floor, and a contradiction is refused with both numbers quoted.
+    That is why an agreeing declaration leaves ``offset_method`` at
+    ``running_head_mode`` -- the text is what supports the number, and saying
+    "declared" would credit the repo for an inference the pages carried.  The returned
     payload carries ``offset_confidence``, ``offset_method`` and ``kind_counts``
     so the caller can print what it inferred and refuse a weak inference --
     below 0.9 the caller asks rather than guesses, because an offset wrong by one
@@ -271,6 +280,8 @@ def prepare(
         and previous.get("sha256") == sha
         and (offset is None or previous.get("offset") == offset)
         and not declared_over_guess
+        # a cached run that never saw this declaration never ran the cross-check
+        and previous.get("offset_declared") == declared
         and (kinds is None or list(previous.get("kinds") or []) == list(kinds))
         and os.path.exists(txt_path)
         and os.path.exists(items_path)
@@ -294,7 +305,9 @@ def prepare(
     voting_pages = 0
 
     if infer:
-        guess = _infer_offset(pages, declared=offset)
+        # a human's override supersedes the repo's prose: only one of the two is
+        # ever cross-checked against the pages, and it is whichever was given.
+        guess = _infer_offset(pages, declared=(offset if offset is not None else declared))
         if guess is not None:
             if offset is None:
                 offset = guess.offset
@@ -351,6 +364,7 @@ def prepare(
         "offset": offset,
         "offset_confidence": round(float(offset_confidence), 4),
         "offset_method": offset_method,
+        "offset_declared": declared,
         "offset_voting_pages": voting_pages,
         "offset_histogram": histogram,
         "printed_page_rule": "printed = pdf_page - %d" % offset,

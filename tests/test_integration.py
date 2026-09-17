@@ -110,6 +110,24 @@ class TestCommandDiscovery(unittest.TestCase):
             self.assertIn(name, mapping)
         self.assertNotIn("book", mapping)
 
+    def test_every_documented_sources_subcommand_exists(self):
+        """SKILL.md's command index names `sources <sub>` rows; each must parse."""
+        import argparse
+        import re
+
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+        cf_main.discover_commands(subparsers)
+        documented = set(re.findall(r"^\| `sources (\w+)",
+                                    (HERE.parent / "SKILL.md").read_text(), re.M))
+        self.assertIn("remove", documented, "cf sources remove is undocumented")
+        extra = {"show": ["x"], "remove": ["x"], "set": ["x", "y=1"],
+                 "add": ["x.pdf", "--for", "ours"]}
+        for sub in sorted(documented):
+            with self.subTest(sub=sub):
+                args = parser.parse_args(["sources", sub, *extra.get(sub, [])])
+                self.assertEqual(getattr(args, "sources_command"), sub)
+
 
 class TestPairsArtifactsAreWrappers(unittest.TestCase):
     """``cf pair`` writes {..., items: [...]}; planning must unwrap it."""
@@ -806,7 +824,7 @@ class TestExportPolicyIsRead(unittest.TestCase):
         policy = Workspace.load(self.workspace).policy
         self.assertEqual(set(policy),
                          {"publish_unchallenged", "redact_quotes_on_export", "allow_remote",
-                          "allow_download", "require_confirmed_sources"})
+                          "allow_download", "require_confirmed_sources", "allow_errata_fetch"})
 
     def test_require_confirmed_sources_is_enforced_by_plan_run(self):
         """Discovery appends a new source with confirmed: false (R3).

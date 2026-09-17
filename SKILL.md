@@ -64,7 +64,7 @@ page is exactly the defect class this audit exists to find.
 | which edition | sha256 of the actual PDF bytes, looked up in `registry/sources.yaml` |
 | the page offset | the mode of the running-head votes, with a confidence; below 0.9 it refuses (`cflib.inference.MIN_OFFSET_CONFIDENCE`) |
 | the item kinds | the capitalised words that really head numbered items in this source's text |
-| the errata URL | the registry, corroborated by the book page the repo cites; fetched with `curl`, raw HTML kept |
+| the errata URL | the registry, corroborated by the book page the repo cites; fetched with `curl`, raw HTML kept. A URL the REPO supplies waits for `--fetch-errata`: the page reaches workers as authoritative text |
 | the audited scope | the chapters the companions actually tag |
 | the anchor edition | scoring the repo's own page anchors against each candidate edition; prose only corroborates |
 
@@ -128,11 +128,12 @@ checkout actually has.
 | command | one line |
 |---|---|
 | `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No source flags**; only `--name`, `--no-git`, `--allow-nested`, `--force` |
-| `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--anchor-source`, `--download`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path |
+| `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
 | `sources list` | one row per source: id, sha8, edition, offset ± confidence, kinds, items, errata, companions, role, confirmed |
 | `sources show <id>` | the full record: provenance, licence, `same_work` siblings, the page map, the prepared artifacts |
 | `sources add <pdf> --for <companion>` | add a source by hand; fingerprints, registers, prepares, appends to that companion's list |
 | `sources set <id> key=value …` | override a discovered field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `confirmed=true`); sets the matching `*_method: manual` |
+| `sources remove <id>` | drop a source that should never have been registered: workspace.yaml, the overlay row and the prepared directory. Loads even a workspace its own validator rejects — it is the repair path |
 | `sources refresh [<id>]` | re-prepare text, page map, items and errata for one source or all of them. **This replaces the old `cf book`** |
 | `extract [--companion X]` | adapters → `statements.jsonl`; every row carries `source_id` + `source_sha`; no-op when (repo commit, adapter key) is unchanged |
 | `pair [--source ID]` | iterates the shared sources: one `pairs/<source_id>/` tree per source — pairs, coverage, queue, targets, def-coverage, uncovered, page-anchor differential |

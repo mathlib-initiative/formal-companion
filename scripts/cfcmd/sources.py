@@ -7,6 +7,7 @@ exceptions:
     cf sources show <id>                  the full record and its provenance
     cf sources add <pdf> --for <name>     add one by hand (fingerprint + prepare)
     cf sources set <id> offset=16 ...     override a field discovery got wrong
+    cf sources remove <id>                drop one that should not be here
     cf sources refresh [<id>]             re-prepare text / items / errata
 
 ``cf sources set`` marks what it touches: an overridden offset gets
@@ -76,6 +77,11 @@ def register(subparsers) -> None:
     st.add_argument("assignments", nargs="+", metavar="key=value",
                     help="offset=16 errata_url=... chapters=1,2 kinds=A,B confirmed=true")
 
+    rm = sub.add_parser("remove", help="drop a source from this workspace")
+    rm.add_argument("source_id")
+    rm.add_argument("--keep-files", action="store_true",
+                    help="leave sources/<id>/ on disk (the default deletes the prepared text)")
+
     refresh = sub.add_parser("refresh", help="re-prepare text, page map, items and errata")
     refresh.add_argument("source_id", nargs="?", help="default: every source")
     refresh.add_argument("--force", action="store_true")
@@ -86,10 +92,13 @@ def register(subparsers) -> None:
 
 
 def run(args) -> int:
-    workspace = from_args(args)
     command = getattr(args, "sources_command", None) or "list"
+    # `remove` is the repair path: it must load a workspace whose own validator
+    # rejects it, because that is precisely when a source has to come out.
+    workspace = from_args(args, validate=(command != "remove"))
     return {
-        "list": _list, "show": _show, "add": _add, "set": _set, "refresh": _refresh,
+        "list": _list, "show": _show, "add": _add, "set": _set, "remove": _remove,
+        "refresh": _refresh,
     }[command](workspace, args)
 
 
@@ -240,6 +249,9 @@ def _add(workspace, args) -> int:
     log.ok(f"{args.companion}: sources = {', '.join(sources)}   anchor = {anchor}")
     if not args.no_prepare:
         from cfcmd.onboard import _prepare_source
+        # a PDF a human named by hand is as confirmed as a source gets, so its
+        # errata URL may be fetched -- but only when the URL itself is confirmed
+        # too, which `_errata_provenance` decides.
         _prepare_source(workspace, source_id, force=False, no_errata=False)
         workspace.save()
     return 0
@@ -267,6 +279,12 @@ def _set(workspace, args) -> int:
         changes["offset_confidence"] = 1.0
     if "chapters" in changes:
         changes["scope_method"] = "manual"
+    # the same rule for the errata URL: a URL a human typed is CONFIRMED, and
+    # only a confirmed URL is fetched without being asked (a repo-supplied one
+    # is an outbound request the repo chose, and text that reaches prompts).
+    if "errata_url" in changes:
+        changes["errata_method"] = "manual"
+        changes["errata_confidence"] = 1.0
     if "role" in changes and changes["role"] not in {ROLE_AUDITED, ROLE_REFERENCE}:
         raise CfError(f"role must be {ROLE_AUDITED} or {ROLE_REFERENCE}")
     workspace.upsert_source(ref.id, **changes)
@@ -282,6 +300,74 @@ def _set(workspace, args) -> int:
     if "offset" in changes or "kinds" in changes:
         log.info(f"re-prepare so items.json follows: cf sources refresh {ref.id}")
     return 0
+
+
+def _remove(workspace, args) -> int:
+    """Drop a source from workspace.yaml, the overlay and (by default) the disk.
+
+    The recovery command.  A workspace that names one PDF under two source ids
+    could not be loaded at all, so there was no way to undo it but to hand-edit
+    two YAML files; this undoes it, and says what it took out.
+    """
+    source_id = args.source_id
+    table = (workspace.data.get("sources") or {})
+    if source_id not in table:
+        raise SourceError(f"unknown source {source_id!r}",
+                          hint="known: " + (", ".join(sorted(table)) or "(none)"))
+    body = dict(table[source_id] or {})
+    users = [name for name, comp in (workspace.data.get("companions") or {}).items()
+             if isinstance(comp, dict)
+             and source_id in ((comp.get("sources") or []) + (comp.get("bundled_sources") or []))]
+    orphaned = workspace.remove_source(source_id)
+    repos = {name: str((workspace.data.get("companions") or {}).get(name, {}).get("repo") or "")
+             for name in orphaned}
+    for name in orphaned:
+        # a companion with no source cannot be audited, and a workspace that
+        # holds one cannot be loaded -- so the repair takes it out too, and says
+        # the one command that brings it back.
+        (workspace.data.get("companions") or {}).pop(name, None)
+    workspace.save()
+    log.ok(f"removed sources.{source_id}"
+           + (f" (sha {short(str(body.get('sha256') or ''), 8)})" if body.get("sha256") else ""))
+    for name in users:
+        if name not in orphaned:
+            log.warn(f"{name} no longer lists {source_id}; re-run "
+                     f"`cf onboard <repo> --force` if that companion needs another source")
+    for name in orphaned:
+        log.warn(f"{name} had no other source, so it was removed too")
+        log.info(f"  bring it back with:  cf onboard {repos.get(name) or '<repo>'}")
+    _drop_overlay_row(workspace, source_id)
+    prepared = workspace.paths.source_dir(source_id)
+    if prepared.exists() and not args.keep_files:
+        import shutil
+        shutil.rmtree(prepared, ignore_errors=True)
+        log.ok(f"removed {prepared}")
+    elif prepared.exists():
+        log.info(f"{prepared} left on disk (--keep-files)")
+    return 0
+
+
+def _drop_overlay_row(workspace, source_id: str) -> None:
+    """Take the id out of the workspace's registry overlay, if it is there."""
+    from cflib.registry import OVERLAY_FILE, REGISTRY_VERSION
+    from cflib.jsonio import atomic_write
+    from cflib.yamlio import dump_yaml, read_yaml
+    path = workspace.root / OVERLAY_FILE
+    if not path.exists():
+        return
+    data = read_yaml(path)
+    if not isinstance(data, dict) or source_id not in (data.get("sources") or {}):
+        return
+    data["sources"].pop(source_id, None)
+    data.setdefault("version", REGISTRY_VERSION)
+    header = (
+        "# registry.yaml -- this WORKSPACE's overlay on the skill's source registry.\n"
+        "# Written by `cf onboard` / `cf sources add`, always with confirmed: false.\n"
+        "# Metadata only -- no source text, ever. Promote an entry by copying it into\n"
+        "# the skill's registry/sources.yaml (confirmed: true) and deleting it here.\n"
+    )
+    atomic_write(path, header + dump_yaml(data))
+    log.ok(f"removed {source_id} from {path.name}")
 
 
 def _refresh(workspace, args) -> int:

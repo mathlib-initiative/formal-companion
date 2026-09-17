@@ -45,6 +45,11 @@ MIN_ANCHOR_AGREEMENT = 0.80
 MIN_ANCHOR_MARGIN = 0.05
 MIN_ADAPTER_CONFIDENCE = 0.5
 
+#: a sha we cannot find is worth saying once per candidate, not 450 times: past
+#: this many `edition_mismatch` lines the search stops reporting and just keeps
+#: looking.
+MAX_MISMATCH_WARNINGS = 8
+
 #: prose files S5 reads (repo-relative; docs/**/*.md is added at scan time)
 PROSE_FILES = ("CLAUDE.md", "AGENTS.md", "README.md")
 
@@ -144,6 +149,14 @@ class SourceClaim:
         Full sha first, then a resolvable prefix, then (last resort) the same
         normalised title AND a compatible edition token -- never the title alone,
         because two editions of one book share it.
+
+        One more join, and it is the common case for a repo nobody has
+        catalogued: one signal names the WORK (``formalization.yaml`` gives a
+        title and no file) while another names the FILE (the filesystem scan and
+        the prose give ``sources/<name>.pdf`` and no title).  Every claim here
+        came from the same repository, so when the filename echoes the title they
+        are one source -- and without this branch they became two source ids for
+        one PDF, which `Workspace.validate` then rejected forever.
         """
         if self.sha256 and other.sha256:
             return self.sha256 == other.sha256
@@ -160,6 +173,10 @@ class SourceClaim:
             return bool(set(_basenames(self.pdf_hints)) & set(_basenames(other.pdf_hints)))
         if self.title and other.title and _norm_title(self.title) == _norm_title(other.title):
             return _edition_compatible(self.edition, other.edition)
+        if self.title and not self.pdf_hints and other.pdf_hints and not other.title:
+            return _name_echoes_title(other.pdf_hints, self.title)
+        if other.title and not other.pdf_hints and self.pdf_hints and not self.title:
+            return _name_echoes_title(self.pdf_hints, other.title)
         return bool(set(_basenames(self.pdf_hints)) & set(_basenames(other.pdf_hints)))
 
 
@@ -188,6 +205,11 @@ class DiscoveryResult:
     adapter_evidence: dict = field(default_factory=dict)
     claims: list[SourceClaim] = field(default_factory=list)
     sources: list[dict] = field(default_factory=list)
+    #: which claim each source id was built from. Matching a claim to a body by
+    #: the FILE they share cannot do this: two sources declared in one
+    #: formalization.yaml share every signal path, and the overlay row for one of
+    #: them was written from the other one's title.
+    claims_by_source: dict[str, SourceClaim] = field(default_factory=dict)
     anchor_source: str = ""
     anchor_confidence: float = 0.0
     anchor_evidence: dict = field(default_factory=dict)
@@ -681,29 +703,45 @@ def _workspace_root(workspace: Any) -> Path:
 
 
 def search_order(claim: SourceClaim, *, repo: Path, workspace: Any | None,
-                 library_paths: Sequence[str] = ()) -> list[tuple[Path, str, int]]:
-    """Candidate PDFs, strictly ordered: repo-declared, repo cache, workspace, library."""
+                 library_paths: Sequence[str] = (),
+                 rejected: list[str] | None = None) -> list[tuple[Path, str, int]]:
+    """Candidate PDFs, strictly ordered: repo-declared, repo cache, workspace, library.
+
+    The order is also a BOUNDARY.  ``claim.pdf_hints`` are strings read out of a
+    companion repo's ledger, graph.json, prose and README, and an absolute path,
+    a ``~`` path or a ``../../..`` path in one of them used to be followed
+    wherever it went -- so a repo could name any PDF on the machine and have its
+    full text extracted into the workspace.  A hint is now kept only when it
+    lands inside the repo itself, the workspace's own ``sources/`` store, or one
+    of the ``library_paths`` the USER configured; anything else is reported
+    through *rejected* and never opened.
+    """
     out: list[tuple[Path, str, int]] = []
     seen: set[Path] = set()
+    repo_root = _resolve(Path(repo))
+    store = _resolve(_workspace_root(workspace) / "sources") if workspace is not None else None
+    #: hints outside the repo and the store: allowed only if a library path holds
+    #: them, which is decided once the library is expanded (step 4).
+    deferred: list[tuple[Path, str, int, str]] = []
 
-    def add(path: Path, where: str, rank: int) -> None:
-        try:
-            resolved = path.expanduser().resolve()
-        except OSError:                                   # pragma: no cover
+    def add(path: Path, where: str, rank: int, hint: str = "") -> None:
+        resolved = _resolve(path)
+        if resolved is None or resolved in seen or not resolved.is_file():
             return
-        if resolved in seen or not resolved.is_file():
+        if _within(resolved, repo_root) or (store is not None and _within(resolved, store)):
+            seen.add(resolved)
+            out.append((resolved, where, rank))
             return
-        seen.add(resolved)
-        out.append((resolved, where, rank))
+        deferred.append((resolved, where, rank, hint or str(path)))
 
     # 1. paths the repo names
     for hint in claim.pdf_hints:
         raw = str(hint)
         if not raw.lower().endswith(".pdf"):
             continue
-        add(repo / raw, "repo_declared", 0)
+        add(repo / raw, "repo_declared", 0, raw)
         if raw.startswith("~") or os.path.isabs(raw):
-            add(Path(raw), "repo_declared", 0)
+            add(Path(raw), "repo_declared", 0, raw)
         # the same BASENAME somewhere else in the repo is the repo's cache, not a
         # path the repo names: measure_theory's ledger says
         # `sources/gsm-126-tao5-measure-book.pdf`, which does not exist, and the
@@ -711,7 +749,7 @@ def search_order(claim: SourceClaim, *, repo: Path, workspace: Any | None,
         # there would hide that the declared path is stale.
         base = Path(raw).name
         for found in _walk(repo, base, limit=5):
-            add(found, "repo_cache", 1)
+            add(found, "repo_cache", 1, raw)
 
     # 2. the repo's own caches
     for pattern in (".lake/official-pdf/*.pdf", "sources/*.pdf", "pdf-overlay/vendor/**/*.pdf"):
@@ -720,16 +758,55 @@ def search_order(claim: SourceClaim, *, repo: Path, workspace: Any | None,
 
     # 3. the workspace's store
     if workspace is not None:
-        store = _workspace_root(workspace) / "sources"
+        store_dir = _workspace_root(workspace) / "sources"
         for pattern in ("*/*.pdf", "*.pdf"):
-            for found in sorted(store.glob(pattern)) if store.is_dir() else []:
+            for found in sorted(store_dir.glob(pattern)) if store_dir.is_dir() else []:
                 add(found, "workspace_store", 2)
 
-    # 4. library_paths from workspace.yaml
+    # 4. library_paths from workspace.yaml -- and the only roots outside the repo
+    #    and the store that a repo-declared path may resolve into.
+    library: list[Path] = []
     for pattern in library_paths or ():
         for found in _expand_library(pattern):
-            add(found, "library_path", 3)
+            resolved = _resolve(found)
+            if resolved is not None:
+                library.append(resolved)
+    in_library = set(library)
+    said: set[Path] = set()
+    for resolved, where, rank, hint in deferred:
+        if resolved in in_library:
+            if resolved not in seen:
+                seen.add(resolved)
+                out.append((resolved, where, rank))
+            continue
+        if rejected is not None and resolved not in said:
+            said.add(resolved)
+            named = hint if str(resolved) == str(hint) else f"{hint} -> {resolved}"
+            rejected.append(
+                f"the repo names {named}, outside the repo, the workspace's sources/ store "
+                f"and every library_path -- not opened "
+                f"(`cf sources add {resolved} --for <companion>` to use it anyway)")
+    for found in library:
+        # already resolved, already inside a root the user configured: appended
+        # directly rather than through add(), whose job is the boundary check.
+        if found not in seen and found.is_file():
+            seen.add(found)
+            out.append((found, "library_path", 3))
     return out
+
+
+def _resolve(path: Path) -> Path | None:
+    try:
+        return path.expanduser().resolve()
+    except (OSError, RuntimeError):                       # pragma: no cover
+        return None
+
+
+def _within(path: Path, root: Path | None) -> bool:
+    """Is *path* inside *root*? (both already resolved)"""
+    if root is None:
+        return False
+    return path == root or root in path.parents
 
 
 #: expansions are cached per process: onboarding two sources must not walk
@@ -840,6 +917,15 @@ def _pdftotext(pdf: Path) -> str | None:
     return proc.stdout.decode("utf-8", "ignore")
 
 
+#: how far a candidate's NAME is from what we are looking for.
+MATCH_ALIAS = 1        # a filename the registry records for this source
+MATCH_TITLE = 2        # two or more title tokens in the filename
+MATCH_NONE = 3         # no relation to the title at all
+
+#: search_order ranks: 0 repo_declared, 1 repo_cache, 2 workspace_store, 3 library_path
+RANK_CONVENIENCE = 2   # at this rank and beyond, the file was not named by anybody
+
+
 def locate_pdf(claim: SourceClaim, *, repo: Path, workspace: Any | None,
                registry: Registry, library_paths: Sequence[str] = (),
                download: bool = False, entry: RegistryEntry | None = None,
@@ -849,6 +935,20 @@ def locate_pdf(claim: SourceClaim, *, repo: Path, workspace: Any | None,
     A candidate whose sha CONTRADICTS a known sha is never adopted: it is
     reported as ``edition_mismatch``, because adopting it is precisely the
     mistake the audit exists to catch.
+
+    With NO sha to check against -- the new-source case -- the NAME has to carry
+    the identification, and it is a rule, not a sort key: a file nobody named,
+    found by walking a ``library_paths`` convenience directory, is adopted only
+    when its filename is a registry alias or shares two title tokens.  Without
+    that floor the first readable PDF in ``~/Downloads`` became the audited
+    source (observed: a paper on the sunflower lemma adopted as "An Introduction
+    to Measure Theory"), and every quote gate afterwards checked the companion
+    against the wrong document.
+
+    The search also STOPS at the first candidate it accepts.  The list is
+    already ordered, so everything after it is worse -- and fingerprinting means
+    sha256 plus a full ``pdftotext`` run, which turned onboarding a repo whose
+    PDF sat at rank 0 into a scan of the whole of ``~/Downloads``.
     """
     warnings = warnings if warnings is not None else []
     known_sha = claim.sha256 or (entry.sha256 if entry else "") or ""
@@ -856,21 +956,30 @@ def locate_pdf(claim: SourceClaim, *, repo: Path, workspace: Any | None,
     alias_names = {str(f).lower() for f in ((entry.aliases.get("filenames") if entry else []) or [])}
     title_tokens = _tokens(f"{claim.title} {claim.edition} {entry.title if entry else ''}")
 
-    candidates = search_order(claim, repo=repo, workspace=workspace, library_paths=library_paths)
+    candidates = search_order(claim, repo=repo, workspace=workspace,
+                              library_paths=library_paths, rejected=warnings)
     ranked: list[tuple[tuple, Path, str, int]] = []
     for path, where, rank in candidates:
         name = path.name.lower()
         if name in alias_names:
-            match_rank = 1
+            match_rank = MATCH_ALIAS
         elif len(set(_tokens(name)) & title_tokens) >= 2:
-            match_rank = 2
+            match_rank = MATCH_TITLE
         else:
-            match_rank = 3
+            match_rank = MATCH_NONE
         ranked.append(((rank, match_rank, str(path)), path, where, rank))
     ranked.sort(key=lambda row: row[0])
 
+    blind = not known_sha and not known_prefix
+    unrelated: list[Path] = []
     fallback: LocatedPdf | None = None
-    for _key, path, where, rank in ranked:
+    for key, path, where, rank in ranked:
+        match_rank = key[1]
+        if blind and match_rank == MATCH_NONE and rank >= RANK_CONVENIENCE:
+            # nothing pins these bytes and nothing connects this name to the
+            # title: a library path is a convenience, not a claim.
+            unrelated.append(path)
+            continue
         try:
             fp = fingerprint(path)
         except OSError:                                   # pragma: no cover
@@ -879,16 +988,22 @@ def locate_pdf(claim: SourceClaim, *, repo: Path, workspace: Any | None,
         if known_sha:
             if sha == known_sha:
                 return _located(fp, where, rank)
-            warnings.append(f"edition_mismatch: {path} is {sha[:8]}, expected {known_sha[:8]}")
+            if len(warnings) < MAX_MISMATCH_WARNINGS:
+                warnings.append(f"edition_mismatch: {path} is {sha[:8]}, expected {known_sha[:8]}")
             continue
         if known_prefix:
             if sha.startswith(known_prefix):
                 return _located(fp, where, rank)
             continue
-        if fallback is None:
-            fallback = _located(fp, where, rank)
+        fallback = _located(fp, where, rank)
+        break
     if fallback is not None:
         return fallback
+    if unrelated:
+        warnings.append(
+            f"no PDF matching {claim.title or claim.path!r}: "
+            f"{len(unrelated)} file(s) under the library paths match neither a registry "
+            f"filename nor the title (first: {unrelated[0].name})")
 
     if download and entry is not None:
         fetched = _download(entry, workspace=workspace, registry=registry, warnings=warnings)
@@ -1054,6 +1169,11 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
     merged = merge_claims(claims, registry)
     result = DiscoveryResult(repo=repo, name=repo.name, adapter="")
     taken: set[str] = set(getattr(workspace, "sources", {}) or {})
+    #: the fingerprint is the identity the whole model is built on, so two claims
+    #: that end up on the same bytes are ONE source however differently they were
+    #: worded. Without this, `cf onboard` could write a workspace.yaml its own
+    #: loader rejects ("the same bytes are one source") and wedge the directory.
+    by_sha: dict[str, dict] = {}
     for claim in merged:
         if _is_noise(claim):
             continue
@@ -1075,13 +1195,63 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         if entry is None and located is None and not claim.title and not claim.sha256:
             result.unresolved.append(f"{claim.path} named no source we could resolve")
             continue
+        if located is not None and located.sha256 in by_sha:
+            _fold_into(by_sha[located.sha256], claim, entry, located, result, taken)
+            result.claims.append(claim)
+            continue
+
         source_id = _source_id(claim, entry, located, taken)
         taken.add(source_id)
         body = _source_body(source_id, claim, entry, located, result)
         result.claims.append(claim)
+        result.claims_by_source[source_id] = claim
         result.sources.append(body)
+        if located is not None:
+            by_sha[located.sha256] = body
     result.sources.sort(key=lambda b: (b.get("role") != "audited", b["id"]))
     return result
+
+
+def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
+               located: LocatedPdf, result: DiscoveryResult, taken: set[str]) -> None:
+    """Merge a second claim on the SAME bytes into the source already accepted.
+
+    The claims were worded differently enough that :func:`merge_claims` kept
+    them apart, and only the fingerprint showed they were one source.  The
+    evidence is unioned so ``discovered.from`` still names every file that
+    pointed here; a registry entry found on the second pass upgrades a source
+    that had been named from a filename, because a catalogued id is the stable
+    one (S3: sha -> registry alias -> derivation).
+    """
+    discovered = body.setdefault("discovered", {"from": [], "pdf_found_in": located.where,
+                                                "signal": claim.signal})
+    discovered["from"] = _uniq(tuple(discovered.get("from") or ()) + tuple(claim.sources))
+    discovered["from"] = list(discovered["from"])
+    for key, value in (("title", claim.title), ("edition", claim.edition),
+                       ("isbn", claim.isbn), ("book_page_url", claim.book_page_url)):
+        if value and not body.get(key):
+            body[key] = value
+    if claim.kinds and not body.get("kinds"):
+        body["kinds"] = list(claim.kinds)
+    if body.get("offset_hint") is None and claim.offset_hint is not None:
+        body["offset_hint"] = claim.offset_hint
+    if not body.get("anchor_hint") and claim.anchor_hint:
+        body["anchor_hint"] = claim.anchor_hint
+    stored = result.claims_by_source.get(body["id"])
+    result.claims_by_source[body["id"]] = stored.merge(claim) if stored is not None else claim
+    if entry is not None and body.get("registry") == "local" and entry.id != body["id"]:
+        old_id = body["id"]
+        taken.discard(old_id)
+        taken.add(entry.id)
+        body.update(entry.to_source_fields())
+        body["id"] = entry.id
+        body["registry"] = entry.origin
+        result.claims_by_source[entry.id] = result.claims_by_source.pop(old_id)
+        detail(f"{old_id} and {entry.id} are the same bytes ({located.sha256[:8]}); "
+               f"keeping the catalogued id {entry.id}")
+    else:
+        detail(f"{body['id']}: a second claim ({claim.signal} {claim.path}) names the same "
+               f"bytes {located.sha256[:8]}; folded in")
 
 
 def _is_noise(claim: SourceClaim) -> bool:
@@ -1183,6 +1353,28 @@ def _uniq(values: Iterable[str]) -> tuple[str, ...]:
 
 def _basenames(hints: Iterable[str]) -> list[str]:
     return [Path(str(h)).name.lower() for h in hints if str(h).lower().endswith(".pdf")]
+
+
+#: words a filename and a title can share without meaning anything
+_NAME_NOISE = frozenset({"the", "and", "for", "pdf", "book", "final", "copy", "new", "old"})
+
+
+def _name_echoes_title(hints: Iterable[str], title: str) -> bool:
+    """Does one of these filenames share a meaningful word with *title*?
+
+    The guard on the work/file join above.  ``elementary-notes.pdf`` echoes
+    "Elementary Notes on Sets"; ``sunflower-rao.pdf`` does not, and a repo that
+    declares one book while committing an unrelated paper must end up with two
+    claims, not one.
+    """
+    wanted = _tokens(title) - _NAME_NOISE
+    if not wanted:
+        return False
+    for hint in hints:
+        name = Path(str(hint)).stem
+        if (_tokens(name) - _NAME_NOISE) & wanted:
+            return True
+    return False
 
 
 def _edition_key_tokens(edition: str) -> set[str]:

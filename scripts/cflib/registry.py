@@ -36,6 +36,13 @@ REGISTRY_VERSION = 1
 REGISTRY_FILE = "sources.yaml"
 OVERLAY_FILE = "registry.yaml"
 
+OVERLAY_HEADER = (
+    "# registry.yaml -- this WORKSPACE's overlay on the skill's source registry.\n"
+    "# Written by `cf onboard` / `cf sources add`, always with confirmed: false.\n"
+    "# Metadata only -- no source text, ever. Promote an entry by copying it into\n"
+    "# the skill's registry/sources.yaml (confirmed: true) and deleting it here.\n"
+)
+
 
 def skill_registry_path() -> Path:
     """``<skill>/registry/sources.yaml`` -- the curated, shipped registry."""
@@ -174,10 +181,16 @@ class Registry:
     """The skill registry with a workspace overlay on top."""
 
     def __init__(self, entries: dict[str, RegistryEntry], *,
-                 skill_path: Path | None = None, overlay_path: Path | None = None):
+                 skill_path: Path | None = None, overlay_path: Path | None = None,
+                 shadowed: Sequence[str] = ()):
         self.entries = entries
         self.skill_path = skill_path
         self.overlay_path = overlay_path
+        #: ids where an overlay row sits on top of a CONFIRMED skill entry -- the
+        #: state the documented promotion step passes through, and the state a
+        #: skill upgrade creates on a workspace that had already discovered the
+        #: source.  Reported, never silently obeyed.
+        self.shadowed: tuple[str, ...] = tuple(shadowed)
 
     # -- loading -------------------------------------------------------
     @classmethod
@@ -190,18 +203,29 @@ class Registry:
             merged[sid] = dict(body)
             origin[sid] = "skill"
         overlay_path = None
+        shadowed: list[str] = []
         if workspace is not None:
             overlay_path = _root_of(workspace) / OVERLAY_FILE
             for sid, body in _read_registry_file(overlay_path).items():
                 base = dict(merged.get(sid) or {})
+                curated = bool(base.get("confirmed"))
                 for key, value in (body or {}).items():
                     if value is not None:
                         base[key] = value
+                if curated:
+                    # `confirmed` is ASYMMETRIC: the overlay is always written
+                    # with confirmed: false, so letting it win would demote a
+                    # curated skill entry forever -- and silently, since
+                    # `unconfirmed()` would then list a source the skill vouches
+                    # for. A skill `true` is a fact the overlay cannot retract.
+                    base["confirmed"] = True
+                    shadowed.append(sid)
                 merged[sid] = base
                 origin[sid] = "overlay"
         entries = {sid: RegistryEntry.from_dict(sid, body, origin.get(sid, "skill"))
                    for sid, body in merged.items()}
-        return cls(entries, skill_path=skill_path, overlay_path=overlay_path)
+        return cls(entries, skill_path=skill_path, overlay_path=overlay_path,
+                   shadowed=sorted(shadowed))
 
     # -- lookups -------------------------------------------------------
     def get(self, source_id: str) -> RegistryEntry | None:
@@ -315,20 +339,57 @@ class Registry:
         body["confirmed"] = False
         body["added"] = date.today().isoformat()
         sources[entry.id] = body
-        header = (
-            "# registry.yaml -- this WORKSPACE's overlay on the skill's source registry.\n"
-            "# Written by `cf onboard` / `cf sources add`, always with confirmed: false.\n"
-            "# Metadata only -- no source text, ever. Promote an entry by copying it into\n"
-            "# the skill's registry/sources.yaml (confirmed: true) and deleting it here.\n"
-        )
-        atomic_write(path, header + dump_yaml(data))
+        atomic_write(path, OVERLAY_HEADER + dump_yaml(data))
         self.entries[entry.id] = RegistryEntry.from_dict(entry.id, body, "overlay")
+        return path
+
+    def update_overlay(self, workspace: Any, source_id: str, **fields) -> Path | None:
+        """Write back what preparing the source TAUGHT us (R3's other half).
+
+        The overlay is meant to remember "what was learned about each known
+        source"; a row written before the PDF was read knows none of it.  After
+        `cf onboard` / `cf sources add` has fingerprinted the file, inferred the
+        page offset from its running heads, read the item kinds off its headings
+        and confirmed an errata page, those facts belong in the row -- otherwise
+        promoting it into the skill registry by hand yields an entry that teaches
+        the next discovery nothing, and a sha-less row cannot even be matched by
+        content next time.  Returns None when this id is not in the overlay.
+        """
+        path = _root_of(workspace) / OVERLAY_FILE
+        if not path.exists():
+            return None
+        data = read_yaml(path)
+        if not isinstance(data, dict):
+            return None
+        sources = data.get("sources")
+        if not isinstance(sources, dict) or source_id not in sources:
+            return None
+        body = dict(sources[source_id] or {})
+        changed = False
+        for key, value in fields.items():
+            if value in (None, "", (), []):
+                continue
+            value = list(value) if isinstance(value, tuple) else value
+            if body.get(key) != value:
+                body[key] = value
+                changed = True
+        if not changed:
+            return path
+        body["confirmed"] = False        # still nobody's word but ours
+        sources[source_id] = body
+        data["version"] = REGISTRY_VERSION
+        atomic_write(path, OVERLAY_HEADER + dump_yaml(data))
+        self.entries[source_id] = RegistryEntry.from_dict(source_id, body, "overlay")
         return path
 
     # -- validation ----------------------------------------------------
     def validate(self) -> list[str]:
         """Structural problems, including page_map_to symmetry."""
         problems: list[str] = []
+        for sid in self.shadowed:
+            problems.append(
+                f"{sid}: the workspace overlay shadows a CONFIRMED entry in the skill's "
+                f"registry -- delete that row from {OVERLAY_FILE} so the curated one is used")
         for sid, entry in sorted(self.entries.items()):
             if not entry.title:
                 problems.append(f"{sid}: title is required")
@@ -556,7 +617,10 @@ def entry_from_claim(source_id: str, claim, *, pdf=None) -> RegistryEntry:
         id=source_id,
         title=getattr(claim, "title", "") or "",
         authors=tuple(getattr(claim, "authors", ()) or ()),
-        edition=getattr(claim, "edition", "") or "",
+        # "unspecified" rather than "": the workspace records an edition for every
+        # source, and an overlay row that omits it is a row `Registry.validate`
+        # (and now `cf status`) reports as broken on every run.
+        edition=getattr(claim, "edition", "") or "unspecified",
         isbn=(getattr(claim, "isbn", "") or None),
         sha256=(getattr(pdf, "sha256", None) if pdf is not None else None)
                or (getattr(claim, "sha256", "") or None),

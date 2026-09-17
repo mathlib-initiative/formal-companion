@@ -98,6 +98,13 @@ policy:
   allow_download: false
   # true makes `cf plan-run` refuse a source whose `confirmed` is still false.
   require_confirmed_sources: false
+  # An errata URL from a CONFIRMED registry entry (or one typed with
+  # `cf sources set`) is fetched without asking. A URL harvested from a
+  # companion repo's own files is not, unless this is true or `cf onboard
+  # --fetch-errata` says so once: the repo would otherwise choose both an
+  # outbound request from this machine and a block of text that reaches the
+  # workers as authoritative errata.
+  allow_errata_fetch: false
 
 # Where `cf onboard` may look for a PDF a repo names but does not commit,
 # searched after the paths the repo itself names, the repo's own caches and this

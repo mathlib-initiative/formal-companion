@@ -30,6 +30,7 @@ named after a source overwrite it.
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -276,9 +277,18 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                                   note="COPYRIGHTED: leaves this machine only with "
                                        "--include-source-text"))
             if (sdir / "errata.md").exists():
-                entries.append(_entry(f"source-errata:{source_id}", sdir / "errata.md",
-                                      f"{dest}/errata.md",
-                                      note="live errata, as fetched (never a summary)"))
+                if _errata_is_repo_supplied(sdir):
+                    # The URL came out of the companion repo, and nobody has
+                    # confirmed it. The page is handed to workers as authoritative
+                    # errata, so an unconfirmed one does not leave this machine.
+                    warnings.append(
+                        "errata for %s came from the companion repo and is unconfirmed: not "
+                        "transferred (`cf sources set %s errata_url=<url>` to confirm it)"
+                        % (source_id, source_id))
+                else:
+                    entries.append(_entry(f"source-errata:{source_id}", sdir / "errata.md",
+                                          f"{dest}/errata.md",
+                                          note="live errata, as fetched (never a summary)"))
             if wants_images:
                 entries.append(_entry(f"source-images:{source_id}", sdir / "images",
                                       f"{dest}/images/",
@@ -293,6 +303,24 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
         if entry["required"] and not entry["exists"]:
             warnings.append("missing %s: %s" % (entry["name"], entry["src"]))
     return entries, warnings
+
+
+def _errata_is_repo_supplied(source_dir: Path) -> bool:
+    """Did the errata URL come from the audited repository itself?
+
+    ``sources/<id>/errata.json`` records the provenance of the URL it fetched
+    (``fetch_errata.fetch(provenance=…)``).  An older file without the key
+    predates the provenance record and is treated as confirmed, since it could
+    only have been written when every fetch was allowed.
+    """
+    meta_path = source_dir / "errata.json"
+    if not meta_path.exists():
+        return False
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):                       # pragma: no cover - unreadable meta
+        return False
+    return bool(meta.get("repo_supplied"))
 
 
 def _bridges_staged(tend_root: Path) -> bool:

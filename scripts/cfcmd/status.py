@@ -168,6 +168,7 @@ def run(args) -> int:
 
 def _print_unconfirmed(workspace) -> None:
     """Discovery writes `confirmed: false`; this is where a human sees it."""
+    _print_registry_problems(workspace)
     unconfirmed = workspace.unconfirmed_sources()
     if not unconfirmed:
         return
@@ -180,6 +181,29 @@ def _print_unconfirmed(workspace) -> None:
         log.info(f"      confirm with:  cf sources show {ref.id}")
         log.info(f"                     cf sources set {ref.id} confirmed=true")
         log.info("      or promote it into the skill's registry/sources.yaml")
+
+
+def _print_registry_problems(workspace) -> None:
+    """Problems with the registry this workspace reads, chiefly a shadowed entry.
+
+    A workspace that discovered a source before the skill catalogued it keeps an
+    overlay row for it; once the skill ships a CONFIRMED entry for the same id,
+    that row adds nothing and hides the curated facts behind a stale copy.  The
+    merge keeps the skill's `confirmed: true`, and this is where the row itself
+    gets reported so it can be deleted.
+    """
+    from cflib.registry import Registry
+    try:
+        problems = Registry.load(workspace).validate()
+    except Exception as exc:  # noqa: BLE001 - status must never die on a bad registry
+        log.warn(f"registry could not be read: {exc}")
+        return
+    if not problems:
+        return
+    log.info("")
+    log.warn(f"registry ({len(problems)} problem(s))")
+    for problem in problems[:8]:
+        log.info(f"  {problem}")
 
 
 # ---------------------------------------------------------------------------

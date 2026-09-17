@@ -137,6 +137,10 @@ class SourceRef:
     bytes: int | None = None
     errata_url: str | None = None
     errata_confidence: float = 0.0
+    #: where the errata URL came from: `registry` (a curated entry), `manual`
+    #: (`cf sources set`), or `repo` (harvested from the companion's own files).
+    #: Only the first two are fetched without an explicit opt-in.
+    errata_method: str = "unknown"
     download_url: str | None = None
     book_page_url: str | None = None
     licence: dict = field(default_factory=dict)
@@ -170,6 +174,7 @@ class SourceRef:
             bytes=(int(data["bytes"]) if data.get("bytes") is not None else None),
             errata_url=(str(data["errata_url"]) if data.get("errata_url") else None),
             errata_confidence=float(data.get("errata_confidence") or 0.0),
+            errata_method=str(data.get("errata_method") or "unknown"),
             download_url=(str(data["download_url"]) if data.get("download_url") else None),
             book_page_url=(str(data["book_page_url"]) if data.get("book_page_url") else None),
             licence=dict(data.get("licence") or {}),
@@ -259,19 +264,41 @@ class Workspace:
 
     # -- loading -------------------------------------------------------
     @classmethod
-    def load(cls, start: str | Path | None = None) -> "Workspace":
+    def load(cls, start: str | Path | None = None, *, validate: bool = True) -> "Workspace":
+        """Read workspace.yaml.
+
+        ``validate=False`` is for the REPAIR path only (`cf sources remove`): a
+        workspace whose file its own validator rejects cannot otherwise be
+        loaded by any command, which is exactly when a human needs one.
+        """
         root = find_workspace_root(start)
         data = read_yaml(root / WORKSPACE_FILE)
         if not isinstance(data, dict):
             raise WorkspaceError(f"{root / WORKSPACE_FILE}: expected a mapping at the top level")
         ws = cls(root=root, data=data)
-        problems = ws.validate()
+        problems = ws.validate() if validate else []
         if problems:
-            raise WorkspaceError(f"{root / WORKSPACE_FILE} is invalid: " + "; ".join(problems))
+            raise WorkspaceError(f"{root / WORKSPACE_FILE} is invalid: " + "; ".join(problems),
+                                 hint="`cf sources remove <id>` drops a source that should never "
+                                      "have been registered (it loads even a broken workspace)")
         return ws
 
     def save(self) -> Path:
-        """Rewrite workspace.yaml, re-emitting the load-bearing section comments."""
+        """Rewrite workspace.yaml, re-emitting the load-bearing section comments.
+
+        Refuses to write a file its own loader would reject.  ``validate()`` used
+        to run only in :meth:`load`, so a command could persist a contradiction
+        -- two source ids on one sha256 was the real one -- and then every
+        subsequent `cf` command in that directory died on reading it back, with
+        no command able to load the workspace to repair it.  Only the STRUCTURAL
+        rules are checked here: a save mid-command legitimately sees a source
+        whose companion has not been written yet.
+        """
+        problems = self.validate(structural_only=True)
+        if problems:
+            raise WorkspaceError(
+                f"refusing to write {self.paths.workspace_yaml}: " + "; ".join(problems),
+                hint="nothing was written; this is a bug in the command that built this state")
         out = [f"# workspace.yaml -- N companions, M sources.\n"
                f"# Rewritten by cf on {date.today().isoformat()}; see\n"
                f"# docs/design/multi-source-model.md for the schema.\n"]
@@ -337,8 +364,28 @@ class Workspace:
             body[key] = value
         return body
 
-    def remove_source(self, source_id: str) -> None:
+    def remove_source(self, source_id: str) -> list[str]:
+        """Drop ``sources.<id>`` and every reference to it; returns the companions
+        left with no source at all (does not save).
+
+        A companion with an empty source list is not a workspace this loader will
+        read, and this is the REPAIR command: it must not leave behind the state
+        it exists to undo.  The caller decides what to do with the names -- `cf
+        sources remove` drops those companions and says how to bring them back.
+        """
         (self.data.get("sources") or {}).pop(source_id, None)
+        orphaned: list[str] = []
+        for name, body in (self.data.get("companions") or {}).items():
+            if not isinstance(body, dict):
+                continue
+            for key in ("sources", "bundled_sources"):
+                if isinstance(body.get(key), list):
+                    body[key] = [s for s in body[key] if s != source_id]
+            if not body.get("sources"):
+                orphaned.append(name)
+            elif body.get("anchor_source") == source_id:
+                body["anchor_source"] = body["sources"][0]
+        return orphaned
 
     # -- companions ----------------------------------------------------
     @property
@@ -495,8 +542,14 @@ class Workspace:
         return [str(p) for p in raw]
 
     # -- validation ----------------------------------------------------
-    def validate(self) -> list[str]:
-        """Structural problems with workspace.yaml (empty list when valid)."""
+    def validate(self, *, structural_only: bool = False) -> list[str]:
+        """Structural problems with workspace.yaml (empty list when valid).
+
+        ``structural_only`` keeps the rules that no half-finished command may
+        break (the schema version, the shape of the two tables, one sha per
+        source) and drops the cross-references between companions and sources,
+        which a command legitimately completes over several saves.
+        """
         problems: list[str] = []
         version = self.data.get("version")
         if version != WORKSPACE_VERSION:
@@ -538,6 +591,8 @@ class Workspace:
                         f"sources.{sid} and sources.{by_sha[ref.sha256]} share sha256 "
                         f"{ref.sha256[:8]}: the same bytes are one source")
                 by_sha[ref.sha256] = sid
+        if structural_only:
+            return problems
 
         companions: dict[str, CompanionRef] = {}
         for name, body in raw_companions.items():
@@ -606,11 +661,12 @@ def _registry_ids() -> set[str]:
         return set()
 
 
-def from_args(args) -> Workspace:
+def from_args(args, *, validate: bool = True) -> Workspace:
     """Load the workspace a cf command was pointed at.
 
     Every ``cfcmd`` module uses this: cf.py parses the global ``--workspace``
     option (defaulting to ``$CF_WORKSPACE`` or the current directory) and stores
-    it on ``args.workspace``.
+    it on ``args.workspace``.  ``validate=False`` is the repair path -- see
+    :meth:`Workspace.load`.
     """
-    return Workspace.load(getattr(args, "workspace", None))
+    return Workspace.load(getattr(args, "workspace", None), validate=validate)

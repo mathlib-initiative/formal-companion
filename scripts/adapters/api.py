@@ -36,6 +36,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
+from cflib import gitsafe
 from cflib.adapters_api import Adapter as CoreAdapter
 from cflib.errors import AdapterError
 from cflib.hashing import sha256_file, sha256_text
@@ -74,6 +75,7 @@ class Adapter(CoreAdapter):
         super().__init__(config, name=name, workspace=workspace)
         self.source = source or f"adapter({self.kind})"
         self._claims_cache: dict[str, list] = {}
+        self.last_binding: "SourceBinding | None" = None
         if not self.name:
             raise AdapterError(f"{self.source}: 'name' is required (the companion's short name)")
         self.validate_config()
@@ -156,11 +158,12 @@ class Adapter(CoreAdapter):
             return []
         rel = [str(Path(p).relative_to(repo)) for p in paths]
         try:
-            proc = subprocess.run(
-                ["git", "-C", str(repo), "check-ignore", "--stdin"],
-                input="\n".join(rel) + "\n",
-                capture_output=True, text=True, timeout=60,
-            )
+            # `check-ignore` refreshes the index, and an index refresh runs
+            # `core.fsmonitor` -- a program named in THIS repo's .git/config.
+            # cflib.gitsafe pins that (and the other config keys that are an
+            # execve) so reading a companion tree stays reading.
+            proc = gitsafe.run(repo, ["check-ignore", "--stdin"],
+                               input="\n".join(rel) + "\n", timeout=60)
         except (OSError, subprocess.SubprocessError):       # pragma: no cover
             return []
         # 0 = some paths are ignored, 1 = none are; anything else is an error
@@ -234,8 +237,13 @@ class Adapter(CoreAdapter):
 
     # -- which source, and what it says ------------------------------------
     def bind(self, sources: "Mapping[str, str] | None" = None) -> "SourceBinding":
-        """The row -> (source_id, source_sha) attributor for one extraction."""
-        return SourceBinding(self, sources)
+        """The row -> (source_id, source_sha) attributor for one extraction.
+
+        Kept on the adapter as :attr:`last_binding` so the command that ran the
+        extraction can report what the attribution could not decide.
+        """
+        self.last_binding = SourceBinding(self, sources)
+        return self.last_binding
 
     def source_ref(self, source_id: str | None):
         """What the workspace records about one source, or None.
@@ -351,10 +359,18 @@ class SourceBinding:
 
     1. a ``sources.map`` rule in adapter.yaml matching the row's ``tag_prefix``
        or its ``files:`` glob -- the row's tag names another source;
-    2. otherwise the companion's default source, which is
+    2. with no map and MORE THAN ONE bound source, the source whose
+       ``items.json`` actually contains this tag's item.  A companion may be
+       audited against two different books (R1), and `cf onboard` writes the
+       ``sources.map`` rules out commented; without this, every row of the
+       second book would be stamped with the first book's id -- the wrong-edition
+       attribution the whole model exists to stop, just one level up.
+    3. otherwise the companion's default source, which is
        ``sources.default`` when `cf extract` bound it, else the single bound
        source.  `cf onboard` re-decides the anchor edition mechanically AFTER
        extracting, so the ids it binds are fresher than adapter.yaml's and win.
+       Rows that reach this rule while several sources are bound are counted in
+       :attr:`unattributed`, and `cf onboard` / `cf extract` say so.
 
     The sha comes from the ``{source_id: source_sha}`` mapping the caller passed
     in, falling back to the workspace's record.  A row with no sha is still
@@ -375,6 +391,12 @@ class SourceBinding:
         self.used: dict[str, str | None] = {}
         self._default: str | None = None
         self._sha_cache: dict[str, str | None] = {}
+        self._items_cache: dict[str, set[str]] = {}
+        #: tags no bound source numbers, when there was a choice to make
+        self.unattributed: list[str] = []
+        #: tags MORE THAN ONE bound source numbers -- two books can both have a
+        #: "Definition 1.1.1", and then only a sources.map rule can say which
+        self.ambiguous: list[str] = []
 
     @property
     def default(self) -> str:
@@ -396,10 +418,51 @@ class SourceBinding:
             # fallback is adapter.yaml's, and the binding's is fresher.
             if matched and matched != self.declared_default:
                 source_id = matched
+        if not source_id and len(self.shas) > 1 and tag:
+            source_id, hits = self._source_holding(str(tag))
+            if not source_id:
+                (self.ambiguous if hits > 1 else self.unattributed).append(str(tag))
         source_id = source_id or self.default
         sha = self.sha(source_id)
         self.used[source_id] = sha
         return source_id, sha
+
+    def _source_holding(self, tag: str) -> tuple[str, int]:
+        """The one bound source whose items.json holds this tag's item, and how many do.
+
+        The map `cf onboard` could not write, inferred from the sources
+        themselves: a tag is parsed with each candidate's own kind list (one item
+        grammar, ``cflib.items``) and looked up in that candidate's item index.
+        Exactly one hit attributes the row; none or several leave the decision to
+        the default and are reported.
+        """
+        from cflib import items as cf_items
+        hits = []
+        for source_id in sorted(self.shas):
+            index = self._item_index(source_id)
+            if not index:
+                continue
+            item, _reject = cf_items.try_parse(tag, self.adapter.item_kinds(source_id))
+            if item is not None and item.id in index:
+                hits.append(source_id)
+        return (hits[0] if len(hits) == 1 else "", len(hits))
+
+    def _item_index(self, source_id: str) -> set[str]:
+        """Every item id ``sources/<id>/items.json`` records (empty when unprepared)."""
+        if source_id not in self._items_cache:
+            found: set[str] = set()
+            paths = getattr(getattr(self.adapter, "workspace", None), "paths", None)
+            path = paths.source_items(source_id) if paths is not None else None
+            if path is not None and path.exists():
+                try:
+                    import json
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    found = {str(row.get("item")) for row in (data.get("items") or [])
+                             if row.get("item")}
+                except (OSError, ValueError):            # pragma: no cover - unreadable index
+                    found = set()
+            self._items_cache[source_id] = found
+        return self._items_cache[source_id]
 
     def sha(self, source_id: str) -> str | None:
         if source_id in self.shas:

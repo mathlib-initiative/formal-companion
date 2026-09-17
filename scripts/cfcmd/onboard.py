@@ -25,7 +25,7 @@ import subprocess
 import traceback
 from pathlib import Path
 
-from cflib import discovery, inference, log, state as state_mod, vocab
+from cflib import discovery, gitsafe, inference, log, state as state_mod, vocab
 from cflib.adapters_api import DRY_RUN_REQUIRED_KEYS
 from cflib.errors import AdapterError, CfError, DiscoveryError, SourceError
 from cflib.jsonio import write_jsonl
@@ -63,6 +63,9 @@ def register(subparsers) -> None:
     p.add_argument("--write-policy", default="read_only", choices=list(vocab.WRITE_POLICIES),
                    help="v1 is findings-only; peers stay read_only")
     p.add_argument("--no-errata", action="store_true", help="skip the errata fetch")
+    p.add_argument("--fetch-errata", action="store_true",
+                   help="allow fetching an errata URL the COMPANION REPO supplies "
+                        "(off by default: the page ends up in worker prompts)")
     p.add_argument("--no-extract", action="store_true", help="stop after preparing the sources")
     p.add_argument("--force", action="store_true", help="rewrite adapter.yaml and re-prepare")
 
@@ -131,8 +134,18 @@ def run(args) -> int:
 
     # ---- prepare -----------------------------------------------------
     log.info("")
-    for body in result.sources:
-        _prepare_source(workspace, body["id"], force=args.force, no_errata=args.no_errata)
+    try:
+        for body in result.sources:
+            _prepare_source(workspace, body["id"], force=args.force, no_errata=args.no_errata,
+                            declared_offset=body.get("declared_offset"),
+                            fetch_errata_ok=_errata_allowed(workspace, args))
+    except CfError:
+        # A refusal here must not strand the workspace: the sources above are
+        # already saved as `audited`, and one that no companion lists is a file
+        # this loader rejects -- so every later cf command in the directory would
+        # die on the state a refusal left behind. Park them, then raise.
+        _park_unlisted_sources(workspace, result)
+        raise
 
     # ---- the anchor edition (needs prepared items) --------------------
     audited, bundled, anchor, anchor_conf, anchor_evidence = _decide_sources(
@@ -222,6 +235,28 @@ def _default_name(repo: Path) -> str:
     return repo.name.strip().lower().replace("_", "-").replace(" ", "-")
 
 
+def _park_unlisted_sources(workspace, result) -> None:
+    """Demote every just-registered source no companion lists to `reference`.
+
+    `role: audited` means "some companion is audited against this"; until the
+    companion entry is written that is not true, and `Workspace.validate` says
+    so.  A source parked here comes back as audited on the next successful
+    onboard, and `cf sources remove <id>` drops it for good.
+    """
+    for body in result.sources:
+        source_id = body["id"]
+        if source_id in workspace.sources and not workspace.companions_of(source_id):
+            workspace.upsert_source(source_id, role=ROLE_REFERENCE)
+    workspace.save()
+
+
+def _errata_allowed(workspace, args) -> bool:
+    """May a repo-supplied errata URL be fetched? ``--fetch-errata`` or the policy."""
+    if getattr(args, "fetch_errata", False):
+        return True
+    return bool((workspace.policy or {}).get("allow_errata_fetch"))
+
+
 def _detect(repo: Path, override: str | None) -> tuple[str, float, dict]:
     if override:
         return override, 1.0, {"reason": "--adapter"}
@@ -229,11 +264,18 @@ def _detect(repo: Path, override: str | None) -> tuple[str, float, dict]:
 
 
 def _fold_offset_hints(result: discovery.DiscoveryResult) -> None:
-    """Keep the repo's declared offset on the source body for prepare() to check."""
+    """Keep the repo's declared offset on the source body for prepare() to check.
+
+    Kept whatever the registry already says.  Dropping it when the two disagreed
+    threw away the one case the cross-check exists for: a repo declaring "PDF
+    page = book page + 9" over a source the registry (and the running heads) put
+    at 2 is a repo talking about a different edition, and it has to be said out
+    loud rather than quietly resolved in the registry's favour.
+    """
     for body in result.sources:
         hint = body.pop("offset_hint", None)
         body.pop("anchor_hint", None)
-        if hint is not None and body.get("offset") in (None, hint):
+        if hint is not None:
             body["declared_offset"] = hint
 
 
@@ -243,8 +285,13 @@ def _register_source(workspace, registry: Registry, body: dict, result) -> None:
     fields = {k: v for k, v in body.items() if k not in {"id", "declared_offset"}}
     fields.setdefault("role", ROLE_AUDITED)
     if body.get("registry") == "local":
-        claim = next((c for c in result.claims if source_id in _ids_of(c, result)), None)
-        entry = entry_from_claim(source_id, claim or _empty_claim(body))
+        claim = result.claims_by_source.get(source_id)
+        # `pdf=` is the point: discovery has already located and fingerprinted
+        # this file, and an overlay row written without the sha it just computed
+        # cannot be matched by CONTENT on the next workspace -- which is both
+        # what R3 asks of the registry and what keeps the next discovery from
+        # splitting one PDF into two candidates again.
+        entry = entry_from_claim(source_id, claim or _empty_claim(body), pdf=_located_of(body))
         path = registry.append_overlay(workspace, entry)
         fields["registry"] = "overlay"
         fields["confirmed"] = False
@@ -253,9 +300,15 @@ def _register_source(workspace, registry: Registry, body: dict, result) -> None:
     workspace.upsert_source(source_id, **fields)
 
 
-def _ids_of(claim, result) -> list[str]:
-    return [b["id"] for b in result.sources if set(b.get("discovered", {}).get("from") or [])
-            & set(claim.sources)]
+def _located_of(body: dict):
+    """The `LocatedPdf` discovery already built, rebuilt from the source body."""
+    if not body.get("pdf") or not body.get("sha256"):
+        return None
+    return discovery.LocatedPdf(
+        path=Path(str(body["pdf"])), sha256=str(body["sha256"]),
+        bytes=int(body.get("bytes") or 0), pages=body.get("pages"),
+        text_sha256=body.get("text_sha256"),
+        where=(body.get("discovered") or {}).get("pdf_found_in", "repo_declared"))
 
 
 def _empty_claim(body: dict) -> discovery.SourceClaim:
@@ -267,8 +320,17 @@ def _empty_claim(body: dict) -> discovery.SourceClaim:
 # prepare
 # ---------------------------------------------------------------------------
 
-def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool) -> None:
-    """Run STAGES-A's prepare() + errata fetch for one source."""
+def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
+                    declared_offset: int | None = None,
+                    fetch_errata_ok: bool = False) -> None:
+    """Run STAGES-A's prepare() + errata fetch for one source.
+
+    ``declared_offset`` is the offset the repo's own prose declares, handed
+    straight in (never round-tripped through workspace.yaml, which is where it
+    used to be dropped): :func:`cflib.inference.infer_offset` REFUSES when the
+    running heads say something else.  ``fetch_errata_ok`` allows the one
+    fetch a repo-supplied URL would otherwise not get.
+    """
     ref = workspace.source(source_id)
     out_dir = workspace.paths.source_dir(source_id)
     if ref.pdf is None or not Path(ref.pdf).exists():
@@ -278,12 +340,14 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool) 
         return
     from sources import prepare_source
 
-    declared = (workspace.data.get("sources") or {}).get(source_id, {}).get("declared_offset")
     payload = prepare_source.prepare(
         str(ref.pdf), str(out_dir),
         source_id=source_id,
-        offset=ref.offset if ref.offset_method in {"manual", "declared"} and ref.offset_confidence
-        else (declared if declared is not None else None),
+        # an override a human set stays an override; the repo's declaration is a
+        # cross-check the running heads have to agree with.
+        offset=(ref.offset if ref.offset_method in {"manual", "declared"} and ref.offset_confidence
+                else None),
+        declared=declared_offset,
         kinds=list(ref.kinds) if ref.kinds and ref.registry != "local" else None,
         edition=ref.edition,
         expect_sha=ref.sha256 or "",
@@ -302,23 +366,44 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool) 
         offset_method=payload["offset_method"], pages=payload["pages"],
         bytes=payload.get("text_bytes") and Path(ref.pdf).stat().st_size,
         text_sha256=payload["text_sha256"], kinds=list(payload["kinds"]))
-    (workspace.data.get("sources") or {}).get(source_id, {}).pop("declared_offset", None)
     log.ok(f"prepared  sources/{source_id}/   text {payload['pages']} pages, "
            f"{payload['items']} items, offset {payload['offset']} "
            f"(confidence {confidence:.3f}, {payload['offset_method']})")
+    _refuse_an_empty_source(source_id, ref, payload)
+    _teach_the_overlay(workspace, source_id, sha256=ref.sha256, bytes=ref.bytes,
+                       pages=payload["pages"], offset=payload["offset"],
+                       offset_confidence=confidence, offset_method=payload["offset_method"],
+                       kinds=list(payload["kinds"]))
 
     if no_errata:
         return
-    url, conf, method = inference.infer_errata_url([], Registry.load(workspace).get(source_id))
+    ref = workspace.source(source_id)
+    entry = Registry.load(workspace).get(source_id)
+    url, conf, method = inference.infer_errata_url([], entry)
     if not url:
         url, conf, method = (ref.errata_url, ref.errata_confidence or 0.5, "workspace")
     if not url:
         log.warn(f"{source_id}: no errata page found (a real erratum has been missed before)")
         return
+    provenance = _errata_provenance(entry, ref, method)
+    if provenance == "repo" and not fetch_errata_ok:
+        # The URL came out of the COMPANION's own files. Fetching it is an
+        # outbound GET this machine did not choose, and the page it returns is
+        # shipped to the fleet and handed to workers as authoritative errata --
+        # so a repo would be choosing both. It waits for a human.
+        log.warn(f"{source_id}: the errata URL {url} came from the companion repo "
+                 f"({method}); NOT fetched")
+        log.info(f"         confirm it, then re-run:  cf sources set {source_id} "
+                 f"errata_url={url}")
+        log.info(f"         or onboard with --fetch-errata (workspace policy "
+                 f"allow_errata_fetch: true does it once and for all)")
+        workspace.upsert_source(source_id, book_page_url=url, errata_method="repo_unconfirmed")
+        return
     from sources import fetch_errata
     try:
         meta = fetch_errata.fetch(url, str(out_dir), source_id=source_id,
-                                  source_sha=ref.sha256 or "", offset=payload["offset"])
+                                  source_sha=ref.sha256 or "", offset=payload["offset"],
+                                  provenance=provenance)
     except Exception as exc:                        # noqa: BLE001 - offline is not fatal
         log.warn(f"{source_id}: errata fetch failed ({exc}); sources/{source_id}/errata.md is stale")
         return
@@ -329,9 +414,67 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool) 
         conf = conf / 2
         log.warn(f"{source_id}: {url} does not contain the word 'errata' "
                  f"(errata_url_unconfirmed)")
-    workspace.upsert_source(source_id, errata_url=url, errata_confidence=round(conf, 3))
+    workspace.upsert_source(source_id, errata_url=url, errata_confidence=round(conf, 3),
+                            errata_method=provenance)
+    _teach_the_overlay(workspace, source_id, errata_url=url)
     log.ok(f"errata    {url}  HTTP {meta['http_status']}  "
-           f"{meta['entries']} entries  ({method}, confidence {conf:.2f})")
+           f"{meta['entries']} entries  ({method}, confidence {conf:.2f}, url from {provenance})")
+
+
+def _teach_the_overlay(workspace, source_id: str, **learned) -> None:
+    """Record on the overlay row what reading the source actually taught us.
+
+    R3 makes the registry the memory of what is known about a source.  The row
+    `cf onboard` / `cf sources add` appends is written BEFORE the text is read,
+    so it knows no offset, no kinds and (for onboard) not even the sha; this puts
+    them back.  A no-op for a source that came from the skill's own registry.
+    """
+    if workspace.source(source_id).registry != "overlay":
+        return
+    registry = Registry.load(workspace)
+    path = registry.update_overlay(workspace, source_id, **learned)
+    if path is not None:
+        log.detail(f"registry  {path.name}: {source_id} now remembers "
+                   f"offset {learned.get('offset')}, {len(learned.get('kinds') or [])} kinds")
+
+
+def _refuse_an_empty_source(source_id: str, ref, payload: dict) -> None:
+    """A PDF with no items in it is not this source -- most likely not a source at all.
+
+    `locate_pdf` can only rank the candidates it finds; the text is the last
+    check, and it is a decisive one.  A document whose own headings number
+    nothing, or none of the kinds the repo tags, cannot be paired, cannot answer
+    a quote gate and cannot carry a page anchor -- so adopting it would mean
+    auditing a companion against the wrong document in silence.
+    """
+    if payload.get("items"):
+        return
+    kind_warnings = payload.get("kind_warnings") or []
+    raise SourceError(
+        f"{source_id}: {ref.pdf} has 0 numbered items in its text "
+        f"({payload.get('pages')} pages, kinds {', '.join(payload.get('kinds') or []) or 'none'})"
+        + (f"; {kind_warnings[0]}" if kind_warnings else ""),
+        hint=f"this is almost certainly not the document this companion formalises. "
+             f"Name the right PDF: cf sources add <pdf> --for <companion>")
+
+
+def _errata_provenance(entry, ref, method: str) -> str:
+    """Who chose this errata URL: ``registry``, ``manual`` or ``repo``.
+
+    Only a CONFIRMED registry entry (the curated file the skill ships, or an
+    overlay row a human has vouched for) and a URL a human typed with
+    `cf sources set` are fetched without being asked.  Everything else -- a book
+    page scraped out of ``formalization.yaml``, a README link, the parent
+    directory of a download URL the repo names -- is the repository's choice of
+    an outbound request and of text that lands in agent prompts.
+    """
+    if entry is not None and getattr(entry, "errata_url", "") and getattr(entry, "confirmed", False):
+        return "registry"
+    if ref.errata_method == "manual":
+        return "manual"
+    if ref.confirmed and ref.errata_url and method == "workspace":
+        return "manual"
+    return "repo"
 
 
 # ---------------------------------------------------------------------------
@@ -339,21 +482,67 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool) 
 # ---------------------------------------------------------------------------
 
 def _decide_sources(workspace, repo: Path, name: str, result, args):
-    """(audited ids, bundled ids, anchor id, confidence, evidence)."""
+    """(audited ids, bundled ids, anchor id, confidence, evidence).
+
+    A companion has a LIST of sources (R1), and the list may hold two genuinely
+    different books.  Only EDITIONS OF ONE WORK are rivals for the anchor, so the
+    discovered ids are clustered by ``same_work`` first and
+    :func:`discovery.choose_anchor_source` runs inside each cluster.  Scoring all
+    of them together asked which of "An Introduction to Measure Theory" and
+    "Elementary Notes on Sets" the page anchors follow, a question with no
+    answer, and on a first onboard (no rows to score) it refused outright -- so a
+    two-book companion had no flagless path at all.
+    """
     ids = result.source_ids()
     hints = [c.anchor_hint for c in result.claims if c.anchor_hint]
     rows = _existing_rows(workspace, name)
+    clusters = _same_work_clusters(result, ids)
     if args.anchor_source:
         if args.anchor_source not in ids:
             raise CfError(f"--anchor-source {args.anchor_source} is not one of the discovered "
                           f"sources ({', '.join(ids)})")
         anchor, conf, evidence = args.anchor_source, 1.0, {"reason": "--anchor-source"}
+        chosen = [anchor] + [_elect(repo, rows, c, workspace, hints)[0]
+                             for c in clusters if anchor not in c]
     else:
-        anchor, conf, evidence = discovery.choose_anchor_source(
-            repo, rows, ids, workspace=workspace, hints=hints)
-    audited = [anchor] + [sid for sid in ids if sid != anchor and _is_audited(result, sid, anchor)]
+        elected = [_elect(repo, rows, cluster, workspace, hints) for cluster in clusters]
+        anchor, conf, evidence = elected[0]
+        chosen = [sid for sid, _c, _e in elected]
+    audited = [sid for sid in ids if sid in chosen]
     bundled = [sid for sid in ids if sid not in audited]
+    if len(audited) > 1:
+        log.info(f"{name} formalises {len(audited)} different works: "
+                 f"{', '.join(audited)} (anchor: {anchor})")
     return audited, bundled, anchor, conf, evidence
+
+
+def _elect(repo: Path, rows, cluster: list[str], workspace, hints):
+    """The one edition of ONE work a companion anchors to."""
+    return discovery.choose_anchor_source(repo, rows, cluster, workspace=workspace, hints=hints)
+
+
+def _same_work_clusters(result, ids: list[str]) -> list[list[str]]:
+    """Group the discovered ids by ``same_work``: one cluster per WORK.
+
+    Two editions of one book are rivals (one is the pagination the repo follows,
+    the other is prepared only so the page map can be checked); two different
+    books are not rivals at all, they are two entries on the companion's list.
+    """
+    clusters: list[list[str]] = []
+    for sid in ids:
+        body = result.get(sid) or {}
+        siblings = set(body.get("same_work") or [])
+        for cluster in clusters:
+            others = set(cluster)
+            back = set()
+            for other in cluster:
+                back |= set((result.get(other) or {}).get("same_work") or [])
+            if siblings & others or sid in back:
+                cluster.append(sid)
+                break
+        else:
+            clusters.append([sid])
+    return clusters
 
 
 def _confirm_anchor(workspace, repo, name, result, args, rows, anchor, conf, evidence):
@@ -361,9 +550,15 @@ def _confirm_anchor(workspace, repo, name, result, args, rows, anchor, conf, evi
     if args.anchor_source or not rows or len(result.source_ids()) < 2:
         return anchor, conf, evidence
     hints = [c.anchor_hint for c in result.claims if c.anchor_hint]
+    # the rivals are the other editions of the anchor's OWN work, never another
+    # book the same companion also formalises.
+    cluster = next((c for c in _same_work_clusters(result, result.source_ids()) if anchor in c),
+                   [anchor])
+    if len(cluster) < 2:
+        return anchor, conf, evidence
     try:
         winner, winner_conf, winner_evidence = discovery.choose_anchor_source(
-            repo, rows, result.source_ids(), workspace=workspace, hints=hints)
+            repo, rows, cluster, workspace=workspace, hints=hints)
     except DiscoveryError as exc:
         log.warn(f"the anchor edition could not be confirmed mechanically: {exc.message}")
         log.warn(f"keeping {anchor} (confidence {conf:.2f}); settle it with "
@@ -389,19 +584,6 @@ def _print_anchor(result) -> None:
     for sid in result.bundled_sources:
         log.info(f"  the repo BUNDLES {sid} but does not anchor to it -> bundled_sources "
                  "(prepared as a reference, audited by nobody)")
-
-
-def _is_audited(result, source_id: str, anchor: str) -> bool:
-    """A sibling edition of the anchor is a REFERENCE, not a second audit source.
-
-    ``same_work`` is the test: two editions of one book are not two sources to
-    audit against -- one of them is the pagination the repo follows and the other
-    is prepared only so the page map between them can be checked.
-    """
-    body = result.get(source_id) or {}
-    anchor_body = result.get(anchor) or {}
-    siblings = set(body.get("same_work") or []) | set(anchor_body.get("same_work") or [])
-    return not (source_id in siblings or anchor in (body.get("same_work") or []))
 
 
 def _existing_rows(workspace, name: str) -> list[dict]:
@@ -435,7 +617,13 @@ def _write_adapter_yaml(workspace, name: str, repo: Path, kind: str, commit, sou
         "write_policy": args.write_policy,
         "owner": _yaml_str(args.owner),
         "source_default": anchor,
-        "source_map": "\n".join(f"    # - {{source: {sid}, files: [\"...\"]}}" for sid in sources),
+        # Commented-out placeholders: with more than one source bound and no map,
+        # the attribution reads each source's items.json per row (adapters/api.py
+        # SourceBinding._source_holding), so an uncommented rule is an OVERRIDE
+        # of that, not the only thing standing between a row and the anchor.
+        "source_map": "\n".join(
+            [f"    # a rule here overrides the per-row items.json lookup:"]
+            + [f"    # - {{source: {sid}, files: [\"...\"]}}" for sid in sources]),
     }, allow_missing=True)
     atomic_write(adapter_yaml, text)
     log.ok(f"wrote {adapter_yaml}")
@@ -447,8 +635,10 @@ def _yaml_str(value: str) -> str:
 
 
 def _commit(repo: Path) -> str | None:
-    res = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"],
-                         capture_output=True, text=True)
+    try:
+        res = gitsafe.run(repo, ["rev-parse", "HEAD"], timeout=30)
+    except (OSError, subprocess.SubprocessError):           # pragma: no cover
+        return None
     return res.stdout.strip() if res.returncode == 0 else None
 
 
@@ -526,12 +716,27 @@ def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anch
         log.warn(f"{name}: extraction failed: {exc.__class__.__name__}: {exc}")
         log.detail(traceback.format_exc())
         return []
-    _report_schema_problems(workspace, name, rows, anchor)
+    _report_unattributed(name, adapter, sources, anchor)
+    problems = _report_schema_problems(workspace, name, rows, anchor)
     path = workspace.paths.statements_jsonl(name)
-    write_jsonl(path, rows, meta={
-        "companion": name, "repo": str(repo), "sources": list(sources),
-        "anchor_source": anchor, "rows": len(rows), "at": state_mod.now(),
-    })
+    meta = {"companion": name, "repo": str(repo), "sources": list(sources),
+            "anchor_source": anchor, "rows": len(rows), "at": state_mod.now()}
+    if problems:
+        # `cf extract` refuses to write a table that fails the schema gate, and
+        # there must be ONE answer to "is this companion's table valid". The rows
+        # are still returned, because the anchor edition is scored from them and
+        # they never leave this process; they land beside the table with a
+        # .rejected suffix so the 142-duplicate-key case can be read.
+        rejected = path.parent / (path.name + ".rejected")
+        write_jsonl(rejected, rows, meta={**meta, "rejected": problems[:10]})
+        log.warn(f"{name}: statements.jsonl failed schema v2 validation "
+                 f"({len(problems)} problems); nothing was written to "
+                 f"{path.relative_to(workspace.root)}")
+        log.info(f"         the rows are at {rejected.relative_to(workspace.root)} -- fix "
+                 f"adapter.yaml (glob, tag pattern, sources.map) and re-run "
+                 f"`cf onboard {repo} --force`")
+        return rows
+    write_jsonl(path, rows, meta=meta)
     log.ok(f"extracted {path.relative_to(workspace.root)}   {len(rows)} rows")
     with state_mod.update(workspace, name) as st:
         state_mod.set_section(st, "extract", {
@@ -549,17 +754,42 @@ def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anch
     return rows
 
 
-def _report_schema_problems(workspace, name: str, rows, anchor: str) -> None:
-    """Say NOW what `cf extract` will refuse later.
+def _report_unattributed(name: str, adapter, sources, anchor: str) -> None:
+    """Say which rows no source could claim when the companion has more than one.
 
-    Onboarding writes its table before the schema gate runs, because the anchor
-    edition is decided from these rows and an empty table decides nothing.  That
-    is exactly why the problems have to be printed here: a companion whose
-    `glob:` reaches a generated mirror of its own modules produces two rows per
-    declaration, and finding that out at `cf extract` is three stages too late.
+    With one source there is nothing to decide.  With two, the attribution reads
+    each candidate's items.json; a tag neither of them numbers falls to the
+    anchor, and that is a guess, so it is printed rather than hidden.
+    """
+    binding = getattr(adapter, "last_binding", None)
+    if binding is None or len(list(sources or ())) < 2:
+        return
+    for tags, why in ((list(binding.ambiguous or []), "are numbered by MORE THAN ONE of"),
+                      (list(binding.unattributed or []), "match no item in any of")):
+        if not tags:
+            continue
+        log.warn(f"{name}: {len(tags)} tag(s) {why} {', '.join(sources)}; "
+                 f"attributed to the anchor {anchor}")
+        for tag in sorted(set(tags))[:5]:
+            log.info(f"    {tag!r}")
+        log.info(f"    add a sources.map rule in {name}/adapter.yaml to say which source "
+                 f"they belong to")
+
+
+def _report_schema_problems(workspace, name: str, rows, anchor: str) -> list[str]:
+    """Apply `cf extract`'s schema gate here, and say what it caught.
+
+    Onboarding needs the rows before the gate runs, because the anchor edition is
+    decided from them and an empty table decides nothing -- but it must not
+    PUBLISH a table `cf extract` would refuse, or the two writers of
+    companions/<name>/statements.jsonl disagree about what a valid table is.  So
+    the problems are reported here and the caller keeps the table out of the
+    companion directory: a companion whose `glob:` reaches a generated mirror of
+    its own modules produces two rows per declaration, and a workspace holding
+    that table is a workspace whose next stage reads 142 duplicate keys.
     """
     if not rows:
-        return
+        return []
     cap = 10
     try:
         from adapters.base import validate_rows
@@ -567,9 +797,9 @@ def _report_schema_problems(workspace, name: str, rows, anchor: str) -> None:
         problems = validate_rows(rows, kinds=kinds, require_source_sha=False, max_problems=cap)
     except Exception as exc:  # noqa: BLE001 - a reporting aid must never be fatal
         log.detail(f"schema check skipped: {exc.__class__.__name__}: {exc}")
-        return
+        return []
     if not problems:
-        return
+        return []
     # validate_rows stops at `cap`, so this is a floor, not a total: saying "10"
     # of a table with 142 collisions would read as "nearly clean".
     at_least = "at least " if len(problems) > cap else ""
@@ -582,6 +812,7 @@ def _report_schema_problems(workspace, name: str, rows, anchor: str) -> None:
                  f"{workspace.paths.adapter_yaml(name)} to the companion's own modules "
                  "(a generated mirror of them is inside the glob), then "
                  f"`cf extract --companion {name} --force`")
+    return problems
 
 
 def _infer_scope(workspace, source_id: str, rows) -> None:
