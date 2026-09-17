@@ -54,15 +54,34 @@ def scratch(case: unittest.TestCase) -> Path:
     return path
 
 
-def write_findings(directory: Path, item: str, defects: list[dict]) -> Path:
-    """A minimal v1-shaped findings file, as the runs merged them."""
+#: the two Tao editions, by the ids registry/sources.yaml gives them
+PUBLISHED_ID = "tao-measure-gsm126-published"
+DRAFT_ID = "tao-measure-2011-draft"
+PUBLISHED_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+DRAFT_SHA = "62d95658" + "0" * 56
+
+
+def write_findings(directory: Path, item: str, defects: list[dict],
+                   source_id: str | None = None, source_sha: str | None = None) -> Path:
+    """A minimal findings file, as the runs merged them.
+
+    With no ``source_id``/``source_sha`` it is v1-shaped: a document that does
+    not say which source it read, which is what the corpus looked like before
+    ``convert_v1`` stamped it.  The name is qualified by the source when one is
+    given, because ``exercise-1-1-1.json`` names two different items in two
+    sources and one directory holds both.
+    """
     directory.mkdir(parents=True, exist_ok=True)
-    name = item.lower().replace(" ", "-").replace(".", "-") + ".json"
+    tail = item.lower().replace(" ", "-").replace(".", "-")
+    name = (f"{source_id}--{tail}.json" if source_id else f"{tail}.json")
     path = directory / name
-    path.write_text(json.dumps({
-        "item": item, "book_located": True, "book_passage_quote": "q",
-        "matches": [], "disagreements": defects, "coverage_notes": "",
-    }), encoding="utf-8")
+    payload = {"item": item, "book_located": True, "book_passage_quote": "q",
+               "matches": [], "disagreements": defects, "coverage_notes": ""}
+    if source_id:
+        payload["source_id"] = source_id
+    if source_sha:
+        payload["source_sha"] = source_sha
+    path.write_text(json.dumps(payload), encoding="utf-8")
     return path
 
 
@@ -247,16 +266,35 @@ class TestReceipt(unittest.TestCase):
             write_findings(self.source, f"Exercise 1.1.{i}", [])
 
     def test_local_harvest_is_complete(self):
-        receipt = harvest_mod.harvest(run_id="run-1",
-                                      source={"kind": "local", "path": str(self.source)},
-                                      dest=self.dest, book_sha="abc", verify_sha=True)
+        receipt = harvest_mod.harvest(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA}, verify_sha=True)
         self.assertTrue(receipt["complete"])
         self.assertEqual(receipt["expected"]["count"], 8)
         self.assertEqual(receipt["actual"]["count"], 8)
         self.assertEqual(receipt["missing"], [])
         self.assertEqual(len(receipt["manifest"]), 8)
-        self.assertEqual(receipt["book_sha"], "abc")
+        # The RECEIPT records the sha of EVERY source the run read, so a later
+        # reader can say which editions the corpus was judged against without
+        # re-opening 2,672 files.
+        self.assertEqual(receipt["sources"], {PUBLISHED_ID: PUBLISHED_SHA})
+        self.assertNotIn("book_sha", receipt)
         self.assertTrue((self.dest / harvest_mod.RECEIPT_NAME).exists())
+
+    def test_the_receipt_counts_the_files_of_each_source_separately(self):
+        """A two-source harvest must say how many files came from each."""
+        for i in (1, 2, 3):
+            write_findings(self.source, f"Exercise 1.1.{i}", [], PUBLISHED_ID, PUBLISHED_SHA)
+        for i in (1, 2):
+            write_findings(self.source, f"Exercise 1.1.{i}", [], DRAFT_ID, DRAFT_SHA)
+        receipt = harvest_mod.harvest(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA, DRAFT_ID: DRAFT_SHA})
+        self.assertTrue(receipt["complete"])
+        self.assertEqual(receipt["by_source"], {DRAFT_ID: 2, PUBLISHED_ID: 3})
+        # the eight unstamped v1 files are recorded, not counted against a source
+        self.assertEqual(len(receipt["edition"]["no_source"]), 8)
+        self.assertEqual(receipt["actual"]["count"], 13)
 
     def test_one_file_short_is_not_complete(self):
         """findings-hunt held 762 where the server had 763; the missing file was real."""
@@ -300,53 +338,80 @@ class TestReceipt(unittest.TestCase):
         self.assertEqual(receipt["previous"]["actual"], 8)
         self.assertEqual(receipt["previous"]["gained"], ["exercise-1-1-9.json"])
 
-    def test_edition_audit_names_findings_from_another_edition(self):
-        """Batch-1 findings were judged against the 2011 draft; anchors differ."""
-        write_findings(self.source, "Exercise 1.1.99", [])
-        harvest_mod.harvest(run_id="run-1", source={"kind": "local", "path": str(self.source)},
-                            dest=self.dest, book_sha="published-sha")
-        victim = self.dest / "exercise-1-1-99.json"
+    def _mismatched_corpus(self) -> Path:
+        """Harvest a corpus in which one file was judged against the draft."""
+        write_findings(self.source, "Exercise 1.1.99", [], PUBLISHED_ID, PUBLISHED_SHA)
+        harvest_mod.harvest(run_id="run-1",
+                            source={"kind": "local", "path": str(self.source)},
+                            dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA})
+        victim = self.dest / f"{PUBLISHED_ID}--exercise-1-1-99.json"
         payload = json.loads(victim.read_text())
-        payload["book_sha"] = "draft-sha"
+        payload["source_sha"] = DRAFT_SHA
         victim.write_text(json.dumps(payload), encoding="utf-8")
-        audit = harvest_mod.edition_audit(self.dest, "published-sha")
-        self.assertEqual(audit["mismatched"], ["exercise-1-1-99.json"])
-        self.assertEqual(len(audit["no_book_sha"]), 8)
-        self.assertFalse(harvest_mod.edition_audit(self.dest, "")["checked"])
+        return victim
+
+    def test_source_audit_names_findings_from_another_edition(self):
+        """Batch-1 findings were judged against the 2011 draft; anchors differ."""
+        victim = self._mismatched_corpus()
+        audit = harvest_mod.source_audit(self.dest, {PUBLISHED_ID: PUBLISHED_SHA})
+        self.assertEqual(audit["mismatched"], [victim.name])
+        self.assertEqual(len(audit["no_source"]), 8)
+        self.assertFalse(harvest_mod.source_audit(self.dest, {})["checked"])
+
+    def test_a_file_naming_a_source_this_run_does_not_carry_is_its_own_class(self):
+        """Wrong edition and wrong RUN need different fixes, so they are separate.
+
+        A file stamped with a source_id the run never read was judged somewhere
+        else entirely; re-pinning the edition would not make it belong here.
+        """
+        write_findings(self.source, "Exercise 2.1.1", [], "some-other-book", "c" * 64)
+        harvest_mod.harvest(run_id="run-1",
+                            source={"kind": "local", "path": str(self.source)},
+                            dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA},
+                            allow_edition_mismatch=True)
+        audit = harvest_mod.source_audit(self.dest, {PUBLISHED_ID: PUBLISHED_SHA})
+        self.assertEqual(audit["unknown_source"], ["some-other-book--exercise-2-1-1.json"])
+        self.assertEqual(audit["mismatched"], [])
 
     def test_an_edition_mismatch_fails_the_receipt(self):
         """SKILL.md hard rule 3: a mismatch is refused, not warned about."""
-        write_findings(self.source, "Exercise 1.1.99", [])
-        harvest_mod.harvest(run_id="run-1", source={"kind": "local", "path": str(self.source)},
-                            dest=self.dest, book_sha="published-sha")
-        victim = self.dest / "exercise-1-1-99.json"
-        payload = json.loads(victim.read_text())
-        payload["book_sha"] = "draft-sha"
-        victim.write_text(json.dumps(payload), encoding="utf-8")
+        self._mismatched_corpus()
+        expected = [p.name for p in self.source.iterdir()]
 
         receipt = harvest_mod.build_receipt(
             run_id="run-1", source={"kind": "local", "path": str(self.source)},
-            expected=[p.name for p in self.source.iterdir()], dest=self.dest,
-            book_sha="published-sha")
+            expected=expected, dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA})
         self.assertFalse(receipt["complete"])
         self.assertFalse(receipt["edition"]["ok"])
         self.assertIn("REFUSED", harvest_mod.describe(receipt))
 
         allowed = harvest_mod.build_receipt(
             run_id="run-1", source={"kind": "local", "path": str(self.source)},
-            expected=[p.name for p in self.source.iterdir()], dest=self.dest,
-            book_sha="published-sha", allow_edition_mismatch=True)
+            expected=expected, dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA},
+            allow_edition_mismatch=True)
         self.assertTrue(allowed["complete"])
         self.assertTrue(allowed["edition"]["ok"])
         self.assertTrue(allowed["edition"]["allowed_mismatch"])
 
-    def test_a_missing_book_sha_is_recorded_but_not_fatal(self):
+    def test_the_other_edition_passes_when_the_run_carries_both(self):
+        """The same file is a mismatch or not depending on what the run read."""
+        self._mismatched_corpus()
+        receipt = harvest_mod.build_receipt(
+            run_id="run-1", source={"kind": "local", "path": str(self.source)},
+            expected=[p.name for p in self.source.iterdir()], dest=self.dest,
+            sources={PUBLISHED_ID: PUBLISHED_SHA, DRAFT_ID: DRAFT_SHA})
+        # It still names the published source, so its own sha decides it: the
+        # sha does not belong to the id it claims.
+        self.assertEqual(receipt["edition"]["mismatched"],
+                         [f"{PUBLISHED_ID}--exercise-1-1-99.json"])
+
+    def test_a_missing_source_sha_is_recorded_but_not_fatal(self):
         """v1 rows carry none until convert_v1 stamps them."""
         receipt = harvest_mod.harvest(
             run_id="run-1", source={"kind": "local", "path": str(self.source)},
-            dest=self.dest, book_sha="published-sha")
+            dest=self.dest, sources={PUBLISHED_ID: PUBLISHED_SHA})
         self.assertTrue(receipt["complete"])
-        self.assertEqual(len(receipt["edition"]["no_book_sha"]), 8)
+        self.assertEqual(len(receipt["edition"]["no_source"]), 8)
 
     def test_a_failing_gate_fails_the_receipt(self):
         gate_result = {"ok": False, "preset": "p", "problems": ["x.json: missing item"]}
@@ -361,27 +426,41 @@ class TestReceipt(unittest.TestCase):
         """`cf harvest --gate` is the only path on which the gate actually runs."""
         from harvest import gate_corpus
 
-        book = self.root / "book.txt"
+        book = self.root / "text.txt"
         book.write_text("Show that the union of two elementary sets is elementary "
                         "and that the intersection is elementary as well.\n", encoding="utf-8")
+        draft = self.root / "draft.txt"
+        draft.write_text("The 2011 draft says something else entirely here.\n",
+                         encoding="utf-8")
         cfg = self.root / "gate.local.json"
         cfg.write_text(json.dumps({
             "schema_version": 2, "preset": "differential-text", "mode": "differential",
-            "run_id": "run-1", "book": {"text": str(book), "sha256": "abc"},
+            "run_id": "run-1",
+            "sources": {PUBLISHED_ID: {"text": str(book), "sha256": PUBLISHED_SHA,
+                                       "page_offset": 16},
+                        DRAFT_ID: {"text": str(draft), "sha256": DRAFT_SHA,
+                                   "page_offset": 16}},
             "repos": ["ours"], "kinds": ["CONTENT", "COVERAGE"],
             "verdicts": ["AGREE", "CONTENT_DELTA"], "witness_required": False,
-            "require_book_located": True, "require_book_sha": True,
+            "require_book_located": True, "require_source_sha": True,
             "findings_dir": ".", "kind_rules": {},
         }), encoding="utf-8")
 
+        def doc(**over):
+            payload = {
+                "schema_version": 2, "run_id": "run-1", "source_id": PUBLISHED_ID,
+                "source_sha": PUBLISHED_SHA, "item": "Exercise 1.2.4",
+                "book_located": True,
+                "book_passage_quote":
+                    "Show that the union of two elementary sets is elementary",
+                "matches": [], "disagreements": [], "coverage_notes": "",
+            }
+            payload.update(over)
+            return json.dumps(payload)
+
         good = self.root / "corpus" / "gated"
         good.mkdir(parents=True)
-        (good / "exercise-1-2-4.json").write_text(json.dumps({
-            "schema_version": 2, "run_id": "run-1", "book_sha": "abc",
-            "item": "Exercise 1.2.4", "book_located": True,
-            "book_passage_quote": "Show that the union of two elementary sets is elementary",
-            "matches": [], "disagreements": [], "coverage_notes": "",
-        }), encoding="utf-8")
+        (good / f"{PUBLISHED_ID}--exercise-1-2-4.json").write_text(doc(), encoding="utf-8")
         result = gate_corpus.gate_corpus(good, cfg)
         self.assertTrue(result["ok"], result["problems"])
         self.assertEqual(result["files"], 1)
@@ -391,13 +470,21 @@ class TestReceipt(unittest.TestCase):
                                                      encoding="utf-8")
         self.assertTrue(gate_corpus.gate_corpus(good, cfg)["ok"])
 
-        (good / "fabricated.json").write_text(json.dumps({
-            "schema_version": 2, "run_id": "run-1", "book_sha": "abc",
-            "item": "Exercise 1.2.5", "book_located": True,
-            "book_passage_quote": "Every bounded function on the unit interval is Riemann "
-                                  "integrable whenever the measure is complete.",
-            "matches": [], "disagreements": [], "coverage_notes": "",
-        }), encoding="utf-8")
+        # The same quote, moved to the draft: both texts are loaded, and it is
+        # checked against the one its own document names.
+        (good / f"{DRAFT_ID}--exercise-1-2-4.json").write_text(
+            doc(source_id=DRAFT_ID, source_sha=DRAFT_SHA), encoding="utf-8")
+        moved = gate_corpus.gate_corpus(good, cfg)
+        self.assertFalse(moved["ok"])
+        self.assertTrue(any("NOT FOUND" in p and DRAFT_ID in p for p in moved["problems"]),
+                        moved["problems"])
+        (good / f"{DRAFT_ID}--exercise-1-2-4.json").unlink()
+
+        (good / "fabricated.json").write_text(doc(
+            item="Exercise 1.2.5",
+            book_passage_quote="Every bounded function on the unit interval is Riemann "
+                               "integrable whenever the measure is complete."),
+            encoding="utf-8")
         bad = gate_corpus.gate_corpus(good, cfg)
         self.assertFalse(bad["ok"])
         self.assertTrue(any("NOT FOUND" in p for p in bad["problems"]))
@@ -506,6 +593,82 @@ class TestUnionSynthetic(unittest.TestCase):
         self.assertEqual(union_mod.summary(union_mod.union(self.rows, repo="ours"))["multi_run"], 1)
 
 
+class TestTwoSourcesDoNotMerge(unittest.TestCase):
+    """The same item label in two sources is two items, everywhere downstream.
+
+    ``Exercise 1.1.1`` of the published edition and ``Exercise 1.1.1`` of the
+    2011 draft are different items (S6.1).  A stage that keyed on the bare label
+    would report one defect where there are two, and -- worse -- would report
+    two runs "agreeing" when each faulted a different edition.
+    """
+
+    DEFECT = [{"concept": "hypothesis d >= 1 dropped", "kind": "CONTENT",
+               "severity": "high", "repos_involved": ["ours"], "faithful": [],
+               "unfaithful_decls": ["ours:Foo.bar"], "book_quote": "q", "reasoning": "r"}]
+
+    def setUp(self):
+        self.root = scratch(self)
+        for run, sid, sha in (("run-a", PUBLISHED_ID, PUBLISHED_SHA),
+                              ("run-b", DRAFT_ID, DRAFT_SHA)):
+            write_findings(self.root / run, "Exercise 1.1.1", self.DEFECT, sid, sha)
+        self.runs = {"run-a": self.root / "run-a", "run-b": self.root / "run-b"}
+        self.rows = tally_mod.collect(self.runs)
+
+    def test_every_row_says_which_source_it_is_about(self):
+        self.assertEqual(sorted(r["source_id"] for r in self.rows),
+                         [DRAFT_ID, PUBLISHED_ID])
+        self.assertEqual({r["source_id"]: r["source_sha"] for r in self.rows},
+                         {PUBLISHED_ID: PUBLISHED_SHA, DRAFT_ID: DRAFT_SHA})
+
+    def test_tally_groups_by_source_and_repo(self):
+        result = tally_mod.tally(self.runs)
+        self.assertEqual(sorted(result["groups"]),
+                         sorted([tally_mod.group_key({"source_id": PUBLISHED_ID, "repo": "ours"}),
+                                 tally_mod.group_key({"source_id": DRAFT_ID, "repo": "ours"})]))
+        for block in result["groups"].values():
+            self.assertEqual(block["rows"], 1)
+        # the per-repo rollup is still there, and says which sources it spans
+        self.assertEqual(result["repos"]["ours"]["rows"], 2)
+        self.assertEqual(sorted(result["repos"]["ours"]["sources"]),
+                         sorted([PUBLISHED_ID, DRAFT_ID]))
+        self.assertEqual(result["sources"],
+                         {DRAFT_ID: DRAFT_SHA, PUBLISHED_ID: PUBLISHED_SHA})
+
+    def test_union_keys_on_the_source_so_one_defect_stays_two(self):
+        entries = union_mod.union(self.rows, repo="ours")
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(sorted(e["source_id"] for e in entries),
+                         sorted([PUBLISHED_ID, DRAFT_ID]))
+        for entry in entries:
+            self.assertEqual(entry["item"], "Exercise 1.1.1")
+            self.assertEqual(len(entry["runs"]), 1)     # never "found by both runs"
+        one = union_mod.union(self.rows, repo="ours", source_id=PUBLISHED_ID)
+        self.assertEqual([e["source_id"] for e in one], [PUBLISHED_ID])
+        summary = union_mod.summary(entries)
+        self.assertEqual(summary["multi_run"], 0)
+        self.assertEqual(summary["items"], 2)
+        self.assertEqual(summary["by_source"], {PUBLISHED_ID: 1, DRAFT_ID: 1})
+
+    def test_agreement_is_never_computed_across_two_sources(self):
+        """Two runs faulting one label in two editions agree about nothing."""
+        self.assertEqual(agreed_mod.agreed(self.rows, min_runs=2), [])
+        # ... and the same two runs over ONE source do agree
+        both = scratch(self)
+        for run in ("run-a", "run-b"):
+            write_findings(both / run, "Exercise 1.1.1", self.DEFECT,
+                           PUBLISHED_ID, PUBLISHED_SHA)
+        rows = tally_mod.collect({"run-a": both / "run-a", "run-b": both / "run-b"})
+        entries = agreed_mod.agreed(rows, min_runs=2)
+        self.assertEqual([(e["source_id"], e["item"]) for e in entries],
+                         [(PUBLISHED_ID, "Exercise 1.1.1")])
+
+    def test_a_tally_can_be_restricted_to_one_source(self):
+        """One corpus directory can hold two sources' files."""
+        rows = tally_mod.collect(self.runs, sources=[DRAFT_ID])
+        self.assertEqual([r["source_id"] for r in rows], [DRAFT_ID])
+        self.assertEqual(tally_mod.tally(self.runs, sources=[DRAFT_ID])["rows"], 1)
+
+
 # ---------------------------------------------------------------------------
 # the run planner: allowlist, budget, disk, out-of-tree gate
 
@@ -515,65 +678,135 @@ class TestRunPlanner(unittest.TestCase):
 
     def setUp(self):
         sys.path.insert(0, str(SCRIPTS))
-        from cflib.campaign import Campaign
+        from cflib.workspace import Workspace
 
         self.root = scratch(self)
-        (self.root / "campaign.yaml").write_text(
-            "version: 1\n"
-            "book:\n  id: tao-measure\n  sha256: abc123\n  offset: 16\n"
-            "companions:\n  - name: ours\n    repo: /tmp/ours\n"
+        self.ours = self.root / "repos" / "ours"
+        self.ours.mkdir(parents=True)
+        (self.root / "workspace.yaml").write_text(
+            "version: 2\n"
+            "workspace:\n  name: tao\n"
+            "companions:\n"
+            "  ours:\n"
+            f"    repo: {self.ours}\n"
+            "    adapter: docstring_tags\n"
+            f"    sources: [{PUBLISHED_ID}]\n"
+            f"    anchor_source: {PUBLISHED_ID}\n"
+            "sources:\n"
+            f"  {PUBLISHED_ID}:\n"
+            f'    sha256: "{PUBLISHED_SHA}"\n'
+            "    title: An Introduction to Measure Theory\n"
+            '    edition: "AMS GSM 126 (published pagination)"\n'
+            "    offset: 16\n"
+            "    role: audited\n"
+            f"  {DRAFT_ID}:\n"
+            f'    sha256: "{DRAFT_SHA}"\n'
+            "    title: An Introduction to Measure Theory\n"
+            '    edition: "2011-01-24 draft"\n'
+            "    offset: 16\n"
+            "    role: reference\n"
             "hosts:\n  allowlist: [testbox]\n  remote_root: /home/tester\n"
             "  testbox:\n    ssh: tester@testbox\n"
             "budget:\n  max_cost_usd: 25\n", encoding="utf-8")
-        self.campaign = Campaign.load(self.root)
+        self.workspace = Workspace.load(self.root)
+        # Both editions are PREPARED on this machine; the run reads one.
+        for sid in (PUBLISHED_ID, DRAFT_ID):
+            sdir = self.root / "sources" / sid
+            (sdir / "images").mkdir(parents=True)
+            (sdir / "text.txt").write_text(f"text of {sid}\n", encoding="utf-8")
+            (sdir / "errata.md").write_text("# errata\n", encoding="utf-8")
+            (sdir / "images" / "p-080.png").write_bytes(b"\x89PNG")
         self.run_dir = self.root / "runs" / "demo"
         (self.run_dir / "tasks").mkdir(parents=True)
         for i in (1, 2, 3):
-            (self.run_dir / "tasks" / f"exercise-1-1-{i}.yaml").write_text(
-                f"schema_version: 1\nid: exercise-1-1-{i}\ntitle: \"hunt: Exercise 1.1.{i}\"\n"
+            name = f"{PUBLISHED_ID}--exercise-1-1-{i}"
+            (self.run_dir / "tasks" / f"{name}.yaml").write_text(
+                f"schema_version: 1\nid: {name}\ntitle: \"hunt: Exercise 1.1.{i}\"\n"
                 f"description: |\n  probe\n", encoding="utf-8")
         self.run = {"run_id": "demo", "mode": "attack:hunt", "companions": ["ours"],
-                    "book": {"id": "tao-measure", "sha256": "abc123", "access": "text"},
+                    "sources": [{"id": PUBLISHED_ID, "sha256": PUBLISHED_SHA,
+                                 "offset": 16}],
+                    "source_access": "text",
                     "remote": {"entrypoint": "hunt", "tend_root": "hunt-tend"}}
 
     def test_host_must_be_allowlisted(self):
         from run import manifest
 
-        self.assertEqual(manifest.resolve_host(self.campaign, "testbox")["ssh"], "tester@testbox")
+        self.assertEqual(manifest.resolve_host(self.workspace, "testbox")["ssh"], "tester@testbox")
         with self.assertRaises(Exception):
-            manifest.resolve_host(self.campaign, "ffmain")
+            manifest.resolve_host(self.workspace, "ffmain")
 
     def test_sources_and_book_are_excluded_by_default(self):
         from run import manifest
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         entries, _ = manifest.build_manifest(
-            campaign_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
-            host=host, include_sources=False, include_book=False,
-            companions=manifest.companion_repos(self.campaign))
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=False, include_texts=False,
+            companions=manifest.companion_repos(self.workspace))
         names = [e["name"] for e in entries]
-        self.assertNotIn("source:ours", names)
-        self.assertFalse([n for n in names if n.startswith("book-")])
+        self.assertNotIn("repo:ours", names)
+        self.assertFalse([n for n in names if n.startswith("source-")])
         self.assertIn("gate", names)
 
     def test_sources_are_transferred_read_only(self):
         from run import manifest
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         entries, _ = manifest.build_manifest(
-            campaign_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
-            host=host, include_sources=True, include_book=False,
-            companions={"ours": str(self.root)})
-        source = [e for e in entries if e["name"] == "source:ours"][0]
-        self.assertIn("--chmod=D0555,F0444", source["rsync_flags"])
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=True, include_texts=False,
+            companions={"ours": str(self.ours)})
+        repo = [e for e in entries if e["name"] == "repo:ours"][0]
+        self.assertIn("--chmod=D0555,F0444", repo["rsync_flags"])
+        # Lean under repos/, source text under sources/: a companion named after
+        # a source cannot land on top of the text the gate checks quotes against.
+        self.assertTrue(repo["dest"].endswith("/repos/ours/"), repo["dest"])
+
+    def test_only_the_sources_this_run_reads_leave_the_machine(self):
+        """Both editions are prepared here; the run reads one, so one travels."""
+        from run import manifest
+
+        host = manifest.resolve_host(self.workspace, "testbox")
+        entries, warnings = manifest.build_manifest(
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=False, include_texts=True, companions={})
+        names = [e["name"] for e in entries]
+        self.assertIn(f"source-text:{PUBLISHED_ID}", names)
+        self.assertIn(f"source-errata:{PUBLISHED_ID}", names)
+        self.assertFalse([n for n in names if DRAFT_ID in n],
+                         "the draft is on this machine but not in this run")
+        text = [e for e in entries if e["name"] == f"source-text:{PUBLISHED_ID}"][0]
+        self.assertEqual(text["src"], str(self.root / "sources" / PUBLISHED_ID / "text.txt"))
+        self.assertTrue(text["dest"].endswith(f"/sources/{PUBLISHED_ID}/text.txt"))
+        # a text-only run does not ship the page images
+        self.assertNotIn(f"source-images:{PUBLISHED_ID}", names)
+        self.assertEqual([w for w in warnings if "image" in w], [])
+
+    def test_a_two_source_run_transfers_both_texts_and_only_those(self):
+        from run import manifest
+
+        host = manifest.resolve_host(self.workspace, "testbox")
+        run = dict(self.run, sources=[
+            {"id": PUBLISHED_ID, "sha256": PUBLISHED_SHA},
+            {"id": DRAFT_ID, "sha256": DRAFT_SHA}], source_access="text+images")
+        entries, _ = manifest.build_manifest(
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=run,
+            host=host, include_sources=False, include_texts=True, companions={})
+        names = [e["name"] for e in entries]
+        for sid in (PUBLISHED_ID, DRAFT_ID):
+            self.assertIn(f"source-text:{sid}", names)
+            self.assertIn(f"source-images:{sid}", names)   # the hunt run reads notation
+        self.assertEqual(manifest.source_shas(self.workspace, run),
+                         {PUBLISHED_ID: PUBLISHED_SHA, DRAFT_ID: DRAFT_SHA})
 
     def test_gate_is_transferred_out_of_tree(self):
         from run import manifest
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         entries, _ = manifest.build_manifest(
-            campaign_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
-            host=host, include_sources=False, include_book=False, companions={})
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=False, include_texts=False, companions={})
         gate = [e for e in entries if e["name"] == "gate"][0]
         entrypoint = f"{host['remote_root']}/hunt/"
         self.assertFalse(gate["dest"].startswith(entrypoint))
@@ -581,7 +814,7 @@ class TestRunPlanner(unittest.TestCase):
     def test_in_tree_gate_config_is_reported(self):
         from run import manifest
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         tend_root = self.run_dir / "tend-root"
         tend_root.mkdir(parents=True)
         (tend_root / "config.yaml").write_text(
@@ -605,14 +838,14 @@ class TestRunPlanner(unittest.TestCase):
         """`cf plan-run` stages the gate in tend-root/gate/ with the run's gate.json."""
         from run import manifest
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         gate_dir = self.run_dir / "tend-root" / "gate"
         gate_dir.mkdir(parents=True)
         (gate_dir / "verify_findings.py").write_text("# gate\n", encoding="utf-8")
         (gate_dir / "gate.json").write_text("{}", encoding="utf-8")
         entries, _ = manifest.build_manifest(
-            campaign_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
-            host=host, include_sources=False, include_book=False, companions={})
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=False, include_texts=False, companions={})
         gate = [e for e in entries if e["name"] == "gate"][0]
         self.assertEqual(gate["src"], str(gate_dir))
         self.assertEqual(gate["dest"], f"{host['remote_root']}/demo-gate/")
@@ -622,14 +855,15 @@ class TestRunPlanner(unittest.TestCase):
 
     def test_budget_cap_is_required(self):
         from run import manifest
-        from cflib.campaign import Campaign
+        from cflib.workspace import Workspace
 
-        budget = manifest.check_budget_cap(self.campaign, self.run, None, False)
+        budget = manifest.check_budget_cap(self.workspace, self.run, None, False)
         self.assertEqual(budget["max_cost"], 25.0)
-        (self.root / "campaign.yaml").write_text(
-            "version: 1\nbook:\n  id: b\n  offset: 16\nhosts:\n  allowlist: [testbox]\n",
-            encoding="utf-8")
-        bare = Campaign.load(self.root)
+        bare_root = scratch(self)
+        (bare_root / "workspace.yaml").write_text(
+            "version: 2\nworkspace:\n  name: bare\ncompanions: {}\nsources: {}\n"
+            "hosts:\n  allowlist: [testbox]\n", encoding="utf-8")
+        bare = Workspace.load(bare_root)
         with self.assertRaises(Exception):
             manifest.check_budget_cap(bare, self.run, None, False)
         self.assertTrue(manifest.check_budget_cap(bare, self.run, None, True)["acknowledged_uncapped"])
@@ -637,11 +871,11 @@ class TestRunPlanner(unittest.TestCase):
     def test_disk_budget_flags_a_worktree_blowout(self):
         from run import manifest
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         host["disk_budget_bytes"] = 1000
         entries, _ = manifest.build_manifest(
-            campaign_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
-            host=host, include_sources=False, include_book=False, companions={})
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=False, include_texts=False, companions={})
         disk = manifest.disk_budget(entries, 763, host)
         self.assertTrue(disk["over_budget"])
         self.assertIn("--copy-dir --cow", disk["advice"])
@@ -649,10 +883,10 @@ class TestRunPlanner(unittest.TestCase):
     def test_commands_smoke_before_raise(self):
         from run import manifest, remote
 
-        host = manifest.resolve_host(self.campaign, "testbox")
+        host = manifest.resolve_host(self.workspace, "testbox")
         entries, _ = manifest.build_manifest(
-            campaign_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
-            host=host, include_sources=False, include_book=False, companions={})
+            workspace_dir=self.root, skill_dir=SCRIPTS.parent, run_id="demo", run=self.run,
+            host=host, include_sources=False, include_texts=False, companions={})
         steps = remote.plan_commands(
             host=host, run_id="demo", run=self.run, entries=entries,
             names=manifest.remote_names(self.run, "demo"),
@@ -698,11 +932,11 @@ class TestRunPlanner(unittest.TestCase):
             over_session_cap = False
 
         with self.assertRaises(CfError) as ctx:
-            run_cmd._concurrency(self.campaign, {}, A())
+            run_cmd._concurrency(self.workspace, {}, A())
         self.assertIn("account cap", str(ctx.exception))
 
         A.over_session_cap = True
-        loud = run_cmd._concurrency(self.campaign, {}, A())
+        loud = run_cmd._concurrency(self.workspace, {}, A())
         self.assertEqual(loud["sessions"], 36)
         self.assertTrue(loud["over_session_cap"])
 
@@ -711,7 +945,7 @@ class TestRunPlanner(unittest.TestCase):
             reviewers = 5
             over_session_cap = False
 
-        fine = run_cmd._concurrency(self.campaign, {}, B())
+        fine = run_cmd._concurrency(self.workspace, {}, B())
         self.assertEqual(fine["sessions"], 13)
         self.assertNotIn("over_session_cap", fine)
 
@@ -724,9 +958,9 @@ class TestRunPlanner(unittest.TestCase):
         self.assertEqual(results, [{"stage": "monitor", "title": "t", "ran": False}])
 
     FLEET_KW = dict(
-        campaign={"book_id": "b", "book_title": "B", "book_sha": "0" * 64,
-                  "book_layout_txt": "/b/book.txt", "book_pages_dir": "/b/pages",
-                  "pdf_page_offset": 16, "errata": ""},
+        source={"source_id": PUBLISHED_ID, "title": "An Introduction to Measure Theory",
+                "source_sha": PUBLISHED_SHA, "text": f"/s/{PUBLISHED_ID}/text.txt",
+                "pages_dir": f"/s/{PUBLISHED_ID}/pages", "page_offset": 16, "errata": ""},
         repos=[{"name": "ours", "repo": "/r/ours",
                 "statements": "/c/ours.jsonl", "conventions": "total functions"}],
         mode="differential",
@@ -734,6 +968,37 @@ class TestRunPlanner(unittest.TestCase):
               "kinds": ["CONTENT"], "witness_required": False,
               "quote_min_chars": 25, "scratch_dir": "/tmp/sg"},
     )
+
+    def test_local_fleet_repos_come_from_the_workspace(self):
+        """`Workspace.companion` returns a CompanionRef, not a mapping.
+
+        This built `args.repos` with `entry.get("repo")`, so `cf run --local`
+        died with AttributeError before writing anything -- and a companion that
+        run.yaml names but workspace.yaml does not must still get a row, with an
+        empty repo, rather than taking the command down.
+        """
+        from cfcmd import run as run_cmd
+
+        (self.workspace.paths.companion_dir("ours")).mkdir(parents=True, exist_ok=True)
+        self.workspace.paths.conventions_md("ours").write_text(
+            "## 1. Total functions\n\n- junk values are 0\n", encoding="utf-8")
+        rows = run_cmd._local_repos(self.workspace, self.run)
+        self.assertEqual([r["name"] for r in rows], ["ours"])
+        self.assertEqual(rows[0]["repo"], str(self.ours))
+        self.assertIn("junk values", rows[0]["conventions"])
+        gone = run_cmd._local_repos(self.workspace, dict(self.run, repos=["ghost"]))
+        self.assertEqual(gone[0]["repo"], "")
+
+    def test_the_local_fleet_source_block_is_the_run_s_own(self):
+        """run.yaml is the record of which edition a planned run reads."""
+        from cfcmd import run as run_cmd
+
+        self.assertEqual(run_cmd._run_source(self.workspace, self.run), PUBLISHED_ID)
+        self.assertEqual(
+            run_cmd._run_source(self.workspace,
+                                dict(self.run, sources=[{"id": DRAFT_ID}])), DRAFT_ID)
+        # a run.yaml naming none, in a workspace holding two, is not guessed at
+        self.assertEqual(run_cmd._run_source(self.workspace, {}), "")
 
     def test_local_fleet_refuses_a_big_run(self):
         from run import fleet_local
@@ -759,7 +1024,7 @@ class TestRunPlanner(unittest.TestCase):
             if key not in ("items",):
                 self.assertIn(key, args, f"workflow reads args.{key}")
         for key in re.findall(r"\bC\.([a-z_]+)", js):
-            self.assertIn(key, args["campaign"], f"workflow reads args.campaign.{key}")
+            self.assertIn(key, args["source"], f"workflow reads args.source.{key}")
         for key in re.findall(r"\bGATE\.([a-z_]+)", js):
             self.assertIn(key, args["gate"], f"workflow reads args.gate.{key}")
 
@@ -781,15 +1046,53 @@ class TestRunPlanner(unittest.TestCase):
 
         meta = {t["item"]: {"repos": ["ours", "adam"], "pdf_pages": [21]}
                 for t in fleet_local.task_args(self.run_dir)}
-        items = fleet_local.item_args(self.run_dir, meta)
+        items = fleet_local.item_args(self.run_dir, meta, source_id=PUBLISHED_ID)
         self.assertTrue(items)
         for it in items:
             self.assertEqual(it["repos"], ["ours", "adam"])
             self.assertEqual(it["pdf_pages"], [21])
             self.assertEqual(it["note"], "")
+            self.assertEqual(it["source_id"], PUBLISHED_ID)
         single = fleet_local.item_args(
             self.run_dir, {t["item"]: {"repos": ["ours"]} for t in items})
         self.assertIn("only ours formalises", single[0]["note"])
+
+    def test_an_item_carries_its_own_source_over_the_run_s(self):
+        """The workflow keys its per-item source map on exactly this field.
+
+        `workflows/fleet-local.workflow.js` builds SRC_OF from `t.source_id` and
+        stamps every finding with it, so an item whose pairs row names the other
+        edition must carry that edition, not the run's default.
+        """
+        from run import fleet_local
+
+        rows = fleet_local.task_args(self.run_dir)
+        meta = {t["item"]: {"repos": ["ours"]} for t in rows}
+        meta[rows[0]["item"]]["source_id"] = DRAFT_ID
+        items = fleet_local.item_args(self.run_dir, meta, source_id=PUBLISHED_ID)
+        self.assertEqual(items[0]["source_id"], DRAFT_ID)
+        self.assertEqual([i["source_id"] for i in items[1:]],
+                         [PUBLISHED_ID] * (len(items) - 1))
+
+    def test_a_run_spanning_two_sources_names_the_source_in_every_item_note(self):
+        """"Exercise 1.3.19" does not tell a worker whose page to open."""
+        from run import fleet_local
+
+        rows = fleet_local.task_args(self.run_dir)
+        meta = {t["item"]: {"repos": ["ours", "adam"]} for t in rows}
+        meta[rows[0]["item"]]["source_id"] = DRAFT_ID
+        args = fleet_local.build(self.run_dir, "demo", max_items=100,
+                                 item_meta=meta,
+                                 **dict(self.FLEET_KW, mode="differential"))
+        self.assertEqual({i["source_id"] for i in args["items"]},
+                         {DRAFT_ID, PUBLISHED_ID})
+        for item in args["items"]:
+            self.assertIn(f"source `{item['source_id']}`", item["note"])
+        # ... and a single-source run does not carry that noise
+        one = fleet_local.build(self.run_dir, "demo", max_items=100,
+                                item_meta={t["item"]: {"repos": ["ours", "adam"]}
+                                           for t in rows}, **self.FLEET_KW)
+        self.assertEqual([i["note"] for i in one["items"]], [""] * len(one["items"]))
 
 
 if __name__ == "__main__":

@@ -61,7 +61,7 @@ DATA
 - Statement tables (one JSON row per declaration, with file:line and the signature):
 ${REPOS.map(r => '    ' + r.name + ': ' + r.statements).join('\n')}
 ${A.pairs ? '- Paired rows for this item: grep -F \'"item": "<ITEM>"\' ' + A.pairs : ''}
-- The source: ${C.text} -- `${C.source_id}` (pdftotext of the pinned edition, sha256 ${C.source_sha}; pages separated by form feed)
+- The source: ${C.text} -- \`${C.source_id}\` (pdftotext of the pinned edition, sha256 ${C.source_sha}; pages separated by form feed)
   and one file per page at ${C.pages_dir}/pNNN.txt (PDF page = printed page + ${C.page_offset}).
   Another edition of the same work may exist; every quote is checked against THIS text and no other.
   Locate the item (e.g. grep -n 'Exercise 1.2.4') and READ THE ACTUAL PASSAGE; never work from memory of the book.
@@ -90,7 +90,7 @@ dots replaced by '-', as TASK_ID), then run:
     ${GATE.command}
 It checks: every book_quote is at least ${GATE.quote_min_chars || 25} normalised characters and actually occurs in the
 book text; every named declaration exists; kinds and severities are in the vocabulary${GATE.witness_required ? '; every disagreement carries a witness' : ''};
-source_sha matches ${C.source_sha} and source_id is `${C.source_id}`. Fix whatever it rejects and run it again. Report the command you ran and its final
+source_sha matches ${C.source_sha} and source_id is \`${C.source_id}\`. Fix whatever it rejects and run it again. Report the command you ran and its final
 output in the \`gate\` field. If you cannot make a finding pass the gate, DROP the finding and say so in coverage_notes
 -- a finding that cannot be evidenced does not exist. The authoritative gate runs again, out of tree, at harvest.` : ''
 

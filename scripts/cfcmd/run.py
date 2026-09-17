@@ -160,14 +160,17 @@ def _local_repos(workspace, data: dict) -> list[dict]:
     names = [str(r) for r in (data.get("repos") or [])] or workspace.companion_names()
     out = []
     for name in names:
-        entry = {}
+        # `Workspace.companion` returns a CompanionRef, not a mapping: a
+        # companion listed in run.yaml but absent from workspace.yaml still gets
+        # a row, with an empty repo, rather than taking the command down.
+        repo = ""
         try:
-            entry = workspace.companion(name)
+            repo = str(workspace.companion(name).repo or "")
         except CfError:
             pass
         out.append({
             "name": name,
-            "repo": str(entry.get("repo") or entry.get("path") or ""),
+            "repo": repo,
             "statements": str(paths.statements_jsonl(name)),
             "conventions": _conventions_text(paths, name),
         })

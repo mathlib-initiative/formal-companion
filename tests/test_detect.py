@@ -44,8 +44,14 @@ from detect.stages import StageTable  # noqa: E402
 BASELINE_DIFF = os.environ.get("CF_BASELINE_DIFF")
 BOOK_TXT = os.environ.get("CF_BOOK_TXT")
 
-BOOK_KINDS = ("Definition", "Lemma", "Theorem", "Proposition", "Corollary",
-              "Exercise", "Example", "Remark")
+#: the two Tao editions, by the ids registry/sources.yaml gives them
+PUBLISHED_ID = "tao-measure-gsm126-published"
+DRAFT_ID = "tao-measure-2011-draft"
+PUBLISHED_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+DRAFT_SHA = "62d95658" + "0" * 56
+
+SOURCE_KINDS = ("Definition", "Lemma", "Theorem", "Proposition", "Corollary",
+                "Exercise", "Example", "Remark")
 
 
 def _read_jsonl(path: Path) -> list[dict]:
@@ -61,7 +67,7 @@ def _items_from_book(book_text: str) -> list[dict]:
     """
     items: list[dict] = []
     seen: set[str] = set()
-    for kind in BOOK_KINDS:
+    for kind in SOURCE_KINDS:
         for m in re.finditer(rf"(?:^|\n)[ \t]*({kind}[ \t]+1\.\d+\.\d+)", book_text):
             ident = re.sub(r"\s+", " ", m.group(1))
             if ident in seen:
@@ -76,13 +82,24 @@ def _items_from_book(book_text: str) -> list[dict]:
 # ==========================================================================
 class StageTableTest(unittest.TestCase):
     def setUp(self):
-        self.stages = StageTable.for_book("tao-measure")
+        self.stages = StageTable.for_source(PUBLISHED_ID)
 
     def test_shipped_table_loads(self):
-        self.assertEqual(self.stages.book, "tao-measure")
+        self.assertEqual(self.stages.source_id, PUBLISHED_ID)
         self.assertEqual(self.stages.chapter, 1)
         self.assertTrue(self.stages.module_stages)
         self.assertIn("MeasureTheory.MeasureSpace.volume", self.stages.objects)
+
+    def test_one_table_serves_every_edition_of_the_work(self):
+        """A stage is which SECTION develops a concept, not which page.
+
+        Two editions of one work share their section structure even when their
+        pagination differs, so the draft resolves to the same shipped file.
+        """
+        self.assertEqual(sorted(self.stages.source_ids), sorted([PUBLISHED_ID, DRAFT_ID]))
+        draft = StageTable.for_source(DRAFT_ID)
+        self.assertEqual(draft.path, self.stages.path)
+        self.assertEqual(draft.stage_of_item("Definition 1.2.2"), 2)
 
     def test_module_stage_is_first_match_wins(self):
         # Lebesgue measure is developed in S1.2 ...
@@ -100,10 +117,11 @@ class StageTableTest(unittest.TestCase):
         self.assertIsNone(self.stages.stage_of_item("Exercise 2.1.1"))
         self.assertIsNone(self.stages.stage_of_item("In-text p.7"))
 
-    def test_unknown_book_names_the_shipped_tables(self):
+    def test_an_unknown_source_names_the_shipped_tables(self):
         with self.assertRaises(Exception) as ctx:
-            StageTable.for_book("no-such-book")
-        self.assertIn("tao-measure", str(getattr(ctx.exception, "hint", "")) + str(ctx.exception))
+            StageTable.for_source("no-such-source")
+        message = str(getattr(ctx.exception, "hint", "")) + str(ctx.exception)
+        self.assertIn(PUBLISHED_ID, message)
 
 
 # ==========================================================================
@@ -194,7 +212,7 @@ class BodyProxyTest(unittest.TestCase):
     """The ``elementaryMeasure := (volume E).toNNReal`` shape, from bodies alone."""
 
     def setUp(self):
-        self.stages = StageTable.for_book("tao-measure")
+        self.stages = StageTable.for_source(PUBLISHED_ID)
 
     def _candidates(self, rows):
         return def_coverage.body_proxy_candidates(rows, self.stages)
@@ -275,18 +293,21 @@ class BodyProxyTest(unittest.TestCase):
 
 class FindingRowTest(unittest.TestCase):
     def setUp(self):
-        self.stages = StageTable.for_book("tao-measure")
+        self.stages = StageTable.for_source(PUBLISHED_ID)
         self.cov = {"missing": ["Definition 1.1.9"], "bridge_only": ["Definition 1.4.1"],
                     "stated": [], "bridge_only_detail": {"Definition 1.4.1": ["isSetAlgebra_iff"]}}
 
     def test_rows_use_the_shared_vocabulary(self):
         rows = def_coverage.build_finding_rows(
-            self.cov, [], companion="ours", run_id="detect-ours-cheap", book_sha="abc")
+            self.cov, [], companion="ours", run_id="detect-ours-cheap",
+            source_id=PUBLISHED_ID, source_sha=PUBLISHED_SHA)
         self.assertEqual(len(rows), 2)
         for row in rows:
             self.assertIn(row["kind"], vocab.FINDING_KINDS)
             self.assertIn(row["severity"], vocab.SEVERITY_SET)
-            self.assertEqual(row["book_sha"], "abc")
+            self.assertEqual(row["source_id"], PUBLISHED_ID)
+            self.assertEqual(row["source_sha"], PUBLISHED_SHA)
+            self.assertNotIn("book_sha", row)
             self.assertIsNone(row["book_quote"])
             self.assertIsNone(row["witness"])
             self.assertIsInstance(row["faithful"], list)
@@ -298,11 +319,17 @@ class FindingRowTest(unittest.TestCase):
         self.assertEqual(missing["unfaithful_decls"], [])  # nothing to route on
 
     def test_finding_id_is_stable_and_content_addressed(self):
-        first = def_coverage.build_finding_rows(self.cov, [], companion="ours", run_id="r1")
-        again = def_coverage.build_finding_rows(self.cov, [], companion="ours", run_id="r1")
-        other = def_coverage.build_finding_rows(self.cov, [], companion="ours", run_id="r2")
-        self.assertEqual([r["finding_id"] for r in first], [r["finding_id"] for r in again])
-        self.assertNotEqual([r["finding_id"] for r in first], [r["finding_id"] for r in other])
+        def rows(**over):
+            kw = dict(companion="ours", run_id="r1", source_id=PUBLISHED_ID)
+            kw.update(over)
+            return [r["finding_id"]
+                    for r in def_coverage.build_finding_rows(self.cov, [], **kw)]
+
+        self.assertEqual(rows(), rows())
+        self.assertNotEqual(rows(), rows(run_id="r2"))
+        # ... and the SOURCE is part of the id: the same item of the same repo
+        # in two editions is two findings, not one found twice.
+        self.assertNotEqual(rows(), rows(source_id=DRAFT_ID))
 
     def test_invalid_severity_is_refused(self):
         with self.assertRaises(Exception):
@@ -576,7 +603,7 @@ class BaselineAnalyzeStagesTest(unittest.TestCase):
         diff = Path(BASELINE_DIFF)
         cls.raw = json.loads((diff / "adam-detector" / "deps.json").read_text())
         cls.rows = _read_jsonl(diff / "adam.jsonl")
-        cls.stages = StageTable.for_book("tao-measure")
+        cls.stages = StageTable.for_source(PUBLISHED_ID)
         cls.deps = DepsIndex(cls.raw)
         cls.report = analyze_stages.analyze(cls.deps, cls.stages, cls.rows)
 
@@ -593,7 +620,8 @@ class BaselineAnalyzeStagesTest(unittest.TestCase):
     def test_definition_1_2_2_becomes_a_proxy_finding(self):
         rows = analyze_stages.build_finding_rows(
             self.report, self.deps, self.stages,
-            companion="adam", run_id="detect-adam-lean", book_sha="64498329")
+            companion="adam", run_id="detect-adam-lean",
+            source_id=PUBLISHED_ID, source_sha=PUBLISHED_SHA)
         rows = [r for r in rows if r["item"] == "Definition 1.2.2"]
         self.assertEqual(len(rows), 1)
         row = rows[0]
@@ -601,7 +629,8 @@ class BaselineAnalyzeStagesTest(unittest.TestCase):
         self.assertEqual(row["unfaithful_decls"], [f"adam:{self.OPEN_EXCESS}"])
         self.assertIn(row["bridge"], vocab.BRIDGE_KINDS)
         self.assertEqual(row["evidence"]["rule"], analyze_stages.RULE_SAME_STAGE_PRIMITIVE)
-        self.assertEqual(row["book_sha"], "64498329")
+        self.assertEqual(row["source_id"], PUBLISHED_ID)
+        self.assertEqual(row["source_sha"], PUBLISHED_SHA)
 
     # -- the elementaryMeasure history -------------------------------------
     def test_elementary_measure_is_native_at_this_commit(self):
@@ -653,7 +682,12 @@ class BaselineAnalyzeStagesTest(unittest.TestCase):
 
 @unittest.skipUnless(BASELINE_DIFF and BOOK_TXT, "set CF_BASELINE_DIFF and CF_BOOK_TXT")
 class CommandEndToEndTest(unittest.TestCase):
-    """`cf detect-proxies` over a temp campaign built from the baseline."""
+    """`cf detect-proxies` over a temp workspace built from the baseline.
+
+    The workspace holds BOTH Tao editions and a companion audited against both,
+    so `--source` is what decides which items.json the detector reads -- and the
+    rows, the corpus filenames and the gate all have to agree with it.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -665,19 +699,40 @@ class CommandEndToEndTest(unittest.TestCase):
         cls.tmp = tempfile.TemporaryDirectory()
         root = Path(cls.tmp.name)
         (root / "companions" / "ours").mkdir(parents=True)
-        (root / "book" / "tao-measure").mkdir(parents=True)
+        # An empty stand-in repo: the detector never reads the Lean here, but
+        # workspace.yaml validation refuses a companion whose repo is not a dir.
+        (root / "repos" / "ours").mkdir(parents=True)
         (root / "companions" / "ours" / "statements.jsonl").write_text(
             (Path(BASELINE_DIFF) / "ours.jsonl").read_text())
         book_text = Path(BOOK_TXT).read_text(errors="ignore")
         items = _items_from_book(book_text)
-        (root / "book" / "tao-measure" / "items.json").write_text(
-            json.dumps({"book": "tao-measure", "items": items}))
-        # the corpus emission gates against the `mechanical` preset, and the gate
-        # fails closed without the pinned book text
-        (root / "book" / "tao-measure" / "book.txt").write_text(book_text)
-        (root / "campaign.yaml").write_text(
-            "book:\n  id: tao-measure\n  sha256: \"64498329\"\n  offset: 16\n"
-            "companions:\n  - name: ours\n    repo: /nonexistent\n")
+        for sid in (PUBLISHED_ID, DRAFT_ID):
+            sdir = root / "sources" / sid
+            sdir.mkdir(parents=True)
+            sdir.joinpath("items.json").write_text(
+                json.dumps({"source_id": sid, "offset": 16, "items": items}))
+            # the corpus emission gates against the `mechanical` preset, and the
+            # gate fails closed without the pinned source text
+            sdir.joinpath("text.txt").write_text(book_text)
+        (root / "workspace.yaml").write_text(
+            "version: 2\n"
+            "workspace:\n  name: tao\n"
+            "companions:\n"
+            f"  ours:\n    repo: {root / 'repos' / 'ours'}\n"
+            "    adapter: docstring_tags\n"
+            f"    sources: [{PUBLISHED_ID}, {DRAFT_ID}]\n"
+            f"    anchor_source: {PUBLISHED_ID}\n"
+            "sources:\n"
+            f"  {PUBLISHED_ID}:\n"
+            f'    sha256: "{PUBLISHED_SHA}"\n'
+            "    title: An Introduction to Measure Theory\n"
+            '    edition: "AMS GSM 126 (published pagination)"\n'
+            "    offset: 16\n    chapters: [1]\n    role: audited\n"
+            f"  {DRAFT_ID}:\n"
+            f'    sha256: "{DRAFT_SHA}"\n'
+            "    title: An Introduction to Measure Theory\n"
+            '    edition: "2011-01-24 draft"\n'
+            "    offset: 16\n    chapters: [1]\n    role: reference\n")
         (root / "companions" / "ours" / "state.json").write_text(json.dumps({"name": "ours"}))
         cls.root = root
 
@@ -692,36 +747,66 @@ class CommandEndToEndTest(unittest.TestCase):
         import argparse
 
         ap = argparse.ArgumentParser()
-        ap.add_argument("--campaign")
+        ap.add_argument("--workspace")
         sub = ap.add_subparsers()
         self.mod.register(sub)
-        args = ap.parse_args(["--campaign", str(self.root), "detect-proxies", "ours", *extra])
+        argv = ["--workspace", str(self.root), "detect-proxies", "ours", *extra]
+        if "--source" not in extra:
+            argv += ["--source", PUBLISHED_ID]
+        args = ap.parse_args(argv)
         return args.func(args)
+
+    def coverage_json(self, source_id: str = PUBLISHED_ID) -> Path:
+        """pairs/ is per source: the detector writes under the one it read."""
+        return self.root / "pairs" / source_id / f"def-coverage.ours.json"
 
     def test_writes_coverage_findings_and_state(self):
         self.assertEqual(self._run(), 0)
-        cov = json.loads((self.root / "pairs" / "def-coverage.ours.json").read_text())
+        cov = json.loads(self.coverage_json().read_text())
         self.assertEqual((len(cov["stated"]), len(cov["bridge_only"]), len(cov["missing"])), (32, 4, 0))
-        self.assertEqual(cov["_meta"]["book_sha"], "64498329")
+        self.assertEqual(cov["_meta"]["source_id"], PUBLISHED_ID)
+        self.assertEqual(cov["_meta"]["source_sha"], PUBLISHED_SHA)
+        self.assertNotIn("book_sha", cov["_meta"])
 
         rows = _read_jsonl(self.root / "detect" / "ours" / "findings.cheap.jsonl")
         self.assertIn("_meta", rows[0])
         self.assertEqual(rows[0]["_meta"]["status"], vocab.UNCHALLENGED)
         self.assertEqual(len(rows) - 1, 4)  # the four bridge-only Definitions
+        for row in rows[1:]:
+            self.assertEqual(row["source_id"], PUBLISHED_ID)
+            self.assertEqual(row["source_sha"], PUBLISHED_SHA)
 
         state = json.loads((self.root / "companions" / "ours" / "state.json").read_text())
         self.assertEqual(state["coverage"]["def_bridge_only"], 4)
         self.assertEqual(state["detect"]["cheap"]["stated"], 32)
 
+    def test_the_other_source_gets_its_own_tree_and_its_own_stamp(self):
+        """One companion, two editions: two detector runs that never collide."""
+        self.assertEqual(self._run("--source", PUBLISHED_ID, "--run-id", "d-pub"), 0)
+        self.assertEqual(self._run("--source", DRAFT_ID, "--run-id", "d-dft"), 0)
+        self.assertTrue(self.coverage_json(PUBLISHED_ID).exists())
+        self.assertTrue(self.coverage_json(DRAFT_ID).exists())
+        self.assertEqual(
+            json.loads(self.coverage_json(DRAFT_ID).read_text())["_meta"]["source_sha"],
+            DRAFT_SHA)
+        pub = {p.name for p in (self.root / "corpus" / "d-pub").glob("*.json")}
+        dft = {p.name for p in (self.root / "corpus" / "d-dft").glob("*.json")}
+        # the corpus filenames are qualified, so the same Definition in the two
+        # editions is two files even inside one corpus directory
+        self.assertTrue(pub - {"RECEIPT.json"})
+        self.assertEqual((pub & dft) - {"RECEIPT.json"}, set())
+        for name in pub - {"RECEIPT.json"}:
+            self.assertTrue(name.startswith(PUBLISHED_ID), name)
+
     def test_is_idempotent(self):
         self._run()
-        first = (self.root / "pairs" / "def-coverage.ours.json").read_text()
+        first = self.coverage_json().read_text()
         firstf = (self.root / "detect" / "ours" / "findings.cheap.jsonl").read_text()
         corpus = self.root / "corpus" / "detect-ours-cheap"
         firstc = {p.name: p.read_text() for p in sorted(corpus.glob("*.json"))
                   if p.name != "RECEIPT.json"}
         self._run()
-        self.assertEqual(first, (self.root / "pairs" / "def-coverage.ours.json").read_text())
+        self.assertEqual(first, self.coverage_json().read_text())
         self.assertEqual(firstf, (self.root / "detect" / "ours" / "findings.cheap.jsonl").read_text())
         self.assertEqual(firstc, {p.name: p.read_text() for p in sorted(corpus.glob("*.json"))
                                   if p.name != "RECEIPT.json"})
@@ -737,7 +822,8 @@ class CommandEndToEndTest(unittest.TestCase):
         doc = json.loads(docs[0].read_text())
         self.assertEqual(doc["schema_version"], 2)
         self.assertEqual(doc["run_id"], "detect-ours-cheap")
-        self.assertEqual(doc["book_sha"], "64498329")
+        self.assertEqual(doc["source_id"], PUBLISHED_ID)
+        self.assertEqual(doc["source_sha"], PUBLISHED_SHA)
         self.assertTrue(doc["book_located"])
         self.assertIsNone(doc["book_passage_quote"])
         self.assertEqual(len(doc["disagreements"]), 1)
@@ -752,6 +838,10 @@ class CommandEndToEndTest(unittest.TestCase):
         result = tally_mod.tally({"detect-ours-cheap": corpus})
         self.assertEqual(result["runs"]["detect-ours-cheap"]["files"], 4)
         self.assertGreaterEqual(result["rows"], 4)
+        # the tally groups by (source_id, repo), and the detector stamped one
+        self.assertEqual(result["sources"], {PUBLISHED_ID: PUBLISHED_SHA})
+        self.assertEqual(list(result["groups"]),
+                         [tally_mod.group_key({"source_id": PUBLISHED_ID, "repo": "ours"})])
 
     def test_every_emitted_document_passes_the_mechanical_gate(self):
         from gate import verify_findings as vf
@@ -761,20 +851,22 @@ class CommandEndToEndTest(unittest.TestCase):
         corpus = self.root / "corpus" / "detect-ours-cheap"
         cfg = vf.GateConfig(presets_mod.gate_config(
             presets_mod.get("mechanical"), run_id="detect-ours-cheap",
-            book_text=str(self.root / "book" / "tao-measure" / "book.txt"),
-            book_sha="64498329", repos=["ours"]))
+            sources={PUBLISHED_ID: {
+                "text": str(self.root / "sources" / PUBLISHED_ID / "text.txt"),
+                "sha256": PUBLISHED_SHA, "page_offset": 16}},
+            repos=["ours"]))
         cfg.findings_dir = "."
-        book, errs = vf.load_book(cfg)
+        books, errs = vf.load_sources(cfg)
         self.assertEqual(errs, [])
         problems = []
         for path in sorted(corpus.glob("*.json")):
             if path.name == "RECEIPT.json":
                 continue
-            problems += vf.validate_doc(json.loads(path.read_text()), path.name, cfg, book)
+            problems += vf.validate_doc(json.loads(path.read_text()), path.name, cfg, books)
         self.assertEqual(problems, [])
 
     def test_no_emit_corpus_writes_nothing_under_corpus(self):
-        # a distinct --run-id, because the class shares one campaign directory
+        # a distinct --run-id, because the class shares one workspace directory
         self._run("--no-emit-corpus", "--run-id", "detect-quiet")
         self.assertFalse(list((self.root / "corpus").glob("detect-quiet/*.json")))
         self._run("--run-id", "detect-loud")
@@ -798,7 +890,7 @@ class CommandEndToEndTest(unittest.TestCase):
         }))
         table = self.root / "stages.json"
         table.write_text(json.dumps({
-            "book": "toy", "chapter": 1, "default_stage": 0,
+            "source_id": "toy", "chapter": 1, "default_stage": 0,
             "module_stages": [["Lib.Unknown", None]], "mathlib_objects": {}, "native_tokens": [],
         }))
         statements = self.root / "companions" / "ours" / "tiny.jsonl"
@@ -811,7 +903,7 @@ class CommandEndToEndTest(unittest.TestCase):
         self.assertEqual(self._run(*common, "--allow-unclassified"), 0)
         report = json.loads((self.root / "detect" / "ours" / "report_keydefs.json").read_text())
         self.assertEqual(report["unclassified_modules"], {"Lib.Unknown": 1})
-        deps.unlink()  # leave the campaign as the other tests expect it
+        deps.unlink()  # leave the workspace as the other tests expect it
 
     def test_render_dump_deps_writes_outside_the_companion(self):
         self.assertEqual(self._run("--render-dump-deps"), 0)

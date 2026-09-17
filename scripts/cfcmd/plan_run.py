@@ -271,6 +271,25 @@ def _select_source(ws, companions: list[str], requested: str | None) -> str:
     return candidates[0]
 
 
+def _check_confirmed(ws, source) -> None:
+    """``policy.require_confirmed_sources`` -- read here, or it means nothing.
+
+    Discovery appends what it learned about a new source with ``confirmed:
+    false`` and surfaces it in ``cf status`` (R3).  A workspace that sets this
+    key is saying "no run may be planned against a source a human has not
+    signed off", and the one place to enforce it is the moment a run picks its
+    source: everything downstream is stamped with it.
+    """
+    if source.confirmed or not ws.policy.get("require_confirmed_sources"):
+        return
+    raise CfError(
+        f"source {source.id!r} is not confirmed, and this workspace sets "
+        "policy.require_confirmed_sources",
+        hint=f"check what discovery inferred with `cf sources show {source.id}`, then "
+             f"`cf sources confirm {source.id}` -- or set the policy key to false",
+    )
+
+
 def _dir_bytes(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) if path.exists() else 0
 
@@ -304,6 +323,7 @@ def run(args) -> int:
 
     source_id = _select_source(camp, names, args.source_id)
     source = camp.source(source_id)
+    _check_confirmed(camp, source)
     source_sha = source.sha256
     if not source_sha:
         raise CfError(
