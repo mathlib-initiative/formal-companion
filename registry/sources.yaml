@@ -1,0 +1,97 @@
+version: 1
+# The SOURCE REGISTRY shipped with the skill (docs/design/multi-source-model.md S2).
+#
+# Curated and committed here; a WORKSPACE never writes to this file -- discovery
+# appends what it learns to <workspace>/registry.yaml with confirmed: false, and a
+# human promotes an entry by editing this file and deleting the overlay row.
+#
+# METADATA ONLY -- no book text, ever. Shas, URLs, page maps and licence notes are
+# facts about an edition; the prose is copyrighted and lives (gitignored) in a
+# workspace's sources/<id>/ directory. A download_url is recorded only when the
+# author publishes the file himself, and `redistribute: false` means exactly that.
+sources:
+
+  tao-measure-gsm126-published:
+    title: An Introduction to Measure Theory
+    authors: [Terence Tao]
+    edition: "AMS GSM 126, author's preliminary AMS version (published pagination; PDF metadata 2012-12-04)"
+    isbn: "978-0-8218-6919-2"
+    sha256: 64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec
+    bytes: 1338765
+    pages: 265
+    download_url: https://terrytao.wordpress.com/wp-content/uploads/2012/12/gsm-126-tao5-measure-book.pdf
+    book_page_url: https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
+    errata_url: https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
+    licence:
+      note: >-
+        AMS copyright (GSM 126). The author publishes a free preliminary version
+        on his own site; fetching that copy for a local audit is fine,
+        redistributing it is not.
+      fetch: author_site
+      redistribute: false
+    offset: 16
+    offset_confidence: 0.9959
+    offset_method: running_head_mode
+    kinds: [Definition, Lemma, Theorem, Proposition, Corollary, Exercise, Example, Remark]
+    same_work: [tao-measure-2011-draft]
+    page_map_to:
+      tao-measure-2011-draft:
+        default_shift: 0
+        exception_shift: 1
+        exceptions: []
+        note: >-
+          ~65 numbered items, nearly all in section 1.6, print one page LATER in
+          the 2011 draft. Both editions satisfy pdf_page = printed_page + 16, so
+          a wrong-edition anchor is off by exactly one printed page, never by 16.
+        confirmed_by: "mathlib-initiative/tao-measure-lean CLAUDE.md L48-L55 (anchors corrected 2026-09-04)"
+    aliases:
+      sha256_prefixes: ["64498329"]
+      urls:
+        - https://terrytao.wordpress.com/wp-content/uploads/2012/12/gsm-126-tao5-measure-book.pdf
+        - https://teorth.github.io/tao-web/an-introduction-to-measure-theory.html
+      filenames: ["gsm-126-tao5-measure-book.pdf"]
+      titles: ["An Introduction to Measure Theory"]
+    confirmed: true
+    notes: >-
+      The edition to audit against. Both local Lean companions anchor to this
+      pagination even though one of them ships the draft PDF.
+
+  tao-measure-2011-draft:
+    title: An Introduction to Measure Theory
+    authors: [Terence Tao]
+    edition: "2011-01-24 draft (pre-publication pagination)"
+    isbn: null
+    sha256: 62d9565841b8593a7a3d12b3cbcea6ce8d3d3ae2f83b60ebf024d59714c0c6e8
+    bytes: 1218984
+    pages: 265
+    download_url: null
+    book_page_url: https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
+    errata_url: https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
+    licence:
+      note: "Author's pre-publication draft; not redistributable."
+      fetch: none
+      redistribute: false
+    offset: 16
+    offset_confidence: 0.996
+    offset_method: running_head_mode
+    kinds: [Definition, Lemma, Theorem, Proposition, Corollary, Exercise, Example, Remark]
+    same_work: [tao-measure-gsm126-published]
+    page_map_to:
+      tao-measure-gsm126-published:
+        default_shift: 0
+        exception_shift: -1
+        exceptions: []
+        note: >-
+          ~65 numbered items, nearly all in section 1.6, print one page EARLIER
+          in the published book.
+        confirmed_by: "mathlib-initiative/tao-measure-lean CLAUDE.md L48-L55"
+    aliases:
+      sha256_prefixes: ["62d95658"]
+      urls: []
+      filenames: ["Measure.Theory.Tao.pdf", "tao-measure-theory.pdf"]
+      titles: ["An Introduction to Measure Theory (Tao)"]
+    confirmed: true
+    notes: >-
+      Batch-1 anchor findings were judged against THIS edition and were wrong for
+      that reason. A workspace prepares it with role: reference so page_map_to can
+      be checked; nothing is audited against it.

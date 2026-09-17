@@ -1,0 +1,104 @@
+# workspace.yaml -- N companions, M sources.
+#
+# Rendered by `cf init <dir>`, which takes NO source flags: a source is
+# discovered by `cf onboard <repo>`, which reads the repo, fingerprints the PDF
+# bytes and infers the page offset, the item kinds and the errata page. If you
+# find yourself typing an offset or an errata URL here, discovery failed and
+# said so -- fix that rather than filling this in by hand.
+#
+# This file is the ONLY place a host, a model, a page offset or a repo path is
+# named; no script hard-codes them. The workspace directory is a local git repo
+# with no remote: it holds source text, statement tables, the findings corpus
+# and the ledgers, none of which belong in the skill repo or in a companion.
+version: 2
+
+workspace:
+  name: {{ workspace_name }}
+  created: {{ created }}
+  notes: ""
+
+# Filled by `cf onboard <repo>`. One entry per companion:
+#   repo, adapter, sources[], anchor_source, bundled_sources[], owner,
+#   write_policy (read_only | branch_only | branch_and_pr), discovered{}
+#
+# `sources` is the list this companion is audited against -- a companion may be
+# bound to more than one. `anchor_source` is the edition whose PAGINATION its
+# page anchors follow, which is NOT always an edition it ships: tao-measure-lean
+# bundles the 2011 draft and anchors to the published book, and mistaking the one
+# for the other is what made 22 of 40 batch-1 findings pagination noise.
+companions: {}
+
+# Filled by `cf onboard` / `cf sources add`, keyed by source_id and identified by
+# the sha256 of the PDF BYTES. The PDF is never copied into the workspace or the
+# skill repo; only its sha is pinned, and page images rendered from it stay
+# gitignored.
+#
+#   offset             printed page = PDF page - offset
+#   offset_confidence  < 0.9 means a human had to say so (`cf sources set`)
+#   kinds              the item kinds THIS source's headings actually use
+#   chapters           the audited scope, derived from what the companions tag
+#   role               audited | reference (reference is prepared for the page
+#                      map only and audited by nobody)
+#   confirmed          false = discovered, nobody has checked it (`cf status`)
+sources: {}
+
+hosts:
+  # `cf run` REFUSES any host that is not listed here, and requires
+  # --i-have-consent (recorded in run.yaml). Running a fleet copies private Lean
+  # sources and copyrighted source text to the host: the box owner must agree.
+  allowlist: []
+  agentbox_profile: null
+  remote_root: null
+
+models:
+  # Never Fable for subagents: Fable-default fleets lost agents to the session
+  # limit mid-run. Worker/reviewer ids must be confirmed by a 1/1 smoke test.
+  worker: claude-sonnet-5
+  reviewer: claude-opus-5
+  skeptic: claude-opus-5
+  adjudicator: claude-opus-5
+  # Second opinion for the calibration pair (agentbox host codex).
+  calibration: null
+
+defaults:
+  # def-coverage -> attack presets -> differential -> adjudicate -> route -> report
+  mode: attack:vac
+  source_access: text          # text | text+images
+  max_concurrent_workers: 8
+  max_concurrent_reviewers: 5
+  # HARD account limit (references/traps.md C3): past 16 concurrent sessions the
+  # API returns 409s, per ACCOUNT, across workspaces. workers + reviewers must
+  # stay under it; `cf run` refuses more without --over-session-cap.
+  max_concurrent_sessions: 16
+  max_repos_per_task: 4        # k>4 companions split into reference + peers
+  local_fleet_max_items: 100   # above this, the run belongs on the server
+  gate_out_of_tree: true       # the gate never runs from the tree the worker edits
+  worktree_budget_gb: 8        # tend makes a worktree per ready task
+
+budget:
+  billing_path: subscription   # subscription | api_gateway
+  max_cost_usd: null
+  require_consent: true
+
+policy:
+  # Nothing leaves the workspace directory while _meta.status is UNCHALLENGED.
+  publish_unchallenged: false
+  # Exports replace book_quote with (page, normalised hash) unless turned off.
+  redact_quotes_on_export: true
+  # `cf init` installs a pre-push hook; the workspace repo has no remote.
+  allow_remote: false
+  # false forbids `cf onboard --download` outright. Even when true, a download
+  # happens only with the flag AND a registry licence note saying the author
+  # publishes the file himself. Nothing is ever redistributed.
+  allow_download: false
+  # true makes `cf plan-run` refuse a source whose `confirmed` is still false.
+  require_confirmed_sources: false
+
+# Where `cf onboard` may look for a PDF a repo names but does not commit,
+# searched after the paths the repo itself names, the repo's own caches and this
+# workspace's sources/ store. Matched by sha when one is known, by filename or
+# title otherwise.
+library_paths:
+  - ~/Downloads
+  - ~/Desktop/**/sources
+  - ~/Desktop/**/.lake/official-pdf

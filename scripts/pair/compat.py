@@ -1,22 +1,26 @@
-"""Re-export of the book stage's cflib adapter.
+"""Re-export of the source stage's cflib adapter.
 
-The pair stage consumes the book stage's ``items.json``, so it depends on
-``book`` anyway; keeping ONE adapter avoids two views of the item grammar.
-Delete both this file and ``book/compat.py`` when every call site has been
+The pair stage consumes ``sources/<source_id>/items.json``, so it depends on
+``sources`` anyway; keeping ONE adapter avoids two views of the item grammar.
+Delete both this file and ``sources/compat.py`` when every call site has been
 switched to ``cflib`` directly -- the names below already resolve to cflib
 whenever it is importable.
+
+(The two renamed names below are the workspace model's: ``campaign_paths`` ->
+``workspace_paths``, ``load_campaign`` -> ``load_workspace``. The rest of this
+package still speaks the old vocabulary and is migrated by the STAGES-A package.)
 """
 
-from book.compat import (  # noqa: F401
+from sources.compat import (  # noqa: F401
     DEFAULT_KINDS,
     DEFINITIONAL_KEYWORDS,
     DEFINITIONAL_KINDS,
     PAGE_ANCHOR,
     ItemId,
-    campaign_paths,
+    workspace_paths,
     finding_id,
     item_sort_key,
-    load_campaign,
+    load_workspace,
     load_yaml,
     normalise_item,
     parse_item,

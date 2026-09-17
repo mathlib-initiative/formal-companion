@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""cf -- the companion-faithfulness campaign CLI.
+"""cf -- the companion-faithfulness workspace CLI.
 
 New code (design/architecture.md S8 item 1).  Run it by path:
 
     python3 /Users/jack/Desktop/companion-faithfulness/scripts/cf.py status
-    python3 .../scripts/cf.py --campaign ~/Desktop/tao-differential status
+    python3 .../scripts/cf.py --workspace ~/Desktop/tao-workspace status
 
 Commands live one-per-module in ``scripts/cfcmd/``; each module exposes
 ``register(subparsers)`` and ``run(args)``.  cf.py discovers them with
@@ -29,10 +29,23 @@ from cflib import __version__, log  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 
 EPILOG = """\
-campaign directory:
-  --campaign <dir>   the campaign to act on (default: $CF_CAMPAIGN, else the
+workspace directory:
+  --workspace <dir>  the workspace to act on (default: $CF_WORKSPACE, else the
                      current directory or the nearest ancestor holding
-                     campaign.yaml).  Create one with `cf init`.
+                     workspace.yaml).  Create one with `cf init <dir>`.
+
+A workspace holds N COMPANIONS and M SOURCES; a companion is audited against a
+LIST of sources, and a differential is possible exactly where two companions'
+source lists overlap.  Nothing about a source is typed in: `cf onboard <repo>`
+discovers it, fingerprints the PDF and infers the page offset, the item kinds
+and the errata page.
+
+typical program:
+  cf init ~/Desktop/tao-workspace
+  cf onboard ~/Desktop/tao-measure-lean
+  cf onboard ~/Desktop/measure_theory
+  cf sources list
+  cf pair
 
 Run `cf <command> --help` for a command's options.
 """
@@ -92,7 +105,7 @@ def build_parser():
     """The argument parser and the {command: module} dispatch table."""
     parser = argparse.ArgumentParser(
         prog="cf",
-        description="Audit Lean book companions against their textbook (findings only).",
+        description="Audit Lean book companions against their sources (findings only).",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -105,12 +118,12 @@ def build_parser():
 def _global_options(argv: list[str]):
     """Pull the options every command shares out of argv, wherever they sit."""
     pre = argparse.ArgumentParser(add_help=False)
-    pre.add_argument("--campaign", default=None)
+    pre.add_argument("--workspace", default=None)
     pre.add_argument("-v", "--verbose", action="count", default=0)
     pre.add_argument("-q", "--quiet", action="store_true")
     known, rest = pre.parse_known_args(argv)
-    if known.campaign is None:
-        known.campaign = os.environ.get("CF_CAMPAIGN") or None
+    if known.workspace is None:
+        known.workspace = os.environ.get("CF_WORKSPACE") or None
     return known, rest
 
 
@@ -128,7 +141,7 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 1
 
-    args.campaign = globals_.campaign
+    args.workspace = globals_.workspace
     args.verbose = globals_.verbose
     module = mapping.get(args.command)
     if module is None:  # pragma: no cover - argparse rejects unknown commands first

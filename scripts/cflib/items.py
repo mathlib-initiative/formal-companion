@@ -33,7 +33,8 @@ from typing import Iterable, Sequence
 
 from .errors import ItemGrammarError
 
-#: Kinds of the Tao measure-theory book; campaign.yaml overrides per book.
+#: Kinds of the Tao measure-theory book; every source overrides them with its own
+#: ``sources.<id>.kinds``, which discovery INFERS from the source's headings.
 DEFAULT_KINDS: tuple[str, ...] = (
     "Definition", "Lemma", "Theorem", "Proposition", "Corollary",
     "Exercise", "Example", "Remark", "Strategy", "Claim",
@@ -61,7 +62,7 @@ class Item:
     """A parsed book item id."""
 
     id: str                     # canonical id without the sub-part
-    kind: str                   # a campaign kind, or "In-text"
+    kind: str                   # one of the SOURCE's kinds, or "In-text"
     chapter: int | None = None
     section: int | None = None
     number: int | None = None
@@ -232,7 +233,8 @@ def parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> Item:
     if item is None:
         assert reject is not None
         raise ItemGrammarError(raw, reject.reason,
-                               hint="fix the tag in the companion repo, or add the kind to campaign.yaml book.kinds")
+                               hint="fix the tag in the companion repo, or add the kind to "
+                                    "workspace.yaml sources.<id>.kinds")
     return item
 
 
@@ -319,3 +321,49 @@ def slug_variants(item: "Item | str", raw: str | None = None) -> list[str]:
             seen.add(s)
             uniq.append(s)
     return uniq
+
+
+# --------------------------------------------------------------------------
+# namespacing: an item is the pair (source_id, item)
+# --------------------------------------------------------------------------
+
+#: The ONE separator between a source and its item in a single string.
+QUALIFIED_SEP = "::"
+
+
+def qualified_item(source_id: str, item: "Item | str") -> str:
+    """``"<source_id>::Exercise 1.3.19"`` -- an item id that cannot collide.
+
+    An item is the pair ``(source_id, item)`` (docs/design/multi-source-model.md
+    S6.1): ``Exercise 1.3.19`` means one thing in one source and something else
+    in another, so a bare item string is NEVER used as a cross-source key.  Rows
+    carry two fields; a task id, a log line or a finding payload -- anywhere only
+    one string fits -- carries this.
+    """
+    label = item.full if isinstance(item, Item) else clean(str(item))
+    sid = str(source_id or "").strip()
+    if not sid:
+        raise ItemGrammarError(str(item), "no source_id",
+                               hint="every item is (source_id, item); pass the source it is from")
+    return f"{sid}{QUALIFIED_SEP}{label}"
+
+
+def split_qualified(qualified: str) -> tuple[str, str]:
+    """Inverse of :func:`qualified_item`. Raises on a bare item string."""
+    text = str(qualified or "")
+    if QUALIFIED_SEP not in text:
+        raise ItemGrammarError(text, "not a qualified item",
+                               hint=f"expected <source_id>{QUALIFIED_SEP}<item>; a bare item has no "
+                                    "source and cannot be looked up")
+    source_id, _, item = text.partition(QUALIFIED_SEP)
+    return source_id.strip(), clean(item)
+
+
+def source_slug(source_id: str) -> str:
+    """A filename-safe spelling of a source id (it is already a slug)."""
+    return re.sub(r"[^a-z0-9]+", "-", str(source_id or "").lower()).strip("-")
+
+
+def qualified_slug(source_id: str, item: "Item | str", style: str = "dash") -> str:
+    """``tao-measure-gsm126-published--exercise-1-3-19`` -- a per-source filename."""
+    return source_slug(source_id) + "--" + slug(item, style=style)

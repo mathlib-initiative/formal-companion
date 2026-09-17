@@ -1,4 +1,4 @@
-"""Error types for the campaign CLI.
+"""Error types for the cf CLI.
 
 New code (no original): the recovered scripts died with tracebacks; the skill
 needs one error type the CLI can render as a single line.
@@ -28,8 +28,22 @@ class CfError(Exception):
         return out
 
 
-class CampaignError(CfError):
-    """campaign.yaml is missing, malformed, or inconsistent."""
+class WorkspaceError(CfError):
+    """workspace.yaml is missing, malformed, or inconsistent."""
+
+
+class SourceError(CfError):
+    """A source is unknown, unprepared, or pinned to the wrong bytes."""
+
+
+class DiscoveryError(CfError):
+    """`cf onboard` could not decide something it refuses to guess at.
+
+    Discovery replaces typed metadata (docs/design/multi-source-model.md R2), so
+    every thing it cannot establish -- the adapter kind, the page offset, which
+    edition a repo's anchors follow -- is a refusal that names the evidence and
+    the one flag that settles it, never a silent default.
+    """
 
 
 class StateError(CfError):
@@ -37,7 +51,11 @@ class StateError(CfError):
 
 
 class ItemGrammarError(CfError):
-    """A book item id does not match the strict grammar (see cflib.items)."""
+    """A source item id does not match the strict grammar (see cflib.items).
+
+    The grammar is per SOURCE: the kind list comes from ``sources.<id>.kinds``,
+    so the same string can be a valid item of one source and junk in another.
+    """
 
     def __init__(self, raw: str, reason: str, hint: str | None = None):
         self.raw = raw

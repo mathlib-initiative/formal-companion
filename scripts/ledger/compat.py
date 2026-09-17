@@ -149,17 +149,20 @@ def decl_repo(decl: Any) -> str:
     return s.split(":", 1)[0] if ":" in s else ""
 
 
-def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: Iterable[str]) -> str:
-    """``sha256(run_id, clean(item), kind, sorted(unfaithful_decls))``.
+def finding_id(run_id: str, source_id: str, item: str, kind: str,
+               unfaithful_decls: Iterable[str]) -> str:
+    """``sha256(run_id, source_id, clean(item), kind, sorted(unfaithful_decls))``.
 
     Delegates to :func:`cflib.hashing.finding_id`, the single definition; the
     fallback below inlines the identical algorithm for stand-alone use.
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
     if _hashing is not None:
-        return _hashing.finding_id(str(run_id or ""), str(item or ""), str(kind or ""), decls)
+        return _hashing.finding_id(str(run_id or ""), str(source_id or ""), str(item or ""),
+                                   str(kind or ""), decls)
     payload = "\n".join(
-        [str(run_id or ""), _clean_item_fallback(str(item or "")), str(kind or ""), *decls]
+        [str(run_id or ""), str(source_id or ""), _clean_item_fallback(str(item or "")),
+         str(kind or ""), *decls]
     )
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 

@@ -12,7 +12,7 @@ design/stage_map.md Stage 2 asks for, with their recorded defects fixed:
    missed ``noncomputable instance`` and every ``private noncomputable`` form,
    and the three parsers on disk disagreed (1,248 / 1,414 / 1,413
    declarations).  See ``adapters.leanparse``.
-2. Item kinds come from campaign.yaml, not from a regex baked into the
+2. Item kinds come from the bound source (workspace.yaml), not from a regex
    extractor, and every tag goes through the strict grammar in ``cflib.items``
    so junk (``Corollary (Lemma 1.2.5 + Exercise 1.2.4)``) is reported, not
    turned into an item id.

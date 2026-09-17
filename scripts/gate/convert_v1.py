@@ -90,7 +90,7 @@ def convert_disagreement(
     if note:
         out["faithful_note"] = note
     kind = str(g.get("kind") or "")
-    out["finding_id"] = finding_id(run_id, item, kind, decls)
+    out["finding_id"] = finding_id(run_id, str(out.get("source_id") or ""), item, kind, decls)
     out.setdefault("source", "convert_v1")
     if lift_witness and kind in {"CONTENT", "VACUITY"} and not isinstance(g.get("witness"), dict):
         out["witness"] = {

@@ -133,7 +133,7 @@ def map_v1_row(
                 if compat.decl_repo(d) == repo
             ]
     else:
-        fid = compat.finding_id(run_id, item, kind, decls)
+        fid = compat.finding_id(run_id, str(row.get("source_id") or ""), item, kind, decls)
 
     verdict = map_verdict(row.get("verdict"))
     resolution, note = split_resolution(row.get("resolution"))

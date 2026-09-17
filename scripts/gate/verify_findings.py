@@ -240,10 +240,11 @@ def clean_item(raw: str) -> str:
     return s.rstrip(" .,;:").strip()
 
 
-def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: list[str]) -> str:
+def finding_id(run_id: str, source_id: str, item: str, kind: str,
+               unfaithful_decls: list[str]) -> str:
     """Stable content address of a finding — the ONE definition.
 
-    ``sha256("\\n".join([run_id, clean_item(item), kind, *sorted(decls)]))`` —
+    ``sha256("\\n".join([run_id, source_id, clean_item(item), kind, *sorted(decls)]))`` —
     the critique rejected the original ``concept``-based id because ``concept``
     is LLM-written prose, so the same defect got a different id in every run.
 
@@ -254,7 +255,8 @@ def finding_id(run_id: str, item: str, kind: str, unfaithful_decls: list[str]) -
     is enforced by a test instead of by sharing code.
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
-    payload = "\n".join([str(run_id or ""), clean_item(str(item or "")), str(kind or ""), *decls])
+    payload = "\n".join([str(run_id or ""), str(source_id or ""), clean_item(str(item or "")),
+                         str(kind or ""), *decls])
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
@@ -488,7 +490,8 @@ def _validate_disagreement(
         )
 
     if cfg.require_finding_id:
-        want = finding_id(run_id, doc.get("item", ""), str(kind), [d for d in decls if isinstance(d, str)])
+        want = finding_id(run_id, str(doc.get("source_id", "") or ""), doc.get("item", ""),
+                          str(kind), [d for d in decls if isinstance(d, str)])
         got = g.get("finding_id")
         if not got:
             errs.append(f"{where}: missing finding_id")
