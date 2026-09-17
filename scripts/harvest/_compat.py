@@ -26,15 +26,15 @@ if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
 from cflib import hashing, items as cf_items, log, state as cf_state, vocab  # noqa: E402
-from cflib.campaign import Campaign, from_args  # noqa: E402
+from cflib.workspace import Workspace, from_args  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_json, read_jsonl, write_json, write_jsonl  # noqa: E402
 from cflib.yamlio import read_yaml, write_yaml  # noqa: E402
 
 __all__ = [
-    "Campaign", "CfError", "from_args", "hashing", "cf_items", "cf_state", "log", "vocab",
+    "Workspace", "CfError", "from_args", "hashing", "cf_items", "cf_state", "log", "vocab",
     "read_json", "read_jsonl", "write_json", "write_jsonl", "read_yaml", "write_yaml",
-    "SEVERITIES", "SUBSTANTIVE_KINDS", "iso_now", "iter_finding_files", "campaign_kinds",
+    "SEVERITIES", "SUBSTANTIVE_KINDS", "iso_now", "iter_finding_files", "source_kinds",
 ]
 
 iso_now = cf_state.now
@@ -64,7 +64,20 @@ def iter_finding_files(directory: str | Path) -> list[Path]:
             and not p.name.startswith(".")]
 
 
-def campaign_kinds(campaign) -> Sequence[str]:
-    """The book's item kinds, from the campaign when it names them."""
-    kinds = getattr(campaign, "kinds", None)
+def source_kinds(workspace, source_id: str | None = None) -> Sequence[str]:
+    """One SOURCE's item kinds, from workspace.yaml when it names them.
+
+    The kinds list is per source, not per workspace: a source whose grammar has
+    no ``Proposition`` must not have one invented for it by a sibling edition,
+    because the kinds decide which labels parse at all.
+    """
+    kinds = None
+    getter = getattr(workspace, "kinds", None)
+    if callable(getter):
+        try:
+            kinds = getter(source_id) if source_id else None
+        except Exception:  # noqa: BLE001 - an unknown source falls back to the default
+            kinds = None
+    elif getter:
+        kinds = getter
     return list(kinds) if kinds else list(cf_items.DEFAULT_KINDS)

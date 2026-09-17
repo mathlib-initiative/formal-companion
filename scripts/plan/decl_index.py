@@ -67,11 +67,15 @@ def _from_lean(repo: Path, globs: Sequence[str] = ("**/*.lean",)) -> list[str]:
     return sorted(names)
 
 
-def _from_statements(path: Path) -> list[str]:
+def _from_statements(path: Path, source_id: str | None = None) -> list[str]:
     """Declaration names from statements.jsonl -- TAGGED ROWS ONLY.
 
     Never used to build a gate index (see the module docstring): it is here for
-    callers that want to know which declarations carry a book tag.
+    callers that want to know which declarations carry a source tag.  With
+    ``source_id`` only the rows tagged against THAT source are counted: a
+    companion audited against two sources has two disjoint tagged sets, and
+    merging them would answer "does this declaration carry a tag" for the wrong
+    source.
     """
     names: set[str] = set()
     for line in path.read_text(encoding="utf-8").splitlines():
@@ -82,13 +86,21 @@ def _from_statements(path: Path) -> list[str]:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if isinstance(row, dict) and row.get("decl"):
-            names.add(str(row["decl"]))
+        if not isinstance(row, dict) or not row.get("decl"):
+            continue
+        if source_id and str(row.get("source_id") or "") != source_id:
+            continue
+        names.add(str(row["decl"]))
     return sorted(names)
 
 
 def for_companion(paths, name: str, repo: Path | None) -> tuple[list[str], str]:
-    """``(declaration names, which source produced them)`` for one companion."""
+    """``(declaration names, which ORIGIN produced them)`` for one companion.
+
+    "Origin" here is deps.json / lean-source / none -- it is not a
+    ``source_id``.  The declaration set is a fact about the Lean, not about the
+    book, so it is the same whichever source a run audits.
+    """
     deps = Path(paths.detect_companion_dir(name)) / "deps.json"
     if deps.exists():
         return _from_deps(deps), "deps.json"
@@ -99,27 +111,26 @@ def for_companion(paths, name: str, repo: Path | None) -> tuple[list[str], str]:
     return [], "none (no deps.json and no readable Lean source)"
 
 
-def build(campaign, repos: Iterable[str]) -> dict:
-    """``{repo: [decl, ...]}`` plus a ``_meta`` block naming each source."""
-    paths = campaign.paths
+def build(workspace, repos: Iterable[str]) -> dict:
+    """``{repo: [decl, ...]}`` plus a ``_meta`` block naming each origin."""
+    paths = workspace.paths
     index: dict[str, list[str]] = {}
-    sources: dict[str, str] = {}
+    origins: dict[str, str] = {}
     for name in repos:
         try:
-            entry = campaign.companion(name)
+            repo = workspace.companion(name).repo
         except CfError:
-            entry = {}
-        repo = entry.get("repo")
-        names, source = for_companion(paths, name, Path(repo).expanduser() if repo else None)
+            repo = None
+        names, origin = for_companion(paths, name, Path(repo).expanduser() if repo else None)
         index[name] = names
-        sources[name] = source
+        origins[name] = origin
         if len(names) < MIN_DECLS:
-            log.warn(f"decl-index: no declarations found for {name} ({source}); "
+            log.warn(f"decl-index: no declarations found for {name} ({origin}); "
                      "the gate's phantom-name check stays OFF rather than running against "
                      "an incomplete set. Run `cf detect-proxies --lean` (deps.json) or point "
-                     "campaign.yaml at a readable repo.")
+                     "workspace.yaml at a readable repo.")
     index["_meta"] = {  # type: ignore[assignment]
-        "sources": sources,
+        "origins": origins,
         "counts": {k: len(v) for k, v in index.items() if k != "_meta"},
         "note": ("the FULL declaration set, never statements.jsonl: findings name private "
                  "helpers and untagged lemmas, and an index of tagged rows alone would "
@@ -133,10 +144,10 @@ def usable_repos(index: dict) -> list[str]:
     return sorted(k for k, v in index.items() if k != "_meta" and v)
 
 
-def write(campaign, run_id: str, repos: Iterable[str]) -> tuple[Path, dict]:
+def write(workspace, run_id: str, repos: Iterable[str]) -> tuple[Path, dict]:
     """Write ``runs/<run-id>/decl-index.json``; returns (path, index)."""
-    index = build(campaign, repos)
-    path = Path(campaign.paths.run_dir(run_id)) / "decl-index.json"
+    index = build(workspace, repos)
+    path = Path(workspace.paths.run_dir(run_id)) / "decl-index.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(index, indent=1, sort_keys=True) + "\n", encoding="utf-8")
     return path, index

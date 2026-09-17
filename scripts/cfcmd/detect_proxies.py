@@ -7,9 +7,10 @@ analyze2.py, DumpDeps.lean) and from transcript b174aa13 L6099/L6145.
 Two tiers:
 
 ``cheap`` (always)
-    ``statements.jsonl`` + the book's ``items.json`` -> ``pairs/def-coverage.<name>.json``
-    (stated / bridge_only / missing) and PROXY rows for definition bodies that
-    are the library's object under a book name.
+    ``statements.jsonl`` + the source's ``sources/<source_id>/items.json`` ->
+    ``pairs/<source_id>/def-coverage.<name>.json`` (stated / bridge_only /
+    missing) and PROXY rows for definition bodies that are the library's object
+    under a source's name.
 
 ``lean`` (``--lean``)
     a ``deps.json`` dump -> ORDER_VIOLATION and SAME_STAGE_PRIMITIVE hits.
@@ -17,9 +18,14 @@ Two tiers:
     ``dump_deps.sh`` command line and stops, because producing it needs a built
     ``.lake`` that the skill must not build or modify.
 
-Outputs, all inside the campaign directory::
+Every run is scoped to ONE source (``--source``, defaulting to the companion's
+anchor source when it has only one): the detector reads that source's items.json
+and stamps every row with its id and sha, so the rows can be gated against the
+text they are actually about.
 
-    pairs/def-coverage.<name>.json
+Outputs, all inside the workspace directory::
+
+    pairs/<source_id>/def-coverage.<name>.json
     detect/<name>/findings.cheap.jsonl
     detect/<name>/report_keydefs.json
     detect/<name>/report_broad_defs.json      (--broad, when the stage table maps the repo's modules)
@@ -48,7 +54,7 @@ _SCRIPTS = Path(__file__).resolve().parent.parent
 if str(_SCRIPTS) not in sys.path:  # pragma: no cover - import side effect
     sys.path.insert(0, str(_SCRIPTS))
 
-from cflib import campaign as cf_campaign  # noqa: E402
+from cflib import workspace as cf_workspace  # noqa: E402
 from cflib import state as cf_state  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_jsonl, write_json, write_jsonl  # noqa: E402
@@ -70,14 +76,16 @@ def register(subparsers) -> object:
     """Add the ``detect-proxies`` subcommand (cf.py discovers this)."""
     ap = subparsers.add_parser(
         COMMAND,
-        help="classify book Definitions as native / bridge-only / missing and find proxies",
+        help="classify source Definitions as native / bridge-only / missing and find proxies",
         description=__doc__,
     )
     ap.add_argument("name", help="companion name, as in companions/<name>/")
     ap.add_argument("--lean", action="store_true", help="also run the deps.json tier")
-    ap.add_argument("--deps", help="deps.json path (default: <campaign>/detect/<name>/deps.json)")
-    ap.add_argument("--book", help="stage-table id (default: campaign.yaml book.id)")
-    ap.add_argument("--stages", help="explicit stage table json (overrides --book)")
+    ap.add_argument("--deps", help="deps.json path (default: <workspace>/detect/<name>/deps.json)")
+    ap.add_argument("--source", dest="source_id",
+                    help="the source to detect against (default: the companion's anchor source; "
+                         "required when it has more than one)")
+    ap.add_argument("--stages", help="explicit stage table json (overrides the source's)")
     ap.add_argument("--statements", help="statements.jsonl override")
     ap.add_argument("--items", help="items.json override")
     ap.add_argument("--run-id", help="run id stamped into findings (default: detect-<name>-<tier>)")
@@ -103,12 +111,14 @@ def register(subparsers) -> object:
 # --------------------------------------------------------------------------
 def run(args) -> int:
     """Run the cheap tier, then the Lean tier when ``--lean`` is passed."""
-    campaign = cf_campaign.from_args(args)
-    paths = campaign.paths
+    workspace = cf_workspace.from_args(args)
+    paths = workspace.paths
     name = args.name
-    kinds = campaign.kinds
-    book_sha = campaign.book_sha
-    entry = _companion_entry(campaign, name)
+    source_id = _select_source(workspace, name, args.source_id)
+    source = workspace.source(source_id)
+    source_sha = source.sha256
+    kinds = workspace.kinds(source_id)
+    entry = _companion_entry(workspace, name)
     adapter = _read_yaml(paths.adapter_yaml(name))
     detect_dir = paths.detect_companion_dir(name)
 
@@ -121,46 +131,89 @@ def run(args) -> int:
             f"no statement table for {name!r}: {statements}",
             hint=f"run `cf extract --companion {name}` first",
         )
-    items_path = Path(args.items) if args.items else paths.items_json
+    items_path = Path(args.items) if args.items else paths.source_items(source_id)
     if not items_path.exists():
         raise CfError(
-            f"no items.json for book {campaign.book_id!r}: {items_path}",
-            hint=f"run `cf book {campaign.book_id}` first, or pass --items",
+            f"no items.json for source {source_id!r}: {items_path}",
+            hint=f"run `cf sources refresh {source_id}` first, or pass --items",
         )
 
-    stages = _load_stages(args, paths.detect_dir, args.book or campaign.book_id)
-    rows = read_jsonl(statements, skip_meta=True)
+    stages = _load_stages(args, paths.detect_dir, source_id)
+    rows = _rows_for_source(read_jsonl(statements, skip_meta=True), source_id)
 
     summary: dict = {
         "companion": name,
-        "book": campaign.book_id,
-        "book_sha": book_sha,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "statements": str(statements),
         "items": str(items_path),
     }
-    chapter = _audited_chapter(campaign, stages)
+    chapter = _audited_chapter(workspace, source_id, stages)
     summary["cheap"] = _run_cheap(
-        args, paths, detect_dir, name, rows, items_path, stages, kinds, book_sha,
-        chapter=chapter,
+        args, paths, detect_dir, name, rows, items_path, stages, kinds,
+        source_id, source_sha, chapter=chapter,
     )
     exit_code = 0
     if args.lean:
         summary["lean"], exit_code = _run_lean(
-            args, paths, detect_dir, name, rows, stages, kinds, book_sha, entry, adapter
+            args, paths, detect_dir, name, rows, stages, kinds, source_id, source_sha,
+            entry, adapter
         )
 
-    _write_state(campaign, name, summary)
+    _write_state(workspace, name, summary)
     if args.as_json:
         print(json.dumps(summary, indent=1))
     return exit_code
 
 
-def _companion_entry(campaign, name: str) -> dict:
-    """The companion's campaign.yaml record; ``{}`` when it is not listed."""
+def _select_source(workspace, companion: str, requested: str | None) -> str:
+    """Which source this detector run reads.
+
+    A detector reads ONE source's items.json: its output classifies THAT
+    source's Definitions, and a run that pooled two would report an item as
+    missing because the other edition happens not to have it.
+    """
+    listed = workspace.sources_of(companion) or workspace.source_ids()
+    if requested:
+        workspace.source(requested)  # raises when unknown
+        if listed and requested not in listed:
+            raise CfError(
+                f"companion {companion!r} is not audited against source {requested!r}",
+                hint="its sources are: " + (", ".join(listed) or "(none)"))
+        return requested
+    anchor = workspace.anchor_source(companion) if companion in workspace.companions else ""
+    if anchor:
+        return anchor
+    if len(listed) == 1:
+        return listed[0]
+    if not listed:
+        raise CfError("this workspace has no sources",
+                      hint="run `cf onboard <repo>` first")
+    raise CfError(
+        f"{companion!r} is audited against {len(listed)} sources ({', '.join(listed)})",
+        hint="a detector run reads one source's items.json; pass --source <id>")
+
+
+def _rows_for_source(rows: list[dict], source_id: str) -> list[dict]:
+    """statements.jsonl rows tagged against ONE source.
+
+    A row with no ``source_id`` is kept: a table written before the rows carried
+    one is still usable, and dropping it would silently report every Definition
+    as missing.
+    """
+    return [r for r in rows
+            if not r.get("source_id") or str(r["source_id"]) == source_id]
+
+
+def _companion_entry(workspace, name: str) -> dict:
+    """The companion's workspace.yaml record; ``{}`` when it is not listed."""
     try:
-        return dict(campaign.companion(name))
+        ref = workspace.companion(name)
     except CfError:
         return {}
+    return {"name": ref.name, "repo": str(ref.repo or ""), "adapter": ref.adapter,
+            "owner": ref.owner, "write_policy": ref.write_policy,
+            "sources": list(ref.sources), "anchor_source": ref.anchor_source}
 
 
 def _read_yaml(path: Path) -> dict:
@@ -174,35 +227,32 @@ def _read_yaml(path: Path) -> dict:
         return {}
 
 
-def _load_stages(args, detect_dir: Path, book_id: str | None) -> StageTable:
-    """A campaign-local stage table wins over the one shipped with the skill."""
+def _load_stages(args, detect_dir: Path, source_id: str) -> StageTable:
+    """A workspace-local stage table wins over the one shipped with the skill."""
     if args.stages:
         return StageTable.load(args.stages)
-    if not book_id:
+    if not source_id:
         raise CfError(
-            "no book id: campaign.yaml has no book.id",
-            hint="pass --book <id> or --stages <path to a stage table>",
+            "no source id",
+            hint="pass --source <id> or --stages <path to a stage table>",
         )
-    return StageTable.for_book(book_id, extra_dirs=[detect_dir / "mathlib_stages"])
+    return StageTable.for_source(source_id, extra_dirs=[detect_dir / "mathlib_stages"])
 
 
-def _audited_chapter(campaign, stages):
+def _audited_chapter(workspace, source_id: str, stages):
     """The chapter def-coverage is scoped to.
 
-    ``campaign.yaml book.chapters`` is the single source of scope, because
-    ``cf pair`` writes the SAME ``pairs/def-coverage.<name>.json`` and reads it
-    from there: when the two disagreed, an unscoped ``cf pair`` reported 32
-    stated / 7 bridge-only / 1 missing for the same repo this command scored
-    32 / 4 / 0, and the file meant whichever the last command ran.  The stage
-    table's own chapter is the fallback for a campaign that predates the key.
+    ``workspace.yaml sources.<id>.chapters`` is the single source of scope,
+    because ``cf pair`` writes the SAME ``pairs/<source_id>/def-coverage.<name>.json``
+    and reads it from there: when the two disagreed, an unscoped ``cf pair``
+    reported 32 stated / 7 bridge-only / 1 missing for the same repo this
+    command scored 32 / 4 / 0, and the file meant whichever command ran last.
+    The stage table's own chapter is the fallback for a source with no scope.
     """
-    chapters = (campaign.book or {}).get("chapters")
-    if isinstance(chapters, list) and len(chapters) == 1:
-        try:
-            return int(chapters[0])
-        except (TypeError, ValueError):
-            pass
-    if isinstance(chapters, list) and len(chapters) > 1:
+    chapters = list(workspace.chapters(source_id))
+    if len(chapters) == 1:
+        return int(chapters[0])
+    if len(chapters) > 1:
         return None          # multi-chapter scope: do not narrow to one
     return stages.chapter
 
@@ -210,9 +260,9 @@ def _audited_chapter(campaign, stages):
 # --------------------------------------------------------------------------
 # cheap tier
 # --------------------------------------------------------------------------
-def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, book_sha,
-               *, chapter=None) -> dict:
-    """def-coverage + body-proxy candidates; writes pairs/def-coverage.<name>.json."""
+def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
+               source_id, source_sha, *, chapter=None) -> dict:
+    """def-coverage + body proxies; writes pairs/<source_id>/def-coverage.<name>.json."""
     definitions = def_coverage.load_items(items_path, kind="Definition", chapter=chapter, kinds=kinds)
     if not definitions:
         warn(f"items.json names no Definition items for chapter {chapter}")
@@ -230,11 +280,12 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
     # construction rather than by luck.
     # TODO(cf): collapse the two implementations into this one.
     out = {
-        "book_sha": book_sha,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "kind": "Definition",
         "chapter": chapter,
         "keywords": list(def_coverage.DEFINITIONAL_KEYWORDS),
-        "book_items": len(definitions),
+        "source_items": len(definitions),
         "missing": coverage["missing"],
         "bridge_only": coverage["bridge_only"],
         "bridge_only_decls": coverage["bridge_only_detail"],
@@ -243,8 +294,9 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
         "proxy_candidates": candidates,
         "_meta": {
             "companion": name,
-            "book": stages.book,
-            "book_sha": book_sha,
+            "source_id": source_id,
+            "source_sha": source_sha,
+            "stage_table_source": stages.source_id,
             "definitions": len(definitions),
             "definitional_rows_with_body": bodies,
             "shadowed_objects": shadowed,
@@ -252,7 +304,7 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
         },
         "written_by": "cf detect-proxies",
     }
-    coverage_path = paths.def_coverage_json(name)
+    coverage_path = paths.def_coverage_json(source_id, name)
     merged = dict(read_json(coverage_path) or {}) if coverage_path.exists() else {}
     merged.update(out)
     write_json(coverage_path, merged)
@@ -266,7 +318,7 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
         "definitional_rows_with_body": bodies,
     }
     info(
-        f"{name}: {counts['definitions']} book Definitions -- {counts['stated']} stated, "
+        f"{name}/{source_id}: {counts['definitions']} Definitions -- {counts['stated']} stated, "
         f"{counts['bridge_only']} bridge-only, {counts['missing']} missing; "
         f"{counts['proxy_candidates']} body proxy candidate(s)"
     )
@@ -282,29 +334,31 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds, b
     if not args.no_findings:
         rows_out = def_coverage.build_finding_rows(
             coverage, candidates, companion=name, run_id=run_id,
-            book_sha=book_sha, items_pages=_items_pages(items_path, kinds),
+            source_id=source_id, source_sha=source_sha,
+            items_pages=_items_pages(items_path, kinds),
         )
         path = detect_dir / "findings.cheap.jsonl"
         write_jsonl(
             path, rows_out,
             meta=find_rows.meta(
-                run_id=run_id, companion=name, tier="cheap", book_sha=book_sha,
-                counts=counts, inputs={"items": str(items_path), "stage_table": str(stages.source)},
+                run_id=run_id, companion=name, tier="cheap",
+                source_id=source_id, source_sha=source_sha,
+                counts=counts, inputs={"items": str(items_path), "stage_table": str(stages.path)},
             ),
         )
         ok(f"wrote {path} ({len(rows_out)} rows)")
     result = {"counts": counts, "coverage_file": str(coverage_path), "findings": len(rows_out)}
     if rows_out:
         emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="cheap",
-                              book_sha=book_sha, counts=counts,
-                              items_pages=_items_pages(items_path, kinds))
+                               source_id=source_id, source_sha=source_sha, counts=counts,
+                               items_pages=_items_pages(items_path, kinds))
         if emitted:
             result["corpus"] = emitted
     return result
 
 
 def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier: str,
-                 book_sha, counts: dict, items_pages: dict) -> dict | None:
+                 source_id: str, source_sha, counts: dict, items_pages: dict) -> dict | None:
     """Publish the detector's rows into ``corpus/<run-id>/``, gated.
 
     Stage 8's own gate (stage_map.md): a hit only counts once it "joins the
@@ -317,11 +371,12 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
         return None
     dest = Path(paths.corpus_run_dir(run_id))
     docs = detect_corpus.documents(rows, companion=name, run_id=run_id,
-                                   book_sha=book_sha, items_pages=items_pages)
+                                   source_id=source_id, source_sha=source_sha,
+                                   items_pages=items_pages)
     gate_result = None
     if not args.no_gate:
         gate_result = _gate_documents(paths, docs, run_id=run_id, companion=name,
-                                      book_sha=book_sha)
+                                      source_id=source_id, source_sha=source_sha)
         if not gate_result["ok"]:
             warn(f"the mechanical gate refused {len(gate_result['problems'])} thing(s); "
                  f"corpus/{run_id} was NOT written")
@@ -330,7 +385,8 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
             return {"ok": False, "gate": gate_result, "destination": str(dest)}
 
     receipt = detect_corpus.write_corpus(docs, dest, run_id=run_id, companion=name,
-                                         book_sha=book_sha, counts=counts)
+                                         source_id=source_id, source_sha=source_sha,
+                                         counts=counts)
     stale = detect_corpus.stale_files(dest, receipt["names"])
     for path in stale:
         path.unlink()
@@ -339,7 +395,8 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
     receipt["complete"] = True
     receipt["expected"] = {"count": len(docs), "names": receipt["names"]}
     receipt["actual"] = {"count": len(receipt["names"])}
-    receipt["expected_from"] = f"cf detect-proxies {name} ({tier} tier): one document per book item"
+    receipt["expected_from"] = (f"cf detect-proxies {name} --source {source_id} ({tier} tier): "
+                                "one document per source item")
     receipt["harvested_at"] = cf_state.now()
     write_json(dest / "RECEIPT.json", receipt, indent=1, sort_keys=True)
     ok(f"wrote corpus/{run_id} ({len(docs)} document(s), {len(rows)} row(s))")
@@ -347,22 +404,26 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
             "rows": len(rows), "gate": gate_result}
 
 
-def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str, book_sha) -> dict:
+def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
+                    source_id: str, source_sha) -> dict:
     """Validate detector documents against the `mechanical` preset, in memory."""
     from gate import verify_findings as vf
     from plan import presets as presets_mod
 
     config = presets_mod.gate_config(
         presets_mod.get("mechanical"),
-        run_id=run_id, book_text=str(paths.book_txt), book_sha=book_sha or "",
+        run_id=run_id,
+        sources={source_id: {"text": str(paths.source_text(source_id)),
+                             "sha256": source_sha or ""}},
         repos=[companion],
     )
     cfg = vf.GateConfig(config)
-    book, problems = vf.load_book(cfg)
+    books, problems = vf.load_sources(cfg)
     for doc in docs:
-        problems.extend(vf.validate_doc(doc, detect_corpus.slug(doc["item"]) + ".json", cfg, book))
+        name = detect_corpus.slug(str(doc["item"]), str(doc.get("source_id") or "")) + ".json"
+        problems.extend(vf.validate_doc(doc, name, cfg, books))
     return {"ok": not problems, "preset": "mechanical", "problems": problems,
-            "documents": len(docs)}
+            "sources": cfg.source_ids(), "documents": len(docs)}
 
 
 def _items_pages(items_source, kinds) -> dict[str, int]:
@@ -406,7 +467,8 @@ def _first_page(entry: dict) -> int | None:
 # --------------------------------------------------------------------------
 # lean tier
 # --------------------------------------------------------------------------
-def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, book_sha, entry, adapter) -> tuple[dict, int]:
+def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, source_sha,
+              entry, adapter) -> tuple[dict, int]:
     """ORDER_VIOLATION / SAME_STAGE_PRIMITIVE over deps.json. Never runs lake."""
     deps_path = Path(args.deps) if args.deps else detect_dir / "deps.json"
     if not deps_path.exists():
@@ -417,7 +479,8 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, book_sha, entr
     deps = DepsIndex.load(deps_path)
     report = analyze_stages.analyze(deps, stages, rows, key_only=not args.all_decls, kinds=kinds)
     report["companion"] = name
-    report["book_sha"] = book_sha
+    report["source_id"] = source_id
+    report["source_sha"] = source_sha
     keydefs_path = detect_dir / "report_keydefs.json"
     write_json(keydefs_path, report)
 
@@ -448,14 +511,16 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, book_sha, entr
     run_id = args.run_id or find_rows.default_run_id(name, "lean")
     if not args.no_findings:
         rows_out = analyze_stages.build_finding_rows(
-            report, deps, stages, companion=name, run_id=run_id, book_sha=book_sha
+            report, deps, stages, companion=name, run_id=run_id,
+            source_id=source_id, source_sha=source_sha
         )
         path = detect_dir / "findings.lean.jsonl"
         write_jsonl(
             path, rows_out,
             meta=find_rows.meta(
-                run_id=run_id, companion=name, tier="lean", book_sha=book_sha,
-                counts=counts, inputs={"deps": str(deps_path), "stage_table": str(stages.source)},
+                run_id=run_id, companion=name, tier="lean",
+                source_id=source_id, source_sha=source_sha,
+                counts=counts, inputs={"deps": str(deps_path), "stage_table": str(stages.path)},
             ),
         )
         ok(f"wrote {path} ({len(rows_out)} rows)")
@@ -463,7 +528,8 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, book_sha, entr
     emitted = None
     if rows_out:
         emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="lean",
-                               book_sha=book_sha, counts=counts, items_pages={})
+                               source_id=source_id, source_sha=source_sha,
+                               counts=counts, items_pages={})
     exit_code = _report_unclassified(report, stages, args.allow_unclassified)
     return (
         {
@@ -490,7 +556,7 @@ def _report_unclassified(report: dict, stages: StageTable, allow: bool) -> int:
     if not unclassified:
         return 0
     listing = ", ".join(f"{m} ({n})" for m, n in list(unclassified.items())[:10])
-    table = stages.source.name if stages.source else "the stage table"
+    table = stages.path.name if stages.path else "the stage table"
     message = f"{len(unclassified)} module(s) are not classified by {table}: {listing}"
     if allow:
         warn(message + " -- continuing because --allow-unclassified was passed")
@@ -498,7 +564,7 @@ def _report_unclassified(report: dict, stages: StageTable, allow: bool) -> int:
     warn(message)
     warn(
         "an unclassified module silently suppresses every hit through it; add it to "
-        f"module_stages in {stages.source} or re-run with --allow-unclassified"
+        f"module_stages in {stages.path} or re-run with --allow-unclassified"
     )
     return 1
 
@@ -556,22 +622,29 @@ def _render_dump_deps(detect_dir: Path, name: str, entry: dict, adapter: dict, a
 # --------------------------------------------------------------------------
 # state
 # --------------------------------------------------------------------------
-def _write_state(campaign, name: str, summary: dict) -> None:
+def _write_state(workspace, name: str, summary: dict) -> None:
     """Merge the detector's counts into companions/<name>/state.json."""
-    if not campaign.paths.companion_dir(name).exists():
+    if not workspace.paths.companion_dir(name).exists():
         return
     cheap = summary.get("cheap", {}).get("counts", {})
     lean = summary.get("lean")
-    with cf_state.update(campaign, name) as st:
+    source_id = summary.get("source_id") or ""
+    with cf_state.update(workspace, name) as st:
         cf_state.merge_section(st, "coverage", {
+            # The source the numbers are about: a companion audited against two
+            # sources has two coverage figures, and one unlabelled number would
+            # be read as covering both.
+            "source_id": source_id,
             "definitions": cheap.get("definitions"),
             "def_stated": cheap.get("stated"),
             "def_bridge_only": cheap.get("bridge_only"),
             "def_missing": cheap.get("missing"),
         })
-        detect = {"cheap": {**cheap, "findings": summary.get("cheap", {}).get("findings")}}
+        detect = {"source_id": source_id,
+                  "cheap": {**cheap, "findings": summary.get("cheap", {}).get("findings")}}
         if lean:
             detect["lean"] = {**lean.get("counts", {}), "findings": lean.get("findings")}
         cf_state.merge_section(st, "detect", detect)
         cf_state.note(st, "detect-proxies", tier="lean" if lean else "cheap",
+                      source=source_id,
                       proxy_candidates=cheap.get("proxy_candidates"))

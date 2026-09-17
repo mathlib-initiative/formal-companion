@@ -131,30 +131,53 @@ def link_challenges(items: dict[str, dict], challenges: Sequence[dict]) -> dict[
     return by_item
 
 
-def _slug(item: str) -> str:
-    """Corpus filename for an item (the attack runs' dash style)."""
+def _slug(item: str, source_id: str = "") -> str:
+    """Corpus filename for an item (the attack runs' dash style).
+
+    Prefixed with the source when the journal names one: two sources' corpus
+    files would otherwise collide on ``exercise-1-3-19.json`` and the second
+    written would silently replace the first.
+    """
     parsed, _reject = cf_items.try_parse(item)
     if parsed is not None:
-        return cf_items.slug(parsed, "dash")
-    return re.sub(r"[^a-z0-9]+", "-", item.lower()).strip("-") or "item"
+        tail = cf_items.slug(parsed, "dash")
+    else:
+        tail = re.sub(r"[^a-z0-9]+", "-", item.lower()).strip("-") or "item"
+    prefix = cf_items.source_slug(source_id) if source_id else ""
+    return f"{prefix}--{tail}" if prefix else tail
 
 
 def write_corpus(items: dict[str, dict], challenges: dict[str, list[dict]],
-                 dest: Path, run_id: str) -> list[str]:
-    """Write one findings file per item into *dest*; returns the file names."""
+                 dest: Path, run_id: str, source_id: str = "",
+                 source_sha: str = "") -> list[str]:
+    """Write one findings file per item into *dest*; returns the file names.
+
+    Each record is stamped with the source it was judged against -- the
+    journal's own value when it has one, else the caller's -- because the gate
+    that runs over this corpus picks a text by ``source_id`` and a file without
+    one is refused.
+    """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)
     written = []
     for item, payload in sorted(items.items()):
         record = dict(payload)
         record.setdefault("item", item)
+        sid = str(record.get("source_id") or source_id or "")
+        if sid:
+            record["source_id"] = sid
+        sha = str(record.get("source_sha") or source_sha or "")
+        if sha:
+            record["source_sha"] = sha
         record["_meta"] = {
             "recovered_from": "workflow journal",
             "run_id": run_id,
+            "source_id": sid,
+            "source_sha": sha,
             "recovered_at": iso_now(),
             "challenges": challenges.get(item, []),
         }
-        name = _slug(item) + ".json"
+        name = _slug(item, sid) + ".json"
         write_json(dest / name, record, indent=1, sort_keys=True)
         written.append(name)
     return written
@@ -175,6 +198,7 @@ def summarise(items: dict[str, dict], challenges: dict[str, list[dict]]) -> dict
     challenged = {i: c for i, c in challenges.items() if c}
     return {
         "items": len(items),
+        "sources": sorted({str(p.get("source_id") or "") for p in items.values()}),
         "book_located": sum(1 for p in items.values() if p.get("book_located")),
         "defects": len(defects),
         "challenge_results": sum(len(c) for c in challenges.values()),

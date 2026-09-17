@@ -104,7 +104,7 @@ def companion_bullet(name: str, conventions: Mapping[str, list[str]]) -> str:
 def shared_bullet(per_repo: Mapping[str, Mapping[str, list[str]]], override: str | None = None) -> str:
     """The "Any repo:" line.
 
-    An explicit campaign-level text wins. Otherwise it is the de-duplicated
+    An explicit workspace-level text wins. Otherwise it is the de-duplicated
     union of every companion's standing conventions: derived from the confirmed
     per-repo lists rather than invented here, because a shared list invented in
     the skill would be both Tao-specific and unconfirmed.
@@ -140,11 +140,13 @@ def build_context(
     preset: Preset,
     *,
     run_id: str,
+    source_id: str,
     book_citation: str,
     book_text: str,
-    book_sha: str,
+    source_sha: str,
     page_offset: int,
     companions: Iterable[Mapping[str, Any]],
+    source_edition: str = "",
     gate_command: str,
     data_dir: str = "data",
     errata_path: str = "",
@@ -155,6 +157,12 @@ def build_context(
     """Build the slot dictionary the prompt templates need.
 
     ``companions`` rows: ``{name, path, files?, conventions_md?}``.
+
+    The prompt names the SOURCE, not "the book": a worker told to check a quote
+    against "the book" when two editions of one work are on the host has no way
+    to know which, and the anchor edition is not always the one the companion
+    ships (docs/design/multi-source-model.md S4.6).  ``source_id``, the edition
+    label and the first eight characters of ``source_sha`` go in the header.
     """
     rows = list(companions)
     if not rows:
@@ -175,9 +183,12 @@ def build_context(
     return {
         "run_id": run_id,
         "preset": preset.name,
+        "source_id": source_id,
+        "source_edition": source_edition or source_id,
+        "source_sha": source_sha,
+        "source_sha8": str(source_sha or "")[:8],
         "book_citation": book_citation,
         "book_text": book_text,
-        "book_sha": book_sha,
         "page_offset": page_offset,
         "images_dir": images_dir or "(no page images in this run)",
         "errata_path": errata_path or "(none fetched)",

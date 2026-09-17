@@ -17,6 +17,11 @@ So this module's contract is reconciliation, not templating:
 * an item that is dropped for any reason — unparseable, slug collision,
   duplicate — is an error that names the item, never a silently shorter run.
 
+Every entry, task and reconciliation key carries its ``source_id``, because an
+item is the pair ``(source_id, item)`` (docs/design/multi-source-model.md S6.1).
+Reconciling on the bare label would make two sources' ``Exercise 1.3.19`` one
+item, and the whole contract of this module is that nothing merges silently.
+
 Task shape (``tend.orchestrator.tasks.Task``): ``schema_version, id, title,
 status, priority, depends_on, summary, description``. Titles carry the evidence
 class (``DIFFERENTIAL:``/``SINGLE-SOURCE:``/``hunt:``/``vac:``) so that a
@@ -61,11 +66,12 @@ def tend_priority(value: str | None) -> str:
 
 @dataclass
 class Entry:
-    """One planned task: a book item plus everything the prompt needs."""
+    """One planned task: a source item plus everything the prompt needs."""
 
     item: str                       # the label as the queue/targets carry it
     repos: list[str]                # repos formalising it (differential)
     decls: dict[str, list[str]]     # repo -> declaration names
+    source_id: str = ""             # which source the label belongs to
     printed_page: int | None = None
     section: str | None = None
     single_source: bool = True
@@ -75,6 +81,11 @@ class Entry:
     def __post_init__(self) -> None:
         if self.peers is None:
             self.peers = []
+
+    @property
+    def qualified(self) -> str:
+        """``<source_id>::<item>`` -- the key nothing can collide on."""
+        return cfitems.qualified_item(self.source_id, self.item)
 
 
 @dataclass
@@ -87,6 +98,11 @@ class Task:
     priority: str
     text: str
     depends_on: list[str]
+    source_id: str = ""
+
+    @property
+    def qualified(self) -> str:
+        return cfitems.qualified_item(self.source_id, self.item)
 
 
 # --------------------------------------------------------------------------- #
@@ -125,8 +141,13 @@ def _decls_map(entry: dict, repos: Sequence[str], companion: str | None) -> dict
     return out
 
 
-def queue_entries(queue: Iterable[dict], *, offset: int = 0) -> list[Entry]:
-    """Normalise ``pairs/queue.json`` rows into planning entries."""
+def queue_entries(queue: Iterable[dict], *, source_id: str, offset: int = 0) -> list[Entry]:
+    """Normalise ``pairs/<source_id>/queue.json`` rows into planning entries.
+
+    ``offset`` is THAT SOURCE's page offset: the two Tao editions share
+    ``pdf = printed + 16`` but a different source will not, and a pdf_pages hint
+    converted with the wrong offset points a worker at the wrong page.
+    """
     out: list[Entry] = []
     for row in queue:
         repos = [str(r) for r in (row.get("repos") or [])]
@@ -137,6 +158,7 @@ def queue_entries(queue: Iterable[dict], *, offset: int = 0) -> list[Entry]:
                 item=str(row["item"]),
                 repos=repos,
                 decls=_decls_map(row, repos, None),
+                source_id=str(row.get("source_id") or source_id),
                 printed_page=_page_from(row, offset),
                 section=row.get("section"),
                 single_source=len(repos) == 1,
@@ -150,6 +172,7 @@ def differential_entries(
     queue: Iterable[dict],
     targets_by_companion: Mapping[str, Iterable[dict]],
     *,
+    source_id: str,
     offset: int = 0,
     chapters: Sequence[int] | None = None,
     kinds: Sequence[str] = cfitems.DEFAULT_KINDS,
@@ -222,6 +245,7 @@ def differential_entries(
                 item=item,
                 repos=rs,
                 decls=decls.get(item, {}),
+                source_id=source_id,
                 printed_page=pages.get(item),
                 section=sections.get(item),
                 single_source=len(rs) == 1,
@@ -239,7 +263,7 @@ def _parses(item: str, kinds: Sequence[str]) -> bool:
 def _rows(data) -> list[dict]:
     """Accept a pairs/ artifact either as a bare row list or as its wrapper.
 
-    ``make_queue`` writes ``{created, book_sha, count, ..., items: [...]}``.
+    ``make_queue`` writes ``{created, source_sha, count, ..., items: [...]}``.
     Iterating the wrapper yields its KEYS, which fails far from the mistake
     ("string indices must be integers"), so unwrap it here as well as in the
     command.
@@ -253,8 +277,9 @@ def _rows(data) -> list[dict]:
     return list(data or [])
 
 
-def target_entries(targets: Iterable[dict], companion: str, *, offset: int = 0) -> list[Entry]:
-    """Normalise ``pairs/targets.<name>.json`` rows into planning entries."""
+def target_entries(targets: Iterable[dict], companion: str, *, source_id: str,
+                   offset: int = 0) -> list[Entry]:
+    """Normalise ``pairs/<source_id>/targets.<name>.json`` rows into entries."""
     out: list[Entry] = []
     for row in _rows(targets):
         peers = [str(p) for p in (row.get("peers") or [])]
@@ -264,6 +289,7 @@ def target_entries(targets: Iterable[dict], companion: str, *, offset: int = 0) 
                 item=str(row["item"]),
                 repos=[companion],
                 decls=_decls_map(row, [companion], companion),
+                source_id=str(row.get("source_id") or source_id),
                 printed_page=_page_from(row, offset),
                 section=row.get("section"),
                 single_source=single,
@@ -280,31 +306,42 @@ def target_entries(targets: Iterable[dict], companion: str, *, offset: int = 0) 
 def assign_slugs(entries: Sequence[Entry], style: str, kinds: Sequence[str]) -> dict[int, str]:
     """Map entry index -> task id, order-independently and without collisions.
 
-    The canonical id comes from the item grammar. Two raw labels can normalise
-    onto one canonical id (``In-text, book p. 18`` and ``In-text convention,
-    book p. 18`` are both ``In-text p.18``): *every* entry in such a group falls
-    back to the raw-derived slug, which is what the original runs used as a
-    filename, so the choice does not depend on input order. A collision that
-    survives that is an error — merging two items into one task is exactly the
-    silent drop this module exists to prevent.
+    The canonical id comes from the item grammar, PREFIXED BY THE SOURCE
+    (``cflib.items.qualified_slug``): a filename is a single string, and
+    ``exercise-1-3-19`` names two different items in two sources, so two
+    sources' tasks would overwrite each other in one ``tasks/`` directory.
+
+    Two raw labels can still normalise onto one canonical id within a source
+    (``In-text, book p. 18`` and ``In-text convention, book p. 18`` are both
+    ``In-text p.18``): *every* entry in such a group falls back to the
+    raw-derived slug, which is what the original runs used as a filename, so
+    the choice does not depend on input order. A collision that survives that is
+    an error — merging two items into one task is exactly the silent drop this
+    module exists to prevent.
     """
+    def _qualify(entry: Entry, tail: str) -> str:
+        prefix = cfitems.source_slug(entry.source_id)
+        return f"{prefix}--{tail}" if prefix else tail
+
     canonical: dict[int, str] = {}
     for i, e in enumerate(entries):
         item, _reject = cfitems.try_parse(e.item, kinds)
-        canonical[i] = cfitems.slug(item, style) if item is not None else cfitems.slug_from_raw(e.item)
+        tail = cfitems.slug(item, style) if item is not None else cfitems.slug_from_raw(e.item)
+        canonical[i] = _qualify(e, tail)
     counts = collections.Counter(canonical.values())
     out: dict[int, str] = {}
     for i, e in enumerate(entries):
-        out[i] = canonical[i] if counts[canonical[i]] == 1 else cfitems.slug_from_raw(e.item)
+        out[i] = (canonical[i] if counts[canonical[i]] == 1
+                  else _qualify(e, cfitems.slug_from_raw(e.item)))
     clash: dict[str, list[str]] = collections.defaultdict(list)
     for i, s in out.items():
-        clash[s].append(entries[i].item)
+        clash[s].append(entries[i].qualified if entries[i].source_id else entries[i].item)
     bad = {s: v for s, v in clash.items() if len(v) > 1}
     if bad:
         lines = "; ".join(f"{s} <- {v}" for s, v in sorted(bad.items()))
         raise CfError(
             f"{len(bad)} task id collision(s): {lines}",
-            hint="two book items would share one task file; fix the labels in the companion "
+            hint="two source items would share one task file; fix the labels in the companion "
                  "or give the queue distinct item ids",
         )
     return out
@@ -370,7 +407,9 @@ def render_task(
         "decls_inline": ", ".join(sorted({d for v in entry.decls.values() for d in v})) or "(none listed)",
         "decls_block": _decls_block(entry.decls, entry.repos),
         "run_id": ctx.get("run_id", ""),
-        "book_sha": ctx.get("book_sha", ""),
+        "source_id": entry.source_id or ctx.get("source_id", ""),
+        "source_sha": ctx.get("source_shas", {}).get(entry.source_id)
+        or ctx.get("source_sha", ""),
         "gate_command": ctx.get("gate_command", ""),
         "kinds_inline": " or ".join(preset.kinds),
         "companion": ctx.get("companion", entry.repos[0] if entry.repos else ""),
@@ -402,6 +441,7 @@ def render_task(
         priority=common["priority"],
         text=text if text.endswith("\n") else text + "\n",
         depends_on=depends_on,
+        source_id=entry.source_id,
     )
 
 
@@ -422,7 +462,8 @@ def make_tasks(
     eleven minutes with a single worker allowed).
 
     ``expected_items`` — usually ``items.json ∩ (any repo)`` — turns the count
-    reconciliation into a set reconciliation and names what is missing.
+    reconciliation into a set reconciliation and names what is missing.  Its
+    entries may be bare labels (one source) or ``<source_id>::<item>``.
     """
     ctx = dict(ctx or {})
     tdir = pathlib.Path(ctx.get("templates_dir") or (templates_dir() / "tasks"))
@@ -453,16 +494,27 @@ def make_tasks(
     return tasks
 
 
+def _key(source_id: str, item: str) -> str:
+    """The reconciliation key: qualified when a source is known, else the label."""
+    return cfitems.qualified_item(source_id, item) if source_id else cfitems.clean(item)
+
+
 def reconcile(
     entries: Sequence[Entry],
     tasks: Sequence[Task],
     *,
     expected_items: Iterable[str] | None = None,
 ) -> None:
-    """Refuse a task set that lost an item. Raises ``CfError`` with the names."""
+    """Refuse a task set that lost an item. Raises ``CfError`` with the names.
+
+    Everything is compared on ``(source_id, item)``.  On the bare label, two
+    sources' ``Exercise 1.3.19`` would cancel out — one missing and one
+    unexpected would net to zero and the reconciliation would report success
+    over a run that audited the wrong edition of one of them.
+    """
     if len(tasks) != len(entries):
-        planned = {e.item for e in entries}
-        written = {t.item for t in tasks}
+        planned = {e.qualified if e.source_id else e.item for e in entries}
+        written = {t.qualified if t.source_id else t.item for t in tasks}
         raise CfError(
             f"task count {len(tasks)} != planned {len(entries)}",
             hint="dropped: " + ", ".join(sorted(planned - written)),
@@ -472,8 +524,13 @@ def reconcile(
     if dupes:
         raise CfError(f"duplicate task ids: {sorted(dupes)}")
     if expected_items is not None:
-        expected = {str(i) for i in expected_items}
-        got = {t.item for t in tasks}
+        sources = {t.source_id for t in tasks}
+        only = next(iter(sources)) if len(sources) == 1 else ""
+        expected = {
+            str(i) if cfitems.QUALIFIED_SEP in str(i) else _key(only, str(i))
+            for i in expected_items
+        }
+        got = {_key(t.source_id, t.item) for t in tasks}
         missing, extra = sorted(expected - got), sorted(got - expected)
         if missing or extra:
             raise CfError(

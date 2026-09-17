@@ -29,7 +29,7 @@ from cflib.hashing import finding_id, sha256_file, sha256_text  # noqa: E402,F40
 from cflib.jsonio import read_json, read_jsonl, write_json, write_jsonl  # noqa: E402,F401
 from cflib.log import info, ok, warn  # noqa: E402,F401
 
-#: item kinds a campaign uses unless campaign.yaml overrides them
+#: item kinds a source uses unless workspace.yaml overrides them for it
 DEFAULT_KINDS: tuple[str, ...] = _items.DEFAULT_KINDS
 
 

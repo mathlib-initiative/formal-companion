@@ -4,7 +4,7 @@ A rewrite (not an adaptation) of
 /Users/jack/Desktop/tao-differential/adam-detector/analyze2.py, as
 adam-detector/README.md:63-73 requires: the closure logic and the two rules are
 kept verbatim in spirit, but the item -> declaration mapping now comes from the
-campaign's ``statements.jsonl`` instead of one repo's PDF-overlay artifacts
+workspace's ``statements.jsonl`` instead of one repo's PDF-overlay artifacts
 (``target-refinement.json`` + ``declaration-snippets.json`` + four
 ``geometry-batch-*.json``), and the section of an item is a substring parse of
 its id instead of that repo's label -> source_ids -> page fallback chain.
@@ -22,7 +22,7 @@ The two rules (analyze2.py L165-196):
     shape, where the book's own construction is replaced by the thing it was
     supposed to construct.
 
-``MATHLIB_STAGE`` lives in ``detect/mathlib_stages/<book>.json`` (shipped for
+``MATHLIB_STAGE`` lives in ``detect/mathlib_stages/<source_id>.json`` (shipped for
 tao-measure from analyze2.py L51-120). Modules in the subject's namespace that
 the table does not classify are reported and make the run fail unless
 ``--allow-unclassified`` is passed: an unclassified module silently suppresses
@@ -199,7 +199,7 @@ def analyze(
         "analysed": analysed,
         "items_without_stage": without_stage,
         "decls_not_in_deps": unknown_decls,
-        "book": stages.book,
+        "source_id": stages.source_id,
         "stage_table": str(stages.source) if stages.source else None,
         "deps": str(deps.source) if deps.source else None,
     }
@@ -277,9 +277,16 @@ def build_finding_rows(
     *,
     companion: str,
     run_id: str,
-    book_sha: str | None = None,
+    source_id: str = "",
+    source_sha: str | None = None,
 ) -> list[dict]:
-    """Turn ORDER_VIOLATION / SAME_STAGE_PRIMITIVE hits into PROXY rows."""
+    """Turn ORDER_VIOLATION / SAME_STAGE_PRIMITIVE hits into PROXY rows.
+
+    ``source_id`` defaults to the stage table's own, which is the source whose
+    section structure decided every stage in the report -- so a row can never
+    claim a stage that was computed against a different work.
+    """
+    source_id = source_id or stages.source_id
     out: list[dict] = []
     for hit in report.get("order_violations", []):
         constants = [c for _s, c, _m in hit["later_hits"]]
@@ -289,6 +296,8 @@ def build_finding_rows(
             find_rows.proxy_row(
                 run_id=run_id,
                 companion=companion,
+                source_id=source_id,
+                source_sha=source_sha,
                 item=hit["item"],
                 decl=hit["decl"],
                 rule=RULE_ORDER_VIOLATION,
@@ -308,7 +317,6 @@ def build_finding_rows(
                     "closure_path": hit["example_path"],
                     "module": hit["module"],
                 },
-                book_sha=book_sha,
                 tier="lean",
             )
         )
@@ -320,6 +328,8 @@ def build_finding_rows(
             find_rows.proxy_row(
                 run_id=run_id,
                 companion=companion,
+                source_id=source_id,
+                source_sha=source_sha,
                 item=hit["item"],
                 decl=hit["decl"],
                 rule=RULE_SAME_STAGE_PRIMITIVE,
@@ -338,7 +348,6 @@ def build_finding_rows(
                     "direct_same_stage": hit["direct_same_stage"],
                     "module": hit["module"],
                 },
-                book_sha=book_sha,
                 tier="lean",
             )
         )
@@ -353,16 +362,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--deps", required=True, help="deps.json from DumpDeps.lean (outside the repo tree)")
     ap.add_argument("--statements", required=True, help="statements.jsonl for the companion")
-    ap.add_argument("--book", help="stage table name, e.g. tao-measure")
+    ap.add_argument("--source", dest="source_id",
+                    help="stage table source id, e.g. tao-measure-gsm126-published")
     ap.add_argument("--stages", help="explicit path to a stage table json")
     ap.add_argument("--out", help="write the report json here")
     ap.add_argument("--all-decls", action="store_true", help="do not restrict to rows marked key")
     ap.add_argument("--allow-unclassified", action="store_true")
     args = ap.parse_args(argv)
 
-    if not args.stages and not args.book:
-        ap.error("pass --book or --stages")
-    stages = StageTable.load(args.stages) if args.stages else StageTable.for_book(args.book)
+    if not args.stages and not args.source_id:
+        ap.error("pass --source or --stages")
+    stages = (StageTable.load(args.stages) if args.stages
+              else StageTable.for_source(args.source_id))
     deps = DepsIndex.load(args.deps)
     rows = read_jsonl(args.statements, skip_meta=True)
     report = analyze(deps, stages, rows, key_only=not args.all_decls)

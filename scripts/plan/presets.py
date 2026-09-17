@@ -18,7 +18,7 @@ task shape, concurrency) is a field here, and ``plan-run`` writes it into
 from __future__ import annotations
 
 from dataclasses import dataclass, field, asdict
-from typing import Any
+from typing import Any, Mapping
 
 from cflib import vocab
 from cflib.errors import CfError
@@ -252,39 +252,63 @@ def priority_for(kind: str, single_source: bool, section: str | None) -> str:
     return "default"
 
 
+def source_block(spec: "Mapping[str, Any] | str") -> dict:
+    """Normalise one ``gate.json`` ``sources.<id>`` body.
+
+    A caller may pass the whole mapping or just the text path; the gate needs
+    the five keys below and nothing else, and a missing ``page_offset`` is 0
+    rather than an exception because a source whose offset is unknown still has
+    a quote gate worth running.
+    """
+    if isinstance(spec, str):
+        spec = {"text": spec}
+    return {
+        "text": str(spec.get("text") or "") or None,
+        "sha256": spec.get("sha256") or spec.get("source_sha") or None,
+        "text_sha256": spec.get("text_sha256") or None,
+        "images_dir": str(spec["images_dir"]) if spec.get("images_dir") else None,
+        "page_offset": int(spec.get("page_offset") or spec.get("offset") or 0),
+    }
+
+
 def gate_config(
     preset: Preset,
     *,
     run_id: str,
-    book_text: str,
-    book_sha: str | None,
+    sources: "Mapping[str, Any]",
     repos: list[str],
-    book_text_sha: str | None = None,
-    images_dir: str | None = None,
-    page_offset: int = 0,
     decl_index: str | None = None,
 ) -> dict:
-    """Build the ``gate.json`` the out-of-tree gate reads."""
+    """Build the ``gate.json`` the out-of-tree gate reads.
+
+    ``sources`` maps ``source_id`` -> ``{text, sha256, text_sha256, images_dir,
+    page_offset}`` (docs/design/multi-source-model.md S6.2).  It is a MAP, not a
+    single book, because a run may span more than one source and the gate picks
+    the text to check a quote against by the document's own ``source_id`` --
+    checking every quote against one concatenated text would let a quote from
+    the 2011 draft pass as the published book's.
+    """
+    blocks = {str(sid): source_block(body) for sid, body in dict(sources or {}).items()}
+    if not blocks:
+        raise CfError(
+            "gate_config() was given no sources",
+            hint="a gate with no text to check quotes against passes everything; "
+                 "pass sources={source_id: {text, sha256, ...}}",
+        )
     return {
         "schema_version": 2,
         "preset": preset.name,
         "mode": "attack" if preset.is_attack else "differential",
         "run_id": run_id,
-        "book": {
-            "text": book_text,
-            "sha256": book_sha,
-            "text_sha256": book_text_sha,
-            "images_dir": images_dir,
-            "page_offset": page_offset,
-        },
+        "sources": blocks,
         "repos": list(repos),
         "kinds": list(preset.kinds),
         "verdicts": list(preset.verdicts),
         "severities": list(vocab.SEVERITIES),
         "witness_required": preset.witness_required,
         "require_book_located": True,
-        "require_book_sha": True,
-        "verify_text_sha": bool(book_text_sha),
+        "require_source_sha": True,
+        "verify_text_sha": any(b["text_sha256"] for b in blocks.values()),
         "require_finding_id": preset.require_finding_id,
         "require_passage_quote": preset.require_passage_quote,
         "check_operators": preset.check_operators,

@@ -47,7 +47,7 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     cfg = vf.GateConfig(json.loads(cfg_path.read_text(encoding="utf-8")), cfg_path)
     cfg.findings_dir = findings_dir
 
-    book, problems = vf.load_book(cfg)
+    books, problems = vf.load_sources(cfg)
     decl_index = vf._load_decl_index(cfg.decl_index) if cfg.decl_index else None
 
     files = [f for f in sorted((dest / cfg.findings_dir).glob("*.json"))
@@ -59,12 +59,14 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
         except Exception as exc:  # noqa: BLE001 - any parse failure is a gate failure
             problems.append(f"{f.name}: not valid JSON ({exc})")
             continue
-        problems.extend(vf.validate_doc(doc, f.name, cfg, book, decl_index))
-        partial.extend(vf.partial_quotes(doc, f.name, book))
+        problems.extend(vf.validate_doc(doc, f.name, cfg, books, decl_index))
+        partial.extend(vf.partial_quotes(
+            doc, f.name, vf._book_for(books, vf.doc_source_id(doc, cfg))))
     return {
         "ok": not problems,
         "config": str(cfg_path),
         "preset": cfg.preset or cfg.mode,
+        "sources": cfg.source_ids(),
         "files": len(files),
         "problems": problems,
         "partial_quotes": partial,
@@ -73,7 +75,8 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
 
 def render(result: dict, max_named: int = 12) -> str:
     """One-screen summary of a gate result."""
-    head = (f"gate {result['preset']}: {result['files']} file(s), "
+    sources = ", ".join(result.get("sources") or []) or "(none)"
+    head = (f"gate {result['preset']} [{sources}]: {result['files']} file(s), "
             + ("PASSED" if result["ok"] else f"FAILED ({len(result['problems'])} problem(s))"))
     lines = [head]
     for problem in result["problems"][:max_named]:

@@ -16,7 +16,7 @@ changes the record forces:
     that was named in none of them.  Routing is now exactly: the row names a
     declaration of that repo in ``unfaithful_decls``.
 
-2.  ``_meta`` is structured (status / rule / book_sha / counts) instead of two
+2.  ``_meta`` is structured (status / rule / sources / counts) instead of two
     prose sentences, because ``route`` now REFUSES to emit anything upstream
     while the status is UNCHALLENGED -- the 32 held-back teorth findings and the
     ~40% first-pass false-positive rate are the reason the challenge stage
@@ -58,16 +58,40 @@ class UpstreamRefused(RuntimeError):
     """Raised when an upstream export is attempted on an UNCHALLENGED file."""
 
 
-def challenge_command(campaign: str, companion: str) -> str:
+def challenge_command(workspace: str, companion: str) -> str:
     """The exact command that turns UNCHALLENGED into CHALLENGED."""
     return (
-        "python3 scripts/cf.py adjudicate --campaign %s --companion %s "
-        "--challenge-only --emit-args" % (campaign, companion)
+        "python3 scripts/cf.py adjudicate --workspace %s --companion %s "
+        "--challenge-only --emit-args" % (workspace, companion)
     )
 
 
+def _is_payload(value: Any) -> bool:
+    """True when *value* looks like one anchor-check document, not a map of them."""
+    if isinstance(value, list):
+        return True
+    return isinstance(value, dict) and any(
+        k in value for k in ("rows", "items", "anchors", "summary", "checked_items"))
+
+
+def _by_source(anchor_check: Any) -> dict[str, Any]:
+    """Normalise the ``anchor_check`` argument into ``{source_id: payload}``.
+
+    ``route_workspace`` passes a map keyed by ``source_id`` -- the oracle is per
+    source, because ``pairs/<source_id>/anchor-check.json`` only ever examined
+    ITS edition's items.  A single payload (what a direct caller or a test
+    passes) is kept under ``""`` and used for every source, which preserves the
+    one-source behaviour exactly.
+    """
+    if not anchor_check:
+        return {}
+    if _is_payload(anchor_check):
+        return {"": anchor_check}
+    return {str(k): v for k, v in dict(anchor_check).items()}
+
+
 def _anchor_index(anchor_check: Any) -> dict[str, dict]:
-    """Index a pair/anchor_check.json payload by normalised item."""
+    """Index a pairs/<source_id>/anchor-check.json payload by normalised item."""
     if not anchor_check:
         return {}
     rows = anchor_check
@@ -94,7 +118,8 @@ def provenance(row: dict) -> str:
     return ""
 
 
-def _withdrawal(row: dict, anchors: dict[str, dict], checked: set[str]) -> str:
+def _withdrawal(row: dict, anchors: dict[str, dict], checked: set[str],
+                source_id: str = "") -> str:
     """Return a withdrawal reason for *row*, or '' when it should be routed.
 
     critique.json correction 2: "Route them as mechanical low-severity rows from
@@ -120,14 +145,16 @@ def _withdrawal(row: dict, anchors: dict[str, dict], checked: set[str]) -> str:
     item = compat.normalise_item(row.get("item"))
     if item in anchors:
         return ""  # the mechanical check found the same mismatch: route it
+    where = "pairs/%s/anchor-check.json" % source_id if source_id else "pairs/<source>/anchor-check.json"
     if item in checked:
         return (
             "contradicted by the pinned edition: anchor_check examined %s and the "
-            "repo anchor is correct (pairs/anchor-check.json)" % (row.get("item") or item)
+            "repo anchor is correct (%s)" % (row.get("item") or item, where)
         )
     return (
         "%s is mechanical-only in vocabulary v2 and anchor_check never examined "
-        "this item; re-derive with `python3 scripts/cf.py pair`" % kind
+        "this item for %s; re-derive with `python3 scripts/cf.py pair`"
+        % (kind, source_id or "this source")
     )
 
 
@@ -146,19 +173,39 @@ def route_repo(
     findings: Iterable[dict],
     companion: str,
     *,
-    book_sha: str = "",
+    source_id: str = "",
+    source_sha: str = "",
     ledger_rows: Iterable[dict] | None = None,
     anchor_check: Any = None,
-    campaign: str = "",
+    workspace: str = "",
 ) -> dict:
     """Route every finding that names *companion* and decide the file's status.
+
+    ``source_id``/``source_sha`` are the fallbacks for a finding that carries
+    none; a row's own source always wins, and the meta records every source the
+    routed file touches.  A routed file may span sources (one companion audited
+    against two books), so the edition is a per-row fact, not a file-level one.
 
     Returns ``{"rows": [...], "meta": {...}}``; the caller writes it out.
     """
     rows_in = list(findings)
     mine = findings_mod.rows_naming(rows_in, companion)
-    anchors = _anchor_index(anchor_check)
-    checked = _checked_items(anchor_check)
+    payloads = _by_source(anchor_check)
+    anchors = {sid: _anchor_index(p) for sid, p in payloads.items()}
+    checked = {sid: _checked_items(p) for sid, p in payloads.items()}
+
+    def _oracle(sid: str) -> tuple:
+        """The (mismatches, examined) oracle for one source.
+
+        Falls back to the unkeyed payload -- and ONLY to that -- so a
+        single-payload caller behaves as before while a per-source map never
+        judges one edition's item by another edition's check.
+        """
+        if sid in anchors:
+            return anchors[sid], checked[sid]
+        if "" in anchors:
+            return anchors[""], checked[""]
+        return {}, set()
 
     ledger_by_id: dict[str, dict] = {}
     for row in ledger_rows or []:
@@ -176,6 +223,8 @@ def route_repo(
         row = {
             "finding_id": f["finding_id"],
             "run_id": f.get("run_id", ""),
+            "source_id": f.get("source_id", "") or source_id,
+            "source_sha": f.get("source_sha", "") or source_sha,
             "item": f["item"],
             "kind": f.get("kind", ""),
             "severity": f.get("severity", ""),
@@ -189,7 +238,6 @@ def route_repo(
             "book_quote": f.get("book_quote", ""),
             "reasoning": f.get("reasoning", ""),
             "suggested_fix": f.get("suggested_fix", ""),
-            "book_sha": f.get("book_sha", "") or book_sha,
             "provenance": f.get("provenance", ""),
             "source_file": f.get("source_file", ""),
         }
@@ -197,7 +245,9 @@ def route_repo(
             row["witness"] = f["witness"]
         if f.get("bridge") is not None:
             row["bridge"] = f["bridge"]
-        reason = _withdrawal(f, anchors, checked)
+        row_source = str(row.get("source_id") or "")
+        row_anchors, row_checked = _oracle(row_source)
+        reason = _withdrawal(f, row_anchors, row_checked, row_source)
         if reason:
             row["withdrawn"] = True
             row["withdrawn_reason"] = reason
@@ -226,15 +276,31 @@ def route_repo(
             by_severity.get(str(r.get("severity") or ""), 0) + 1
         )
 
-    shas = {r.get("book_sha") for r in routed if r.get("book_sha")}
+    sources: dict[str, str] = {}
+    for r in routed:
+        sid = str(r.get("source_id") or "")
+        if sid:
+            sources.setdefault(sid, str(r.get("source_sha") or ""))
+    if source_id and source_id not in sources:
+        sources[source_id] = source_sha
+    # Two shas under ONE source_id means two editions were routed as though they
+    # were the same source: exactly the batch-1 defect, now nameable.
+    conflicts = sorted({sid for sid in sources
+                        if len({str(r.get("source_sha") or "") for r in routed
+                                if str(r.get("source_id") or "") == sid
+                                and r.get("source_sha")}) > 1})
     meta = {
         "repo": companion,
         "status": status,
         "rule": ROUTING_RULE,
-        "book_sha": book_sha or (sorted(shas)[0] if shas else ""),
+        "sources": dict(sorted(sources.items())),
         "counts": {
             "rows": len(open_rows),
-            "items": len({r["item"] for r in open_rows}),
+            "items": len({(r.get("source_id", ""), r["item"]) for r in open_rows}),
+            "by_source": {
+                sid: sum(1 for r in open_rows if str(r.get("source_id") or "") == sid)
+                for sid in sorted(sources)
+            },
             "withdrawn": len(routed) - len(open_rows),
             "challenged": len(open_rows) - len(unchallenged),
             "unchallenged": len(unchallenged),
@@ -244,11 +310,11 @@ def route_repo(
         },
         "schema": "routed-v2",
     }
-    if len(shas) > 1:
-        meta["book_sha_conflict"] = sorted(shas)
+    if conflicts:
+        meta["source_sha_conflict"] = conflicts
     if status == STATUS_UNCHALLENGED:
         meta["upstream"] = "REFUSED while UNCHALLENGED"
-        meta["challenge_command"] = challenge_command(campaign or "<campaign>", companion)
+        meta["challenge_command"] = challenge_command(workspace or "<workspace>", companion)
     return {"rows": routed, "meta": meta}
 
 
@@ -289,7 +355,7 @@ def emit_upstream(
     dest_dir: str,
     *,
     companion: str,
-    campaign: str = "",
+    workspace: str = "",
     redact_quotes: bool = False,
     open_only: bool = True,
 ) -> str:
@@ -297,8 +363,11 @@ def emit_upstream(
 
     Refuses -- loudly -- while ``_meta.status`` is UNCHALLENGED: a first-pass
     finding is wrong about 40% of the time, and 32 unchallenged findings were
-    held back from teorth for exactly this reason.  It also refuses a file whose
-    rows were judged against more than one edition of the book.
+    held back from teorth for exactly this reason.  It also refuses a file in
+    which one ``source_id`` carries more than one ``source_sha`` -- that means
+    two editions were routed as if they were the same source, which is how
+    batch 1's anchor findings ended up judged against the 2011 draft.  Rows
+    from two DIFFERENT sources are fine: they say which is which.
     """
     meta = routed.get("meta") or {}
     if meta.get("status") != STATUS_CHALLENGED:
@@ -309,15 +378,14 @@ def emit_upstream(
                 companion,
                 meta.get("status", "UNKNOWN"),
                 (meta.get("counts") or {}).get("unchallenged", 0),
-                meta.get("challenge_command") or challenge_command(campaign or "<campaign>", companion),
+                meta.get("challenge_command") or challenge_command(workspace or "<workspace>", companion),
             )
         )
-    if meta.get("book_sha_conflict"):
+    if meta.get("source_sha_conflict"):
         raise UpstreamRefused(
-            "refusing to emit an upstream report for %s: its rows were judged against "
-            "%d different editions (%s). Re-run the stages that produced the odd one."
-            % (companion, len(meta["book_sha_conflict"]),
-               ", ".join(s[:12] for s in meta["book_sha_conflict"]))
+            "refusing to emit an upstream report for %s: source(s) %s carry rows judged "
+            "against more than one edition. Re-run the stages that produced the odd one."
+            % (companion, ", ".join(meta["source_sha_conflict"]))
         )
     rows = [r for r in routed["rows"] if not r.get("withdrawn")]
     held = []
@@ -362,7 +430,10 @@ def owner_message(routed: dict, companion: str, owner: str = "") -> str:
             counts.get("challenged", 0),
             counts.get("unchallenged", 0),
         ),
-        "Book edition: `%s`. Routing rule: %s." % ((meta.get("book_sha") or "")[:16], meta.get("rule", "")),
+        "Sources: %s. Routing rule: %s."
+        % (", ".join("`%s` (%s…)" % (sid, str(sha)[:12])
+                     for sid, sha in sorted((meta.get("sources") or {}).items())) or "(none)",
+           meta.get("rule", "")),
         "",
     ]
     if meta.get("status") != STATUS_CHALLENGED:
@@ -371,65 +442,89 @@ def owner_message(routed: dict, companion: str, owner: str = "") -> str:
             "Run: `%s`" % (meta.get("challenge_command") or ""),
             "",
         ]
-    lines += ["| item | kind | severity | declaration | verdict |", "|---|---|---|---|---|"]
+    multi = len(meta.get("sources") or {}) > 1
+    header = "| item | kind | severity | declaration | verdict |"
+    rule = "|---|---|---|---|---|"
+    if multi:
+        # Two sources: the item column alone is ambiguous, so name the source.
+        header = "| source | item | kind | severity | declaration | verdict |"
+        rule = "|---|---|---|---|---|---|"
+    lines += [header, rule]
     for r in rows:
         decls = ", ".join(r.get("unfaithful_decls") or [])
-        lines.append(
-            "| %s | %s | %s | `%s` | %s |"
-            % (
-                r.get("item", ""),
-                r.get("kind", ""),
-                r.get("severity", ""),
-                decls,
-                r.get("ledger_verdict", "(unchallenged)"),
-            )
-        )
+        cells = [r.get("item", ""), r.get("kind", ""), r.get("severity", ""),
+                 "`%s`" % decls, r.get("ledger_verdict", "(unchallenged)")]
+        if multi:
+            cells.insert(0, r.get("source_id", ""))
+        lines.append("| " + " | ".join(str(c) for c in cells) + " |")
     lines.append("")
     return "\n".join(lines)
 
 
-def route_campaign(
-    campaign: str,
+def _load_anchor_checks(paths: Any, cfg: Any, names: Iterable[str],
+                        anchor_check_path: str = "") -> dict:
+    """``{source_id: anchor-check payload}`` for the sources in play.
+
+    The withdrawal oracle is per source (``pairs/<source_id>/anchor-check.json``):
+    a PAGE_ANCHOR row about the published book must not be withdrawn because the
+    2011 draft's anchor check did not examine that item.
+    """
+    out: dict[str, Any] = {}
+    wanted: list[str] = []
+    for name in names:
+        for sid in cfg.sources_of(name) or []:
+            if sid not in wanted:
+                wanted.append(sid)
+    if not wanted:
+        wanted = list(paths.list_paired_sources())
+    if anchor_check_path:
+        # An explicit path overrides every source: the operator named one file.
+        payload = compat.read_json(anchor_check_path) if os.path.exists(anchor_check_path) else None
+        return {sid: payload for sid in (wanted or [""])}
+    for sid in wanted:
+        path = paths.anchor_check(sid)
+        if os.path.exists(path):
+            out[sid] = compat.read_json(path)
+    return out
+
+
+def route_workspace(
+    workspace: str,
     *,
     companions: Iterable[str] | None = None,
     corpus: Iterable[str] | None = None,
-    book_sha: str = "",
     anchor_check_path: str = "",
     write_messages: bool = True,
 ) -> list[dict]:
-    """Route every companion of a campaign; returns one report per companion."""
-    cfg = compat.load_campaign(campaign)
+    """Route every companion of a workspace; returns one report per companion."""
+    cfg = compat.load_workspace(workspace)
     paths = cfg.paths
-    book_sha = book_sha or cfg.book_sha
     names = list(companions or []) or cfg.companion_names()
-    sources = list(corpus or [])
-    if not sources:
+    corpora = list(corpus or [])
+    if not corpora:
         corpus_root = paths.corpus()
         if os.path.isdir(corpus_root):
-            sources = [
+            corpora = [
                 os.path.join(corpus_root, d)
                 for d in sorted(os.listdir(corpus_root))
                 if os.path.isdir(os.path.join(corpus_root, d))
             ]
-    all_findings = findings_mod.load_findings(sources, book_sha=book_sha)
-    anchor_check = None
-    anchor_path = anchor_check_path or str(
-        getattr(paths, "anchor_check_json", os.path.join(paths.pairs, "anchor-check.json"))
-    )
-    if os.path.exists(anchor_path):
-        anchor_check = compat.read_json(anchor_path)
+    all_findings = findings_mod.load_findings(corpora)
+    anchor_checks = _load_anchor_checks(paths, cfg, names, anchor_check_path)
 
     reports = []
     for name in names:
         loaded = vl.load_ledger_dir(paths, name)
         ledger_rows = loaded["rows"]["accepted"] + loaded["rows"]["refuted"]
+        anchor_source = cfg.anchor_source(name)
         routed = route_repo(
             all_findings,
             name,
-            book_sha=book_sha,
+            source_id=anchor_source,
+            source_sha=cfg.source_sha(anchor_source),
             ledger_rows=ledger_rows,
-            anchor_check=anchor_check,
-            campaign=campaign,
+            anchor_check=anchor_checks,
+            workspace=workspace,
         )
         path = write_routed(paths, name, routed)
         if write_messages:
@@ -446,7 +541,7 @@ def route_campaign(
                         "file": _p,
                         "status": _r["meta"]["status"],
                         "counts": _r["meta"]["counts"],
-                        "book_sha": _r["meta"]["book_sha"],
+                        "sources": _r["meta"]["sources"],
                     }
                 }
             ),
@@ -458,19 +553,17 @@ def route_campaign(
 def main(argv: list[str] | None = None) -> int:
     """CLI mirror of ``cf route`` (see scripts/cfcmd/route.py)."""
     ap = argparse.ArgumentParser(description="Route findings to the repo that owns them.")
-    ap.add_argument("--campaign", required=True)
+    ap.add_argument("--workspace", required=True)
     ap.add_argument("--companion", action="append", default=[])
     ap.add_argument("--corpus", action="append", default=[])
-    ap.add_argument("--book-sha", default="")
     ap.add_argument("--emit-upstream", default="", help="directory for the upstream export")
     ap.add_argument("--redact-quotes", action="store_true")
     args = ap.parse_args(argv)
 
-    reports = route_campaign(
-        args.campaign,
+    reports = route_workspace(
+        args.workspace,
         companions=args.companion,
         corpus=args.corpus,
-        book_sha=args.book_sha,
     )
     rc = 0
     for rep in reports:
@@ -486,7 +579,7 @@ def main(argv: list[str] | None = None) -> int:
                     rep["routed"],
                     args.emit_upstream,
                     companion=rep["companion"],
-                    campaign=args.campaign,
+                    workspace=args.workspace,
                     redact_quotes=args.redact_quotes,
                 )
                 print("  upstream: %s" % out)

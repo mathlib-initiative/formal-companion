@@ -1,11 +1,11 @@
 """cflib adapter for the ledger / route / report stages.
 
-The shared library is ``scripts/cflib`` (vocabulary, paths, campaign, state,
+The shared library is ``scripts/cflib`` (vocabulary, paths, workspace, state,
 json io, hashing).  This module is the thin translation layer those three stages
 import, so that a rename in cflib is a one-file change here rather than a
 rewrite of five modules.  Everything it exports resolves to cflib when cflib is
 importable; the small fallbacks exist only so the stage can be exercised
-stand-alone (the same pattern as ``book/compat.py`` and ``pair/compat.py``).
+stand-alone (the same pattern as ``sources/compat.py`` and ``pair/compat.py``).
 
 Delete this file once every call site has been switched to cflib directly.
 
@@ -17,9 +17,11 @@ Two deliberate choices worth knowing about:
   file carries; they now agree byte for byte (the gate inlines the same
   algorithm because it must run with no cflib on the path) and the test suite
   asserts it, so the preference is gone.
-* ``LedgerPaths`` wraps ``cflib.paths.CampaignPaths`` and adds the short
+* ``LedgerPaths`` wraps ``cflib.paths.WorkspacePaths`` and adds the short
   accessors this stage uses (``accepted``/``refuted``/``routed_findings``);
-  every cflib accessor still passes through untouched.
+  every cflib accessor still passes through untouched.  The pairing accessors
+  take a ``source_id`` now (``pairs/<source_id>/…``), because one workspace
+  pairs each of its sources separately.
 """
 
 from __future__ import annotations
@@ -37,14 +39,14 @@ from typing import Any, Callable, Iterable, Iterator
 
 try:
     from cflib import hashing as _hashing, jsonio as _jsonio, state as _state, vocab as _vocab
-    from cflib.campaign import Campaign as _Campaign
-    from cflib.paths import CampaignPaths as _CampaignPaths
+    from cflib.workspace import Workspace as _Workspace
+    from cflib.paths import WorkspacePaths as _WorkspacePaths
     from cflib.yamlio import read_yaml as _read_yaml
 
     _HAVE_CFLIB = True
 except Exception:  # pragma: no cover - stand-alone use only
     _hashing = _jsonio = _state = _vocab = None  # type: ignore[assignment]
-    _Campaign = _CampaignPaths = None  # type: ignore[assignment]
+    _Workspace = _WorkspacePaths = None  # type: ignore[assignment]
     _read_yaml = None  # type: ignore[assignment]
     _HAVE_CFLIB = False
 
@@ -216,7 +218,7 @@ def read_jsonl(path: str) -> list[dict]:
 
 
 def is_meta_row(row: Any) -> bool:
-    """True for the ``_meta`` header row every campaign .jsonl carries."""
+    """True for the ``_meta`` header row every workspace .jsonl carries."""
     return isinstance(row, dict) and "_meta" in row
 
 
@@ -292,12 +294,12 @@ def load_yaml(path: str) -> Any:
 
 
 # --------------------------------------------------------------------------
-# campaign paths and state
+# workspace paths and state
 # --------------------------------------------------------------------------
 
 
 class LedgerPaths:
-    """``cflib.paths.CampaignPaths`` plus the short names this stage uses.
+    """``cflib.paths.WorkspacePaths`` plus the short names this stage uses.
 
     Unknown attributes fall through to the wrapped object, so cflib accessors
     (``statements_jsonl``, ``run_yaml``, ``tally_json`` ...) keep working.
@@ -341,9 +343,17 @@ class LedgerPaths:
     def reports(self) -> str:
         return str(self._inner.reports_dir)
 
-    @property
-    def pairs(self) -> str:
-        return str(self._inner.pairs_dir)
+    def pairs(self, source_id: str = "") -> str:
+        """``pairs/`` or ``pairs/<source_id>/`` -- one pairing per source."""
+        if not source_id:
+            return str(self._inner.pairs_root)
+        return str(self._inner.pairs_dir(source_id))
+
+    def anchor_check(self, source_id: str) -> str:
+        return str(self._inner.anchor_check_json(source_id))
+
+    def list_paired_sources(self) -> list:
+        return list(self._inner.list_paired_sources())
 
     @property
     def runs(self) -> str:
@@ -367,11 +377,10 @@ class LedgerPaths:
 
 
 class _PlainPaths:
-    """Fallback CampaignPaths for stand-alone use (cflib absent)."""
+    """Fallback WorkspacePaths for stand-alone use (cflib absent)."""
 
-    def __init__(self, root: str, book_id: str = ""):
+    def __init__(self, root: str):
         self.root = os.path.abspath(root)
-        self.book_id = book_id
 
     def companion_dir(self, name): return os.path.join(self.root, "companions", name)
     def statements_jsonl(self, name): return os.path.join(self.companion_dir(name), "statements.jsonl")
@@ -383,7 +392,13 @@ class _PlainPaths:
     def refuted_jsonl(self, name): return os.path.join(self.root, "ledger", "refuted.%s.jsonl" % name)
     def adjudicated_md(self, name): return os.path.join(self.root, "ledger", "adjudicated.%s.md" % name)
     def routed_jsonl(self, name): return os.path.join(self.root, "ledger", "routed", "findings.%s.jsonl" % name)
-    def book_dir_for(self, book_id): return os.path.join(self.root, "book", book_id)
+    def source_dir(self, source_id): return os.path.join(self.root, "sources", source_id)
+    def source_text(self, source_id): return os.path.join(self.source_dir(source_id), "text.txt")
+    def source_pages_dir(self, source_id): return os.path.join(self.source_dir(source_id), "pages")
+    def source_items(self, source_id): return os.path.join(self.source_dir(source_id), "items.json")
+    def source_errata_md(self, source_id): return os.path.join(self.source_dir(source_id), "errata.md")
+    def pairs_dir(self, source_id): return os.path.join(self.pairs_root, source_id)
+    def anchor_check_json(self, source_id): return os.path.join(self.pairs_dir(source_id), "anchor-check.json")
 
     @property
     def corpus_dir(self): return os.path.join(self.root, "corpus")
@@ -396,11 +411,9 @@ class _PlainPaths:
     @property
     def reports_dir(self): return os.path.join(self.root, "reports")
     @property
-    def pairs_dir(self): return os.path.join(self.root, "pairs")
+    def pairs_root(self): return os.path.join(self.root, "pairs")
     @property
-    def anchor_check_json(self): return os.path.join(self.pairs_dir, "anchor-check.json")
-    @property
-    def book_dir(self): return os.path.join(self.root, "book", self.book_id)
+    def sources_dir(self): return os.path.join(self.root, "sources")
     @property
     def companions_dir(self): return os.path.join(self.root, "companions")
 
@@ -410,81 +423,186 @@ class _PlainPaths:
             return []
         return sorted(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
 
+    def list_paired_sources(self) -> list[str]:
+        d = self.pairs_root
+        if not os.path.isdir(d):
+            return []
+        return sorted(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
 
-def campaign_paths(root: str, book_id: str = "") -> LedgerPaths:
-    """Paths inside a campaign directory."""
-    if _CampaignPaths is not None:
+
+def workspace_paths(root: str) -> LedgerPaths:
+    """Paths inside a workspace directory."""
+    if _WorkspacePaths is not None:
         from pathlib import Path
 
-        return LedgerPaths(_CampaignPaths(root=Path(root), book_id=book_id), root)
-    return LedgerPaths(_PlainPaths(root, book_id), root)
+        return LedgerPaths(_WorkspacePaths(root=Path(root)), root)
+    return LedgerPaths(_PlainPaths(root), root)
 
 
-class CampaignInfo:
-    """What ledger/route/report need from campaign.yaml.
+class SourceInfo:
+    """One source as the ledger/route/report stages need it.
 
-    Wraps ``cflib.campaign.Campaign`` when the file is there and valid; falls
-    back to an empty configuration so that a scratch directory (a test, or a
-    campaign mid-``cf init``) can still be routed and reported on.
+    A plain record rather than ``cflib.workspace.SourceRef`` so the stand-alone
+    fallback (no cflib) produces the same shape.
     """
 
-    def __init__(self, root: str, data: dict | None = None, campaign: Any = None):
+    __slots__ = ("id", "sha256", "title", "edition", "offset", "kinds", "errata_url",
+                 "chapters", "role", "confirmed")
+
+    def __init__(self, source_id: str, data: dict | None = None):
+        data = data or {}
+        self.id = str(source_id)
+        self.sha256 = str(data.get("sha256") or "")
+        self.title = str(data.get("title") or "")
+        self.edition = str(data.get("edition") or "")
+        self.offset = int(data.get("offset") or 0)
+        self.kinds = tuple(str(k) for k in (data.get("kinds") or ()))
+        self.errata_url = str(data.get("errata_url") or "")
+        self.chapters = tuple(int(c) for c in (data.get("chapters") or ()))
+        self.role = str(data.get("role") or "audited")
+        self.confirmed = bool(data.get("confirmed", False))
+
+    @classmethod
+    def from_ref(cls, ref: Any) -> "SourceInfo":
+        return cls(ref.id, {
+            "sha256": ref.sha256, "title": ref.title, "edition": ref.edition,
+            "offset": ref.offset, "kinds": ref.kinds, "errata_url": ref.errata_url,
+            "chapters": ref.chapters, "role": ref.role, "confirmed": ref.confirmed,
+        })
+
+    def to_dict(self) -> dict:
+        return {"source_id": self.id, "source_sha": self.sha256, "title": self.title,
+                "edition": self.edition, "offset": self.offset, "kinds": list(self.kinds),
+                "errata_url": self.errata_url, "chapters": list(self.chapters),
+                "role": self.role, "confirmed": self.confirmed}
+
+    def short(self) -> str:
+        return f"{self.id} ({self.sha256[:8]})" if self.sha256 else self.id
+
+
+class WorkspaceInfo:
+    """What ledger/route/report need from workspace.yaml.
+
+    Wraps ``cflib.workspace.Workspace`` when the file is there and valid; falls
+    back to an empty configuration so that a scratch directory (a test, or a
+    workspace mid-``cf init``) can still be routed and reported on.
+
+    There is no ``book``: a workspace holds a LIST of sources, and every method
+    that used to answer "the book's sha / offset / kinds" now takes a
+    ``source_id``.  ``require_source_sha`` is the source gate at this boundary.
+    """
+
+    def __init__(self, root: str, data: dict | None = None, workspace: Any = None):
         self.root = os.path.abspath(root)
-        self._campaign = campaign
-        self.data = data if data is not None else (getattr(campaign, "data", {}) or {})
+        self._workspace = workspace
+        self.data = data if data is not None else (getattr(workspace, "data", {}) or {})
 
-    # -- book ------------------------------------------------------------
+    # -- sources ---------------------------------------------------------
     @property
-    def book(self) -> dict:
-        return self.data.get("book") or {}
+    def sources(self) -> dict:
+        """``{source_id: SourceInfo}`` in workspace.yaml order."""
+        if self._workspace is not None:
+            return {sid: SourceInfo.from_ref(ref)
+                    for sid, ref in self._workspace.sources.items()}
+        out: dict[str, SourceInfo] = {}
+        for sid, body in (self.data.get("sources") or {}).items():
+            out[str(sid)] = SourceInfo(str(sid), body if isinstance(body, dict) else {})
+        return out
 
-    @property
-    def book_id(self) -> str:
-        if self._campaign is not None:
-            return self._campaign.book_id
-        return str(self.book.get("id") or "")
+    def source_ids(self) -> list:
+        return list(self.sources)
 
-    @property
-    def book_sha(self) -> str:
-        if self._campaign is not None:
-            return str(self._campaign.book_sha or "")
-        return str(self.book.get("sha256") or "")
+    def source(self, source_id: str) -> SourceInfo:
+        """One source, or an EMPTY record for an unknown id.
 
-    @property
-    def offset(self) -> int:
-        if self._campaign is not None:
-            return int(self._campaign.offset or 0)
-        return int(self.book.get("offset") or 0)
+        Empty rather than raising: routing a stray corpus must still produce a
+        report that says the id is unknown, which is more use than a traceback.
+        ``require_source_sha`` is where an unknown source is refused.
+        """
+        return self.sources.get(str(source_id)) or SourceInfo(str(source_id))
 
-    @property
-    def errata_url(self) -> str:
-        return str(self.book.get("errata_url") or "")
+    def source_sha(self, source_id: str) -> str:
+        return self.source(source_id).sha256
+
+    def source_shas(self) -> dict:
+        return {sid: src.sha256 for sid, src in self.sources.items() if src.sha256}
+
+    def offset(self, source_id: str) -> int:
+        return self.source(source_id).offset
+
+    def kinds(self, source_id: str) -> tuple:
+        return self.source(source_id).kinds
+
+    def errata_url(self, source_id: str) -> str:
+        return self.source(source_id).errata_url
+
+    def require_source_sha(self, source_id: str, sha: str | None, where: str) -> None:
+        """The source gate: refuse an artifact stamped with another edition."""
+        want = self.source_sha(source_id)
+        if not want:
+            raise ValueError(
+                "%s names source %r, which this workspace does not have "
+                "(known: %s)" % (where, source_id, ", ".join(self.source_ids()) or "none"))
+        if sha and str(sha) != want:
+            raise ValueError(
+                "%s: source_sha %s… is not %s's %s… — wrong edition"
+                % (where, str(sha)[:12], source_id, want[:12]))
 
     @property
     def title(self) -> str:
-        return str(self.book.get("title") or self.data.get("name") or self.book_id or
-                   os.path.basename(self.root))
+        """A human name for the workspace (never one source's title)."""
+        return str(self.data.get("name") or os.path.basename(self.root))
 
     # -- companions ------------------------------------------------------
     @property
     def paths(self) -> LedgerPaths:
-        return campaign_paths(self.root, self.book_id)
+        return workspace_paths(self.root)
 
-    def companion_names(self) -> list[str]:
-        if self._campaign is not None:
-            return list(self._campaign.companion_names())
-        names = [str(c.get("name")) for c in (self.data.get("companions") or [])
-                 if isinstance(c, dict) and c.get("name")]
+    def companion_names(self) -> list:
+        if self._workspace is not None:
+            return list(self._workspace.companion_names())
+        names = [str(n) for n in (self.data.get("companions") or {})]
         for name in self.paths.list_companions():
             if name not in names:
                 names.append(name)
         return names
 
     def companion(self, name: str) -> dict:
-        for c in self.data.get("companions") or []:
-            if isinstance(c, dict) and c.get("name") == name:
-                return c
+        """One companion as a plain dict (repo, adapter, sources, anchor_source)."""
+        if self._workspace is not None:
+            try:
+                ref = self._workspace.companion(name)
+            except Exception:  # noqa: BLE001 - unknown companion -> empty record
+                return {"name": name}
+            return {"name": ref.name, "repo": str(ref.repo or ""), "adapter": ref.adapter,
+                    "sources": list(ref.sources), "anchor_source": ref.anchor_source,
+                    "owner": ref.owner, "write_policy": ref.write_policy,
+                    "commit": ref.commit}
+        body = (self.data.get("companions") or {}).get(name)
+        if isinstance(body, dict):
+            return {"name": name, **body}
         return {"name": name}
+
+    def sources_of(self, companion: str) -> list:
+        """The source ids one companion is audited against."""
+        if self._workspace is not None:
+            try:
+                return list(self._workspace.sources_of(companion))
+            except Exception:  # noqa: BLE001
+                return []
+        listed = self.companion(companion).get("sources") or []
+        return [str(s) for s in listed]
+
+    def anchor_source(self, companion: str) -> str:
+        """The source whose PAGINATION a companion's anchors follow."""
+        if self._workspace is not None:
+            try:
+                return str(self._workspace.anchor_source(companion))
+            except Exception:  # noqa: BLE001
+                return ""
+        entry = self.companion(companion)
+        ids = self.sources_of(companion)
+        return str(entry.get("anchor_source") or (ids[0] if ids else ""))
 
     @property
     def policy(self) -> dict:
@@ -495,23 +613,24 @@ class CampaignInfo:
         return self.data.get("models") or {}
 
 
-def load_campaign(root: str | None) -> CampaignInfo:
-    """Load a campaign; a directory without campaign.yaml yields empty config.
+def load_workspace(root: str | None) -> WorkspaceInfo:
+    """Load a workspace; a directory without workspace.yaml yields empty config.
 
-    An EXPLICIT root is taken literally: unlike ``cflib.campaign.find_campaign_root``
-    this does not walk up to an ancestor's campaign.yaml, because a caller that
-    names a directory means that directory (a scratch campaign inside another
+    An EXPLICIT root is taken literally: unlike ``cflib.workspace.find_workspace_root``
+    this does not walk up to an ancestor's workspace.yaml, because a caller that
+    names a directory means that directory (a scratch workspace inside another
     one must not inherit it).
     """
     explicit = bool(root)
-    if _Campaign is not None and (not explicit or os.path.exists(os.path.join(str(root), "campaign.yaml"))):
+    if _Workspace is not None and (not explicit
+                                   or os.path.exists(os.path.join(str(root), "workspace.yaml"))):
         try:
-            camp = _Campaign.load(root)
-            return CampaignInfo(str(camp.root), camp.data, camp)
+            ws = _Workspace.load(root)
+            return WorkspaceInfo(str(ws.root), ws.data, ws)
         except Exception:
             pass
-    root = root or os.environ.get("CF_CAMPAIGN") or os.getcwd()
-    path = os.path.join(root, "campaign.yaml")
+    root = root or os.environ.get("CF_WORKSPACE") or os.getcwd()
+    path = os.path.join(root, "workspace.yaml")
     data: dict = {}
     if os.path.exists(path):
         try:
@@ -520,7 +639,7 @@ def load_campaign(root: str | None) -> CampaignInfo:
                 data = loaded
         except Exception:
             data = {}
-    return CampaignInfo(root, data)
+    return WorkspaceInfo(root, data)
 
 
 def read_state(paths: Any, companion: str) -> dict:

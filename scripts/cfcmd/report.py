@@ -15,7 +15,7 @@ Two outputs, both mechanical:
    the draft from the same sources, with an independent second vote on the
    numbers.  An earlier pass of that workflow found 19 wrong claims out of 173.
 
-The report is a campaign-internal document: while any routed file says
+The report is a workspace-internal document: while any routed file says
 UNCHALLENGED it is not an upstream report, and section 1 says so.
 """
 
@@ -44,7 +44,7 @@ def register(subparsers):
         NAME, help=HELP, description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--campaign", help="campaign directory (default: $CF_CAMPAIGN or cwd upward)")
+    p.add_argument("--workspace", help="workspace directory (default: $CF_WORKSPACE or cwd upward)")
     p.add_argument("--tally", action="append", default=[],
                    help="tally JSON to read (default: every reports/tally.*.json)")
     p.add_argument("--gh-json", action="append", default=[],
@@ -69,7 +69,7 @@ def run(args) -> int:
             wrong = fh.read().strip()
 
     report = handoff_mod.make_handoff(
-        args.campaign or os.getcwd(),
+        args.workspace or os.getcwd(),
         out_path=args.out,
         tally_files=args.tally,
         gh_files=args.gh_json,
@@ -98,7 +98,7 @@ def run(args) -> int:
         paths.root,
         draft=draft,
         companions=[f["name"] for f in ctx["_facts"]],
-        campaign_cfg=ctx["_campaign"],
+        workspace_cfg=ctx["_workspace"],
         verification_commands=ctx["verification_commands"],
     )
     out = os.path.join(paths.reports, "verify-claims.args.json")

@@ -1,6 +1,11 @@
 {
- "book": "tao-measure",
- "book_title": "Terence Tao, An Introduction to Measure Theory (GSM 126)",
+ "source_id": "tao-measure-gsm126-published",
+ "source_ids": [
+  "tao-measure-gsm126-published",
+  "tao-measure-2011-draft"
+ ],
+ "_source_ids_note": "A stage is which SECTION of the work first develops a concept, which is the same in both editions of Tao's measure theory book (they differ only in pagination). StageTable.for_source accepts either id and loads this one file.",
+ "title": "Terence Tao, An Introduction to Measure Theory (GSM 126)",
  "_source": "ported verbatim from /Users/jack/Desktop/tao-differential/adam-detector/analyze2.py (MATHLIB_STAGE L51-120, MOD_SEC L40-43, MATHLIB_MT L279-282, NATIVE L283-284); object stages computed from that repo's deps.json module table",
  "chapter": 1,
  "stage_beyond_book": 8,
@@ -327,7 +332,7 @@
    7
   ]
  ],
- "_repo_module_stages_note": "COMPANION-SPECIFIC (measure_theory's MeasureTheory.Tao.* layout), used only by the optional broad scan. A campaign may override this file with detect/mathlib_stages/<book>.json of its own; a published copy of this skill should carry only the book-level module_stages.",
+ "_repo_module_stages_note": "COMPANION-SPECIFIC (measure_theory's MeasureTheory.Tao.* layout), used only by the optional broad scan. A workspace may override this file with detect/mathlib_stages/<source_id>.json of its own; a published copy of this skill should carry only the source-level module_stages.",
  "mathlib_objects": {
   "MeasureTheory.MeasureSpace.volume": {
    "label": "volume",

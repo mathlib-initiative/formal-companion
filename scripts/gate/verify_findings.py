@@ -17,8 +17,12 @@ Three things changed on purpose, per the design critique:
 2. **Per-kind rules.** CONTENT/VACUITY need a quote and (in attack mode) a
    witness object; SUSPECTED_ERRATA needs a quote; COVERAGE needs neither;
    PROXY needs bridge + closure evidence; PAGE_ANCHOR is mechanical-only.
-3. **Edition binding.** Every findings file carries ``book_sha`` and it must be
-   the campaign's; batch 1's anchor findings were judged against the 2011 draft.
+3. **Source binding.** Every findings file carries ``source_id`` and
+   ``source_sha``, and both must be one this run pinned; batch 1's anchor
+   findings were judged against the 2011 draft.  ``gate.json`` carries a MAP of
+   sources and the document's ``source_id`` chooses which text its quotes are
+   matched against, so a run spanning two editions cannot launder a quote from
+   one as a quote from the other.
 
 Deliberately stdlib-only and self-contained (no ``cflib`` import): it is rsynced
 to a server and must run there with nothing installed.
@@ -35,7 +39,7 @@ import pathlib
 import re
 import sys
 import unicodedata
-from typing import Any
+from typing import Any, Mapping
 
 #: Files that live beside findings in a corpus directory and are NOT findings.
 #: ``cf harvest`` and ``cf import-corpus`` write RECEIPT.json into the findings
@@ -266,18 +270,30 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
 class GateConfig:
     """The parsed ``gate.json``; every former hard-wired constant lives here."""
 
-    def __init__(self, data: dict[str, Any], source: pathlib.Path | None = None):
-        self.source = source
+    def __init__(self, data: dict[str, Any], path: pathlib.Path | None = None):
+        self.path = path
         self.data = data
         self.mode: str = data.get("mode", "differential")
         self.preset: str = data.get("preset", "")
         self.run_id: str = data.get("run_id", "")
         self.schema_version: int = int(data.get("schema_version", 2))
-        book = data.get("book") or {}
-        self.book_text = pathlib.Path(book["text"]).expanduser() if book.get("text") else None
-        self.book_sha: str | None = book.get("sha256")
-        self.book_text_sha: str | None = book.get("text_sha256")
-        self.images_dir: str | None = book.get("images_dir")
+        # A MAP of sources, not one book: a run may span more than one source,
+        # and the text a quote is checked against is chosen by the document's
+        # own source_id.  One concatenated text would let a quote from the 2011
+        # draft pass as the published book's, which is the exact defect the
+        # source gate exists to stop.
+        self._sources: dict[str, dict[str, Any]] = {}
+        for sid, body in (data.get("sources") or {}).items():
+            body = body if isinstance(body, dict) else {"text": body}
+            self._sources[str(sid)] = {
+                "source_id": str(sid),
+                "text": (pathlib.Path(body["text"]).expanduser()
+                         if body.get("text") else None),
+                "sha256": body.get("sha256"),
+                "text_sha256": body.get("text_sha256"),
+                "images_dir": body.get("images_dir"),
+                "page_offset": int(body.get("page_offset") or 0),
+            }
         self.repos: list[str] = list(data.get("repos") or [])
         self.kinds: set[str] = set(data.get("kinds") or [])
         self.verdicts: set[str] = set(data.get("verdicts") or [])
@@ -288,7 +304,7 @@ class GateConfig:
         # detect/ produce findings without ever reading the book's prose, so
         # demanding a verbatim passage quote of them is demanding a fabrication.
         self.require_passage_quote: bool = bool(data.get("require_passage_quote", True))
-        self.require_book_sha: bool = bool(data.get("require_book_sha", True))
+        self.require_source_sha: bool = bool(data.get("require_source_sha", True))
         self.verify_text_sha: bool = bool(data.get("verify_text_sha", False))
         self.require_finding_id: bool = bool(data.get("require_finding_id", False))
         # The operator pass is on everywhere except the two *-legacy presets that
@@ -310,6 +326,30 @@ class GateConfig:
 
     def rule(self, kind: str) -> dict[str, Any]:
         return self.kind_rules.get(kind, {"quote": True, "witness": True, "decls": True})
+
+    # --- sources -----------------------------------------------------------
+    def source_ids(self) -> list[str]:
+        """Every source_id this gate can check a document against."""
+        return sorted(self._sources)
+
+    def source(self, source_id: str) -> dict[str, Any]:
+        """One ``sources.<id>`` block, or ``{}`` when the gate does not know it.
+
+        Returning ``{}`` rather than raising is deliberate: an unknown source is
+        a GATE FAILURE reported against the document that named it, not a crash
+        that loses the other 2,671 files' results.
+        """
+        return self._sources.get(str(source_id), {})
+
+    def only_source(self) -> str:
+        """The single source_id when there is exactly one, else ``""``.
+
+        The one place a document may omit ``source_id``: a single-source gate
+        knows what it meant.  With two or more sources an unstamped document is
+        refused, because guessing is how a quote gets checked against the wrong
+        edition.
+        """
+        return self.source_ids()[0] if len(self._sources) == 1 else ""
 
 
 def _load_decl_index(spec: str) -> set[str]:
@@ -356,14 +396,33 @@ def _witness_ok(witness: Any) -> bool:
     return bool(object_) and bool(why)
 
 
+def doc_source_id(doc: Any, cfg: GateConfig) -> str:
+    """The source_id a document is judged against.
+
+    A document says which source it read.  When the gate knows exactly one
+    source an unstamped document inherits it (the single-source case cannot be
+    ambiguous); with two or more, an unstamped document is refused by
+    :func:`validate_doc` rather than guessed at.
+    """
+    if isinstance(doc, dict) and doc.get("source_id"):
+        return str(doc["source_id"])
+    return cfg.only_source()
+
+
 def validate_doc(
     doc: Any,
     name: str,
     cfg: GateConfig,
-    book: "BookText | str",
+    books: "Mapping[str, BookText] | BookText | str",
     decl_index: set[str] | None = None,
 ) -> list[str]:
-    """Return the list of gate errors for one findings document."""
+    """Return the list of gate errors for one findings document.
+
+    ``books`` is the ``{source_id: BookText}`` map :func:`load_sources` returns.
+    A single ``BookText``/``str`` is still accepted for the one-source callers
+    (``pair/anchor_check``, ``detect/``), and is then used for whatever source
+    the document names.
+    """
     errs: list[str] = []
     if not isinstance(doc, dict):
         return [f"{name}: top level is not a JSON object"]
@@ -376,13 +435,33 @@ def validate_doc(
             f"{name}: schema_version {doc.get('schema_version')!r} "
             f"(expected {cfg.schema_version}; run convert_v1.py on a v1 corpus)"
         )
-    if cfg.require_book_sha:
-        if not doc.get("book_sha"):
-            errs.append(f"{name}: missing book_sha (the pinned edition must be stamped)")
-        elif cfg.book_sha and doc["book_sha"] != cfg.book_sha:
+
+    # --- the SOURCE gate ---------------------------------------------------
+    # An item is the pair (source_id, item): a document that does not say which
+    # source it read cannot be checked against a text, and one that names a
+    # source this run does not carry was judged against something nobody pinned.
+    source_id = doc_source_id(doc, cfg)
+    known = cfg.source_ids()
+    if not source_id:
+        errs.append(
+            f"{name}: missing source_id and this gate carries {len(known)} sources "
+            f"({', '.join(known) or 'none'}) — stamp the source the quotes came from"
+        )
+    elif known and source_id not in known:
+        errs.append(
+            f"{name}: source_id {source_id!r} is not one of this run's sources "
+            f"({', '.join(known)})"
+        )
+    block = cfg.source(source_id)
+    book = _book_for(books, source_id)
+    if cfg.require_source_sha:
+        want = block.get("sha256")
+        if not doc.get("source_sha"):
+            errs.append(f"{name}: missing source_sha (the pinned edition must be stamped)")
+        elif want and doc["source_sha"] != want:
             errs.append(
-                f"{name}: book_sha {doc['book_sha'][:12]}… is not this campaign's "
-                f"{(cfg.book_sha or '')[:12]}… — wrong edition"
+                f"{name}: source_sha {doc['source_sha'][:12]}… is not "
+                f"{source_id}'s {str(want)[:12]}… — wrong edition"
             )
     if cfg.require_book_located and not doc.get("book_located"):
         errs.append(
@@ -405,7 +484,8 @@ def validate_doc(
 
     run_id = doc.get("run_id") or cfg.run_id
     for i, g in enumerate(doc.get("disagreements") or []):
-        errs.extend(_validate_disagreement(g, i, name, cfg, book, decl_index, run_id, doc))
+        errs.extend(_validate_disagreement(g, i, name, cfg, book, decl_index, run_id, doc,
+                                           source_id))
     return errs
 
 
@@ -418,6 +498,7 @@ def _validate_disagreement(
     decl_index: set[str] | None,
     run_id: str,
     doc: dict[str, Any],
+    source_id: str = "",
 ) -> list[str]:
     errs: list[str] = []
     where = f"{name}: disagreement[{i}]"
@@ -490,7 +571,7 @@ def _validate_disagreement(
         )
 
     if cfg.require_finding_id:
-        want = finding_id(run_id, str(doc.get("source_id", "") or ""), doc.get("item", ""),
+        want = finding_id(run_id, source_id, doc.get("item", ""),
                           str(kind), [d for d in decls if isinstance(d, str)])
         got = g.get("finding_id")
         if not got:
@@ -575,29 +656,61 @@ def check_changed(paths: set[str], *, allow_empty: bool = False) -> list[str]:
     return problems
 
 
-def load_book(cfg: GateConfig) -> tuple[BookText, list[str]]:
-    """Read and normalise the book text; returns (BookText, errors).
-
-    Both normalisations are built up front: the word form every quote is matched
-    against, and — unless ``check_operators`` is off — the operator-bearing form.
-    """
+def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[str]]:
+    """Read and normalise one source's text; returns (BookText, errors)."""
+    sid = block.get("source_id") or "?"
     empty = BookText("")
-    if cfg.book_text is None:
-        return empty, ["gate.json has no book.text path"]
-    if not cfg.book_text.exists():
-        return empty, [f"book text missing at {cfg.book_text} (the gate fails closed)"]
-    raw = cfg.book_text.read_bytes()
+    path = block.get("text")
+    if path is None:
+        return empty, [f"gate.json sources.{sid} has no text path"]
+    if not path.exists():
+        return empty, [f"{sid}: source text missing at {path} (the gate fails closed)"]
+    raw = path.read_bytes()
     errs: list[str] = []
-    if cfg.verify_text_sha and cfg.book_text_sha:
+    want = block.get("text_sha256")
+    if cfg.verify_text_sha and want:
         got = hashlib.sha256(raw).hexdigest()
-        if got != cfg.book_text_sha:
+        if got != want:
             errs.append(
-                f"book text sha256 {got[:12]}… != gate.json book.text_sha256 "
-                f"{cfg.book_text_sha[:12]}… — wrong extraction"
+                f"{sid}: source text sha256 {got[:12]}… != gate.json "
+                f"sources.{sid}.text_sha256 {str(want)[:12]}… — wrong extraction"
             )
     text = raw.decode("utf-8", errors="ignore")
     ops = norm_operators(text) if cfg.check_operators else None
     return BookText(norm(text), ops), errs
+
+
+def load_sources(cfg: GateConfig) -> tuple[dict[str, BookText], list[str]]:
+    """``({source_id: BookText}, errors)`` for every source in ``gate.json``.
+
+    Every text is read up front so a document's quotes are matched against the
+    edition it names and no other.  A gate with no sources at all is an error,
+    not an empty pass: a gate that cannot find a text would otherwise approve
+    every quote in the run.
+    """
+    books: dict[str, BookText] = {}
+    errs: list[str] = []
+    ids = cfg.source_ids()
+    if not ids:
+        return books, ["gate.json has no `sources` block (the gate fails closed)"]
+    for sid in ids:
+        book, problems = _load_one(cfg, cfg.source(sid))
+        books[sid] = book
+        errs.extend(problems)
+    return books, errs
+
+
+def _book_for(books: "Mapping[str, BookText] | BookText | str", source_id: str) -> BookText:
+    """The text one document is checked against.
+
+    A missing entry yields an EMPTY text, so every quote in a document naming an
+    unknown source fails — the gate fails closed, and the "unknown source_id"
+    error above says why.
+    """
+    if isinstance(books, (BookText, str)):
+        return BookText.coerce(books)
+    got = books.get(source_id) if hasattr(books, "get") else None
+    return BookText.coerce(got) if got is not None else BookText("")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -615,7 +728,10 @@ def main(argv: list[str] | None = None) -> int:
              "Use '.' to gate a harvested corpus, where the files sit directly in corpus/<run-id>/",
     )
     ap.add_argument("--findings", action="append", default=[], help="validate this file only (repeatable)")
-    ap.add_argument("--book", default=None, help="override gate.json book.text")
+    ap.add_argument("--source-text", default=None, metavar="ID=PATH",
+                    action="append", dest="source_text",
+                    help="override gate.json sources.<ID>.text (repeatable). "
+                         "With a single-source gate a bare PATH is accepted.")
     ap.add_argument(
         "--changed-files",
         action="store_true",
@@ -636,12 +752,19 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: gate config missing at {gate_path}", file=sys.stderr)
         return 1
     cfg = GateConfig.load(gate_path)
-    if args.book:
-        cfg.book_text = pathlib.Path(args.book).expanduser()
+    for spec in args.source_text or []:
+        sid, sep, path = str(spec).partition("=")
+        if not sep:
+            sid, path = cfg.only_source(), sid
+        if not sid or not cfg.source(sid):
+            print(f"FAIL: --source-text {spec!r} names no source of this gate "
+                  f"({', '.join(cfg.source_ids()) or 'none'})", file=sys.stderr)
+            return 1
+        cfg.source(sid)["text"] = pathlib.Path(path).expanduser()
     if args.findings_dir:
         cfg.findings_dir = args.findings_dir
 
-    book, errs = load_book(cfg)
+    books, errs = load_sources(cfg)
     if errs:
         for e in errs:
             print(f"FAIL: {e}", file=sys.stderr)
@@ -675,8 +798,8 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 - any parse failure is a gate failure
             problems.append(f"{f.name}: not valid JSON ({exc})")
             continue
-        problems.extend(validate_doc(doc, f.name, cfg, book, decl_index))
-        partial.extend(partial_quotes(doc, f.name, book))
+        problems.extend(validate_doc(doc, f.name, cfg, books, decl_index))
+        partial.extend(partial_quotes(doc, f.name, _book_for(books, doc_source_id(doc, cfg))))
 
     if problems:
         print(f"VALIDATION FAILED ({len(problems)} problem(s)):", file=sys.stderr)

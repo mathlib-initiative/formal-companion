@@ -11,7 +11,7 @@ and a Workflow cannot be launched from a Python CLI.  So this command does the
 three things that ARE mechanical:
 
 1. ``--emit-args`` builds the workflow's ``args`` from the routed findings, the
-   statement tables and the campaign paths, and prints the invocation to paste
+   statement tables and the workspace paths, and prints the invocation to paste
    into the session (replacing the hand-assembled workflow_inputs.json of
    recovered/c4082627_L225_Bash.txt);
 2. ``--transcribe`` turns the saved result into ledger rows, the two .jsonl
@@ -50,7 +50,7 @@ def register(subparsers):
         NAME, help=HELP, description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument("--campaign", help="campaign directory (default: $CF_CAMPAIGN or cwd upward)")
+    p.add_argument("--workspace", help="workspace directory (default: $CF_WORKSPACE or cwd upward)")
     p.add_argument("--companion", action="append", default=[],
                    help="companion to act on (repeatable; default: all)")
     p.add_argument("--corpus", action="append", default=[],
@@ -61,8 +61,14 @@ def register(subparsers):
                    help="with --emit-args: only rows with no ledger verdict, for challenge.workflow.js")
     p.add_argument("--refuters", type=int, default=2, help="refuters per finding (challenge)")
     p.add_argument("--transcribe", default="", help="JSON file holding a workflow's return value")
-    p.add_argument("--source", choices=("adjudicate", "challenge"), default="adjudicate",
-                   help="which workflow produced --transcribe")
+    # NOT `--source`: that flag means a source_id everywhere else in the CLI, and
+    # reusing it for "which workflow" is how a reader ends up passing a source id
+    # to a choices=("adjudicate","challenge") argument.
+    p.add_argument("--from", dest="kind", choices=("adjudicate", "challenge"),
+                   default="adjudicate", help="which workflow produced --transcribe")
+    p.add_argument("--source", dest="source_id", default="",
+                   help="the source_id rows without one belong to (default: the "
+                        "companion's anchor source)")
     p.add_argument("--at", default="", help="date stamp for transcribed rows (default: file mtime)")
     p.add_argument("--definitions", default="", help="JSON file of definition items (group D)")
     p.add_argument("--uncovered", default="", help="JSON file of uncovered definitions (group B3)")
@@ -84,14 +90,15 @@ def _corpus_sources(paths, explicit: list[str]) -> list[str]:
     ]
 
 
-def _routed_or_route(paths, companion, all_findings, book_sha, ledger_rows, campaign_root):
+def _routed_or_route(paths, companion, all_findings, source_id, source_sha,
+                     ledger_rows, workspace_root):
     """Prefer the routed file; fall back to routing in memory."""
     path = paths.routed_findings(companion)
     if os.path.exists(path):
         return route_mod.read_routed(path)
     return route_mod.route_repo(
-        all_findings, companion, book_sha=book_sha, ledger_rows=ledger_rows,
-        campaign=campaign_root,
+        all_findings, companion, source_id=source_id, source_sha=source_sha,
+        ledger_rows=ledger_rows, workspace=workspace_root,
     )
 
 
@@ -109,27 +116,39 @@ def _load_list(path: str) -> list[dict]:
 
 
 def run(args) -> int:
-    cfg = compat.load_campaign(args.campaign)
+    cfg = compat.load_workspace(args.workspace)
     paths = cfg.paths
-    book_sha = cfg.book_sha
     names = args.companion or cfg.companion_names()
     if not names:
-        print("no companions: add them to campaign.yaml or run `cf onboard`", file=sys.stderr)
+        print("no companions: add them to workspace.yaml or run `cf onboard`", file=sys.stderr)
         return 2
+    shas = cfg.source_shas()
 
-    sources = _corpus_sources(paths, args.corpus)
-    all_findings = findings_mod.load_findings(sources, book_sha=book_sha) if sources else []
+    def _source_for(companion: str) -> tuple:
+        """(source_id, sha) a row of this companion defaults to.
+
+        The anchor source, because that is the edition its page anchors follow
+        and the one a row that forgot to say belongs to by default.
+        """
+        sid = args.source_id or cfg.anchor_source(companion)
+        return sid, shas.get(sid, "")
+
+    corpora = _corpus_sources(paths, args.corpus)
+    all_findings = findings_mod.load_findings(corpora) if corpora else []
     index = findings_mod.index_by_id(all_findings)
 
     if args.transcribe:
+        sid, sha = _source_for(names[0])
         report = transcribe_mod.transcribe(
             args.transcribe,
-            campaign=paths.root,
+            workspace=paths.root,
             companion=names[0],
-            book_sha=book_sha,
+            source_id=sid,
+            source_sha=sha,
             index=index,
-            source=args.source,
+            kind=args.kind,
             at=args.at,
+            sources=shas,
         )
         for err in report.get("errors") or []:
             print(str(err), file=sys.stderr)
@@ -151,7 +170,7 @@ def run(args) -> int:
                 "errata": _c.get("ERRATA", 0),
                 "unsure": _c.get("UNSURE", 0),
                 "by_verdict": _c,
-                "method": "workflow:%s" % args.source,
+                "method": "workflow:%s" % args.kind,
                 "errors": len(_r.get("errors") or []),
             }),
         )
@@ -167,7 +186,7 @@ def run(args) -> int:
         ledger_rows = ledger["rows"]["accepted"] + ledger["rows"]["refuted"]
 
         if args.validate:
-            report = vl.validate_ledger_dir(paths, name, index=index or None, book_sha=book_sha)
+            report = vl.validate_ledger_dir(paths, name, index=index or None, sources=shas)
             for err in report["errors"]:
                 print(str(err), file=sys.stderr)
             print("%s: %d accepted + %d refuted rows, %d error(s)"
@@ -175,7 +194,8 @@ def run(args) -> int:
             rc = rc or (0 if report["ok"] else 1)
             continue
 
-        routed = _routed_or_route(paths, name, all_findings, book_sha, ledger_rows, paths.root)
+        sid, sha = _source_for(name)
+        routed = _routed_or_route(paths, name, all_findings, sid, sha, ledger_rows, paths.root)
         rows = [r for r in routed["rows"] if not r.get("withdrawn")]
         unchallenged = [r for r in rows if not r.get("challenged")]
 
@@ -185,8 +205,8 @@ def run(args) -> int:
                   % (name, counts.get("rows", len(rows)), counts.get("items", 0),
                      counts.get("challenged", 0), len(unchallenged), routed["meta"].get("status", "")))
             if unchallenged:
-                print("  next: python3 scripts/cf.py adjudicate --campaign %s --companion %s --emit-args"
-                      % (paths.root, name))
+                print("  next: python3 scripts/cf.py adjudicate --workspace %s --companion %s "
+                      "--emit-args" % (paths.root, name))
             continue
 
         selected = unchallenged if args.challenge_only else rows
@@ -214,8 +234,8 @@ def run(args) -> int:
         print("    Workflow({ scriptPath: \"%s\", args: <the JSON in %s> })"
               % (os.path.join(_skill_root(), script), out))
         print("  ~%d subagents; resume with resumeFromRunId if the session limit stops it." % agents)
-        print("  then: python3 scripts/cf.py adjudicate --campaign %s --companion %s "
-              "--transcribe <result.json> --source %s" % (paths.root, name, kind))
+        print("  then: python3 scripts/cf.py adjudicate --workspace %s --companion %s "
+              "--transcribe <result.json> --from %s" % (paths.root, name, kind))
     return rc
 
 

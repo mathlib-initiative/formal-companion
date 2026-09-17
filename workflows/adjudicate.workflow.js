@@ -9,7 +9,7 @@ export const meta = {
     { title: 'Definitions — blind readers', detail: 'two independent readers compare each key definition body to the book', model: 'opus' },
     { title: 'Definitions — reconcile', detail: 'merge reader disagreements', model: 'opus' },
     { title: 'Uncovered definitions', detail: 'inventory what stands in for book definitions with no native definition', model: 'opus' },
-    { title: 'Assessments', detail: 'optional systemic assessments supplied by the campaign', model: 'opus' },
+    { title: 'Assessments', detail: 'optional systemic assessments supplied by the workspace', model: 'opus' },
     { title: 'Completeness critic', detail: 'what is missing or inconsistent across all results', model: 'opus' },
   ],
 }
@@ -27,10 +27,19 @@ export const meta = {
 //   * every agent runs on opus (the batch-1 Fable-default runs lost votes to
 //     session limits).
 // Inputs are built by `python3 scripts/cf.py adjudicate --companion <name> --emit-args`
-// and contain campaign paths only -- never a session scratchpad path.
+// and contain workspace paths only -- never a session scratchpad path.
 
 const A = args || {}
-const C = A.campaign || {}
+const W = A.workspace || {}
+const SOURCES = W.sources || []
+// A companion is audited against a LIST of sources; every finding row names the
+// one it read. `srcOf` is how an agent gets from that id to a path it can open.
+const srcOf = id => SOURCES.filter(s => s.source_id === id)[0] || SOURCES[0] || {}
+const sourceLines = SOURCES.map(s =>
+  '  ' + s.source_id + ' -- ' + (s.title || s.source_id) + (s.edition ? ' (' + s.edition + ')' : '') +
+  '\n    text: ' + s.text + '  (sha256 ' + s.source_sha + ')' +
+  '\n    pages: ' + s.pages_dir + '/pNNN.txt   (PDF page = printed page + ' + s.page_offset + ')' +
+  '\n    errata: ' + s.errata).join('\n')
 const COMP = A.companion || {}
 const PEERS = A.peers || []
 const FINDINGS = A.findings || []
@@ -45,18 +54,20 @@ const peerLines = PEERS.map(p => '  ' + p.name + ' = ' + p.repo).join('\n')
 const COMMON = `
 You are adjudicating FAITHFULNESS -- statement- and definition-level fidelity to the book -- for the Lean 4
 repository "${COMP.name}" (clone: ${COMP.repo}${COMP.commit ? ', pinned at ' + COMP.commit : ''}), a companion to
-${C.book_title || C.book_id}. Proofs are machine-checked and out of scope: only what is STATED or DEFINED matters.
+${COMP.sources && COMP.sources.length > 1 ? 'the sources listed below' : ((SOURCES[0] || {}).title || 'the source listed below')}. Proofs are machine-checked and out of scope: only what is STATED or DEFINED matters.
 The owner wants faithfulness bugs, not style bugs.
 
 READ-ONLY. Never edit a file in any repository, never run a build (no lake), never run a git command that changes
 state. Use absolute paths; the session working directory may move.
 
 Resources:
-- Book text, one file per PDF page: ${C.book_pages_dir}/pNNN.txt (PDF page = printed page + ${C.pdf_page_offset}).
-  A layout-preserving full text is at ${C.book_layout_txt}. Grep these for the item label (e.g. "Exercise 1.2.23").
-  The pinned edition is sha256 ${C.book_sha} -- any conclusion about pagination is about THAT edition only.
-- The book's published errata: ${C.errata}. Check it for every item you rule on; a deviation from the printed text
-  may be the companion following the erratum.
+- The SOURCES this companion is audited against. Every finding row carries a source_id: open THAT source, never
+  another, and any conclusion about pagination is about that edition only.
+${sourceLines}
+  Grep the text for the item label (e.g. "Exercise 1.2.23"). Check each source's errata for every item you rule on;
+  a deviation from the printed text may be the companion following the erratum.
+  Page anchors in this companion follow the source ${COMP.anchor_source || (SOURCES[0] || {}).source_id},
+  which is not necessarily an edition the repository ships.
 - The companion's statement table (one JSON row per declaration): ${COMP.statements}
 ${peerLines ? '- Peer formalizations of the same book, for comparison only:\n' + peerLines : ''}
 
@@ -334,7 +345,7 @@ ${JSON.stringify(u, null, 1)}`,
     { label: 'U' + i + ':' + (u.label || u.item || ''), phase: 'Uncovered definitions', schema: UNCOVERED_SCHEMA, model: MODEL, effort: 'medium' })
 )).then(rs => rs.filter(Boolean))
 
-// ---------------- optional campaign-supplied systemic assessments ----------------
+// ---------------- optional workspace-supplied systemic assessments ----------------
 const ASSESS_SCHEMA = {
   type: 'object',
   properties: {
@@ -379,7 +390,7 @@ ROLE = COMPLETENESS CRITIC. Below is the summary of an adjudication run over rou
 and uncovered book definitions for this companion. Ask what is missing: (a) contradictions between groups (a definition
 ruled FAITHFUL whose item a finding ruled CONTENT); (b) verdicts whose rationale rests on a claim you can quickly
 falsify by opening the book page or the Lean file -- do it for the three you find most suspicious; (c) numbered book
-definitions in scope that appear in neither list (compare against ${C.items_json || C.book_pages_dir}); (d) anything a
+definitions in scope that appear in neither list (compare against ${SOURCES.map(s => s.items_json).join(', ')}); (d) anything a
 faithfulness report for the repo owner would be embarrassed to have missed. Return plain text, most important first,
 each point with evidence.
 
@@ -399,7 +410,7 @@ log('adjudicated ' + findings.length + '/' + FINDINGS.length + ' findings; conte
 return {
   schema: 'cf-adjudicate-v2',
   companion: COMP.name,
-  book_sha: C.book_sha,
+  sources: SOURCES.map(s => ({ source_id: s.source_id, source_sha: s.source_sha })),
   contested_threshold: THRESHOLD,
   counts: {
     findings_in: FINDINGS.length,

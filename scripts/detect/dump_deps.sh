@@ -56,7 +56,7 @@ abspath() { python3 -c 'import os,sys; print(os.path.abspath(os.path.expanduser(
 repo_abs="$(abspath "$repo")"
 out_abs="$(abspath "$out")"
 case "$out_abs" in
-  "$repo_abs"/*) die "--out is inside the companion tree ($repo_abs); write deps.json to the campaign's detect/ dir" ;;
+  "$repo_abs"/*) die "--out is inside the companion tree ($repo_abs); write deps.json to the workspace's detect/ dir" ;;
 esac
 [ -n "$lean_out" ] || lean_out="$(dirname "$out_abs")/DumpDeps.lean"
 lean_abs="$(abspath "$lean_out")"

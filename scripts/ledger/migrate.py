@@ -78,20 +78,26 @@ def _decls(row: dict, repo: str) -> list[str]:
 
 
 def match_finding(
-    findings: Iterable[dict], item: str, decls: Iterable[str], kind: str = ""
+    findings: Iterable[dict], item: str, decls: Iterable[str], kind: str = "",
+    *, source_id: str = ""
 ) -> dict | None:
     """Find the corpus finding a v1 ledger row answers.
 
-    v1 rows carry no ``finding_id``; they are matched on (item, declarations)
-    with the finding's ``kind`` as a tie-break.  Returns None when the row
-    answers nothing in the given corpus -- the validator then reports it as an
-    unlinked row rather than silently inventing an id.
+    v1 rows carry no ``finding_id``; they are matched on
+    ``(source_id, item, declarations)`` with the finding's ``kind`` as a
+    tie-break.  The join is on the PAIR: with two sources in the corpus, the
+    label alone would match an ``Exercise 1.3.19`` from the other edition and
+    file a ledger row against a finding nobody raised.  Returns None when the
+    row answers nothing in the given corpus -- the validator then reports it as
+    an unlinked row rather than silently inventing an id.
     """
     item_n = compat.normalise_item(item)
     want = {compat.normalise_decl(d) for d in decls if d}
     best, best_score = None, 0
     for f in findings:
         if compat.normalise_item(f.get("item")) != item_n:
+            continue
+        if source_id and str(f.get("source_id") or "") not in ("", source_id):
             continue
         have = {compat.normalise_decl(d) for d in (f.get("unfaithful_decls") or []) if d}
         overlap = len(want & have)
@@ -111,20 +117,29 @@ def map_v1_row(
     row: dict,
     *,
     repo: str,
-    book_sha: str,
+    source_id: str,
+    source_sha: str = "",
     findings: Iterable[dict] | None = None,
     run_id: str = "",
     method: str = "manual-transcription",
     at: str = "",
 ) -> dict:
-    """Map one v1 ledger row to the v2 schema (see references/vocabulary.md)."""
+    """Map one v1 ledger row to the v2 schema (see references/vocabulary.md).
+
+    A v1 row predates the multi-source model and names no source, so the
+    caller supplies the run's ``source_id``; a matched finding's own source
+    wins over it.  The ``finding_id`` is recomputed five-part from that source,
+    which is the whole reason the migration has to know it.
+    """
     findings = list(findings or [])
     item = compat.normalise_item(row.get("item"))
     decls = _decls(row, repo)
     kind = str(row.get("kind") or "").strip()
-    finding = match_finding(findings, item, decls, kind) if findings else None
+    finding = match_finding(findings, item, decls, kind, source_id=source_id) if findings else None
     if finding is not None:
         fid = finding["finding_id"]
+        source_id = str(finding.get("source_id") or source_id)
+        source_sha = str(finding.get("source_sha") or source_sha)
         kind = kind or str(finding.get("kind") or "")
         if not decls:
             decls = [
@@ -133,7 +148,7 @@ def map_v1_row(
                 if compat.decl_repo(d) == repo
             ]
     else:
-        fid = compat.finding_id(run_id, str(row.get("source_id") or ""), item, kind, decls)
+        fid = compat.finding_id(run_id, str(row.get("source_id") or source_id), item, kind, decls)
 
     verdict = map_verdict(row.get("verdict"))
     resolution, note = split_resolution(row.get("resolution"))
@@ -141,6 +156,8 @@ def map_v1_row(
     out = {
         "finding_id": fid,
         "run_id": str(finding.get("run_id") if finding else run_id) or run_id,
+        "source_id": str(row.get("source_id") or source_id or ""),
+        "source_sha": str(row.get("source_sha") or row.get("book_sha") or source_sha or ""),
         "item": item,
         "repo": repo,
         "kind": kind,
@@ -155,7 +172,6 @@ def map_v1_row(
         ).strip(),
         "reason": reason,
         "method": str(row.get("method") or method),
-        "book_sha": str(row.get("book_sha") or book_sha or ""),
         "schema": "ledger-v2",
     }
     if verdict == "CONVENTION":
@@ -179,19 +195,20 @@ def map_v1_file(
     path: str,
     *,
     repo: str,
-    book_sha: str = "",
+    source_id: str,
+    source_sha: str = "",
     findings: Iterable[dict] | None = None,
     run_id: str = "",
     method: str = "manual-transcription",
 ) -> tuple[list[dict], dict]:
     """Map a whole v1 ledger file; returns (rows, meta).
 
-    ``book_sha`` falls back to the file's own ``_meta.official_pdf.sha256``
+    ``source_sha`` falls back to the file's own ``_meta.official_pdf.sha256``
     (refuted.adam.jsonl records the pinned edition that way).
     """
     raw = compat.read_jsonl(path)
     meta = compat.meta_row(raw)
-    sha = book_sha or str(
+    sha = source_sha or str(
         (meta.get("official_pdf") or {}).get("sha256") if isinstance(meta.get("official_pdf"), dict) else ""
     )
     at = str(meta.get("written") or "")
@@ -200,7 +217,8 @@ def map_v1_file(
         map_v1_row(
             r,
             repo=repo,
-            book_sha=sha,
+            source_id=source_id,
+            source_sha=sha,
             findings=findings,
             run_id=run_id,
             method=method,

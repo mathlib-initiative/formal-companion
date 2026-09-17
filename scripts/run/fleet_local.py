@@ -70,7 +70,8 @@ def _item_note(repos: list[str], meta: dict, note_single_source: bool) -> str:
 
 
 def item_args(run_dir: Path, item_meta: dict[str, dict] | None = None,
-              note_single_source: bool = True) -> list[dict]:
+              note_single_source: bool = True, source_id: str = "",
+              name_source: bool = False) -> list[dict]:
     """The workflow's ``items``: the task rows plus the per-item context it reads.
 
     ``workflows/fleet-local.workflow.js`` dereferences ``t.item``, ``t.repos``,
@@ -112,7 +113,7 @@ def build(
     run_dir: Path,
     run_id: str,
     *,
-    campaign: dict,
+    source: dict,
     repos: list[dict],
     mode: str | None,
     gate: dict,
@@ -130,10 +131,23 @@ def build(
     (``{run_id, context, model, self_gate, items, count}``) shared not one key
     with it, so the workflow rendered an empty repository list, an undefined
     book path and — because ``GATE.command`` was absent — no self-gate at all.
-    ``tests/test_run_harvest`` asserts the two stay in step.
+    ``tests/test_harvest.py`` asserts the two stay in step.
+
+    ``source`` is the ONE source block (``source_id``, ``title``,
+    ``source_sha``, ``text``, ``pages_dir``, ``page_offset``, ``errata``) the
+    workflow prints into its context: a local fleet is planned for one source,
+    and naming it is what lets the gate check the quotes against the right text.
     """
     attack = str(mode or "").startswith("attack")
-    items = item_args(run_dir, item_meta, note_single_source=not attack)
+    source = dict(source)
+    source_id = str(source.get("source_id") or "")
+    items = item_args(run_dir, item_meta, note_single_source=not attack,
+                      source_id=source_id)
+    if len({i.get("source_id") for i in items}) > 1:
+        # A run that spans sources must say so per item: "Exercise 1.3.19" does
+        # not tell a worker which edition's page to open.
+        items = item_args(run_dir, item_meta, note_single_source=not attack,
+                          source_id=source_id, name_source=True)
     if len(items) > max_items and not force:
         raise CfError(
             f"{len(items)} items is too many for the local Workflow fleet (limit {max_items})",
@@ -142,7 +156,7 @@ def build(
         )
     args = {
         "run_id": run_id,
-        "campaign": dict(campaign),
+        "source": source,
         "repos": [dict(r) for r in repos],
         "mode": workflow_mode(mode, items),
         "gate": dict(gate),
@@ -157,24 +171,24 @@ def build(
     return args
 
 
-#: every key ``workflows/fleet-local.workflow.js`` reads off ``args``, ``args.campaign``,
+#: every key ``workflows/fleet-local.workflow.js`` reads off ``args``, ``args.source``,
 #: ``args.gate``, ``args.repos[i]`` and ``args.items[i]`` -- the contract build() must meet
 WORKFLOW_KEYS: dict[str, tuple[str, ...]] = {
-    "args": ("run_id", "campaign", "repos", "mode", "gate", "model",
+    "args": ("run_id", "source", "repos", "mode", "gate", "model",
              "challenge", "challenge_model", "pairs", "items"),
-    "campaign": ("book_id", "book_title", "book_sha", "book_layout_txt",
-                 "book_pages_dir", "pdf_page_offset", "errata"),
+    "source": ("source_id", "title", "source_sha", "text", "pages_dir",
+               "page_offset", "errata"),
     "repos": ("name", "repo", "statements", "conventions"),
     "gate": ("command", "config", "kinds", "witness_required", "quote_min_chars",
              "scratch_dir"),
-    "items": ("item", "repos", "pdf_pages", "note"),
+    "items": ("item", "source_id", "repos", "pdf_pages", "note"),
 }
 
 
 def missing_keys(args: dict) -> list[str]:
     """Keys the workflow dereferences that ``args`` does not carry (for tests)."""
     out = [f"args.{k}" for k in WORKFLOW_KEYS["args"] if k not in args]
-    for section in ("campaign", "gate"):
+    for section in ("source", "gate"):
         block = args.get(section) or {}
         out += [f"args.{section}.{k}" for k in WORKFLOW_KEYS[section] if k not in block]
     for i, repo in enumerate(args.get("repos") or []):

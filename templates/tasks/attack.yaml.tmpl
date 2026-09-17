@@ -4,12 +4,13 @@ title: "{{attack_label}}: {{item}}"
 status: open
 priority: {{priority}}
 depends_on: {{depends_on}}
-summary: "{{attack_label}} probe of {{item}}"
+summary: "{{attack_label}} probe of {{item}} ({{source_id}})"
 description: |
 {{probe_block}}
 
   Write exactly one file `findings/{{task_id}}.json` and change nothing else except your task file.
-  Schema (v2): schema_version 2, run_id "{{run_id}}", book_sha "{{book_sha}}", item, book_located (bool),
+  Schema (v2): schema_version 2, run_id "{{run_id}}", source_id "{{source_id}}",
+  source_sha "{{source_sha}}", item, book_located (bool),
   book_passage_quote (VERBATIM from the book text — machine verified), matches (list; use verdict
   SINGLE_SOURCE_OK when you find nothing and SINGLE_SOURCE_DELTA when you do), disagreements
   (list; kind must be {{kinds_inline}} — PAGE_ANCHOR and COVERAGE are NOT accepted in this run),
