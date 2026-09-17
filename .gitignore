@@ -17,3 +17,9 @@ detect/*/deps.json
 __pycache__/
 *.pyc
 .DS_Store
+
+# tests/e2e fixtures generated at run time (a synthetic booklet, two synthetic companions, a scratch workspace)
+tests/e2e/elementary-notes.pdf
+tests/e2e/notes-a/
+tests/e2e/notes-b/
+tests/e2e/ws-test/

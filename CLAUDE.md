@@ -170,3 +170,14 @@ push, do not rewrite history, do not commit anything from a workspace
 directory, and do not run `git add -A` — this repo is edited by several agents
 at once; add the paths you own. End a commit message with the
 `Co-Authored-By:` line for the model that wrote the change.
+
+## End-to-end demonstration
+
+`tests/e2e/multisource.sh` rebuilds a workspace from nothing: it onboards the two
+Tao companions with no flags, generates a public-domain booklet and two
+synthetic companions of it, and checks about seventy artifacts (never log
+lines) against pinned figures. Run it with `bash tests/e2e/multisource.sh
+[--offline]`; it needs poppler's `pdftotext`, the two companion checkouts named
+at the top of the script (override with `CF_TML`, `CF_MT`, `CF_BASELINE_CORPUS`)
+and, unless `--offline`, network access for the errata fetch. Its generated
+fixtures are gitignored.
