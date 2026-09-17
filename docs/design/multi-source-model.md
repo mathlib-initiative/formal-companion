@@ -596,11 +596,18 @@ score wins; a tie or a best score below 0.5 is a `CfError` asking for
 |---|---|---|
 | `attribution_table` | `pdf-overlay/data/*.json` exists **and** `pdf-overlay/official-source.json` exists | 0.98 |
 | `ledger_nodes` | `source-formalization-ledger.json` exists and `pdf-overlay/` does not | 0.9 |
-| `docstring_tags` | ≥20 `*.lean` files outside `.lake/` whose docstrings open with a book tag matched by `adapters.itemtag.find_tag` | 0.6 + 0.35 × (tagged / sampled), capped 0.95 |
+| `docstring_tags` | ≥20 `*.lean` files outside `.lake/` whose docstrings open with a book tag matched by `adapters.itemtag.find_tag` | 0.6 + 0.35 × (tagged / **documented**), capped 0.95 |
 | `custom` | never auto-detected | — |
 
 `measure_theory` scores 0.98 on `attribution_table` (it has both files);
-`tao-measure-lean` scores ~0.95 on `docstring_tags`.
+`tao-measure-lean` scores ~0.93 on `docstring_tags`.
+
+**`documented`, not `sampled`.** The denominator counts only the sampled files
+that carry a docstring at all. A Lean file with no docstring is not evidence
+against the convention, and `tao-measure-lean` has 154 Lean files of which 110
+are generated blueprint stubs with none: over `sampled` it scores 0.70 and looks
+like a repo the skill barely recognises, over `documented` (42 of 44) it scores
+0.93, which is what it is. Measured on this machine, 2026-09-16.
 
 ### 4.3 Repo signals (`discover_sources`)
 
@@ -656,10 +663,18 @@ Strictly ordered; the first candidate whose sha matches a known sha wins, and
 when no sha is known the first candidate that fingerprints successfully wins.
 
 1. **paths the repo names** — every `pdf_hints` entry, resolved (a) relative to
-   the repo root, (b) `~`-expanded absolute, (c) basename-matched inside the
-   repo. `rank = 0`, `pdf_found_in: repo_declared`.
-2. **the repo's own caches** — `.lake/official-pdf/*.pdf`, `sources/*.pdf`,
+   the repo root, (b) `~`-expanded absolute. `rank = 0`,
+   `pdf_found_in: repo_declared`.
+2. **the repo's own caches** — the same *basename* found anywhere else in the
+   repo, then `.lake/official-pdf/*.pdf`, `sources/*.pdf`,
    `pdf-overlay/vendor/**/*.pdf`. `rank = 1`, `repo_cache`.
+
+   The basename match sits here and not in step 1, which is what §1.3 and the
+   worked paragraph below already say: `measure_theory`'s ledger declares
+   `sources/gsm-126-tao5-measure-book.pdf` and that path **does not exist**, so
+   calling the bytes it actually found in `.lake/official-pdf/` "repo_declared"
+   would hide a stale declaration — the one fact a reader of
+   `discovered.pdf_found_in` most needs.
 3. **the workspace's store** — `<workspace>/sources/<source_id>/*.pdf` and
    `<workspace>/sources/*.pdf`. `rank = 2`, `workspace_store`.
 4. **`workspace.yaml library_paths`** — each pattern expanded with `~` and
