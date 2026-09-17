@@ -5,7 +5,7 @@ How a fleet of hundreds of read-heavy tasks actually runs, distilled from the fi
 after the run moved to the server. Written as: **what `cf` automates**, **what you check**, and
 **what stays manual**.
 
-No host address, account or profile name appears in this file. They live in `campaign.yaml`, and
+No host address, account or profile name appears in this file. They live in `workspace.yaml`, and
 `cf run` refuses any host not in its allowlist.
 
 ---
@@ -39,13 +39,14 @@ tend (orchestrator)                       entrypoint repo (git, main)
 
 ## 2. Preconditions — all manual, none automated
 
-1. **ssh access to the host**, and the host listed in `campaign.yaml`'s allowlist.
+1. **ssh access to the host**, and the host listed in `workspace.yaml`'s allowlist.
 2. **The hosted-agent profile is logged in on the server.** `cf` cannot log it in, and a stale login
    fails every task identically.
 3. **The box owner's consent for a heavy job.** The audited box was shared; heavy jobs were
    coordinated by asking first. `cf run` requires `--i-have-consent` and records who consented, when
    and for what, in `run.yaml`. Without the flag it refuses.
-4. **Book text and errata on the host, outside every repo** (copyrighted, and the gate reads them).
+4. **Source text and errata on the host, outside every repo** (copyrighted, and the gate reads
+   them): `sources/<source_id>/` per source the run touches, transferred read-only.
    Page images too, for an image-enabled run.
 5. **Source repos cloned read-only** on the host. "READ-ONLY" in a prompt is an instruction, not a
    control: copy or mount them read-only.
@@ -68,9 +69,10 @@ cf plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
   `ATTACK:`; reconciled against `items.json ∩ any-repo` (`references/findings-schema-v2.md` §2).
 - `runs/<run-id>/prompts/*.md` — worker-system, worker, worker-revision, reviewer-system, reviewer,
   rendered from `templates/prompts/` with the companion's `conventions.md` injected.
-- `runs/<run-id>/gate.json` — `KINDS`, `VERDICTS`, witness requirement, book path, `book_sha`,
-  allowed repo prefixes. The two paths the legacy gate hard-wired (the book file and the repo-name
-  regex) are fields here.
+- `runs/<run-id>/gate.json` — `KINDS`, `VERDICTS`, witness requirement, a `sources` block
+  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir}}`) and the allowed repo
+  prefixes. The gate picks the text by the document's `source_id`; the two paths the legacy gate
+  hard-wired (the book file and the repo-name regex) are fields here.
 - a tend root — `config.yaml`, `.tend/*.yaml`, `bin/` (the two bridges, the normaliser, the
   out-of-tree gate invocation).
 
@@ -117,7 +119,7 @@ agents genuinely read the book and the Lean. At 8 workers that is ~8–12 h for 
 ~16–24 h for 763, plus rework loops. 13 concurrent agents left a 96-core box at load ~1 — the
 limit is the hosted-session cap and the review loop, not CPU.
 
-**Hard cap: 16 concurrent hosted sessions per account, across campaigns.** 8 workers + 5 reviewers
+**Hard cap: 16 concurrent hosted sessions per account, across workspaces.** 8 workers + 5 reviewers
 leaves three. Above the cap you get 409s.
 
 ## 6. Failure modes you will actually meet
@@ -128,17 +130,17 @@ leaves three. Above the cap you get 409s.
 | a task loops, repeating a rejected mistake | the bridge re-ran the original prompt on rework | the shipped bridge appends the reviewer's feedback from `.tend/discussion.md` |
 | the gate fails on every task | the book text is missing at the configured path | intended: the gate fails closed. Check the book directory before blaming the run |
 | `aggregate usage: input=0` | agents run inside hosted sessions | expected; watch the gateway, not the orchestrator |
-| 409s when starting | the session cap | lower concurrency, or wait for the other campaign |
+| 409s when starting | the session cap | lower concurrency, or wait for the other workspace |
 | the disk fills minutes after launch | one worktree per ready task | see §2.6 |
 | a run dies | the orchestrator resumes from its sqlite state (`worker_running` → pending) | re-`tend run --root` with the same root; `run.yaml` records the exact command |
 
 ## 7. `cf harvest` — pulling results back
 
 1. `rsync` the merged `findings/` from the entrypoint on the host into `corpus/<run-id>/`.
-2. Write `RECEIPT.json`: source host alias and path, expected count, actual count, sha256 manifest,
-   `run.yaml` sha, `book_sha`. **Fail on any mismatch.** A harvest once held 762 files where the
+2. Write `RECEIPT.json`: origin host alias and path, expected count, actual count, sha256 manifest,
+   `run.yaml` sha, and the run's `sources: {<id>: <sha>}`. **Fail on any mismatch.** A harvest once held 762 files where the
    host had 763 and the missing file was a real `CONTENT` finding.
-3. Commit the corpus in the campaign repo (append-only per run-id).
+3. Commit the corpus in the workspace repo (append-only per run-id).
 4. Run `tally.py`, `union.py`, `agreed.py`; write the counts into `state.json`.
 
 Everything downstream is a function of `corpus/`, never of files someone read.

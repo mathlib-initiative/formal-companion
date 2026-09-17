@@ -40,6 +40,11 @@ companions: {}
 #   role               audited | reference (reference is prepared for the page
 #                      map only and audited by nobody)
 #   confirmed          false = discovered, nobody has checked it (`cf status`)
+#
+# What a source was ALREADY known to be is remembered in the skill's
+# registry/sources.yaml, and anything new discovery learns is appended to this
+# workspace's own registry.yaml overlay with confirmed: false. Neither file ever
+# holds a line of the book: see registry/README.md.
 sources: {}
 
 hosts:

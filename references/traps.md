@@ -5,36 +5,84 @@ symptom you will actually see), *the fix*, and *where the evidence is*. Most of 
 **silently** or look like an unrelated failure, which is why they are worth a page.
 
 Host names, server addresses, agentbox profile names and session ids deliberately do not appear
-here; they belong in `campaign.yaml`.
+here; they belong in `workspace.yaml`.
 
 ---
 
-## A. The book and its sources
+## A. Sources, editions and discovery
 
-**A1 — Two PDF editions, differing by a page.**
-*Presents as:* a wave of page-anchor findings, or an adjudicator refuting anchors that look right.
+**A1 — The anchor edition is not the bundled edition.**
+*Presents as:* a wave of page-anchor findings, or an adjudicator refuting anchors that look right;
+and, once discovery exists, a repo whose committed PDF is confidently adopted as the thing to audit
+against.
 *Cause:* the draft PDF and the published edition paginate differently — roughly 65 numbered items
-sit one printed page earlier in the published book, nearly all in one section.
-*Fix:* pin one edition by sha256 in `campaign.yaml`; stamp `book_sha` into every artifact; the gate
-refuses a mismatch; `anchor_check` runs against the pinned edition only. Batch-1 anchor findings
-were produced against the draft and had to be withdrawn wholesale.
+sit one printed page earlier in the published book, nearly all in one section — and a repo may
+**ship one and anchor to the other**. `tao-measure-lean` commits the 2011 draft and writes its
+docstring anchors against the published book.
+*Fix:* decide the anchor edition **mechanically**, by scoring the repo's own `page_anchor` rows
+against each candidate's `items.json` (`agreement = ok / (ok + mismatched)`), accept only at ≥0.80
+with a ≥0.05 margin, and let prose corroborate rather than decide. Record the bundled-but-not-
+anchored edition in `bundled_sources` with `role: reference` so it is prepared for page-map
+checking and audited by nobody. Stamp `source_id` + `source_sha` into every artifact; the gate
+refuses a mismatch. Measured 2026-09-16: published 0.89 (271 ok / 35 mismatched) vs draft 0.66
+(202 / 103).
 *Evidence:* `/Users/jack/Desktop/tao-measure-lean/CLAUDE.md` lines 48-55;
-`/Users/jack/Desktop/tao-differential/refuted.adam.jsonl` `_meta.official_pdf` and row 1.
+`/Users/jack/Desktop/tao-differential/refuted.adam.jsonl` `_meta.official_pdf` and row 1; the
+`anchor edition` block `cf onboard` prints.
 
-**A2 — The printed/PDF offset.**
+**A1b — Both editions share the offset, so the error is exactly one page.**
+*Presents as:* anchors that are "nearly right", which reads as sloppy formalisation rather than as
+a wrong edition.
+*Cause:* both Tao PDFs satisfy `pdf_page = printed_page + 16`; the editions differ only by the
+one-page shift of ~65 items. A wrong-edition anchor is therefore never off by 16 — the size that
+would be obvious — but by 1.
+*Fix:* never diagnose an anchor mismatch by eye. Run the mechanical check against both candidates
+and compare the agreement rates; the shape of the histogram, not the size of the error, is what
+identifies the edition. The registry's `page_map_to` records the shift and which items it applies
+to, in both directions, and a validator checks the two directions agree.
+
+**A2 — The printed/PDF offset, and the confidence on it.**
 *Presents as:* an agent grepping the right page number in the wrong coordinate system, or a page
 image request that returns the wrong page.
-*Fix:* one offset field per book (`printed page = PDF page − 16` for the audited edition), applied
-in exactly one place; page images are named by **PDF** page, zero-padded to three digits, and the
-prompt says so.
-*Evidence:* the run prompts' "You can SEE the page" block; `book.json.offset`.
+*Fix:* one offset per source (`printed page = PDF page − offset`), inferred once from the running
+heads and applied in exactly one place; page images are named by **PDF** page, zero-padded to three
+digits, and the prompt says so.
+*And the discovery half:* `offset_confidence < 0.9` means **ask**, never guess
+(`cflib.inference.MIN_OFFSET_CONFIDENCE`). A healthy inference looks like the two editions measured
+on this machine — 265 pages each, 245 voting pages with 244 agreeing on 16 (0.9959) and 249 voting
+with 248 agreeing (0.9960). A guessed 16 at 0.71 would produce exactly the class of defect the
+audit exists to find, so the command refuses and names `cf sources set <id> offset=N`, which stamps
+`offset_method: manual` so a reader can tell an inference from a claim.
+*Evidence:* the run prompts' "You can SEE the page" block; `sources/<id>/meta.json`
+`offset_histogram` and `offset_voting_pages`.
+
+**A2b — A truncated sha in prose is a candidate, not an identity.**
+*Presents as:* a source adopted on the strength of `64498329…` in a `CLAUDE.md`, and a file that
+was never fingerprinted being treated as the pinned edition.
+*Fix:* an 8–63 hex prefix is stored as `sha256_prefix` and resolves only through a registry alias
+or a real fingerprint of real bytes. Unresolved prefixes are *reported* — in the discovery result
+and in `cf status` — never adopted. A file in the right place with the right name that fingerprints
+to a different edition is an `edition_mismatch` warning, not a source.
+*Evidence:* `cflib/discovery.py` module docstring, rules 1 and 2.
+
+**A2c — The declared path is stale.**
+*Presents as:* `pdf_found_in: repo_declared` for bytes the repo never actually declared.
+*Cause:* `measure_theory`'s ledger declares `sources/gsm-126-tao5-measure-book.pdf`; that path does
+not exist, and the bytes live in `.lake/official-pdf/`.
+*Fix:* basename matching inside the repo ranks as `repo_cache`, one step **below** the paths the
+repo names. Calling found-by-basename bytes "declared" hides exactly the fact a reader of the
+provenance most needs.
 
 **A3 — A summarised source is not the source.**
 *Presents as:* "no erratum exists", confidently, when one does.
 *Cause:* the local errata file was produced by a summarising fetch tool and had silently dropped
 the entry that decided a high-severity finding.
-*Fix:* `book/fetch_errata.py` uses `curl` against the live page, keeps the **raw HTML** beside the
-rendered markdown, and dates both. Never use a summarising fetch for a source of record.
+*Fix:* `sources/fetch_errata.py` uses `curl` against the live page, keeps the **raw HTML** beside
+the rendered markdown, and dates both in `errata.json` (URL, HTTP status, both shas, byte count,
+entry count, `changed`). Never use a summarising fetch for a source of record. After the fetch the
+raw HTML is checked for the word "errata"; absent, the confidence is halved and
+`meta.json.warnings` records `errata_url_unconfirmed` — a page that does not mention errata is a
+guess, however plausible its URL.
 *Evidence:* `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §4;
 `REVIEW_PATTERNS.md` P13.
 
@@ -47,14 +95,28 @@ what distinguishes the `-pdf` and `hunt` run variants from their text-only sibli
 *Evidence:* the "You can SEE the page" block, added to both the worker and reviewer prompts of
 those two variants.
 
-**A5 — The book text is copyrighted and must not spread.**
-*Presents as:* a convenient copy of `book.txt`, page images or crops inside a repo.
-*Fix:* book text, page images and crops live only in the campaign directory, gitignored; findings
-quote 1-3 sentences and stay in the campaign repo; `--redact-quotes` replaces `book_quote` with
-(page, normalised hash) for anything shared. The gate reads the book from a path outside every
-repo and **fails closed** when it is absent — which presents as a run failure, not as a missing
-file, so check that first.
-*Evidence:* `~/Desktop/tao-diff-run/README.md`; `docs/HANDOFF.md` §7 ("DO NOT DELETE").
+**A5 — The source text is copyrighted and must not spread.**
+*Presents as:* a convenient copy of `text.txt`, page images or crops inside a repo.
+*Fix:* source text, page images and crops live only in the workspace's gitignored `sources/`,
+never in the skill repo or a companion; findings quote 1-3 sentences and stay in the workspace;
+`--redact-quotes` replaces `book_quote` with (page, normalised hash) for anything shared. The
+registry holds metadata and URLs only, which is what makes *it* committable. A download happens
+only with `--download` **and** a licence note saying the author publishes the file himself, and
+nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails
+closed** when it is absent — which presents as a run failure, not as a missing file, so check that
+first.
+*Evidence:* `~/Desktop/tao-diff-run/README.md`; `docs/HANDOFF.md` §7 ("DO NOT DELETE");
+`registry/README.md`.
+
+**A6 — `sources/` in `.gitignore` hides `scripts/sources/`.**
+*Presents as:* the entire stage-1 package silently absent from the next `git add`, and a clone that
+cannot prepare a source at all.
+*Cause:* the skill repo's own `.gitignore` carries the **workspace** patterns so that a stray copy
+of workspace data cannot be committed by accident. `sources/` matches a directory at any depth, and
+the code package is `scripts/sources/`.
+*Fix:* the `!scripts/sources/` negation, which must move in the same commit as anything that
+renames either side. Two lines, one meaning; they are commented in `.gitignore` as such.
+*Evidence:* `.gitignore` in this repo; `docs/design/multi-source-model.md` §6.3.
 
 ---
 
@@ -117,11 +179,11 @@ in `run.yaml`; never claim tend's budget protects a bridged run.
 *Evidence:* `RUNBOOK.md` addendum; `docs/HANDOFF.md` §8.
 
 **C3 — The host caps concurrent sessions per account.**
-*Presents as:* HTTP 409s once you pass 16 sessions — and the cap is per account, across campaigns,
-so two campaigns cannot both run at full width.
+*Presents as:* HTTP 409s once you pass 16 sessions — and the cap is per account, across workspaces,
+so two workspaces cannot both run at full width.
 *Fix:* `plan-run` writes worker+reviewer concurrency into `run.yaml`, and `cf run` refuses a total
 above `defaults.max_concurrent_sessions` (16) unless `--over-session-cap` is passed; the plan prints
-`<n> sessions, cap <m>` so the number is visible before anything starts. A second campaign waits.
+`<n> sessions, cap <m>` so the number is visible before anything starts. A second workspace waits.
 *Evidence:* `docs/HANDOFF.md` §8.
 
 **C4 — The worktree explosion.**
@@ -252,7 +314,7 @@ and symlink `.lake/packages` — lake trusts the copied traces.
 **G1 — Worktrees share one stash stack.**
 *Presents as:* a stash pushed in one worktree appearing to another session, or work vanishing from
 under someone else.
-*Fix:* never `git stash` in a shared repo's worktrees; the campaign rule is to not touch another
+*Fix:* never `git stash` in a shared repo's worktrees; the standing rule is to not touch another
 session's repo or worktrees at all.
 *Evidence:* `memory/measure-theory-faithfulness-audit.md` ("shared stash stack").
 
@@ -268,7 +330,7 @@ from writing to a peer's repo.
 *Presents as:* "every merged file passed the gate twice" as an assurance claim — while the gate
 script lives inside the entrypoint the worker has write access to, and both gate invocations run
 from that copy.
-*Fix:* invoke the gate from the campaign/skill copy, pass the entrypoint as an argument, and check
+*Fix:* invoke the gate from the workspace/skill copy, pass the entrypoint as an argument, and check
 `changed files ⊆ {findings/<id>.json, tasks/<id>.yaml}` before merge. Mount or copy source repos
 read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Evidence:* the tend config's two `validation` commands, both
@@ -284,6 +346,6 @@ read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Presents as:* a convenient example in a skill file that names a private repo's conventions, a
 host, or a session id.
 *Fix:* skill examples are synthetic; repo paths, hosts, profiles, owners and session ids live in
-`campaign.yaml` / `adapter.yaml` only; the campaign repo has no remote by default and a pre-push
+`workspace.yaml` / `adapter.yaml` only; the workspace repo has no remote by default and a pre-push
 guard, because "no remote" is a default and not a control.
 *Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); `critique.json` risks 1-3.
