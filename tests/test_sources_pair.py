@@ -782,12 +782,11 @@ class CheckEditionTests(unittest.TestCase):
         books = {"draft": self.DRAFT, "published": self.PUBLISHED}
         want = anchor_check.check_edition(books, self.ROWS)
 
-        fallback = getattr(discovery, "_check_edition_fallback", None)
-        if fallback is not None:
-            # the inline copy is scored on the anchors it can read: a bare
-            # `int(anchor)` drops "book p. N", which this module keeps.
-            plain = [r for r in self.ROWS if str(r["page_anchor"]).isdigit()]
-            self.assertEqual(anchor_check.check_edition(books, plain), fallback(books, plain))
+        # There must be exactly one implementation of this rule.  A second,
+        # inline copy in discovery.py would let `cf onboard` pick an anchor
+        # edition by one rule and `cf pair` check the anchors by another.
+        self.assertFalse(hasattr(discovery, "_check_edition_fallback"),
+                         "discovery must delegate to pair.anchor_check.check_edition")
 
         out = pathlib.Path(tmp_dir("cf-editions-"))
         for source_id, items_json in books.items():

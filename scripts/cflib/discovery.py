@@ -1004,7 +1004,17 @@ def choose_anchor_source(repo: Path, rows: Sequence[Mapping], candidates: Sequen
 
 def _anchor_agreement(candidates: Sequence[str], rows: Sequence[Mapping],
                       *, workspace: Any) -> dict[str, dict]:
-    """Delegate to pair.anchor_check.check_edition when STAGES-A has landed."""
+    """How well the companion's own page anchors agree with each candidate edition.
+
+    The scoring lives in :func:`pair.anchor_check.check_edition` and is imported,
+    not reimplemented: this module and `cf pair` must not be able to disagree
+    about which edition a repo is anchored to.  There is no fallback -- an
+    inline second copy behind ``except Exception`` would silently answer for a
+    broken ``check_edition`` and decide the anchor edition by a different rule
+    than the one `cf pair` then checks against.
+    """
+    from pair.anchor_check import check_edition
+
     items_by_source: dict[str, dict] = {}
     paths = getattr(workspace, "paths", None)
     for sid in candidates:
@@ -1015,40 +1025,7 @@ def _anchor_agreement(candidates: Sequence[str], rows: Sequence[Mapping],
             items_by_source[sid] = json.loads(path.read_text(encoding="utf-8"))
     if not items_by_source:
         return {sid: {"ok": 0, "mismatched": 0, "agreement": 0.0} for sid in candidates}
-    try:
-        from pair.anchor_check import check_edition  # type: ignore
-        return check_edition(items_by_source, rows)
-    except Exception:                        # STAGES-A has not landed check_edition yet
-        return _check_edition_fallback(items_by_source, rows)
-
-
-def _check_edition_fallback(items_by_source: Mapping[str, Mapping],
-                            rows: Sequence[Mapping]) -> dict[str, dict]:
-    """The mechanical half of S4.6, inline, until pair.anchor_check owns it."""
-    out: dict[str, dict] = {}
-    for sid, items_json in items_by_source.items():
-        index = {row["item"]: row for row in (items_json.get("items") or [])}
-        ok = mismatched = 0
-        for row in rows or ():
-            anchor = row.get("page_anchor")
-            item = row.get("item")
-            if anchor in (None, "") or not item or item not in index:
-                continue
-            try:
-                found = int(anchor)
-            except (TypeError, ValueError):
-                continue
-            expected = index[item].get("page")
-            if expected is None:
-                continue
-            if int(expected) == found:
-                ok += 1
-            else:
-                mismatched += 1
-        total = ok + mismatched
-        out[sid] = {"ok": ok, "mismatched": mismatched,
-                    "agreement": round(ok / total, 4) if total else 0.0}
-    return out
+    return check_edition(items_by_source, rows)
 
 
 def _anchor_hint_pick(hints: Sequence[str], candidates: Sequence[str]) -> tuple[str, str]:

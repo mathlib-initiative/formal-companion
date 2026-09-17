@@ -137,6 +137,19 @@ def slug(item: str, source_id: str = "") -> str:
     return f"{head}--{tail}" if head else tail
 
 
+def _sources_map(docs: Sequence[dict], source_id: str, source_sha: str | None) -> dict:
+    """{source_id: source_sha} over the documents actually written."""
+    out: dict[str, str] = {}
+    for doc in docs:
+        sid = str(doc.get("source_id") or source_id or "")
+        if not sid:
+            continue
+        out.setdefault(sid, str(doc.get("source_sha") or source_sha or ""))
+    if not out and source_id:
+        out[str(source_id)] = str(source_sha or "")
+    return out
+
+
 def write_corpus(docs: Sequence[dict], dest: str | Path, *, run_id: str,
                  companion: str, source_id: str = "", source_sha: str | None = None,
                  counts: dict | None = None) -> dict:
@@ -157,7 +170,10 @@ def write_corpus(docs: Sequence[dict], dest: str | Path, *, run_id: str,
         "repo": companion,
         "source_id": source_id,
         "source_sha": source_sha,
-        "sources": sorted({str(d.get("source_id") or source_id) for d in docs}),
+        # {id: sha}, the shape `cf harvest` and `cf import-corpus` write and the
+        # runs table reads.  A bare list of ids loses the sha, which is the half
+        # that says WHICH EDITION these documents were judged against.
+        "sources": _sources_map(docs, source_id, source_sha),
         "destination": str(dest),
         "documents": len(written),
         "names": sorted(written),

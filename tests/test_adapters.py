@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -466,14 +467,20 @@ class DocstringTagsSyntheticTest(unittest.TestCase):
 
 
 class GeneratedMirrorTest(unittest.TestCase):
-    """A generated copy of the companion's own modules inside the glob.
+    """A second, TRACKED copy of the companion's own modules inside the glob.
 
-    tao-measure-lean ships `Blueprint/Gen/S_*.lean`, a generated mirror of
-    `TaoMeasure/Section_*.lean` with the same declaration names, so the
-    onboarding default glob `**/*.lean` reads every declaration twice.  Neither
-    copy can be preferred mechanically -- a stub and the proof it mirrors look
-    identical from here -- so the collision is REPORTED at the stage where
-    narrowing `glob:` is still one edit.
+    When two committed files define the same declaration, neither can be
+    preferred mechanically -- a stub and the proof it mirrors look identical
+    from here -- so the collision is REPORTED at the stage where narrowing
+    `glob:` is still one edit, and the schema gate refuses the ambiguity.
+
+    (An earlier version of this docstring blamed tao-measure-lean's
+    `Blueprint/Gen/S_*.lean`.  That was wrong: those are Verso `#doc` manual
+    files that define nothing and parse to zero declarations; the declaration
+    names in them are markdown link labels.  The duplicates in that repo came
+    from the git-IGNORED `scratch/`, which is what `IgnoredFilesTest` covers.
+    The synthetic repo here is deliberately not a git checkout, so the ignore
+    filter is a no-op and this test still measures the tracked-mirror case.)
     """
 
     @classmethod
@@ -513,6 +520,69 @@ class GeneratedMirrorTest(unittest.TestCase):
         self.assertEqual(base.validate_rows(rows, kinds=KINDS), [])
         self.assertEqual(adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
                          ["duplicate_declarations"], 0)
+
+
+class IgnoredFilesTest(unittest.TestCase):
+    """A file the repository ignores is not part of the thing under audit.
+
+    A companion is audited AT A COMMIT, so reading a git-ignored working file
+    invents rows.  tao-measure-lean keeps spliced copies of its own modules in
+    `scratch/` (.gitignore line 44); with the onboarding default `**/*.lean`
+    they were parsed a second and third time, producing 142 duplicate keys that
+    made `cf extract` refuse a repo `cf onboard` had just accepted.
+    """
+
+    def _repo(self, *, git: bool) -> Path:
+        tmp = Path(tempfile.mkdtemp(prefix="cf-ignored-",
+                                    dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "Src").mkdir()
+        (tmp / "scratch").mkdir()
+        (tmp / "Src" / "Sample.lean").write_text(SAMPLE, encoding="utf-8")
+        (tmp / "scratch" / "Splice.lean").write_text(SAMPLE, encoding="utf-8")
+        if git:
+            (tmp / ".gitignore").write_text("scratch/\n", encoding="utf-8")
+            env = dict(os.environ, GIT_AUTHOR_NAME="T", GIT_AUTHOR_EMAIL="t@e.invalid",
+                       GIT_COMMITTER_NAME="T", GIT_COMMITTER_EMAIL="t@e.invalid")
+            subprocess.run(["git", "init", "-q", str(tmp)], check=True, env=env)
+            subprocess.run(["git", "-C", str(tmp), "add", "-A"], check=True, env=env)
+            subprocess.run(["git", "-C", str(tmp), "commit", "-qm", "t"], check=True, env=env)
+        return tmp
+
+    def _adapter(self, repo: Path):
+        return from_config({"adapter": "docstring_tags", "name": "demo", "repo": str(repo),
+                            "glob": "**/*.lean", "item_kinds": list(KINDS)},
+                           source="<ignored>")
+
+    def test_an_ignored_copy_is_not_read(self):
+        adapter = self._adapter(self._repo(git=True))
+        files = {p.name for p in adapter.source_files(adapter.resolve_repo())}
+        self.assertEqual(files, {"Sample.lean"})
+        rows = list(adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
+        self.assertEqual(base.validate_rows(rows, kinds=KINDS), [])
+        self.assertEqual(adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
+                         ["duplicate_declarations"], 0)
+
+    def test_the_same_tree_without_git_reads_everything(self):
+        """No repository to ask means read it all, not audit nothing."""
+        adapter = self._adapter(self._repo(git=False))
+        files = {p.name for p in adapter.source_files(adapter.resolve_repo())}
+        self.assertEqual(files, {"Sample.lean", "Splice.lean"})
+        problems = base.validate_rows(
+            list(adapter.extract(sources={SOURCE_ID: SOURCE_SHA})), kinds=KINDS)
+        self.assertTrue(any("duplicate" in p for p in problems))
+
+    def test_ignored_files_is_empty_for_a_non_repo(self):
+        tmp = Path(tempfile.mkdtemp(prefix="cf-ignored-none-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        (tmp / "a.lean").write_text("-- x\n", encoding="utf-8")
+        self.assertEqual(api.Adapter.ignored_files(tmp, [tmp / "a.lean"]), [])
+
+    def test_tracked_files_are_never_dropped(self):
+        """The filter removes ignored paths only -- nothing else."""
+        repo = self._repo(git=True)
+        kept = [repo / "Src" / "Sample.lean"]
+        self.assertEqual(api.Adapter.ignored_files(repo, kept), [])
 
 
 @unittest.skipUnless(env_path("CF_TML"), "set CF_TML to the tao-measure-lean checkout")

@@ -115,6 +115,32 @@ def load_runs(paths: Any) -> dict[str, dict]:
     return out
 
 
+def load_receipts(paths: Any) -> dict[str, dict]:
+    """Read ``corpus/<run-id>/RECEIPT.json`` for runs that have no ``run.yaml``.
+
+    An IMPORTED corpus never gets a ``run.yaml`` -- ``cf plan-run`` did not plan
+    it -- but its receipt records the edition every document was judged against.
+    Without this reader the runs table printed ``TODO(source)`` for a run whose
+    source is written down two directories away.
+    """
+    out: dict[str, dict] = {}
+    root = (paths.corpus_dir if hasattr(paths, "corpus_dir")
+            else os.path.join(str(getattr(paths, "root", paths)), "corpus"))
+    if not os.path.isdir(str(root)):
+        return out
+    for name in sorted(os.listdir(str(root))):
+        receipt = os.path.join(str(root), name, "RECEIPT.json")
+        if not os.path.exists(receipt):
+            continue
+        try:
+            doc = compat.read_json(receipt)
+        except Exception:
+            continue
+        if isinstance(doc, dict):
+            out[str(doc.get("run_id") or name)] = doc
+    return out
+
+
 def load_gh(files: Iterable[str]) -> list[dict]:
     """Read saved ``gh`` JSON output. This module never calls gh itself."""
     out = []
@@ -262,8 +288,35 @@ def _task_count(cfg: dict):
     return tasks or cfg.get("task_count")
 
 
-def render_runs_table(runs: dict[str, dict], tallies: list[dict]) -> str:
-    """Section 2: one line per run, joining run.yaml with that run's tally."""
+def _receipt_sources(receipt: dict) -> str:
+    """The source ids a corpus RECEIPT.json names, for the runs table.
+
+    ``sources`` is a {id: sha} map.  A list of bare ids is a receipt written
+    before that shape settled; read it rather than printing a TODO next to a
+    fact that is on disk.
+    """
+    value = receipt.get("sources")
+    ids: list[str] = []
+    if isinstance(value, dict):
+        ids = [str(k) for k in sorted(value)]
+    elif isinstance(value, (list, tuple)):
+        ids = [str(v) for v in value]
+    if not ids and receipt.get("source_id"):
+        ids = [str(receipt["source_id"])]
+    return ", ".join("`%s`" % i for i in ids if i)
+
+
+def render_runs_table(runs: dict[str, dict], tallies: list[dict],
+                      receipts: dict[str, dict] | None = None) -> str:
+    """Section 2: one line per run, joining run.yaml and RECEIPT.json with the tally.
+
+    A planned run has a ``run.yaml`` and every cell is filled from it.  An
+    IMPORTED corpus has no run.yaml and never will: the model, the task count
+    and the source access of a historical v1 run are not recorded anywhere, so
+    those cells read ``--`` rather than a TODO pointing at ``cf plan-run``,
+    which would never fill them.  The edition IS recorded, in the receipt.
+    """
+    receipts = receipts or {}
     seen: dict[str, dict] = {}
     for tally in tallies:
         for run_id, info in (tally.get("runs") or {}).items():
@@ -273,21 +326,36 @@ def render_runs_table(runs: dict[str, dict], tallies: list[dict]) -> str:
             entry["tally_file"] = tally["file"]
     for run_id in runs:
         seen.setdefault(run_id, {})
+    for run_id in receipts:
+        seen.setdefault(run_id, {})
     rows = []
     for run_id in sorted(seen):
         info = seen[run_id]
         cfg = runs.get(run_id) or {}
+        receipt = receipts.get(run_id) or {}
+        # A run with a receipt but no run.yaml was never planned: an imported v1
+        # corpus, or one `cf pair`/`cf detect-proxies` computed mechanically.
+        # Neither records a model, a task count or a source access, and no
+        # `cf plan-run` will ever fill them in, so they read `--`, not TODO.
+        unplanned = bool(receipt) and not cfg
+        gap = (lambda name, how: "--") if unplanned else todo
         models = cfg.get("models") if isinstance(cfg.get("models"), dict) else None
+        mode = (cfg.get("mode") or info.get("mode")
+                or (receipt.get("source") or {}).get("mode")
+                or receipt.get("mode"))
         rows.append(
             [
                 "`%s`" % run_id,
-                cfg.get("mode") or info.get("mode") or todo("mode", "cf plan-run"),
-                cfg.get("model") or (models or {}).get("worker") or todo("model", "cf plan-run"),
-                _run_sources(cfg) or todo("source", "cf plan-run"),
-                _source_access(cfg) or todo("source access", "cf plan-run"),
+                mode or todo("mode", "cf plan-run"),
+                cfg.get("model") or (models or {}).get("worker")
+                or gap("model", "cf plan-run"),
+                _run_sources(cfg) or _receipt_sources(receipt)
+                or todo("source", "cf plan-run"),
+                _source_access(cfg) or gap("source access", "cf plan-run"),
                 _host_name(cfg),
-                _task_count(cfg) or todo("tasks", "cf plan-run"),
-                info.get("files", todo("finding files", "cf harvest")),
+                _task_count(cfg) or gap("tasks", "cf plan-run"),
+                info.get("files", (receipt.get("actual") or {}).get("count")
+                         or todo("finding files", "cf harvest")),
             ]
         )
     return _table(["run", "mode", "model", "source", "source access", "host", "tasks",
@@ -567,6 +635,7 @@ def build_context(
     facts = [companion_facts(paths, n, cfg.companion(n)) for n in names]
     tallies = load_tallies(paths, tally_files)
     runs = load_runs(paths)
+    receipts = load_receipts(paths)
     gh = load_gh(gh_files)
     source_ids = cfg.source_ids()
 
@@ -601,9 +670,10 @@ def build_context(
         "tldr": tldr or default_tldr,
         "state_table": render_state_table(facts),
         "status_note": status_note,
-        "runs_table": render_runs_table(runs, tallies),
+        "runs_table": render_runs_table(runs, tallies, receipts),
         "yield_note": (
-            "Every cell above is `run.yaml` or a tally file; no number here was typed by hand."
+            "Every cell above is `run.yaml`, a corpus `RECEIPT.json` or a tally file; no number "
+            "here was typed by hand. `--` means an imported run records no such figure."
             if tallies else todo("yield table", "cf harvest --tally")
         ),
         "findings_tables": render_findings_tables(facts, tallies),
@@ -615,9 +685,10 @@ def build_context(
         "paths_list": render_paths_list(paths, facts, source_ids),
         "traps_list": render_traps(traps),
         "verification_commands": render_verification(paths, facts, tallies, gh),
-        "provenance": "_Generated by `cf report` from %d tally file(s), %d run.yaml file(s) and %d "
-        "saved gh output file(s). Figures with no artifact behind them are marked TODO._"
-        % (len(tallies), len(runs), len(gh)),
+        "provenance": "_Generated by `cf report` from %d tally file(s), %d run.yaml file(s), %d "
+        "corpus receipt(s) and %d saved gh output file(s). Figures with no artifact behind them "
+        "are marked TODO._"
+        % (len(tallies), len(runs), len(receipts), len(gh)),
         "_facts": facts,
         "_tallies": tallies,
         "_paths": paths,

@@ -414,15 +414,17 @@ def _title_token(title: str) -> str:
     if words and words[0] in {"a", "an", "the"}:
         words = words[1:]
     words = [w for w in words if w not in _TITLE_STOPWORDS]
-    kept = [w for w in words[:2] if w not in _TITLE_GENERIC]
-    if any(w not in _TITLE_GENERIC_IF_OTHER for w in kept):
-        kept = [w for w in kept if w not in _TITLE_GENERIC_IF_OTHER]
-    if not kept:
-        # "A First Course in Real Analysis": the first two words are BOTH generic
-        # ("first", "course"), so keep looking rather than naming the source after
-        # a word that says nothing -- `smith-first` would collide with every other
-        # "A First Course in ...".
-        kept = [w for w in words if w not in _TITLE_GENERIC][:1] or words[:1]
+    # Drop the words that say nothing BEFORE taking the first two, not after.
+    # Truncating first threw away the distinctive word: "Elementary Notes on
+    # Sets" kept only `elementary` (because `notes` used up the second slot and
+    # was then dropped), and "A First Course in Real Analysis" kept only `real`.
+    # A source id is the primary key of every item, finding and pair, so a
+    # non-distinctive one invites exactly the collision the `-2` suffix exists
+    # to paper over.
+    meaningful = [w for w in words if w not in _TITLE_GENERIC]
+    if any(w not in _TITLE_GENERIC_IF_OTHER for w in meaningful):
+        meaningful = [w for w in meaningful if w not in _TITLE_GENERIC_IF_OTHER]
+    kept = meaningful[:2] or words[:1]
     return "-".join(kept)
 
 
