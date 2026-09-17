@@ -63,10 +63,14 @@ class TestCommandDiscovery(unittest.TestCase):
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
         mapping = cf_main.discover_commands(subparsers)
-        for name in ("init", "book", "onboard", "extract", "pair", "plan-run", "run",
+        # the command index of SKILL.md S"Command index". `book` is deleted: a
+        # source is discovered by `cf onboard` and re-prepared by
+        # `cf sources refresh` (docs/design/multi-source-model.md S7).
+        for name in ("init", "onboard", "sources", "extract", "pair", "plan-run", "run",
                      "harvest", "import-corpus", "tally", "detect-proxies",
                      "adjudicate", "route", "report", "status"):
             self.assertIn(name, mapping)
+        self.assertNotIn("book", mapping)
 
 
 class TestPairsArtifactsAreWrappers(unittest.TestCase):
