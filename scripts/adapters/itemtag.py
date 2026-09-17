@@ -28,12 +28,37 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-__all__ = ["TagHit", "AnchorHit", "find_tag", "find_page_anchor", "DEFAULT_KEYWORDS"]
+__all__ = ["TagHit", "AnchorHit", "find_tag", "find_page_anchor", "DEFAULT_KEYWORDS",
+           "TAG_KIND_RE", "kinds_from_labels"]
 
 DEFAULT_KEYWORDS: tuple[str, ...] = (
     "Definition", "Lemma", "Theorem", "Proposition", "Corollary",
     "Exercise", "Example", "Remark", "Claim", "Strategy", "In-text",
 )
+
+#: The kind half of a tag: a capitalised word immediately followed by a
+#: ``c.s.n``-style number, or the literal ``In-text``.  This is how a repo's item
+#: GRAMMAR is read rather than declared (R2): a companion that tags
+#: ``Problem 2.3.1`` reveals the kind ``Problem`` without anyone typing a list,
+#: and the word is never invented -- it is the one the repo wrote.
+TAG_KIND_RE = re.compile(r"`?\s*(In-text|[A-Z][A-Za-z-]{2,15})(?=\s*[,.`]?\s*(?:\d+\.\d+|book\s+pp?\.))")
+
+
+def kinds_from_labels(labels, min_count: int = 2) -> tuple[str, ...]:
+    """Item kinds a repo's own tags use, most frequent first.
+
+    ``min_count`` is the noise floor: one stray capitalised word before a
+    section number is not a kind.  Nothing here consults a keyword list, which
+    is the point -- a list would only ever return the kinds we already knew.
+    """
+    from collections import Counter
+    counts: Counter = Counter()
+    for label in labels:
+        m = TAG_KIND_RE.match(str(label or "").strip())
+        if m:
+            counts[m.group(1)] += 1
+    return tuple(k for k, n in counts.most_common() if n >= min_count)
+
 
 #: "book p. 24", "book pp. 25-26", "pages 70-71", "p. 156".
 PAGE_RE = re.compile(

@@ -9,7 +9,7 @@ Two layers:
       CF_TML           /Users/jack/Desktop/tao-measure-lean
       CF_MT            /Users/jack/Desktop/measure_theory
       CF_BASELINE_DIFF /Users/jack/Desktop/tao-differential   (ours.jsonl, adam.jsonl)
-      CF_TEST_TMP      where the end-to-end test may create a scratch campaign
+      CF_TEST_TMP      where the end-to-end test may create a scratch workspace
                        (default: the system temp directory)
 
 The regression numbers come from the tables the audit actually ran on:
@@ -38,7 +38,14 @@ if str(SCRIPTS) not in sys.path:
 from adapters import api, base, itemtag, leanparse  # noqa: E402
 from adapters.api import from_config, load  # noqa: E402
 
-BOOK_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+#: The published GSM 126 edition: the bytes both target companions were read
+#: against.  Rows carry the PAIR (source_id, source_sha) -- the id so an item is
+#: namespaced, the sha so a row can never be compared against another edition.
+SOURCE_ID = "tao-measure-gsm126-published"
+SOURCE_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+#: the 2011 draft tao-measure-lean bundles but does not anchor to
+DRAFT_ID = "tao-measure-2011-draft"
+DRAFT_SHA = "62d9565841b8593a7a3d12b3cbcea6ce8d3d3ae2f83b60ebf024d59714c0c6e8"
 KINDS = ("Definition", "Lemma", "Theorem", "Proposition", "Corollary",
          "Exercise", "Example", "Remark", "Strategy", "Claim", "In-text")
 
@@ -221,26 +228,32 @@ class TagAndAnchorTest(unittest.TestCase):
 def valid_row(**overrides) -> dict:
     row = base.make_row(
         item_raw="Exercise 1.3.19", item="Exercise 1.3.19", sub="", item_kind="Exercise",
+        source_id=SOURCE_ID,
         decl="TaoMeasure.foo", kind="theorem", namespace="TaoMeasure",
         file="TaoMeasure/Section_1_3_3.lean", line=12,
         statement="theorem foo : True", body=None, sorry=True, sorry_class="exercise",
         page_anchor=66, page_anchor_raw="book p. 66", anchor_source="own",
         repo="ours", key=True, anonymous=False, private=False, granularity="item",
-        book_sha=BOOK_SHA)
+        source_sha=SOURCE_SHA)
     row.update(overrides)
     return row
 
 
 class RowSchemaTest(unittest.TestCase):
-    """Schema v2: every field, every enum, and (item, sub, decl) uniqueness."""
+    """Schema v2: every field, every enum, and per-source uniqueness."""
 
     def test_a_good_row_validates(self):
         self.assertEqual(base.validate_row(valid_row(), kinds=KINDS), [])
 
-    def test_missing_book_sha_is_a_problem(self):
-        self.assertTrue(base.validate_row(valid_row(book_sha=None), kinds=KINDS))
-        self.assertEqual(base.validate_row(valid_row(book_sha=None), kinds=KINDS,
-                                           require_book_sha=False), [])
+    def test_missing_source_sha_is_a_problem(self):
+        self.assertTrue(base.validate_row(valid_row(source_sha=None), kinds=KINDS))
+        self.assertEqual(base.validate_row(valid_row(source_sha=None), kinds=KINDS,
+                                           require_source_sha=False), [])
+
+    def test_a_row_without_a_source_id_is_a_problem(self):
+        # An item is the pair (source_id, item): half of it is not an item.
+        for bad in (None, "", 7):
+            self.assertTrue(base.validate_row(valid_row(source_id=bad), kinds=KINDS), bad)
 
     def test_unknown_item_kind_is_a_problem(self):
         self.assertTrue(base.validate_row(valid_row(item_kind="Display"), kinds=KINDS))
@@ -269,9 +282,24 @@ class RowSchemaTest(unittest.TestCase):
         problems = base.validate_rows([valid_row(), valid_row()], kinds=KINDS)
         self.assertTrue(any("duplicate" in p for p in problems))
 
+    def test_the_same_item_in_two_sources_is_not_a_duplicate(self):
+        # One declaration may legitimately formalise `Exercise 1.3.19` of two
+        # editions; calling that a duplicate would refuse a table the model
+        # exists to allow.
+        rows = [valid_row(), valid_row(source_id=DRAFT_ID, source_sha=DRAFT_SHA)]
+        self.assertEqual(base.validate_rows(rows, kinds=KINDS), [])
+
+    def test_rows_sort_by_source_first(self):
+        rows = sorted([valid_row(source_id="z-source"), valid_row(source_id="a-source")],
+                      key=base.row_sort_key)
+        self.assertEqual([r["source_id"] for r in rows], ["a-source", "z-source"])
+
     def test_row_fields_cover_the_core_required_set(self):
         from cflib.adapters_api import ROW_REQUIRED_FIELDS
         self.assertTrue(set(ROW_REQUIRED_FIELDS) <= set(base.ROW_FIELDS))
+        self.assertIn("source_id", base.ROW_FIELDS)
+        self.assertIn("source_sha", base.ROW_FIELDS)
+        self.assertNotIn("book_sha", base.ROW_FIELDS)
 
 
 class AdapterLoadingTest(unittest.TestCase):
@@ -310,7 +338,7 @@ class DocstringTagsSyntheticTest(unittest.TestCase):
             "glob": "Src/*.lean", "item_kinds": list(KINDS),
             "sorry": {"exercise_sorry": "permanent", "gap_marker": "sorry -- TODO"},
         }, source="<synthetic>")
-        cls.rows = list(cls.adapter.extract(book_sha=BOOK_SHA))
+        cls.rows = list(cls.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
 
     @classmethod
     def tearDownClass(cls):
@@ -353,12 +381,72 @@ class DocstringTagsSyntheticTest(unittest.TestCase):
         self.assertIn("x + 1", self.row("Lemma 1.2.5")["body"])
         self.assertIsNone(self.row("Exercise 1.1.3")["body"])
 
+    def test_every_row_carries_the_source_it_was_read_against(self):
+        self.assertTrue(all(r["source_id"] == SOURCE_ID for r in self.rows))
+        self.assertTrue(all(r["source_sha"] == SOURCE_SHA for r in self.rows))
+
+    def test_the_single_bound_source_is_the_default_without_adapter_yaml_saying_so(self):
+        # adapter.yaml here has no `sources:` block at all; one bound source is
+        # unambiguous, and a guess is never needed.
+        self.assertEqual(self.adapter.default_source({SOURCE_ID: SOURCE_SHA}), SOURCE_ID)
+
+    def test_two_bound_sources_and_no_default_is_refused_not_guessed(self):
+        with self.assertRaises(api.AdapterError):
+            self.adapter.default_source({SOURCE_ID: SOURCE_SHA, DRAFT_ID: DRAFT_SHA})
+
+    def test_a_tag_prefix_rule_sends_a_row_to_another_source(self):
+        adapter = from_config({
+            **self.adapter.config,
+            "sources": {"default": SOURCE_ID,
+                        "map": [{"source": DRAFT_ID, "tag_prefix": "Exercise"}]},
+        }, source="<synthetic-map>")
+        rows = list(adapter.extract(sources={SOURCE_ID: SOURCE_SHA, DRAFT_ID: DRAFT_SHA}))
+        by_item = {r["item"]: r for r in rows}
+        self.assertEqual(by_item["Exercise 1.1.3"]["source_id"], DRAFT_ID)
+        self.assertEqual(by_item["Exercise 1.1.3"]["source_sha"], DRAFT_SHA)
+        self.assertEqual(by_item["Definition 1.1.1"]["source_id"], SOURCE_ID)
+        self.assertEqual(base.validate_rows(rows, kinds=KINDS), [])
+
+    def test_the_bound_anchor_beats_a_stale_sources_default(self):
+        # `cf onboard` re-decides the anchor edition against the rows it is about
+        # to extract, so adapter.yaml's default can be the older answer.
+        adapter = from_config({**self.adapter.config, "sources": {"default": "gone-source"}},
+                              source="<synthetic-stale>")
+        rows = list(adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
+        self.assertTrue(all(r["source_id"] == SOURCE_ID for r in rows))
+
+    def test_a_default_naming_an_unbound_source_is_an_error_naming_both(self):
+        adapter = from_config({**self.adapter.config, "sources": {"default": "gone-source"}},
+                              source="<synthetic-stale>")
+        with self.assertRaises(api.AdapterError) as caught:
+            adapter.default_source({SOURCE_ID: SOURCE_SHA, DRAFT_ID: DRAFT_SHA})
+        self.assertIn("gone-source", str(caught.exception))
+        self.assertIn(SOURCE_ID, str(caught.exception))
+
+    def test_the_extract_key_changes_with_the_bound_edition(self):
+        other = from_config({**self.adapter.config, "sources": {"default": DRAFT_ID}},
+                            source="<synthetic-draft>")
+        self.assertNotEqual(self.adapter.key(), other.key())
+
+    def test_observed_kinds_are_read_from_the_tags_not_a_list(self):
+        # Nothing here consults a keyword list: the kinds ARE the words the repo
+        # wrote before a c.s.n number.
+        kinds = self.adapter.observed_kinds(min_count=1)
+        self.assertEqual(set(kinds),
+                         {"Definition", "Exercise", "Lemma", "Example", "Remark"})
+        self.assertEqual(self.adapter.observed_kinds(min_count=2), ("Exercise",))
+
     def test_dry_run_reports_the_stage_0_gate_counts(self):
-        report = self.adapter.dry_run()
+        report = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
         for key in ("declarations", "tagged", "items", "untagged", "private", "rejects"):
             self.assertIn(key, report)
         self.assertEqual(report["untagged"], 1)
         self.assertEqual(report["private"], 1)
+
+    def test_dry_run_reports_the_discovered_sources(self):
+        report = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
+        self.assertIn("sources", report)
+        self.assertEqual(report["rows_by_source"], {SOURCE_ID: len(self.rows)})
 
     def test_key_changes_when_a_source_file_changes(self):
         before = self.adapter.key()
@@ -372,9 +460,59 @@ class DocstringTagsSyntheticTest(unittest.TestCase):
         self.assertEqual(before, self.adapter.key())
 
     def test_extraction_is_deterministic(self):
-        again = list(self.adapter.extract(book_sha=BOOK_SHA))
+        again = list(self.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
         self.assertEqual(json.dumps(self.rows, sort_keys=True),
                          json.dumps(again, sort_keys=True))
+
+
+class GeneratedMirrorTest(unittest.TestCase):
+    """A generated copy of the companion's own modules inside the glob.
+
+    tao-measure-lean ships `Blueprint/Gen/S_*.lean`, a generated mirror of
+    `TaoMeasure/Section_*.lean` with the same declaration names, so the
+    onboarding default glob `**/*.lean` reads every declaration twice.  Neither
+    copy can be preferred mechanically -- a stub and the proof it mirrors look
+    identical from here -- so the collision is REPORTED at the stage where
+    narrowing `glob:` is still one edit.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="cf-mirror-",
+                                        dir=os.environ.get("CF_TEST_TMP") or None))
+        (cls.tmp / "Src").mkdir()
+        (cls.tmp / "Gen").mkdir()
+        (cls.tmp / "Src" / "Sample.lean").write_text(SAMPLE, encoding="utf-8")
+        (cls.tmp / "Gen" / "Mirror.lean").write_text(SAMPLE, encoding="utf-8")
+        cls.adapter = from_config({
+            "adapter": "docstring_tags", "name": "demo", "repo": str(cls.tmp),
+            "glob": "**/*.lean", "item_kinds": list(KINDS),
+        }, source="<mirror>")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def test_the_collision_is_reported_with_both_files(self):
+        report = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
+        self.assertEqual(report["duplicate_declarations"], 5)   # the named declarations
+        files = {tuple(d["files"]) for d in report["duplicates"]}
+        self.assertEqual(files, {("Gen/Mirror.lean", "Src/Sample.lean")})
+
+    def test_neither_copy_is_silently_dropped(self):
+        rows = list(self.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
+        self.assertEqual(len(rows), 12)
+        problems = base.validate_rows(rows, kinds=KINDS)
+        self.assertTrue(any("duplicate" in p for p in problems),
+                        "the schema gate is what refuses the ambiguity")
+
+    def test_a_narrowed_glob_is_the_fix(self):
+        adapter = from_config({**self.adapter.config, "glob": "Src/*.lean"},
+                              source="<mirror-narrowed>")
+        rows = list(adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
+        self.assertEqual(base.validate_rows(rows, kinds=KINDS), [])
+        self.assertEqual(adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
+                         ["duplicate_declarations"], 0)
 
 
 @unittest.skipUnless(env_path("CF_TML"), "set CF_TML to the tao-measure-lean checkout")
@@ -389,7 +527,7 @@ class DocstringTagsBaselineTest(unittest.TestCase):
             "glob": "TaoMeasure/Section_*.lean", "item_kinds": list(KINDS),
             "sorry": {"exercise_sorry": "permanent", "gap_marker": "sorry -- TODO"},
         }, source="<CF_TML>")
-        cls.rows = list(cls.adapter.extract(book_sha=BOOK_SHA))
+        cls.rows = list(cls.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
 
     def test_at_least_the_baseline_row_count(self):
         self.assertGreaterEqual(len(self.rows), 1157, "ours.jsonl had 1,157 rows")
@@ -405,6 +543,45 @@ class DocstringTagsBaselineTest(unittest.TestCase):
 
     def test_anonymous_examples_are_extracted(self):
         self.assertTrue(any(r["anonymous"] for r in self.rows))
+
+    def test_every_row_names_the_published_edition_it_was_read_against(self):
+        self.assertEqual({r["source_id"] for r in self.rows}, {SOURCE_ID})
+        self.assertEqual({r["source_sha"] for r in self.rows}, {SOURCE_SHA})
+
+    def test_discovery_finds_this_repo_s_two_editions_and_its_own_grammar(self):
+        """S1 + S5: the formalization.yaml sources list and CLAUDE.md's editions.
+
+        tao-measure-lean commits no PDF, names the book in `formalization.yaml`
+        and states BOTH editions in CLAUDE.md as truncated shas.  The adapter
+        reports them; nothing here adopts a truncated sha as an identity.
+        """
+        claims = self.adapter.discover_sources()
+        by_signal = {}
+        for claim in claims:
+            by_signal.setdefault(claim.signal, []).append(claim)
+
+        self.assertIn("formalization_yaml", by_signal)
+        titled = by_signal["formalization_yaml"][0]
+        self.assertIn("Measure Theory", titled.title)
+        self.assertTrue(titled.authors)
+
+        prefixes = {c.sha256_prefix for c in by_signal.get("prose", [])}
+        self.assertLessEqual({"62d95658", "64498329"}, prefixes,
+                             "CLAUDE.md states both editions")
+        self.assertFalse(any(c.sha256 for c in by_signal.get("prose", [])
+                             if c.sha256_prefix),
+                         "a truncated sha must never be written as an identity")
+
+        # this kind's own signals are ranked first, and they carry the grammar
+        self.assertIn(claims[0].signal, set(self.adapter.PRIMARY_SIGNALS))
+        self.assertLessEqual({"Exercise", "Definition", "In-text"}, set(claims[0].kinds))
+
+    def test_the_item_kinds_come_from_the_repo_s_tags(self):
+        kinds = self.adapter.observed_kinds()
+        self.assertLessEqual({"Definition", "Lemma", "Theorem", "Exercise", "In-text"},
+                             set(kinds))
+        # frequency order, most-tagged first: Exercise dominates this repo
+        self.assertEqual(kinds[0], "Exercise")
 
     def test_sorries_are_classified_not_reported(self):
         self.assertTrue(all(r["sorry_class"] in ("exercise", "gap")
@@ -440,10 +617,51 @@ class AttributionTableBaselineTest(unittest.TestCase):
             "adapter": "attribution_table", "name": "adam", "repo": str(cls.repo),
             "page_offset": 16, "item_kinds": list(KINDS),
         }, source="<CF_MT>")
-        cls.rows = list(cls.adapter.extract(book_sha=BOOK_SHA))
+        cls.rows = list(cls.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
 
     def test_row_count(self):
         self.assertEqual(len(self.rows), 562)
+
+    def test_every_row_names_the_edition_the_ledger_pins(self):
+        self.assertEqual({r["source_id"] for r in self.rows}, {SOURCE_ID})
+        self.assertEqual({r["source_sha"] for r in self.rows}, {SOURCE_SHA})
+
+    def test_discovery_finds_the_ledger_sha_the_official_record_and_the_book_page(self):
+        """S2 + S3 + S7: the three signals this convention owns.
+
+        measure_theory's ledger pins the bytes, official-source.json carries the
+        author's download URL and the book page, and the README cites the page
+        the errata live on.
+        """
+        claims = self.adapter.discover_sources()
+        by_signal = {}
+        for claim in claims:
+            by_signal.setdefault(claim.signal, []).append(claim)
+
+        ledger = by_signal["ledger_source"][0]
+        self.assertEqual(ledger.sha256, SOURCE_SHA)
+        self.assertIn("sources/gsm-126-tao5-measure-book.pdf", ledger.pdf_hints)
+
+        official = by_signal["official_source_json"][0]
+        self.assertEqual(official.sha256, SOURCE_SHA)
+        self.assertTrue(any(u.endswith(".pdf") for u in official.urls))
+        self.assertTrue(official.book_page_url.startswith("https://"))
+
+        self.assertIn("citation", by_signal)
+        self.assertTrue(by_signal["citation"][0].urls)
+
+        # this kind's own signals are ranked first
+        self.assertIn(claims[0].signal, set(self.adapter.PRIMARY_SIGNALS))
+
+    def test_the_item_kinds_come_from_the_overlay_labels(self):
+        kinds = self.adapter.observed_kinds()
+        self.assertLessEqual({"Definition", "Exercise", "Theorem"}, set(kinds))
+
+    def test_dry_run_reports_the_discovered_sources(self):
+        report = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
+        signals = {claim["signal"] for claim in report["sources"]}
+        self.assertLessEqual({"ledger_source", "official_source_json"}, signals)
+        self.assertEqual(report["rows_by_source"], {SOURCE_ID: 562})
 
     def test_every_row_validates(self):
         self.assertEqual(base.validate_rows(self.rows, kinds=KINDS), [])
@@ -471,7 +689,12 @@ class AttributionTableBaselineTest(unittest.TestCase):
 
 @unittest.skipUnless(env_path("CF_TML"), "set CF_TML to the tao-measure-lean checkout")
 class ExtractCommandTest(unittest.TestCase):
-    """`cf extract` writes, is idempotent, and is byte-stable."""
+    """`cf extract` writes, is idempotent, is byte-stable, and stamps the source.
+
+    The fixture is a v2 WORKSPACE, not a campaign: a companion is audited against
+    a LIST of sources, so the sha a row was read against is per source and lives
+    under ``sources.<id>``, never at the top level.
+    """
 
     @classmethod
     def setUpClass(cls):
@@ -480,18 +703,29 @@ class ExtractCommandTest(unittest.TestCase):
         log.set_level(0)                     # the command's own output is not the test's
         cls.tmp = Path(tempfile.mkdtemp(prefix="cf-extract-",
                                         dir=os.environ.get("CF_TEST_TMP") or None))
-        (cls.tmp / "campaign.yaml").write_text(
-            "version: 1\n"
-            "book:\n"
-            "  id: tao-measure\n"
-            f"  sha256: {BOOK_SHA}\n"
-            "  offset: 16\n"
-            "  kinds: [Definition, Lemma, Theorem, Proposition, Corollary, Exercise,"
-            " Example, Remark, Strategy, Claim]\n"
+        (cls.tmp / "workspace.yaml").write_text(
+            "version: 2\n"
+            "workspace:\n"
+            "  name: extract-test\n"
             "companions:\n"
-            "  - name: ours\n"
+            "  ours:\n"
             f"    repo: {env_path('CF_TML')}\n"
             "    adapter: docstring_tags\n"
+            f"    sources: [{SOURCE_ID}]\n"
+            f"    anchor_source: {SOURCE_ID}\n"
+            "    owner: test\n"
+            "    write_policy: read_only\n"
+            "sources:\n"
+            f"  {SOURCE_ID}:\n"
+            "    title: An Introduction to Measure Theory\n"
+            "    edition: AMS GSM 126 (published pagination)\n"
+            f"    sha256: {SOURCE_SHA}\n"
+            "    offset: 16\n"
+            "    offset_confidence: 0.996\n"
+            "    kinds: [Definition, Lemma, Theorem, Proposition, Corollary, Exercise,"
+            " Example, Remark, Strategy, Claim]\n"
+            "    role: audited\n"
+            "    confirmed: true\n"
             "hosts:\n"
             "  allowlist: []\n", encoding="utf-8")
         comp = cls.tmp / "companions" / "ours"
@@ -503,6 +737,9 @@ class ExtractCommandTest(unittest.TestCase):
             "granularity: item\n"
             'glob: "TaoMeasure/Section_*.lean"\n'
             "exclude: []\n"
+            "sources:\n"
+            f"  default: {SOURCE_ID}\n"
+            "  map: []\n"
             "tag:\n"
             "  position: docstring_start\n"
             "sorry:\n"
@@ -519,8 +756,8 @@ class ExtractCommandTest(unittest.TestCase):
         import argparse
 
         from cfcmd import extract as extract_cmd
-        args = argparse.Namespace(campaign=str(self.tmp), companions=None, repo=None,
-                                  force=False, dry_run=False, allow_missing_book_sha=False)
+        args = argparse.Namespace(workspace=str(self.tmp), companions=None, repo=None,
+                                  force=False, dry_run=False, allow_missing_source_sha=False)
         for k, v in flags.items():
             setattr(args, k, v)
         return extract_cmd.run(args)
@@ -534,7 +771,11 @@ class ExtractCommandTest(unittest.TestCase):
         state = json.loads((self.tmp / "companions" / "ours" / "state.json").read_text())
         self.assertEqual(state["extract"]["rows"], len(first.splitlines()))
         self.assertTrue(state["extract"]["key"].startswith("sha256:"))
-        self.assertEqual(state["book_sha"], BOOK_SHA)
+        # v2: the sha a table was built against is PER SOURCE, not top level.
+        self.assertNotIn("book_sha", state)
+        self.assertEqual(state["sources"][SOURCE_ID]["sha"], SOURCE_SHA)
+        self.assertEqual(state["sources"][SOURCE_ID]["rows"], len(first.splitlines()))
+        self.assertEqual(state["anchor_source"], SOURCE_ID)
 
         mtime = out.stat().st_mtime_ns
         self.assertEqual(self._run(), 0)          # unchanged key: a no-op
@@ -543,11 +784,40 @@ class ExtractCommandTest(unittest.TestCase):
         self.assertEqual(self._run(force=True), 0)
         self.assertEqual(out.read_bytes(), first)  # byte-stable
 
-    def test_every_written_row_carries_the_book_sha(self):
+    def test_every_written_row_carries_the_source_id_and_sha(self):
         self._run()
         out = self.tmp / "companions" / "ours" / "statements.jsonl"
         rows = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
-        self.assertTrue(all(r["book_sha"] == BOOK_SHA for r in rows))
+        self.assertTrue(all(r["source_id"] == SOURCE_ID for r in rows))
+        self.assertTrue(all(r["source_sha"] == SOURCE_SHA for r in rows))
+        self.assertTrue(all("book_sha" not in r for r in rows))
+
+    def test_a_source_with_no_sha_is_refused_rather_than_stamped_null(self):
+        """A row stamped with an unidentified edition is the batch-1 mistake."""
+        from cflib.workspace import Workspace
+        ws = Workspace.load(self.tmp)
+        original = dict(ws.data["sources"][SOURCE_ID])
+        ws.data["sources"][SOURCE_ID].pop("sha256")
+        ws.save()
+        try:
+            self.assertEqual(self._run(force=True), 1)   # reported, not raised
+        finally:
+            ws = Workspace.load(self.tmp)
+            ws.data["sources"][SOURCE_ID] = original
+            ws.save()
+
+    def test_a_row_attributed_outside_the_companion_s_sources_is_refused(self):
+        """The table's own edition gate: no row may name a source nobody bound."""
+        from cfcmd import extract as extract_cmd
+        rows = [valid_row(source_id="an-edition-nobody-bound")]
+        problems = extract_cmd._source_problems(rows, {SOURCE_ID: SOURCE_SHA}, "ours")
+        self.assertTrue(any("an-edition-nobody-bound" in p for p in problems))
+
+    def test_a_row_stamped_with_another_edition_s_sha_is_refused(self):
+        from cfcmd import extract as extract_cmd
+        rows = [valid_row(source_id=SOURCE_ID, source_sha=DRAFT_SHA)]
+        problems = extract_cmd._source_problems(rows, {SOURCE_ID: SOURCE_SHA}, "ours")
+        self.assertTrue(any("source_sha" in p for p in problems))
 
 
 class TestRegistryMatchesTheVocabulary(unittest.TestCase):

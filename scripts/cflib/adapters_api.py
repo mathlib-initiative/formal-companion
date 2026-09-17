@@ -16,7 +16,7 @@ from __future__ import annotations
 import subprocess
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, ClassVar, Iterator
+from typing import Any, ClassVar, Iterator, Mapping
 
 from .errors import AdapterError
 from .hashing import sha256_json
@@ -85,15 +85,42 @@ class Adapter(ABC):
         score, evidence = detect_scores(Path(repo)).get(cls.kind, (0.0, {}))
         return score, evidence
 
+    #: The repo signals (:data:`cflib.discovery.SIGNALS`) this convention reads
+    #: as its own.  They are ranked first by :meth:`discover_sources`, and they
+    #: are the ones a subclass is responsible for enriching -- for
+    #: ``docstring_tags`` the mathlib-initiative ``formalization.yaml`` and the
+    #: Autoform ``graph.json``, for ``attribution_table`` the ledger's source
+    #: block, ``official-source.json`` and the README's book-page link.
+    PRIMARY_SIGNALS: ClassVar[tuple[str, ...]] = ()
+
     def discover_sources(self, repo: str | Path) -> list:
         """Source claims from the signals THIS kind knows about (S4.3).
 
-        The base implementation runs the generic signals (prose, filesystem,
-        citation); a subclass adds the structured ones it understands and calls
-        ``super().discover_sources(repo)``.
+        The base implementation runs every repo signal, ranked for this kind:
+        design S4.3 is explicit that ALL signals run for EVERY adapter kind,
+        because a repo may carry a signal that "belongs" to another convention
+        (tao-measure-lean has both a ``formalization.yaml`` and an Autoform
+        ``graph.json``).  The kind only orders the claims -- its own signals
+        first, then by confidence -- so a subclass never has to re-implement a
+        parser cflib.discovery already owns.
+
+        A subclass calls ``super().discover_sources(repo)`` and then adds what
+        only its convention can say: chiefly the item kinds its own tags use,
+        which no signal over the SOURCE can supply when the PDF is not on this
+        machine (:attr:`cflib.discovery.SourceClaim.kinds`).
         """
         from .discovery import discover_sources
-        return discover_sources(Path(repo), adapter=self.kind)
+        claims = list(discover_sources(Path(repo), adapter=self.kind))
+        primary = set(self.PRIMARY_SIGNALS)
+        claims.sort(key=lambda c: (c.signal not in primary, -c.confidence, c.path))
+        return claims
+
+    def observed_kinds(self, repo: str | Path) -> tuple[str, ...]:
+        """Item kinds THIS repo's tags actually use, in descending frequency.
+
+        Empty by default; a subclass that can read its own tags overrides it.
+        """
+        return ()
 
     def source_for(self, *, file: Path, tag: str, decl: str) -> str:
         """Which source a row belongs to.
@@ -120,6 +147,47 @@ class Adapter(ABC):
             f"{self.name}: cannot tell which source {decl} ({file}) belongs to",
             hint="set sources.default in adapter.yaml, or add a sources.map rule")
 
+    def default_source(self, sources: "Mapping[str, str] | None" = None) -> str:
+        """The source_id an unmapped row belongs to.
+
+        ``adapter.yaml``'s ``sources.default`` when it names a source the caller
+        actually bound (or when nothing was bound at all, as in a stand-alone
+        regression run); otherwise the single bound source.  A companion bound to
+        several sources with no usable default is an ERROR rather than a guess:
+        attributing a row to the wrong edition means judging a finding against
+        the wrong pages, which is the failure this whole model exists to stop.
+        """
+        bound = dict(sources or {})
+        declared = str((self.config.get("sources") or {}).get("default") or "")
+        if declared and (not bound or declared in bound):
+            return declared
+        if len(bound) == 1:
+            return next(iter(bound))
+        if declared:
+            raise AdapterError(
+                f"{self.name}: sources.default is {declared!r}, which is not one of the "
+                f"sources this companion is bound to ({', '.join(sorted(bound)) or 'none'})",
+                hint="re-run `cf onboard <repo> --force` so adapter.yaml names the anchor "
+                     "edition again, or fix sources.default by hand")
+        raise AdapterError(
+            f"{self.name}: cannot tell which source these rows belong to "
+            f"(bound: {', '.join(sorted(bound)) or 'none'})",
+            hint="set sources.default in adapter.yaml, or add sources.map rules")
+
+    def bind_default_source(self, source_id: str) -> None:
+        """Pin which source unmapped rows belong to (the companion's anchor).
+
+        `cf onboard` decides the anchor edition MECHANICALLY and may re-decide it
+        after extracting, so the anchor the workspace holds is fresher than the
+        one written into adapter.yaml; `cf extract` pins the workspace's.  It
+        also changes :meth:`key_inputs`, which is correct: the same repo read
+        against another edition is another table and must not replay this one.
+        """
+        cfg = self.config.setdefault("sources", {})
+        if not isinstance(cfg, dict):
+            raise AdapterError(f"{self.name}: adapter.yaml `sources:` must be a mapping")
+        cfg["default"] = str(source_id)
+
     # -- required ------------------------------------------------------
     @abstractmethod
     def dry_run(self, repo: str | Path) -> dict:
@@ -138,9 +206,9 @@ class Adapter(ABC):
         """Yield statement rows (row schema v2), each stamped with its source.
 
         ``sources`` maps ``source_id -> source_sha`` for every source this
-        companion is bound to.  (The shipped adapters still take the older
-        ``extract(repo, book_sha)``; `cf onboard` calls whichever they expose and
-        the ADAPTERS package unifies them.)
+        companion is bound to.  It is the ONLY signature: a row that does not
+        say which source it is about cannot be paired, gated or tallied, so
+        there is no spelling of this call that omits the sources.
         """
 
     # -- idempotence ---------------------------------------------------
@@ -158,9 +226,17 @@ class Adapter(ABC):
             "adapter_kind": self.kind,
             "config": self.config,
             "repo_commit": self.repo_commit(self.config.get("repo")),
-            "source_shas": getattr(self.workspace, "source_sha", None)
-                           or (self.config.get("sources") or {}).get("default"),
+            "source_shas": self.bound_source_shas(),
         }
+
+    def bound_source_shas(self) -> dict:
+        """``{source_id: source_sha}`` for every source this companion reads.
+
+        Part of the extract key: the same repo extracted against another edition
+        is a different table, and replaying the old one is exactly how batch-1's
+        anchor findings came to be judged against the 2011 draft.
+        """
+        return {}
 
     def key(self) -> str:
         """Idempotence key: unchanged key means `cf extract` is a no-op."""
@@ -211,9 +287,4 @@ def load(adapter_yaml: str | Path, workspace: Any | None = None) -> Adapter:
         raise AdapterError("scripts/adapters/__init__.py does not expose load(adapter_yaml)")
     if workspace is None:
         return loader(adapter_yaml)
-    try:
-        return loader(adapter_yaml, workspace=workspace)
-    except TypeError:
-        # the ADAPTERS package has not been migrated yet: its loader still spells
-        # the keyword `campaign`. One call, one fallback, and it goes away with it.
-        return loader(adapter_yaml, campaign=workspace)
+    return loader(adapter_yaml, workspace=workspace)

@@ -11,8 +11,16 @@ tables"), which generalises the three row shapes that were produced by hand:
 v2 adds the fields the downstream gates need: the parsed item id and its
 sub-part next to the verbatim tag, a fully qualified ``decl``, the Lean
 keyword, definition bodies, the sorry classification, the printed page as an
-int with the provenance of the anchor, and ``book_sha`` so a row can never be
-compared against a different edition.
+int with the provenance of the anchor, and the pair ``source_id`` /
+``source_sha`` so a row says WHICH source it is about and which bytes of it.
+
+``source_id`` is not decoration.  An item is the pair ``(source_id, item)``
+(docs/design/multi-source-model.md S6.1): ``Exercise 1.3.19`` of one source is
+not the same item as ``Exercise 1.3.19`` of another, and a row that does not
+name its source cannot be paired, gated or tallied.  ``source_sha`` is the
+sha256 of that source's PDF bytes, so a row can never be compared against a
+different edition -- the mistake that had batch-1's anchor findings judged
+against the 2011 draft.
 """
 
 from __future__ import annotations
@@ -34,14 +42,15 @@ __all__ = [
 
 #: Every key of a statement-table row, in the order they are written.
 #: ``kind`` is the LEAN kind and ``item_kind`` the BOOK item kind, following
-#: cflib.adapters_api.ROW_OPTIONAL_FIELDS; the eight fields that library marks
-#: required (item, item_raw, decl, file, line, statement, repo, book_sha) are
-#: all present here.
+#: cflib.adapters_api.ROW_OPTIONAL_FIELDS; the nine fields that library marks
+#: required (item, item_raw, source_id, source_sha, decl, file, line, statement,
+#: repo) are all present here.
 ROW_FIELDS: tuple[str, ...] = (
     "item_raw",        # the verbatim tag / label from the repo
     "item",            # canonical id: "Exercise 1.3.19" | "In-text p.29"
     "sub",             # "" | "(iv)" | "(3)"
     "item_kind",       # book item kind: Definition | Exercise | In-text | ...
+    "source_id",       # which source this row is about; (source_id, item) is the item
     "decl",            # fully qualified name, or example@<file>:<line>
     "kind",            # Lean keyword: theorem | def | example | ...
     "namespace",       # enclosing namespace ("" when none)
@@ -59,7 +68,7 @@ ROW_FIELDS: tuple[str, ...] = (
     "anonymous",       # unnameable declaration (example) with a synthetic id
     "private",         # declared `private`
     "granularity",     # item | node (ledger repos before curation)
-    "book_sha",        # sha256 of the pinned book PDF
+    "source_sha",      # sha256 of that source's PDF bytes
 )
 
 ANCHOR_SOURCES = frozenset({"own", "crossref", "none"})
@@ -85,7 +94,7 @@ def make_row(**kwargs: Any) -> dict:
 def validate_row(
     row: Any,
     kinds: Sequence[str] | None = None,
-    require_book_sha: bool = True,
+    require_source_sha: bool = True,
     index: int | None = None,
 ) -> list[str]:
     """Return a list of human-readable problems with one row (empty = valid)."""
@@ -112,6 +121,9 @@ def validate_row(
          "a whitespace-free declaration id")
     need("item_kind", isinstance(row.get("item_kind"), str) and bool(row.get("item_kind")),
          "a non-empty string")
+    # The item half of (source_id, item) is meaningless without the other half.
+    need("source_id", isinstance(row.get("source_id"), str) and bool(row.get("source_id")),
+         "a non-empty source_id")
     if kinds is not None and isinstance(row.get("item_kind"), str) and row["item_kind"] not in set(kinds):
         problems.append(f"{where}: item_kind={row['item_kind']!r} is not one of {sorted(set(kinds))}")
     need("kind", isinstance(row.get("kind"), str) and bool(row.get("kind")), "a non-empty string")
@@ -144,30 +156,40 @@ def validate_row(
         problems.append(f"{where}: sorry=False but sorry_class={row.get('sorry_class')!r}")
     if row.get("sorry") is True and row.get("sorry_class") == "none":
         problems.append(f"{where}: sorry=True but sorry_class='none'")
-    sha = row.get("book_sha")
-    if require_book_sha:
-        need("book_sha", isinstance(sha, str) and bool(_SHA_RE.match(sha or "")), "a sha256 hex digest")
+    sha = row.get("source_sha")
+    if require_source_sha:
+        need("source_sha", isinstance(sha, str) and bool(_SHA_RE.match(sha or "")),
+             "a sha256 hex digest")
     elif sha is not None:
-        need("book_sha", isinstance(sha, str) and bool(_SHA_RE.match(sha)), "a sha256 hex digest or null")
+        need("source_sha", isinstance(sha, str) and bool(_SHA_RE.match(sha)),
+             "a sha256 hex digest or null")
     return problems
 
 
 def validate_rows(
     rows: Iterable[dict],
     kinds: Sequence[str] | None = None,
-    require_book_sha: bool = True,
+    require_source_sha: bool = True,
     max_problems: int = 50,
 ) -> list[str]:
-    """Validate a whole table: per-row schema plus (item, sub, decl) uniqueness."""
+    """Validate a whole table: per-row schema plus per-source uniqueness.
+
+    Uniqueness is keyed on the SOURCE too: one declaration may legitimately
+    formalise ``Exercise 1.3.19`` of two different sources, and calling that a
+    duplicate would refuse a table the model is built to allow.
+    """
     problems: list[str] = []
     seen: dict[tuple, int] = {}
     for i, row in enumerate(rows):
-        problems.extend(validate_row(row, kinds=kinds, require_book_sha=require_book_sha, index=i))
+        problems.extend(validate_row(row, kinds=kinds, require_source_sha=require_source_sha,
+                                     index=i))
         if isinstance(row, dict):
-            key = (row.get("repo"), row.get("item"), row.get("sub"), row.get("decl"))
+            key = (row.get("repo"), row.get("source_id"), row.get("item"),
+                   row.get("sub"), row.get("decl"))
             if key in seen:
                 problems.append(
-                    f"row {i}: duplicate (repo, item, sub, decl) {key!r}, first seen at row {seen[key]}")
+                    f"row {i}: duplicate (repo, source_id, item, sub, decl) {key!r}, "
+                    f"first seen at row {seen[key]}")
             else:
                 seen[key] = i
         if len(problems) >= max_problems:
@@ -179,7 +201,9 @@ def validate_rows(
 def row_sort_key(row: dict) -> tuple:
     """Deterministic table order: book order is applied by the caller's parser.
 
-    Falls back to (file, line, decl) so that two runs over the same tree always
-    produce byte-identical statements.jsonl.
+    Falls back to (source_id, file, line, decl) so that two runs over the same
+    tree always produce byte-identical statements.jsonl, and a table bound to
+    two sources groups by source instead of interleaving them.
     """
-    return (str(row.get("file") or ""), int(row.get("line") or 0), str(row.get("decl") or ""))
+    return (str(row.get("source_id") or ""), str(row.get("file") or ""),
+            int(row.get("line") or 0), str(row.get("decl") or ""))

@@ -16,6 +16,11 @@ in one place:
 Item kinds and the printed/PDF page offset come from the WORKSPACE's record of
 the source being extracted (``sources.<id>.kinds`` / ``.offset``) when the loader
 is given one, so no adapter hard-codes the Tao kind list or the ``+16`` offset.
+Which source that is comes from :class:`SourceBinding`: ``adapter.yaml``'s
+``sources.default`` and ``sources.map``, narrowed to the ids `cf extract` passes
+in ``extract(repo, sources={id: sha})``.  An item is the pair
+``(source_id, item)``, so every row carries both halves and the sha of the bytes
+it was read against.
 
 ``key()`` (inherited) hashes ``key_inputs()``; every adapter here extends it
 with the sha of the content it actually reads, so ``cf extract`` is a no-op
@@ -28,7 +33,7 @@ target-refinement sha for ledger repos").
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Mapping, Sequence
 
 from cflib.adapters_api import Adapter as CoreAdapter
 from cflib.errors import AdapterError
@@ -36,8 +41,8 @@ from cflib.hashing import sha256_file, sha256_text
 
 from . import yamlio
 
-__all__ = ["Adapter", "AdapterError", "load", "from_config", "register", "registry",
-           "sha_of_files"]
+__all__ = ["Adapter", "AdapterError", "SourceBinding", "load", "from_config", "register",
+           "registry", "sha_of_files"]
 
 _REGISTRY: dict[str, type["Adapter"]] = {}
 
@@ -67,6 +72,7 @@ class Adapter(CoreAdapter):
                  source: str | None = None):
         super().__init__(config, name=name, workspace=workspace)
         self.source = source or f"adapter({self.kind})"
+        self._claims_cache: dict[str, list] = {}
         if not self.name:
             raise AdapterError(f"{self.source}: 'name' is required (the companion's short name)")
         self.validate_config()
@@ -124,10 +130,100 @@ class Adapter(CoreAdapter):
                 selected.pop(str(p), None)
         return list(selected.values())
 
-    # -- book parameters ---------------------------------------------------
-    def item_kinds(self) -> tuple[str, ...]:
-        """Item kinds: the bound source's list, else the adapter's own."""
-        source_kinds = getattr(self.workspace, "kinds", None) if self.workspace else None
+    # -- discovery (design S4.3) -------------------------------------------
+    def discover_sources(self, repo: str | Path | None = None) -> list:
+        """Source claims for this repo, this kind's own signals first.
+
+        Subclasses add the item kinds their own tags reveal
+        (:meth:`observed_kinds`) to the claims coming from
+        :attr:`PRIMARY_SIGNALS`, which is the one fact about a source that can
+        only be read off the COMPANION -- and the only kinds there are when the
+        PDF is not on this machine for `cflib.inference.infer_kinds` to read.
+        """
+        path = self.resolve_repo(repo)
+        cached = self._claims_cache.get(str(path))
+        if cached is not None:
+            return list(cached)
+        claims = super().discover_sources(path)
+        kinds = self.observed_kinds(path)
+        if kinds:
+            primary = [c for c in claims if c.signal in set(self.PRIMARY_SIGNALS)]
+            # No claim from this convention's own signals: there is no better
+            # place to hang the grammar than every candidate, and merging unions
+            # them into the repo's source(s) anyway.
+            for claim in (primary or claims):
+                claim.kinds = tuple(dict.fromkeys(tuple(claim.kinds) + kinds))
+        self._claims_cache[str(path)] = list(claims)
+        return list(claims)
+
+    def observed_kinds(self, repo: str | Path | None = None) -> tuple[str, ...]:
+        """Item kinds THIS repo's tags use (empty when the kind cannot tell)."""
+        return ()
+
+    def source_report(self, repo: str | Path | None = None) -> list[dict]:
+        """:meth:`discover_sources` flattened for ``dry_run`` and `cf onboard`.
+
+        Never raises: a repo whose metadata cannot be read must still report its
+        parse counts, and the reason is carried in the report rather than thrown.
+        """
+        try:
+            claims = self.discover_sources(repo)
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            return [{"signal": "error", "path": "",
+                     "note": f"{exc.__class__.__name__}: {exc}"}]
+        out: list[dict] = []
+        for claim in claims:
+            body = {
+                "signal": claim.signal,
+                "path": claim.path,
+                "confidence": round(float(claim.confidence), 3),
+            }
+            for field_name in ("title", "edition", "isbn", "sha256", "sha256_prefix",
+                               "book_page_url"):
+                value = getattr(claim, field_name, "")
+                if value:
+                    body[field_name] = value
+            for field_name in ("authors", "pdf_hints", "urls", "kinds"):
+                value = getattr(claim, field_name, ())
+                if value:
+                    body[field_name] = list(value)
+            if claim.offset_hint is not None:
+                body["offset_hint"] = claim.offset_hint
+            if claim.anchor_hint:
+                body["anchor_hint"] = claim.anchor_hint[:200]
+            out.append(body)
+        return out
+
+    # -- which source, and what it says ------------------------------------
+    def bind(self, sources: "Mapping[str, str] | None" = None) -> "SourceBinding":
+        """The row -> (source_id, source_sha) attributor for one extraction."""
+        return SourceBinding(self, sources)
+
+    def source_ref(self, source_id: str | None):
+        """What the workspace records about one source, or None.
+
+        Accepts a real :class:`cflib.workspace.Workspace` (``source(id)`` ->
+        SourceRef) and any object that simply exposes ``kinds`` / ``offset`` /
+        ``sha256``, which is what the regression tests and `cf extract --repo`
+        hand in.
+        """
+        ws = self.workspace
+        if ws is None:
+            return None
+        getter = getattr(ws, "source", None)
+        if callable(getter):
+            if not source_id:
+                return None
+            try:
+                return getter(source_id)
+            except Exception:                 # noqa: BLE001 - an unknown id is not fatal here
+                return None
+        return ws
+
+    def item_kinds(self, source_id: str | None = None) -> tuple[str, ...]:
+        """Item kinds of ONE source: the grammar is per source, never global."""
+        ref = self.source_ref(source_id if source_id is not None else self._primary_source())
+        source_kinds = getattr(ref, "kinds", None) if ref is not None else None
         kinds = list(source_kinds) if source_kinds else list(self.config.get("item_kinds") or [])
         if not kinds:
             from .itemtag import DEFAULT_KEYWORDS
@@ -136,34 +232,55 @@ class Adapter(CoreAdapter):
             kinds.append("In-text")
         return tuple(str(k) for k in kinds)
 
-    def numbered_kinds(self) -> tuple[str, ...]:
+    def numbered_kinds(self, source_id: str | None = None) -> tuple[str, ...]:
         """Item kinds that carry a ``c.s.n`` number (everything but In-text)."""
-        return tuple(k for k in self.item_kinds() if k != "In-text")
+        return tuple(k for k in self.item_kinds(source_id) if k != "In-text")
 
-    def page_offset(self) -> int:
+    def page_offset(self, source_id: str | None = None) -> int:
         """printed page = PDF page - offset (the bound source, else adapter.yaml)."""
-        if self.workspace is not None and getattr(self.workspace, "offset", None) is not None:
-            return int(self.workspace.offset)
-        offset = self.config.get("page_offset")
+        ref = self.source_ref(source_id if source_id is not None else self._primary_source())
+        offset = getattr(ref, "offset", None) if ref is not None else None
+        if offset is None:
+            offset = self.config.get("page_offset")
         if offset is None:
             raise AdapterError(
-                f"{self.source}: no page offset",
+                f"{self.source}: no page offset for {source_id or 'this companion'}",
                 hint="set the source's offset in workspace.yaml (16 for the published GSM 126) "
                      "or page_offset in adapter.yaml")
         return int(offset)
 
-    def book_sha(self, book_sha: str | None = None) -> str | None:
-        if book_sha:
-            return book_sha
-        return getattr(self.workspace, "book_sha", None) if self.workspace else None
+    def source_sha(self, source_id: str | None = None) -> str | None:
+        """sha256 of the bytes a row was read against, from the workspace."""
+        ref = self.source_ref(source_id if source_id is not None else self._primary_source())
+        if ref is None:
+            return None
+        for attr in ("sha256", "source_sha"):
+            value = getattr(ref, attr, None)
+            if value:
+                return str(value)
+        return None
+
+    def _primary_source(self) -> str:
+        """``sources.default`` -- the id used when a caller names none."""
+        return str((self.config.get("sources") or {}).get("default") or "")
+
+    def bound_source_shas(self) -> dict:
+        """``{source_id: sha}`` for every source adapter.yaml names (the key)."""
+        cfg = self.config.get("sources") or {}
+        ids = [str(cfg.get("default"))] if cfg.get("default") else []
+        for rule in cfg.get("map") or []:
+            if isinstance(rule, dict) and rule.get("source"):
+                ids.append(str(rule["source"]))
+        return {sid: self.source_sha(sid) for sid in dict.fromkeys(ids)}
 
     # -- the interface -----------------------------------------------------
     def dry_run(self, repo: str | Path | None = None) -> dict:
         """Parse without writing: counts, rejects and a few sample rows."""
         raise NotImplementedError
 
-    def extract(self, repo: str | Path | None = None, book_sha: str | None = None) -> Iterator[dict]:
-        """Yield schema-v2 statement rows for this companion."""
+    def extract(self, repo: str | Path | None = None, *,
+                sources: "Mapping[str, str] | None" = None) -> Iterator[dict]:
+        """Yield schema-v2 statement rows, each stamped with its source."""
         raise NotImplementedError
 
     def key_inputs(self) -> dict:
@@ -174,6 +291,9 @@ class Adapter(CoreAdapter):
             "config": self.config,
             "repo": str(repo),
             "repo_commit": self.repo_commit(repo),
+            # the bound editions: extracting the same tree against another
+            # source is another table, and must not replay this one.
+            "source_shas": self.bound_source_shas(),
         }
         extra = {str(f): self.file_sha(repo / str(f)) for f in (self.config.get("key_files") or [])}
         if extra:
@@ -182,6 +302,86 @@ class Adapter(CoreAdapter):
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
         return f"<{type(self).__name__} name={self.name!r} kind={self.kind!r}>"
+
+
+class SourceBinding:
+    """Which source each row of one extraction belongs to, and its sha.
+
+    An item is the pair ``(source_id, item)`` (design S6.1): the same label
+    means different things in different sources, so every row is attributed
+    before it is written, never afterwards.  The rule, in order:
+
+    1. a ``sources.map`` rule in adapter.yaml matching the row's ``tag_prefix``
+       or its ``files:`` glob -- the row's tag names another source;
+    2. otherwise the companion's default source, which is
+       ``sources.default`` when `cf extract` bound it, else the single bound
+       source.  `cf onboard` re-decides the anchor edition mechanically AFTER
+       extracting, so the ids it binds are fresher than adapter.yaml's and win.
+
+    The sha comes from the ``{source_id: source_sha}`` mapping the caller passed
+    in, falling back to the workspace's record.  A row with no sha is still
+    written when the caller allows it (``cf extract --allow-missing-source-sha``,
+    the stand-alone regression runs), and the schema check is what refuses it
+    otherwise.
+    """
+
+    def __init__(self, adapter: "Adapter", sources: "Mapping[str, str] | None" = None):
+        self.adapter = adapter
+        self.shas: dict[str, str | None] = {
+            str(k): (str(v) if v else None) for k, v in dict(sources or {}).items()}
+        cfg = adapter.config.get("sources") or {}
+        if not isinstance(cfg, dict):
+            raise AdapterError(f"{adapter.source}: adapter.yaml `sources:` must be a mapping")
+        self.declared_default = str(cfg.get("default") or "")
+        self.has_map = bool(cfg.get("map"))
+        self.used: dict[str, str | None] = {}
+        self._default: str | None = None
+        self._sha_cache: dict[str, str | None] = {}
+
+    @property
+    def default(self) -> str:
+        # computed lazily: a companion whose every row is mapped need not have a
+        # default at all, and asking for one in __init__ would refuse it.
+        if self._default is None:
+            self._default = self.adapter.default_source(self.shas)
+        return self._default
+
+    def resolve(self, *, file: Any = "", tag: str = "", decl: str = "") -> tuple[str, str | None]:
+        """``(source_id, source_sha)`` for one row."""
+        source_id = ""
+        if self.has_map:
+            try:
+                matched = self.adapter.source_for(file=Path(str(file)), tag=tag, decl=decl)
+            except AdapterError:
+                matched = ""
+            # source_for falls back to sources.default when no rule matches; that
+            # fallback is adapter.yaml's, and the binding's is fresher.
+            if matched and matched != self.declared_default:
+                source_id = matched
+        source_id = source_id or self.default
+        sha = self.sha(source_id)
+        self.used[source_id] = sha
+        return source_id, sha
+
+    def sha(self, source_id: str) -> str | None:
+        if source_id in self.shas:
+            return self.shas[source_id]
+        if source_id not in self._sha_cache:
+            self._sha_cache[source_id] = self.adapter.source_sha(source_id)
+        return self._sha_cache[source_id]
+
+    def ids(self) -> list[str]:
+        """Every source this binding can attribute a row to."""
+        ids = set(self.shas) | set(self.used)
+        if self.declared_default:
+            ids.add(self.declared_default)
+        for rule in (self.adapter.config.get("sources") or {}).get("map") or []:
+            if isinstance(rule, dict) and rule.get("source"):
+                ids.add(str(rule["source"]))
+        return sorted(i for i in ids if i)
+
+    def __repr__(self) -> str:  # pragma: no cover - debugging aid
+        return f"<SourceBinding {self.ids()}>"
 
 
 # -- loading ---------------------------------------------------------------

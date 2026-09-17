@@ -92,6 +92,12 @@ class SourceClaim:
     licence: str = ""
     offset_hint: int | None = None
     anchor_hint: str = ""
+    #: item kinds the COMPANION's own tags use for this source (the grammar half
+    #: of R2).  Only an adapter can fill this -- it is the one thing about a
+    #: source that is read from the companion rather than from the source -- and
+    #: it is what `cf sources` has to fall back on when the PDF is not on this
+    #: machine and :func:`cflib.inference.infer_kinds` has no text to read.
+    kinds: tuple[str, ...] = ()
     confidence: float = 0.0
     sources: tuple[str, ...] = ()          # every file that contributed
 
@@ -125,6 +131,9 @@ class SourceClaim:
             licence=pick("licence"),
             offset_hint=hi.offset_hint if hi.offset_hint is not None else lo.offset_hint,
             anchor_hint=pick("anchor_hint"),
+            # kinds are unioned, never picked: two signals that each see part of
+            # the grammar (an adapter's tags, a sibling claim's) both saw it.
+            kinds=_uniq(hi.kinds + lo.kinds),
             confidence=max(self.confidence, other.confidence),
             sources=_uniq(self.sources + other.sources),
         )
@@ -1137,6 +1146,12 @@ def _source_body(source_id: str, claim: SourceClaim, entry: RegistryEntry | None
         body["isbn"] = claim.isbn
     if claim.book_page_url and not body.get("book_page_url"):
         body["book_page_url"] = claim.book_page_url
+    if claim.kinds and not body.get("kinds"):
+        # An adapter saw the grammar in the companion's own tags. It is weaker
+        # evidence than the source's headings (cflib.inference.infer_kinds runs
+        # over the text in prepare and overwrites this), but it is the only
+        # evidence there is when the PDF is not on this machine.
+        body["kinds"] = list(claim.kinds)
     if claim.licence and not (body.get("licence") or {}).get("note"):
         body["licence"] = {"note": claim.licence, "fetch": "none", "redistribute": False}
     body.setdefault("licence", {"note": "", "fetch": "none", "redistribute": False})

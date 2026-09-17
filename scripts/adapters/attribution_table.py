@@ -36,7 +36,7 @@ import json
 import re
 from collections import Counter
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Mapping
 
 from cflib import items as cf_items
 from cflib.hashing import sha256_file
@@ -44,6 +44,7 @@ from cflib.hashing import sha256_file
 from . import leanparse
 from .api import Adapter, AdapterError, register
 from .base import make_row
+from .itemtag import kinds_from_labels
 
 #: measure_theory's layout; overridable per companion in adapter.yaml.
 DEFAULT_FILES = {
@@ -85,6 +86,13 @@ class AttributionTableAdapter(Adapter):
 
     kind = "attribution_table"
 
+    #: The repo signals this convention owns (design S4.3): the ledger's
+    #: ``source`` block (the sha is authoritative), ``official-source.json``
+    #: (download URL, licence, book page) and the README's citation link, which
+    #: is where measure_theory records the page the errata live on.  Ranked
+    #: first by :meth:`discover_sources`; the rest still run.
+    PRIMARY_SIGNALS = ("ledger_source", "official_source_json", "citation")
+
     # -- config ------------------------------------------------------------
     def validate_config(self) -> None:
         if not self.config.get("repo"):
@@ -119,10 +127,35 @@ class AttributionTableAdapter(Adapter):
         return path if path.is_file() else None
 
     # -- joins -------------------------------------------------------------
-    def _regions(self, repo: Path) -> tuple[dict[str, dict], Counter, list[dict]]:
+    def _labels(self, repo: Path) -> list[str]:
+        """Every overlay label, verbatim -- the repo's own item vocabulary."""
+        out: list[str] = []
+        for path in self._geometry_files(repo):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):      # pragma: no cover - broken export
+                continue
+            for entry in data.get("items", []):
+                label = str(entry.get("label") or "").strip()
+                if label:
+                    out.append(label)
+        return out
+
+    def observed_kinds(self, repo: str | Path | None = None,
+                       min_count: int = 2) -> tuple[str, ...]:
+        """The item kinds this repo's overlay labels use.
+
+        The geometry batches carry the label a human signed off against the page
+        image, so they are the repo's statement of the source's grammar -- read
+        with the same regex as a docstring tag, and with no kind list in the loop.
+        """
+        return kinds_from_labels(self._labels(self.resolve_repo(repo)), min_count=min_count)
+
+    def _regions(self, repo: Path, source_id: str | None = None
+                 ) -> tuple[dict[str, dict], Counter, list[dict]]:
         """region_id -> {item, sub, kind, label, page(printed)}; plus counters."""
-        offset = self.page_offset()
-        kinds = self.numbered_kinds()
+        offset = self.page_offset(source_id)
+        kinds = self.numbered_kinds(source_id)
         regions: dict[str, dict] = {}
         counts: Counter[str] = Counter()
         rejects: list[dict] = []
@@ -160,8 +193,12 @@ class AttributionTableAdapter(Adapter):
             return item.id, item.sub, item.kind, ""
         return f"In-text p.{printed_page}", "", "In-text", (reject.reason if reject else "")
 
-    def _rows(self, repo: Path, book_sha: str | None):
-        regions, counts, rejects = self._regions(repo)
+    def _rows(self, repo: Path, binding):
+        # Every row of this convention comes from one export pair, so the source
+        # is decided once: there is no per-row tag that could name another.
+        source_id, source_sha = binding.resolve(file=self.config.get("target_refinement") or "",
+                                                tag="", decl="<attribution table>")
+        regions, counts, rejects = self._regions(repo, source_id)
         # A repo whose exercises ship with a permanent `sorry` classifies a
         # bare sorry as `exercise`; otherwise it is an unfinished `gap`.
         exercise_permanent = str(self.get("sorry.exercise_sorry", "permanent")).lower() != "none"
@@ -214,6 +251,7 @@ class AttributionTableAdapter(Adapter):
                     item=region["item"],
                     sub=region["sub"],
                     item_kind=region["kind"],
+                    source_id=source_id,
                     decl=decl,
                     kind=decl_kind,
                     namespace=decl.rsplit(".", 1)[0] if "." in decl else "",
@@ -231,9 +269,9 @@ class AttributionTableAdapter(Adapter):
                     anonymous=ledger_kind == "anonymous example",
                     private=False,
                     granularity=str(self.config.get("granularity") or "item"),
-                    book_sha=self.book_sha(book_sha),
+                    source_sha=source_sha,
                 ))
-        rows.sort(key=lambda r: (r["item"], r["sub"], not r["key"], r["decl"]))
+        rows.sort(key=lambda r: (r["source_id"], r["item"], r["sub"], not r["key"], r["decl"]))
         counts["rows"] = len(rows)
         counts["declarations"] = len({r["decl"] for r in rows})
         counts["tagged"] = len(rows)
@@ -248,13 +286,17 @@ class AttributionTableAdapter(Adapter):
                 for n in ledger.get("formalization_nodes", []) if n.get("id")}
 
     # -- interface ---------------------------------------------------------
-    def extract(self, repo: str | Path | None = None, book_sha: str | None = None) -> Iterator[dict]:
-        rows, _counts, _missing, _rejects = self._rows(self.resolve_repo(repo), book_sha)
+    def extract(self, repo: str | Path | None = None, *,
+                sources: "Mapping[str, str] | None" = None) -> Iterator[dict]:
+        rows, _counts, _missing, _rejects = self._rows(self.resolve_repo(repo),
+                                                       self.bind(sources))
         yield from rows
 
-    def dry_run(self, repo: str | Path | None = None) -> dict:
+    def dry_run(self, repo: str | Path | None = None, *,
+                sources: "Mapping[str, str] | None" = None) -> dict:
         path = self.resolve_repo(repo)
-        rows, counts, missing, rejects = self._rows(path, None)
+        binding = self.bind(sources)
+        rows, counts, missing, rejects = self._rows(path, binding)
         fp = self.key_inputs()
         kinds = Counter(r["item_kind"] for r in rows)
         return {
@@ -285,6 +327,12 @@ class AttributionTableAdapter(Adapter):
             "rejects": rejects[:50],
             "missing": missing[:50],
             "samples": rows[:3],
+            # What this repo says its sources ARE (the ledger's sha, the
+            # official-source record, the README's book page), and where the
+            # rows were attributed. `cf onboard` prints both.
+            "sources": self.source_report(path),
+            "rows_by_source": {sid: sum(1 for r in rows if r["source_id"] == sid)
+                               for sid in binding.ids()},
         }
 
     def key_inputs(self) -> dict:
