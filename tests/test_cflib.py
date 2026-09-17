@@ -607,7 +607,20 @@ class TestSourceIdRule(unittest.TestCase):
 
     def test_stopwords_and_generic_nouns_are_dropped(self):
         self.assertEqual(source_id_for("A First Course in Real Analysis", "2e", ["Ann Smith"]),
-                         "smith-real-2e")
+                         "smith-real-analysis-2e")
+
+    def test_a_generic_word_does_not_use_up_a_slot_it_is_then_dropped_from(self):
+        """The distinctive word must survive the two-word budget.
+
+        Generic words were filtered AFTER the title was cut to two words, so
+        "Elementary Notes on Sets" spent the second slot on `notes` and then
+        dropped it, yielding `elementary` -- an id that says nothing and
+        collides with every other elementary-anything.
+        """
+        self.assertEqual(source_id_for("Elementary Notes on Sets", "", ["Anonymous"]),
+                         "anonymous-elementary-sets")
+        self.assertEqual(source_id_for("Lectures on Complex Manifolds", "", ["Ann Smith"]),
+                         "smith-complex-manifolds")
 
     def test_collisions_never_silently_reuse_an_id(self):
         taken = {PUBLISHED_ID}

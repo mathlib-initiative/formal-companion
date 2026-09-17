@@ -40,6 +40,7 @@ import cf as cf_main                                          # noqa: E402
 from cfcmd import plan_run                                    # noqa: E402
 from cflib.errors import CfError                              # noqa: E402
 from plan import make_tasks as mt                             # noqa: E402
+from cflib.paths import WorkspacePaths                        # noqa: E402
 from report import make_handoff                               # noqa: E402
 
 BASELINE_CORPUS = os.environ.get("CF_BASELINE_CORPUS")
@@ -177,6 +178,94 @@ class TestHandoffRunTable(unittest.TestCase):
         self.assertIn("findings-hunt", table)
         self.assertIn("763", table)
         self.assertIn("TODO(", table)           # never invent a model or a host
+
+    # -- the receipt join ---------------------------------------------------
+    # An imported corpus has no run.yaml, but its RECEIPT.json records the
+    # edition every document was judged against.  The table printed
+    # TODO(source) next to a fact sitting two directories away.
+    IMPORT_RECEIPT = {
+        "run_id": "batch1",
+        "sources": {PUBLISHED_ID: PUBLISHED_SHA},
+        "source": {"kind": "import", "mode": "differential", "preset": "differential-text"},
+        "actual": {"count": 382},
+    }
+
+    def test_an_imported_run_names_the_source_its_receipt_records(self):
+        table = make_handoff.render_runs_table(
+            {}, [{"file": "t.json", "runs": {"batch1": {"mode": "differential",
+                                                        "files": 382}}}],
+            {"batch1": self.IMPORT_RECEIPT})
+        self.assertIn("`%s`" % PUBLISHED_ID, table)
+        self.assertNotIn("TODO(source)", table)
+
+    def test_an_unplanned_run_does_not_point_at_a_command_that_cannot_help(self):
+        """`cf plan-run` will never fill in a historical run's model."""
+        table = make_handoff.render_runs_table(
+            {}, [], {"batch1": self.IMPORT_RECEIPT})
+        self.assertNotIn("TODO(model)", table)
+        self.assertNotIn("TODO(tasks)", table)
+        self.assertIn("--", table)
+        # the count still comes off the receipt, not out of the air
+        self.assertIn("382", table)
+
+    def test_a_planned_run_still_shows_its_holes(self):
+        """The `--` is for unplanned runs only; a planned run keeps its TODOs."""
+        table = make_handoff.render_runs_table({"r1": {"mode": "attack"}}, [])
+        self.assertIn("TODO(model)", table)
+        self.assertIn("TODO(tasks)", table)
+
+    def test_a_legacy_list_shaped_receipt_is_still_read(self):
+        """`cf pair` wrote `sources` as a bare list of ids before it was a map."""
+        table = make_handoff.render_runs_table(
+            {}, [], {"anchor-check": {"run_id": "anchor-check",
+                                      "sources": [PUBLISHED_ID],
+                                      "actual": {"count": 12}}})
+        self.assertIn("`%s`" % PUBLISHED_ID, table)
+        self.assertNotIn("TODO(source)", table)
+
+    def test_load_receipts_reads_the_corpus_directory(self):
+        tmp = Path(tempfile.mkdtemp(prefix="cf-receipts-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        run = tmp / "corpus" / "batch1"
+        run.mkdir(parents=True)
+        (run / "RECEIPT.json").write_text(json.dumps(self.IMPORT_RECEIPT))
+        (tmp / "corpus" / "no-receipt").mkdir()
+        found = make_handoff.load_receipts(WorkspacePaths(tmp))
+        self.assertEqual(sorted(found), ["batch1"])
+        self.assertEqual(found["batch1"]["sources"], {PUBLISHED_ID: PUBLISHED_SHA})
+
+
+class TestMechanicalReceiptShape(unittest.TestCase):
+    """`cf pair` and `cf detect-proxies` write the same receipt shape as import.
+
+    A bare list of source ids loses the sha, which is the half that says which
+    EDITION the documents were judged against.
+    """
+
+    def test_write_corpus_records_the_sha_per_source(self):
+        from detect import corpus as detect_corpus
+
+        tmp = Path(tempfile.mkdtemp(prefix="cf-mech-receipt-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        docs = [
+            {"item": "Definition 1.1.1", "source_id": PUBLISHED_ID,
+             "source_sha": PUBLISHED_SHA, "run_id": "r"},
+            {"item": "Definition 1.1.1", "source_id": DRAFT_ID,
+             "source_sha": DRAFT_SHA, "run_id": "r"},
+        ]
+        receipt = detect_corpus.write_corpus(docs, tmp, run_id="r", companion="ours")
+        self.assertEqual(receipt["sources"],
+                         {PUBLISHED_ID: PUBLISHED_SHA, DRAFT_ID: DRAFT_SHA})
+
+    def test_an_empty_emission_still_names_the_source_it_was_asked_for(self):
+        from detect import corpus as detect_corpus
+
+        tmp = Path(tempfile.mkdtemp(prefix="cf-mech-empty-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, True)
+        receipt = detect_corpus.write_corpus(
+            [], tmp, run_id="r", companion="ours",
+            source_id=PUBLISHED_ID, source_sha=PUBLISHED_SHA)
+        self.assertEqual(receipt["sources"], {PUBLISHED_ID: PUBLISHED_SHA})
 
 
 class TestStatusSourceColumn(unittest.TestCase):

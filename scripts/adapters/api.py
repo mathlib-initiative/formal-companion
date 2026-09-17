@@ -1,9 +1,9 @@
 """The adapter base class and loader used by ``cf onboard`` / ``cf extract``.
 
 The abstract contract lives in ``cflib.adapters_api`` (``dry_run(repo)``,
-``extract(repo, book_sha)``, ``key()``); this module adds what every concrete
-adapter needs and keeps the config vocabulary of ``templates/adapter.yaml.example``
-in one place:
+``extract(repo, sources={id: sha})``, ``key()``); this module adds what every
+concrete adapter needs and keeps the config vocabulary of
+``templates/adapter.yaml.example`` in one place:
 
     adapter:        docstring_tags | attribution_table | ledger_nodes | custom
     repo:           the companion repo (never written to)
@@ -32,6 +32,7 @@ target-refinement sha for ledger repos").
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any, Iterator, Mapping, Sequence
 
@@ -119,7 +120,18 @@ class Adapter(CoreAdapter):
         return [str(raw)] if isinstance(raw, str) else [str(g) for g in raw]
 
     def matching_files(self, repo: Path, default_globs: Sequence[str] = ()) -> list[Path]:
-        """Files under ``repo`` matching ``glob:`` and not matching ``exclude:``."""
+        """Files under ``repo`` matching ``glob:``, minus ``exclude:`` and minus
+        anything the repository itself ignores.
+
+        The ignore filter is not a convenience.  A companion is audited AT A
+        COMMIT -- `cf onboard` records one, and every finding is a claim about
+        the committed repository -- so a file git ignores is not part of the
+        thing under audit.  Reading it invents rows: tao-measure-lean keeps
+        spliced working copies of its own modules in the git-ignored
+        ``scratch/``, and the default ``**/*.lean`` glob parsed 142 declarations
+        a second and third time from them, which is both a false audit surface
+        and a duplicate-key failure in `cf extract`.
+        """
         selected: dict[str, Path] = {}
         for pattern in self.globs(default_globs):
             for p in sorted(repo.glob(pattern)):
@@ -128,7 +140,33 @@ class Adapter(CoreAdapter):
         for pattern in self.excludes():
             for p in repo.glob(pattern):
                 selected.pop(str(p), None)
+        for path in self.ignored_files(repo, list(selected.values())):
+            selected.pop(str(path), None)
         return list(selected.values())
+
+    @staticmethod
+    def ignored_files(repo: Path, paths: Sequence[Path]) -> list[Path]:
+        """The subset of *paths* that this repository's git ignores.
+
+        Empty when *repo* is not a git checkout, when git is unavailable, or
+        when the call fails for any reason: an adapter that cannot ask must
+        read everything rather than silently audit nothing.
+        """
+        if not paths or not (repo / ".git").exists():
+            return []
+        rel = [str(Path(p).relative_to(repo)) for p in paths]
+        try:
+            proc = subprocess.run(
+                ["git", "-C", str(repo), "check-ignore", "--stdin"],
+                input="\n".join(rel) + "\n",
+                capture_output=True, text=True, timeout=60,
+            )
+        except (OSError, subprocess.SubprocessError):       # pragma: no cover
+            return []
+        # 0 = some paths are ignored, 1 = none are; anything else is an error
+        if proc.returncode not in (0, 1):                   # pragma: no cover
+            return []
+        return [repo / line for line in proc.stdout.splitlines() if line.strip()]
 
     # -- discovery (design S4.3) -------------------------------------------
     def discover_sources(self, repo: str | Path | None = None) -> list:
