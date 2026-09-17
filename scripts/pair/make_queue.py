@@ -5,13 +5,14 @@ hints from each repo's ``page_anchor``, ranges capped at +3 pages, ``+16`` to
 reach PDF pages, first six pages kept).  Generalised per design/stage_map.md
 Stage 3-4:
 
-* the offset and the printed-page bounds come from ``book.json``, not ``+16`` /
-  ``1..260``;
+* the offset and the printed-page bounds come from the SOURCE's ``meta.json``
+  (``sources/<source_id>/``), not ``+16`` / ``1..260``, and every row carries
+  the ``source_id`` it was built against;
 * page anchors are parsed with a SEARCH, not a match-at-position-0: the original
   ``re.match(r'(\\d+)...')`` silently dropped every ``book p. 135`` anchor, i.e.
   the whole attribution-table convention (97 of 225 queue items had page hints;
   the same data yields 179 read tolerantly);
-* each queue row also carries the authoritative page from the book's
+* each queue row also carries the authoritative page from that source's
   ``items.json`` (``book_pdf_page``), so a task is not limited to what the
   companions claim;
 * ``targets.<name>.json`` (never committed anywhere before) lists every item a
@@ -44,13 +45,14 @@ def anchor_pages(rows: Sequence[Mapping], *, span: int = 3, lo: int = 1, hi: int
 def build_queue(
     pairs: Sequence[Mapping],
     *,
+    source_id: str = "",
     offset: int = 0,
     max_pages: int = 6,
     span: int = 3,
     printed_max: int = 10000,
     book_items: Mapping[str, dict] | None = None,
 ) -> list[dict]:
-    """``[{item, repos, pdf_pages, book_pdf_page}]`` for every paired item."""
+    """``[{source_id, item, repos, pdf_pages, book_pdf_page}]`` per paired item."""
     queue = []
     for pair in pairs:
         repos = list(pair.get("repos") or [k for k in pair if isinstance(pair.get(k), list)])
@@ -58,6 +60,7 @@ def build_queue(
         for repo in repos:
             pages |= anchor_pages(pair.get(repo) or [], span=span, lo=1, hi=printed_max)
         entry = {
+            "source_id": source_id or str(pair.get("source_id") or ""),
             "item": pair["item"],
             "repos": repos,
             "pdf_pages": sorted(p + offset for p in pages)[:max_pages],
@@ -109,8 +112,9 @@ def late_section_threshold(book_items: Mapping[str, dict] | None, chapters=None)
 
 def build_targets(
     index: Mapping[str, Mapping[str, list]],
-    repo: str,
+    name: str,
     *,
+    source_id: str = "",
     repos: Sequence[str],
     offset: int = 0,
     span: int = 3,
@@ -118,17 +122,24 @@ def build_targets(
     printed_max: int = 10000,
     book_items: Mapping[str, dict] | None = None,
     kinds: Sequence[str] = DEFAULT_KINDS,
+    chapters: Sequence[int] | None = None,
     late_from: int | None = None,
 ) -> list[dict]:
-    """Every item ``repo`` formalises, with peers, single-source flag, priority."""
+    """Every item ``name`` formalises OF THIS SOURCE: peers, single-source, priority.
+
+    ``chapters`` is the source's audited scope (``sources.<id>.chapters``): the
+    "late section" band that decides a `high` priority is computed inside it, so
+    a workspace whose second source has ten chapters does not drag the first
+    source's threshold with it.
+    """
     if late_from is None:
-        late_from = late_section_threshold(book_items)
+        late_from = late_section_threshold(book_items, chapters)
     out = []
     for key in sorted(index, key=item_sort_key):
-        rows = index[key].get(repo)
+        rows = index[key].get(name)
         if not rows:
             continue
-        peers = [r for r in repos if r != repo and index[key].get(r)]
+        peers = [r for r in repos if r != name and index[key].get(r)]
         parsed = parse_item(key, kinds)
         kind = parsed.kind if parsed else key.split()[0]
         section = parsed.section if parsed else None
@@ -142,6 +153,7 @@ def build_targets(
         )[:max_pages]
         out.append(
             {
+                "source_id": source_id,
                 "item": key,
                 "kind": kind,
                 "number": parsed.number if parsed else "",
@@ -167,16 +179,18 @@ def write_queue(
     queue: Sequence[dict],
     targets: Mapping[str, Sequence[dict]],
     *,
-    book_sha: str = "",
+    source_id: str = "",
+    source_sha: str = "",
     offset: int = 0,
 ) -> dict:
-    """Write ``queue.json`` and one ``targets.<name>.json`` per companion."""
+    """Write ``pairs/<source_id>/queue.json`` + one ``targets.<name>.json`` each."""
     os.makedirs(out_dir, exist_ok=True)
     write_json(
         os.path.join(out_dir, "queue.json"),
         {
             "created": utcnow(),
-            "book_sha": book_sha,
+            "source_id": source_id,
+            "source_sha": source_sha,
             "offset": offset,
             "count": len(queue),
             "with_page_hints": sum(1 for q in queue if q["pdf_pages"]),
@@ -193,7 +207,8 @@ def write_queue(
             {
                 "created": utcnow(),
                 "companion": name,
-                "book_sha": book_sha,
+                "source_id": source_id,
+                "source_sha": source_sha,
                 "priority_rule": PRIORITY_RULE,
                 "count": len(rows),
                 # distinct docstring tags behind those items: In-text tags collapse

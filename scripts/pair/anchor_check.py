@@ -9,12 +9,17 @@ Generalised per design/critique.json:
 * PAGE_ANCHOR is a MECHANICAL kind -- never an LLM finding.  22 of the 40
   differential-flagged items in batch 1 were pagination, which is exactly the
   work a regex does for free (HANDOFF section 2);
-* the comparison is against the pinned edition's ``items.json`` (one edition,
-  stamped with ``book_sha``), not draft-vs-official;
+* the comparison is against ONE pinned source's ``items.json`` (stamped with
+  ``source_id`` + ``source_sha``), not draft-vs-official;
 * rows are emitted in the findings v2 shape with a stable ``finding_id`` so the
   corpus, the ledger and ``route`` treat them like any other finding -- they are
   routed as low-severity mechanical rows, not silently withdrawn (32 anchors
-  were genuinely corrected in PR #5).
+  were genuinely corrected in PR #5);
+* :func:`check_edition` scores the SAME anchors against every candidate edition
+  of one work.  That is the mechanical half of choosing a companion's anchor
+  source (docs/design/multi-source-model.md S4.6): tao-measure-lean bundles the
+  2011 draft and anchors to the published book, and no prose sentence is allowed
+  to settle that -- the pages do.
 """
 
 from __future__ import annotations
@@ -54,8 +59,8 @@ def check(
     items_index: Mapping[str, Mapping],
     tables: Mapping[str, Sequence[Mapping]],
     *,
-    source_id: str = "",
-    book_sha: str,
+    source_id: str,
+    source_sha: str = "",
     offset: int = 0,
     run_id: str = "anchor-check",
     kinds: Sequence[str] = DEFAULT_KINDS,
@@ -71,7 +76,8 @@ def check(
     summary = {
         "created": utcnow(),
         "run_id": run_id,
-        "book_sha": book_sha,
+        "source_id": source_id,
+        "source_sha": source_sha,
         "offset": offset,
         "tolerance": tolerance,
         "repos": {},
@@ -130,6 +136,7 @@ def check(
                     "finding_id": finding_id(run_id, source_id, item, KIND, decls),
                     "run_id": run_id,
                     "source_id": source_id,
+                    "source_sha": source_sha,
                     "item": item,
                     "kind": KIND,
                     "severity": SEVERITY,
@@ -148,7 +155,7 @@ def check(
                     },
                     "concept": "page anchor",
                     "reasoning": (
-                        "%s anchors %s at printed page(s) %s; the pinned edition prints it on "
+                        "%s anchors %s at printed page(s) %s; the pinned source prints it on "
                         "page %d (PDF page %d). Pattern: %s."
                         % (
                             repo,
@@ -161,7 +168,6 @@ def check(
                     ),
                     "book_quote": None,
                     "witness": None,
-                    "book_sha": book_sha,
                     "detail": {
                         "official_page": official,
                         "official_pdf_page": entry["pdf_page"],
@@ -188,8 +194,54 @@ def check(
     return {"summary": summary, "rows": rows}
 
 
+def check_edition(
+    items_by_source: Mapping[str, Mapping],
+    rows: Sequence[Mapping],
+    *,
+    kinds: Sequence[str] = DEFAULT_KINDS,
+) -> dict[str, dict]:
+    """Anchor agreement per candidate edition -- the mechanical half of S4.6.
+
+    ``{source_id: {"ok": n, "mismatched": m, "agreement": r}}`` over the rows
+    whose item is a heading in that edition and whose ``page_anchor`` names a
+    printed page.  ``cflib.discovery.choose_anchor_source`` picks the highest
+    agreement and accepts it only above ``MIN_ANCHOR_AGREEMENT`` and by
+    ``MIN_ANCHOR_MARGIN``; below either it REFUSES rather than guessing.
+
+    It reads each edition's own ``kinds`` (a source's grammar is its own, S5.2)
+    and parses anchors with :func:`claimed_pages`, so the 179 ``book p. N``
+    anchors that a bare ``int(anchor)`` drops are scored like any other.
+    """
+    out: dict[str, dict] = {}
+    for source_id, items_json in items_by_source.items():
+        source_kinds = tuple(dict.fromkeys(
+            [str(k) for k in (items_json.get("kinds") or [])] + list(kinds)))
+        index = {row["item"]: row for row in (items_json.get("items") or [])}
+        ok = mismatched = 0
+        for row in rows or ():
+            pages = claimed_pages(row.get("page_anchor"))
+            if not pages:
+                continue
+            parsed = parse_item(row_item(row), source_kinds)
+            # an In-text row's anchor IS its key: there is nothing to check it
+            # against, and counting it would score every edition identically.
+            if parsed is None or parsed.is_intext or parsed.key not in index:
+                continue
+            official = index[parsed.key].get("page")
+            if official is None:
+                continue
+            if official in pages:
+                ok += 1
+            else:
+                mismatched += 1
+        total = ok + mismatched
+        out[source_id] = {"ok": ok, "mismatched": mismatched,
+                          "agreement": round(ok / total, 4) if total else 0.0}
+    return out
+
+
 def write_check(out_dir: str, result: Mapping) -> str:
-    """Write ``pairs/anchor-check.json`` (summary + PAGE_ANCHOR rows)."""
+    """Write ``pairs/<source_id>/anchor-check.json`` (summary + PAGE_ANCHOR rows)."""
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "anchor-check.json")
     write_json(path, {"summary": result["summary"], "rows": result["rows"]})

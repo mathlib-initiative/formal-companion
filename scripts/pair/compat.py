@@ -6,9 +6,11 @@ Delete both this file and ``sources/compat.py`` when every call site has been
 switched to ``cflib`` directly -- the names below already resolve to cflib
 whenever it is importable.
 
-(The two renamed names below are the workspace model's: ``campaign_paths`` ->
-``workspace_paths``, ``load_campaign`` -> ``load_workspace``. The rest of this
-package still speaks the old vocabulary and is migrated by the STAGES-A package.)
+The names below are the workspace model's throughout (``campaign_paths`` ->
+``workspace_paths``, ``load_campaign`` -> ``load_workspace``, ``book_sha`` ->
+``source_sha``); nothing in this package answers to the old vocabulary any more.
+``workspace_paths(root).pairs_dir(source_id)`` takes the source, because a
+workspace pairs each of its M sources into its own tree.
 """
 
 from sources.compat import (  # noqa: F401

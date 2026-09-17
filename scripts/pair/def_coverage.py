@@ -8,12 +8,16 @@ items with no declaration at all).
 
 Generalised per design/stage_map.md Stage 3/8:
 
-* the book item universe comes from ``book/<id>/items.json`` (whitespace-tolerant
-  headings) instead of re-grepping the book text with a single-space regex;
+* the item universe comes from ``sources/<source_id>/items.json``
+  (whitespace-tolerant headings) instead of re-grepping the book text with a
+  single-space regex;
 * the kind whose coverage is measured, the chapter filter and the definitional
   keyword list are parameters;
-* results carry ``book_sha`` and are shaped so ``missing`` / ``bridge_only`` can
-  be emitted as COVERAGE and PROXY findings by the detect stage.
+* results carry ``source_id`` + ``source_sha`` and land under
+  ``pairs/<source_id>/``, so a companion audited against two sources gets two
+  coverage files instead of one that silently mixes them;
+* they are shaped so ``missing`` / ``bridge_only`` can be emitted as COVERAGE
+  and PROXY findings by the detect stage.
 
 Baseline (tao-measure-lean @ 2026-09-04, Tao Ch.1): 36 Definitions = 32 stated,
 4 bridge-only, 0 missing; 29 numbered items uncovered (28 Remarks + Ex 1.6.18).
@@ -88,12 +92,14 @@ def def_coverage(
     items_json: Mapping,
     rows: Sequence[Mapping],
     *,
+    source_id: str = "",
     kind: str = "Definition",
     chapter: int | None = None,
     keywords: Sequence[str] = DEF_KEYWORDS,
     kinds: Sequence[str] | None = None,
 ) -> dict:
-    """Split the book's Definitions into stated / bridge-only / missing."""
+    """Split ONE source's Definitions into stated / bridge-only / missing."""
+    source_id = source_id or str(items_json.get("source_id") or "")
     kinds = list(kinds or items_json.get("kinds") or [])
     defs = _book_items(items_json, kind=kind, kinds=None, chapter=chapter)
     by = _rows_by_item(rows, kinds)
@@ -111,7 +117,8 @@ def def_coverage(
             bridge_decls[item] = [r.get("decl") for r in rs][:5]
     return {
         "created": utcnow(),
-        "book_sha": items_json.get("book_sha", ""),
+        "source_id": source_id,
+        "source_sha": items_json.get("source_sha", ""),
         "kind": kind,
         "chapter": chapter,
         "keywords": list(keywords),
@@ -127,10 +134,12 @@ def uncovered(
     items_json: Mapping,
     rows: Sequence[Mapping],
     *,
+    source_id: str = "",
     kinds: Sequence[str] | None = None,
     chapter: int | None = None,
 ) -> dict:
-    """Numbered book items with no declaration in this companion at all."""
+    """Numbered items of ONE source with no declaration in this companion at all."""
+    source_id = source_id or str(items_json.get("source_id") or "")
     kind_list = list(kinds or items_json.get("kinds") or [])
     universe = _book_items(items_json, kind=None, kinds=kind_list, chapter=chapter)
     have = set(_rows_by_item(rows, kind_list))
@@ -140,7 +149,8 @@ def uncovered(
         by_kind.setdefault(item.split()[0], []).append(item)
     return {
         "created": utcnow(),
-        "book_sha": items_json.get("book_sha", ""),
+        "source_id": source_id,
+        "source_sha": items_json.get("source_sha", ""),
         "chapter": chapter,
         "kinds": kind_list,
         "book_items": len(universe),
@@ -153,7 +163,7 @@ def uncovered(
 def write_coverage(
     out_dir: str, name: str, coverage: Mapping, uncov: Mapping
 ) -> dict:
-    """Write ``def-coverage.<name>.json`` and ``uncovered.<name>.json``.
+    """Write ``pairs/<source_id>/{def-coverage,uncovered}.<name>.json``.
 
     MERGES rather than overwrites: ``cf detect-proxies`` writes the same file
     with a superset of the keys (``_meta``, ``bridge_only_detail``,
