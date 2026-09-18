@@ -530,6 +530,91 @@ class TestImportCorpus(unittest.TestCase):
         self.assertIn("--preset", said)
         self.assertIn("--gate-config", said)
 
+    V1_DEFECT_DOC = {
+        "item": "In-text, book p. 71",
+        "book_located": True,
+        "book_passage_quote": "",
+        "matches": [],
+        "disagreements": [{"concept": "c", "kind": "CONTENT", "severity": "medium",
+                           "repos_involved": ["ours"], "faithful": "none",
+                           "unfaithful_decls": ["ours:Riemann.foo"],
+                           "book_quote": "q", "reasoning": "r"}],
+        "coverage_notes": "",
+    }
+
+    def _with_a_companion(self) -> Path:
+        """A workspace that has a companion, and a v1 file naming `ours`."""
+        write_workspace(
+            self.workspace, sources=tao_source(),
+            companions=("  tml-prefix:\n"
+                        f"    repo: {self.tmp}\n"
+                        "    adapter: docstring_tags\n"
+                        f"    sources: [{PUBLISHED_ID}]\n"
+                        f"    anchor_source: {PUBLISHED_ID}\n"))
+        src = self.tmp / "v1-defect"
+        src.mkdir(exist_ok=True)
+        (src / "in-text-book-p-71.json").write_text(
+            json.dumps(self.V1_DEFECT_DOC), encoding="utf-8")
+        return src
+
+    def test_a_foreign_repo_name_is_warned_about_not_silently_adopted(self):
+        """The union key holds the repo: an unmapped import joins nothing here."""
+        src = self._with_a_companion()
+        err = io.StringIO()
+        with redirect_stderr(err):                      # log.warn is a diagnostic
+            rc = self._cf("import-corpus", "--run-id", "v1", "--from", str(src),
+                          "--workspace", str(self.workspace), "--no-tally")
+        self.assertEqual(rc, 0)
+        self.assertIn("this workspace does not have: ours", err.getvalue())
+        self.assertIn("--repo-map", err.getvalue())
+        receipt = json.loads(
+            (self.workspace / "corpus" / "v1" / "RECEIPT.json").read_text())
+        self.assertEqual(receipt["source"]["repos"], ["ours"])
+        self.assertEqual(receipt["source"]["repos_not_in_workspace"], ["ours"])
+        row = json.loads((self.workspace / "corpus" / "v1"
+                          / "in-text-book-p-71.json").read_text())["disagreements"][0]
+        self.assertEqual(row["unfaithful_decls"], ["ours:Riemann.foo"])
+
+    def test_the_repo_map_makes_an_imported_run_this_workspace_s_own(self):
+        src = self._with_a_companion()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc = self._cf("import-corpus", "--run-id", "v1", "--from", str(src),
+                          "--workspace", str(self.workspace), "--no-tally",
+                          "--repo-map", "ours=tml-prefix")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("this workspace does not have", err.getvalue())
+        receipt = json.loads(
+            (self.workspace / "corpus" / "v1" / "RECEIPT.json").read_text())
+        self.assertEqual(receipt["source"]["repos"], ["tml-prefix"])
+        self.assertEqual(receipt["source"]["repo_map"], {"ours": "tml-prefix"})
+        self.assertEqual(receipt["source"]["repos_not_in_workspace"], [])
+        doc = json.loads((self.workspace / "corpus" / "v1"
+                          / "in-text-book-p-71.json").read_text())
+        self.assertEqual(doc["repo_map"], {"ours": "tml-prefix"})
+        self.assertEqual(doc["disagreements"][0]["unfaithful_decls"],
+                         ["tml-prefix:Riemann.foo"])
+        self.assertEqual(doc["disagreements"][0]["unfaithful_decls_v1"],
+                         ["ours:Riemann.foo"])
+
+    def test_a_map_onto_a_companion_nobody_has_is_refused(self):
+        src = self._with_a_companion()
+        with self.assertRaises(CfError) as ctx:
+            self._cf("import-corpus", "--run-id", "v1", "--from", str(src),
+                     "--workspace", str(self.workspace), "--no-tally",
+                     "--repo-map", "ours=nobody")
+        self.assertIn("nobody", str(ctx.exception))
+        with self.assertRaises(CfError):
+            self._cf("import-corpus", "--run-id", "v1", "--from", str(src),
+                     "--workspace", str(self.workspace), "--no-tally",
+                     "--repo-map", "ours")          # not <old>=<new>
+        # and renaming a repo inside a verbatim copy would invalidate its id
+        with self.assertRaises(CfError) as ctx:
+            self._cf("import-corpus", "--run-id", "v1", "--from", str(src),
+                     "--workspace", str(self.workspace), "--no-tally",
+                     "--no-convert", "--repo-map", "ours=tml-prefix")
+        self.assertIn("--no-convert", str(ctx.exception))
+
     def test_the_mode_is_guessed_from_the_baseline_directory_names(self):
         from cfcmd import import_corpus
 

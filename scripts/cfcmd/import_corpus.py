@@ -22,6 +22,16 @@ required whenever the workspace has more than one source; ``--source-sha`` says
 the findings were judged against a different edition than the workspace pins,
 and the receipt's source audit then reports the mismatch instead of hiding it.
 
+``--repo-map ours=tml-prefix`` is the same job for the REPO half.  "Indistinguish-
+able downstream" is only true if the imported rows name this workspace's
+companions: the union key is ``(source_id, repo, item, kind)``, so a baseline
+that spells the repository ``ours`` and a run of this workspace that spells the
+same repository ``tml-prefix`` produce two entries for one defect and
+``union --new-only`` calls the re-found one new -- and the gate, which checks
+``unfaithful_decls`` prefixes against the known repos, rejects every row.
+Nothing is guessed: without the flag the v1 names are kept and the import WARNS,
+naming the repos this workspace does not have.
+
 Ported from: recovered/b174aa13_L5690_Bash.txt (harvest-from-journal) for the
 receipt discipline, and scripts/gate/convert_v1.py for the v1 -> v2 mapping.
 """
@@ -70,6 +80,11 @@ def register(subparsers) -> None:
                         "older run)")
     p.add_argument("--repos", default=None,
                    help="comma-separated companion ids (default: the workspace's)")
+    p.add_argument("--repo-map", action="append", default=[], metavar="V1=COMPANION",
+                   help="the name these findings give a repository and this workspace's "
+                        "name for it (e.g. ours=tml-prefix; repeatable). Without it the "
+                        "imported rows keep their own names and can never join a run of "
+                        "this workspace, because the union key holds the repo")
     p.add_argument("--no-convert", action="store_true",
                    help="copy verbatim; only for a directory that is already schema v2")
     p.add_argument("--gate", action="store_true",
@@ -110,6 +125,27 @@ def run(args) -> int:
                  "(the receipt records it, and the report must say so).")
     repos = ([r.strip() for r in args.repos.split(",") if r.strip()]
              if args.repos else list(workspace.companion_names()))
+    try:
+        repo_map = convert_v1.parse_repo_map(getattr(args, "repo_map", None))
+    except ValueError as exc:
+        raise CfError(str(exc), hint="--repo-map takes <their name>=<this workspace's "
+                                     "companion id>, e.g. ours=tml-prefix")
+    # `repos` is the vocabulary in play (the workspace's companions, or --repos).
+    # An empty one means nothing has been declared yet, so there is nothing to
+    # check a name against -- as in the gate, where no known repos means any.
+    if repo_map and args.no_convert:
+        raise CfError(
+            "--repo-map and --no-convert contradict each other",
+            hint="--no-convert copies documents verbatim, and renaming a repo in an "
+                 "already-v2 row would invalidate the finding_id computed over its "
+                 "declarations. Convert them, or re-run the gate on the source corpus.")
+    unknown_targets = sorted({v for v in repo_map.values() if repos and v not in repos})
+    if unknown_targets:
+        raise CfError(
+            f"--repo-map names {', '.join(unknown_targets)}, which this workspace has no "
+            f"companion for (it has: {', '.join(repos) or 'none'})",
+            hint="map onto a companion id from workspace.yaml; renaming a repo onto a name "
+                 "nobody has moves the non-join instead of fixing it")
 
     expected = sorted(p.name for p in src.glob("*.json")
                       if p.name != harvest_mod.RECEIPT_NAME)
@@ -123,10 +159,15 @@ def run(args) -> int:
                  f"files); re-importing over it (pass --force to silence this)")
     dest.mkdir(parents=True, exist_ok=True)
 
-    written, converted, already_v2 = _import_files(
+    written, converted, already_v2, repos_seen = _import_files(
         src, dest, expected, args.no_convert,
         run_id=args.run_id, source_id=source_id, source_sha=source_sha,
-        mode=mode, preset=preset, repos=repos)
+        mode=mode, preset=preset, repos=repos, repo_map=repo_map)
+    # An imported row whose decls name a repository this workspace does not have
+    # is not "indistinguishable downstream": the union key is
+    # (source_id, repo, item, kind), so it can never join a run of this
+    # workspace -- and the gate rejects it. Reported, never silently adopted.
+    strangers = sorted(r for r in repos_seen if repos and r not in repos)
 
     # The preset and the source are known here, so `--gate` needs no planned
     # run: gate_runner builds the config from them when there is none.
@@ -135,7 +176,9 @@ def run(args) -> int:
     receipt = harvest_mod.build_receipt(
         run_id=args.run_id,
         source={"kind": "import", "path": str(src), "mode": mode, "preset": preset,
-                "converted": converted, "already_v2": already_v2},
+                "converted": converted, "already_v2": already_v2,
+                "repos": sorted(repos_seen), "repo_map": dict(sorted(repo_map.items())),
+                "repos_not_in_workspace": strangers},
         expected=expected, dest=dest, sources={source_id: source_sha} if source_sha else {},
         previous=previous,
         allow_edition_mismatch=args.allow_edition_mismatch,
@@ -147,6 +190,15 @@ def run(args) -> int:
     log.detail(f"  mode {mode}  preset {preset}  source {source_id} "
                f"{source_sha[:12] or '(no sha)'}  "
                f"converted {converted}, already v2 {already_v2}")
+    if repo_map:
+        log.detail("  repo map: " + ", ".join(f"{k} -> {v}" for k, v in sorted(repo_map.items())))
+    if strangers:
+        log.warn(f"these findings name repo(s) this workspace does not have: "
+                 f"{', '.join(strangers)} (it has: {', '.join(repos) or 'none'}). "
+                 f"The union key is (source_id, repo, item, kind), so their rows will not "
+                 f"join a run of this workspace and `union --new-only` will call every "
+                 f"re-found defect new. Re-import with --repo-map "
+                 f"{strangers[0]}=<companion id> if it is the same repository.")
     log.info(harvest_mod.describe(receipt))
     if not receipt["complete"]:
         log.warn("import INCOMPLETE: every number derived from this corpus is a lower bound.")
@@ -188,9 +240,15 @@ def _select_source(workspace, requested: str | None) -> str:
 
 def _import_files(src: Path, dest: Path, expected, no_convert: bool, *, run_id: str,
                   source_id: str, source_sha: str, mode: str, preset: str,
-                  repos) -> tuple[int, int, int]:
-    """Write each source finding into *dest*, converting v1 rows on the way in."""
+                  repos, repo_map=None) -> tuple[int, int, int, set[str]]:
+    """Write each source finding into *dest*, converting v1 rows on the way in.
+
+    The fourth return value is the repo vocabulary the WRITTEN corpus uses (the
+    decl prefixes, after ``repo_map``), which is what the caller compares with
+    the workspace's companions.
+    """
     written = converted = already_v2 = 0
+    repos_seen: set[str] = set()
     for name in expected:
         doc = json.loads((src / name).read_text(encoding="utf-8"))
         if no_convert or doc.get("schema_version") == 2:
@@ -199,9 +257,10 @@ def _import_files(src: Path, dest: Path, expected, no_convert: bool, *, run_id: 
         else:
             out = convert_v1.convert_doc(
                 doc, run_id=run_id, source_id=source_id, source_sha=source_sha,
-                mode=mode, preset=preset, repos=repos)
+                mode=mode, preset=preset, repos=repos, repo_map=repo_map)
             converted += 1
+        repos_seen |= convert_v1.decl_repos(out)
         (dest / name).write_text(
             json.dumps(out, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         written += 1
-    return written, converted, already_v2
+    return written, converted, already_v2, repos_seen

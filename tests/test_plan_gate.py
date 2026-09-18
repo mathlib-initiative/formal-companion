@@ -770,6 +770,90 @@ class TestConvertV1(unittest.TestCase):
         self.assertNotEqual(
             a, vf.finding_id("run2", PUBLISHED_ID, "Exercise 1.1.1", "CONTENT", ["ours:a"]))
 
+    def test_repo_map_parses_every_spelling(self):
+        f = convert_v1.parse_repo_map
+        self.assertEqual(f(None), {})
+        self.assertEqual(f(""), {})
+        self.assertEqual(f("ours=tml-prefix"), {"ours": "tml-prefix"})
+        self.assertEqual(f(["ours=tml-prefix", "teorth=peer"]),
+                         {"ours": "tml-prefix", "teorth": "peer"})
+        self.assertEqual(f("ours=tml-prefix,teorth=peer"),
+                         {"ours": "tml-prefix", "teorth": "peer"})
+        self.assertEqual(f({"ours": "tml-prefix"}), {"ours": "tml-prefix"})
+        # a typo is an error, not a silently ignored token: a corpus converted
+        # under a broken map cannot join and would say nothing about why
+        with self.assertRaises(ValueError):
+            f("ours")
+        with self.assertRaises(ValueError):
+            f("ours=")
+
+    def test_repo_map_rewrites_only_the_repo_half(self):
+        f = convert_v1.map_decl
+        m = {"ours": "tml-prefix"}
+        self.assertEqual(f("ours:RiemannIntegrableOn.foo", m),
+                         "tml-prefix:RiemannIntegrableOn.foo")
+        self.assertEqual(f("teorth:Foo.bar", m), "teorth:Foo.bar")   # unmapped: untouched
+        self.assertEqual(f("Foo.bar", m), "Foo.bar")                 # no prefix at all
+        self.assertEqual(f("ours:a", {}), "ours:a")                  # no map: nothing happens
+
+    def test_converted_rows_carry_this_workspace_s_repo_names(self):
+        """The union key is (source_id, repo, item, kind); the repo half must join.
+
+        The v1 corpus calls the audited repository ``ours``; a workspace calls
+        the same repository by its companion id.  Unmapped, the baseline and a
+        new run make two entries for one defect.
+        """
+        doc = convert_v1.convert_doc(
+            {"item": "In-text, book p. 71",
+             "matches": [{"verdict": "SINGLE_SOURCE_DELTA",
+                          "decls": [{"repo": "ours", "decl": "foo"}]}],
+             "disagreements": [
+                 {"kind": "CONTENT", "severity": "high", "concept": "c",
+                  "repos_involved": ["ours", "teorth"], "faithful": "teorth",
+                  "unfaithful_decls": ["ours:a", "teorth:b"],
+                  "book_quote": "q", "reasoning": "r"}]},
+            run_id="r", source_id=PUBLISHED_ID, source_sha=BOOK_SHA, mode="attack",
+            repos=["tml-prefix", "teorth"], repo_map="ours=tml-prefix")
+        g = doc["disagreements"][0]
+        self.assertEqual(g["unfaithful_decls"], ["tml-prefix:a", "teorth:b"])
+        self.assertEqual(g["repos_involved"], ["tml-prefix", "teorth"])
+        self.assertEqual(g["faithful"], ["teorth"])
+        self.assertEqual(doc["matches"][0]["decls"][0]["repo"], "tml-prefix")
+        self.assertEqual(convert_v1.decl_repos(doc), {"tml-prefix", "teorth"})
+        # the rewrite is recorded on the row and the map on the document
+        self.assertEqual(g["unfaithful_decls_v1"], ["ours:a", "teorth:b"])
+        self.assertEqual(doc["repo_map"], {"ours": "tml-prefix"})
+        # the id is the MAPPED row's id: it belongs to the importing workspace
+        self.assertEqual(g["finding_id"],
+                         vf.finding_id("r", PUBLISHED_ID, "In-text, book p. 71", "CONTENT",
+                                       ["tml-prefix:a", "teorth:b"]))
+
+    def test_the_v1_faithful_word_survives_the_map(self):
+        """``faithful`` is prose in v1; only repo NAMES are mapped."""
+        for word, expect in (("none", []), ("unsure", []), ("ours", ["tml-prefix"])):
+            doc = convert_v1.convert_doc(
+                {"item": "x", "matches": [], "disagreements": [
+                    {"kind": "CONTENT", "severity": "low", "concept": "c",
+                     "repos_involved": ["ours"], "faithful": word,
+                     "unfaithful_decls": ["ours:a"], "book_quote": "q", "reasoning": "r"}]},
+                run_id="r", source_id=PUBLISHED_ID, source_sha=BOOK_SHA,
+                repos=["tml-prefix"], repo_map={"ours": "tml-prefix"})
+            self.assertEqual(doc["disagreements"][0]["faithful"], expect)
+
+    def test_without_a_map_nothing_is_renamed(self):
+        doc = convert_v1.convert_doc(
+            {"item": "x", "matches": [{"verdict": "AGREE",
+                                       "decls": [{"repo": "ours", "decl": "foo"}]}],
+             "disagreements": [
+                 {"kind": "CONTENT", "severity": "low", "concept": "c",
+                  "repos_involved": ["ours"], "faithful": "teorth",
+                  "unfaithful_decls": ["ours:a"], "book_quote": "q", "reasoning": "r"}]},
+            run_id="r", source_id=PUBLISHED_ID, source_sha=BOOK_SHA, repos=["ours", "teorth"])
+        self.assertEqual(doc["disagreements"][0]["unfaithful_decls"], ["ours:a"])
+        self.assertNotIn("unfaithful_decls_v1", doc["disagreements"][0])
+        self.assertNotIn("repo_map", doc)
+        self.assertEqual(doc["matches"][0]["decls"][0]["repo"], "ours")
+
     def test_refuses_in_place_conversion(self):
         with tempfile.TemporaryDirectory(dir=TMPDIR) as d:
             with self.assertRaises(SystemExit):
