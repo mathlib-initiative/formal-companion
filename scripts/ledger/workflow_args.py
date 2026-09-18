@@ -49,7 +49,7 @@ def load_statements(paths: Any, name: str) -> dict:
         if decl:
             by_decl.setdefault(decl, row)
             by_decl.setdefault("%s:%s" % (name, decl), row)
-        item = compat.normalise_item(row.get("item"))
+        item = compat.item_join_key(row.get("item"))
         if item:
             by_item.setdefault(item, []).append(row)
     return {"by_decl": by_decl, "by_item": by_item, "path": path, "rows": len(rows)}
@@ -76,7 +76,7 @@ def _peer_rows(indexes: dict[str, dict], item: str, exclude: str, cap: int) -> d
     for name, index in indexes.items():
         if name == exclude:
             continue
-        rows = index["by_item"].get(compat.normalise_item(item)) or []
+        rows = index["by_item"].get(compat.item_join_key(item)) or []
         if not rows:
             continue
         out[name] = [

@@ -38,14 +38,15 @@ from typing import Any, Callable, Iterable, Iterator
 # --------------------------------------------------------------------------
 
 try:
-    from cflib import hashing as _hashing, jsonio as _jsonio, state as _state, vocab as _vocab
+    from cflib import hashing as _hashing, items as _cf_items, jsonio as _jsonio
+    from cflib import state as _state, vocab as _vocab
     from cflib.workspace import Workspace as _Workspace
     from cflib.paths import WorkspacePaths as _WorkspacePaths
     from cflib.yamlio import read_yaml as _read_yaml
 
     _HAVE_CFLIB = True
 except Exception:  # pragma: no cover - stand-alone use only
-    _hashing = _jsonio = _state = _vocab = None  # type: ignore[assignment]
+    _hashing = _cf_items = _jsonio = _state = _vocab = None  # type: ignore[assignment]
     _Workspace = _WorkspacePaths = None  # type: ignore[assignment]
     _read_yaml = None  # type: ignore[assignment]
     _HAVE_CFLIB = False
@@ -136,6 +137,38 @@ def normalise_item(item: Any) -> str:
         return ""
     s = unicodedata.normalize("NFKC", str(item)).replace(" ", " ")
     return _WS.sub(" ", s).strip()
+
+
+def item_join_key(item: Any) -> str:
+    """The canonical key a book item is MATCHED on.
+
+    ``normalise_item`` above is whitespace-only, which is right for a label that
+    is about to be written down or hashed and wrong for a label that is about to
+    be looked up.  Items with no number are labelled by whoever wrote the label,
+    and the corpus has two generations of spelling for them --
+    ``"In-text, book p. 71"`` (v1 findings) and ``"In-text p.71"`` (extraction).
+    Matching on the whitespace form, every in-text row in one generation misses
+    every in-text row in the other: the routed file loses the anchor row, the
+    adjudication lens finds no peer statements, and ``match_finding`` files the
+    row as unlinked.
+
+    Numbered labels come back byte-identical to ``normalise_item``; only in-text
+    labels move, onto ``cflib.items.join_key``.  Nothing here is hashed --
+    ``finding_id`` still goes through ``cflib.items.clean`` on the label as
+    written -- so no id changes.
+
+    The kinds are the default list: a ledger row does not carry its source's
+    kinds, and threading them here would mean threading a source through every
+    matcher.  A source with a different kind list therefore keeps an ANCHORED
+    in-text label ("In-text Widget 2.3.4") as written -- the behaviour before
+    this function existed, never a guess -- while page-keyed labels, which is
+    what the grammar reads without kinds, canonicalise for every source.
+    """
+    text = normalise_item(item)
+    if not text or _cf_items is None:
+        return text  # stand-alone: degrade to the whitespace form, never guess
+    key, _reject = _cf_items.try_join_key(text)
+    return key
 
 
 def normalise_decl(decl: Any) -> str:

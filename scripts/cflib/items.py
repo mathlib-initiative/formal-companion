@@ -23,6 +23,11 @@ fixed:
 The canonical id is ``"<Kind> <c>.<s>.<n>"`` or ``"In-text p.<n>"``; the
 sub-part is carried separately so ``Exercise 1.1.6(i)`` and
 ``Exercise 1.1.6(ii)`` pair on the same book item but stay distinguishable.
+
+Two functions normalise a label and they are not interchangeable: ``clean()``
+is the ID transformation (whitespace only, hashed by ``finding_id``, frozen),
+and ``join_key()`` is the KEY two corpus generations join on (the strict
+grammar, applied to in-text labels).  See the section above ``is_in_text``.
 """
 from __future__ import annotations
 
@@ -251,6 +256,108 @@ def parse_all(raws: Iterable[str], kinds: Sequence[str] = DEFAULT_KINDS) -> tupl
         item, reject = try_parse(raw, kinds)
         (items if item is not None else rejects).append(item if item is not None else reject)
     return items, rejects
+
+
+# --------------------------------------------------------------------------
+# the canonical key two corpus GENERATIONS join on
+# --------------------------------------------------------------------------
+#
+# ``clean()`` is the id transformation: it is what ``finding_id`` hashes, it is
+# duplicated byte-for-byte in five places (cflib/hashing.py, gate/
+# verify_findings.py, sources/compat.py, ledger/compat.py, detect/_compat.py)
+# and it MUST NOT change, because changing it re-keys every finding in the
+# 2,672-file baseline corpus.  It is also whitespace-only, which is why the
+# defect below survived it.
+#
+# Book items that carry no number are labelled by whoever wrote the label, and
+# two generations of the corpus spell them differently:
+#
+#     v1 corpus (findings*/):  "In-text, book p. 71"
+#                              "In-text convention, book p. 29 (Exercise 1.2.5: ...)"
+#                              "In-text, Definition 1.4.35"
+#     today's extraction:      "In-text p.71"
+#                              "In-text p.29"
+#                              "In-text Definition 1.4.35"
+#
+# Exact-match overlap between the two label sets is ZERO, so a new run cannot be
+# joined to the baseline on any in-text item -- `union --new-only` calls every
+# re-found in-text defect new, the agreed-across-runs report finds no agreement,
+# and a regression check scores a re-found defect (the live case: the p.71
+# defect on ``RiemannIntegrableOn.complexLebesgueIntegralOn_Icc``) as a miss.
+#
+# The fix is a SECOND function, not a change to ``clean()``: joining wants the
+# canonical item, hashing wants the label as written.  ``join_key`` is the
+# canonical item and nothing hashes it.
+#
+#     numbered labels     -> ``clean(raw)``, byte-identical to today
+#     page-keyed in-text  -> ``In-text p.<n>``       (one spelling for both)
+#     anchored in-text    -> ``In-text <Kind> <c>.<s>.<n>[(sub)]``
+#
+# An anchored in-text item is NOT the numbered item it names: ``In-text
+# Definition 1.4.35`` is the unnumbered material next to Definition 1.4.35, so
+# the two keep separate keys.  A descriptive prefix ("convention", "proof of
+# ..."), a trailing parenthetical and a page RANGE never split a key, and a
+# printed page always wins over a cross-reference the label happens to mention
+# -- so ``In-text, book p. 51 / Definition 1.3.6`` is the p.51 item.
+#
+# An in-text label the grammar refuses keeps the cleaned label as its own key
+# (it is never guessed onto some other item) and comes back with a Reject, so
+# the caller reports it instead of dropping it.
+
+
+def is_in_text(raw: str) -> bool:
+    """True when *raw* labels an unnumbered ("in-text") book item."""
+    return bool(_IN_TEXT_RE.match(clean(raw)))
+
+
+def try_join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[str, Reject | None]:
+    """The key to join *raw* on, and the Reject to report (``None`` when clean).
+
+    The sub-part is KEPT: ``In-text Lemma 1.2.13(ii)`` and ``In-text Lemma
+    1.2.13(iii)`` are two anchors, spelled as two items by both corpus
+    generations, and collapsing them would merge two items the corpus
+    distinguishes.  (A numbered ``Exercise 1.6.27(iii)`` is different: it is a
+    part of an item the book itself numbers, and the tally collapses it.)
+    """
+    s = clean(raw)
+    if not s:
+        return "", Reject(raw, REJECT_EMPTY)
+    if not _IN_TEXT_RE.match(s):
+        return s, None                      # numbered/other labels: untouched
+    item, reject = _parse_in_text(raw, s, kinds)
+    if item is None:
+        return s, reject                    # reported, never guessed onto an item
+    return item.full, None
+
+
+def join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> str:
+    """:func:`try_join_key`, raising ItemGrammarError on an unjoinable label."""
+    key, reject = try_join_key(raw, kinds)
+    if reject is not None:
+        raise ItemGrammarError(raw, reject.reason,
+                               hint="an in-text label needs a printed page ('book p. 71') "
+                                    "or a named numbered item ('In-text Definition 1.4.35')")
+    return key
+
+
+def join_keys(raws: Iterable[str],
+              kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[dict[str, str], list[Reject]]:
+    """Bulk :func:`try_join_key`: ``({raw: key}, [Reject, ...])``.
+
+    The rejects are the report; the keys still contain every input, so a caller
+    that joins on the result loses no row.
+    """
+    keys: dict[str, str] = {}
+    rejects: list[Reject] = []
+    for raw in raws:
+        text = str(raw)
+        if text in keys:
+            continue
+        key, reject = try_join_key(text, kinds)
+        keys[text] = key
+        if reject is not None:
+            rejects.append(reject)
+    return keys, rejects
 
 
 _ROMAN = {"i": 1, "ii": 2, "iii": 3, "iv": 4, "v": 5, "vi": 6, "vii": 7, "viii": 8,

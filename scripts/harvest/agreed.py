@@ -30,7 +30,7 @@ if __package__ in (None, ""):  # `python3 scripts/harvest/agreed.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harvest._compat import SUBSTANTIVE_KINDS, iso_now
-from harvest.tally import collect, parse_run_arg
+from harvest.tally import collect, parse_run_arg, unjoinable
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 
@@ -81,8 +81,8 @@ def agreed(rows: Sequence[dict], min_runs: int = 2, min_severity: str = "high",
 
 def build(runs: dict[str, str | Path], source_id: str | None = None, **kwargs) -> dict:
     """``{generated_at, criteria, entries}`` for reports/agreed_high.json."""
-    entries = agreed(collect(runs, sources=[source_id] if source_id else None),
-                     source_id=source_id, **kwargs)
+    rows = collect(runs, sources=[source_id] if source_id else None)
+    entries = agreed(rows, source_id=source_id, **kwargs)
     return {
         "generated_at": iso_now(),
         "runs": sorted(runs),
@@ -94,6 +94,9 @@ def build(runs: dict[str, str | Path], source_id: str | None = None, **kwargs) -
             "grouped_by": "source_id + repo + item (sub-parts collapsed)",
         },
         "count": len(entries),
+        # an in-text label the grammar could not canonicalise cannot agree with
+        # the same item under another spelling: reported, never dropped.
+        "unjoinable": unjoinable(rows),
         "by_source": dict(collections.Counter(e["source_id"] for e in entries)),
         "cross_family": sum(1 for e in entries if e["cross_family"]),
         "entries": entries,

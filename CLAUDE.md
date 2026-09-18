@@ -76,6 +76,16 @@ Those two lines move together or not at all.
   sources may legitimately both have an `Exercise 1.3.19`, and a function that
   takes a bare item string takes a `source_id` too. One string spelling only:
   `qualified_item()` / `split_qualified()` around `::`.
+- **Two normalisers, and they are not interchangeable.** `items.clean()` is the
+  ID transformation (whitespace only, hashed by `finding_id`, frozen — changing
+  it re-keys the whole corpus). `items.join_key()` is the KEY two corpus
+  generations join on: for a numbered label it *is* `clean()`, and for an
+  unnumbered one it is the strict grammar, so the v1 corpus's
+  `"In-text, book p. 71"` and the extraction's `"In-text p.71"` are one item.
+  Anything that MATCHES on an item matches on `join_key` (`tally.
+  collapse_to_book_item`, `ledger.compat.item_join_key`); anything that WRITES
+  or HASHES a label leaves it as written. An in-text label the grammar refuses
+  keeps itself as its own key and is reported, never guessed onto an item.
 - **Nothing about a source is typed in.** Sources, editions, offsets, kinds,
   errata URLs and scope are discovered (`cflib/discovery.py`) and inferred
   (`cflib/inference.py`). A new fact a repo can expose is a new *signal*, not a

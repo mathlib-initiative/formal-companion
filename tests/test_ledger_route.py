@@ -717,6 +717,62 @@ class TestTranscription(unittest.TestCase):
         self.assertEqual(rows[0]["verdict"], "REFUTED")
 
 
+class TestItemJoinKeyMatching(unittest.TestCase):
+    """Everything that MATCHES on an item matches on the canonical key.
+
+    `compat.normalise_item` is whitespace-only.  That is right for a label about
+    to be written down or hashed and wrong for one about to be looked up: the v1
+    corpus spells an unnumbered item ``"In-text, book p. 71"`` and the extraction
+    spells it ``"In-text p.71"``, so every in-text lookup missed.
+    """
+
+    def test_numbered_labels_are_unchanged(self):
+        for raw in ("Exercise 1.3.19", "Exercise    1.3.19", "Exercise 1.6.27(iii)",
+                    "Lemma 1.2.13(ii)", "Definition 1.2.2 (Lebesgue measurability)",
+                    "not an item", "", None):
+            with self.subTest(raw=raw):
+                self.assertEqual(compat.item_join_key(raw), compat.normalise_item(raw))
+
+    def test_the_two_generations_match(self):
+        pairs = [("In-text, book p. 71", "In-text p.71"),
+                 ("In-text convention, book p. 18", "In-text p.18"),
+                 ("In-text, Definition 1.4.35", "In-text Definition 1.4.35"),
+                 ("In-text definition, book pp. 70–71", "In-text p.70")]
+        for old, new in pairs:
+            with self.subTest(old=old):
+                self.assertNotEqual(compat.normalise_item(old), compat.normalise_item(new))
+                self.assertEqual(compat.item_join_key(old), compat.item_join_key(new))
+
+    def test_an_unjoinable_label_keeps_itself(self):
+        self.assertEqual(compat.item_join_key("In-text, somewhere"), "In-text, somewhere")
+
+    def test_statements_are_found_by_the_v1_spelling(self):
+        """The adjudication lens: a v1 finding must find today's statement rows."""
+        root = scratch_dir()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        paths = compat.workspace_paths(root)
+        compat.write_jsonl(paths.statements("ours"), [
+            {"item": "In-text p.71", "decl": "RiemannIntegrableOn.complexLebesgueIntegralOn_Icc",
+             "file": "Section_1_4.lean", "line": 71, "statement": "theorem ...", "sorry": False},
+        ])
+        index = workflow_args.load_statements(paths, "ours")
+        self.assertEqual(index["rows"], 1)
+        rows = workflow_args._peer_rows({"ours": index}, "In-text definition, book p. 71",
+                                        exclude="adam", cap=3)
+        self.assertEqual([r["decl"] for r in rows["ours"]],
+                         ["RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"])
+
+    def test_migrate_matches_a_v1_ledger_row_to_an_in_text_finding(self):
+        finding = {"finding_id": "f1", "item": "In-text p.71", "kind": "CONTENT",
+                   "source_id": PUBLISHED_ID,
+                   "unfaithful_decls": ["ours:RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"]}
+        match = migrate.match_finding(
+            [finding], "In-text definition, book p. 71",
+            ["ours:RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"], "CONTENT",
+            source_id=PUBLISHED_ID)
+        self.assertIs(match, finding)
+
+
 class TestWorkflowArgs(unittest.TestCase):
     """`cf adjudicate --emit-args` must produce workspace-only, id-linked inputs."""
 
