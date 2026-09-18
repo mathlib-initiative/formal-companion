@@ -333,7 +333,12 @@ baseline.**
    silently mix editions;
 5. `finding_id` computed per `references/vocabulary.md` §3;
 6. bare `repo:decl` names are kept and, where `statements.jsonl` supplies a unique namespace,
-   `decl_qualified` is added;
+   `decl_qualified` is added. The `repo:` half is rewritten only when `--repo-map ours=<companion>`
+   says the two names are one repository — v1 predates the workspace, and the union key
+   `(source_id, repo, item, kind)` and the gate's known-repo check both read that half, so an
+   unmapped import neither joins nor gates. The row keeps its v1 spelling in
+   `unfaithful_decls_v1`, the document records the `repo_map` it was converted under, and an
+   import without the flag warns instead of renaming anything;
 7. dash and underscore slugs both accepted; the file name is not trusted for the item — `item`
    inside the JSON is;
 8. batch-1 ledger rows (`accepted.adam.jsonl`, `refuted.adam.jsonl`) import into `ledger/` with

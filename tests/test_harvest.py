@@ -760,6 +760,262 @@ class TestRealCorpusGenerationsJoin(unittest.TestCase):
         self.assertEqual(tally_mod.unjoinable(rows), [])
 
 
+class TestImportedCorpusJoinsThisWorkspacesRuns(unittest.TestCase):
+    """The union key is ``(source_id, repo, item, kind)``: the repo half joins too.
+
+    The canonical in-text item key fixed the ITEM half.  The repo half broke the
+    same join for the same reason: the v1 corpus calls the audited repository
+    ``ours`` (the 2026-09 campaign's name for it) and a workspace calls the same
+    repository by its companion id (``tml-prefix``), so the baseline entry and
+    the re-found one stayed two entries and ``--new-only`` called the re-found
+    defect new.  A repo name is not guessable, so it is STATED at the import
+    boundary -- ``convert_v1 --repo-map`` -- exactly where ``--source`` states
+    the source a v1 row never recorded.
+    """
+
+    DECL_V1 = "ours:RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"
+    DECL_NEW = "tml-prefix:TaoMeasure.RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"
+
+    def setUp(self):
+        from gate import convert_v1
+
+        self.convert_v1 = convert_v1
+        self.root = scratch(self)
+        # the v1 baseline: v1 item spelling, v1 repo vocabulary, no source stamp
+        write_findings(self.root / "v1-raw", "In-text, book p. 71",
+                       [{"concept": "Riemann integrability is stated for the wrong class",
+                         "kind": "CONTENT", "severity": "medium",
+                         "repos_involved": ["ours"], "faithful": "none",
+                         "unfaithful_decls": [self.DECL_V1],
+                         "book_quote": "q", "reasoning": "r"}])
+        # today's run of this workspace: today's spelling, this workspace's repo
+        write_findings(self.root / "today", "In-text p.71",
+                       [{"concept": "the p.71 definition admits non-integrable functions",
+                         "kind": "CONTENT", "severity": "high",
+                         "repos_involved": ["tml-prefix"], "faithful": [],
+                         "unfaithful_decls": [self.DECL_NEW],
+                         "book_quote": "q", "reasoning": "r"}],
+                       PUBLISHED_ID, PUBLISHED_SHA)
+
+    def _import(self, repo_map=None) -> dict:
+        """Convert the v1 directory as `cf import-corpus` does, and union it."""
+        out = self.root / ("mapped" if repo_map else "unmapped")
+        out.mkdir(parents=True, exist_ok=True)
+        for path in sorted((self.root / "v1-raw").glob("*.json")):
+            doc = self.convert_v1.convert_doc(
+                json.loads(path.read_text(encoding="utf-8")),
+                run_id="v1-hunt", source_id=PUBLISHED_ID, source_sha=PUBLISHED_SHA,
+                mode="attack", repos=["tml-prefix"], repo_map=repo_map)
+            (out / path.name).write_text(json.dumps(doc), encoding="utf-8")
+        runs = {"v1-hunt": out, "today": self.root / "today"}
+        return union_mod.build(runs, baseline_runs=["v1-hunt"])
+
+    def test_unmapped_repo_names_are_two_entries_for_one_defect(self):
+        """The defect, pinned: the item halves agree and the repos do not."""
+        doc = self._import()
+        self.assertEqual([(e["repo"], e["item"], e["new"]) for e in doc["entries"]],
+                         [("ours", "In-text p.71", False),
+                          ("tml-prefix", "In-text p.71", True)])
+        self.assertEqual(doc["summary"]["multi_run"], 0)
+
+    def test_the_repo_map_makes_it_one_entry_found_by_both_runs(self):
+        doc = self._import(repo_map={"ours": "tml-prefix"})
+        self.assertEqual(len(doc["entries"]), 1)
+        entry = doc["entries"][0]
+        self.assertEqual(entry["repo"], "tml-prefix")
+        self.assertEqual(entry["item"], "In-text p.71")
+        self.assertEqual(entry["runs"], ["today", "v1-hunt"])
+        self.assertFalse(entry["new"], "a re-found baseline defect is not new")
+        self.assertEqual(doc["summary"]["multi_run"], 1)
+        self.assertEqual(doc["summary"]["new"], 0)
+        # both decl spellings are kept: the map renames the repo, not the decl
+        self.assertEqual(entry["decls"],
+                         sorted([self.DECL_V1.replace("ours:", "tml-prefix:"), self.DECL_NEW]))
+
+    def test_new_only_and_agreed_both_follow(self):
+        out = self.root / "mapped2"
+        out.mkdir()
+        for path in sorted((self.root / "v1-raw").glob("*.json")):
+            doc = self.convert_v1.convert_doc(
+                json.loads(path.read_text(encoding="utf-8")),
+                run_id="v1-hunt", source_id=PUBLISHED_ID, source_sha=PUBLISHED_SHA,
+                mode="attack", repos=["tml-prefix"], repo_map="ours=tml-prefix")
+            (out / path.name).write_text(json.dumps(doc), encoding="utf-8")
+        rows = tally_mod.collect({"v1-hunt": out, "today": self.root / "today"})
+        self.assertEqual(union_mod.union(rows, baseline_runs=["v1-hunt"], new_only=True), [])
+        self.assertEqual([e["item"] for e in agreed_mod.agreed(rows, min_runs=2,
+                                                              min_severity="low")],
+                         ["In-text p.71"])
+
+    def test_the_importer_refuses_a_map_onto_a_companion_nobody_has(self):
+        from gate.convert_v1 import parse_repo_map
+
+        self.assertEqual(parse_repo_map("ours=tml-prefix"), {"ours": "tml-prefix"})
+        with self.assertRaises(ValueError):
+            parse_repo_map("ours")
+
+
+@unittest.skipUnless(BASELINE, "set CF_BASELINE_CORPUS to the tao-diff-run checkout")
+class TestRealBaselineJoinsTodaysRun(unittest.TestCase):
+    """The live case, end to end on the real v1 corpus.
+
+    Every in-text findings file of the real ``findings-hunt`` run is converted as
+    `cf import-corpus` converts it, and unioned against the p.71 row the
+    2026-09-18 ground-truth run actually produced (item ``In-text p.71``, decl
+    ``tml-prefix:TaoMeasure.RiemannIntegrableOn.complexLebesgueIntegralOn_Icc``).
+    Without the repo map that union scores the re-found defect `new`.
+    """
+
+    DECL_NEW = "tml-prefix:TaoMeasure.RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"
+
+    def setUp(self):
+        from gate import convert_v1
+
+        self.root = scratch(self)
+        self.converted = {}
+        for label, repo_map in (("mapped", {"ours": "tml-prefix"}), ("unmapped", None)):
+            out = self.root / label
+            out.mkdir(parents=True)
+            for path in sorted((Path(BASELINE) / "findings-hunt").glob("*.json")):
+                doc = json.loads(path.read_text(encoding="utf-8"))
+                if not cf_items.is_in_text(str(doc.get("item") or "")):
+                    continue
+                (out / path.name).write_text(json.dumps(convert_v1.convert_doc(
+                    doc, run_id="v1-hunt", source_id=PUBLISHED_ID, source_sha=PUBLISHED_SHA,
+                    mode="attack", repos=["tml-prefix"], repo_map=repo_map)), encoding="utf-8")
+            self.converted[label] = out
+        write_findings(self.root / "today", "In-text p.71",
+                       [{"concept": "Riemann integrability on Icc", "kind": "CONTENT",
+                         "severity": "high", "repos_involved": ["tml-prefix"],
+                         "faithful": [], "unfaithful_decls": [self.DECL_NEW],
+                         "book_quote": "q", "reasoning": "r"}],
+                       PUBLISHED_ID, PUBLISHED_SHA)
+
+    def _p71(self, label):
+        runs = {"v1-hunt": self.converted[label], "today": self.root / "today"}
+        entries = union_mod.build(runs, baseline_runs=["v1-hunt"])["entries"]
+        return [e for e in entries if e["item"] == "In-text p.71"]
+
+    def test_the_real_baseline_in_text_corpus_is_what_this_joins(self):
+        """137 in-text items were probed; two of them carry a defect row."""
+        self.assertEqual(len(list(self.converted["mapped"].glob("*.json"))), 137)
+        rows = tally_mod.collect({"v1-hunt": self.converted["mapped"]})
+        self.assertEqual(sorted({r["item"] for r in rows}),
+                         ["In-text Exercise 1.4.24", "In-text p.71"])
+        # ours -> tml-prefix, and the peer repo the map does not name is left
+        # exactly as the baseline wrote it
+        self.assertEqual({r["repo"] for r in rows}, {"teorth", "tml-prefix"})
+        self.assertEqual(tally_mod.unjoinable(rows), [])
+
+    def test_unmapped_the_re_found_defect_is_scored_new(self):
+        entries = self._p71("unmapped")
+        self.assertEqual(sorted(e["repo"] for e in entries), ["ours", "tml-prefix"])
+        self.assertEqual([e["new"] for e in entries if e["repo"] == "tml-prefix"], [True])
+
+    def test_mapped_the_re_found_defect_joins_the_baseline_row(self):
+        entries = self._p71("mapped")
+        self.assertEqual(len(entries), 1, "one defect, one entry")
+        self.assertEqual(entries[0]["repo"], "tml-prefix")
+        self.assertEqual(entries[0]["runs"], ["today", "v1-hunt"])
+        self.assertFalse(entries[0]["new"])
+        self.assertIn("In-text, book p. 71", entries[0]["items_raw"])
+        self.assertIn("In-text p.71", entries[0]["items_raw"])
+
+
+class TestWorkspaceTallyReportsUnderTheSourcesOwnKinds(unittest.TestCase):
+    """`cf tally --union` must report unjoinable labels under the SOURCE's kinds.
+
+    ``collapse_to_book_item`` is called with each source's own kinds (the grammar
+    is per source), so a label anchored to a kind the source does not have stays
+    unjoinable -- it keeps itself as its key and can never join the same item
+    under another spelling.  The report was computed under
+    ``items.DEFAULT_KINDS`` instead, which parses the label happily and finds
+    nothing to report: a silent drop, in the flagless path, for exactly the rows
+    the list exists to surface.  Both live sources have 8 kinds, not the
+    default 10 (no Strategy, no Claim).
+    """
+
+    KINDS = ("Definition", "Lemma", "Theorem", "Proposition", "Corollary",
+             "Exercise", "Example", "Remark")
+    #: anchored to a kind this source does not have, so it cannot be canonicalised
+    LABEL = "In-text, Claim 1.2.3"
+
+    def setUp(self):
+        sys.path.insert(0, str(SCRIPTS))
+        from cflib.workspace import Workspace
+
+        self.root = scratch(self)
+        repo = self.root / "repos" / "tml-prefix"
+        repo.mkdir(parents=True)
+        (self.root / "workspace.yaml").write_text(
+            "version: 2\n"
+            "workspace:\n  name: ws\n"
+            "companions:\n"
+            "  tml-prefix:\n"
+            f"    repo: {repo}\n"
+            "    adapter: docstring_tags\n"
+            f"    sources: [{PUBLISHED_ID}]\n"
+            f"    anchor_source: {PUBLISHED_ID}\n"
+            "sources:\n"
+            f"  {PUBLISHED_ID}:\n"
+            f'    sha256: "{PUBLISHED_SHA}"\n'
+            "    title: An Introduction to Measure Theory\n"
+            '    edition: "AMS GSM 126 (published pagination)"\n'
+            "    offset: 16\n"
+            "    role: audited\n"
+            "    kinds:\n" + "".join(f"      - {k}\n" for k in self.KINDS),
+            encoding="utf-8")
+        self.workspace = Workspace.load(self.root)
+        self.assertEqual(self.workspace.kinds(PUBLISHED_ID), self.KINDS)
+        write_findings(self.root / "corpus" / "hunt", self.LABEL,
+                       [{"concept": "c", "kind": "CONTENT", "severity": "high",
+                         "repos_involved": ["tml-prefix"], "faithful": [],
+                         "unfaithful_decls": ["tml-prefix:Foo.bar"],
+                         "book_quote": "q", "reasoning": "r"}],
+                       PUBLISHED_ID, PUBLISHED_SHA)
+
+    def _run(self):
+        from cfcmd import tally as tally_cmd
+
+        class Args:
+            workspace = self.root
+            run = []
+            repo = []
+            source_id = None
+            union = True
+            agreed = False
+            baseline = []
+            new_only = False
+            min_runs = 2
+            as_json = False
+            no_write = False
+
+        out = io.StringIO()
+        import contextlib
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(out):
+            self.assertEqual(tally_cmd.run(Args()), 0)
+        return json.loads(Path(self.workspace.paths.union_json("tml-prefix")).read_text())
+
+    def test_the_label_is_unjoinable_under_this_source_and_joinable_under_the_default(self):
+        """The precondition, so the test below cannot pass by accident."""
+        self.assertEqual(tally_mod.collapse_to_book_item(self.LABEL, self.KINDS), self.LABEL)
+        self.assertEqual(tally_mod.collapse_to_book_item(self.LABEL), "In-text Claim 1.2.3")
+
+    def test_the_union_document_reports_it(self):
+        doc = self._run()
+        self.assertEqual([u["item_raw"] for u in doc["unjoinable"]], [self.LABEL])
+        self.assertEqual(doc["unjoinable"][0]["reason"], "in_text_no_target")
+        self.assertEqual(doc["unjoinable"][0]["source_id"], PUBLISHED_ID)
+        # reported, not dropped: the row is still in the union, under itself
+        self.assertEqual([e["item"] for e in doc["entries"]], [self.LABEL])
+
+    def test_the_tally_document_reports_it_too(self):
+        self._run()
+        tally_doc = json.loads(
+            Path(self.workspace.paths.tally_json("all")).read_text())
+        self.assertEqual([u["item_raw"] for u in tally_doc["unjoinable"]], [self.LABEL])
+
+
 class TestTwoSourcesDoNotMerge(unittest.TestCase):
     """The same item label in two sources is two items, everywhere downstream.
 

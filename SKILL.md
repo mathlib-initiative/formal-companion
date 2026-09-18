@@ -141,7 +141,7 @@ checkout actually has.
 | `run <run-id> --i-have-consent` | drive the fleet (server via tend+agentbox, or a local Workflow under ~100 items) |
 | `status [--companion X] [--source ID] [--json]` | the sources table, the differential line, every companion's `state.json`, and the **unconfirmed sources** block; prints nothing it did not read |
 | `harvest <run-id>` | pull findings, write `RECEIPT.json` (count + sha manifest + `sources`), tally |
-| `import-corpus --run-id <id> --from <dir>` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt, source never touched |
+| `import-corpus --run-id <id> --from <dir> [--repo-map ours=<companion>]` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt, source never touched. `--repo-map` states which of this workspace's companions a foreign repo name is — the union key is `(source_id, repo, item, kind)`, so without it the imported rows join nothing here, and the import warns |
 | `tally [--union] [--agreed] [--source ID]` | recompute every finding count from `corpus/`, grouped by `(source_id, repo)`; nothing downstream may count by hand |
 | `adjudicate [--companion X]` | lenses → reconciler → skeptics; challenge unchallenged rows; write ledger rows |
 | `detect-proxies <name> [--source ID]` | definition coverage and (with a built Lean env) dependency-stage analysis; publishes PROXY/COVERAGE rows into `corpus/detect-<name>-<tier>/` through the `mechanical` gate |

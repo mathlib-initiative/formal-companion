@@ -144,7 +144,10 @@ python3 $CF harvest attack-vac-2026-09-20 --gate
 python3 $CF tally --union --agreed
 
 # 5b. findings produced before this skill existed
-python3 $CF import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt
+#     --repo-map says which companion their repo names are: the union key holds
+#     the repo, so an unmapped import joins nothing this workspace runs
+python3 $CF import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt \
+    --repo-map ours=tao-measure-lean
 # batch-1 rows were judged against the 2011 draft, so they say so:
 python3 $CF import-corpus --run-id batch1 --from ~/Desktop/tao-differential/batch1 \
     --source tao-measure-2011-draft --source-sha <that edition's full sha256> \

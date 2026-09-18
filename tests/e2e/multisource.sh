@@ -213,10 +213,14 @@ print(sum(json.load(open(p))["actual"]["count"]
   check "ours items"                 "$(tally ours   raw.items)"          "40"
   check "ours substantive"           "$(tally ours   raw.substantive)"    "17"
   check "ours high"                  "$(tally ours   raw.high)"           "3"
+  # 41/19, not 40/18, since in-text labels stopped collapsing onto the numbered
+  # item they merely cite: findings-hunt's "In-text definition, Exercise 1.4.24"
+  # is the in-text definition, not Exercise 1.4.24.  A de-conflation, not a new
+  # finding (the `ours` numbers above are unchanged).
   check "teorth substantive (collapsed to book items)" \
-                                     "$(tally teorth collapsed.substantive)" "40"
+                                     "$(tally teorth collapsed.substantive)" "41"
   check "teorth high (collapsed to book items)" \
-                                     "$(tally teorth collapsed.high)"        "18"
+                                     "$(tally teorth collapsed.high)"        "19"
   check "adam rows"                  "$(tally adam   rows)"               "7"
   check "adam items"                 "$(tally adam   raw.items)"          "5"
   check "adam high"                  "$(tally adam   raw.high)"           "1"

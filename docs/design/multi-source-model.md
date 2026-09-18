@@ -907,6 +907,24 @@ Callers: `harvest/tally.py::collapse_to_book_item` (hence `union.py`,
 `workflow_args.py`, `validate_ledger.py`, `migrate.py`). **Nothing hashes the
 key form**, so no `finding_id` changes.
 
+**The item is only one half of the union key.** `union.py` groups on
+`(source_id, repo, item, kind)`, so two corpus generations join only when their
+*repo* vocabularies agree as well. They did not: the v1 corpus spells the
+audited repository `ours` (the campaign's name for it) and a workspace spells
+the same repository by its companion id (`tml-prefix`), so on the live data the
+canonical item key alone still produced two p.71 entries and `--new-only` still
+called the re-found defect new. A repo name is not guessable from the corpus —
+two names may or may not be one repository — so it is **stated at the import
+boundary**, exactly where `--source` states the source a v1 row never recorded:
+`convert_v1 --repo-map ours=tml-prefix` (and `cf import-corpus --repo-map`)
+rewrites the `repo:` half of `unfaithful_decls`, `repos_involved`, `faithful`
+and `matches[].decls[].repo`, keeps the v1 spelling in `unfaithful_decls_v1`,
+and records the map on the document. Without it nothing is renamed and the
+import **warns**, naming the repos the workspace does not have — the same
+discipline as `unjoinable`: reported, never guessed. With it, the 2026-09-18
+ground-truth run against the imported `findings-hunt` goes from 0 shared
+entries / 8 new to 4 shared / 4 new, and the p.71 defect is `new: false`.
+
 | context | representation |
 |---|---|
 | a JSON/JSONL row | two fields: `"source_id": "<id>"`, `"item": "Exercise 1.3.19"` |

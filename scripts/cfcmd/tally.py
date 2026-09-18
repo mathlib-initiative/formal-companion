@@ -117,7 +117,13 @@ def _write_unions(workspace, args, runs: dict[str, Path], result: dict) -> None:
             "baseline_runs": sorted(args.baseline),
             "new_only": bool(args.new_only),
             "summary": union_mod.summary(entries),
-            "unjoinable": tally_mod.unjoinable(rows),
+            # the SAME kinds the rows were collapsed under, three lines up: a
+            # source whose kinds list is narrower than the default (both live
+            # ones are -- no Strategy, no Claim) has in-text labels that are
+            # genuinely unjoinable under ITS grammar and joinable under the
+            # default one, and reporting them under the default is the silent
+            # drop this list exists to prevent.
+            "unjoinable": tally_mod.unjoinable(rows, kinds),
             "entries": entries,
         }
         out = Path(workspace.paths.union_json(repo))
