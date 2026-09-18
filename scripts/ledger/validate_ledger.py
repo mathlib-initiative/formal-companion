@@ -225,7 +225,7 @@ def validate_row(
                 )
             )
         else:
-            if compat.normalise_item(row.get("item")) != compat.normalise_item(finding.get("item")):
+            if compat.item_join_key(row.get("item")) != compat.item_join_key(finding.get("item")):
                 errs.append(
                     _err(
                         "item_mismatch",

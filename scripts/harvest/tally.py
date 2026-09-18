@@ -14,7 +14,9 @@ That recipe is kept exactly (same row rule, same dedup) and generalised:
 * both a RAW item count (the label the worker wrote) and a COLLAPSED one (the
   book item it belongs to), because ``Exercise 1.6.27(iii)`` and ``In-text
   definition, Exercise 1.4.24`` are findings about ``Exercise 1.6.27`` and
-  ``Exercise 1.4.24``;
+  ``In-text Exercise 1.4.24`` -- the collapsed label is the key every join
+  uses, so an in-text label goes through the grammar and NOT through the
+  positional search (see :func:`collapse_to_book_item`);
 * findings that name no declaration at all are counted separately instead of
   being attributed to a repo -- routing on anything but the ``unfaithful_decls``
   prefix is what produced the "31 findings" scare (design/stage_map.md Stage 9).
@@ -74,7 +76,7 @@ def _kind_alternation(kinds: Sequence[str]) -> re.Pattern:
 
 
 def collapse_to_book_item(label: str, kinds: Sequence[str] | None = None) -> str:
-    """The source item a finding label belongs to.
+    """The source item a finding label belongs to -- the key every join uses.
 
     ``kinds`` is ONE SOURCE's kinds list.  It has to be, because the kinds decide
     which labels collapse at all: a source whose grammar has no ``Proposition``
@@ -82,17 +84,37 @@ def collapse_to_book_item(label: str, kinds: Sequence[str] | None = None) -> str
     sibling edition's kinds, and the two would tally as two items.
 
     ``Exercise 1.6.27(iii)`` -> ``Exercise 1.6.27``;
-    ``In-text definition, Exercise 1.4.24`` -> ``Exercise 1.4.24``;
-    ``In-text, book p. 68`` -> ``In-text p.68`` (no numbered item to collapse to).
+    ``Corollary (Lemma 1.2.5 + Exercise 1.2.4)`` -> ``Lemma 1.2.5``;
+    ``In-text, book p. 68`` -> ``In-text p.68``;
+    ``In-text definition, Exercise 1.4.24`` -> ``In-text Exercise 1.4.24``.
 
-    The search is deliberately positional rather than a strict parse: worker
-    labels wrap the item in prose ("In-text definition, Exercise 1.4.24"), and
-    the strict grammar in cflib.items rejects those, which would leave two rows
-    for one book item.  Whitespace is normalised first, so ``Exercise    1.3.19``
-    collapses like any other.
+    For a NUMBERED label the search is deliberately positional rather than a
+    strict parse: worker labels wrap the item in prose, and the strict grammar
+    rejects those, which would leave two rows for one book item.  Whitespace is
+    normalised first, so ``Exercise    1.3.19`` collapses like any other.
+
+    An IN-TEXT label never reaches that search.  It goes through
+    ``cflib.items.join_key``, for two reasons:
+
+    * the positional search hijacks it.  ``In-text, book p. 51 / Definition
+      1.3.6`` collapsed onto ``Definition 1.3.6`` and ``In-text convention,
+      book p. 29 (Exercise 1.2.5: ...)`` onto ``Exercise 1.2.5`` -- a page-keyed
+      item filed under a numbered item it merely cites, which is both a lost
+      join (the same page under another label lands elsewhere) and a false one
+      (the numbered item collects findings that are not about it);
+    * ``In-text Definition 1.4.35`` is not ``Definition 1.4.35``.  It is the
+      unnumbered material next to it, so it keeps its own key.
+
+    An in-text sub-part is NOT collapsed: ``In-text Lemma 1.2.13(ii)`` and
+    ``In-text Lemma 1.2.13(iii)`` are two anchors, and both corpus generations
+    spell them as two items.  ``Exercise 1.6.27(iii)`` still collapses, because
+    that one is a part of an item the book itself numbers.
     """
     kinds = list(kinds or cf_items.DEFAULT_KINDS)
     cleaned = cf_items.clean(label or "")
+    if cf_items.is_in_text(cleaned):
+        key, _reject = cf_items.try_join_key(cleaned, kinds)
+        return key  # an unparseable in-text label keeps itself; see unjoinable()
     match = _kind_alternation(kinds).search(cleaned)
     if match:
         return f"{match.group(1)} {match.group(2)}"
@@ -100,6 +122,35 @@ def collapse_to_book_item(label: str, kinds: Sequence[str] | None = None) -> str
     if item is not None:
         return item.id
     return cleaned
+
+
+def unjoinable(rows: Iterable[dict], kinds=None) -> list[dict]:
+    """In-text labels the grammar could not canonicalise, with the reason.
+
+    Nothing is dropped: such a label still tallies under itself.  But it cannot
+    be joined to the same item under another spelling, so every caller that
+    joins by item reports this list rather than letting the row look unique.
+    """
+    rows = list(rows)
+    seen: dict[tuple[str, str], dict] = {}
+    for row in rows:
+        raw = str(row.get("item_raw") or "")
+        source_id = str(row.get("source_id") or "")
+        if (source_id, raw) in seen or not cf_items.is_in_text(raw):
+            continue
+        _key, reject = cf_items.try_join_key(raw, _kinds_for(kinds, source_id)
+                                             or cf_items.DEFAULT_KINDS)
+        if reject is None:
+            continue
+        seen[(source_id, raw)] = {
+            "source_id": source_id,
+            "item_raw": raw,
+            "item": str(row.get("item") or ""),
+            "reason": reject.reason,
+            "runs": sorted({str(r.get("run") or "") for r in rows
+                            if str(r.get("item_raw") or "") == raw}),
+        }
+    return [seen[k] for k in sorted(seen)]
 
 
 def _defects(payload: dict) -> list[dict]:
@@ -327,6 +378,10 @@ def tally(runs: dict[str, str | Path], kinds=None,
         "rows": len(rows),
         "groups": groups,
         "repos": out_repos,
+        # in-text labels that could not be canonicalised: they tally under
+        # themselves and therefore cannot join the same item under another
+        # spelling.  Reported, never dropped.
+        "unjoinable": unjoinable(rows, kinds),
     }
 
 
@@ -364,6 +419,10 @@ def render(result: dict, repos: Sequence[str] | None = None) -> str:
     lines = [f"runs: " + ", ".join(f"{r} ({v['mode']}, {v['files']} files)"
                                    for r, v in result["runs"].items()),
              f"rows: {result['rows']}"]
+    if result.get("unjoinable"):
+        lines.append("UNJOINABLE in-text labels (reported, not dropped): "
+                     + ", ".join("%s (%s)" % (u["item_raw"], u["reason"])
+                                 for u in result["unjoinable"]))
     for key, data in result.get("groups", {}).items():
         repo = data.get("repo", key)
         if repos and repo not in repos:

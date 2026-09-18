@@ -876,6 +876,37 @@ grammar of `cflib/items.py` unchanged — `<Kind> <c>.<s>.<n>` with an optional
 sub-part, or `In-text p.<n>` — because the grammar is per-source and the kinds
 list is per-source.
 
+**The item half has two normal forms, and a join must use the right one.**
+`items.clean(label)` is the ID form: whitespace only, what `finding_id` hashes,
+frozen. `items.join_key(label)` is the KEY form: identical to `clean()` for a
+numbered label, and the strict grammar for an unnumbered ("in-text") one.
+Unnumbered items have no printed id, so every generation of the corpus invents
+its own spelling — the v1 findings write `In-text, book p. 71`,
+`In-text convention, book p. 29 (Exercise 1.2.5: …)` and `In-text, Definition
+1.4.35`, while extraction writes `In-text p.71`, `In-text p.29` and `In-text
+Definition 1.4.35`. Exact-match overlap between those two vocabularies is
+**zero**, so before the key form existed no in-text item could be joined across
+runs at all: `union --new-only` called every re-found in-text defect new, the
+agreed-across-runs report found no agreement, and a baseline regression check
+scored a re-found defect as a miss (the live case, 2026-09-18: the p.71 defect
+on `RiemannIntegrableOn.complexLebesgueIntegralOn_Icc`).
+
+The key form collapses a descriptive prefix (`convention`, `proof of …`), a
+trailing parenthetical and a page range onto one spelling, and a printed page
+always beats a cross-reference the label happens to cite, so `In-text, book
+p. 51 / Definition 1.3.6` is the p.51 item. A page-keyed item and an
+item-anchored one are different keys, and an item-anchored one is **not** the
+numbered item it names: `In-text Definition 1.4.35` is the unnumbered material
+beside `Definition 1.4.35`, and merging them lets a finding about one hide a
+finding about the other. An in-text label the grammar refuses keeps itself as
+its own key and comes back with a `Reject` the caller reports (`tally()`
+carries them in `unjoinable`) — it is never guessed onto some other item.
+
+Callers: `harvest/tally.py::collapse_to_book_item` (hence `union.py`,
+`agreed.py`) and `ledger/compat.py::item_join_key` (hence `route.py`,
+`workflow_args.py`, `validate_ledger.py`, `migrate.py`). **Nothing hashes the
+key form**, so no `finding_id` changes.
+
 | context | representation |
 |---|---|
 | a JSON/JSONL row | two fields: `"source_id": "<id>"`, `"item": "Exercise 1.3.19"` |

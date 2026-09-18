@@ -105,7 +105,7 @@ def _anchor_index(anchor_check: Any) -> dict[str, dict]:
     out: dict[str, dict] = {}
     for row in rows or []:
         if isinstance(row, dict) and row.get("item"):
-            out[compat.normalise_item(row["item"])] = row
+            out[compat.item_join_key(row["item"])] = row
     return out
 
 
@@ -142,7 +142,7 @@ def _withdrawal(row: dict, anchors: dict[str, dict], checked: set[str],
         return ""
     if provenance(row) == MECHANICAL_SOURCE:
         return ""
-    item = compat.normalise_item(row.get("item"))
+    item = compat.item_join_key(row.get("item"))
     if item in anchors:
         return ""  # the mechanical check found the same mismatch: route it
     where = "pairs/%s/anchor-check.json" % source_id if source_id else "pairs/<source>/anchor-check.json"
@@ -166,7 +166,7 @@ def _checked_items(anchor_check: Any) -> set[str]:
     names = (summary or {}).get("checked_items") if isinstance(summary, dict) else None
     if names is None:
         names = anchor_check.get("checked_items")
-    return {compat.normalise_item(n) for n in (names or [])}
+    return {compat.item_join_key(n) for n in (names or [])}
 
 
 def route_repo(

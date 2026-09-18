@@ -175,6 +175,148 @@ class TestItemGrammar(unittest.TestCase):
         self.assertEqual(order, ["Exercise 1.1.1", "Lemma 1.2.13", "Theorem 1.10.1", "In-text p.5"])
 
 
+class TestItemJoinKey(unittest.TestCase):
+    """`join_key` is the key two corpus GENERATIONS join on.
+
+    The bug it fixes, found by the 2026-09-18 ground-truth run: the v1 findings
+    corpus labels unnumbered items ``"In-text, book p. 71"`` and the extraction
+    labels the same item ``"In-text p.71"``, exact-match overlap between the two
+    label sets is ZERO, and nothing normalised them -- so the run re-found the
+    p.71 defect on ``RiemannIntegrableOn.complexLebesgueIntegralOn_Icc``, failed
+    to join the baseline row that records it, and the comparison called it a miss.
+    """
+
+    #: (v1 corpus spelling, extraction spelling) of the SAME item
+    SAME_ITEM = [
+        ("In-text, book p. 71", "In-text p.71"),
+        ("In-text definition, book p. 71", "In-text p.71"),
+        ("In-text convention, book p. 18", "In-text p.18"),
+        ("In-text, book p. 29", "In-text p.29"),
+        ("In-text definition (book p. 29)", "In-text p.29"),
+        ("In-text convention, book p. 29 "
+         "(Exercise 1.2.5: extension of Jordan inner measure to unbounded sets)",
+         "In-text p.29"),
+        ("In-text proof (book p. 227)", "In-text p.227"),
+        ("In-text record (book p. 156; author's errata)", "In-text p.156"),
+        ("In-text, book p. 47, display (1.7)", "In-text p.47"),
+        ("In-text, Definition 1.4.35", "In-text Definition 1.4.35"),
+        ("In-text definition, Exercise 1.2.13", "In-text Exercise 1.2.13"),
+        ("In-text definition, Lemma 1.2.13(iii)", "In-text Lemma 1.2.13(iii)"),
+        ("In-text step in the proof of Lemma 1.2.13(ii)", "In-text Lemma 1.2.13(ii)"),
+    ]
+
+    def test_the_bug_itself(self):
+        """clean() -- what finding_id hashes -- does NOT join the two spellings."""
+        self.assertEqual(items.clean("In-text, book p. 71"), "In-text, book p. 71")
+        self.assertEqual(items.clean("In-text p.71"), "In-text p.71")
+        self.assertNotEqual(items.clean("In-text, book p. 71"), items.clean("In-text p.71"))
+
+    def test_both_generations_land_on_one_key(self):
+        for old, new in self.SAME_ITEM:
+            with self.subTest(old=old):
+                self.assertEqual(items.join_key(old), items.join_key(new))
+                self.assertEqual(items.join_key(old), new)
+
+    def test_page_ranges_and_prefixes_do_not_split_a_key(self):
+        for raw in ("In-text, book pp. 70–71", "In-text definition, book pp. 70-71",
+                    "In-text, book p. 70"):
+            with self.subTest(raw=raw):
+                self.assertEqual(items.join_key(raw), "In-text p.70")
+
+    def test_a_printed_page_wins_over_a_cross_reference(self):
+        """The label cites a numbered item; the item it IS is the page."""
+        self.assertEqual(items.join_key("In-text, book p. 51 / Definition 1.3.6"),
+                         "In-text p.51")
+        self.assertEqual(items.join_key("In-text proof of Lemma 1.1.2(i) (book p. 6)"),
+                         "In-text p.6")
+
+    def test_an_in_text_item_is_not_the_numbered_item_it_names(self):
+        """Definition 1.4.35 is not the unnumbered material beside it."""
+        self.assertNotEqual(items.join_key("In-text Definition 1.4.35"),
+                            items.join_key("Definition 1.4.35"))
+        self.assertEqual(items.join_key("Definition 1.4.35"), "Definition 1.4.35")
+        self.assertNotEqual(items.join_key("In-text Exercise 1.4.24"),
+                            items.join_key("Exercise 1.4.24"))
+
+    def test_a_page_key_is_not_an_anchor_key(self):
+        self.assertNotEqual(items.join_key("In-text, book p. 51"),
+                            items.join_key("In-text Definition 1.3.6"))
+
+    def test_two_anchors_into_one_lemma_stay_two_items(self):
+        self.assertNotEqual(items.join_key("In-text Lemma 1.2.13(ii)"),
+                            items.join_key("In-text Lemma 1.2.13(iii)"))
+
+    def test_numbered_labels_are_byte_identical_to_clean(self):
+        """The one thing that must not move: a numbered label's key IS clean()."""
+        for raw in ("Exercise 1.3.19", "Exercise    1.3.19", "Exercise\t1.3.19",
+                    "Exercise 1.6.27(iii)", "Lemma 1.2.13(ii)", "Theorem 1.7",
+                    "Definition 1.2.2 (Lebesgue measurability)",
+                    "Corollary (Lemma 1.2.5 + Exercise 1.2.4)",
+                    "Definition 1.3.8 (Unsigned measurable function) def Unsigned {d",
+                    "Foo 1.2.3", "not an item at all", ""):
+            with self.subTest(raw=raw):
+                key, reject = items.try_join_key(raw)
+                self.assertEqual(key, items.clean(raw))
+                if raw:
+                    self.assertIsNone(reject)
+
+    def test_an_unjoinable_in_text_label_is_reported_not_guessed(self):
+        for raw in ("In-text", "In-text, somewhere", "In-text musings on measure"):
+            with self.subTest(raw=raw):
+                key, reject = items.try_join_key(raw)
+                self.assertEqual(key, items.clean(raw))      # keeps itself, joins nothing
+                self.assertIsNotNone(reject)
+                self.assertEqual(reject.reason, items.REJECT_IN_TEXT_NO_TARGET)
+                with self.assertRaises(ItemGrammarError):
+                    items.join_key(raw)
+
+    def test_join_keys_reports_and_keeps_everything(self):
+        keys, rejects = items.join_keys(
+            ["In-text, book p. 71", "In-text p.71", "Exercise 1.3.19", "In-text"])
+        self.assertEqual(keys["In-text, book p. 71"], keys["In-text p.71"])
+        self.assertEqual(keys["Exercise 1.3.19"], "Exercise 1.3.19")
+        self.assertEqual([r.raw for r in rejects], ["In-text"])
+        self.assertEqual(len(keys), 4)   # nothing dropped
+
+    def test_the_kinds_are_per_source(self):
+        self.assertEqual(items.join_key("In-text Widget 2.3.4", kinds=("Widget",)),
+                         "In-text Widget 2.3.4")
+        _key, reject = items.try_join_key("In-text Widget 2.3.4", kinds=("Definition",))
+        self.assertIsNotNone(reject)
+
+    def test_is_in_text(self):
+        self.assertTrue(items.is_in_text("In-text, book p. 71"))
+        self.assertTrue(items.is_in_text("in text p.71"))
+        self.assertFalse(items.is_in_text("Exercise 1.3.19"))
+        self.assertFalse(items.is_in_text("Definition 1.4.35"))
+
+
+class TestJoinKeyDoesNotTouchFindingIds(unittest.TestCase):
+    """The blast radius of the fix is zero ids.
+
+    ``finding_id`` hashes ``items.clean(item)``; the same algorithm is inlined in
+    five places on purpose.  ``join_key`` is a SECOND function and nothing hashes
+    it, so every id in the 2,672-file baseline corpus is byte-for-byte what it
+    was.  These digests are the proof; they were computed before the fix.
+    """
+
+    def test_clean_is_unchanged(self):
+        self.assertEqual(items.clean("In-text, book p. 71"), "In-text, book p. 71")
+        self.assertEqual(items.clean("In-text convention, book p. 18"),
+                         "In-text convention, book p. 18")
+        self.assertEqual(items.clean("Exercise    1.3.19"), "Exercise 1.3.19")
+        self.assertEqual(items.clean("`Exercise 1.3.19`"), "Exercise 1.3.19")
+        self.assertEqual(items.clean("Exercise 1.3.19."), "Exercise 1.3.19")
+
+    def test_finding_id_still_hashes_the_label_as_written(self):
+        from cflib import hashing
+        a = hashing.finding_id("r", "s", "In-text, book p. 71", "CONTENT", ["ours:D"])
+        b = hashing.finding_id("r", "s", "In-text p.71", "CONTENT", ["ours:D"])
+        self.assertNotEqual(a, b, "finding_id must still key on the label as written")
+        self.assertEqual(
+            a, hashing.sha256_text("r\ns\nIn-text, book p. 71\nCONTENT\nours:D"))
+
+
 class TestItemNamespacing(unittest.TestCase):
     """An item is the pair (source_id, item) -- S6.1."""
 

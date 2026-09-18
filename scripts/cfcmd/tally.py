@@ -117,6 +117,7 @@ def _write_unions(workspace, args, runs: dict[str, Path], result: dict) -> None:
             "baseline_runs": sorted(args.baseline),
             "new_only": bool(args.new_only),
             "summary": union_mod.summary(entries),
+            "unjoinable": tally_mod.unjoinable(rows),
             "entries": entries,
         }
         out = Path(workspace.paths.union_json(repo))

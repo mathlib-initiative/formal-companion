@@ -29,7 +29,7 @@ if __package__ in (None, ""):  # `python3 scripts/harvest/union.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from harvest._compat import SUBSTANTIVE_KINDS, iso_now
-from harvest.tally import UNATTRIBUTED, collect, parse_run_arg
+from harvest.tally import UNATTRIBUTED, collect, parse_run_arg, unjoinable
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
 
@@ -125,6 +125,10 @@ def build(runs: dict[str, str | Path], repo: str | None = None,
         "baseline_runs": sorted(kwargs.get("baseline_runs") or []),
         "group_by": kwargs.get("group_by", "item-kind"),
         "summary": summary(entries),
+        # in-text labels whose spelling the grammar could not canonicalise.  A
+        # union joins by item, so such a row cannot be matched to the same item
+        # under another spelling and will look new: reported, never dropped.
+        "unjoinable": unjoinable(rows),
         "entries": entries,
     }
 

@@ -32,6 +32,7 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
+from cflib import items as cf_items  # noqa: E402
 from harvest import agreed as agreed_mod  # noqa: E402
 from harvest import harvest as harvest_mod  # noqa: E402
 from harvest import harvest_journal  # noqa: E402
@@ -104,9 +105,20 @@ class TestCollapse(unittest.TestCase):
                          "Exercise 1.3.19")
 
     def test_prose_wrapped_label(self):
-        # teorth's "In-text definition, Exercise 1.4.24" is a finding about 1.4.24
+        # teorth's "In-text definition, Exercise 1.4.24" is a finding about the
+        # in-text definition Exercise 1.4.24 uses, which the extraction lists as
+        # its own item ("In-text Exercise 1.4.24").  It collapses onto THAT item,
+        # not onto the numbered exercise: they are two items, and merging them
+        # let a finding about one hide a finding about the other.
         self.assertEqual(tally_mod.collapse_to_book_item("In-text definition, Exercise 1.4.24"),
-                         "Exercise 1.4.24")
+                         "In-text Exercise 1.4.24")
+        self.assertEqual(tally_mod.collapse_to_book_item("In-text Exercise 1.4.24"),
+                         "In-text Exercise 1.4.24")
+
+    def test_prose_wrapped_numbered_label(self):
+        # a NUMBERED label still collapses positionally, exactly as before
+        self.assertEqual(tally_mod.collapse_to_book_item("Corollary (Lemma 1.2.5 + Exercise 1.2.4)"),
+                         "Lemma 1.2.5")
 
     def test_in_text_page_label_has_no_book_item(self):
         self.assertEqual(tally_mod.collapse_to_book_item("In-text, book p. 68"), "In-text p.68")
@@ -176,8 +188,14 @@ class TestBaselineTally(unittest.TestCase):
         self.assertEqual(teorth["raw"]["items"], 71)
         self.assertEqual(teorth["raw"]["substantive"], 62)
         self.assertEqual(teorth["raw"]["high"], 25)
-        self.assertEqual(teorth["collapsed"]["substantive"], 40)
-        self.assertEqual(teorth["collapsed"]["high"], 18)
+        # 41/19, not the 40/18 of the runs before 2026-09-18.  ONE row moved:
+        # findings-hunt's "In-text definition, Exercise 1.4.24" used to collapse
+        # onto the numbered "Exercise 1.4.24" and is now the separate item
+        # "In-text Exercise 1.4.24" -- a de-conflation, not a new finding.  The
+        # published `ours` numbers (72 rows / 40 items / 16 / 1 / 1 / 22) are
+        # unchanged, and every other repo's counts are unchanged.
+        self.assertEqual(teorth["collapsed"]["substantive"], 41)
+        self.assertEqual(teorth["collapsed"]["high"], 19)
 
     def test_adam(self):
         adam = self.result["repos"]["adam"]
@@ -591,6 +609,155 @@ class TestUnionSynthetic(unittest.TestCase):
         entries = agreed_mod.agreed(self.rows, min_runs=2)
         self.assertEqual([e["item"] for e in entries], ["Exercise 1.1.1"])
         self.assertEqual(union_mod.summary(union_mod.union(self.rows, repo="ours"))["multi_run"], 1)
+
+
+class TestInTextItemsJoinAcrossCorpusGenerations(unittest.TestCase):
+    """`union --new-only` and `agreed` must join the two spellings of one item.
+
+    The v1 corpus writes ``"In-text, book p. 71"``; the extraction writes
+    ``"In-text p.71"``.  Before the fix these were two keys, so a run that
+    re-found a known in-text defect was reported as finding something new and
+    agreeing with nobody.
+    """
+
+    def setUp(self):
+        self.root = scratch(self)
+        decl = "ours:RiemannIntegrableOn.complexLebesgueIntegralOn_Icc"
+        defect = lambda concept: [{"concept": concept, "kind": "CONTENT", "severity": "high",
+                                   "repos_involved": ["ours"], "faithful": "teorth",
+                                   "unfaithful_decls": [decl], "book_quote": "q",
+                                   "reasoning": "r"}]
+        # v1 spelling (the baseline) and today's spelling (the new run)
+        write_findings(self.root / "v1", "In-text definition, book p. 71",
+                       defect("Riemann integrability is stated for the wrong class"))
+        write_findings(self.root / "v2", "In-text p.71",
+                       defect("the p.71 definition admits non-integrable functions"))
+        write_findings(self.root / "v2", "In-text p.241", defect("unrelated, new"))
+        self.rows = tally_mod.collect({"v1": self.root / "v1", "v2": self.root / "v2"})
+
+    def test_the_two_spellings_are_one_key(self):
+        self.assertEqual({r["item"] for r in self.rows}, {"In-text p.71", "In-text p.241"})
+
+    def test_union_makes_one_entry_found_by_both_runs(self):
+        entries = {e["item"]: e for e in union_mod.union(self.rows, repo="ours")}
+        self.assertEqual(sorted(entries), ["In-text p.241", "In-text p.71"])
+        self.assertEqual(entries["In-text p.71"]["runs"], ["v1", "v2"])
+        self.assertEqual(entries["In-text p.71"]["items_raw"],
+                         ["In-text definition, book p. 71", "In-text p.71"])
+
+    def test_new_only_does_not_call_a_re_found_defect_new(self):
+        entries = union_mod.union(self.rows, repo="ours", baseline_runs=["v1"], new_only=True)
+        self.assertEqual([e["item"] for e in entries], ["In-text p.241"])
+
+    def test_the_two_runs_agree(self):
+        entries = agreed_mod.agreed(self.rows, min_runs=2)
+        self.assertEqual([e["item"] for e in entries], ["In-text p.71"])
+
+    def test_an_in_text_item_does_not_swallow_the_numbered_item(self):
+        """"In-text Exercise 1.4.24" and "Exercise 1.4.24" are two items."""
+        decl = ["teorth:Measure.measurable_of_lim"]
+        defect = [{"concept": "c", "kind": "CONTENT", "severity": "high",
+                   "repos_involved": ["teorth"], "faithful": "ours",
+                   "unfaithful_decls": decl, "book_quote": "q", "reasoning": "r"}]
+        write_findings(self.root / "v3", "Exercise 1.4.24", defect)
+        write_findings(self.root / "v3", "In-text definition, Exercise 1.4.24", defect)
+        rows = tally_mod.collect({"v3": self.root / "v3"})
+        self.assertEqual(sorted({r["item"] for r in rows}),
+                         ["Exercise 1.4.24", "In-text Exercise 1.4.24"])
+
+    def test_an_unjoinable_in_text_label_is_reported(self):
+        write_findings(self.root / "v4", "In-text, somewhere",
+                       [{"concept": "c", "kind": "CONTENT", "severity": "low",
+                         "repos_involved": ["ours"], "faithful": "teorth",
+                         "unfaithful_decls": ["ours:Foo.bar"], "book_quote": "q",
+                         "reasoning": "r"}])
+        result = tally_mod.tally({"v4": self.root / "v4"})
+        self.assertEqual([u["item_raw"] for u in result["unjoinable"]], ["In-text, somewhere"])
+        self.assertEqual(result["unjoinable"][0]["reason"], "in_text_no_target")
+        # reported, NOT dropped: the row still tallies, under itself
+        self.assertEqual(result["rows"], 1)
+        self.assertIn("In-text, somewhere", tally_mod.render(result))
+
+    def test_a_clean_corpus_reports_nothing(self):
+        self.assertEqual(tally_mod.tally({"v2": self.root / "v2"})["unjoinable"], [])
+
+    def test_union_and_agreed_carry_the_report(self):
+        runs = {"v1": self.root / "v1", "v2": self.root / "v2"}
+        self.assertEqual(union_mod.build(runs, repo="ours")["unjoinable"], [])
+        self.assertEqual(agreed_mod.build(runs)["unjoinable"], [])
+        write_findings(self.root / "v1", "In-text, somewhere",
+                       [{"concept": "c", "kind": "CONTENT", "severity": "high",
+                         "repos_involved": ["ours"], "faithful": "teorth",
+                         "unfaithful_decls": ["ours:Foo.bar"], "book_quote": "q",
+                         "reasoning": "r"}])
+        self.assertEqual([u["item_raw"] for u in union_mod.build(runs, repo="ours")["unjoinable"]],
+                         ["In-text, somewhere"])
+        self.assertEqual([u["item_raw"] for u in agreed_mod.build(runs)["unjoinable"]],
+                         ["In-text, somewhere"])
+
+
+@unittest.skipUnless(BASELINE, "set CF_BASELINE_CORPUS to the tao-diff-run checkout")
+class TestRealCorpusGenerationsJoin(unittest.TestCase):
+    """The live regression: the real v1 corpus against the real new extraction.
+
+    ``tests/data/in_text_labels.tml-prefix.json`` pins the in-text item labels of
+    the 2026-09-18 ground-truth extraction (105 of them); the v1 labels are read
+    out of ``$CF_BASELINE_CORPUS`` itself (140 of them).  Exact-match overlap is
+    zero, which is the bug; under the canonical key 139 of the 140 join.
+    """
+
+    NEW_LABELS = Path(__file__).resolve().parent / "data" / "in_text_labels.tml-prefix.json"
+    #: the only v1 in-text item the extraction has no counterpart for -- p.156 is
+    #: an errata note, and the companion formalises nothing anchored to that page
+    #: (the extraction has p.155 and p.157).  It canonicalises fine; there is
+    #: simply no such item on the other side.
+    KNOWN_UNMATCHED = {"In-text record (book p. 156; author's errata)"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.old = set()
+        for path in sorted(Path(BASELINE).glob("findings*/*.json")):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            item = payload.get("item")
+            if isinstance(item, str) and cf_items.is_in_text(item):
+                cls.old.add(item)
+        cls.new = set(json.loads(cls.NEW_LABELS.read_text(encoding="utf-8"))["labels"])
+
+    def test_the_two_label_sets_are_the_sizes_the_bug_report_names(self):
+        self.assertEqual(len(self.old), 140)
+        self.assertEqual(len(self.new), 105)
+
+    def test_exact_match_overlap_is_zero(self):
+        """The bug, asserted on the real data."""
+        self.assertEqual({cf_items.clean(x) for x in self.old}
+                         & {cf_items.clean(x) for x in self.new}, set())
+
+    def test_every_real_in_text_label_canonicalises(self):
+        for labels in (self.old, self.new):
+            _keys, rejects = cf_items.join_keys(sorted(labels))
+            self.assertEqual([r.raw for r in rejects], [])
+
+    def test_the_canonical_key_joins_them(self):
+        old_keys, _ = cf_items.join_keys(sorted(self.old))
+        new_keys = set(cf_items.join_keys(sorted(self.new))[0].values())
+        joined = {raw for raw, key in old_keys.items() if key in new_keys}
+        self.assertGreater(len(joined), 100, "the join must be non-trivial")
+        self.assertEqual(len(joined), 139)
+        self.assertEqual(set(self.old) - joined, self.KNOWN_UNMATCHED)
+        # and every one of today's labels is reachable from the v1 vocabulary
+        self.assertEqual(new_keys - set(old_keys.values()), set())
+
+    def test_the_p71_defect_joins(self):
+        """The live proof: the item the ground-truth run re-found and lost."""
+        self.assertIn("In-text definition, book p. 71", self.old)
+        self.assertIn("In-text p.71", self.new)
+        self.assertEqual(cf_items.join_key("In-text definition, book p. 71"), "In-text p.71")
+        self.assertEqual(tally_mod.collapse_to_book_item("In-text definition, book p. 71"),
+                         tally_mod.collapse_to_book_item("In-text p.71"))
+
+    def test_the_whole_baseline_corpus_has_nothing_unjoinable(self):
+        rows = tally_mod.collect(baseline_runs())
+        self.assertEqual(tally_mod.unjoinable(rows), [])
 
 
 class TestTwoSourcesDoNotMerge(unittest.TestCase):

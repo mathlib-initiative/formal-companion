@@ -91,11 +91,11 @@ def match_finding(
     row answers nothing in the given corpus -- the validator then reports it as
     an unlinked row rather than silently inventing an id.
     """
-    item_n = compat.normalise_item(item)
+    item_n = compat.item_join_key(item)
     want = {compat.normalise_decl(d) for d in decls if d}
     best, best_score = None, 0
     for f in findings:
-        if compat.normalise_item(f.get("item")) != item_n:
+        if compat.item_join_key(f.get("item")) != item_n:
             continue
         if source_id and str(f.get("source_id") or "") not in ("", source_id):
             continue
