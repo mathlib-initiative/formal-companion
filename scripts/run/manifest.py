@@ -505,14 +505,16 @@ def agent_permissions(run_dir: Path) -> dict:
     read from the environment.  This reads the wrappers `cf plan-run` staged,
     because that is the only channel `cf run` can see.
 
-    It is therefore a THREE-state record, not a boolean.  The wrappers are
-    generated (`cf plan-run` writes "Regenerate rather than edit" into them) and
-    nothing stages the variable today, so a bare ``permission_bypass: false``
-    would have claimed a fact this command cannot know: an operator who exports
-    ``CF_ALLOW_SANDBOX_BYPASS=1`` in the shell that launches tend on the host gets
-    a bypassed run, and the wrappers say nothing about it.  What the host does
-    record either way is the bridge's own ``bypass=`` line in
-    ``<tend-root>/agentbox-<role>.err``.
+    It is therefore a THREE-state record, not a boolean.  ``cf plan-run
+    --allow-sandbox-bypass`` is what stages the variable, so a wrapper that
+    exports it says the opt-in was asked for deliberately and recorded in
+    run.yaml.  Its absence is still not ``false``: the wrappers are generated
+    (`cf plan-run` writes "Regenerate rather than edit" into them), and an
+    operator who exports ``CF_ALLOW_SANDBOX_BYPASS=1`` in the shell that launches
+    tend on the host gets a bypassed run the wrappers say nothing about.  So the
+    two states this can distinguish are "requested here" and "not requested here,
+    and the host can still set it".  What the host does record either way is the
+    bridge's own ``bypass=`` line in ``<tend-root>/agentbox-<role>.err``.
     """
     bindir = Path(run_dir) / "tend-root" / "bin"
     wrappers = sorted(p for p in bindir.glob("*.sh")) if bindir.is_dir() else []
@@ -539,7 +541,8 @@ def agent_permissions(run_dir: Path) -> dict:
             if key == BYPASS_ENV and value == "1":
                 bypass_from.append(path.name)
     return {
-        "permission_bypass": (f"requested: the staged wrapper exports {BYPASS_ENV}=1"
+        "permission_bypass": (f"requested: `cf plan-run --allow-sandbox-bypass` staged a "
+                              f"wrapper that exports {BYPASS_ENV}=1"
                               if bypass_from else
                               "not requested in the staged wrapper (the environment that "
                               "launches tend on the host can still set it; the bridge logs "
@@ -550,9 +553,10 @@ def agent_permissions(run_dir: Path) -> dict:
         "wrappers": [p.name for p in wrappers],
         "env": found,
         "default": "deny by default: role allowlist for claude, --sandbox for codex "
-                   f"(to opt out, export {BYPASS_ENV}=1 in the environment that starts "
-                   "tend on the host -- the bin/*.sh wrappers are generated per run and a "
-                   "re-plan overwrites an edit to them)",
+                   "(to opt out, re-plan with `cf plan-run --allow-sandbox-bypass`, which "
+                   f"stages {BYPASS_ENV}=1 into the wrappers and records it here; the "
+                   "bin/*.sh wrappers are generated per run, so a hand edit to them is "
+                   "overwritten by the next plan)",
     }
 
 

@@ -87,6 +87,7 @@ def make_tend_root(
     agent: dict[str, Any] | None = None,
     task_count: int = 0,
     model: str | None = None,
+    allow_sandbox_bypass: bool = False,
     tdir: pathlib.Path | None = None,
     gate_src: pathlib.Path | None = None,
     bridges_src: pathlib.Path | None = None,
@@ -101,6 +102,13 @@ def make_tend_root(
     ``CF_MODEL`` in the wrapper for the agentbox and claude-p bridges.  Recording
     a model in run.yaml that the bridge never received is worse than recording
     none: a regression comparison would compare two tiers claiming one id.
+
+    ``allow_sandbox_bypass`` (``cf plan-run --allow-sandbox-bypass``) is the ONLY
+    thing that stages ``CF_ALLOW_SANDBOX_BYPASS=1`` into the wrappers, which is
+    what ``bridge-agentbox.sh`` reads to run with approvals and the sandbox OFF.
+    Default off.  Without it the opt-in existed only as a variable an operator
+    could export by hand on the host, so ``run.yaml``'s record of what the agents
+    may do could not be made true by anything this tool does.
 
     The ``model:`` block in the generated ``.tend/*-agent.yaml`` belongs to the
     tend-agent backend alone -- ``config.yaml`` sends every other bridge through
@@ -189,6 +197,10 @@ def make_tend_root(
         # reaching run.yaml.
         if model:
             env_lines += f"export CF_MODEL={model}\n"
+        if allow_sandbox_bypass:
+            # Deliberate, recorded in run.yaml and visible in the wrapper the
+            # operator can read: the bridge otherwise denies by default.
+            env_lines += "export CF_ALLOW_SANDBOX_BYPASS=1\n"
         for role in ("worker", "reviewer"):
             files.append(
                 _write_exec(
