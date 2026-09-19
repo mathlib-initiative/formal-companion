@@ -312,6 +312,11 @@ def gate_config(
         "require_finding_id": preset.require_finding_id,
         "require_passage_quote": preset.require_passage_quote,
         "check_operators": preset.check_operators,
+        # Bind every quote to the page its own item is stated on.  Off for the
+        # *-legacy presets for the same reason as the operator pass: 17 of the
+        # 2,942 bindable quotes of the imported corpus sit further than the
+        # gate's window from their item's heading, and those rows are landed.
+        "bind_item_page": not preset.legacy,
         "findings_dir": "findings",
         "decl_index": decl_index,
         "kind_rules": preset.kind_rules or {},

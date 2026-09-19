@@ -52,6 +52,16 @@ NON_FINDING_FILES = {
     "tally.json", "journal-harvest.json", "gate.json", "gate.local.json",
 }
 
+#: Every key a findings document may carry its defect rows under.  ``harvest/
+#: tally.py`` (FINDING_LISTS) and ``ledger/findings.py`` count BOTH of these, so
+#: the gate must validate both: a file whose rows sat under ``findings`` was
+#: gated on ``disagreements`` alone and counted on the union, which is a complete
+#: bypass of the quote gate, the kind and verdict vocabularies, the witness
+#: requirement and the repo allowlist, reachable by one key name.  Duplicated
+#: rather than imported for the same reason as NON_FINDING_FILES above; the
+#: symmetry is enforced by a test.
+DEFECT_LISTS = ("disagreements", "findings")
+
 MIN_QUOTE_CHARS = 25
 #: the copyright ceiling, the floor's missing other half.  SKILL.md hard rule 6
 #: permits "at most a sentence or two of a source in any artifact" and the gate
@@ -78,6 +88,9 @@ MAX_MATCH_PAGES = 5
 PAGE_BIND_WINDOW = 2
 #: how many unmatched words the gate prints back when a quote matched only in part
 REMAINDER_WORDS = 12
+#: how many binding notes the gate prints before summarising the rest: gating the
+#: 2,672-file baseline corpus in one go would otherwise print a page per file
+MAX_NOTES_PRINTED = 12
 
 DEFAULT_KIND_RULES: dict[str, dict[str, Any]] = {
     "CONTENT": {"quote": True, "witness": True, "decls": True},
@@ -290,6 +303,10 @@ class BookText:
         self.words = words
         self.ops = ops
         self.pages = pages
+        #: item label -> the pages carrying it.  A corpus gate asks for the same
+        #: label once per findings file per run directory, and the search is over
+        #: every page of the source.
+        self._label_pages: dict[str, list[int]] = {}
 
     @classmethod
     def from_text(cls, raw: str, *, operators: bool = True) -> "BookText":
@@ -315,6 +332,21 @@ class BookText:
         if self.pages is None or not needle:
             return []
         return [n for n, page in enumerate(self.pages, 1) if needle in page]
+
+    def pages_with_label(self, needle: str) -> list[int]:
+        """The 1-based PDF pages where an item label occurs, cached.
+
+        Not :meth:`pages_matching`: a label must not match the longer number it
+        is a prefix of, or ``Exercise 1.3.19`` would be found wherever
+        ``Exercise 1.3.190`` is.
+        """
+        if self.pages is None or not needle:
+            return []
+        if needle not in self._label_pages:
+            pattern = re.compile(r"(?<![0-9])" + re.escape(needle) + r"(?![0-9])")
+            self._label_pages[needle] = [n for n, page in enumerate(self.pages, 1)
+                                         if pattern.search(page)]
+        return self._label_pages[needle]
 
 
 def _window_match(book: str, words: list[str], fraction: float) -> int:
@@ -493,6 +525,11 @@ class GateConfig:
                 "text_sha256": body.get("text_sha256"),
                 "images_dir": body.get("images_dir"),
                 "page_offset": int(body.get("page_offset") or 0),
+                # optional ``{item: pdf page}`` from the source's items.json.  The
+                # gate finds an item's own heading in the pinned text when this is
+                # absent, so nothing has to ship beside gate.json; a caller that
+                # has items.json can still do better than a heading search.
+                "item_pages": dict(body.get("item_pages") or {}),
             }
         self.repos: list[str] = list(data.get("repos") or [])
         self.kinds: set[str] = set(data.get("kinds") or [])
@@ -511,6 +548,16 @@ class GateConfig:
         # validate the imported 2011-draft corpus, whose quotes carry pdftotext
         # artifacts predating the check (two of 3,019 fail it).
         self.check_operators: bool = bool(data.get("check_operators", True))
+        # Bind every quote to the page its own item is stated on.  Off for the
+        # two *-legacy presets for the same reason as the operator pass: 17 of
+        # the 2,942 bindable quotes of the imported corpus sit more than
+        # PAGE_BIND_WINDOW pages from their item, and those rows are already
+        # landed.  A new run has no such history, so it is on.
+        self.bind_item_page: bool = bool(data.get("bind_item_page", True))
+        # The copyright ceiling, per run: a source whose registry licence note
+        # permits more may raise it, and 0 turns the refusal off.
+        self.long_quote_chars: int = int(data.get("long_quote_chars", LONG_QUOTE_CHARS))
+        self.max_quote_chars: int = int(data.get("max_quote_chars", MAX_QUOTE_CHARS))
         self.findings_dir: str = data.get("findings_dir", "findings")
         self.decl_index: str | None = data.get("decl_index")
         rules = dict(DEFAULT_KIND_RULES)
@@ -582,6 +629,90 @@ def _load_decl_index(spec: str) -> set[str]:
             else:
                 out.add(f"{entry['repo']}:{entry['decl']}")
     return out
+
+
+# --------------------------------------------------------------------------- #
+# binding a quote to the item it is supposed to evidence
+# --------------------------------------------------------------------------- #
+#: a numbered item label inside a NORMALISED item string (`exercise 2 3 4`)
+_ITEM_LABEL = re.compile(r"(?:^|\s)([a-z][a-z]{2,})\s+(\d+(?:\s+\d+){0,2})(?![0-9])")
+#: an item that names a printed page instead of a numbered label
+#: (`In-text, book p. 71`, `In-text, book pp. 46-47`)
+_ITEM_PRINTED = re.compile(r"(?:^|\s)pp?\s*(\d{1,4})(?:\s|$)")
+
+
+class PageBind:
+    """Where a document's item is stated, and whether its quotes are there.
+
+    Nothing used to bind a quote to its item: ``validate_doc`` checked that the
+    quote occurred SOMEWHERE in the pinned text and ``item`` was read for nothing
+    but the finding id, so a finding about ``Definition 1.6.1`` passed on a
+    sentence from another section.  The item's page comes from, in order,
+    ``gate.json``'s own ``sources.<id>.item_pages`` map, the printed page the
+    label itself names, and the item's heading in the pinned text.
+
+    When none of those yields a page the state is UNBOUND: recorded and printed
+    by the gate, never a silent pass and never a mass failure.  851 of the
+    baseline corpus's 3,019 quotes carry a label with no heading in the text.
+    """
+
+    def __init__(self, cfg: "GateConfig", source_id: str, book: "BookText",
+                 item: Any, *, window: int = PAGE_BIND_WINDOW):
+        self.item = clean_item(str(item or ""))
+        self.window = window
+        self.on = bool(cfg.bind_item_page)
+        self.pages, self.how = self._resolve(cfg.source(source_id), book)
+
+    def _resolve(self, block: dict[str, Any], book: "BookText") -> tuple[list[int], str]:
+        if not self.on:
+            return [], "the item-page bind is off for this preset"
+        if not self.item:
+            return [], "the document names no item"
+        mapped = (block.get("item_pages") or {})
+        for label, page in mapped.items():
+            if clean_item(str(label)) == self.item:
+                pages = page if isinstance(page, list) else [page]
+                return [int(p) for p in pages], "gate.json item_pages"
+        printed = _ITEM_PRINTED.search(norm(self.item))
+        offset = int(block.get("page_offset") or 0)
+        if printed and offset:
+            # `page_offset: 0` is how gate.json spells "this run does not know the
+            # offset" (presets.source_block defaults to it), and binding a printed
+            # page as if the offset were 0 would reject every In-text item of a
+            # source that is offset -- a false refusal destroys real findings.
+            return ([int(printed.group(1)) + offset],
+                    "the printed page the item names, plus the source's page_offset")
+        if book.pages is None:
+            return [], "the source was handed in as flat text, which carries no pages"
+        label = _ITEM_LABEL.search(norm(self.item))
+        if not label:
+            return [], f"{self.item!r} is neither a numbered label nor a printed page"
+        pages = book.pages_with_label(f"{label.group(1)} {label.group(2)}")
+        if not pages:
+            return [], f"{self.item!r} occurs nowhere in the pinned text"
+        return pages, "the item's own heading in the pinned text"
+
+    def problem(self, where: str, m: "QuoteMatch") -> str:
+        """``""`` unless the quote matched too far from where the item is stated."""
+        if not self.pages or not m.pages:
+            return ""
+        delta = min(abs(page - known) for page in m.pages for known in self.pages)
+        if delta <= self.window:
+            return ""
+        return (f"{where} matched on page(s) {m.pages}, {delta} pages from "
+                f"{self.item!r} on page(s) {self.pages} ({self.how}) — this quote is "
+                f"not the item's passage")
+
+    def note(self, name: str, where: str, m: "QuoteMatch") -> str:
+        """The visible record when a quote could NOT be bound to a page."""
+        if not self.on:
+            return ""
+        if not self.pages:
+            return f"page unbound: {name}: {self.how}"
+        if not m.pages:
+            return (f"page unbound: {name}: {where} matches no single page "
+                    f"(it straddles a page break)")
+        return ""
 
 
 # --------------------------------------------------------------------------- #
@@ -667,11 +798,16 @@ def validate_doc(
         errs.append(
             f"{name}: book_located is false — locate the passage, or raise a COVERAGE finding"
         )
+    bind = PageBind(cfg, source_id, book, doc.get("item"))
     passage = doc.get("book_passage_quote")
     if cfg.require_passage_quote or passage:
-        ok, why = quote_ok(book, passage or "")
-        if not ok:
-            errs.append(f"{name}: book_passage_quote {why}")
+        found = quote_match(book, passage or "", max_chars=cfg.max_quote_chars)
+        if not found.ok:
+            errs.append(f"{name}: book_passage_quote {found.why}")
+        else:
+            problem = bind.problem("book_passage_quote", found)
+            if problem:
+                errs.append(f"{name}: {problem}")
 
     for i, m in enumerate(doc.get("matches") or []):
         if not isinstance(m, dict):
@@ -685,7 +821,7 @@ def validate_doc(
     run_id = doc.get("run_id") or cfg.run_id
     for i, g in enumerate(doc.get("disagreements") or []):
         errs.extend(_validate_disagreement(g, i, name, cfg, book, decl_index, run_id, doc,
-                                           source_id))
+                                           source_id, bind=bind))
     return errs
 
 
@@ -699,15 +835,18 @@ def _validate_disagreement(
     run_id: str,
     doc: dict[str, Any],
     source_id: str = "",
+    *,
+    bind: "PageBind | None" = None,
+    key: str = "disagreement",
 ) -> list[str]:
     errs: list[str] = []
-    where = f"{name}: disagreement[{i}]"
+    where = f"{name}: {key}[{i}]"
     if not isinstance(g, dict):
         return [f"{where} is not an object"]
 
-    for key in ("concept", "kind", "repos_involved", "faithful", "reasoning", "severity"):
-        if key not in g:
-            errs.append(f"{where}: missing required key {key!r}")
+    for required in ("concept", "kind", "repos_involved", "faithful", "reasoning", "severity"):
+        if required not in g:
+            errs.append(f"{where}: missing required key {required!r}")
 
     kind = g.get("kind")
     if kind not in cfg.kinds:
@@ -739,14 +878,15 @@ def _validate_disagreement(
         elif decl_index is not None and u not in decl_index:
             errs.append(f"{where}: unfaithful_decls entry {u!r} names no declaration in the index")
 
-    if rule.get("quote", True):
-        ok, why = quote_ok(book, g.get("book_quote", ""))
-        if not ok:
-            errs.append(f"{where}.book_quote {why}")
-    elif g.get("book_quote"):
-        ok, why = quote_ok(book, g["book_quote"])
-        if not ok:
-            errs.append(f"{where}.book_quote {why} (optional for {kind}, but must be real)")
+    if rule.get("quote", True) or g.get("book_quote"):
+        optional = "" if rule.get("quote", True) else f" (optional for {kind}, but must be real)"
+        found = quote_match(book, g.get("book_quote", ""), max_chars=cfg.max_quote_chars)
+        if not found.ok:
+            errs.append(f"{where}.book_quote {found.why}{optional}")
+        elif bind is not None:
+            problem = bind.problem(f"{key}[{i}].book_quote", found)
+            if problem:
+                errs.append(f"{name}: {problem}")
 
     if cfg.witness_required and rule.get("witness"):
         if not _witness_ok(g.get("witness")):
@@ -802,6 +942,46 @@ def partial_quotes(doc: Any, name: str, book: "BookText | str") -> list[str]:
         ok, why = quote_ok(book, q)
         if ok and why.startswith("partial"):
             out.append(f"{name}: {where} {why}")
+    return out
+
+
+def _quotes_of(doc: dict[str, Any]) -> list[tuple[str, str]]:
+    """``(where, quote)`` for every quote in a document, defect key or not."""
+    todo = [("book_passage_quote", doc.get("book_passage_quote"))]
+    for key in DEFECT_LISTS:
+        for i, g in enumerate(doc.get(key) or []):
+            if isinstance(g, dict) and g.get("book_quote"):
+                todo.append((f"{key}[{i}].book_quote", g["book_quote"]))
+    return [(where, q) for where, q in todo if q]
+
+
+def binding_notes(doc: Any, name: str, cfg: GateConfig,
+                  book: "BookText | str") -> list[str]:
+    """What the gate could not settle about this document, said out loud.
+
+    Two states that are neither a pass nor a failure, and both used to be
+    invisible: a quote whose item could not be located on a page (so the page
+    bind did not run), and a quote longer than the copyright rule allows but
+    inside the refusal ceiling.  The gate prints these with the partial-window
+    notes and ``cf harvest --gate`` records them in the receipt.
+    """
+    out: list[str] = []
+    if not isinstance(doc, dict):
+        return out
+    bk = BookText.coerce(book)
+    bind = PageBind(cfg, doc_source_id(doc, cfg), bk, doc.get("item"))
+    said_unbound = False
+    for where, q in _quotes_of(doc):
+        found = quote_match(bk, q, max_chars=cfg.max_quote_chars)
+        if cfg.long_quote_chars and found.chars > cfg.long_quote_chars:
+            out.append(f"over-long quote: {name}: {where} is {found.chars} characters "
+                       f"(at most a sentence or two, {cfg.long_quote_chars})")
+        if not found.ok:
+            continue
+        note = bind.note(name, where, found)
+        if note and not (said_unbound and not bind.pages):
+            out.append(note)
+            said_unbound = said_unbound or not bind.pages
     return out
 
 
@@ -991,6 +1171,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     partial: list[str] = []
+    notes: list[str] = []
     for f in files:
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
@@ -998,7 +1179,9 @@ def main(argv: list[str] | None = None) -> int:
             problems.append(f"{f.name}: not valid JSON ({exc})")
             continue
         problems.extend(validate_doc(doc, f.name, cfg, books, decl_index))
-        partial.extend(partial_quotes(doc, f.name, _book_for(books, doc_source_id(doc, cfg))))
+        book = _book_for(books, doc_source_id(doc, cfg))
+        partial.extend(partial_quotes(doc, f.name, book))
+        notes.extend(binding_notes(doc, f.name, cfg, book))
 
     if problems:
         print(f"VALIDATION FAILED ({len(problems)} problem(s)):", file=sys.stderr)
@@ -1008,10 +1191,18 @@ def main(argv: list[str] | None = None) -> int:
     if not args.quiet:
         for note in partial:
             print("  ~ " + note)
+        for note in notes[:MAX_NOTES_PRINTED]:
+            print("  ? " + note)
+        if len(notes) > MAX_NOTES_PRINTED:
+            print(f"  ? ... +{len(notes) - MAX_NOTES_PRINTED} more")
         ops = "operators checked" if cfg.check_operators else "OPERATORS NOT CHECKED (legacy preset)"
+        unbound = sum(1 for n in notes if n.startswith("page unbound:"))
+        bind = (f"{unbound} quote(s) not bound to an item page" if cfg.bind_item_page
+                else "ITEM PAGES NOT BOUND (legacy preset)")
         print(
             f"OK: {len(files)} findings file(s) validated against gate {cfg.preset or cfg.mode}; "
-            f"every book quote matched the text ({len(partial)} only in part, listed above; {ops})"
+            f"every book quote matched the text ({len(partial)} only in part, listed above; "
+            f"{ops}; {bind})"
         )
     return 0
 
