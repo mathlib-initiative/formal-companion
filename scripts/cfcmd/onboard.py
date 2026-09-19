@@ -517,8 +517,29 @@ def _decide_sources(workspace, repo: Path, name: str, result, args):
 
 
 def _elect(repo: Path, rows, cluster: list[str], workspace, hints):
-    """The one edition of ONE work a companion anchors to."""
-    return discovery.choose_anchor_source(repo, rows, cluster, workspace=workspace, hints=hints)
+    """The one edition of ONE work a companion anchors to, or a refusal.
+
+    Both anchor call sites come through here, and an undecidable anchor is a
+    REFUSAL at both -- the CLAUDE.md rule that below ``MIN_ANCHOR_AGREEMENT`` the
+    command stops and names the flag that settles it.  It used to be both: the
+    pre-extraction site let a 0.60 prose-only guess through while the
+    post-extraction site downgraded the same condition to a warning, so the
+    identical command exited 0 with no statements.jsonl to score and 2 once one
+    existed.  Re-running `cf onboard` after editing conventions.md -- which
+    onboard's own "next:" block tells you to do -- broke a workspace that had
+    worked a minute earlier.
+    """
+    sid, conf, evidence = discovery.choose_anchor_source(
+        repo, rows, cluster, workspace=workspace, hints=hints)
+    if conf < discovery.MIN_ANCHOR_AGREEMENT:
+        raise DiscoveryError(
+            f"cannot decide which edition {repo.name} anchors to: "
+            f"{sid} scores only {conf:.2f} ({(evidence or {}).get('reason', 'no evidence')}), "
+            f"below the {discovery.MIN_ANCHOR_AGREEMENT:.2f} a mechanical decision needs",
+            hint=f"settle it with `cf onboard {repo} --anchor-source <id>`, or prepare the "
+                 "missing edition's PDF first (`cf sources add <pdf> --for <companion>`) so "
+                 "the page anchors can be scored")
+    return sid, conf, evidence
 
 
 def _same_work_clusters(result, ids: list[str]) -> list[list[str]]:
@@ -556,14 +577,10 @@ def _confirm_anchor(workspace, repo, name, result, args, rows, anchor, conf, evi
                    [anchor])
     if len(cluster) < 2:
         return anchor, conf, evidence
-    try:
-        winner, winner_conf, winner_evidence = discovery.choose_anchor_source(
-            repo, rows, cluster, workspace=workspace, hints=hints)
-    except DiscoveryError as exc:
-        log.warn(f"the anchor edition could not be confirmed mechanically: {exc.message}")
-        log.warn(f"keeping {anchor} (confidence {conf:.2f}); settle it with "
-                 f"`cf onboard {repo} --anchor-source <id>`")
-        return anchor, conf, evidence
+    # No try/except here on purpose: `_elect` refuses an undecidable anchor, and
+    # catching that refusal is exactly what made the same command exit 0 before
+    # any rows existed and 2 afterwards.
+    winner, winner_conf, winner_evidence = _elect(repo, rows, cluster, workspace, hints)
     if winner != anchor:
         log.warn(f"the anchors agree with {winner}, not {anchor}: re-pinning the anchor edition "
                  f"and re-run `cf extract --companion {name}`")

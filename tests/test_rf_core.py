@@ -393,6 +393,137 @@ class TestLibrarySearchRoots(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# first-run#2 -- onboard twice, same answer
+# ---------------------------------------------------------------------------
+
+class _FakeAdapter:
+    """The `adapters.load` seam, reduced to what `cf onboard` calls."""
+
+    def __init__(self, workspace=None):
+        self.default_source_id = None
+
+    def bind_default_source(self, source_id):
+        self.default_source_id = source_id
+
+    def _bind(self, sources):
+        bound = dict(sources or {})
+        sid = self.default_source_id or (next(iter(bound)) if bound else None)
+        return sid, bound.get(sid)
+
+    def dry_run(self, repo=None, *, sources=None):
+        sid, _ = self._bind(sources)
+        return {"declarations": 25, "tagged": 25, "items": 25, "rejects": [],
+                "sources": [], "rows_by_source": {sid: 1}}
+
+    def extract(self, repo=None, *, sources=None):
+        sid, sha = self._bind(sources)
+        yield {"item": "Definition 1.1.1", "item_raw": "Definition 1.1.1", "sub": "",
+               "item_kind": "Definition", "decl": "Foo", "kind": "def", "namespace": "",
+               "file": "A.lean", "line": 3, "statement": "theorem foo", "body": None,
+               "sorry": False, "sorry_class": "none", "page_anchor": 5,
+               "page_anchor_raw": "book p. 5", "anchor_source": "own", "repo": "ours",
+               "key": True, "anonymous": False, "private": False, "granularity": "item",
+               "source_id": sid, "source_sha": sha}
+
+    def key_inputs(self):
+        return {"adapter_kind": "docstring_tags"}
+
+
+def _two_edition_repo(root: Path) -> Path:
+    """A companion that names TWO editions of one work and resolves neither PDF.
+
+    This is the shape the finding is about: the anchor cannot be decided
+    mechanically, because the edition whose pagination the docstrings follow has
+    no text on this machine to score them against.
+    """
+    repo = root / "two-editions"
+    (repo / "Companion").mkdir(parents=True)
+    (repo / "formalization.yaml").write_text(
+        "version: v0.3\n"
+        "sources:\n"
+        "- title: An Introduction to Measure Theory\n"
+        "  authors:\n"
+        "  - Terence Tao\n"
+        "  type: textbook\n", encoding="utf-8")
+    # The truncated shas carry the ellipsis `_SHA_PREFIX_RE` looks for: a prefix
+    # is a CANDIDATE the registry resolves to an edition, never an identity.
+    (repo / "CLAUDE.md").write_text(
+        "- The source PDF is not committed (copyrighted). Two editions exist locally.\n"
+        f"  An earlier *draft* (sha256 `{DRAFT_SHA[:8]}…`) and the published book\n"
+        f"  (sha256 `{PUBLISHED_SHA[:8]}…`). Both satisfy PDF page = book page + 16.\n"
+        "  **Book-page anchors in docstrings follow the PUBLISHED pagination.**\n",
+        encoding="utf-8")
+    for i in range(25):
+        (repo / "Companion" / f"File{i}.lean").write_text(
+            f'/-- `Definition 1.1.{i + 1}` (book p. {20 + i}) -/\n'
+            f"theorem foo{i} : True := trivial\n", encoding="utf-8")
+    return repo
+
+
+class TestOnboardIsIdempotent(unittest.TestCase):
+    """The identical command must not exit 0 and then 2."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self.ws = self.root / "ws"
+        self.repo = _two_edition_repo(self.root)
+        self.assertEqual(_quiet(cf_main.main, ["init", str(self.ws), "--no-git", "-q"]), 0)
+        # library_paths: [] -- no machine can reach either edition's PDF, which is
+        # every machine that does not already keep a copy.
+        ws = Workspace.load(self.ws)
+        ws.data["library_paths"] = []
+        ws.save()
+        fake = types.ModuleType("adapters")
+        fake.load = lambda adapter_yaml, workspace=None: _FakeAdapter(workspace)
+        self._saved = sys.modules.get("adapters")
+        sys.modules["adapters"] = fake
+
+    def tearDown(self):
+        if self._saved is not None:
+            sys.modules["adapters"] = self._saved
+        else:
+            sys.modules.pop("adapters", None)
+        self.tmp.cleanup()
+
+    def _onboard(self):
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cf_main.cli(["onboard", str(self.repo), "--workspace", str(self.ws),
+                              "--no-errata", "-q"])
+        return rc, err.getvalue()
+
+    def test_two_identical_onboards_give_the_same_exit_code(self):
+        rc1, err1 = self._onboard()
+        rc2, err2 = self._onboard()
+        self.assertEqual(rc1, rc2,
+                         f"first run exited {rc1}, second {rc2}\nfirst:\n{err1}\n"
+                         f"second:\n{err2}")
+
+    def test_an_undecidable_anchor_is_a_refusal_that_names_the_flag(self):
+        """CLAUDE.md: below MIN_ANCHOR_AGREEMENT the command stops, both times."""
+        for run in (1, 2):
+            rc, err = self._onboard()
+            with self.subTest(run=run):
+                self.assertEqual(rc, 2, err)
+                self.assertIn("cannot decide which edition", err)
+                self.assertIn("--anchor-source", err)
+
+    def test_the_healthy_path_is_still_idempotent_and_exits_zero(self):
+        """The refusal must not swallow the case where the anchor IS decidable."""
+        rc1, err1 = self._onboard_with_anchor()
+        rc2, _ = self._onboard_with_anchor()
+        self.assertEqual((rc1, rc2), (0, 0), err1)
+
+    def _onboard_with_anchor(self):
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cf_main.cli(["onboard", str(self.repo), "--workspace", str(self.ws),
+                              "--no-errata", "-q", "--anchor-source", PUBLISHED_ID])
+        return rc, err.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
