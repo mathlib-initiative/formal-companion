@@ -83,14 +83,26 @@ def normalise_finding(
     cannot be trusted to compute it").  A stored id that disagrees with the
     content is kept as ``finding_id_stored`` so the disagreement is recorded
     rather than lost.
+
+    The id hashes the declarations AS WRITTEN, which is why ``raw_decls`` and not
+    ``decls`` goes into it.  ``compat.normalise_decl`` strips INTERIOR whitespace
+    (it is a matching form), while the corpus, ``convert_v1``, the gate and
+    ``harvest.tally`` all hash each declaration with nothing but ``.strip()``.
+    Hashing the normalised form re-keyed every finding whose declaration carries
+    a space -- ``teorth:example «Exercise 1.2.1 (countable union)» at ...`` -- on
+    the ledger side only, so an adjudication row addressed to the corpus id
+    stopped matching its finding and ``cf tally`` reported nothing, because it
+    reads its own rows.  The normalised form is still what the payload carries:
+    it is what routing and matching compare.
     """
     it = compat.normalise_item(raw.get("item") or item)
     kind = str(raw.get("kind") or "").strip()
-    decls = [compat.normalise_decl(d) for d in (raw.get("unfaithful_decls") or []) if d]
+    raw_decls = [str(d) for d in (raw.get("unfaithful_decls") or []) if d]
+    decls = [compat.normalise_decl(d) for d in raw_decls]
     rid = str(raw.get("run_id") or run_id or "")
     sid = str(raw.get("source_id") or source_id or "")
     ssha = str(raw.get("source_sha") or raw.get("book_sha") or source_sha or "")
-    fid = compat.finding_id(rid, sid, it, kind, decls)
+    fid = compat.finding_id(rid, sid, it, kind, raw_decls)
     stored = str(raw.get("finding_id") or "")
     row = {
         "finding_id": fid,

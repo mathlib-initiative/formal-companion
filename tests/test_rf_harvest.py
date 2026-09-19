@@ -126,6 +126,74 @@ class TestFindingIdIsRecomputedNotTrusted(unittest.TestCase):
         self.assertEqual(rows[0]["finding_id_stored"], "00" * 32)
 
 
+class TestBothReadersComputeOneId(unittest.TestCase):
+    """The tally and the ledger read the same document; they must get one id.
+
+    ``harvest.tally`` keys union/agreed/the gate and ``ledger.findings`` keys
+    route/adjudicate/transcribe, so an id computed two ways re-keys one half of
+    the pipeline: an adjudication row addressed to the corpus id stops matching
+    its finding, and ``cf tally``'s id_mismatches says 0, because it only ever
+    compares its own rows with themselves.
+    """
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.corpus = self.root / "corpus" / "run-a"
+
+    def both(self, run_id: str = "run-a") -> tuple[dict, dict]:
+        rows = tally_mod.rows_for_run(run_id, self.corpus)
+        led = findings_mod.load_findings([str(self.corpus)], run_id=run_id)
+        self.assertEqual((len(rows), len(led)), (1, 1))
+        return rows[0], led[0]
+
+    def test_a_declaration_with_a_space_hashes_as_written_on_both_sides(self):
+        """Anonymous examples are named `«Exercise 1.2.1 (countable union)»`.
+
+        The ledger's ``normalise_decl`` strips interior whitespace -- it is a
+        matching form -- so hashing it re-keyed every such finding on one side.
+        """
+        decl = "teorth:example «Exercise 1.2.1 (countable union)» at Section_1_2_0.lean:415"
+        write_doc(self.corpus, "Exercise 1.2.1", [defect(unfaithful_decls=[decl])])
+        row, led = self.both()
+        want = finding_id("run-a", SOURCE_ID, "Exercise 1.2.1", "CONTENT", [decl])
+        self.assertEqual(row["finding_id"], want)
+        self.assertEqual(led["finding_id"], want)
+        # the payload still carries the matching form: that is what routing and
+        # `rows_naming` compare, and only the HASH reads the label as written
+        self.assertEqual(led["unfaithful_decls"],
+                         ["teorth:example«Exercise1.2.1(countableunion)»atSection_1_2_0.lean:415"])
+
+    def test_a_defect_that_names_its_own_run_is_hashed_under_that_run(self):
+        """``normalise_finding`` prefers the defect's ``run_id``; so does the tally.
+
+        Latent rather than live -- no file in the landed corpus carries one --
+        but a routed row read back does, and the two readers have to agree
+        whichever of them is asked first.
+        """
+        write_doc(self.corpus, "Exercise 1.2.9",
+                  [defect(run_id="other-run", unfaithful_decls=["ours:Foo.bar"])])
+        row, led = self.both()
+        want = finding_id("other-run", SOURCE_ID, "Exercise 1.2.9", "CONTENT", ["ours:Foo.bar"])
+        self.assertEqual(row["finding_id"], want)
+        self.assertEqual(led["finding_id"], want)
+        self.assertEqual(row["run"], "run-a", "the row is still filed under the harvest run")
+
+    def test_a_kind_with_stray_whitespace_is_hashed_the_same_way_twice(self):
+        write_doc(self.corpus, "Exercise 1.2.9", [defect(kind=" CONTENT ")])
+        row, led = self.both()
+        self.assertEqual(row["finding_id"], led["finding_id"])
+        self.assertEqual(row["finding_id"],
+                         finding_id("run-a", SOURCE_ID, "Exercise 1.2.9", "CONTENT",
+                                    ["ours:Foo.bar"]))
+
+    def test_the_run_independent_key_agrees_with_the_id_it_drops_the_run_from(self):
+        decl = "ours:Foo bar"
+        write_doc(self.corpus, "Exercise 1.2.9", [defect(unfaithful_decls=[decl])])
+        row, _led = self.both()
+        self.assertEqual(row["defect_key"],
+                         finding_id("", SOURCE_ID, "Exercise 1.2.9", "CONTENT", [decl]))
+
+
 class TestTwoClaimsAtOneIdAreVisible(unittest.TestCase):
     """The id excludes prose, so two different defects on one decl share it."""
 
