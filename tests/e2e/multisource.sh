@@ -192,7 +192,13 @@ from cflib.yamlio import read_yaml
 full = read_yaml("runs/p-attack-hunt/run.yaml")["tasks"]["count"]
 narrow = read_yaml("runs/p-ch1/run.yaml")["tasks"]["count"]
 print("narrower" if 0 < narrow < full else "%s vs %s" % (narrow, full))' "$SKILL/scripts")" "narrower"
-check "  and run.yaml records which chapters" "$(yget "runs/p-ch1/run.yaml" tasks.chapters)" "1"
+# The VALUE, not the length: `yget` prints len() for a list, so a run narrowed to
+# chapter 9 would also have printed "1" here.
+check "  and run.yaml records which chapters" \
+      "$(py 'import sys
+sys.path.insert(0, sys.argv[1])
+from cflib.yamlio import read_yaml
+print(",".join(str(c) for c in read_yaml("runs/p-ch1/run.yaml")["tasks"]["chapters"]))' "$SKILL/scripts")" "1"
 # the other three presets are gate-only scoring configs, not runnable plans
 for P in differential-legacy attack-legacy mechanical; do
   $CF plan-run --preset "$P" --run-id "x-$P" -q >/dev/null 2>&1
