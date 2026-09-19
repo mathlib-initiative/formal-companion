@@ -27,6 +27,12 @@ tao-measure from analyze2.py L51-120). Modules in the subject's namespace that
 the table does not classify are reported and make the run fail unless
 ``--allow-unclassified`` is passed: an unclassified module silently suppresses
 every hit that goes through it (analyze2.py L172-173).
+
+The supported entry point is ``cf detect-proxies <name> --lean``. This module's
+own ``main()`` is a DEBUGGING aid over explicit paths: it loads no workspace, so
+it applies no companion stage overlay, no chapter scope from
+``sources.<id>.chapters`` and no source gate, and it writes no state, no finding
+rows and no corpus. Treat its output as a probe, not as an audit result.
 """
 from __future__ import annotations
 
@@ -359,7 +365,11 @@ def build_finding_rows(
 # --------------------------------------------------------------------------
 def main(argv: Sequence[str] | None = None) -> int:
     """Run the analysis over explicit paths; for debugging and tests."""
-    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0]
+        + "  DEBUGGING ENTRY POINT: no workspace, so no companion stage overlay, no chapter "
+          "scope, no source gate, and no findings, state or corpus are written. The supported "
+          "command is `cf detect-proxies <name> --lean`.")
     ap.add_argument("--deps", required=True, help="deps.json from DumpDeps.lean (outside the repo tree)")
     ap.add_argument("--statements", required=True, help="statements.jsonl for the companion")
     ap.add_argument("--source", dest="source_id",
