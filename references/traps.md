@@ -346,6 +346,10 @@ read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Presents as:* a convenient example in a skill file that names a private repo's conventions, a
 host, or a session id.
 *Fix:* skill examples are synthetic; repo paths, hosts, profiles, owners and session ids live in
-`workspace.yaml` / `adapter.yaml` only; the workspace repo has no remote by default and a pre-push
-guard, because "no remote" is a default and not a control.
+`workspace.yaml` / `adapter.yaml` only; the workspace itself stays local, and what makes it stay
+local is that `cf init` REFUSES a workspace repo with a remote unless `policy.allow_remote` says
+otherwise. The pre-push hook is a reminder on top of that, not the control: `git push --no-verify`
+skips it, a fresh clone does not carry it, and a remote added after `cf init` never passes through
+it — which is why `cf status` prints, every run, whether there is a remote and whether the hook is
+still in place.
 *Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); `critique.json` risks 1-3.

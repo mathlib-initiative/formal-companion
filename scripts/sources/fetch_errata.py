@@ -8,7 +8,9 @@ fetched with a raw HTTP client (curl), never the summarising fetch tool").
 So this module:
 
 * fetches with ``curl`` and stores the page verbatim (markup and all, decoded
-  to UTF-8) in ``errata.raw.html``;
+  to UTF-8) in ``errata.raw.html`` -- bounded: https only on the request and on
+  every redirect, at most 3 redirects, at most ``MAX_FILESIZE``, and the
+  ``url_effective`` recorded beside the sha (see :func:`curl_argv`);
 * renders a deterministic ``errata.md`` from those bytes with a stdlib parser --
   no model, no summary, nothing dropped;
 * stamps the fetch date, the http status, the raw sha256 and the workspace's
@@ -150,10 +152,46 @@ def _decode(raw: bytes) -> str:
         return raw.decode("utf-8", errors="replace")
 
 
-def curl(url: str, *, timeout: int = 60) -> tuple[bytes, int]:
-    """GET ``url`` with curl; returns (body bytes, http status)."""
+#: the page is HTML an operator reads and a worker is told to trust, so a body
+#: this size is already a fetch that went wrong.  The flag only helps when the
+#: server declares a length, so the bytes are checked again after the transfer.
+MAX_BYTES = 10 * 1024 * 1024
+MAX_FILESIZE = "10m"
+MAX_REDIRS = "3"
+
+
+def curl_argv(exe: str, url: str, tmp: str, timeout: int) -> list[str]:
+    """The exact curl command line, so a test can pin the caps.
+
+    Everything here bounds a fetch of a URL this machine may not have chosen (an
+    errata URL can be harvested from the companion repo, and the page becomes the
+    document that decides whether a deviation is a correction):
+
+    * ``--proto =https`` / ``--proto-redir =https`` -- no plaintext, no FTP on a
+      redirect (curl blocks file:// on redirect itself, but not FTP);
+    * ``--max-redirs 3`` -- a redirect chain is not a fetch;
+    * ``--max-filesize`` / ``--max-time`` -- a multi-gigabyte body has nowhere
+      to stop, and this writes into every worker's prompt;
+    * ``%{url_effective}`` -- what was actually fetched, recorded next to the sha
+      so a redirect is visible in the audit trail.
+    """
+    return [exe, "-sS", "-L",
+            "--proto", "=https", "--proto-redir", "=https",
+            "--max-redirs", MAX_REDIRS,
+            "--max-filesize", MAX_FILESIZE,
+            "--max-time", str(timeout),
+            "-o", tmp, "-w", "%{http_code}\\n%{url_effective}\\n", url]
+
+
+def curl(url: str, *, timeout: int = 60) -> tuple[bytes, int, str]:
+    """GET ``url`` with curl; returns (body bytes, http status, effective url)."""
     if not re.match(r"^https?://", url):
         raise ValueError("errata url must be http(s): %r" % url)
+    if not url.lower().startswith("https://"):
+        raise ValueError(
+            "errata url must be https (this one is plaintext): %r -- the page is handed to "
+            "workers as the document that decides whether a deviation is a correction; fix the "
+            "URL with `cf sources set <id> errata_url=https://...`" % url)
     exe = shutil.which("curl")
     if exe is None:
         raise RuntimeError("curl not found")
@@ -161,7 +199,7 @@ def curl(url: str, *, timeout: int = 60) -> tuple[bytes, int]:
     os.close(fd)
     try:
         proc = subprocess.run(
-            [exe, "-sS", "-L", "--max-time", str(timeout), "-o", tmp, "-w", "%{http_code}", url],
+            curl_argv(exe, url, tmp, timeout),
             capture_output=True,
             text=True,
         )
@@ -169,11 +207,18 @@ def curl(url: str, *, timeout: int = 60) -> tuple[bytes, int]:
             raise RuntimeError("curl failed (%s): %s" % (proc.returncode, proc.stderr.strip()))
         with open(tmp, "rb") as fh:
             body = fh.read()
+        if len(body) > MAX_BYTES:
+            # --max-filesize is a no-op when the response declares no length, so
+            # the cap is enforced on what actually landed as well.
+            raise RuntimeError("errata page is %d bytes, over the %s cap (%s)"
+                               % (len(body), MAX_FILESIZE, url))
+        lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
         try:
-            status = int(proc.stdout.strip()[-3:])
+            status = int(lines[0][-3:]) if lines else 0
         except ValueError:
             status = 0
-        return body, status
+        effective = lines[1] if len(lines) > 1 else ""
+        return body, status, effective
     finally:
         try:
             os.unlink(tmp)
@@ -206,7 +251,7 @@ def fetch(
     meta_path = os.path.join(out_dir, "errata.json")
     previous = read_json(meta_path, default={}) or {}
 
-    body, status = curl(url, timeout=timeout)
+    body, status, effective = curl(url, timeout=timeout)
     if status >= 400 or not body:
         raise RuntimeError("errata fetch returned HTTP %s for %s" % (status, url))
     source = _decode(body)
@@ -220,6 +265,10 @@ def fetch(
     )
     meta = {
         "url": url,
+        # WHAT WAS ACTUALLY FETCHED: a redirect is invisible otherwise, and this
+        # page is handed to workers as authoritative errata.
+        "url_effective": effective or url,
+        "url_redirected": bool(effective and effective != url),
         "url_provenance": provenance,
         "repo_supplied": provenance == "repo",
         "fetched_at": utcnow(),
@@ -244,6 +293,10 @@ def fetch(
             "# Errata (fetched verbatim, not summarised)",
             "",
             "- source: %s" % url,
+        ]
+        if meta["url_redirected"]:
+            header.append("- REDIRECTED to: %s" % meta["url_effective"])
+        header += [
             "- fetched: %s" % meta["fetched_at"],
             "- raw sha256: %s" % digest,
             "- content sha256 (comments stripped): %s" % content_digest,
