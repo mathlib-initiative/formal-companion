@@ -1,0 +1,43 @@
+{
+ "source_id": "anonymous-elementary-sets",
+ "_what": "The stage table for the generated booklet, so `cf detect-proxies` can run against the synthetic fixture without the shipped Tao table. A stage is which SECTION of the work first develops a concept (scripts/detect/stages.py); `Lib.*` is the fixture's stand-in for a library the companion could reach for.",
+ "_use": "cf detect-proxies notes-b --stages tests/e2e/stages.anonymous-elementary-sets.json, or copy it into <workspace>/detect/mathlib_stages/anonymous-elementary-sets.json",
+ "title": "Elementary Notes on Sets (generated fixture)",
+ "chapter": 1,
+ "stage_beyond_book": 5,
+ "default_stage": 0,
+ "module_stages": [
+  [
+   "Lib.Jordan",
+   3
+  ],
+  [
+   "Lib.Lebesgue",
+   4
+  ],
+  [
+   "Notes",
+   0
+  ]
+ ],
+ "mathlib_objects": {
+  "Lib.Jordan.jordanContent": {
+   "label": "jordanContent",
+   "module": "Lib.Jordan",
+   "stage": 3,
+   "_note": "the library's own Jordan content: same stage as the booklet's S1.3, so a definition whose body is this one hands back the library's object instead of the booklet's"
+  },
+  "Lib.Lebesgue.outerContent": {
+   "label": "outerContent",
+   "module": "Lib.Lebesgue",
+   "stage": 4
+  }
+ },
+ "native_tokens": [
+  "box",
+  "elementary",
+  "jordanInner",
+  "jordanOuter",
+  "lebesgueOuter"
+ ]
+}
