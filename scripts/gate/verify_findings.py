@@ -53,13 +53,29 @@ NON_FINDING_FILES = {
 }
 
 MIN_QUOTE_CHARS = 25
+#: the copyright ceiling, the floor's missing other half.  SKILL.md hard rule 6
+#: permits "at most a sentence or two of a source in any artifact" and the gate
+#: could only ever refuse a quote for being too SHORT.  Measured over the 3,019
+#: quotes of the baseline corpus: median 176 raw characters, 90th percentile 329,
+#: longest 2,620.  Over ``LONG_QUOTE_CHARS`` the gate RECORDS the quote as
+#: over-long (36 baseline quotes, 1.2%, would be named); over ``MAX_QUOTE_CHARS``
+#: -- roughly one page of that source, and longer than anything in the baseline --
+#: it refuses, because that is a page of the book rather than a passage.  Both are
+#: overridable per run from gate.json for a source whose licence note allows more.
+LONG_QUOTE_CHARS = 600
+MAX_QUOTE_CHARS = 3000
 WINDOW_FRACTION = 0.6
 MIN_WINDOW_WORDS = 6
-#: the operator pass tolerates more mangling than the word pass: pdftotext
-#: breaks display mathematics across lines, so a run of 50% of the quote's
-#: operator-bearing tokens is enough.  Measured against the 3,019 quotes of the
-#: baseline corpus: at 0.5, two legacy quotes fail; at 0.6, eleven do.
-OPERATOR_WINDOW_FRACTION = 0.5
+#: how many pages the matched text may occur on before the gate refuses it: a
+#: running head or a table-of-contents line recurs, a passage does not.
+MAX_MATCH_PAGES = 5
+#: how far the page a quote matched on may sit from the page its item is stated
+#: on.  An item's statement runs over a page break and pdftotext puts the odd
+#: heading on the neighbouring page, so the bind is a window, not an equality:
+#: measured over the baseline, +-2 pages holds for 2,925 of the 2,942 bindable
+#: quotes, and the 17 outside include the ones quoting a wholly different section
+#: (58, 73 and 107 pages away), which is the defect the bind exists to catch.
+PAGE_BIND_WINDOW = 2
 #: how many unmatched words the gate prints back when a quote matched only in part
 REMAINDER_WORDS = 12
 
@@ -84,18 +100,37 @@ DEFAULT_KIND_RULES: dict[str, dict[str, Any]] = {
 # --------------------------------------------------------------------------- #
 #: mathematical operators the operator pass keeps.  Flipping any of these is the
 #: defect class this audit exists to find, and the word pass below deletes them
-#: all, so they are checked separately.
+#: all, so they are checked separately.  The NEGATED and variant glyphs are here
+#: for the same reason as the plain ones: with ``\u2209`` missing from this table,
+#: doctoring ``x \u2208 E`` into ``x \u2209 E`` normalised to the same token stream as the
+#: book and the gate certified it as verbatim.
 _OPERATOR_TOKENS: dict[str, str] = {
     "\u2264": "ople", "\u2265": "opge", "<": "oplt", ">": "opgt",
     "=": "opeq", "\u2260": "opne", "+": "opplus", "-": "opminus",
     "\u2208": "opin", "\u2282": "opsub", "\u2286": "opsub",
     "\u222a": "opcup", "\u2229": "opcap", "\u2192": "oparr", "\u00ac": "opnot",
+    "\u2209": "opnotin", "\u220c": "opnotni",
+    "\u2283": "opsup", "\u2287": "opsup",
+    "\u2284": "opnotsub", "\u2285": "opnotsup",
+    "\u228a": "opsubne", "\u228b": "opsupne",
+    "\u2270": "opnotle", "\u2271": "opnotge", "\u2262": "opnotequiv",
+    "\u2200": "opforall", "\u2203": "opexists", "\u2205": "opempty",
 }
-#: ASCII spellings pdftotext and Lean sources use for the same operators
+#: ASCII spellings pdftotext and Lean sources use for the same operators, and the
+#: typographic variants of ``\u2264``/``\u2265`` (a quote spelled with ``\u2a7d`` must not be able to
+#: mean something else from the book's ``\u2264``).
 _OPERATOR_DIGRAPHS: tuple[tuple[str, str], ...] = (
     ("<=", "\u2264"), (">=", "\u2265"), ("!=", "\u2260"),
     ("/=", "\u2260"), ("->", "\u2192"),
+    ("\u2266", "\u2264"), ("\u2a7d", "\u2264"),
+    ("\u2267", "\u2265"), ("\u2a7e", "\u2265"),
 )
+#: the token names above, for splitting a normalised stream back into words and
+#: operators, and one representative glyph per name for the error messages.
+_OPERATOR_NAMES: frozenset[str] = frozenset(_OPERATOR_TOKENS.values())
+_OPERATOR_GLYPH: dict[str, str] = {}
+for _glyph, _name in _OPERATOR_TOKENS.items():
+    _OPERATOR_GLYPH.setdefault(_name, _glyph)
 
 
 def _fold(s: str) -> str:
@@ -137,11 +172,106 @@ def norm_operators(s: str) -> str:
 
 
 def has_operators(q: str) -> bool:
-    """True when the raw quote contains one of the operators worth checking."""
+    """True when the raw quote contains one of the operators worth checking.
+
+    NOT a gate on the operator pass, and it must never become one again: a quote
+    with the book's ``≤`` *deleted* carries no operator, so skipping the pass for
+    it certified exactly the doctoring the pass exists to catch.  The pass now
+    runs whenever the book was loaded with an operator normalisation.
+    """
     folded = _fold(q)
     return any(ch in folded for ch in _OPERATOR_TOKENS) or any(
         a in folded for a, _ in _OPERATOR_DIGRAPHS
     )
+
+
+def _split_operators(stream: list[str]) -> tuple[list[str], list[list[str]]]:
+    """Split a :func:`norm_operators` token stream into words and operators.
+
+    Returns ``(words, gaps)`` where ``gaps[j]`` holds the operator tokens that
+    sit immediately before ``words[j]`` and ``gaps[-1]`` the trailing ones.  The
+    words are exactly :func:`norm`'s tokens (both normalisations delete the same
+    characters; only the operators differ), which is what lets the operator pass
+    be anchored to the window the word pass matched.
+    """
+    words: list[str] = []
+    gaps: list[list[str]] = [[]]
+    for token in stream:
+        if token in _OPERATOR_NAMES:
+            gaps[-1].append(token)
+        else:
+            words.append(token)
+            gaps.append([])
+    return words, gaps
+
+
+def _with_operators(words: list[str], gaps: list[list[str]], start: int, length: int) -> str:
+    """``words[start:start+length]`` spelled with the operators between them."""
+    out: list[str] = []
+    for j in range(start, start + length):
+        if j > start:
+            out.extend(gaps[j])
+        out.append(words[j])
+    return " ".join(out)
+
+
+def _glyphs(tokens: list[str]) -> str:
+    """Operator tokens as glyphs, for an error a human can act on."""
+    return " ".join(_OPERATOR_GLYPH.get(t, t) for t in tokens) or "(none)"
+
+
+def _book_operators(ops: str, words: list[str]) -> list[str] | None:
+    """The operators the book carries inside its first occurrence of ``words``.
+
+    Only used to word the refusal: the pass itself is a containment test.  The
+    pattern lets any operator token sit between two words, so the span found is
+    the book's spelling of the same words.
+    """
+    if not words:
+        return None
+    pattern = r"(?:\s+op[a-z]+)*\s+".join(re.escape(w) for w in words)
+    m = re.search(pattern, ops)
+    if m is None:
+        return None
+    return [t for t in m.group(0).split() if t in _OPERATOR_NAMES]
+
+
+def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
+                      length: int) -> str:
+    """``""`` when the matched window carries the book's operators, else why not.
+
+    The window the word pass matched, spelled WITH the quote's own operators,
+    must occur in the book's operator normalisation.  Anchoring it to that window
+    is the whole point: the old pass ran an independent 50%-window search over the
+    operator stream, so any six operator-free tokens anywhere in the quote
+    satisfied it and a single flipped ``≤`` → ``≥`` passed as *verbatim*.
+    Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
+    (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
+    sign the extraction dropped), against 2 under the old one, and the two
+    ``*-legacy`` presets keep ``check_operators`` off for exactly that reason.
+    """
+    qwords, gaps = _split_operators(norm_operators(q).split())
+    if qwords != words:
+        # The two normalisations disagreed about the word stream, so the window
+        # cannot be anchored.  Refusing here would reject a real quote over a
+        # normalisation bug; the word pass still applies.
+        return ""
+    if _with_operators(qwords, gaps, start, length) in bk.ops:
+        return ""
+    carried = [t for j in range(start + 1, start + length) for t in gaps[j]]
+    book = _book_operators(bk.ops, words[start:start + length])
+    if book is None:
+        return ("words match the book but their OPERATORS could not be located there "
+                "at all (the quote splices two passages together, or its "
+                f"mathematics was rewritten): quote has {_glyphs(carried)}")
+    if len(book) > len(carried):
+        what = "an OPERATOR the book carries has been DROPPED"
+    elif len(book) < len(carried):
+        what = "the quote carries an OPERATOR the book does not"
+    else:
+        what = ("an OPERATOR has been CHANGED -- an inequality, equality, "
+                "quantifier or set operator is not the book's")
+    return f"words match the book but {what}: book has {_glyphs(book)}, quote has {_glyphs(carried)}"
 
 
 class BookText:
@@ -150,15 +280,41 @@ class BookText:
     ``words`` is the lossy :func:`norm` form (the historical one).  ``ops`` is
     the :func:`norm_operators` form, or ``None`` when the caller handed in a
     plain string — in which case the operator pass is skipped and says so.
+    ``pages`` is the SAME text as one :func:`norm` form per page, so a match can
+    be bound to a page; ``None`` means the caller handed in a flat string and no
+    quote can be bound, which the gate records rather than passing over.
     """
 
-    def __init__(self, words: str, ops: str | None = None):
+    def __init__(self, words: str, ops: str | None = None,
+                 pages: list[str] | None = None):
         self.words = words
         self.ops = ops
+        self.pages = pages
+
+    @classmethod
+    def from_text(cls, raw: str, *, operators: bool = True) -> "BookText":
+        """Load one source's pinned text, page by page.
+
+        ``pdftotext`` writes a form feed between pages and ``norm`` deletes it,
+        so the flat string the word pass searches cannot say WHERE a quote
+        matched — which is why a section running head, repeated on every page of
+        the section, passed the gate as an item's passage.  Splitting first and
+        joining the pages costs nothing and is byte-identical to ``norm(raw)``
+        (a form feed always separates two tokens).
+        """
+        pages = [norm(page) for page in raw.split("\f")]
+        return cls(" ".join(p for p in pages if p),
+                   norm_operators(raw) if operators else None, pages)
 
     @classmethod
     def coerce(cls, book: "BookText | str") -> "BookText":
         return book if isinstance(book, BookText) else cls(str(book))
+
+    def pages_matching(self, needle: str) -> list[int]:
+        """The 1-based PDF pages carrying ``needle``, or ``[]`` when unknown."""
+        if self.pages is None or not needle:
+            return []
+        return [n for n, page in enumerate(self.pages, 1) if needle in page]
 
 
 def _window_match(book: str, words: list[str], fraction: float) -> int:
@@ -175,48 +331,92 @@ def unmatched_words(book: str, words: list[str], start: int, length: int) -> lis
     return words[:start] + words[start + length :]
 
 
-def quote_ok(book: "BookText | str", q: str) -> tuple[bool, str]:
-    """True when ``q`` occurs in the book text (verbatim, or a 60% window).
+class QuoteMatch:
+    """What the quote gate found for one quote.
 
-    Two passes:
+    ``pages`` are the PDF pages the matched window occurs on — the evidence the
+    page binds in :class:`ItemBinding` need, and empty when the book was handed
+    in as a flat string or the match straddles a page break.
+    """
 
-    1. the **word** pass (historical): operators deleted, a contiguous window of
+    def __init__(self, ok: bool, why: str, *, needle: str = "",
+                 pages: list[int] | None = None, chars: int = 0):
+        self.ok = ok
+        self.why = why
+        self.needle = needle
+        self.pages = pages or []
+        self.chars = chars
+
+    def __bool__(self) -> bool:  # pragma: no cover - convenience only
+        return self.ok
+
+
+def quote_match(book: "BookText | str", q: str, *,
+                max_chars: int = MAX_QUOTE_CHARS) -> QuoteMatch:
+    """Locate ``q`` in the book text: verbatim, or a 60% window.
+
+    Four passes:
+
+    1. the **length** floor and ceiling: below 25 normalised characters nothing
+       can be verified, and above ``max_chars`` the "quote" is a page of the book
+       rather than a passage (SKILL.md hard rule 6: at most a sentence or two).
+    2. the **word** pass (historical): operators deleted, a contiguous window of
        >=60% of the quote's words must occur in the book.  When only a window
        matched, the reason string names the words that were NOT verified —
        previously a quote that was 70% genuine and 30% invented passed with the
        gate saying nothing at all about the invented 30%.
-    2. the **operator** pass: when the quote carries operators and the book was
-       loaded with an operator normalisation, the operator-bearing token stream
-       must match too, so an inequality or operator flip is refused.
+    3. the **operator** pass: when the book was loaded with an operator
+       normalisation, the matched window spelled with the quote's own operators
+       must occur in it, so a flipped, dropped or added operator is refused.
+    4. the **page** pass: a window that occurs on more than
+       :data:`MAX_MATCH_PAGES` pages is a running head or a contents line, not a
+       passage.  Measured over the baseline corpus: the most a real quote recurs
+       is 5 pages, while this source's own boilerplate line is on all 265 and its
+       section heads on 16 to 19.
     """
     bk = BookText.coerce(book)
     n = norm(q)
+    chars = len(q or "")
     if len(n) < MIN_QUOTE_CHARS:
-        return False, f"quote too short to verify (need >={MIN_QUOTE_CHARS} normalised chars)"
+        return QuoteMatch(False, f"quote too short to verify "
+                                 f"(need >={MIN_QUOTE_CHARS} normalised chars)", chars=chars)
+    if max_chars and chars > max_chars:
+        return QuoteMatch(False, f"quote is {chars} characters, over the {max_chars}-character "
+                                 f"ceiling — quote the passage, not the page", chars=chars)
     w = n.split()
     if n in bk.words:
+        needle, start, length = n, 0, len(w)
         why = "verbatim"
     else:
         i = _window_match(bk.words, w, WINDOW_FRACTION)
         if i < 0:
-            return False, "NOT FOUND in the book text"
+            return QuoteMatch(False, "NOT FOUND in the book text", chars=chars)
         k = max(MIN_WINDOW_WORDS, int(len(w) * WINDOW_FRACTION))
+        needle, start, length = " ".join(w[i : i + k]), i, k
         rest = unmatched_words(bk.words, w, i, k)
         shown = " ".join(rest[:REMAINDER_WORDS]) + ("…" if len(rest) > REMAINDER_WORDS else "")
         why = (
             f"partial ({k}/{len(w)} words matched as one window; pdftotext mangling "
             f"tolerated). UNVERIFIED: {shown!r}"
         )
-    if bk.ops is not None and has_operators(q):
-        o = norm_operators(q)
-        ow = o.split()
-        if o not in bk.ops and _window_match(bk.ops, ow, OPERATOR_WINDOW_FRACTION) < 0:
-            return False, (
-                "words match the book but the OPERATORS do not — an inequality, "
-                "equality or set operator has been changed (or the quote splices "
-                "two passages together)"
-            )
-    return True, why
+    if bk.ops is not None:
+        problem = _operator_problem(bk, q, w, start, length)
+        if problem:
+            return QuoteMatch(False, problem, needle=needle, chars=chars)
+    pages = bk.pages_matching(needle)
+    if len(pages) > MAX_MATCH_PAGES:
+        return QuoteMatch(
+            False,
+            f"matched text occurs on {len(pages)} pages ({pages[0]}, {pages[1]}, … , "
+            f"{pages[-1]}) — a running head or a contents line, not a passage",
+            needle=needle, pages=pages, chars=chars)
+    return QuoteMatch(True, why, needle=needle, pages=pages, chars=chars)
+
+
+def quote_ok(book: "BookText | str", q: str) -> tuple[bool, str]:
+    """``(ok, why)`` for one quote — :func:`quote_match` without the evidence."""
+    m = quote_match(book, q)
+    return m.ok, m.why
 
 
 #: characters pdftotext and LaTeX produce for a hyphen (mirrors cflib.items._DASHES)
@@ -676,8 +876,7 @@ def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[st
                 f"sources.{sid}.text_sha256 {str(want)[:12]}… — wrong extraction"
             )
     text = raw.decode("utf-8", errors="ignore")
-    ops = norm_operators(text) if cfg.check_operators else None
-    return BookText(norm(text), ops), errs
+    return BookText.from_text(text, operators=cfg.check_operators), errs
 
 
 def load_sources(cfg: GateConfig) -> tuple[dict[str, BookText], list[str]]:
