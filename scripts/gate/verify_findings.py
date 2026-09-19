@@ -50,6 +50,7 @@ from typing import Any, Mapping
 NON_FINDING_FILES = {
     "RECEIPT.json", "run.yaml", "run.json", "manifest.json",
     "tally.json", "journal-harvest.json", "gate.json", "gate.local.json",
+    "queue_remaining.json",
 }
 
 MIN_QUOTE_CHARS = 25

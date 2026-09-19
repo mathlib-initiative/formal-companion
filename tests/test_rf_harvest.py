@@ -313,5 +313,172 @@ class TestGroupByFindingIdLinksAcrossRuns(unittest.TestCase):
         self.assertEqual(len(union_mod.union(one, group_by="finding-id")), 1)
 
 
+# ---------------------------------------------------------------------------
+# gates-correctness#8 + skill-design#1 (the code half)
+
+
+class TestTheCountingPathFailsClosed(unittest.TestCase):
+    """The receipt's `complete` is the trust boundary; it used to default to
+    "nothing about the contents was validated" and still say COMPLETE."""
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.source = self.root / "src"
+        write_doc(self.source, "Exercise 1.1.1", [defect()])
+        self.dest = self.root / "corpus" / "run-a"
+
+    def test_a_non_object_findings_file_is_not_silently_skipped(self):
+        """`null` and `[...]` used to be a `continue` in both readers."""
+        (self.source / "broken.json").write_text("null", encoding="utf-8")
+        (self.source / "listy.json").write_text('[{"kind": "CONTENT"}]', encoding="utf-8")
+        receipt = harvest_mod.harvest(
+            run_id="run-a", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest)
+        self.assertEqual(receipt["malformed"], ["broken.json", "listy.json"])
+        self.assertFalse(receipt["complete"])
+        self.assertIn("MALFORMED 2", harvest_mod.describe(receipt))
+        with self.assertRaises(CfError) as caught:
+            tally_mod.rows_for_run("run-a", self.dest)
+        self.assertIn("broken.json", str(caught.exception))
+
+    def test_a_clean_corpus_is_still_complete(self):
+        receipt = harvest_mod.harvest(
+            run_id="run-a", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest)
+        self.assertEqual(receipt["malformed"], [])
+        self.assertTrue(receipt["complete"])
+
+    def test_the_source_listing_excludes_what_the_destination_excludes(self):
+        """A landed corpus carries a RECEIPT and a manifest; re-harvesting it
+        reported both as MISSING -- files that were on disk in both places."""
+        for name in ("RECEIPT.json", "manifest.json", "queue_remaining.json"):
+            (self.source / name).write_text("{}", encoding="utf-8")
+        names = harvest_mod.source_names({"kind": "local", "path": str(self.source)})
+        self.assertEqual(names, ["exercise-1-1-1.json"])
+        receipt = harvest_mod.harvest(
+            run_id="run-a", source={"kind": "local", "path": str(self.source)},
+            dest=self.dest)
+        self.assertEqual(receipt["missing"], [])
+        self.assertTrue(receipt["complete"])
+
+    def test_the_two_non_finding_lists_still_agree(self):
+        """The gate ships without cflib and carries its own copy of the list."""
+        from gate import verify_findings as vf
+        from harvest._compat import NON_FINDING_FILES
+
+        self.assertEqual(vf.NON_FINDING_FILES, set(NON_FINDING_FILES))
+        self.assertIn("queue_remaining.json", NON_FINDING_FILES)
+
+    def test_an_ungated_run_is_named_by_the_tally(self):
+        harvest_mod.harvest(run_id="run-a",
+                            source={"kind": "local", "path": str(self.source)},
+                            dest=self.dest)
+        result = tally_mod.tally({"run-a": self.dest})
+        self.assertEqual(result["ungated"], ["run-a"])
+        self.assertIn("UNGATED run(s): run-a", tally_mod.render(result))
+        self.assertEqual(harvest_mod.ungated_runs({"run-a": self.dest}), ["run-a"])
+
+    def test_a_gated_run_is_not(self):
+        harvest_mod.harvest(run_id="run-a",
+                            source={"kind": "local", "path": str(self.source)},
+                            dest=self.dest,
+                            gate_runner=lambda _dest: {"ok": True, "preset": "p",
+                                                       "files": 1, "problems": []})
+        self.assertEqual(tally_mod.tally({"run-a": self.dest})["ungated"], [])
+
+    def test_a_corpus_with_no_receipt_counts_as_ungated(self):
+        self.assertEqual(harvest_mod.ungated_runs({"run-a": self.source}), ["run-a"])
+
+
+class TestTheGateDefaultsOn(unittest.TestCase):
+    """SKILL.md's program is `cf harvest <run-id>`; the gate has to be in it."""
+
+    class Args:
+        run_id = "run-a"
+        gate_config = None
+
+    def test_harvest_gates_by_default_and_no_gate_is_the_escape(self):
+        from cfcmd import harvest as cmd
+
+        parser = _harvest_parser()
+        self.assertTrue(parser.parse_args(["run-a"]).gate)
+        self.assertTrue(parser.parse_args(["run-a", "--gate"]).gate,
+                        "the flag the runbook and README print still works")
+        self.assertFalse(parser.parse_args(["run-a", "--no-gate"]).gate)
+        args = self.Args()
+        args.gate = False
+        self.assertIsNone(cmd.gate_runner(None, args))
+
+    def test_import_corpus_gates_by_default_too(self):
+        parser = _import_parser()
+        base = ["--run-id", "r", "--from", "."]
+        self.assertTrue(parser.parse_args(base).gate)
+        self.assertFalse(parser.parse_args(base + ["--no-gate"]).gate)
+
+    def test_an_empty_corpus_is_a_gate_failure_not_a_pass(self):
+        """`files: 0, problems: [], ok: True` is how an empty corpus receipted
+        as complete."""
+        from cfcmd import harvest as cmd
+
+        root = scratch(self)
+        cfg = root / "gate.local.json"
+        cfg.write_text("{}", encoding="utf-8")
+        args = self.Args()
+        args.gate = True
+        args.gate_config = str(cfg)
+        empty = {"ok": True, "files": 0, "problems": [], "preset": "p", "partial_quotes": []}
+        runner = cmd.gate_runner(_FakeWorkspace(root), args)
+        with _patched(cmd.gate_mod, "gate_corpus", lambda *a, **k: empty):
+            result = runner(root)
+        self.assertFalse(result["ok"])
+        self.assertTrue(any("no findings to validate" in p for p in result["problems"]))
+        receipt = harvest_mod.build_receipt(
+            run_id="run-a", source={"kind": "local", "path": str(root)},
+            expected=[], dest=root, gate=result)
+        self.assertFalse(receipt["complete"])
+
+
+class _FakeWorkspace:
+    """Just enough workspace for ``gate_runner``: where a planned gate would be."""
+
+    def __init__(self, root: Path):
+        self.paths = type("P", (), {"run_dir": staticmethod(lambda run_id: str(root))})()
+
+
+def _harvest_parser():
+    import argparse
+
+    from cfcmd import harvest as cmd
+    parser = argparse.ArgumentParser()
+    cmd.register(parser.add_subparsers(dest="cmd"))
+    sub = parser._subparsers._group_actions[0].choices["harvest"]
+    return sub
+
+
+def _import_parser():
+    import argparse
+
+    from cfcmd import import_corpus as cmd
+    parser = argparse.ArgumentParser()
+    cmd.register(parser.add_subparsers(dest="cmd"))
+    return parser._subparsers._group_actions[0].choices["import-corpus"]
+
+
+class _patched:
+    """Minimal attribute patch (no unittest.mock, to match the suite's style)."""
+
+    def __init__(self, obj, name, value):
+        self.obj, self.name, self.value = obj, name, value
+
+    def __enter__(self):
+        self.old = getattr(self.obj, self.name)
+        setattr(self.obj, self.name, self.value)
+        return self.value
+
+    def __exit__(self, *exc):
+        setattr(self.obj, self.name, self.old)
+        return False
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
