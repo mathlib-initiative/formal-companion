@@ -30,6 +30,7 @@ named after a source overwrite it.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -42,6 +43,9 @@ BASE_RSYNC = ["-a", "--no-D", "--omit-dir-times"]
 #: read-only transfer for companion sources: the run must not be able to edit them.
 #: (design/critique.json: "'sources read-only' is prompt-enforced only".)
 READONLY_CHMOD = ["--chmod=D0555,F0444"]
+#: the opt-in that lets a run's agents run with approvals and the sandbox off
+#: (scripts/run/bridge-agentbox.sh); absent, both hosts deny by default.
+BYPASS_ENV = "CF_ALLOW_SANDBOX_BYPASS"
 #: the only files of scripts/run/ that belong on the server
 BRIDGE_FILES = ("bridge-agentbox.sh", "bridge-claude-p.sh", "bridge-tend-agent.sh",
                 "normalize_result.py", "extract_final_json.py")
@@ -60,7 +64,15 @@ def resolve_host(workspace, host: str) -> dict:
 
     ``Workspace.check_host`` is the enforcement point (it refuses anything not in
     ``hosts.allowlist``); this adds the connection facts the commands need:
-    ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes}``.
+    ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes,
+    tend_version_required}``.
+
+    ``tend_version_required`` is a comma-separated version spec (``">=0.4,<0.6"``)
+    from ``hosts.<host>.tend_version``, ``hosts.tend_version`` or
+    ``defaults.tend_version``.  The whole of ``scripts/plan`` + ``scripts/run``
+    exists to drive one external tool whose config schema nothing pins, so
+    preflight compares the host's ``tend --version`` against this and refuses;
+    with nothing recorded it can only print the version, and says so.
     """
     workspace.check_host(host)
     hosts = _as_dict(workspace.hosts)
@@ -80,6 +92,9 @@ def resolve_host(workspace, host: str) -> dict:
         "disk_budget_bytes": int(entry.get("disk_budget_bytes")
                                  or (float(budget_gb) * 1024 ** 3 if budget_gb else 0)
                                  or DEFAULT_DISK_BUDGET_BYTES),
+        "tend_version_required": str(entry.get("tend_version")
+                                     or hosts.get("tend_version")
+                                     or workspace.default("tend_version", "") or ""),
     }
 
 
@@ -125,6 +140,105 @@ def _excluded(rel: Path, patterns: list[str]) -> bool:
         if fnmatch.fnmatch(rel.as_posix(), pat):
             return True
     return False
+
+
+def tree_digest(root: Path, excludes: list[str] | None = None) -> dict:
+    """``{sha256, files, bytes}`` over exactly the files rsync would send.
+
+    ``READONLY_CHMOD`` transfers a companion at mode 0444 inside 0555
+    directories, which is a speed bump and not a barrier: the copy is owned by
+    the run's user, so an agent running with approvals bypassed can ``chmod u+w``
+    and edit it, and nothing else would ever notice.  This digest is recorded
+    before the transfer and recomputed on the host (``REMOTE_TREE_DIGEST_PY``)
+    after the transfer and after the run, so an edit is visible in the run's own
+    record instead of being discovered in the findings.
+
+    One sha256 over ``<relative posix path>\\0<file sha256>\\n`` lines sorted by
+    path.  Symlinks are skipped: ``rsync -a`` ships the link, not its target.
+    """
+    root = Path(root)
+    patterns = list(excludes or [])
+    rows: list[tuple[str, str]] = []
+    total = 0
+    for dirpath, dirs, names in os.walk(root):
+        rel_root = Path(dirpath).relative_to(root)
+        dirs[:] = [d for d in dirs if not _excluded(rel_root / d, patterns)]
+        for name in names:
+            rel = rel_root / name
+            if _excluded(rel, patterns):
+                continue
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            inner = hashlib.sha256()
+            try:
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        inner.update(chunk)
+                        total += len(chunk)
+            except OSError:
+                rows.append((rel.as_posix(), "unreadable"))
+                continue
+            rows.append((rel.as_posix(), inner.hexdigest()))
+    outer = hashlib.sha256()
+    for rel_posix, digest in sorted(rows):
+        outer.update(("%s\0%s\n" % (rel_posix, digest)).encode("utf-8"))
+    return {"sha256": outer.hexdigest(), "files": len(rows), "bytes": total}
+
+
+#: :func:`tree_digest`, for python3 on the run host (no cflib there).  The two
+#: must agree byte for byte -- tests/test_rf_security.py runs this snippet against
+#: the function on the same tree, which is the enforcement.
+REMOTE_TREE_DIGEST_PY = r'''
+import fnmatch, hashlib, os, sys
+
+root, want = sys.argv[1], sys.argv[2]
+patterns = sys.argv[3:]
+
+
+def excluded(rel):
+    for pat in patterns:
+        if any(fnmatch.fnmatch(part, pat) for part in rel.split("/")):
+            return True
+        if fnmatch.fnmatch(rel, pat):
+            return True
+    return False
+
+
+rows = []
+for dirpath, dirs, names in os.walk(root):
+    rel_root = os.path.relpath(dirpath, root)
+    prefix = "" if rel_root == "." else rel_root + "/"
+    dirs[:] = [d for d in dirs if not excluded(prefix + d)]
+    for name in names:
+        rel = prefix + name
+        if excluded(rel):
+            continue
+        path = os.path.join(dirpath, name)
+        if os.path.islink(path):
+            continue
+        inner = hashlib.sha256()
+        try:
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    inner.update(chunk)
+        except OSError:
+            rows.append((rel, "unreadable"))
+            continue
+        rows.append((rel, inner.hexdigest()))
+outer = hashlib.sha256()
+for rel, digest in sorted(rows):
+    outer.update(("%s\0%s\n" % (rel, digest)).encode("utf-8"))
+got = outer.hexdigest()
+print("tree %s files=%d sha256=%s" % (root, len(rows), got))
+if want and want != got:
+    sys.stderr.write("REFUSED: %s is not the tree that was transferred\n" % root)
+    sys.stderr.write("  expected %s\n  got      %s\n" % (want, got))
+    sys.stderr.write("  the companion copies go over read-only, but 0444 is reversible by their\n")
+    sys.stderr.write("  owner: an agent may have edited the repo the findings cite. Re-transfer\n")
+    sys.stderr.write("  and do not harvest this run.\n")
+    raise SystemExit(1)
+'''
 
 
 def _measure(src: Path, patterns: list[str]) -> tuple[int, int]:
@@ -258,10 +372,16 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
 
     if include_sources:
         for name, repo in sorted((companions or {}).items()):
-            entries.append(_entry(f"repo:{name}", Path(repo).expanduser(),
-                                  f"{root}/{names['repos']}/{name}/",
-                                  flags=READONLY_CHMOD + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
-                                  note="companion Lean sources, transferred read-only"))
+            entry = _entry(f"repo:{name}", Path(repo).expanduser(),
+                           f"{root}/{names['repos']}/{name}/",
+                           flags=READONLY_CHMOD + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
+                           note="companion Lean sources, transferred read-only")
+            if entry["exists"]:
+                # The BEFORE hash of what leaves this machine, so the same digest
+                # can be demanded of the host after the transfer and after the run.
+                entry["tree_sha256"] = tree_digest(Path(repo).expanduser(),
+                                                   SOURCE_EXCLUDES)["sha256"]
+            entries.append(entry)
         if not companions:
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
     wants_images = "image" in source_access(run).lower()
@@ -321,6 +441,50 @@ def _errata_is_repo_supplied(source_dir: Path) -> bool:
     except (OSError, ValueError):                       # pragma: no cover - unreadable meta
         return False
     return bool(meta.get("repo_supplied"))
+
+
+def agent_permissions(run_dir: Path) -> dict:
+    """What the staged wrappers will hand the agent hosts, for run.yaml's record.
+
+    ``bridge-agentbox.sh`` denies by default (a role allowlist, and ``codex``
+    sandboxed) and takes the approvals-and-sandbox bypass as an explicit opt-in.
+    The opt-in is an environment variable exported by the wrapper `cf plan-run`
+    staged, so it is read back here: a run that ran with the checks off has to say
+    so in its own record, where the receipt's ``run_yaml_sha`` pins it.
+    """
+    bindir = Path(run_dir) / "tend-root" / "bin"
+    wrappers = sorted(p for p in bindir.glob("*.sh")) if bindir.is_dir() else []
+    wanted = (BYPASS_ENV, "CF_ALLOWED_TOOLS", "CF_WORKER_TOOLS", "CF_REVIEWER_TOOLS",
+              "CF_PERMISSION_FLAGS", "CF_CODEX_SANDBOX")
+    found: dict[str, str] = {}
+    bypass_from: list[str] = []
+    for path in wrappers:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:                                 # pragma: no cover - unreadable wrapper
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("export "):
+                continue
+            assignment = line[len("export "):]
+            key, _, value = assignment.partition("=")
+            key = key.strip()
+            if key not in wanted:
+                continue
+            value = value.strip().strip('"').strip("'")
+            found[key] = value
+            if key == BYPASS_ENV and value == "1":
+                bypass_from.append(path.name)
+    return {
+        "permission_bypass": bool(bypass_from),
+        "bypass_env": BYPASS_ENV,
+        "bypass_exported_by": bypass_from,
+        "wrappers": [p.name for p in wrappers],
+        "env": found,
+        "default": "deny by default: role allowlist for claude, --sandbox for codex "
+                   f"(set {BYPASS_ENV}=1 in the wrapper to opt out, deliberately)",
+    }
 
 
 def _bridges_staged(tend_root: Path) -> bool:

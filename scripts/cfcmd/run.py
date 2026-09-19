@@ -446,6 +446,9 @@ def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, dis
         "sources_transferred": (manifest.run_source_ids(data)
                                 if args.include_source_text else []),
         "source_access": manifest.source_access(data),
+        # WHAT THE AGENTS MAY DO: the bridge denies by default, and a run whose
+        # wrapper opted out of approvals and the sandbox has to say so here.
+        "agents": manifest.agent_permissions(run_yaml_path.parent),
         "budget": budget,
         "disk_budget": disk,
         "concurrency": concurrency,
