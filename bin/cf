@@ -1,0 +1,26 @@
+#!/usr/bin/env python3
+"""`cf` for PATH: run the checkout this shim lives in.
+
+New code (first-run#6).  Every command's "next:" hint says `cf <command> ...`,
+and there was no `cf` -- the install step only symlinks the repo into the Claude
+Code skills directory, so a new user had to translate nine printed hints into
+`python3 <skill>/scripts/cf.py ...` by hand.
+
+Put it on PATH by symlinking it, not copying it; ``realpath`` follows the
+symlink back to the checkout, so one shim serves every worktree it is linked
+from:
+
+    ln -s <skill>/bin/cf ~/.local/bin/cf
+
+There is no console script to install instead: see pyproject.toml.
+"""
+import os
+import sys
+
+_HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(os.path.dirname(_HERE), "scripts"))
+
+import cf  # noqa: E402
+
+if __name__ == "__main__":
+    sys.exit(cf.cli())
