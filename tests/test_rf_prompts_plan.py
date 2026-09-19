@@ -636,7 +636,9 @@ class TestQuoteLengthMatchesTheHardRule(unittest.TestCase):
     def test_the_prompt_asks_for_the_shortest_identifying_span(self):
         text = _render("attack-hunt")["worker-system.md"]
         self.assertIn("SHORTEST span that identifies the passage", text)
-        self.assertIn("one or two sentences at most", text)
+        # the sentence count now carries the gate's own character bound; the
+        # numbers are pinned to it by tests/test_rf_handoffs.py
+        self.assertIn("1-2 sentences, at most 600 characters", text)
         self.assertIn("copyright boundary", text)
         self.assertIn("shortest span that decides", _render("attack-hunt")["reviewer-system.md"])
 

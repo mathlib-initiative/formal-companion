@@ -51,7 +51,7 @@ Write **exactly one** file, `findings/<task-id>.json`, and change nothing else e
   "source_sha": "{{source_sha}}",
   "item": "{{example_item}}",
   "book_located": true,
-  "book_passage_quote": "VERBATIM from the book text: the SHORTEST span that identifies the passage, one or two sentences at most",
+  "book_passage_quote": "VERBATIM from the book text: the SHORTEST span that identifies the passage, 1-2 sentences and at most 600 characters",
   "matches": [
     {"concept": "the statement in words",
      "decls": [{"repo": "{{example_repo}}", "decl": "foo"}],
@@ -63,7 +63,7 @@ Write **exactly one** file, `findings/<task-id>.json`, and change nothing else e
      "repos_involved": ["{{example_repo}}"],
      "faithful": ["{{example_repo}}"],
      "unfaithful_decls": ["{{example_repo}}:someDecl"],
-     "book_quote": "VERBATIM: the shortest span that decides it, one sentence where one will do",
+     "book_quote": "VERBATIM: the shortest span that decides it, one sentence where one will do, at most 600 characters",
 {{#if witness_required}}
      "witness": {"object": "the specific d / set / function / index", "why": "how it splits the Lean from the book"},
 {{/if}}
@@ -78,7 +78,7 @@ Write **exactly one** file, `findings/<task-id>.json`, and change nothing else e
 `witness` is a required **object** on every disagreement, not a sentence in `reasoning`.
 {{/if}}
 
-Quote no more than you need: the shortest span that identifies the passage, one or two sentences at most, per quote. This is a copyright boundary, not a style preference.
+Quote no more than you need, per quote: 1-2 sentences, at most 600 characters. The gate records anything longer as over-long and refuses a quote over 3,000 characters — that is a page of the book, not a passage. This is a copyright boundary, not a style preference.
 
 **Every quote is machine-verified against the book text after you finish** (the orchestrator runs the gate as a validation command, from outside this worktree — you cannot edit it). A quote that does not occur in the book **fails the task**. Copy exactly; do not paraphrase, do not reconstruct from memory. Run the gate yourself before committing:
 
