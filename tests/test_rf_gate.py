@@ -745,7 +745,9 @@ class TestTheGateRunsNoProgramTheWorkerChose(WorktreeTestCase):
             if rel in allowed:
                 continue
             body = path.read_text(encoding="utf-8")
-            for m in re.finditer(r"""\[\s*["']git["']""", body):
+            # an argv list opens with ``["git",`` -- a subscript such as
+            # ``facts["git"]`` follows a name or a bracket and is not one
+            for m in re.finditer(r"""(?<![\w\])])\[\s*["']git["']\s*,""", body):
                 window = body[m.start():m.start() + 120]
                 if "SAFE_CONFIG" not in window:
                     line = body[:m.start()].count("\n") + 1
