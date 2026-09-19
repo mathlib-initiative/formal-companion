@@ -110,7 +110,17 @@ policy:
 # searched after the paths the repo itself names, the repo's own caches and this
 # workspace's sources/ store. Matched by sha when one is known, by filename or
 # title otherwise.
+#
+# This list is also the ALLOWLIST for an absolute or `~` path a companion repo
+# names in its own files: a hint that lands outside the repo, this workspace's
+# sources/ store and these roots is reported and never opened. So it is only
+# ever added to deliberately -- the earlier default handed two home-directory
+# subtrees to every audited repo, and only resolved on one machine's layout.
+#
+# `cf init` adds nothing but ~/Downloads. The roots DERIVED from what this
+# workspace already holds -- its own sources/ store and the parent directory of
+# every onboarded companion repo -- are searched as well without being listed
+# here; `cf init` and `cf doctor` print the effective set. Add a root with
+# `cf sources add <pdf> --for <companion>`, or by editing this list.
 library_paths:
   - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf

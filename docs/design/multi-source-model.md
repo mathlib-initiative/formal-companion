@@ -178,10 +178,9 @@ budget: {billing_path, max_cost_usd, require_consent}
 policy: {publish_unchallenged, redact_quotes_on_export, allow_remote,
          allow_download, require_confirmed_sources}
 
-library_paths:                   # where `cf onboard` may look for a PDF it was told about
-  - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf
+library_paths:                   # where `cf onboard` may look for a PDF it was told about,
+  - ~/Downloads                  # PLUS the derived roots (the workspace's own sources/
+                                 # store and the parent of every onboarded repo)
 ```
 
 Renames inside the config blocks: `defaults.book_access` → `defaults.source_access`
@@ -369,8 +368,6 @@ policy:
 
 library_paths:
   - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf
 ```
 
 The differential surface falls straight out: `shared_sources()` returns
@@ -679,8 +676,12 @@ when no sha is known the first candidate that fingerprints successfully wins.
    `<workspace>/sources/*.pdf`. `rank = 2`, `workspace_store`.
 4. **`workspace.yaml library_paths`** — each pattern expanded with `~` and
    `glob`, depth-capped at 4 levels below the pattern's fixed prefix, at most
-   5000 files scanned per pattern, `*.pdf` only. Defaults:
-   `~/Downloads`, `~/Desktop/**/sources`, `~/Desktop/**/.lake/official-pdf`.
+   5000 files scanned per pattern, `*.pdf` only. The configured list is joined
+   by the DERIVED roots — this workspace's own `sources/` store and the parent
+   directory of every onboarded companion repo — so a sibling checkout holding
+   the PDF is reachable on any layout. The only shipped entry is `~/Downloads`:
+   this list is also the allowlist for an absolute path a repo names (rank 0),
+   so a home subtree in it hands every audited repo that subtree.
    `rank = 3`, `library_path`.
 5. **download** — the registry's `download_url`, **only** when all of:
    `--download` was passed, `policy.allow_download` is not `false`… (the flag
@@ -703,7 +704,8 @@ On this machine, step 1 finds `tao-measure-lean/sources/tao-measure-theory.pdf`
 does **not** exist, so step 2 finds `.lake/official-pdf/gsm-126-tao5-measure-book.pdf`
 (`64498329…`). Onboarding `tao-measure-lean` second finds the published edition
 already in the workspace store (step 3) — or, onboarding it first, at step 4
-via `~/Desktop/**/.lake/official-pdf`.
+via the derived root that `measure_theory`'s own checkout sits in, once that
+companion has been onboarded too.
 
 ### 4.5 Fingerprinting (`fingerprint`)
 
@@ -1079,7 +1081,7 @@ sources discovered
       edition  AMS GSM 126, author's preliminary AMS version (published pagination)
       from     CLAUDE.md#L48-L55 (sha prefix), formalization.yaml#sources (title/licence)
       pdf      ~/Desktop/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
-               found in: library_path (~/Desktop/**/.lake/official-pdf)
+               found in: library_path (<the derived root measure_theory sits in>)
       offset   16                                confidence 0.996  (244/245 running heads)
       kinds    Definition Lemma Theorem Proposition Corollary Exercise Example Remark
       errata   https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
