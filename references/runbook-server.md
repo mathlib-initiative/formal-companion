@@ -89,7 +89,17 @@ What it does, in order — and each step is one you can also do by hand:
 4. **Smoke test 1/1.** Set limits to one worker and one reviewer, start the run, and watch exactly
    one task through worker → gate → reviewer → merge. Do not launch hundreds of tasks blind: model
    ids that have never been exercised from this machine fail immediately and repeatedly.
-5. Only then raise the limits to the preset's concurrency.
+5. **Read that task's gate output once per tend version.** Its last line is `changed files: …`.
+   `ownership checked against task <id>` means the orchestrator exported `TEND_TASK_ID` into the
+   validation command's environment and the full ownership rule is running. `ownership: single-stem
+   rule` means it did not: only the weaker rule (one task's findings/task pair per contribution) is
+   in force, so a worker that rewrites a neighbour's landed findings file inside its own single
+   stem is not caught. **Whether tend exports it has never been verified here**, and it is a
+   property of the orchestrator version, not of the run — so check it again after an upgrade. To
+   restore the full rule, append `--task-id <the id>` to both gate commands in the tend root's
+   `config.yaml` by whatever substitution that version supports; an argv list is not shell-expanded,
+   so a literal `$TEND_TASK_ID` element makes the gate refuse every run.
+6. Only then raise the limits to the preset's concurrency.
 
 ```bash
 # the manual equivalents, for when you are debugging rather than driving
