@@ -111,6 +111,33 @@ class WorkspacePathIdsTest(unittest.TestCase):
                 call()
             self.assertIn("unsafe", caught.exception.message)
 
+    def test_a_run_naming_no_source_still_gets_its_own_refusal(self):
+        """The new check must not shadow a command's own, better, error.
+
+        `cf run --local` builds `pairs/<source>/queue.json` before it refuses a
+        run.yaml that names no source, so the empty id reached the path helpers
+        first and the user was told "unsafe source_id ''" instead of which flag
+        settles it.
+        """
+        root = scratch(self)
+        (root / "workspace.yaml").write_text(
+            "version: 2\nworkspace:\n  name: demo\ncompanions: {}\nsources: {}\n"
+            "hosts:\n  allowlist: []\n", encoding="utf-8")
+        run_dir = root / "runs" / "demo"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.yaml").write_text("run_id: demo\nmode: differential\n",
+                                          encoding="utf-8")
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        env.pop("CF_WORKSPACE", None)
+        res = subprocess.run([sys.executable, str(SCRIPTS / "cf.py"), "--workspace", str(root),
+                              "run", "demo", "--local"],
+                             capture_output=True, text=True, env=env, cwd=str(REPO))
+        self.assertNotEqual(res.returncode, 0)
+        output = res.stdout + res.stderr
+        self.assertIn("names no source", output)
+        self.assertIn("cf plan-run --source", output)
+        self.assertNotIn("unsafe source_id", output)
+
     def test_real_ids_still_work_and_stay_inside(self):
         """An interior dot is a legal id: only a separator or `..` is a traversal."""
         paths = WorkspacePaths(root=self.ROOT)
