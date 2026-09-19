@@ -138,8 +138,13 @@ def _write_agreed(workspace, args, runs: dict[str, Path]) -> None:
     out = Path(workspace.paths.agreed_high_json)
     out.parent.mkdir(parents=True, exist_ok=True)
     write_json(out, doc, indent=1, sort_keys=True)
-    log.info(f"agreed (high in >= {args.min_runs} runs): {doc['count']} items, "
+    log.info(f"agreed (the same complaint in >= {args.min_runs} runs): {doc['count']} loci, "
              f"{doc['cross_family']} agreed across run families -> {out}")
+    if doc["same_locus_count"]:
+        # the weaker signal, named: several runs faulted the locus with different
+        # complaints, which is a reason to look and not corroboration
+        log.detail(f"  plus {doc['same_locus_count']} locus/loci several runs faulted with "
+                   f"DIFFERENT complaints (same_locus in that file; not counted as agreement)")
 
 
 def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
