@@ -1121,6 +1121,9 @@ class TestMakeTasksGuards(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 CONVENTIONS = """# House conventions -- ours
 
+confirmed_by: the repo owner
+confirmed_at: 2026-01-01
+
 ## 1. Total functions and junk values
 
 - `measure` of a non-measurable set is `0` by junk value.
@@ -1180,10 +1183,21 @@ class TestPrompts(unittest.TestCase):
         self.assertIn("/home/x/gate/verify_findings.py", out["worker.md"])
 
     def test_differential_text_prompt_has_no_attack_blocks(self):
+        """No page images, no witness demand — but the citation ban is the GATE's.
+
+        The `citation_ban` block used to be a hand-set flag that only the attack
+        presets carried, so a differential prompt invited "a wrong page anchor"
+        its own gate does not accept. It is now a function of `preset.kinds`, so
+        the block appears here too — naming PAGE_ANCHOR only, because COVERAGE is
+        a kind this preset's gate does accept.
+        """
         preset, ctx = self.ctx("differential-text")
         out = rp.render_prompts(preset, ctx)
-        self.assertNotIn("citation findings", out["worker-system.md"])
         self.assertNotIn("p-NNN.png", out["worker-system.md"])
+        self.assertNotIn("must carry a concrete witness", out["worker-system.md"])
+        self.assertIn("citation findings", out["worker-system.md"])
+        self.assertIn("kind `PAGE_ANCHOR` are not accepted", out["worker-system.md"])
+        self.assertNotIn("`COVERAGE`", out["worker-system.md"])
         self.assertIn("CONVENTION vs CONTENT", out["worker-system.md"])
         self.assertIn("faithful` is a **list", out["worker-system.md"])
 
@@ -1355,6 +1369,7 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             max_cost = None
             i_have_consent = False
             force = False
+            conventions_unconfirmed = False
             allow_unreconciled = False
 
         for k, v in over.items():

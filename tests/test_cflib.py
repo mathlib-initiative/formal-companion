@@ -1605,6 +1605,9 @@ block: |
         "gate_command": "python3 /gate/verify_findings.py", "printed_page": "12",
         "repos_inline": "ours, adam", "repo_count": "2",
         "decls_inline": "ours:Foo, adam:Bar",
+        # the rendered value for a preset whose gate accepts PAGE_ANCHOR; empty
+        # on one that does not
+        "anchor_question": " Is the page anchor correct?",
     }
 
     @staticmethod

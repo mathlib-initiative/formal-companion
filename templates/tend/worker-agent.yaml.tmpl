@@ -10,6 +10,10 @@ model:
       effort: {{worker_effort}}
     max_output_tokens: {{max_output_tokens}}
 tools:
+  # `bash` is unrestricted here because a worker commits its own branch and greps the
+  # audited repositories. That material is third-party: the system prompt tells the
+  # worker it is data and never instructions, and the run host should be a box you can
+  # throw away.
   enabled:
     - ls
     - read_file

@@ -23,6 +23,8 @@ from typing import Any, Mapping
 from cflib import vocab
 from cflib.errors import CfError
 
+from . import models
+
 #: The three differential kinds gate-wise; PAGE_ANCHOR is mechanical-only in v2
 #: (22 of 40 batch-1 differential findings were pagination noise).
 DIFFERENTIAL_KINDS = sorted(vocab.KINDS_BY_MODE[vocab.DIFFERENTIAL])
@@ -56,7 +58,6 @@ class Preset:
     model: str | None               # None = the bridge's own default (never recorded upstream)
     # prompt blocks (templates/prompts/*.tmpl)
     page_images: bool = False
-    citation_ban: bool = False
     approve_guidance: bool = True
     final_line: bool = False        # codex bridges parse "VERDICT: approve" from free text
     # tasks
@@ -88,6 +89,50 @@ class Preset:
     def needs_images(self) -> bool:
         return self.book_access == "text+images"
 
+    # -- what the prompts may ask for: a FUNCTION of the gate's kinds ---------
+    # The citation ban used to be a hand-set flag, so the differential presets
+    # rendered prompts that invited "a wrong page anchor" while their gate kinds
+    # did not list PAGE_ANCHOR: 22 of the 40 batch-1 differential findings were
+    # pure pagination, each consuming an adjudication slot (references/method.md
+    # S1).  Deriving it means prompt and gate cannot drift again.
+    @property
+    def banned_citation_kinds(self) -> tuple[str, ...]:
+        """Citation kinds this run's gate rejects (PAGE_ANCHOR, COVERAGE)."""
+        return tuple(k for k in (vocab.PAGE_ANCHOR, vocab.COVERAGE) if k not in self.kinds)
+
+    @property
+    def citation_ban(self) -> bool:
+        return bool(self.banned_citation_kinds)
+
+    @property
+    def wants_page_anchors(self) -> bool:
+        """Whether a worker may report a page-anchor delta at all."""
+        return vocab.PAGE_ANCHOR in self.kinds
+
+    @property
+    def no_defect_verdict(self) -> bool:
+        """Whether NO_DEFECT_FOUND is a verdict this run's gate accepts."""
+        return vocab.NO_DEFECT_FOUND in self.verdicts
+
+    #: bridge -> the ONE channel its prompts may name as the way to finish.
+    #: Three were named in one rendered prompt set (a `final_result` tool the
+    #: agentbox bridges do not expose, `.tend/agent_result.json`, and stdout).
+    FINISH_CHANNELS = {
+        "agentbox-claude": "agent_result",
+        "agentbox-codex": "agent_result",
+        "claude-p": "stdout",
+        "tend-agent": "final_result",
+    }
+
+    @property
+    def finish_channel(self) -> str:
+        return self.FINISH_CHANNELS.get(self.bridge, "agent_result")
+
+    @property
+    def narrows_by_chapter(self) -> bool:
+        """Whether ``--chapters`` can restrict this preset's task universe."""
+        return self.task_style in ("differential", "attack")
+
     def to_dict(self) -> dict:
         return asdict(self)
 
@@ -117,7 +162,6 @@ _ATTACK_COMMON = dict(
     kinds=tuple(ATTACK_KINDS),
     verdicts=tuple(ATTACK_VERDICTS),
     witness_required=True,
-    citation_ban=True,
     task_style="attack",
     slug_style="dash",
     prioritise=True,
@@ -149,7 +193,7 @@ PRESETS: dict[str, Preset] = {
         name="differential-gpt",
         book_access="text",
         bridge="agentbox-codex",
-        model="gpt-5.6-sol",
+        model=models.DEFAULTS["worker_codex"],
         final_line=True,
         note="tao-diff-tend-gpt: the calibration pair's second model",
         **_DIFF_COMMON,
@@ -159,7 +203,7 @@ PRESETS: dict[str, Preset] = {
         mode=vocab.ATTACK_VAC,
         book_access="text",
         bridge="agentbox-codex",
-        model="gpt-5.6-sol",
+        model=models.DEFAULTS["worker_codex"],
         final_line=True,
         attack_label="vac",
         note="tao-attack-vac: vacuity/triviality/strength/junk-value probe; 11 substantive findings",
@@ -185,8 +229,9 @@ PRESETS: dict[str, Preset] = {
         kind_rules=_LEGACY_RULES,
         check_operators=False,
         legacy=True,
-        note="validates the converted v1 differential corpus (findings/, -pdf, -gpt); "
-             "keeps PAGE_ANCHOR in KINDS because those runs emitted it",
+        note="IMPORT-ONLY: the gate for a v1 differential corpus adopted by "
+             "`cf import-corpus --preset differential-legacy --gate` (findings/, -pdf, "
+             "-gpt); keeps PAGE_ANCHOR in KINDS because those runs emitted it",
         **{**_DIFF_COMMON,
            "kinds": tuple(LEGACY_DIFFERENTIAL_KINDS),
            "verdicts": tuple(LEGACY_DIFFERENTIAL_VERDICTS)},
@@ -201,8 +246,9 @@ PRESETS: dict[str, Preset] = {
         kind_rules=_LEGACY_RULES,
         check_operators=False,
         legacy=True,
-        note="validates the converted v1 attack corpus (findings-vac/, findings-hunt/); "
-             "the witness is the one convert_v1 lifted out of `reasoning`",
+        note="IMPORT-ONLY: the gate for a v1 attack corpus adopted by "
+             "`cf import-corpus --preset attack-legacy --gate` (findings-vac/, "
+             "findings-hunt/); the witness is the one convert_v1 lifted out of `reasoning`",
         **{**_ATTACK_COMMON, "verdicts": tuple(LEGACY_ATTACK_VERDICTS)},
     ),
     "mechanical": Preset(
@@ -224,6 +270,17 @@ PRESETS: dict[str, Preset] = {
 
 #: Presets a fleet may actually be launched with.
 RUNNABLE = tuple(p for p, v in PRESETS.items() if not v.legacy and v.bridge != "none")
+
+#: Gate-only presets, and what each one is FOR.  They are not dead surface:
+#: `cf import-corpus --gate` builds its gate.json from one of them (the imported
+#: v1 corpora carry PAGE_ANCHOR kinds and NO_WEAKNESS_FOUND verdicts no runnable
+#: preset accepts), and `mechanical` is the gate for detect/ and anchor_check
+#: rows.  They cannot be planned, which is why the refusal names their purpose.
+GATE_ONLY = {
+    "differential-legacy": "import-only: `cf import-corpus --preset differential-legacy --gate`",
+    "attack-legacy": "import-only: `cf import-corpus --preset attack-legacy --gate`",
+    "mechanical": "the gate for machine-produced rows (`cf pair`, `cf detect-proxies`)",
+}
 
 
 def get(name: str) -> Preset:
