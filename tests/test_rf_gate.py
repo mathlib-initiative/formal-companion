@@ -625,8 +625,12 @@ class TestChangedFilesSeesDeletions(WorktreeTestCase):
         self.git("add", "-A")
         self.git("commit", "-qm", "tidy up")
         entries = self.entries()
-        self.assertEqual(vf.check_changed(entries), [],
-                         "the pair rule alone cannot see this")
+        # The PAIR rule alone cannot see this; the single-stem rule that now
+        # stands in for a missing task id can, because two stems were touched.
+        # It still cannot say WHICH stem is this worker's -- only the task id
+        # does that, which is what the second half asserts.
+        bare = vf.check_changed(entries)
+        self.assertTrue(any("belong to 2 tasks" in p and "alice" in p for p in bare), bare)
         problems = vf.check_changed(entries, task_id="carol")
         self.assertTrue(any("findings/alice.json" in p and "not to this worker's" in p
                             for p in problems), problems)
@@ -699,9 +703,9 @@ class TestTheGateRunsNoProgramTheWorkerChose(WorktreeTestCase):
         """The rule that catches emptying a neighbour's findings file is opt-in.
 
         ``verify_findings.py --changed-files`` is what the tend config runs, and
-        with no ``--task-id`` the pair rule alone cannot see a rewrite of another
-        worker's file.  That state has to be legible in the OK line, not implied by
-        its absence, because the invocation in templates/tend/ passes no task id.
+        with no ``--task-id`` only the weaker single-stem rule runs.  Which of the
+        two judged the contribution has to be legible in the OK line, not implied
+        by its absence, because the invocation in templates/tend/ passes no task id.
         """
         self.write_own_pair()
         self.git("add", "-A")
@@ -724,7 +728,7 @@ class TestTheGateRunsNoProgramTheWorkerChose(WorktreeTestCase):
         bare = subprocess.run(argv, capture_output=True, text=True,
                               env={**self.env, "TEND_TASK_ID": ""})
         self.assertEqual(bare.returncode, 0, bare.stdout + bare.stderr)
-        self.assertIn("OWNERSHIP UNCHECKED", bare.stdout)
+        self.assertIn("single-stem rule", bare.stdout)
         self.assertIn("--task-id", bare.stdout)
         named = subprocess.run(argv + ["--task-id", "carol"], capture_output=True, text=True,
                                env=self.env)
