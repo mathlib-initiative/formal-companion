@@ -92,8 +92,12 @@ class TestCommandDiscovery(unittest.TestCase):
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
         mapping = cf_main.discover_commands(subparsers)
-        broken = [name for name, mod in mapping.items() if mod is None]
-        self.assertEqual(broken, [], f"command modules failed to register: {broken}")
+        # `mod is None` could never be true: discover_commands registers a
+        # _BrokenCommand STUB for a module that fails to import, so this test
+        # passed unchanged with a syntactically broken cfcmd module in the tree.
+        broken = {name: mod.exc for name, mod in mapping.items()
+                  if isinstance(mod, cf_main._BrokenCommand)}
+        self.assertEqual(broken, {}, f"command modules failed to register: {broken}")
 
     def test_the_documented_commands_are_all_registered(self):
         import argparse
