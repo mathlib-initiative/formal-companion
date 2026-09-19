@@ -349,6 +349,83 @@ class TestQuoteIsBoundToItsItem(BookTestCase):
 
 
 # --------------------------------------------------------------------------- #
+# gates-correctness#3 — the union key
+# --------------------------------------------------------------------------- #
+BOGUS_ROW = {
+    "concept": "invented",
+    "kind": "NOT_A_KIND",
+    "repos_involved": ["not-a-repo"],
+    "faithful": "nope",
+    "unfaithful_decls": ["not-a-repo:Nonexistent.decl"],
+    "severity": "catastrophic",
+}
+
+
+class TestEveryCountedDefectKeyIsValidated(BookTestCase):
+    """The validating path read one key; the counting paths read two.
+
+    A row under ``findings`` was gated on ``disagreements`` alone and then counted
+    by ``harvest.tally`` and loaded by the ledger: one key name bypassed the quote
+    gate, the kind and verdict vocabularies, the witness rule and the repo
+    allowlist at once.
+    """
+
+    def corpus_dir(self, doc) -> pathlib.Path:
+        out = self.root / "corpus"
+        out.mkdir(exist_ok=True)
+        (out / "exercise-2-3-4.json").write_text(json.dumps(doc), encoding="utf-8")
+        return out
+
+    def test_the_gate_and_the_tally_read_the_same_keys(self):
+        from harvest import tally
+
+        self.assertEqual(list(vf.DEFECT_LISTS), list(tally.FINDING_LISTS))
+
+    def test_a_row_under_each_counted_key_is_validated(self):
+        for key in vf.DEFECT_LISTS:
+            with self.subTest(key=key):
+                doc = doc_for(**{"disagreements": [], key: [dict(BOGUS_ROW)]})
+                errs = self.errs(doc)
+                self.assertTrue(any("NOT_A_KIND" in e for e in errs), errs)
+
+    def test_the_gate_refuses_no_fewer_rows_than_the_tally_counts(self):
+        """The symmetry itself, over the real tally and the real ledger."""
+        from harvest import tally
+        from ledger import findings as ledger_findings
+
+        doc = doc_for(disagreements=[], findings=[dict(BOGUS_ROW)])
+        corpus = self.corpus_dir(doc)
+        counted = tally.rows_for_run("run-A", corpus)
+        loaded = ledger_findings.load_findings([str(corpus)])
+        self.assertEqual(len(counted), 1, counted)
+        self.assertEqual(len(loaded), 1, loaded)
+        errs = self.errs(doc)
+        self.assertTrue(errs, "the tally counted a row the gate validated nothing about")
+        self.assertTrue(any("findings[0]" in e for e in errs), errs)
+
+    def test_the_next_plausible_key_name_fails_loudly(self):
+        doc = doc_for(defects=[dict(BOGUS_ROW)])
+        errs = self.errs(doc)
+        self.assertTrue(any("'defects'" in e and "does not validate" in e for e in errs), errs)
+
+    def test_a_well_formed_row_under_the_other_key_still_passes(self):
+        """Symmetry cuts both ways: validating the key is not banning it.
+
+        ``disagreements`` stays a required key (schema v2), so a document that
+        writes its rows under ``findings`` still declares the canonical one.
+        """
+        good = doc_for()
+        good["findings"] = good["disagreements"]
+        good["disagreements"] = []
+        self.assertEqual(self.errs(good), [])
+
+    def test_matches_are_not_mistaken_for_defect_rows(self):
+        doc = doc_for()
+        doc["matches"] = [{"concept": "c", "decls": [], "verdict": "NO_DEFECT_FOUND"}]
+        self.assertEqual(self.errs(doc), [])
+
+
+# --------------------------------------------------------------------------- #
 # prompts-workflows#9 — the copyright ceiling
 # --------------------------------------------------------------------------- #
 class TestQuoteLengthCeiling(BookTestCase):
