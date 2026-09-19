@@ -58,10 +58,32 @@ zero or more appended blocks — no base text was ever edited between presets:
 
 | block | text | worker-system | reviewer-system | reviewer.md |
 |---|---|---|---|---|
-| `page_images` | "## You can SEE the page (run 2 only)" — `pdftotext` drops notation; images at `~/book/bookpages/p-NNN.png`, NNN = printed + 16, read with the Read tool; quotes still come from the text file | `differential-pdf`, `attack-hunt` | `differential-pdf`, `attack-hunt` | — |
+| `page_images` | "## You can SEE the page (run 2 only)" — `pdftotext` drops notation; images at `<sources>/<id>/images/p-NNN.png`, NNN = printed + offset, read with the Read tool; quotes still come from the text file | `differential-pdf`, `attack-hunt` | `differential-pdf`, `attack-hunt` | — |
 | `approve_guidance` | "## When to APPROVE (this was missing, and its absence stalled the run)" — refutation is the posture, not the outcome; a coverage omission is a note, not a rejection | — | `differential-gpt`, `attack-vac` | — |
-| `citation_ban` | "## This run does NOT accept citation findings" — PAGE_ANCHOR/COVERAGE rejected; every disagreement carries a concrete witness; `NO_DEFECT_FOUND`/`NO_WEAKNESS_FOUND` is a good answer | `attack-vac`, `attack-hunt` | `attack-vac`, `attack-hunt` | — |
+| `citation_ban` | "## This run does NOT accept citation findings" — names the citation kinds THIS run's gate rejects | every preset whose `kinds` omit PAGE_ANCHOR or COVERAGE | same | — |
+| `witness_required` | "every disagreement must carry a concrete witness" | `attack-vac`, `attack-hunt` | same | — |
 | `final_line` | "## Final line (required)" — end output with exactly `VERDICT: approve` / `VERDICT: request_changes`, parsed mechanically | — | — | `differential-gpt`, `attack-vac` (the two **codex** bridges) |
+
+Three of those are no longer hand-set flags, because a hand-set flag drifted from the gate
+it was supposed to describe:
+
+* `citation_ban` is `preset.banned_citation_kinds` — the members of {PAGE_ANCHOR, COVERAGE}
+  missing from `preset.kinds`. In v1 only the attack presets carried the block, so both
+  differential presets shipped a prompt inviting "a wrong page anchor" their own gate does
+  not list as a kind (22 of 40 batch-1 differential findings were pagination noise);
+* the CONTENT_DELTA list's page-anchor clause, and the single-source task's "is the page
+  anchor correct?" question, come from the same `preset.kinds`;
+* the "how to finish" instruction is `preset.finish_channel`, one per bridge:
+  `final_result` for `tend-agent`, `.tend/agent_result.json` for the agentbox bridges,
+  a last-line JSON object for `claude-p`. One rendered prompt set used to name all three,
+  including a `final_result` tool the agentbox bridges do not expose.
+
+Two figures in those prompts are SLOTS, never literals: the CONVENTION-vs-CONTENT
+calibration sentence and the page-anchor mix that justifies the citation ban. Both are
+rendered from the workspace's own `ledger/{accepted,refuted}.*.jsonl` when it holds
+adjudicated rows, and otherwise state the imported figure **with its sample size and the
+campaign it came from** (4 of 10 adjudicated rows, and 37-vs-4 page anchors, on one chapter
+of one book). A rendered prompt may not assert a measurement of a corpus nobody measured.
 
 Two consequences worth keeping:
 
@@ -109,6 +131,15 @@ reasoning effort `low`, `max_output_tokens: 32768`, 7200 s wall limit, compactio
 writers, output tool `final_result` with schema `worker_contribution` / `review_verdict`. They are
 kept as templates because `--bridge tend-agent` is a supported fallback.
 
+Those model ids are no longer literals in two modules. `scripts/plan/models.py` is the one
+table: the tend-agent backend's defaults and the codex presets' pinned `gpt-5.6-sol` live
+there, a workspace `models:` entry of the same key overrides it, and `cf plan-run` resolves
+the run's model through it — recording the id **and** `model_source` (`--model`,
+`workspace.models.<key>`, `preset.<name>`) in `run.yaml`. The resolved id reaches the agents
+two ways, because the backends read different things: `model_name` in the generated
+`.tend/worker-agent.yaml`, and `CF_MODEL` in `bin/<role>-agent.sh` for every bridge. Before
+this, `--model` changed `run.yaml` and nothing else.
+
 ## 6. Tasks
 
 | | differential presets | attack presets |
@@ -154,10 +185,11 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
 5. **`NO_WEAKNESS_FOUND` is folded into `NO_DEFECT_FOUND`** by `convert_v1.py`; the v2 vocabulary
    has one no-defect verdict. The gate still accepts `NO_WEAKNESS_FOUND` when a legacy preset
    lists it, so the baseline corpus validates unchanged.
-6. **Legacy presets** `differential-text-legacy` / `attack-legacy` exist for exactly one purpose:
-   validating the 2,672-file baseline after `convert_v1.py`. They keep PAGE_ANCHOR/COVERAGE in
+6. **Legacy presets** `differential-legacy` / `attack-legacy` are IMPORT-ONLY: they are the
+   gate for a v1 corpus adopted with `cf import-corpus --preset <that> --gate` (which is how
+   the 2,672-file baseline validates after `convert_v1.py`). They keep PAGE_ANCHOR/COVERAGE in
    KINDS and both no-defect verdicts, and they do not require a witness object beyond the lifted
-   one. New runs never use them.
+   one. `cf plan-run` refuses them and its refusal names that purpose; no fleet ever runs them.
 7. **Worktree budgeting**: `--max-open-tasks N` chains `depends_on` so tend holds at most N
    worktrees at once (the original run created 382 worktrees / 1.1 GB in 11 minutes).
 8. **Host allowlist and consent**: `plan-run` refuses a host absent from `workspace.yaml`'s
@@ -177,11 +209,20 @@ repositories are private, and an unconfirmed convention list is the single bigge
 | `2. Standing type and structure conventions` | the per-repo bullet, and the shared "Any repo:" line (de-duplicated union across companions of the same source) |
 | `3. Scope` | the per-repo bullet ("stops at §1.4" style notes) |
 | `4. Sorry policy` | the per-repo bullet (permanent exercise sorries) |
-| `7. Known-and-accepted deltas` | reserved for the adjudication COMMON block |
+| `5. Naming` / `6. Errata disposition` | no prompt slot: the WHOLE file is inlined into the adjudication COMMON block, and a second copy could disagree with the first |
+| `7. Known-and-accepted deltas` | the "refuted on sight — do not report these" block in `worker-system.md`, and the adjudication COMMON block |
 
 A section left at the shipped `(example) …` placeholders counts as empty, and a companion with no
 recorded conventions renders as "no conventions recorded yet — treat every delta as content until
 the owner confirms one" rather than as a fabricated list.
+
+**That state is now refused, not rendered.** `cf plan-run` stops when a companion's
+`conventions.md` carries no `confirmed_by:` stamp, or when every section above is empty after
+the `(example)` bullets are dropped: the prompt it would otherwise render says "a first pass was
+wrong about 40% of the time by over-calling content" three lines above "treat every delta as
+content", and the actionable half of that maximises the failure the rest of the design exists to
+suppress. `--conventions-unconfirmed` plans anyway and is recorded in `run.yaml` under
+`conventions.unconfirmed`, so the report can say the findings rest on a list nobody confirmed.
 
 ## 9. Task ids and what the gate command looks like
 
