@@ -13,11 +13,55 @@ to be singular are now keyed:
 ``WorkspacePaths`` therefore has no ``book_id`` field: a path that depends on a
 source takes the ``source_id`` as an argument, which is what makes it impossible
 to write an artifact without saying which source it is about.
+
+CLAUDE.md S5.3 makes this module the safety boundary ("never build a path by
+string concatenation"), so every accessor that takes an id validates it with
+:func:`_safe_id`: ``self.sources_dir / source_id`` discards the workspace root
+entirely for an absolute id, and normalises out of the workspace for ``..``.
+Nothing typed in reaches these helpers today -- ids are slugified, or a directory
+name -- but the whole design direction is that facts about a source are
+discovered from repo content, so the pressure is toward repo-derived strings
+arriving here.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+
+from .errors import CfError
+
+
+def _safe_id(value: str, kind: str = "id") -> str:
+    """Return *value* if it can only name something INSIDE the workspace.
+
+    The refusals are what a joined id can do to a workspace path:
+
+    * empty -- ``sources/`` itself, silently standing in for a source;
+    * a path separator -- a subtree of the workspace, or with ``..`` anything
+      above it;
+    * absolute -- pathlib drops the left operand, so ``/etc/cron.d/evil``
+      becomes the whole path;
+    * ``.`` / ``..`` -- the workspace root and its parent.
+
+    A separator is refused first, so ``..`` can only ever be the whole string:
+    an interior dot (``smith-analysis-1.2``) is a legal name and stays legal.
+    """
+    text = str(value)
+    if not text or not text.strip():
+        problem = "it is empty"
+    elif "/" in text or "\\" in text:
+        problem = "it contains a path separator"
+    elif "\x00" in text:
+        problem = "it contains a NUL byte"
+    elif text in (".", ".."):
+        problem = "it names the workspace directory or its parent"
+    elif Path(text).is_absolute():
+        problem = "it is an absolute path"
+    else:
+        return text
+    raise CfError(f"unsafe {kind} {value!r}: {problem}",
+                  hint="ids name one directory or file inside the workspace; they are "
+                       "discovered (slugified) or typed with --source/--name, never a path")
 
 
 def skill_root() -> Path:
@@ -68,7 +112,7 @@ class WorkspacePaths:
         return self.root / "sources"
 
     def source_dir(self, source_id: str) -> Path:
-        return self.sources_dir / source_id
+        return self.sources_dir / _safe_id(source_id, "source_id")
 
     def source_text(self, source_id: str) -> Path:
         return self.source_dir(source_id) / "text.txt"
@@ -107,7 +151,7 @@ class WorkspacePaths:
         return self.root / "companions"
 
     def companion_dir(self, name: str) -> Path:
-        return self.companions_dir / name
+        return self.companions_dir / _safe_id(name, "companion name")
 
     def adapter_yaml(self, name: str) -> Path:
         return self.companion_dir(name) / "adapter.yaml"
@@ -137,7 +181,7 @@ class WorkspacePaths:
         return self.root / "pairs"
 
     def pairs_dir(self, source_id: str) -> Path:
-        return self.pairs_root / source_id
+        return self.pairs_root / _safe_id(source_id, "source_id")
 
     def pairs_jsonl(self, source_id: str) -> Path:
         return self.pairs_dir(source_id) / "pairs.jsonl"
@@ -158,13 +202,13 @@ class WorkspacePaths:
         return self.pairs_dir(source_id) / "queue.json"
 
     def targets_json(self, source_id: str, name: str) -> Path:
-        return self.pairs_dir(source_id) / f"targets.{name}.json"
+        return self.pairs_dir(source_id) / f"targets.{_safe_id(name, 'companion name')}.json"
 
     def def_coverage_json(self, source_id: str, name: str) -> Path:
-        return self.pairs_dir(source_id) / f"def-coverage.{name}.json"
+        return self.pairs_dir(source_id) / f"def-coverage.{_safe_id(name, 'companion name')}.json"
 
     def uncovered_json(self, source_id: str, name: str) -> Path:
-        return self.pairs_dir(source_id) / f"uncovered.{name}.json"
+        return self.pairs_dir(source_id) / f"uncovered.{_safe_id(name, 'companion name')}.json"
 
     def anchor_check_json(self, source_id: str) -> Path:
         return self.pairs_dir(source_id) / "anchor-check.json"
@@ -180,7 +224,7 @@ class WorkspacePaths:
         return self.root / "runs"
 
     def run_dir(self, run_id: str) -> Path:
-        return self.runs_dir / run_id
+        return self.runs_dir / _safe_id(run_id, "run_id")
 
     def run_yaml(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "run.yaml"
@@ -203,7 +247,7 @@ class WorkspacePaths:
         return self.root / "corpus"
 
     def corpus_run_dir(self, run_id: str) -> Path:
-        return self.corpus_dir / run_id
+        return self.corpus_dir / _safe_id(run_id, "run_id")
 
     def receipt_json(self, run_id: str) -> Path:
         return self.corpus_run_dir(run_id) / "RECEIPT.json"
@@ -214,27 +258,27 @@ class WorkspacePaths:
         return self.root / "ledger"
 
     def accepted_jsonl(self, name: str) -> Path:
-        return self.ledger_dir / f"accepted.{name}.jsonl"
+        return self.ledger_dir / f"accepted.{_safe_id(name, 'companion name')}.jsonl"
 
     def refuted_jsonl(self, name: str) -> Path:
-        return self.ledger_dir / f"refuted.{name}.jsonl"
+        return self.ledger_dir / f"refuted.{_safe_id(name, 'companion name')}.jsonl"
 
     def adjudicated_md(self, name: str) -> Path:
-        return self.ledger_dir / f"adjudicated.{name}.md"
+        return self.ledger_dir / f"adjudicated.{_safe_id(name, 'companion name')}.md"
 
     @property
     def routed_dir(self) -> Path:
         return self.ledger_dir / "routed"
 
     def routed_jsonl(self, name: str) -> Path:
-        return self.routed_dir / f"findings.{name}.jsonl"
+        return self.routed_dir / f"findings.{_safe_id(name, 'companion name')}.jsonl"
 
     @property
     def detect_dir(self) -> Path:
         return self.root / "detect"
 
     def detect_companion_dir(self, name: str) -> Path:
-        return self.detect_dir / name
+        return self.detect_dir / _safe_id(name, "companion name")
 
     # -- fixes, reviews, reports (v1: reports only) --------------------
     @property
@@ -250,10 +294,10 @@ class WorkspacePaths:
         return self.root / "reports"
 
     def tally_json(self, run_id: str) -> Path:
-        return self.reports_dir / f"tally.{run_id}.json"
+        return self.reports_dir / f"tally.{_safe_id(run_id, 'run_id')}.json"
 
     def union_json(self, name: str) -> Path:
-        return self.reports_dir / f"union.{name}.json"
+        return self.reports_dir / f"union.{_safe_id(name, 'companion name')}.json"
 
     @property
     def agreed_high_json(self) -> Path:
