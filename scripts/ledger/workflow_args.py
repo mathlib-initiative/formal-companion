@@ -20,6 +20,7 @@ the Workflow tool's ``args``.
 
 from __future__ import annotations
 
+import json
 import os
 from typing import Any, Iterable
 
@@ -92,10 +93,54 @@ def _peer_rows(indexes: dict[str, dict], item: str, exclude: str, cap: int) -> d
     return out
 
 
+#: why an errata path is withheld from a prompt, in the words the agent reads
+ERRATA_WITHHELD = ("withheld: the URL came from the audited repository and nobody has "
+                   "confirmed it (`cf sources set <id> errata_url=<url>`)")
+
+
+def errata_is_repo_supplied(source_dir: Any) -> bool:
+    """Did this source's errata URL come from the audited repository itself?
+
+    ``sources/<id>/errata.json`` records the provenance of the URL it fetched
+    (``sources/fetch_errata.fetch(provenance=…)``).  A file without the key
+    predates the provenance record and is treated as confirmed, since it could
+    only have been written when every fetch was allowed.
+
+    ``run/manifest.py`` applies the same test before TRANSFERRING an errata to a
+    run host.  This copy exists because the guard has to be a property of the
+    data and not of one transport: the local fleet hands the same file to its
+    workers as authoritative errata, and ``adjudicate.workflow.js`` makes ERRATA
+    a verdict that discharges a finding outright.
+    """
+    meta_path = os.path.join(str(source_dir), "errata.json")
+    if not os.path.exists(meta_path):
+        return False
+    try:
+        with open(meta_path, "r", encoding="utf-8") as fh:
+            meta = json.load(fh)
+    except (OSError, ValueError):            # pragma: no cover - unreadable meta
+        return False
+    return bool(isinstance(meta, dict) and meta.get("repo_supplied"))
+
+
+def errata_for_prompt(errata_md: Any, source_dir: Any) -> tuple[str, str]:
+    """``(path, withheld_reason)`` for one source's errata.
+
+    At most one of the two is non-empty, so a prompt either names a path the
+    agent may treat as authoritative or says why there is none.
+    """
+    path = str(errata_md)
+    if os.path.exists(path) and errata_is_repo_supplied(source_dir):
+        return "", ERRATA_WITHHELD
+    return path, ""
+
+
 def source_block(cfg: Any, source_id: str) -> dict:
     """One source's paths and identity, as a workflow prompt quotes them."""
     paths = cfg.paths
     src = cfg.source(source_id)
+    errata, withheld = errata_for_prompt(paths.source_errata_md(src.id),
+                                         paths.source_dir(src.id))
     return {
         "source_id": src.id,
         "title": src.title or src.id,
@@ -105,7 +150,8 @@ def source_block(cfg: Any, source_id: str) -> dict:
         "pages_dir": str(paths.source_pages_dir(src.id)),
         "text": str(paths.source_text(src.id)),
         "items_json": str(paths.source_items(src.id)),
-        "errata": str(paths.source_errata_md(src.id)),
+        "errata": errata,
+        "errata_withheld": withheld,
         "errata_url": src.errata_url,
     }
 
