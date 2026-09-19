@@ -200,7 +200,9 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
 
 No preset and no template in this repo contains a companion's house conventions: both target
 repositories are private, and an unconfirmed convention list is the single biggest source of the
-~40% first-pass false-positive rate. `plan/render_prompts.py` reads each companion's
+~40% first-pass false-positive rate (4 of 10 adjudicated rows, one chapter of one book —
+`references/method.md` S4; the figure never travels without that denominator, and neither does the
+rendered prompt's version of it). `plan/render_prompts.py` reads each companion's
 `companions/<name>/conventions.md` (contract: `templates/conventions.md.example`) and fills:
 
 | conventions.md section | prompt slot |
@@ -216,13 +218,22 @@ A section left at the shipped `(example) …` placeholders counts as empty, and 
 recorded conventions renders as "no conventions recorded yet — treat every delta as content until
 the owner confirms one" rather than as a fabricated list.
 
+One more prompt slot comes from the workspace rather than from a companion: `sources.<id>.prompt_examples`
+in `workspace.yaml` supplies that source's own CONTENT_DELTA illustrations, and without it the
+prompt uses the book-neutral defaults in `render_prompts.NEUTRAL_EXAMPLES` (a list of strings —
+prose for the prompt, never a discovered fact, so it has no inference path and no `cf sources`
+override).
+
 **That state is now refused, not rendered.** `cf plan-run` stops when a companion's
-`conventions.md` carries no `confirmed_by:` stamp, or when every section above is empty after
-the `(example)` bullets are dropped: the prompt it would otherwise render says "a first pass was
-wrong about 40% of the time by over-calling content" three lines above "treat every delta as
-content", and the actionable half of that maximises the failure the rest of the design exists to
-suppress. `--conventions-unconfirmed` plans anyway and is recorded in `run.yaml` under
-`conventions.unconfirmed`, so the report can say the findings rest on a list nobody confirmed.
+`conventions.md` carries no `confirmed_by:` stamp, or when every section that feeds a
+`CONVENTION_ONLY` bullet (1–4 above) is empty after the `(example)` bullets are dropped: the
+prompt it would otherwise render puts the imported false-positive rate (4 of 10 adjudicated rows,
+one chapter of one book) three lines above "treat every delta as content", and the actionable half
+of that maximises the failure the rest of the design exists to suppress. Section 7 on its own does
+not confirm a file — known-and-accepted deltas refute findings rather than licensing them, so a
+file carrying only those still leaves the judgement unwritten, and the refusal names sections 1–4
+rather than "every section". `--conventions-unconfirmed` plans anyway and is recorded in `run.yaml`
+under `conventions.unconfirmed`, so the report can say the findings rest on a list nobody confirmed.
 
 ## 9. Task ids and what the gate command looks like
 

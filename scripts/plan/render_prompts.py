@@ -220,7 +220,11 @@ def conventions_status(path: pathlib.Path | None) -> dict[str, Any]:
     if not who:
         reason = "no confirmed_by: front-matter"
     elif empty:
-        reason = "every section the prompts read is empty once `(example)` bullets are dropped"
+        # Named narrowly on purpose: section 7 also reaches a prompt (the
+        # refuted-on-sight block), so a file whose ONLY filled section is 7
+        # must not be refused with a reason that contradicts what it renders.
+        reason = ("every CONVENTION_ONLY section the prompts read (1-4) is empty once "
+                  "`(example)` bullets are dropped")
     else:
         reason = ""
     return {

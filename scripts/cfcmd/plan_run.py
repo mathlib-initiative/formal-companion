@@ -383,9 +383,12 @@ def _check_conventions(rows: list[dict], override: bool) -> list[str]:
     spends its budget suppressing -- so the run stops here instead of burning a
     fleet and an adjudication pass to produce noise.
 
-    Unconfirmed means: no ``confirmed_by:`` front-matter, or every section the
-    prompts read is empty once the shipped ``(example)`` bullets are dropped
-    (which is the DEFAULT state, because `cf onboard` copies the template in).
+    Unconfirmed means: no ``confirmed_by:`` front-matter, or every section that
+    feeds a CONVENTION_ONLY bullet (1-4) is empty once the shipped ``(example)``
+    bullets are dropped (which is the DEFAULT state, because `cf onboard` copies
+    the template in).  Section 7's known-and-accepted deltas are read by a prompt
+    too, but they refute findings rather than licensing them, so a file carrying
+    only those still leaves the judgement the prompt turns on unwritten.
     Returns the names planned with the override, for run.yaml.
     """
     unconfirmed: list[tuple[str, str]] = []
