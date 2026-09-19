@@ -32,6 +32,22 @@ const GATE = A.gate || {}
 const CHALLENGE = A.challenge !== false
 const MODEL = A.model || undefined      // omit -> inherit the session model; set 'opus' for adjudication-grade work
 const CHALLENGE_MODEL = A.challenge_model || 'opus'
+// The structured-output enums and the corpus schema are the RUN'S GATE, not a
+// second hand-written copy of it: a worker constrained to `PROXY` or to
+// `NO_DEFECT_FOUND` on a preset whose gate allows neither produced a corpus in
+// which every single file failed `verify_findings.py` -- the command this script
+// prints as the next step.
+const KINDS = GATE.kinds && GATE.kinds.length ? GATE.kinds
+  : ['CONTENT', 'VACUITY', 'SUSPECTED_ERRATA', 'COVERAGE']
+const VERDICTS = GATE.verdicts && GATE.verdicts.length ? GATE.verdicts
+  : ['AGREE', 'CONVENTION_ONLY', 'CONTENT_DELTA', 'SINGLE_SOURCE_OK', 'SINGLE_SOURCE_DELTA', 'NO_DEFECT_FOUND']
+const SCHEMA_VERSION = typeof GATE.schema_version === 'number' ? GATE.schema_version : 2
+// Two refuters per content-level ruling, and the stable id that joins their
+// verdicts back to the disagreement they read. The index is the position in the
+// UNFILTERED disagreement list, so a PAGE_ANCHOR row cannot shift it and collect
+// verdicts about a different finding.
+const REFUTERS = 2
+const didOf = (item, di) => item + '#' + di
 
 const repoLines = REPOS.map(r => '  ' + r.name + ' = ' + r.repo + (r.conventions ? '\n      conventions: ' + r.conventions.replace(/\n/g, '\n      ') : '')).join('\n')
 
@@ -65,7 +81,8 @@ ${A.pairs ? '- Paired rows for this item: grep -F \'"item": "<ITEM>"\' ' + A.pai
   and one file per page at ${C.pages_dir}/pNNN.txt (PDF page = printed page + ${C.page_offset}).
   Another edition of the same work may exist; every quote is checked against THIS text and no other.
   Locate the item (e.g. grep -n 'Exercise 1.2.4') and READ THE ACTUAL PASSAGE; never work from memory of the book.
-${C.errata ? '- The published errata: ' + C.errata + '. A statement that differs from the printed text may be following an erratum.' : ''}
+${C.errata ? '- The published errata: ' + C.errata + '. A statement that differs from the printed text may be following an erratum.'
+  : (C.errata_withheld ? '- The published errata: ' + C.errata_withheld : '')}
 
 CONVENTION deltas are NOT faithfulness bugs. Per repository they are listed above; in addition, never report: a
 strictly MORE general statement that specialises to the book's (record it, mark CONVENTION_ONLY, note "strictly
@@ -76,8 +93,8 @@ WHAT IS A CONTENT DELTA: different hypotheses (missing, extra, weaker, stronger)
 specialise correctly; a weaker or different conclusion; different quantifier scope; a wrong endpoint or normalisation
 convention; a vacuous or trivially-true statement; a "definition" that is not the book's definition.
 
-KINDS you may report: ${(GATE.kinds || ['CONTENT', 'VACUITY', 'SUSPECTED_ERRATA', 'COVERAGE']).join(', ')}.
-${(GATE.kinds || []).indexOf('PAGE_ANCHOR') === -1 ? 'PAGE_ANCHOR is NOT one of them: page anchors are compared mechanically against the pinned edition, not by you.' : ''}
+KINDS you may report: ${KINDS.join(', ')}.
+${KINDS.indexOf('PAGE_ANCHOR') === -1 ? 'PAGE_ANCHOR is NOT one of them: page anchors are compared mechanically against the pinned edition, not by you.' : ''}
 Be adversarial toward every repository equally; none is privileged. But do not manufacture disagreements out of
 convention deltas -- a false positive costs a human hour, and about 40% of first-pass findings in this pipeline were
 wrong in exactly that way.`
@@ -96,8 +113,15 @@ output in the \`gate\` field. If you cannot make a finding pass the gate, DROP t
 
 const ADJ_SCHEMA = {
   type: 'object',
-  required: ['item', 'book_located', 'matches', 'disagreements', 'coverage_notes'],
+  required: ['schema_version', 'run_id', 'source_id', 'source_sha',
+             'item', 'book_located', 'matches', 'disagreements', 'coverage_notes'],
   properties: {
+    // The gate reads these four off the FILE, and harvest writes the worker's
+    // own object as the corpus record, so the worker stamps them itself.
+    schema_version: { type: 'integer', description: 'exactly ' + SCHEMA_VERSION },
+    run_id: { type: 'string', description: 'exactly `' + (A.run_id || '') + '`' },
+    source_id: { type: 'string', description: 'exactly `' + (C.source_id || '') + '`' },
+    source_sha: { type: 'string', description: 'exactly `' + (C.source_sha || '') + '`' },
     item: { type: 'string' },
     book_located: { type: 'boolean', description: 'you found and read the actual passage in the book text' },
     book_passage_quote: { type: 'string', description: 'VERBATIM 1-3 sentences from the book (machine-verified)' },
@@ -105,14 +129,14 @@ const ADJ_SCHEMA = {
       concept: { type: 'string' },
       decls: { type: 'array', items: { type: 'object', required: ['repo', 'decl'], properties: {
         repo: { type: 'string' }, decl: { type: 'string' } } } },
-      verdict: { type: 'string', enum: ['AGREE', 'CONVENTION_ONLY', 'CONTENT_DELTA', 'SINGLE_SOURCE_OK', 'SINGLE_SOURCE_DELTA', 'NO_DEFECT_FOUND'] },
+      verdict: { type: 'string', enum: VERDICTS },
       note: { type: 'string' },
     } } },
     disagreements: { type: 'array', items: { type: 'object',
       required: ['concept', 'kind', 'repos_involved', 'faithful', 'book_quote', 'reasoning', 'severity'],
       properties: {
         concept: { type: 'string' },
-        kind: { type: 'string', enum: ['CONTENT', 'VACUITY', 'PROXY', 'SUSPECTED_ERRATA', 'COVERAGE'] },
+        kind: { type: 'string', enum: KINDS },
         repos_involved: { type: 'array', items: { type: 'string' } },
         faithful: { type: 'array', items: { type: 'string' }, description: 'every repo whose statement IS faithful here (a LIST, possibly empty)' },
         unfaithful_decls: { type: 'array', items: { type: 'string' }, description: 'repo:decl for each side judged unfaithful' },
@@ -135,8 +159,12 @@ const ADJ_SCHEMA = {
 
 const CHAL_SCHEMA = {
   type: 'object',
-  required: ['concept', 'ruling_survives', 'evidence'],
+  required: ['disagreement_id', 'concept', 'ruling_survives', 'evidence'],
   properties: {
+    // The join key, not the concept: `concept` is free text the refuter was
+    // never told to preserve, and matching on it silently dropped one verdict of
+    // every paraphrasing pair.
+    disagreement_id: { type: 'string', description: 'copy the disagreement_id you were given, unchanged' },
     concept: { type: 'string' },
     ruling_survives: { type: 'boolean' },
     classification: { type: 'string', enum: ['CONTENT', 'VACUITY', 'CONVENTION', 'ERRATA', 'ATTRIBUTION', 'UNSURE'] },
@@ -171,17 +199,24 @@ Procedure:
 5. For every content-level delta write a disagreement: which repositories, which are faithful (a LIST), which
    declarations are unfaithful (repo:decl), the deciding book sentence VERBATIM, your reasoning, severity, a concrete
    fix${GATE.witness_required ? ', and a WITNESS object -- required in this mode' : ''}.
-6. If you cannot locate the passage, set book_located=false and say why. Do not guess the book's wording.${SELF_GATE}`,
+6. If you cannot locate the passage, set book_located=false and say why. Do not guess the book's wording.
+7. Stamp the record: schema_version ${SCHEMA_VERSION}, run_id \`${A.run_id || ''}\`, source_id \`${C.source_id || ''}\`,
+   source_sha \`${C.source_sha || ''}\`. The gate reads these off the file and refuses one that is missing any of them.${SELF_GATE}`,
     { label: 'work:' + t.item, phase: 'Work', schema: ADJ_SCHEMA, model: MODEL, effort: 'high' }),
 
   (adj, t) => {
     if (!adj) return null
-    const content = (adj.disagreements || []).filter(d => d.kind !== 'PAGE_ANCHOR')
+    // `di` is the index in the UNFILTERED list: the id has to mean the same
+    // thing here and in the findings reduction below.
+    const content = (adj.disagreements || [])
+      .map((d, di) => ({ d, di, did: didOf(adj.item, di) }))
+      .filter(x => x.d.kind !== 'PAGE_ANCHOR')
     if (!CHALLENGE || !content.length) return { adj, challenges: [] }
-    return parallel(content.flatMap((d, di) => [0, 1].map(k => () => agent(`${CONTEXT}
+    return parallel(content.flatMap(({ d, did }) => Array.from({ length: REFUTERS }, (_, k) => () => agent(`${CONTEXT}
 
 A first-pass worker ruled on a disagreement for book item ${adj.item}:
 
+  disagreement_id : ${did}
   concept   : ${d.concept}
   kind      : ${d.kind}
   repos     : ${(d.repos_involved || []).join(', ')}
@@ -196,8 +231,9 @@ the worker misread a hypothesis? Is the "faithful" side itself wrong? Could an e
 ${d.witness ? 'Does the witness actually separate the two statements -- construct it and check.' : ''}
 
 Default to REFUTED unless the ruling survives your own independent reading. Return the strongest counter-argument you
-found even when the ruling stands.`,
-      { label: 'chal' + k + ':' + adj.item + '#' + di, phase: 'Challenge', schema: CHAL_SCHEMA, model: CHALLENGE_MODEL, effort: 'high' })
+found even when the ruling stands. Copy disagreement_id through unchanged: it is what attaches your verdict to this
+ruling rather than to another one on the same item.`,
+      { label: 'chal' + k + ':' + did, phase: 'Challenge', schema: CHAL_SCHEMA, model: CHALLENGE_MODEL, effort: 'high' })
     ))).then(cs => ({ adj, challenges: cs.filter(Boolean) }))
   }
 ).then(rs => rs.filter(Boolean))
@@ -208,18 +244,46 @@ found even when the ruling stands.`,
 const SRC_OF = ITEMS.reduce((m, t) => (m[t.item] = t.source_id || C.source_id, m), {})
 const srcOf = it => SRC_OF[it] || C.source_id
 
-const findings = results.flatMap(r => (r.adj.disagreements || []).map(d => Object.assign(
-  { item: r.adj.item, run_id: A.run_id || '', source_id: srcOf(r.adj.item), source_sha: C.source_sha },
-  d,
-  { challenge_verdicts: r.challenges
-      .filter(c => c.concept === d.concept || r.challenges.length <= 2)
-      .map(c => ({ survives: c.ruling_survives, classification: c.classification, evidence: c.evidence, corrected: c.corrected_ruling })) }
-)))
+// Verdicts attach by the id the refuter copied through, and a missing vote is
+// MISSING, never a pass: without `survives_all` the challenge stage was
+// decorative -- a finding both refuters killed still left this script as a
+// finding, and no consumer of `cf-fleet-local-v2` applied refute-by-default.
+const findings = results.flatMap(r => (r.adj.disagreements || []).map((d, di) => {
+  const did = didOf(r.adj.item, di)
+  const votes = r.challenges.filter(c => c.disagreement_id === did)
+  const expected = (CHALLENGE && d.kind !== 'PAGE_ANCHOR') ? REFUTERS : 0
+  return Object.assign(
+    { item: r.adj.item, disagreement_id: did, run_id: A.run_id || '',
+      source_id: srcOf(r.adj.item), source_sha: C.source_sha },
+    d,
+    {
+      challenge_verdicts: votes.map(c => ({ survives: c.ruling_survives, classification: c.classification, evidence: c.evidence, corrected: c.corrected_ruling })),
+      challenges_expected: expected,
+      missing_votes: Math.max(0, expected - votes.length),
+      survives_all: expected > 0 && votes.length === expected && votes.every(c => c.ruling_survives === true),
+    })
+}))
+
+const attachedIds = {}
+for (const f of findings) attachedIds[f.disagreement_id] = true
+// Never discarded: a ruling that refers to nothing is evidence the refuter
+// dropped the id, which is a defect in this run, not in the finding.
+const unattachedChallenges = results.flatMap(r => r.challenges
+  .filter(c => !attachedIds[c.disagreement_id])
+  .map(c => ({ item: r.adj.item, disagreement_id: c.disagreement_id || '', concept: c.concept || '',
+               survives: c.ruling_survives, evidence: c.evidence || '' })))
+if (unattachedChallenges.length) {
+  log('WARNING: ' + unattachedChallenges.length + ' challenge ruling(s) name no disagreement of their item ' +
+      'and are NOT attached (the refuter dropped disagreement_id); see unattached_challenges')
+}
 
 const located = results.filter(r => r.adj.book_located).length
 const gated = results.filter(r => r.adj.gate && r.adj.gate.passed).length
+const challenged = findings.filter(f => f.challenges_expected > 0).length
+const survived = findings.filter(f => f.survives_all).length
 log('items done: ' + results.length + '/' + ITEMS.length + '; book located: ' + located +
-    '; self-gate passed: ' + gated + '; findings: ' + findings.length)
+    '; self-gate passed: ' + gated + '; findings: ' + findings.length +
+    '; challenged: ' + challenged + '; survived all refuters: ' + survived)
 
 const doneItems = results.map(r => r.adj.item)
 const remaining = ITEMS.filter(t => doneItems.indexOf(t.item) === -1).map(t => t.item)
@@ -227,6 +291,7 @@ if (remaining.length) log('NOT done (requeue these): ' + remaining.length + ' it
 
 return {
   schema: 'cf-fleet-local-v2',
+  schema_version: SCHEMA_VERSION,
   mode: MODE,
   run_id: A.run_id || '',
   source_id: C.source_id,
@@ -237,11 +302,15 @@ return {
     book_located: located,
     self_gate_passed: gated,
     findings: findings.length,
+    challenged,
+    survived_all: survived,
+    unattached_challenges: unattachedChallenges.length,
     by_kind: findings.reduce((m, f) => (m[f.kind] = (m[f.kind] || 0) + 1, m), {}),
     by_severity: findings.reduce((m, f) => (m[f.severity] = (m[f.severity] || 0) + 1, m), {}),
     remaining,
   },
   findings,
+  unattached_challenges: unattachedChallenges,
   quotes: results.map(r => ({ item: r.adj.item, source_id: srcOf(r.adj.item), quote: r.adj.book_passage_quote, located: r.adj.book_located })),
   coverage: results.map(r => ({ item: r.adj.item, source_id: srcOf(r.adj.item), notes: r.adj.coverage_notes })),
   gate_reports: results.map(r => ({ item: r.adj.item, source_id: srcOf(r.adj.item), gate: r.adj.gate || null })),

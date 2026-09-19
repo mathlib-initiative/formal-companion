@@ -240,7 +240,16 @@ def run(args) -> int:
 
 
 def _skill_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    """The skill checkout, from the ONE resolver (``cflib.paths.skill_root``).
+
+    Every printed ``scriptPath``/``script:`` line must be absolute: ``cf``
+    defaults its workspace to the current directory and a workspace has no
+    ``workflows/`` directory, so a relative path resolves against the wrong
+    root. Three sibling commands print one; they resolve it the same way.
+    """
+    from cflib.paths import skill_root
+
+    return str(skill_root())
 
 
 if __name__ == "__main__":  # pragma: no cover

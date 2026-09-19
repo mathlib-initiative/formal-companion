@@ -1394,7 +1394,8 @@ class TestRunPlanner(unittest.TestCase):
                 "statements": "/c/ours.jsonl", "conventions": "total functions"}],
         mode="differential",
         gate={"command": "python3 gate.py", "config": "/c/gate.local.json",
-              "kinds": ["CONTENT"], "witness_required": False,
+              "kinds": ["CONTENT"], "verdicts": ["AGREE", "CONTENT_DELTA"],
+              "schema_version": 2, "witness_required": False,
               "quote_min_chars": 25, "scratch_dir": "/tmp/sg"},
     )
 

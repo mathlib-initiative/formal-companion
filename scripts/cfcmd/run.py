@@ -32,6 +32,7 @@ from cflib.workspace import from_args
 from cflib.errors import CfError
 from cflib.yamlio import read_yaml, write_yaml
 
+from ledger import workflow_args
 from run import fleet_local, manifest, remote, status as run_status
 
 DEFAULT_WORKERS = 6
@@ -254,7 +255,16 @@ def _local(workspace, args, data: dict) -> int:
         raise CfError(f"runs/{args.run_id}/run.yaml names no source",
                       hint="re-plan with `cf plan-run --source <id>`")
     src = workspace.source(source_id)
-    errata = paths.source_errata_md(source_id)
+    # The local fleet reads the errata off THIS machine, so `manifest`'s transfer
+    # guard never sees it -- and the same unconfirmed page would be handed to the
+    # workers as the document that decides whether a deviation is a correction.
+    errata, errata_withheld = workflow_args.errata_for_prompt(
+        paths.source_errata_md(source_id), paths.source_dir(source_id))
+    if errata_withheld:
+        log.warn(f"errata for {source_id} came from the companion repo and is unconfirmed: "
+                 f"not given to the fleet (`cf sources set {source_id} errata_url=<url>` "
+                 "to confirm it)")
+    errata_path = Path(errata) if errata else None
     fleet = fleet_local.build(
         run_dir,
         args.run_id,
@@ -266,7 +276,8 @@ def _local(workspace, args, data: dict) -> int:
             "text": str(paths.source_text(source_id)),
             "pages_dir": str(paths.source_pages_dir(source_id)),
             "page_offset": src.offset,
-            "errata": str(errata) if errata.exists() else "",
+            "errata": str(errata_path) if errata_path and errata_path.exists() else "",
+            "errata_withheld": errata_withheld,
         },
         repos=_local_repos(workspace, data),
         mode=data.get("mode"),
@@ -276,7 +287,14 @@ def _local(workspace, args, data: dict) -> int:
             "command": (f"python3 {gate_script} --gate-config {gate_config} "
                         "--findings " + str(scratch) + "/${TASK_ID}.json"),
             "config": str(gate_config),
+            # The workflow builds the worker's output enums from these three, so
+            # the fleet is constrained by the run's own gate: a hand-written copy
+            # in the script drifted from the preset and every recovered file then
+            # failed the gate the tool prints as the next step.
             "kinds": list(gate_block.get("kinds") or []),
+            "verdicts": list(gate_block.get("verdicts") or []),
+            "schema_version": int(gate_block.get("schema_version")
+                                  or fleet_local.DEFAULT_SCHEMA_VERSION),
             "witness_required": bool(gate_block.get("witness_required")),
             "quote_min_chars": 25,
             "scratch_dir": str(scratch),
