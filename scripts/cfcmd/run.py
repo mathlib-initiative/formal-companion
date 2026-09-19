@@ -359,6 +359,11 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
         companions=manifest.companion_repos(workspace, data.get("repos")))
     warnings += notes
     warnings += manifest.gate_config_warnings(Path(workspace.root), args.run_id, host, data)
+    # The model the record claims and the model the root launches, before
+    # anything is transferred: a dry run prints it, --execute refuses.
+    mismatch = _check_model(run_yaml_path.parent, data, execute=bool(args.execute))
+    if mismatch:
+        warnings.append(mismatch)
 
     tasks = manifest.task_count(Path(workspace.root), args.run_id, data)
     budget = manifest.check_budget_cap(workspace, data, args.max_cost, args.no_budget_cap)
@@ -412,6 +417,36 @@ def _skill_root() -> Path:
     from cflib.paths import skill_root
 
     return skill_root()
+
+
+def _check_model(run_dir: Path, data: dict, *, execute: bool) -> str | None:
+    """Refuse (or, in a dry run, report) a tend root that names another model.
+
+    ``run.yaml``'s ``model`` is what the report attributes the findings to, and
+    the generated ``.tend/<role>-agent.yaml``'s ``model_name`` is what the
+    tend-agent backend actually launches.  A root re-planned after ``--model``
+    changed leaves the two disagreeing, and then the record names a tier the
+    fleet may never have been given (references/method.md S10: "the yields belong
+    to the models that produced them").  Nothing is compared when run.yaml records
+    no model -- that is the honest "the bridge's own default" case, which the yaml
+    fills with the tend-agent default, not with a contradiction.
+    """
+    from plan import models as models_mod
+
+    recorded = str(data.get("model") or "")
+    if not recorded:
+        return None
+    staged = models_mod.tend_agent_model(run_dir / "tend-root", role="worker")
+    if not staged or staged == recorded:
+        return None
+    message = (f"run.yaml records model {recorded!r} but the staged tend root's "
+               f".tend/worker-agent.yaml names {staged!r}")
+    if execute:
+        raise CfError(
+            f"refusing to launch: {message}",
+            hint=f"re-plan so the two agree: `cf plan-run --preset {data.get('preset')} "
+                 f"--run-id {data.get('run_id')} --model {recorded} --force`")
+    return message + " -- re-plan with `cf plan-run ... --force` before launching"
 
 
 def _concurrency(workspace, data: dict, args) -> dict:
