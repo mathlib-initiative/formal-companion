@@ -58,7 +58,9 @@ CORPUS_SCHEMA_VERSION = 2
 
 #: The grammar every ``workflows/*.js`` label follows and :func:`parse_label`
 #: parses.  ``key`` is the LAST colon-separated field, so an optional ``slot``
-#: (a lens name, a reader number) can never eat it.
+#: (a lens name, a reader number) can never eat it -- but an item name may itself
+#: contain a colon, so the last field is a candidate and not the answer; see
+#: :func:`label_item_candidates`.
 LABEL_GRAMMAR = "<role><index?>:[<slot>:]<key>      key = <item>[#<n>] | <finding_id>"
 
 #: The literal ``label:`` expressions the shipped scripts emit, per workflow.
@@ -96,33 +98,79 @@ _LABEL_HEAD = re.compile(r"^([A-Za-z]+)(\d*)$")
 _KEY_INDEX = re.compile(r"^(?P<item>.+)#(?P<index>\d+)$")
 
 
+def split_disagreement_id(key: str) -> tuple[str, int | None]:
+    """``("Exercise 1.2.4", 3)`` from ``Exercise 1.2.4#3``; index ``None`` if absent.
+
+    A disagreement id is ``<item>#<index>`` and nothing else.  Parsing one as a
+    LABEL truncated every item that contains a colon -- the corpus holds such an
+    item -- so the id is split here and never sent through :func:`parse_label`.
+    """
+    keyed = _KEY_INDEX.match(str(key or ""))
+    if keyed is None:
+        return str(key or ""), None
+    return keyed.group("item"), int(keyed.group("index"))
+
+
 def parse_label(label: str) -> dict:
     """Split an agent label into ``{role, index, slot, key, item, disagreement}``.
 
-    ``key`` is verbatim (it may be a ``finding_id``); ``item`` is ``key`` with a
-    ``#<n>`` disagreement suffix removed and the legacy underscores turned back
-    into spaces, so both ``chal0:Exercise 1.2.4#3`` and the original's
-    ``chal0:Exercise_1.2.4`` name ``Exercise 1.2.4``.
+    ``key`` is the LAST colon-separated field, verbatim (it may be a
+    ``finding_id``); ``item`` is ``key`` with a ``#<n>`` disagreement suffix
+    removed and the legacy underscores turned back into spaces, so both
+    ``chal0:Exercise 1.2.4#3`` and the original's ``chal0:Exercise_1.2.4`` name
+    ``Exercise 1.2.4``.
+
+    ``key_full``/``item_full`` are the same two things taken from everything
+    after the FIRST colon.  They differ only when the item itself contains a
+    colon, and then they are the correct reading: use
+    :func:`label_item_candidates`, which tries both (and the suffixes between
+    them), rather than picking one here.
     """
     raw = str(label or "")
-    parts = [p.strip() for p in raw.split(":")]
-    head = parts[0]
+    parts = raw.split(":")
+    head = parts[0].strip()
     match = _LABEL_HEAD.match(head)
     role = match.group(1) if match else head
     index = int(match.group(2)) if match and match.group(2) else None
-    key = parts[-1] if len(parts) > 1 else ""
-    slot = ":".join(parts[1:-1])
-    keyed = _KEY_INDEX.match(key)
-    item = (keyed.group("item") if keyed else key).replace("_", " ").strip()
+    key = parts[-1].strip() if len(parts) > 1 else ""
+    key_full = ":".join(parts[1:]).strip()
+    slot = ":".join(parts[1:-1]).strip()
+    item, disagreement = split_disagreement_id(key)
+    item_full, _ = split_disagreement_id(key_full)
     return {
         "role": role,
         "index": index,
         "slot": slot,
         "key": key,
-        "item": item,
-        "disagreement": int(keyed.group("index")) if keyed else None,
+        "key_full": key_full,
+        "item": item.replace("_", " ").strip(),
+        "item_full": item_full.replace("_", " ").strip(),
+        "disagreement": disagreement,
         "raw": raw,
     }
+
+
+def label_item_candidates(label: str) -> list[str]:
+    """Every item name a label could name, best first.
+
+    The key is the LAST colon-separated field, so an optional slot (a lens name,
+    a reader number) can never eat it.  But an item may itself contain a colon
+    -- the baseline corpus has one, an in-text convention whose parenthetical
+    names an exercise -- and then the last field is a fragment and the right
+    answer is a longer suffix.  So every suffix is a candidate, shortest first,
+    each in both the verbatim and the legacy underscored spelling.
+
+    A candidate that names no recovered item simply does not match; the first
+    that does decides the join, and the method is recorded on the ruling.
+    """
+    parts = str(label or "").split(":")
+    out: list[str] = []
+    for start in range(len(parts) - 1, 0, -1):
+        key, _index = split_disagreement_id(":".join(parts[start:]).strip())
+        for candidate in (key.strip(), key.replace("_", " ").strip()):
+            if candidate and candidate not in out:
+                out.append(candidate)
+    return out
 
 
 def agent_labels(workflow_dir: Path) -> dict[str, str]:
@@ -227,29 +275,26 @@ def read_journal(workflow_dir: Path) -> tuple[dict[str, dict], list[dict]]:
     return rows["items"], rows["challenge"]            # type: ignore[return-value]
 
 
-def _label_item(label: str) -> str:
-    """The item a challenge label names: ``chal0:Exercise 1.2.4#3`` -> ``Exercise 1.2.4``."""
-    return parse_label(label)["item"]
-
-
 def _challenge_keys(challenge: dict) -> list[tuple[str, str]]:
     """``[(method, item), ...]`` to try for one challenge row, best first.
 
     The row's OWN ``disagreement_id`` comes first: ``fleet-local.workflow.js``
     makes the refuter copy it through, so the join no longer depends on a label
-    surviving intact.  The label is the fallback, and the original's truncated
-    prefix the fallback of last resort.
+    surviving intact.  It is split by :func:`split_disagreement_id`, not by the
+    label parser -- an id is not a label, and reading it as one truncated an
+    item whose name contains a colon.  The label is the fallback, and the
+    original's truncated prefix the fallback of last resort.
     """
     out: list[tuple[str, str]] = []
     did = str(challenge.get("disagreement_id") or "")
     if did:
-        out.append(("disagreement-id", parse_label("x:" + did)["item"]))
+        item, _index = split_disagreement_id(did)
+        out.append(("disagreement-id", item))
     row_item = str(challenge.get("item") or "")
     if row_item:
         out.append(("row-item", row_item))
-    label_item = _label_item(challenge.get("_label", ""))
-    if label_item:
-        out.append(("label-item", label_item))
+    for candidate in label_item_candidates(challenge.get("_label", "")):
+        out.append(("label-item", candidate))
     return out
 
 
@@ -297,9 +342,10 @@ def link_challenges(items: dict[str, dict], challenges: Sequence[dict],
             f"{len(items)} recovered item(s): " + ", ".join(sorted(set(unmatched))[:6]),
             hint=f"the label/id contract is `{LABEL_GRAMMAR}` "
                  "(scripts/harvest/harvest_journal.py); to recover the items anyway and "
-                 "keep the orphaned rulings on record, run `python3 "
-                 "scripts/harvest/harvest_journal.py <wf-dir> --dest <corpus-dir> "
-                 "--allow-unlinked-challenges --rows-out <file>`",
+                 "keep the orphaned rulings on record, add `--allow-unlinked-challenges` "
+                 "to `cf harvest <run-id> --journal <wf-dir>` (the command that also "
+                 "writes the receipt, runs the gate and recomputes the tally) or to "
+                 "`python3 scripts/harvest/harvest_journal.py <wf-dir> --dest <corpus-dir>`",
         )
     return by_item
 
@@ -450,4 +496,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    # Same rendering as `scripts/cf.py`: a refusal here is a one-line error plus
+    # the hint that names the flag settling it.  Without this the new
+    # unlinked-challenge refusal printed a traceback, so the escape it names was
+    # invisible exactly where it applies.
+    try:
+        sys.exit(main())
+    except CfError as exc:
+        print(exc.render(), file=sys.stderr)
+        sys.exit(exc.exit_code)

@@ -47,8 +47,13 @@ def journal_counts(journal: Path) -> dict:
 
     path = Path(journal)
     workflow_dir = path.parent if path.name == "journal.jsonl" else path
-    items, challenges = read_journal(workflow_dir)
-    return summarise(items, link_challenges(items, challenges))
+    items, rows = read_journal(workflow_dir)
+    # `--status` is a read-only progress query, so the unlinked rulings are
+    # COUNTED here (challenge_rows_seen / challenges_unlinked / unmatched_labels
+    # in the printed line), never refused: the operator asked what the run did,
+    # and a status command that exits 2 answers nothing.  The refusal belongs to
+    # `cf harvest --journal`, which writes a corpus from the same rows.
+    return summarise(items, link_challenges(items, rows, strict=False), rows)
 
 
 def corpus_status(paths, run_id: str) -> dict:
