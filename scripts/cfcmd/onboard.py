@@ -32,7 +32,7 @@ from cflib.jsonio import write_jsonl
 from cflib.log import format_table
 from cflib.registry import Registry, entry_from_claim
 from cflib.templates import copy_template, render_template
-from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
+from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, derived_roots_for, from_args
 from cflib.jsonio import atomic_write
 
 #: Sensible starting points per adapter kind; edit adapter.yaml afterwards.
@@ -108,8 +108,16 @@ def run(args) -> int:
     _check_adapter_implemented(kind)
     registry = Registry.load(workspace)
     claims = discovery.discover_sources(repo, adapter=kind)
-    result = discovery.resolve_claims(claims, repo=repo, workspace=workspace,
-                                      registry=registry, download=args.download)
+    #: The repo being onboarded is not in `workspace.companions` yet -- `upsert_companion`
+    #: runs further down -- so the search roots DERIVED from it would only exist from the
+    #: second run on, and the identical command would then discover a different set of
+    #: PDFs each time: run 1 left the anchor edition with no text (no quote gate, no
+    #: anchor check), run 2 found it in the sibling repo and prepared it.  Deriving them
+    #: here makes run 1 and run 2 search the same set.
+    result = discovery.resolve_claims(
+        claims, repo=repo, workspace=workspace, registry=registry, download=args.download,
+        library_paths=list(dict.fromkeys(
+            list(workspace.library_paths) + derived_roots_for(repo))))
     result.name = name
     result.adapter = kind
     result.adapter_confidence = adapter_confidence
@@ -497,15 +505,19 @@ def _decide_sources(workspace, repo: Path, name: str, result, args):
     hints = [c.anchor_hint for c in result.claims if c.anchor_hint]
     rows = _existing_rows(workspace, name)
     clusters = _same_work_clusters(result, ids)
+    #: With no rows there is nothing MECHANICAL to decide with, so a pick here is
+    #: provisional and `_confirm_anchor` settles it once this run has extracted.
+    provisional = not rows
     if args.anchor_source:
         if args.anchor_source not in ids:
             raise CfError(f"--anchor-source {args.anchor_source} is not one of the discovered "
                           f"sources ({', '.join(ids)})")
         anchor, conf, evidence = args.anchor_source, 1.0, {"reason": "--anchor-source"}
-        chosen = [anchor] + [_elect(repo, rows, c, workspace, hints)[0]
+        chosen = [anchor] + [_elect(repo, rows, c, workspace, hints, provisional=provisional)[0]
                              for c in clusters if anchor not in c]
     else:
-        elected = [_elect(repo, rows, cluster, workspace, hints) for cluster in clusters]
+        elected = [_elect(repo, rows, cluster, workspace, hints, provisional=provisional)
+                   for cluster in clusters]
         anchor, conf, evidence = elected[0]
         chosen = [sid for sid, _c, _e in elected]
     audited = [sid for sid in ids if sid in chosen]
@@ -516,9 +528,45 @@ def _decide_sources(workspace, repo: Path, name: str, result, args):
     return audited, bundled, anchor, conf, evidence
 
 
-def _elect(repo: Path, rows, cluster: list[str], workspace, hints):
-    """The one edition of ONE work a companion anchors to."""
-    return discovery.choose_anchor_source(repo, rows, cluster, workspace=workspace, hints=hints)
+def _elect(repo: Path, rows, cluster: list[str], workspace, hints, *, provisional: bool):
+    """The one edition of ONE work a companion anchors to, or a refusal.
+
+    Both anchor call sites come through here, and an UNDECIDABLE anchor is a
+    refusal at both -- the CLAUDE.md rule that below ``MIN_ANCHOR_AGREEMENT`` the
+    command stops and names the flag that settles it.  It used to be a warning at
+    one site and a refusal at the other, so the identical command exited 0 with no
+    statements.jsonl to score and 2 once one existed, and re-running `cf onboard`
+    after editing conventions.md -- which onboard's own "next:" block tells you to
+    do -- broke a workspace that had worked a minute earlier.
+
+    ``provisional`` is the difference between undecidable and not-yet-decided.
+    Before extraction there are no page anchors to score, so `choose_anchor_source`
+    can only fall back to the prose sentence and scores it 0.60 whatever the
+    editions look like -- refusing there refused EVERY first onboard of a
+    two-edition work, flags or not, and left a two-book companion with no flagless
+    path at all.  A provisional pick therefore warns and is kept; the refusal lands
+    at :func:`_confirm_anchor`, where a mechanical decision was really attempted.
+    Idempotence holds either way: run 1 refuses after extraction, and run 2 scores
+    the same rows at the pre-extraction site and refuses identically.
+    """
+    sid, conf, evidence = discovery.choose_anchor_source(
+        repo, rows, cluster, workspace=workspace, hints=hints)
+    if conf < discovery.MIN_ANCHOR_AGREEMENT:
+        reason = (evidence or {}).get("reason", "no evidence")
+        if provisional:
+            log.warn("the anchor edition could not be confirmed mechanically: "
+                     f"{sid} scores {conf:.2f} ({reason}) with no page anchors extracted yet")
+            log.warn(f"keeping {sid} (confidence {conf:.2f}); settle it with "
+                     f"`cf onboard {repo} --anchor-source <id>`")
+            return sid, conf, evidence
+        raise DiscoveryError(
+            f"cannot decide which edition {repo.name} anchors to: "
+            f"{sid} scores only {conf:.2f} ({reason}), "
+            f"below the {discovery.MIN_ANCHOR_AGREEMENT:.2f} a mechanical decision needs",
+            hint=f"settle it with `cf onboard {repo} --anchor-source <id>`, or prepare the "
+                 "missing edition's PDF first (`cf sources add <pdf> --for <companion>`) so "
+                 "the page anchors can be scored")
+    return sid, conf, evidence
 
 
 def _same_work_clusters(result, ids: list[str]) -> list[list[str]]:
@@ -546,28 +594,42 @@ def _same_work_clusters(result, ids: list[str]) -> list[list[str]]:
 
 
 def _confirm_anchor(workspace, repo, name, result, args, rows, anchor, conf, evidence):
-    """Re-decide the anchor edition against the rows we just extracted."""
+    """Re-decide the anchor edition against the rows we just extracted.
+
+    EVERY cluster of two or more editions is re-elected, not only the one the
+    anchor landed in: `_decide_sources` ran before any rows existed, so each of
+    its picks was a prose guess, and the anchor's own cluster may well be a single
+    candidate while another work's editions are the undecided ones.  Re-electing
+    only the anchor's cluster let `_elect`'s refusal be skipped entirely there.
+    The anchor itself is only re-pinned from its own cluster -- the rivals for the
+    anchor are the other editions of ITS work, never another book the same
+    companion also formalises.
+
+    No try/except here on purpose: `_elect` refuses an undecidable anchor, and
+    catching that refusal is exactly what made the same command exit 0 before any
+    rows existed and 2 afterwards.
+    """
     if args.anchor_source or not rows or len(result.source_ids()) < 2:
         return anchor, conf, evidence
     hints = [c.anchor_hint for c in result.claims if c.anchor_hint]
-    # the rivals are the other editions of the anchor's OWN work, never another
-    # book the same companion also formalises.
-    cluster = next((c for c in _same_work_clusters(result, result.source_ids()) if anchor in c),
-                   [anchor])
-    if len(cluster) < 2:
-        return anchor, conf, evidence
-    try:
-        winner, winner_conf, winner_evidence = discovery.choose_anchor_source(
-            repo, rows, cluster, workspace=workspace, hints=hints)
-    except DiscoveryError as exc:
-        log.warn(f"the anchor edition could not be confirmed mechanically: {exc.message}")
-        log.warn(f"keeping {anchor} (confidence {conf:.2f}); settle it with "
-                 f"`cf onboard {repo} --anchor-source <id>`")
-        return anchor, conf, evidence
-    if winner != anchor:
-        log.warn(f"the anchors agree with {winner}, not {anchor}: re-pinning the anchor edition "
-                 f"and re-run `cf extract --companion {name}`")
-    return winner, winner_conf, winner_evidence
+    chosen = set(result.source_ids()) - set(result.bundled_sources or ())
+    out = (anchor, conf, evidence)
+    for cluster in _same_work_clusters(result, result.source_ids()):
+        if len(cluster) < 2:
+            continue
+        winner, winner_conf, winner_evidence = _elect(
+            repo, rows, cluster, workspace, hints, provisional=False)
+        if anchor not in cluster:
+            if winner not in chosen:
+                log.warn(f"the anchors agree with {winner}, not the edition picked for that work "
+                         f"({', '.join(sid for sid in cluster if sid in chosen) or 'none'}): "
+                         f"re-run `cf onboard {repo} --anchor-source {winner}` to re-pin it")
+            continue
+        if winner != anchor:
+            log.warn(f"the anchors agree with {winner}, not {anchor}: re-pinning the anchor "
+                     f"edition and re-run `cf extract --companion {name}`")
+        out = (winner, winner_conf, winner_evidence)
+    return out
 
 
 def _print_anchor(result) -> None:

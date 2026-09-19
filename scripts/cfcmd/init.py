@@ -152,6 +152,12 @@ def run(args) -> int:
     log.info(f"workspace : {workspace.root}")
     log.info(f"sources   : {', '.join(workspace.source_ids()) or 'none yet'}")
     log.info(f"companions: {', '.join(workspace.companion_names()) or 'none yet'}")
+    # The search roots are also the ALLOWLIST for an absolute path a companion
+    # repo names in its own files, so a user who never opens workspace.yaml still
+    # has to be told what this workspace will open.
+    log.info("pdf search roots (workspace.yaml library_paths + derived):")
+    for root_path in workspace.library_paths:
+        log.info(f"  {root_path}")
     log.info("")
     log.info("next:")
     log.info(f"  cf --workspace {root} onboard <path to a companion repo>")
