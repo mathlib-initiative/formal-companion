@@ -22,13 +22,20 @@
 # pushed and `lake` is never run.  The only network access is the errata fetch
 # (curl, raw HTML kept verbatim), which --offline skips.
 #
+# The SYNTHETIC half -- the booklet, its two companions, the planted defects and
+# the score -- lives in tests/e2e/synthetic.sh, which needs no private checkout
+# and which step 1 runs.  Anyone can run that half on its own; this script is
+# the full regression and keeps the two Tao companions.
+#
 # usage:  e2e-multisource.sh [--offline] [<workspace dir>]
 
 set -u
 
-SKILL="${CF_SKILL:-/Users/jack/Desktop/companion-faithfulness}"
-CF="python3 $SKILL/scripts/cf.py"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The skill is two directories up from tests/e2e: derived, so a checkout
+# anywhere runs, and no path from one machine is baked in.
+SKILL="${CF_SKILL:-$(cd "$HERE/../.." && pwd)}"
+CF="python3 $SKILL/scripts/cf.py"
 
 OFFLINE=""
 WS=""
@@ -96,12 +103,16 @@ printf '  skill       %s\n  workspace   %s\n  companions  %s\n              %s\n
 [ -n "$OFFLINE" ] && echo "  (offline: the errata fetch is skipped)"
 
 # ---------------------------------------------------------------------------
-step "1. generate the synthetic second source and its two companions"
-# A public-domain booklet written here from the stdlib, plus two Lean companions
-# that formalise it.  Nothing is downloaded; no copyrighted text is copied.
+step "1. the synthetic half -- booklet, two companions, planted defects, score"
+# tests/e2e/synthetic.sh writes the public-domain booklet and the two Lean
+# companions of it, onboards them into a workspace of its own and scores the
+# model-free detector against tests/e2e/answer-key.json.  It needs no private
+# checkout, which is why it is a separate script; this run keeps its fixtures in
+# tests/e2e/ because steps 11-14 below onboard them into the Tao workspace too.
 PDF="$HERE/elementary-notes.pdf"
-run python3 "$HERE/make_pdf.py" "$PDF" || exit 2
-run python3 "$HERE/make_notes_repos.py" "$HERE" "$PDF" || exit 2
+run bash "$HERE/synthetic.sh" --fixtures "$HERE" "$(mktemp -d "${TMPDIR:-/tmp}/cf-synthetic.XXXXXX")/ws" \
+  || FAILED=$((FAILED+1))
+[ -f "$PDF" ] || { echo "the synthetic half wrote no booklet"; exit 2; }
 echo "  booklet sha $(shasum -a 256 "$PDF" | cut -c1-12)"
 
 # ---------------------------------------------------------------------------
