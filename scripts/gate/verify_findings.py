@@ -101,9 +101,12 @@ MAX_MATCH_PAGES = 5
 #: how far the page a quote matched on may sit from the page its item is stated
 #: on.  An item's statement runs over a page break and pdftotext puts the odd
 #: heading on the neighbouring page, so the bind is a window, not an equality:
-#: measured over the baseline, +-2 pages holds for 2,925 of the 2,942 bindable
-#: quotes, and the 17 outside include the ones quoting a wholly different section
-#: (58, 73 and 107 pages away), which is the defect the bind exists to catch.
+#: measured over the 2,672-file baseline corpus WITH the source's own page_offset
+#: (16), +-2 pages holds for 2,969 of the 2,985 bindable quotes, and the 16
+#: outside include the ones quoting a wholly different section (58, 73 and 107
+#: pages away), which is the defect the bind exists to catch.  State the offset
+#: whenever this figure is quoted: without it only 2,750 of the same quotes can
+#: be placed at all, though the same 16 are still outside the window.
 PAGE_BIND_WINDOW = 2
 #: how many unmatched words the gate prints back when a quote matched only in part
 REMAINDER_WORDS = 12
@@ -386,8 +389,8 @@ class QuoteMatch:
     """What the quote gate found for one quote.
 
     ``pages`` are the PDF pages the matched window occurs on — the evidence the
-    page binds in :class:`ItemBinding` need, and empty when the book was handed
-    in as a flat string or the match straddles a page break.
+    page binds in :class:`PageBind` need, and empty when the book was handed in
+    as a flat string or the match straddles a page break.
     """
 
     def __init__(self, ok: bool, why: str, *, needle: str = "",
@@ -422,8 +425,8 @@ def quote_match(book: "BookText | str", q: str, *,
     4. the **page** pass: a window that occurs on more than
        :data:`MAX_MATCH_PAGES` pages is a running head or a contents line, not a
        passage.  Measured over the baseline corpus: the most a real quote recurs
-       is 5 pages, while this source's own boilerplate line is on all 265 and its
-       section heads on 16 to 19.
+       is 5 pages, while this source's own permission line is on all 265 and its
+       section running heads on 9 to 25.
     """
     bk = BookText.coerce(book)
     n = norm(q)
@@ -565,13 +568,15 @@ class GateConfig:
         self.require_finding_id: bool = bool(data.get("require_finding_id", False))
         # The operator pass is on everywhere except the two *-legacy presets that
         # validate the imported 2011-draft corpus, whose quotes carry pdftotext
-        # artifacts predating the check (two of 3,019 fail it).
+        # artifacts predating the check (5 of its 3,019 quotes fail the anchored
+        # pass, 2 failed the old independent window search).
         self.check_operators: bool = bool(data.get("check_operators", True))
         # Bind every quote to the page its own item is stated on.  Off for the
-        # two *-legacy presets for the same reason as the operator pass: 17 of
-        # the 2,942 bindable quotes of the imported corpus sit more than
-        # PAGE_BIND_WINDOW pages from their item, and those rows are already
-        # landed.  A new run has no such history, so it is on.
+        # two *-legacy presets for the same reason as the operator pass: measured
+        # with the source's own page_offset (16), 16 of the 2,985 bindable quotes
+        # of the imported corpus sit more than PAGE_BIND_WINDOW pages from their
+        # item, and those rows are already landed.  A new run has no such history,
+        # so it is on.
         self.bind_item_page: bool = bool(data.get("bind_item_page", True))
         # The copyright ceiling, per run: a source whose registry licence note
         # permits more may raise it, and 0 turns the refusal off.
@@ -671,8 +676,11 @@ class PageBind:
     label itself names, and the item's heading in the pinned text.
 
     When none of those yields a page the state is UNBOUND: recorded and printed
-    by the gate, never a silent pass and never a mass failure.  851 of the
-    baseline corpus's 3,019 quotes carry a label with no heading in the text.
+    by the gate, never a silent pass and never a mass failure.  Measured over the
+    baseline corpus, 262 of its 3,019 quotes cannot be placed at all when the run
+    does not know the source's page offset (230 whose item names a printed page
+    the gate cannot convert without it, 32 whose numbered label occurs nowhere in
+    the pinned text); with the registry's offset of 16, 26 remain.
     """
 
     def __init__(self, cfg: "GateConfig", source_id: str, book: "BookText",
@@ -971,9 +979,10 @@ def partial_quotes(doc: Any, name: str, book: "BookText | str", *,
     """Quotes in ``doc`` that matched only as a window — what nobody verified.
 
     The gate prints these on success.  A quote that is 70% genuine and 30%
-    invented passes the word pass; refusing it outright would reject 25 of the
-    3,019 real quotes in the baseline corpus, so the gate names the unverified
-    remainder instead of staying silent about it.
+    invented passes the word pass; refusing it outright would reject 287 of the
+    3,019 real quotes in the baseline corpus, in 281 of its 2,672 files (286 with
+    the operator pass on), so the gate names the unverified remainder instead of
+    staying silent about it.
     """
     out: list[str] = []
     if not isinstance(doc, dict):
