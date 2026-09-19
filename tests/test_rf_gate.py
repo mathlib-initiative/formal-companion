@@ -448,6 +448,16 @@ class TestQuoteLengthCeiling(BookTestCase):
         self.assertFalse(ok)
         self.assertIn("too short", why)
 
+    def test_gate_json_carries_both_thresholds(self):
+        """A source whose licence note permits more raises them per run."""
+        tight = gate_cfg("attack-vac", self.book_path, max_quote_chars=40)
+        self.assertTrue(any("40-character ceiling" in e
+                            for e in vf.validate_doc(doc_for(), "x.json", tight, self.books)))
+        warn = gate_cfg("attack-vac", self.book_path, long_quote_chars=30)
+        notes = vf.binding_notes(doc_for(), "x.json", warn, self.book)
+        self.assertTrue(any(n.startswith("over-long quote:") for n in notes), notes)
+        self.assertEqual(vf.binding_notes(doc_for(), "x.json", self.cfg, self.book), [])
+
 
 # --------------------------------------------------------------------------- #
 # gates-correctness#7 + security-safety#1 — the changed-files half of the gate
