@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Standalone CLI for the changed-files half of the gate.
 
-The logic lives in ``verify_findings.py`` (``changed_paths`` / ``check_changed``)
+The logic lives in ``verify_findings.py`` (``changed_entries`` / ``check_changed``)
 because only that file and ``gate.json`` are transferred to a run host — the
 tend config calls ``verify_findings.py --changed-files``. This wrapper exists
 for local use and for a tend config that prefers two separate commands:

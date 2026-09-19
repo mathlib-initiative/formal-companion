@@ -9,13 +9,19 @@ One test per defect the code review found in ``scripts/gate/``:
 * the quote gate had a floor and no ceiling, against SKILL.md hard rule 6;
 * defect rows under a ``findings`` key were never validated but were counted by
   ``harvest.tally`` and loaded by the ledger;
-* the changed-files check could not see a deletion or a rename;
+* the changed-files check could not see a deletion or a rename, and its ownership
+  rule was silent about being off;
 * the gate ran bare ``git`` inside the worktree it judges, so a worker could hand
   it a program to execute through ``.git/config``;
-* 'the gate is broken' and 'your findings are rejected' shared exit code 1.
+* 'the gate is broken' and 'your findings are rejected' shared exit code 1;
+* the item-page map, the best of the three binding routes, could not reach the
+  gate from any caller;
+* three recorded measurements did not re-derive from the corpus they name.
 
 The synthetic book below is a public-domain paraphrase: no source text lives in
-this repo (CLAUDE.md S1).  Nothing here needs the private baselines.
+this repo (CLAUDE.md S1).  Every test runs without the private baselines except
+``TestTheRecordedBaselineFiguresReDerive``, which needs CF_BASELINE_CORPUS and
+CF_BOOK_TXT and skips cleanly without them.
 """
 
 from __future__ import annotations
@@ -24,6 +30,7 @@ import json
 import os
 import pathlib
 import re
+import statistics
 import subprocess
 import sys
 import tempfile
@@ -39,6 +46,21 @@ from plan import presets as presets_mod  # noqa: E402
 SOURCE_ID = "a-book-2nd-edition"
 SOURCE_SHA = "b" * 64
 TMPDIR = os.environ.get("CF_TMPDIR") or None
+
+
+def _env_dir(name: str) -> pathlib.Path | None:
+    """A local baseline path from the environment, or None (the suite must pass
+    on a machine that has none of them -- CLAUDE.md S7)."""
+    value = os.environ.get(name)
+    if not value:
+        return None
+    path = pathlib.Path(value).expanduser()
+    return path if path.exists() else None
+
+
+#: the 2,672-file imported corpus and the pinned text of the source it quotes
+_CORPUS = _env_dir("CF_BASELINE_CORPUS")
+_BOOK_TXT = _env_dir("CF_BOOK_TXT")
 
 #: Seven pages, a running head repeated on every one of them, and two sentences
 #: whose operators are the point.  ``\f`` is what pdftotext writes between pages,
@@ -672,6 +694,163 @@ class TestExitCodes(BookTestCase):
     def test_the_three_codes_are_distinct(self):
         self.assertEqual(sorted({vf.EXIT_OK, vf.EXIT_REJECTED, vf.EXIT_GATE_BROKEN}),
                          [0, 1, 3])
+
+
+# --------------------------------------------------------------------------- #
+# the gate's own prose: references that name something, figures that re-derive
+# --------------------------------------------------------------------------- #
+class TestTheDocstringsPointAtRealThings(unittest.TestCase):
+    """A refactor left ``:class:`ItemBinding``` behind; the class is ``PageBind``.
+
+    Cheap to check and worth checking: these docstrings are how the next reader
+    finds the code that implements the rule.
+    """
+
+    def test_every_cross_reference_names_a_module_attribute(self):
+        for module in (vf, presets_mod):
+            source = pathlib.Path(module.__file__).read_text(encoding="utf-8")
+            # a dotted name (``cflib.hashing.finding_id``) points outside this
+            # module on purpose; a bare one claims to be defined in it
+            for role, name in re.findall(r":(class|func|data):`~?([A-Za-z_]\w*)`", source):
+                with self.subTest(module=module.__name__, ref=f"{role}:{name}"):
+                    self.assertTrue(hasattr(module, name),
+                                    f"{module.__name__} docstring names {name!r}, "
+                                    f"which is not defined there")
+
+
+@unittest.skipIf(_CORPUS is None or _BOOK_TXT is None,
+                 "set CF_BASELINE_CORPUS and CF_BOOK_TXT to re-derive the figures")
+class TestTheRecordedBaselineFiguresReDerive(unittest.TestCase):
+    """Every figure the gate's comments cite, measured again from the corpus.
+
+    These numbers are the recorded justification for turning ``bind_item_page``
+    and ``check_operators`` off on the two ``*-legacy`` presets -- for accepting
+    landed rows a new run would refuse -- so they have to be re-derivable, and
+    three of them were not: the window comment claimed 2,925 of 2,942 bindable
+    quotes with 17 outside, and the PageBind docstring 851 unplaceable, none of
+    which any configuration of this code produces.  The page figures HALVE without
+    the source's own page offset, so the offset is part of every assertion here.
+    """
+
+    OFFSET = 16          # registry/sources.yaml: pdf_page = printed_page + 16
+
+    @classmethod
+    def setUpClass(cls):
+        from gate import convert_v1
+
+        raw = _BOOK_TXT.read_text(errors="ignore")
+        # operators OFF is the legacy configuration this corpus is gated under;
+        # the operator pass is measured separately below against the same text
+        plain = vf.BookText.from_text(raw, operators=False)
+        with_ops = vf.BookText.from_text(raw, operators=True)
+        cfg = {n: cls._cfg(n) for n in (0, cls.OFFSET)}
+        f = dict(files=0, quotes=0, operator_failures=0, other_failures=0, partial=0,
+                 over_long=0, max_pages=0, stray_defect_arrays=0,
+                 unbound={0: 0, cls.OFFSET: 0}, straddle={0: 0, cls.OFFSET: 0},
+                 bindable={0: 0, cls.OFFSET: 0}, beyond={0: 0, cls.OFFSET: 0},
+                 unbound_why={}, beyond_files=set(), lengths=[])
+        for run, mode in (("findings", "differential"), ("findings-pdf", "differential"),
+                          ("findings-gpt", "differential"), ("findings-vac", "attack"),
+                          ("findings-hunt", "attack")):
+            for path in sorted((_CORPUS / run).glob("*.json")):
+                v1 = json.loads(path.read_text())
+                f["files"] += 1
+                f["stray_defect_arrays"] += sum(
+                    1 for key, value in v1.items()
+                    if key not in vf.DEFECT_LISTS and key != "matches"
+                    and isinstance(value, list)
+                    and any(isinstance(x, dict) and "kind" in x for x in value))
+                doc = convert_v1.convert_doc(v1, run_id=f"baseline-{run}",
+                                             source_id=SOURCE_ID, source_sha=SOURCE_SHA,
+                                             mode=mode, repos=["ours", "teorth", "adam"])
+                binds = {n: vf.PageBind(cfg[n], SOURCE_ID, plain, doc.get("item"))
+                         for n in cfg}
+                for where, quote in vf._quotes_of(doc):
+                    f["quotes"] += 1
+                    f["lengths"].append(len(quote))
+                    f["over_long"] += len(quote) > vf.LONG_QUOTE_CHARS
+                    if not vf.quote_match(with_ops, quote, max_chars=0).ok:
+                        f["operator_failures"] += 1
+                    m = vf.quote_match(plain, quote, max_chars=0)
+                    if not m.ok:
+                        f["other_failures"] += 1
+                        continue
+                    f["partial"] += m.why.startswith("partial")
+                    f["max_pages"] = max(f["max_pages"], len(m.pages))
+                    for n, bind in binds.items():
+                        if not bind.pages:
+                            f["unbound"][n] += 1
+                            if n == 0:
+                                f["unbound_why"][bind.how] = f["unbound_why"].get(bind.how, 0) + 1
+                        elif not m.pages:
+                            f["straddle"][n] += 1
+                        else:
+                            f["bindable"][n] += 1
+                            delta = min(abs(p - k) for p in m.pages for k in bind.pages)
+                            if delta > vf.PAGE_BIND_WINDOW:
+                                f["beyond"][n] += 1
+                                if n == cls.OFFSET:
+                                    f["beyond_files"].add(f"{run}/{path.name}")
+        cls.f = f
+
+    @staticmethod
+    def _cfg(offset: int) -> vf.GateConfig:
+        data = presets_mod.gate_config(
+            presets_mod.get("differential-legacy"), run_id="baseline",
+            sources={SOURCE_ID: {"text": str(_BOOK_TXT), "sha256": SOURCE_SHA,
+                                 "page_offset": offset}},
+            repos=["ours", "teorth", "adam"])
+        data["bind_item_page"] = True     # the legacy presets turn it off
+        return vf.GateConfig(data)
+
+    def test_the_corpus_is_the_one_the_figures_were_taken_over(self):
+        self.assertEqual(self.f["files"], 2672)
+        self.assertEqual(self.f["quotes"], 3019)
+
+    def test_the_page_bind_figures_with_the_sources_own_offset(self):
+        """PAGE_BIND_WINDOW's comment and gate_config()'s bind_item_page comment."""
+        f, n = self.f, self.OFFSET
+        self.assertEqual(f["unbound"][n], 26)
+        self.assertEqual(f["straddle"][n], 8)
+        self.assertEqual(f["bindable"][n], 2985)
+        self.assertEqual(f["beyond"][n], 16)
+        self.assertEqual(f["bindable"][n] - f["beyond"][n], 2969)
+        self.assertEqual(len(f["beyond_files"]), 16)
+
+    def test_the_same_figures_without_the_offset(self):
+        """PageBind's docstring: the count of unplaceable quotes, and why."""
+        f = self.f
+        self.assertEqual(f["unbound"][0], 262)
+        self.assertEqual(f["bindable"][0], 2750)
+        self.assertEqual(f["beyond"][0], 16)
+        printed = sum(c for why, c in f["unbound_why"].items()
+                      if "neither a numbered label nor a printed page" in why)
+        missing = sum(c for why, c in f["unbound_why"].items()
+                      if "occurs nowhere in the pinned text" in why)
+        self.assertEqual((printed, missing), (230, 32))
+
+    def test_the_operator_pass_and_the_recurrence_ceiling(self):
+        """_operator_problem's docstring, and quote_match's page pass."""
+        self.assertEqual(self.f["operator_failures"], 5)
+        self.assertEqual(self.f["other_failures"], 0)
+        # nothing in the corpus recurs past the ceiling, so it costs no baseline row
+        self.assertEqual(self.f["max_pages"], 5)
+        self.assertLessEqual(self.f["max_pages"], vf.MAX_MATCH_PAGES)
+
+    def test_the_quote_length_figures_and_the_partial_window_count(self):
+        """LONG_QUOTE_CHARS's comment and partial_quotes' docstring."""
+        lengths = sorted(self.f["lengths"])
+        self.assertEqual(statistics.median(lengths), 176)
+        self.assertEqual(lengths[int(0.9 * len(lengths))], 329)
+        self.assertEqual(lengths[-1], 2620)
+        self.assertEqual(self.f["over_long"], 36)
+        self.assertEqual(max(lengths), 2620)
+        self.assertLess(max(lengths), vf.MAX_QUOTE_CHARS)  # the ceiling rejects none
+        self.assertEqual(self.f["partial"], 287)
+
+    def test_no_baseline_file_carries_a_stray_top_level_defect_array(self):
+        """validate_doc's refusal of the next plausible key name, measured."""
+        self.assertEqual(self.f["stray_defect_arrays"], 0)
 
 
 if __name__ == "__main__":
