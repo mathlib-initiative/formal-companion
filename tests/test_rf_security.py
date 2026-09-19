@@ -283,5 +283,61 @@ class NoPushGuardTest(unittest.TestCase):
                         encoding="utf-8")
         self.assertEqual(init_cmd.hook_state(root), "cf")
 
+
+# ==========================================================================
+# security-safety#6 -- dump_deps.sh: gitsafe inline, and say what it executes
+# ==========================================================================
+class DumpDepsTrustTest(unittest.TestCase):
+    SCRIPT = SCRIPTS / "detect" / "dump_deps.sh"
+
+    def test_the_two_git_calls_pin_the_repos_config(self):
+        text = self.SCRIPT.read_text(encoding="utf-8")
+        from cflib import gitsafe
+
+        for i in range(0, len(gitsafe.SAFE_CONFIG), 2):
+            self.assertIn(gitsafe.SAFE_CONFIG[i + 1], text,
+                          "dump_deps.sh must inline every gitsafe config key")
+        for key, value in gitsafe.SAFE_ENV.items():
+            self.assertIn(f"{key}={value}", text)
+        # no bare `git -C` left: an index refresh executes core.fsmonitor from the
+        # companion's own .git/config
+        for line in text.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("#"):
+                continue
+            if stripped.startswith("git -C") or " git -C " in stripped:
+                self.fail(f"bare git call in dump_deps.sh: {stripped}")
+
+    def test_the_header_says_it_runs_the_companions_code_as_you(self):
+        head = "\n".join(self.SCRIPT.read_text(encoding="utf-8").splitlines()[:30])
+        self.assertIn("lake env lean --run", head)
+        self.assertIn("invoking user", head)
+        self.assertTrue("trust" in head and "sandbox" in head, head)
+
+    def test_gitsafe_names_the_one_exception_to_builds_nothing(self):
+        from cflib import gitsafe
+
+        self.assertIn("dump_deps.sh", gitsafe.__doc__ or "")
+
+    def test_the_script_is_valid_bash_and_help_still_shows_usage(self):
+        self.assertEqual(subprocess.run(["bash", "-n", str(self.SCRIPT)],
+                                        capture_output=True, text=True).returncode, 0)
+        res = subprocess.run(["bash", str(self.SCRIPT), "--help"],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("Usage:", res.stdout)
+        self.assertIn("--module-prefix", res.stdout)
+
+    def test_a_dry_run_still_checks_the_tree_with_the_safe_git(self):
+        tmp = scratch(self)
+        repo = tmp / "companion"
+        (repo / ".lake").mkdir(parents=True)
+        res = subprocess.run(
+            ["bash", str(self.SCRIPT), "--repo", str(repo), "--out", str(tmp / "deps.json"),
+             "--root-module", "M", "--module-prefix", "M.Tao", "--dry-run"],
+            capture_output=True, text=True, cwd=str(tmp))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("lake env lean --run", res.stdout)
+
 if __name__ == "__main__":                              # pragma: no cover
     unittest.main()
