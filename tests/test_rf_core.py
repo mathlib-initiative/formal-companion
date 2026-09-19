@@ -50,6 +50,58 @@ PUBLISHED_ID = "tao-measure-gsm126-published"
 
 
 # ---------------------------------------------------------------------------
+# architecture#3 -- a broken command module must be loud
+# ---------------------------------------------------------------------------
+
+BROKEN_MODULE = "this is not python(\n"
+
+
+class TestBrokenCommandIsVisible(unittest.TestCase):
+    """The stub `discover_commands` registers must be findable by the test."""
+
+    def _discover(self):
+        import argparse
+
+        parser = argparse.ArgumentParser()
+        return cf_main.discover_commands(parser.add_subparsers(dest="command"))
+
+    def test_a_broken_module_is_reported_as_a_broken_command(self):
+        import cfcmd
+        import importlib
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "wobbly.py").write_text(BROKEN_MODULE, encoding="utf-8")
+            cfcmd.__path__.append(tmp)
+            importlib.invalidate_caches()
+            try:
+                mapping = self._discover()
+            finally:
+                cfcmd.__path__.remove(tmp)
+                sys.modules.pop("cfcmd.wobbly", None)
+                importlib.invalidate_caches()
+
+        self.assertIn("wobbly", mapping)
+        stub = mapping["wobbly"]
+        self.assertIsInstance(stub, cf_main._BrokenCommand)
+        # The predicate the suite uses has to see it. `mod is None` did not.
+        self.assertEqual([n for n, m in mapping.items()
+                          if isinstance(m, cf_main._BrokenCommand)], ["wobbly"])
+        self.assertEqual([n for n, m in mapping.items() if m is None], [],
+                         "discover_commands never stores None; a test that filters on it "
+                         "cannot fail")
+        with self.assertRaises(CfError) as ctx:
+            stub.run(None)
+        self.assertIn("failed to import", str(ctx.exception))
+        self.assertIn("wobbly", str(ctx.exception))
+
+    def test_a_healthy_tree_has_no_broken_command(self):
+        mapping = self._discover()
+        broken = {n: m.exc for n, m in mapping.items()
+                  if isinstance(m, cf_main._BrokenCommand)}
+        self.assertEqual(broken, {})
+
+
+# ---------------------------------------------------------------------------
 # first-run#5 / architecture#5 -- the floor, the error handler, the shim
 # ---------------------------------------------------------------------------
 
@@ -153,6 +205,32 @@ class TestRepositoryFurniture(unittest.TestCase):
                 text = path.read_text(encoding="utf-8")
                 self.assertNotIn("/Users/", text)
                 self.assertNotIn("~/Desktop", text)
+
+
+# ---------------------------------------------------------------------------
+# tests#1 / tests#3 -- the suite itself
+# ---------------------------------------------------------------------------
+
+class TestSuiteIsHermetic(unittest.TestCase):
+    def test_conftest_points_home_at_a_temporary_directory(self):
+        if os.environ.get("CF_TEST_KEEP_HOME") == "1":
+            self.skipTest("CF_TEST_KEEP_HOME=1 asks for the real home")
+        if "pytest" not in sys.modules:
+            self.skipTest("tests/conftest.py is a pytest hook")
+        self.assertIn("cf-test-home-", os.environ.get("HOME", ""),
+                      "tests/conftest.py should have redirected HOME")
+
+    def test_no_test_module_imports_pyyaml_unguarded(self):
+        """PyYAML is optional; one bare import failed five tests without it."""
+        offenders = []
+        for path in sorted(HERE.glob("test_*.py")):
+            lines = path.read_text(encoding="utf-8").splitlines()
+            for n, line in enumerate(lines, 1):
+                if re.fullmatch(r"\s*import yaml\s*", line):
+                    window = "\n".join(lines[max(0, n - 6):n + 4])
+                    if "try:" not in window and "HAVE_PYYAML" not in window:
+                        offenders.append(f"{path.name}:{n}")
+        self.assertEqual(offenders, [], "use cflib.yamlio, or guard with a skipTest")
 
 
 # ---------------------------------------------------------------------------

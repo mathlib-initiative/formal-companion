@@ -1365,9 +1365,13 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         return f"{cfitems.source_slug(source_id)}--{tail}"
 
     def read_run(self):
-        import yaml
+        # yamlio, not a bare `import yaml`: PyYAML is optional (CLAUDE.md S3) and
+        # this helper was the one unguarded import in the suite, so five tests
+        # failed on any machine without it -- including the worker hosts whose
+        # run.yaml the fallback reader is there to parse.
+        from cflib.yamlio import read_yaml
 
-        return yaml.safe_load((self.root / "runs" / "r1" / "run.yaml").read_text())
+        return read_yaml(self.root / "runs" / "r1" / "run.yaml")
 
     def test_attack_run_writes_everything(self):
         self.assertEqual(self.plan(), 0)
