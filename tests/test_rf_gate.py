@@ -351,6 +351,31 @@ class TestQuoteIsBoundToItsItem(BookTestCase):
         self.assertEqual(vf.PageBind(reloaded, SOURCE_ID, self.book,
                                      "Exercise 2.3.4").pages, [4, 5])
 
+    def test_the_item_page_map_survives_the_trip_through_gate_json(self):
+        """The best binding route has to be reachable from the caller that has it.
+
+        ``presets.source_block`` built each ``sources.<id>`` body from a fixed set
+        of keys and silently dropped this one, so the map could be handed to
+        ``gate_config()`` and never reached the gate: every run fell back to the
+        heading search, which is what leaves quotes unbound and out of window.
+        """
+        data = presets_mod.gate_config(
+            presets_mod.get("attack-vac"), run_id="r",
+            sources={SOURCE_ID: {"text": str(self.book_path), "sha256": SOURCE_SHA,
+                                 "page_offset": 2,
+                                 "item_pages": {"Exercise 2.3.4": 4}}},
+            repos=["ours"])
+        self.assertEqual(data["sources"][SOURCE_ID]["item_pages"], {"Exercise 2.3.4": 4})
+        cfg = vf.GateConfig(json.loads(json.dumps(data)))  # as the run host reads it
+        bind = vf.PageBind(cfg, SOURCE_ID, self.book, "Exercise 2.3.4")
+        # pages OF THE PINNED TEXT (items.json `pdf_page`), so page_offset is not
+        # applied twice -- the printed-page route is the one that converts
+        self.assertEqual((bind.pages, bind.how), ([4], "gate.json item_pages"))
+        self.assertEqual(vf.PageBind(cfg, SOURCE_ID, self.book, "In-text, book p. 3").pages, [5])
+        # a caller that passes nothing still gets a block with the key present
+        self.assertEqual(
+            presets_mod.source_block(str(self.book_path))["item_pages"], {})
+
     def test_the_legacy_presets_do_not_bind_and_say_so(self):
         """The imported corpus has landed rows the bind would reject; measured."""
         for name in ("attack-legacy", "differential-legacy"):

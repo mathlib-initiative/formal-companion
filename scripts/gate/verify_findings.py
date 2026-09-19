@@ -547,10 +547,16 @@ class GateConfig:
                 "text_sha256": body.get("text_sha256"),
                 "images_dir": body.get("images_dir"),
                 "page_offset": int(body.get("page_offset") or 0),
-                # optional ``{item: pdf page}`` from the source's items.json.  The
-                # gate finds an item's own heading in the pinned text when this is
-                # absent, so nothing has to ship beside gate.json; a caller that
-                # has items.json can still do better than a heading search.
+                # optional ``{item: page OF THE PINNED TEXT}`` -- items.json's
+                # ``pdf_page``, never its printed ``page``, because the gate
+                # compares it against the pages it split the text into and the two
+                # differ by the source's offset.  The gate falls back to the item's
+                # own heading in the pinned text when this is absent, so nothing
+                # has to ship beside gate.json, and that fallback is what leaves 26
+                # of the baseline's 3,019 quotes unplaceable.  ``presets.
+                # source_block`` passes the map through; no caller in the tree
+                # fills it in yet (see the handoff note on plan_run.py and
+                # pair.py), so every run today binds by the heading search.
                 "item_pages": dict(body.get("item_pages") or {}),
             }
         self.repos: list[str] = list(data.get("repos") or [])
