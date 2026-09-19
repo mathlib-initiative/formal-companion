@@ -20,8 +20,9 @@ The Workflow scripts under ``workflows/`` pin ``model: 'opus'`` per phase and
 are not planner inputs; they are named here only so a reader knows that is the
 other place an id lives.
 
-Spec: docs/design/multi-source-model.md S7.2 (run.yaml records what produced a
-finding).
+Spec: references/method.md S10 ("the yields belong to the models that produced
+them ... model ids unrecorded in the run metadata"); the ``runs/<id>/run.yaml``
+layout this module writes into is docs/design/multi-source-model.md S6.2.
 """
 
 from __future__ import annotations
@@ -118,11 +119,17 @@ def unknown_warning(model: str | None, workspace: Any) -> str | None:
     a correctness invariant, and a literal allowlist of ids in this repo would
     rot within months -- so an unrecognised id is reported and planned, never
     refused.
+
+    The ids in :data:`DEFAULTS` count as known whatever the workspace names.
+    They are this repo's own pins -- ``worker_codex`` is the calibration pair's
+    second model, which two shipped presets carry -- so warning about them told
+    every stock workspace that planning ``attack-vac`` used an unknown tier.
+    The warning is for an id nobody here has vouched for: a ``--model`` typo.
     """
     if not model:
         return None
     known = known_ids(workspace)
-    if not known or model in known:
+    if not known or model in known or model in DEFAULTS.values():
         return None
     return (f"model {model} is not one of workspace.yaml models: ({', '.join(known)}); "
             "planning anyway -- confirm the id with a 1/1 smoke test before a full fleet "
@@ -132,10 +139,11 @@ def unknown_warning(model: str | None, workspace: Any) -> str | None:
 def tend_agent_model(tend_root: pathlib.Path | str, role: str = "worker") -> str | None:
     """The ``model_name`` in a generated ``.tend/<role>-agent.yaml``.
 
-    ``cf run`` compares this with ``run.yaml``'s ``model`` before it starts, so
-    the recorded id is provably the one that ran: run.yaml used to record a
-    model the bridge never received (references/method.md: "the yields belong to
-    the models that produced them").
+    Exposed so that ``cf run`` can refuse when this and ``run.yaml``'s ``model``
+    disagree -- run.yaml used to record a model the bridge never received
+    (references/method.md S10: "the yields belong to the models that produced
+    them"). That check itself belongs in ``cfcmd/run.py`` and is not wired yet;
+    this is the reader it needs.
     """
     path = pathlib.Path(tend_root) / ".tend" / f"{role}-agent.yaml"
     if not path.exists():
