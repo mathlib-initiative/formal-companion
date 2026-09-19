@@ -197,7 +197,10 @@ def computed_finding_id(run_id: str, source_id: str, item: str, kind: str,
 
     ``decls`` is the defect's WHOLE ``unfaithful_decls`` list, not the per-repo
     slice the row is filed under: the id belongs to the defect, and one defect
-    can name two repos.
+    can name two repos.  Each declaration is hashed AS WRITTEN (``finding_id``
+    strips it and nothing else); ``ledger/findings.py`` recomputes the same id
+    from the same document and the two must agree byte for byte, so neither may
+    hash a matching form.
     """
     return hashing.finding_id(run_id, source_id, item, kind, decls)
 
@@ -252,6 +255,11 @@ def rows_for_run(run_id: str, directory: str | Path,
 
     Every row's ``finding_id`` is RECOMPUTED here (:func:`computed_finding_id`),
     with the stored value kept as ``finding_id_stored`` when the two disagree.
+    The inputs to that hash are read from the same places ``ledger/findings.
+    normalise_finding`` reads them -- a defect's own ``run_id`` and ``source_id``
+    win over the harvest run's, the declarations go in as written -- because the
+    two readers key the two halves of the pipeline (tally/union/gate against
+    route/adjudicate/transcribe) and an id computed two ways links neither.
     """
     directory = Path(directory)
     mode = mode or run_mode(run_id, directory)
@@ -283,8 +291,14 @@ def rows_for_run(run_id: str, directory: str | Path,
             all_decls = [str(d).strip() for d in (defect.get("unfaithful_decls") or [])
                          if str(d).strip()]
             kind = defect.get("kind")
-            computed = computed_finding_id(run_id, row_source, item_raw, str(kind or ""),
-                                          all_decls)
+            # The id's run part is the run that FOUND the defect.  A defect that
+            # carries its own ``run_id`` keeps it, because the ledger reader does
+            # (``normalise_finding``: ``raw.get("run_id") or run_id``) and a
+            # routed row read back has to hash to the id the corpus carries.  The
+            # row's ``run`` below stays the run this corpus directory IS.
+            row_run = str(defect.get("run_id") or run_id or "")
+            computed = computed_finding_id(row_run, row_source, item_raw,
+                                          str(kind or "").strip(), all_decls)
             stored = str(defect.get("finding_id") or "")
             for repo, decls in sorted(by_repo.items()):
                 row = {
@@ -301,7 +315,8 @@ def rows_for_run(run_id: str, directory: str | Path,
                     "concept": defect.get("concept"),
                     "decls": sorted(decls),
                     "finding_id": computed,
-                    "defect_key": defect_key(row_source, item_raw, str(kind or ""), all_decls),
+                    "defect_key": defect_key(row_source, item_raw,
+                                             str(kind or "").strip(), all_decls),
                     "faithful": defect.get("faithful"),
                 }
                 if stored and stored != computed:
