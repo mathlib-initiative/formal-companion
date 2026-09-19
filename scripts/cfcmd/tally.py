@@ -67,6 +67,17 @@ def run(args) -> int:
         print(json.dumps(result, indent=1, sort_keys=True))
     else:
         log.info(tally_mod.render(result, args.repo or None))
+    # The receipt's gate block is the only record that a corpus was validated
+    # against the source text, and nothing used to read it: an ungated run's
+    # numbers looked exactly like a gated one's.
+    if result.get("ungated"):
+        log.warn(f"ungated run(s): {', '.join(result['ungated'])} -- their RECEIPT.json carries "
+                 "no gate block, so no quote in them was checked against the source text. "
+                 "The counts above include them. Re-harvest those runs with a gate config.")
+    if result.get("finding_id_mismatches"):
+        log.warn(f"{len(result['finding_id_mismatches'])} row(s) carry a finding_id that is not "
+                 "the id their content hashes to. The computed id is the one counted and "
+                 "linked; see finding_id_mismatches in the tally file.")
 
     if not args.no_write:
         run_key = args.run[0] if len(args.run) == 1 else "all"
