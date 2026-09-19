@@ -148,10 +148,15 @@ def tree_digest(root: Path, excludes: list[str] | None = None) -> dict:
     ``READONLY_CHMOD`` transfers a companion at mode 0444 inside 0555
     directories, which is a speed bump and not a barrier: the copy is owned by
     the run's user, so an agent running with approvals bypassed can ``chmod u+w``
-    and edit it, and nothing else would ever notice.  This digest is recorded
-    before the transfer and recomputed on the host (``REMOTE_TREE_DIGEST_PY``)
-    after the transfer and after the run, so an edit is visible in the run's own
-    record instead of being discovered in the findings.
+    and edit it, and nothing else would ever notice.  This digest is walked once,
+    pinned in run.yaml (``run.transfer[].tree_sha256``, see
+    :func:`transfer_record`) and recomputed on the host
+    (``REMOTE_TREE_DIGEST_PY``) after the transfer and after the run, so an edit
+    is visible in the run's own record instead of being discovered in the
+    findings.  It is PINNED rather than re-walked because the monitor stage runs
+    in a later `cf run` invocation: comparing the host against whatever the local
+    checkout hashes to by then would accuse an agent of editing a tree the
+    operator had merely pulled.
 
     One sha256 over ``<relative posix path>\\0<file sha256>\\n`` lines sorted by
     path.  Symlinks are skipped: ``rsync -a`` ships the link, not its target.
@@ -371,6 +376,7 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                               note="agent bridges + the StrictModel coercion"))
 
     if include_sources:
+        pinned = recorded_tree_digests(run)
         for name, repo in sorted((companions or {}).items()):
             entry = _entry(f"repo:{name}", Path(repo).expanduser(),
                            f"{root}/{names['repos']}/{name}/",
@@ -379,8 +385,13 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
             if entry["exists"]:
                 # The BEFORE hash of what leaves this machine, so the same digest
                 # can be demanded of the host after the transfer and after the run.
-                entry["tree_sha256"] = tree_digest(Path(repo).expanduser(),
-                                                   SOURCE_EXCLUDES)["sha256"]
+                # run.yaml's record wins: the first `cf run` walks the tree, every
+                # later invocation (the monitor stage is one) compares the host
+                # against the digest that was actually SENT, not against a local
+                # checkout that may have been pulled or switched since.
+                entry["tree_sha256"] = (pinned.get(entry["name"])
+                                        or tree_digest(Path(repo).expanduser(),
+                                                       SOURCE_EXCLUDES)["sha256"])
             entries.append(entry)
         if not companions:
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
@@ -423,6 +434,49 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
         if entry["required"] and not entry["exists"]:
             warnings.append("missing %s: %s" % (entry["name"], entry["src"]))
     return entries, warnings
+
+
+#: the keys of a manifest entry that belong in run.yaml's ``run.transfer`` record.
+#: ``tree_sha256`` is one of them: the monitor-stage integrity check compares the
+#: host against it, so it has to survive the invocation that sent the tree.
+TRANSFER_RECORD_KEYS = ("name", "src", "dest", "files", "bytes", "exists", "tree_sha256")
+
+
+def transfer_record(entries: list[dict]) -> list[dict]:
+    """The ``run.transfer`` rows for run.yaml -- what was sent, and its digest."""
+    return [{key: entry[key] for key in TRANSFER_RECORD_KEYS if key in entry}
+            for entry in entries]
+
+
+def recorded_tree_digests(run: dict) -> dict[str, str]:
+    """``{entry name: tree_sha256}`` a previous `cf run` recorded in run.yaml."""
+    out: dict[str, str] = {}
+    for row in _as_dict(run.get("run")).get("transfer") or []:
+        if isinstance(row, dict) and row.get("name") and row.get("tree_sha256"):
+            out[str(row["name"])] = str(row["tree_sha256"])
+    return out
+
+
+def include_sources_for(run: dict, *, requested: bool, stage: str) -> tuple[bool, list[str]]:
+    """Whether this invocation covers the companion repos, and what to say about it.
+
+    ``stages_upto("monitor")`` is ``["monitor"]`` alone, so the monitor stage is a
+    SEPARATE `cf run` invocation, and the companion-tree integrity check hangs off
+    the ``repo:<name>`` entries.  Reading ``--include-sources`` from the flag alone
+    meant that forgetting to repeat it silently removed the one check that catches
+    a chmod-and-edit on the host, and then rewrote ``include_sources: false`` over
+    the earlier true, dropping the pinned digests with it.
+
+    So the RUN's own record decides: once run.yaml says this run transferred the
+    companion repos, every later invocation covers them too and says why.
+    """
+    recorded = bool(_as_dict(run.get("run")).get("include_sources"))
+    if requested or not recorded:
+        return requested, []
+    return True, ["run.yaml records include_sources: true for this run, so the companion repos "
+                  "are in this %s plan although --include-sources was not repeated -- the "
+                  "before/after tree digests are the check that a read-only copy was not made "
+                  "writable and edited on the host" % stage]
 
 
 def _errata_is_repo_supplied(source_dir: Path) -> bool:

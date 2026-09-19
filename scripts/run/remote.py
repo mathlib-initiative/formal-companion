@@ -21,7 +21,10 @@ preflight compares the host's ``tend --version`` against the range recorded in
 nobody reads, and the verify/monitor stages recompute the digest of each
 transferred companion tree, so a read-only copy an agent made writable again is
 visible before its findings are harvested.  Both record their output into
-run.yaml through :func:`execute`.
+run.yaml through :func:`execute`, including when they REFUSE: a step that exits
+non-zero raises, and the one outcome worth a durable record must not be the one
+that writes nothing, so :func:`execute` appends into a caller-owned ``results``
+list rather than only returning it.
 
 Nothing in this module runs anything unless ``execute=True`` is passed, and
 cf run only passes it when the operator gave --execute for a host on the
@@ -249,14 +252,20 @@ def render(steps: Iterable[dict], stages: Iterable[str]) -> str:
 
 
 def execute(steps: Iterable[dict], stages: Iterable[str], *, dry_run: bool = True,
-            stream: Any = sys.stdout) -> list[dict]:
+            stream: Any = sys.stdout, results: list[dict] | None = None) -> list[dict]:
     """Run the chosen stages in order, stopping at the first failure.
 
     Returns one record per attempted step.  With ``dry_run`` (the default of every
     caller) nothing is executed and the records say so.
+
+    Pass ``results`` to keep the records of a run that FAILED: a non-zero step
+    raises ``CfError``, and a caller that only reads the return value discards
+    exactly the record it most needs -- a refused companion-tree digest, or a
+    refused ``tend --version``.  `cf run` passes its own list and writes it into
+    run.yaml before re-raising.
     """
     wanted = list(stages)
-    results: list[dict] = []
+    results = results if results is not None else []
     for step in steps:
         if step["stage"] not in wanted:
             continue

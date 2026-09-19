@@ -665,6 +665,87 @@ class CompanionTreeIntegrityTest(unittest.TestCase):
             self.assertTrue(step["record_output"])
             self.assertTrue(step["safe"])
 
+    def _cf_run(self, root: Path, *extra: str) -> subprocess.CompletedProcess:
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        env.pop("CF_WORKSPACE", None)
+        return subprocess.run(
+            [sys.executable, str(SCRIPTS / "cf.py"), "--workspace", str(root), "run", "demo",
+             "--host", "examplebox", "--i-have-consent", "--max-cost", "5", *extra],
+            capture_output=True, text=True, env=env, cwd=str(REPO))
+
+    def _workspace(self) -> tuple[Path, Path, Path]:
+        """A workspace with one companion repo and one planned run. (root, repo, run_dir)"""
+        root = scratch(self)
+        repo = self._tree()
+        source_id = "smith-analysis-2e"
+        (root / "workspace.yaml").write_text(
+            "version: 2\nworkspace:\n  name: demo\n"
+            "companions:\n  ours:\n"
+            f"    repo: {repo}\n"
+            "    adapter: docstring_tags\n"
+            f"    sources: [{source_id}]\n"
+            f"    anchor_source: {source_id}\n"
+            "sources:\n"
+            f"  {source_id}:\n"
+            f'    sha256: "{"b" * 64}"\n'
+            "    title: A Synthetic Analysis Text\n"
+            '    edition: "2nd edition"\n'
+            "    offset: 12\n"
+            "    role: audited\n"
+            "hosts:\n  allowlist: [examplebox]\n  remote_root: /home/tester\n"
+            "  examplebox:\n    ssh: tester@examplebox\n    tend_version: \">=0.4\"\n",
+            encoding="utf-8")
+        run_dir = root / "runs" / "demo"
+        (run_dir / "tasks").mkdir(parents=True)
+        (run_dir / "tasks" / "t.yaml").write_text("id: t\n", encoding="utf-8")
+        (run_dir / "run.yaml").write_text(
+            "run_id: demo\nmode: differential\nrepos: [ours]\nsources: []\n", encoding="utf-8")
+        bindir = run_dir / "tend-root" / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "worker-agent.sh").write_text("#!/bin/sh\nexport CF_AGENT_HOST=claude\n",
+                                                encoding="utf-8")
+        return root, repo, run_dir
+
+    def test_a_monitor_only_run_still_plans_the_integrity_check(self):
+        """`stages_upto("monitor")` is ["monitor"] alone, so the check runs in a
+        LATER invocation. It used to exist only if that invocation repeated
+        --include-sources: forgetting the flag removed the one check that catches a
+        chmod-and-edit, and then rewrote include_sources: false over the true."""
+        from run import manifest
+
+        root, repo, run_dir = self._workspace()
+        sent = manifest.tree_digest(repo, manifest.SOURCE_EXCLUDES)["sha256"]
+        first = self._cf_run(root, "--include-sources", "--stage", "verify")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+        recorded = (run_dir / "run.yaml").read_text(encoding="utf-8")
+        self.assertIn(sent, recorded, "run.yaml must pin the digest that was sent")
+
+        later = self._cf_run(root, "--stage", "monitor")      # no --include-sources
+        self.assertEqual(later.returncode, 0, later.stdout + later.stderr)
+        self.assertIn(sent, later.stdout, "the monitor plan must still demand the digest")
+        self.assertIn("unchanged since the transfer", later.stdout)
+        self.assertIn("include_sources: true", later.stdout + later.stderr)
+        self.assertIn("include_sources: true",
+                      (run_dir / "run.yaml").read_text(encoding="utf-8"))
+
+    def test_the_pinned_digest_is_not_rewalked_from_the_local_checkout(self):
+        """An operator who pulled the companion since the transfer must not be told
+        an agent edited the repo the findings cite."""
+        from run import manifest
+
+        root, repo, run_dir = self._workspace()
+        sent = manifest.tree_digest(repo, manifest.SOURCE_EXCLUDES)["sha256"]
+        first = self._cf_run(root, "--include-sources", "--stage", "verify")
+        self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+
+        (repo / "Mod" / "B.lean").write_text("theorem b : True := trivial\n", encoding="utf-8")
+        pulled = manifest.tree_digest(repo, manifest.SOURCE_EXCLUDES)["sha256"]
+        self.assertNotEqual(sent, pulled)
+
+        later = self._cf_run(root, "--stage", "monitor")
+        self.assertIn(sent, later.stdout)
+        self.assertNotIn(pulled, later.stdout)
+
     def test_a_dry_run_records_the_agent_posture_and_prints_the_checks(self):
         """End to end through `cf run`: run.yaml gains the record, no transfer happens."""
         root = scratch(self)
@@ -726,6 +807,34 @@ class CompanionTreeIntegrityTest(unittest.TestCase):
         out = remote.execute(steps, ["verify"], dry_run=False, stream=io.StringIO())
         self.assertEqual(out[0]["expected"], "d" * 64)
         self.assertIn("sha256=" + "d" * 64, out[0]["stdout"])
+
+    def test_a_refused_step_is_the_one_record_that_must_survive(self):
+        """`execute` raises on a non-zero step, so a caller reading only the return
+        value discarded exactly the outcome worth recording -- a refused tree digest
+        or a refused tend version wrote nothing into run.yaml."""
+        import io
+
+        from run import remote
+
+        steps = [
+            {"stage": "verify", "title": "host reachable", "safe": True,
+             "argv": [sys.executable, "-c", "pass"], "shell": "true"},
+            {"stage": "verify", "title": "repo:ours landed byte for byte", "safe": True,
+             "record_output": True, "expected": "d" * 64,
+             "argv": [sys.executable, "-c",
+                      "import sys; sys.stderr.write('REFUSED: not the tree\\n'); "
+                      "sys.stdout.write('tree sha256=%s\\n' % ('e' * 64)); sys.exit(1)"],
+             "shell": "python3 -c ..."},
+        ]
+        executed: list[dict] = []
+        with self.assertRaises(CfError):
+            remote.execute(steps, ["verify"], dry_run=False, stream=io.StringIO(),
+                           results=executed)
+        self.assertEqual(len(executed), 2)
+        self.assertTrue(executed[-1]["failed"])
+        self.assertEqual(executed[-1]["returncode"], 1)
+        self.assertEqual(executed[-1]["expected"], "d" * 64)
+        self.assertIn("sha256=" + "e" * 64, executed[-1]["stdout"])
 
 
 # ==========================================================================

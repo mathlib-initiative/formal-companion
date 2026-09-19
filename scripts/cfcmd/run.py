@@ -328,11 +328,18 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
     for sid, sha in manifest.source_shas(workspace, data).items():
         workspace.require_source_sha(sid, sha, f"runs/{args.run_id}/run.yaml")
 
+    # `--stage monitor` is a separate invocation, and the companion-tree integrity
+    # check hangs off the repo entries: run.yaml's record of what this run
+    # transfers decides, not whether the flag was typed again.
+    include_sources, notes = manifest.include_sources_for(
+        data, requested=args.include_sources, stage=args.stage)
+
     entries, warnings = manifest.build_manifest(
         workspace_dir=Path(workspace.root), skill_dir=_skill_root(), run_id=args.run_id,
-        run=data, host=host, include_sources=args.include_sources,
+        run=data, host=host, include_sources=include_sources,
         include_texts=args.include_source_text,
         companions=manifest.companion_repos(workspace, data.get("repos")))
+    warnings += notes
     warnings += manifest.gate_config_warnings(Path(workspace.root), args.run_id, host, data)
 
     tasks = manifest.task_count(Path(workspace.root), args.run_id, data)
@@ -349,22 +356,33 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
             hint="watch ONE task go worker -> gate -> reviewer -> merge at limits 1/1 first; "
                  "the model ids in run.yaml may never have been exercised on that host")
 
-    _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency)
+    _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency,
+                include_sources=include_sources)
     log.info("")
     log.info(remote.render(steps, stages))
 
-    executed = []
+    executed: list[dict] = []
+    refused = None
     if args.execute:
         missing = [e for e in entries if e["required"] and not e["exists"]]
         if missing:
             raise CfError("refusing to execute with missing components: "
                           + ", ".join(e["name"] for e in missing))
         log.info("")
-        executed = remote.execute(steps, stages, dry_run=False)
+        try:
+            remote.execute(steps, stages, dry_run=False, results=executed)
+        except CfError as exc:
+            # A refused companion-tree digest or tend version is the outcome most
+            # worth a durable record, and it used to be the only one that wrote
+            # nothing: the results list went out with the exception.
+            refused = exc
 
     _record(run_yaml_path, data, args=args, host=host, entries=entries, budget=budget,
-            disk=disk, concurrency=concurrency, names=names, stages=stages, executed=executed)
+            disk=disk, concurrency=concurrency, names=names, stages=stages, executed=executed,
+            include_sources=include_sources)
     _record_state(workspace, args.run_id, data, tasks, host, budget)
+    if refused is not None:
+        raise refused
 
     if not args.execute:
         log.info("")
@@ -408,7 +426,8 @@ def _concurrency(workspace, data: dict, args) -> dict:
     return out
 
 
-def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency) -> None:
+def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency,
+                *, include_sources: bool | None = None) -> None:
     log.info(f"run {args.run_id} -> {host['name']} ({host['ssh']}:{host['remote_root']})")
     log.info(f"  tasks: {tasks}   concurrency: {concurrency['workers']} workers / "
              f"{concurrency['reviewers']} reviewers "
@@ -423,7 +442,7 @@ def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency)
         mark = " " if entry["exists"] else "!"
         log.info(f"   {mark} {entry['name']:<14} {entry['files']:>5} files  "
                  f"{entry['bytes']:>10} B  -> {entry['dest']}")
-    if not args.include_sources:
+    if not (args.include_sources if include_sources is None else include_sources):
         log.info("     (companion sources NOT transferred; --include-sources)")
     if not args.include_source_text:
         log.info("     (source text NOT transferred; --include-source-text)")
@@ -432,7 +451,7 @@ def _print_plan(args, host, entries, warnings, tasks, budget, disk, concurrency)
 
 
 def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, disk,
-            concurrency, names, stages, executed) -> None:
+            concurrency, names, stages, executed, include_sources: bool | None = None) -> None:
     """Write everything this command decided back into run.yaml."""
     block = data.get("run") if isinstance(data.get("run"), dict) else {}
     block.update({
@@ -443,7 +462,8 @@ def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, dis
         "remote_names": names,
         "consent": {"i_have_consent": True, "operator": getpass.getuser(),
                     "recorded_at": state_mod.now()},
-        "include_sources": bool(args.include_sources),
+        "include_sources": bool(args.include_sources if include_sources is None
+                                else include_sources),
         "include_source_text": bool(args.include_source_text),
         # WHAT LEFT THIS MACHINE: the consent record names the exact source ids,
         # not "the book", because a workspace can hold two editions of one work
@@ -458,8 +478,10 @@ def _record(run_yaml_path: Path, data: dict, *, args, host, entries, budget, dis
         "disk_budget": disk,
         "concurrency": concurrency,
         "gate_out_of_tree": f"{host['remote_root']}/{names['gate']}",
-        "transfer": [{k: e[k] for k in ("name", "src", "dest", "files", "bytes", "exists")}
-                     for e in entries],
+        # tree_sha256 is in the record because the monitor stage compares the host
+        # against it: re-walking the local checkout in a later invocation would
+        # compare against a tree the operator may have pulled since.
+        "transfer": manifest.transfer_record(entries),
         "stages_planned": list(stages),
         "smoke_verified": bool(args.smoke_verified) or bool(block.get("smoke_verified")),
     })
