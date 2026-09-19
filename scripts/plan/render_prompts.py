@@ -295,9 +295,9 @@ def calibration_note(local: Mapping[str, Any] | None) -> str:
         n, wrong = int(local["n"]), int(local["wrong"])
         pct = round(100.0 * wrong / n)
         return (f"Measured in this workspace's own ledger: {wrong} of {n} adjudicated "
-                f"findings so far (about {pct}%) turned out to be house convention or were "
-                "refuted outright, rather than content bugs — nearly always in that "
-                "direction, calling a convention a defect.")
+                f"findings so far (about {pct}%) were house convention or were refuted "
+                "outright rather than content bugs. That is this corpus's own rate over "
+                f"{n} adjudicated row(s), which is a small sample early in a campaign.")
     imported = IMPORTED_CALIBRATION
     return (f"No calibration has been measured on this corpus yet. On a different corpus "
             f"— {imported['campaign']} — {imported['wrong']} of {imported['n']} adjudicated "
