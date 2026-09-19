@@ -314,6 +314,64 @@ class NoPushGuardTest(unittest.TestCase):
         self.assertEqual(git["remotes"], [])
         self.assertEqual(git["pre_push_hook"], "cf")
 
+    def _nested_workspace(self) -> tuple[Path, Path]:
+        """`cf init --allow-nested`: no .git of its own, the guard in the outer repo."""
+        outer = (scratch(self) / "outer").resolve()   # /var -> /private/var on macOS
+        outer.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(outer)], check=True,
+                       capture_output=True, text=True)
+        root = outer / "ws"
+        res = self._cf("init", str(root), "--allow-nested")
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertFalse((root / ".git").exists())
+        self.assertIn("CF_ALLOW_PUSH",
+                      (outer / ".git" / "hooks" / "pre-push").read_text(encoding="utf-8"))
+        return outer, root
+
+    def test_status_names_the_enclosing_repo_it_is_guarded_by(self):
+        """A nested workspace was reported as "not a git repo" with all three
+        clauses false: a reminder WAS installed, `cf init` would not create a repo,
+        and the outer repo's remotes were never looked at."""
+        outer, root = self._nested_workspace()
+        res = self._cf("--workspace", str(root), "status")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn(f"guarding {outer}", res.stdout)
+        self.assertIn("nested inside it", res.stdout)
+        self.assertIn("no remote (the workspace stays local)", res.stdout)
+        self.assertIn("cf pre-push reminder installed", res.stdout)
+        self.assertNotIn("is not a git repo", res.stdout + res.stderr)
+
+    def test_status_warns_about_a_remote_on_the_enclosing_repo(self):
+        """The authoritative case: a remote added after init, on the repo that
+        actually holds the workspace's corpus and ledgers."""
+        outer, root = self._nested_workspace()
+        subprocess.run(["git", "-C", str(outer), "remote", "add", "origin",
+                        str(scratch(self) / "bare.git")], check=True,
+                       capture_output=True, text=True)
+        res = self._cf("--workspace", str(root), "status")
+        self.assertIn("remote origin", res.stdout)
+        self.assertIn("HAS a remote", res.stderr)
+        self.assertIn(f"git -C {outer} remote remove origin", res.stderr)
+
+    def test_a_no_git_workspace_is_stated_not_warned_about(self):
+        """`--no-git` is documented: `cf status` must not tell the operator on
+        every run to undo a flag they passed deliberately."""
+        root = scratch(self) / "ws"
+        res = self._cf("init", str(root), "--no-git")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("git: false", (root / "workspace.yaml").read_text(encoding="utf-8"))
+        res = self._cf("--workspace", str(root), "status")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("no git repo (created with --no-git)", res.stdout)
+        self.assertNotIn("is not a git repo", res.stderr)
+
+    def test_a_workspace_that_lost_its_repo_is_still_warned_about(self):
+        """The warning stays for the case it was written for."""
+        root = self._workspace()
+        shutil.rmtree(root / ".git")
+        res = self._cf("--workspace", str(root), "status")
+        self.assertIn("is not a git repo", res.stderr)
+
     def test_the_hook_and_the_docs_say_which_one_is_the_control(self):
         from cfcmd import init as init_cmd
 

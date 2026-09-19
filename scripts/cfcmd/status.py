@@ -12,10 +12,12 @@ writes what it learned about a source nobody had catalogued with
 YAML file nobody reads.
 
 The first line reports the two facts the workspace's copyright story rests on --
-whether this repo has a remote, and whether the cf pre-push reminder is in place.
-`cf init` refuses a remote at creation time and that refusal is the control, but
-a remote added afterwards passes through nothing: printing it on every run is
-what catches it.
+whether the repo holding it has a remote, and whether the cf pre-push reminder is
+in place.  `cf init` refuses a remote at creation time and that refusal is the
+control, but a remote added afterwards passes through nothing: printing it on
+every run is what catches it.  For a workspace created with `--allow-nested` the
+repo in question is the ENCLOSING one, which is where `cf init` put the reminder
+and the ignore rules.
 
     cf status
     cf status --companion ours
@@ -233,27 +235,46 @@ def _workspace_facts(workspace) -> dict:
 
 
 def _git_guard_facts(workspace) -> dict:
-    """Does this workspace repo have a remote, and is the cf pre-push hook there?
+    """Which repo guards this workspace, does it have a remote, is the hook there?
 
     Read fresh from the repo every time, because both facts can change after
     `cf init` -- `git remote add` and a hook somebody moved aside go through no
     cf command at all.
+
+    The guarded repo is not always the workspace itself: `cf init --allow-nested`
+    deliberately leaves the workspace without a ``.git`` of its own and installs
+    the reminder and the ignore rules in the ENCLOSING repo.  Keying on
+    ``root/.git`` alone called that supported layout "not a git repo" and, worse,
+    never looked at the remotes of the repo that actually holds the corpus -- the
+    one case (a remote added after init) this line exists to catch.
     """
-    from cfcmd.init import hook_state, remotes
+    from cfcmd.init import git_toplevel, hook_state, remotes
 
     root = workspace.root
+    guard = root if (root / ".git").exists() else git_toplevel(root)
+    policy = workspace.policy or {}
     return {
         "root": str(root),
-        "repo": (root / ".git").exists(),
-        "remotes": remotes(root) if (root / ".git").exists() else [],
-        "pre_push_hook": hook_state(root) if (root / ".git").exists() else "no-repo",
-        "allow_remote": bool((workspace.policy or {}).get("allow_remote", False)),
+        "repo": guard is not None,
+        "guarding": str(guard) if guard else "",
+        "nested": bool(guard and guard != root),
+        "remotes": remotes(guard) if guard else [],
+        "pre_push_hook": hook_state(guard) if guard else "no-repo",
+        "allow_remote": bool(policy.get("allow_remote", False)),
+        # `cf init --no-git` records policy.git: false. A workspace that was MEANT
+        # to have a repo either has one or is nested inside one, so the warning
+        # below is only ever about a workspace that lost the repo it should have.
+        "policy_git": bool(policy.get("git", True)),
     }
 
 
 def _print_git_guard(git: dict) -> None:
     """One line, every run: the workspace itself stays local, or it does not."""
     if not git["repo"]:
+        if not git["policy_git"]:
+            log.info("git       : no git repo (created with --no-git): no history for the "
+                     "corpus and no pre-push reminder")
+            return
         log.warn("this workspace is not a git repo: no history for the corpus and no pre-push "
                  "reminder -- `cf init <workspace>` sets both up")
         return
@@ -261,18 +282,23 @@ def _print_git_guard(git: dict) -> None:
             "foreign": "pre-push hook is NOT the cf one",
             "absent": "NO cf pre-push reminder",
             "no-hooks-dir": "no .git/hooks directory, so no reminder"}[git["pre_push_hook"]]
+    where = (f"guarding {git['guarding']} (this workspace is nested inside it) -- "
+             if git["nested"] else "")
+    whose = "the repo holding this workspace" if git["nested"] else "this workspace repo"
     if git["remotes"]:
-        log.info(f"git       : remote {', '.join(git['remotes'])}   ({hook})")
-        log.warn("this workspace repo HAS a remote: corpus/ quotes the source and the ledgers "
+        log.info(f"git       : {where}remote {', '.join(git['remotes'])}   ({hook})")
+        log.warn(f"{whose} HAS a remote: corpus/ quotes the source and the ledgers "
                  "hold unchallenged findings, so the workspace itself stays local -- run "
-                 f"`git -C {git.get('root', '<workspace>')} remote remove {git['remotes'][0]}`, "
+                 f"`git -C {git.get('guarding') or '<workspace>'} remote remove "
+                 f"{git['remotes'][0]}`, "
                  "and share findings with `cf route --redact-quotes` instead")
     else:
-        log.info(f"git       : no remote (the workspace stays local)   ({hook})")
+        log.info(f"git       : {where}no remote (the workspace stays local)   ({hook})")
     if git["pre_push_hook"] != "cf":
+        restore = "cf init <workspace>" + (" --allow-nested" if git["nested"] else "")
         log.warn(f"{hook}: the reminder that a push carries book quotes is missing. It is only a "
                  "reminder -- `git push --no-verify` and a fresh clone both defeat it, and having "
-                 "no remote is the real control -- but re-run `cf init <workspace>` to restore it")
+                 f"no remote is the real control -- but re-run `{restore}` to restore it")
 
 
 def _source_facts(workspace) -> list[dict]:
