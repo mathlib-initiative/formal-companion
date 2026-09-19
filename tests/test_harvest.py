@@ -843,8 +843,14 @@ class TestImportedCorpusJoinsThisWorkspacesRuns(unittest.TestCase):
             (out / path.name).write_text(json.dumps(doc), encoding="utf-8")
         rows = tally_mod.collect({"v1-hunt": out, "today": self.root / "today"})
         self.assertEqual(union_mod.union(rows, baseline_runs=["v1-hunt"], new_only=True), [])
-        self.assertEqual([e["item"] for e in agreed_mod.agreed(rows, min_runs=2,
-                                                              min_severity="low")],
+        # The union joins them -- its key is (source_id, repo, item, kind), which
+        # is the question --new-only asks.  AGREEMENT now needs the same
+        # declaration as well, and the two generations spell this one differently
+        # (`Riemann...` against the namespaced `TaoMeasure.Riemann...`), so the
+        # two runs are evidence about the same locus, not the same complaint.
+        self.assertEqual(agreed_mod.agreed(rows, min_runs=2, min_severity="low"), [])
+        self.assertEqual([e["item"] for e in agreed_mod.same_locus(rows, min_runs=2,
+                                                                  min_severity="low")],
                          ["In-text p.71"])
 
     def test_the_importer_refuses_a_map_onto_a_companion_nobody_has(self):

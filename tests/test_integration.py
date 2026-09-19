@@ -521,14 +521,27 @@ class TestImportCorpus(unittest.TestCase):
         self.assertEqual(receipt["actual"]["count"], 2)
 
     def test_the_gate_says_what_it_needs_when_it_cannot_build_one(self):
-        """No preset and no config: name both ways out, do not gate nothing."""
-        with self.assertRaises(CfError) as ctx:
-            self._cf("import-corpus", "--run-id", "nop", "--from", str(self.source),
-                     "--workspace", str(self.workspace), "--no-tally",
-                     "--preset", "", "--gate")
-        said = str(ctx.exception) + str(getattr(ctx.exception, "hint", ""))
+        """No preset and no config: name both ways out, and do not become a refusal.
+
+        The gate is on by default now, so this is the path every import of a
+        foreign directory takes.  It may not turn `cf import-corpus --from X`
+        into a hard failure -- the import still has to be possible -- so it warns
+        with both ways out, records `gate: null`, and leaves `cf tally` to repeat
+        that the run is ungated.
+        """
+        err = io.StringIO()
+        with redirect_stderr(err):                      # log.warn is a diagnostic
+            rc = self._cf("import-corpus", "--run-id", "nop", "--from", str(self.source),
+                          "--workspace", str(self.workspace), "--no-tally", "--preset", "")
+        said = err.getvalue()
+        self.assertEqual(rc, 0, self.out)
         self.assertIn("--preset", said)
         self.assertIn("--gate-config", said)
+        self.assertIn("UNGATED", said)
+        receipt = json.loads(
+            (self.workspace / "corpus" / "nop" / "RECEIPT.json").read_text())
+        self.assertIsNone(receipt["gate"])
+        self.assertTrue(receipt["complete"])
 
     V1_DEFECT_DOC = {
         "item": "In-text, book p. 71",

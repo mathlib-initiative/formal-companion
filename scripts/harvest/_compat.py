@@ -51,7 +51,7 @@ SUBSTANTIVE_KINDS = frozenset(getattr(
 #: harvested corpus fails on the receipt this module wrote.
 NON_FINDING_FILES = {"RECEIPT.json", "run.yaml", "run.json", "manifest.json",
                      "tally.json", "journal-harvest.json", "gate.json",
-                     "gate.local.json"}
+                     "gate.local.json", "queue_remaining.json"}
 
 
 def iter_finding_files(directory: str | Path) -> list[Path]:

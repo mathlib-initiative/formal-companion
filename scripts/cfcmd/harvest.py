@@ -42,10 +42,15 @@ def register(subparsers) -> None:
     p.add_argument("--execute", action="store_true", help="required when the source is remote")
     p.add_argument("--i-have-consent", action="store_true",
                    help="required with a remote --from: this moves data between two machines")
-    p.add_argument("--gate", action="store_true",
-                   help="run the findings gate over what landed; a failure fails the receipt")
+    gate = p.add_mutually_exclusive_group()
+    gate.add_argument("--gate", dest="gate", action="store_true", default=True,
+                      help="(the default) run the findings gate over what landed; a failure "
+                           "fails the receipt")
+    gate.add_argument("--no-gate", dest="gate", action="store_false",
+                      help="land the findings without validating them against the source text "
+                           "(the receipt then records gate: null, and `cf tally` says so)")
     p.add_argument("--gate-config", default=None,
-                   help="with --gate: the gate.json to use (default: runs/<id>/gate.local.json)")
+                   help="the gate.json to use (default: runs/<id>/gate.local.json)")
     p.add_argument("--allow-edition-mismatch", action="store_true",
                    help="accept findings judged against another edition (they are refused by default)")
     # NOT `--source`: that dest already belongs to `--from` above, and argparse
@@ -76,6 +81,12 @@ def run(args) -> int:
     if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):
         log.warn("harvest REFUSED the gate: the findings above do not validate against "
                  "gate.local.json. Fix or re-run them; the receipt is not complete.")
+    if not receipt.get("gate"):
+        # the trust boundary, said out loud: nothing downstream re-checks a quote
+        log.warn(f"UNGATED run {args.run_id}: RECEIPT.json carries no gate block, so no quote "
+                 "in this corpus was checked against the source text and no witness was "
+                 "checked at all. Every number computed from it is unvalidated. Re-run "
+                 f"`cf harvest {args.run_id} --gate-config <file>` when you have one.")
     if not (receipt.get("edition") or {}).get("ok", True):
         log.warn("harvest REFUSED the edition: findings judged against another edition are in "
                  "this corpus. Re-run them against the pinned edition, or pass "
@@ -136,30 +147,54 @@ def _check_remote_source(workspace, args, source: dict) -> None:
 
 
 def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
-    """A callable harvest() invokes on the landed corpus, or None when --gate is off.
+    """A callable harvest() invokes on the landed corpus, or None with ``--no-gate``.
 
     ``--gate-config`` always wins.  Otherwise a run this workspace PLANNED has a
     ``runs/<id>/gate.local.json`` and that is used.  A run it did not plan -- an
     imported v1 corpus -- has none, and the two presets written for imported
     corpora (``differential-legacy``, ``attack-legacy``) are gate-only, so
-    ``cf plan-run`` refuses to write one for them either.  ``--gate`` was
-    therefore unreachable for exactly the corpora it exists to check.  When the
-    caller says which preset and which sources the import was attributed to, the
-    config is built from those and written next to the corpus it judged, so the
-    receipt names a file a human can re-run.
+    ``cf plan-run`` refuses to write one for them either.  When the caller says
+    which preset and which sources the import was attributed to, the config is
+    built from those and written next to the corpus it judged, so the receipt
+    names a file a human can re-run.
+
+    The gate runs BY DEFAULT.  references/runbook-server.md already describes
+    that design ("the worker self-gates; the gate runs post-hoc at harvest"), and
+    it was a flag nobody had to pass, so a corpus could be tallied, adjudicated
+    and reported with no quote ever checked against ``text.txt``.  What a default
+    must not do is turn a harvest into a hard failure when no config can be
+    built at all -- an import of a foreign directory is the case -- so that path
+    warns loudly, leaves ``gate: null`` on the receipt, and lets the harvest
+    finish; ``cf tally`` reports every ungated run it counts.
     """
-    if not getattr(args, "gate", False):
+    if not getattr(args, "gate", True):
         return None
     explicit = getattr(args, "gate_config", None)
     planned = Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
     config = Path(explicit).expanduser() if explicit else planned
 
-    def _run_gate(dest: Path) -> dict:
+    def _run_gate(dest: Path) -> dict | None:
         cfg = config
         if not explicit and not cfg.exists():
-            cfg = write_local_gate(workspace, dest, run_id=args.run_id,
-                                   preset=preset, sources=sources, repos=repos)
+            try:
+                cfg = write_local_gate(workspace, dest, run_id=args.run_id,
+                                       preset=preset, sources=sources, repos=repos)
+            except CfError as exc:
+                log.warn(f"UNGATED: {exc.message} -- landing these findings without checking "
+                         f"a single quote against the source text. The receipt records "
+                         f"gate: null and `cf tally` repeats it. "
+                         f"{exc.hint or ''}".strip())
+                return None
         result = gate_mod.gate_corpus(dest, cfg)
+        if not result.get("files"):
+            # A gate asked to validate a directory and given nothing to validate
+            # has not passed anything: `files: 0, problems: [], ok: True` is how
+            # an empty corpus used to receipt as complete.
+            result = dict(result)
+            result["ok"] = False
+            result["problems"] = list(result.get("problems") or []) + [
+                f"{dest}: the gate found no findings to validate (an empty corpus is not a "
+                f"clean one)"]
         log.info(gate_mod.render(result))
         return result
 
@@ -179,7 +214,7 @@ def write_local_gate(workspace, dest: Path, *, run_id: str, preset: str, sources
 
     if not preset:
         raise CfError(
-            f"--gate has no gate config for run {run_id!r}",
+            f"the gate has no config for run {run_id!r}",
             hint="`cf plan-run` writes runs/<id>/gate.local.json for a run it planned; "
                  "for an imported corpus pass --preset (so the gate knows which rules "
                  "to apply) or --gate-config <file>")
@@ -195,6 +230,18 @@ def write_local_gate(workspace, dest: Path, *, run_id: str, preset: str, sources
             "images_dir": str(images) if obj.needs_images and images.is_dir() else None,
             "page_offset": source.offset,
         }
+    # The quote gate compares every quote with the source TEXT.  A workspace that
+    # has not prepared one cannot have a gate built for it, and a config naming a
+    # file that is not there would fail every row for a reason that is about this
+    # machine and not about the findings -- so this is the "no config can be
+    # built" case, which warns and records gate: null (the caller catches it).
+    if blocks and not any(Path(b["text"]).exists() for b in blocks.values()):
+        raise CfError(
+            f"no prepared source text for {', '.join(blocks)}, so the quote gate has nothing "
+            f"to check {run_id!r} against",
+            hint="`cf sources refresh <source-id>` prepares sources/<id>/text.txt (or "
+                 "`cf onboard <repo>` for a source this workspace has never seen); or pass "
+                 "--gate-config <file>, or --no-gate to land the findings unvalidated")
     # The repos of the CORPUS, not of the workspace: an imported corpus names the
     # repos it was judged over, and a baseline run's `ours`/`teorth`/`adam` are not
     # this workspace's companions.  Gating it against the workspace's names would

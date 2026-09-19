@@ -37,8 +37,10 @@ from typing import Iterable, Mapping, Sequence
 if __package__ in (None, ""):  # `python3 scripts/harvest/tally.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harvest._compat import (SEVERITIES, SUBSTANTIVE_KINDS, cf_items, iso_now,
-                             iter_finding_files, read_json, read_yaml)
+from harvest import harvest as harvest_mod
+from harvest._compat import (SEVERITIES, SUBSTANTIVE_KINDS, CfError, cf_items,
+                             hashing, iso_now, iter_finding_files, read_json,
+                             read_yaml)
 
 #: keys under which a findings file may carry its defect list (v1 and v2)
 FINDING_LISTS = ("disagreements", "findings")
@@ -182,6 +184,64 @@ def _kinds_for(kinds, source_id: str) -> Sequence[str] | None:
     return kinds
 
 
+def computed_finding_id(run_id: str, source_id: str, item: str, kind: str,
+                        decls: Sequence[str]) -> str:
+    """The defect's id, RECOMPUTED from its content -- never the worker's value.
+
+    ``references/vocabulary.md`` says the id "is assigned at harvest ... a worker
+    cannot be trusted to compute it".  It was not: the row's own ``finding_id``
+    was copied straight through into the union and the ledger, so a worker that
+    wrote ``"finding_id": "00" * 32`` on every row had it stored verbatim and
+    every adjudication linked by it.  The id is content-addressed, so the content
+    is what it is computed from, here, every time the corpus is read.
+
+    ``decls`` is the defect's WHOLE ``unfaithful_decls`` list, not the per-repo
+    slice the row is filed under: the id belongs to the defect, and one defect
+    can name two repos.  Each declaration is hashed AS WRITTEN (``finding_id``
+    strips it and nothing else); ``ledger/findings.py`` recomputes the same id
+    from the same document and the two must agree byte for byte, so neither may
+    hash a matching form.
+    """
+    return hashing.finding_id(run_id, source_id, item, kind, decls)
+
+
+def defect_key(source_id: str, item: str, kind: str, decls: Sequence[str]) -> str:
+    """:func:`computed_finding_id` with NO run id -- one key for one defect.
+
+    ``run_id`` is the first part of ``finding_id``, so the same defect found by
+    two runs gets two ids and nothing can link them: ``union --group-by
+    finding-id --new-only`` answered "everything is new".  This key drops it and
+    keeps every other part, so it is the id two runs of the same defect share.
+    It is a KEY, never written into a finding: the stored id is unchanged.
+    """
+    return hashing.finding_id("", source_id, item, kind, decls)
+
+
+def id_mismatches(rows: Iterable[dict]) -> list[dict]:
+    """Rows whose stored ``finding_id`` is not the one their content hashes to.
+
+    Recorded and reported rather than corrected in silence: a mismatch means
+    either a worker computed the id wrongly or wrote one it invented, and both
+    are facts about the corpus the receipt's reader needs.  The computed id is
+    the one every number and every ledger link uses.
+    """
+    seen: dict[tuple, dict] = {}
+    for row in rows:
+        stored = str(row.get("finding_id_stored") or "")
+        if not stored:
+            continue
+        key = (str(row.get("run") or ""), str(row.get("file") or ""), stored)
+        seen.setdefault(key, {
+            "run": key[0],
+            "file": key[1],
+            "item": str(row.get("item_raw") or ""),
+            "kind": row.get("kind"),
+            "stored": stored,
+            "computed": str(row.get("finding_id") or ""),
+        })
+    return [seen[k] for k in sorted(seen)]
+
+
 def rows_for_run(run_id: str, directory: str | Path,
                  kinds=None,
                  mode: str | None = None,
@@ -192,6 +252,14 @@ def rows_for_run(run_id: str, directory: str | Path,
     list or a ``{source_id: kinds}`` map, because the item grammar is per source.
     ``sources`` filters to the named source ids -- a corpus directory can hold
     two sources' files, and a tally of one of them must not count the other's.
+
+    Every row's ``finding_id`` is RECOMPUTED here (:func:`computed_finding_id`),
+    with the stored value kept as ``finding_id_stored`` when the two disagree.
+    The inputs to that hash are read from the same places ``ledger/findings.
+    normalise_finding`` reads them -- a defect's own ``run_id`` and ``source_id``
+    win over the harvest run's, the declarations go in as written -- because the
+    two readers key the two halves of the pipeline (tally/union/gate against
+    route/adjudicate/transcribe) and an id computed two ways links neither.
     """
     directory = Path(directory)
     mode = mode or run_mode(run_id, directory)
@@ -200,7 +268,17 @@ def rows_for_run(run_id: str, directory: str | Path,
     for path in iter_finding_files(directory):
         payload = read_json(path, default=None)
         if not isinstance(payload, dict):
-            continue
+            # A findings file that is valid JSON but not an object used to be
+            # skipped without a word, so the corpus was a file short and every
+            # number computed from it was quietly a lower bound -- the exact
+            # failure the receipt exists to prevent.  The gate already calls it
+            # an error; so does the count.
+            raise CfError(
+                f"{path.name} is not a findings object (it is "
+                f"{'null' if payload is None else type(payload).__name__})",
+                hint="a findings file is an object carrying `disagreements`; a corpus with "
+                     "one it cannot read makes every number a lower bound. Fix or re-run "
+                     f"that task, then `cf harvest {run_id}` again")
         source_id = str(payload.get("source_id") or "")
         if wanted is not None and source_id not in wanted:
             continue
@@ -209,23 +287,41 @@ def rows_for_run(run_id: str, directory: str | Path,
         item = collapse_to_book_item(item_raw, _kinds_for(kinds, source_id))
         for defect in _defects(payload):
             by_repo = _decl_repos(defect) or {UNATTRIBUTED: []}
+            row_source = str(defect.get("source_id") or source_id)
+            all_decls = [str(d).strip() for d in (defect.get("unfaithful_decls") or [])
+                         if str(d).strip()]
+            kind = defect.get("kind")
+            # The id's run part is the run that FOUND the defect.  A defect that
+            # carries its own ``run_id`` keeps it, because the ledger reader does
+            # (``normalise_finding``: ``raw.get("run_id") or run_id``) and a
+            # routed row read back has to hash to the id the corpus carries.  The
+            # row's ``run`` below stays the run this corpus directory IS.
+            row_run = str(defect.get("run_id") or run_id or "")
+            computed = computed_finding_id(row_run, row_source, item_raw,
+                                          str(kind or "").strip(), all_decls)
+            stored = str(defect.get("finding_id") or "")
             for repo, decls in sorted(by_repo.items()):
-                rows.append({
+                row = {
                     "run": run_id,
                     "mode": mode,
                     "file": path.name,
                     "repo": repo,
-                    "source_id": str(defect.get("source_id") or source_id),
+                    "source_id": row_source,
                     "source_sha": str(defect.get("source_sha") or source_sha),
                     "item_raw": item_raw,
                     "item": item,
-                    "kind": defect.get("kind"),
+                    "kind": kind,
                     "severity": defect.get("severity"),
                     "concept": defect.get("concept"),
                     "decls": sorted(decls),
-                    "finding_id": defect.get("finding_id"),
+                    "finding_id": computed,
+                    "defect_key": defect_key(row_source, item_raw,
+                                             str(kind or "").strip(), all_decls),
                     "faithful": defect.get("faithful"),
-                })
+                }
+                if stored and stored != computed:
+                    row["finding_id_stored"] = stored
+                rows.append(row)
     return rows
 
 
@@ -382,6 +478,12 @@ def tally(runs: dict[str, str | Path], kinds=None,
         # themselves and therefore cannot join the same item under another
         # spelling.  Reported, never dropped.
         "unjoinable": unjoinable(rows, kinds),
+        # a worker-written finding_id that is not the id the row's content
+        # hashes to.  The computed one is used; the disagreement is recorded.
+        "finding_id_mismatches": id_mismatches(rows),
+        # runs whose RECEIPT.json carries no gate block: their quotes were never
+        # checked against the source text, and every number below includes them.
+        "ungated": harvest_mod.ungated_runs(runs),
     }
 
 
@@ -423,6 +525,17 @@ def render(result: dict, repos: Sequence[str] | None = None) -> str:
         lines.append("UNJOINABLE in-text labels (reported, not dropped): "
                      + ", ".join("%s (%s)" % (u["item_raw"], u["reason"])
                                  for u in result["unjoinable"]))
+    if result.get("finding_id_mismatches"):
+        bad = result["finding_id_mismatches"]
+        lines.append(f"FINDING_ID MISMATCH in {len(bad)} row(s): the id the worker wrote is not "
+                     "the id the row's content hashes to. The computed id is the one every "
+                     "number and every ledger link below uses: "
+                     + ", ".join(f"{m['file']} ({m['stored'][:12]} != {m['computed'][:12]})"
+                                 for m in bad[:6]))
+    if result.get("ungated"):
+        lines.append(f"UNGATED run(s): {', '.join(result['ungated'])} -- no gate block in "
+                     "RECEIPT.json, so no quote in them was checked against the source text. "
+                     "Re-harvest without --no-gate.")
     for key, data in result.get("groups", {}).items():
         repo = data.get("repo", key)
         if repos and repo not in repos:
