@@ -264,6 +264,90 @@ class TestPageRecurrenceIsRefused(BookTestCase):
         self.assertTrue(vf.quote_ok(flat, RUNNING_HEAD)[0])  # unbindable, so unrefused
 
 
+class TestQuoteIsBoundToItsItem(BookTestCase):
+    """A quote must be where the item it evidences is stated.
+
+    Before the fix ``item`` was read for nothing but the finding id, so a
+    document about ``Exercise 2.9.9`` passed on a sentence six pages away.
+    """
+
+    def test_the_item_page_comes_from_the_items_own_heading(self):
+        bind = vf.PageBind(self.cfg, SOURCE_ID, self.book, "Exercise 2.3.4")
+        self.assertEqual(bind.pages, [QUOTE_1_PAGE])
+        self.assertIn("heading", bind.how)
+
+    def test_a_quote_from_another_section_is_refused_with_the_delta(self):
+        errs = self.errs(doc_for(QUOTE_1, item="Exercise 2.9.9"))
+        self.assertTrue(any("not the item's passage" in e for e in errs), errs)
+        self.assertTrue(any("6 pages from" in e for e in errs), errs)
+
+    def test_the_bind_holds_for_a_disagreement_quote_too(self):
+        doc = doc_for(item="Exercise 2.9.9")
+        doc["book_passage_quote"] = PAGE_7.split(".", 1)[1].strip()
+        errs = self.errs(doc)
+        self.assertTrue(any("disagreement[0].book_quote" in e and "not the item's passage" in e
+                            for e in errs), errs)
+
+    def test_a_neighbouring_page_is_inside_the_window(self):
+        """An item's statement runs over a page break; +-2 pages is not a defect."""
+        bind = vf.PageBind(self.cfg, SOURCE_ID, self.book, "Exercise 2.3.4")
+        near = vf.QuoteMatch(True, "verbatim", pages=[QUOTE_1_PAGE + vf.PAGE_BIND_WINDOW])
+        far = vf.QuoteMatch(True, "verbatim", pages=[QUOTE_1_PAGE + vf.PAGE_BIND_WINDOW + 1])
+        self.assertEqual(bind.problem("q", near), "")
+        self.assertIn("not the item's passage", bind.problem("q", far))
+
+    def test_an_unbindable_item_is_recorded_not_passed_over(self):
+        doc = doc_for(item="In-text, first paragraph of the chapter")
+        self.assertEqual(self.errs(doc), [])  # unbound is not a failure
+        notes = vf.binding_notes(doc, "x.json", self.cfg, self.book)
+        self.assertTrue(any(n.startswith("page unbound:") for n in notes), notes)
+        self.assertTrue(any("neither a numbered label nor a printed page" in n for n in notes))
+
+    def test_an_item_naming_a_printed_page_uses_the_sources_offset(self):
+        """``In-text, book p. 71`` is bindable when the run said what the offset is."""
+        cfg = gate_cfg("attack-vac", self.book_path, source={"page_offset": 2})
+        bind = vf.PageBind(cfg, SOURCE_ID, self.book, "In-text, book p. 3")
+        self.assertEqual(bind.pages, [5])
+        self.assertIn("page_offset", bind.how)
+        # `page_offset: 0` means the run does not know it, so the gate binds
+        # nothing rather than pretending the printed page is the PDF page.
+        self.assertEqual(self.cfg.source(SOURCE_ID)["page_offset"], 0)
+        self.assertEqual(vf.PageBind(self.cfg, SOURCE_ID, self.book,
+                                     "In-text, book p. 3").pages, [])
+
+    def test_gate_json_item_pages_win_over_the_heading_search(self):
+        """A caller holding the source's items.json can hand the map over."""
+        cfg = gate_cfg("attack-vac", self.book_path)
+        cfg.source(SOURCE_ID)["item_pages"] = {"Exercise  2.3.4": 4}
+        bind = vf.PageBind(cfg, SOURCE_ID, self.book, "Exercise 2.3.4")
+        self.assertEqual((bind.pages, bind.how), ([4], "gate.json item_pages"))
+        # and it is read from gate.json, not only settable in process
+        data = dict(cfg.data)
+        data["sources"] = {SOURCE_ID: {**cfg.data["sources"][SOURCE_ID],
+                                       "item_pages": {"Exercise 2.3.4": [4, 5]}}}
+        reloaded = vf.GateConfig(data)
+        self.assertEqual(vf.PageBind(reloaded, SOURCE_ID, self.book,
+                                     "Exercise 2.3.4").pages, [4, 5])
+
+    def test_the_legacy_presets_do_not_bind_and_say_so(self):
+        """The imported corpus has landed rows the bind would reject; measured."""
+        for name in ("attack-legacy", "differential-legacy"):
+            with self.subTest(preset=name):
+                self.assertFalse(presets_mod.gate_config(
+                    presets_mod.get(name), run_id="r",
+                    sources={SOURCE_ID: {"text": "t", "sha256": SOURCE_SHA}},
+                    repos=["ours"])["bind_item_page"])
+        for name in ("differential-text", "attack-vac", "attack-hunt", "mechanical"):
+            with self.subTest(preset=name):
+                self.assertTrue(presets_mod.gate_config(
+                    presets_mod.get(name), run_id="r",
+                    sources={SOURCE_ID: {"text": "t", "sha256": SOURCE_SHA}},
+                    repos=["ours"])["bind_item_page"])
+        legacy = gate_cfg("attack-legacy", self.book_path, repos=["ours"])
+        self.assertEqual(vf.validate_doc(doc_for(QUOTE_1, item="Exercise 2.9.9"),
+                                         "x.json", legacy, self.books), [])
+
+
 # --------------------------------------------------------------------------- #
 # prompts-workflows#9 — the copyright ceiling
 # --------------------------------------------------------------------------- #
