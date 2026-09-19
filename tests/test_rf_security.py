@@ -122,5 +122,84 @@ class WorkspacePathIdsTest(unittest.TestCase):
                     self.assertEqual(os.path.normpath(result), str(result))
                     self.assertTrue(str(result).startswith(str(self.ROOT) + os.sep), result)
 
+
+# ==========================================================================
+# security-safety#4 -- the errata fetch is bounded (first half: the curl caps)
+# ==========================================================================
+class ErrataFetchCapsTest(unittest.TestCase):
+    def setUp(self):
+        from sources import fetch_errata
+
+        self.mod = fetch_errata
+
+    def test_curl_argv_caps_size_redirects_and_scheme(self):
+        argv = self.mod.curl_argv("/usr/bin/curl", "https://example.invalid/errata",
+                                  "/tmp/out.html", 60)
+        self.assertIn("--max-filesize", argv)
+        self.assertEqual(argv[argv.index("--max-filesize") + 1], self.mod.MAX_FILESIZE)
+        self.assertIn("--max-redirs", argv)
+        self.assertEqual(argv[argv.index("--max-redirs") + 1], self.mod.MAX_REDIRS)
+        # https only on the request AND on every redirect: curl blocks file:// on
+        # redirect by itself, but not ftp://
+        self.assertEqual(argv[argv.index("--proto") + 1], "=https")
+        self.assertEqual(argv[argv.index("--proto-redir") + 1], "=https")
+        self.assertIn("--max-time", argv)
+        # the effective URL is collected, so a redirect is in the audit trail
+        self.assertIn("%{url_effective}", argv[argv.index("-w") + 1])
+
+    def test_a_plaintext_url_is_refused_by_name(self):
+        for url in ("http://169.254.169.254/latest/meta-data/",
+                    "http://127.0.0.1:8000/errata.html"):
+            with self.assertRaises(ValueError) as caught:
+                self.mod.curl(url)
+            self.assertIn("https", str(caught.exception))
+
+    def test_a_non_http_url_is_still_refused(self):
+        with self.assertRaises(ValueError):
+            self.mod.curl("file:///etc/passwd")
+
+    def _fake_curl(self, body: bytes, stdout: str):
+        """Replace the module's own `subprocess`/`shutil` handles, nothing global."""
+        import subprocess as sp
+        import types
+        from unittest import mock
+
+        def fake_run(argv, capture_output=True, text=True):
+            with open(argv[argv.index("-o") + 1], "wb") as fh:
+                fh.write(body)
+            return sp.CompletedProcess(argv, 0, stdout=stdout, stderr="")
+
+        patches = [
+            mock.patch.object(self.mod, "subprocess", types.SimpleNamespace(run=fake_run)),
+            mock.patch.object(self.mod, "shutil",
+                              types.SimpleNamespace(which=lambda name: "/usr/bin/" + name)),
+        ]
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def test_an_oversized_body_is_refused_after_the_transfer(self):
+        """--max-filesize is a no-op when the response declares no length."""
+        self._fake_curl(b"x" * (self.mod.MAX_BYTES + 1), "200\nhttps://example.invalid/e\n")
+        with self.assertRaises(RuntimeError) as caught:
+            self.mod.curl("https://example.invalid/e")
+        self.assertIn("over the", str(caught.exception))
+
+    def test_the_effective_url_is_recorded_and_a_redirect_is_visible(self):
+        landed = "https://elsewhere.invalid/errata-page"
+        self._fake_curl(b"<html><body><p>Errata</p><ul><li>page 71: fix</li></ul>"
+                        b"</body></html>", "200\n%s\n" % landed)
+        out_dir = scratch(self)
+        meta = self.mod.fetch("https://example.invalid/errata", str(out_dir),
+                             source_id="src", source_sha="a" * 64, provenance="registry")
+        self.assertEqual(meta["url_effective"], landed)
+        self.assertTrue(meta["url_redirected"])
+        self.assertEqual(json.loads((out_dir / "errata.json").read_text())["url_effective"],
+                         landed)
+        self.assertIn("REDIRECTED to: %s" % landed,
+                      (out_dir / "errata.md").read_text(encoding="utf-8"))
+        # the raw HTML is still kept verbatim: that is why this fetcher exists
+        self.assertIn("<li>", (out_dir / "errata.raw.html").read_text(encoding="utf-8"))
+
 if __name__ == "__main__":                              # pragma: no cover
     unittest.main()
