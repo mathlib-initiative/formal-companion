@@ -966,7 +966,8 @@ def _validate_disagreement(
     return errs
 
 
-def partial_quotes(doc: Any, name: str, book: "BookText | str") -> list[str]:
+def partial_quotes(doc: Any, name: str, book: "BookText | str", *,
+                   max_chars: int = MAX_QUOTE_CHARS) -> list[str]:
     """Quotes in ``doc`` that matched only as a window — what nobody verified.
 
     The gate prints these on success.  A quote that is 70% genuine and 30%
@@ -977,26 +978,21 @@ def partial_quotes(doc: Any, name: str, book: "BookText | str") -> list[str]:
     out: list[str] = []
     if not isinstance(doc, dict):
         return out
-    todo = [("book_passage_quote", doc.get("book_passage_quote"))]
-    for i, g in enumerate(doc.get("disagreements") or []):
-        if isinstance(g, dict) and g.get("book_quote"):
-            todo.append((f"disagreement[{i}].book_quote", g["book_quote"]))
-    for where, q in todo:
-        if not q:
-            continue
-        ok, why = quote_ok(book, q)
-        if ok and why.startswith("partial"):
-            out.append(f"{name}: {where} {why}")
+    for where, q in _quotes_of(doc):
+        found = quote_match(book, q, max_chars=max_chars)
+        if found.ok and found.why.startswith("partial"):
+            out.append(f"{name}: {where} {found.why}")
     return out
 
 
 def _quotes_of(doc: dict[str, Any]) -> list[tuple[str, str]]:
-    """``(where, quote)`` for every quote in a document, defect key or not."""
+    """``(where, quote)`` for every quote in a document, under whichever key."""
     todo = [("book_passage_quote", doc.get("book_passage_quote"))]
     for key in DEFECT_LISTS:
+        label = "disagreement" if key == "disagreements" else key
         for i, g in enumerate(doc.get(key) or []):
             if isinstance(g, dict) and g.get("book_quote"):
-                todo.append((f"{key}[{i}].book_quote", g["book_quote"]))
+                todo.append((f"{label}[{i}].book_quote", g["book_quote"]))
     return [(where, q) for where, q in todo if q]
 
 
@@ -1321,7 +1317,7 @@ def main(argv: list[str] | None = None) -> int:
             continue
         problems.extend(validate_doc(doc, f.name, cfg, books, decl_index))
         book = _book_for(books, doc_source_id(doc, cfg))
-        partial.extend(partial_quotes(doc, f.name, book))
+        partial.extend(partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars))
         notes.extend(binding_notes(doc, f.name, cfg, book))
 
     if problems:
