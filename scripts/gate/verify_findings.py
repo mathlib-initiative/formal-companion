@@ -818,10 +818,36 @@ def validate_doc(
                 f"{name}: match[{i}] verdict {m.get('verdict')!r} not in {sorted(cfg.verdicts)}"
             )
 
+    # --- every key that CARRIES defect rows, not just the one it is written under -
+    # `harvest/tally.py` and `ledger/findings.py` count `disagreements` and
+    # `findings`; the gate validated only the first, so a file whose rows sat
+    # under `findings` was gated on an empty list and counted on the union --
+    # kind vocabulary, verdict vocabulary, witness rule, repo allowlist and quote
+    # gate all bypassed by one key name.
     run_id = doc.get("run_id") or cfg.run_id
-    for i, g in enumerate(doc.get("disagreements") or []):
-        errs.extend(_validate_disagreement(g, i, name, cfg, book, decl_index, run_id, doc,
-                                           source_id, bind=bind))
+    for key in DEFECT_LISTS:
+        rows = doc.get(key)
+        if rows is None:
+            continue
+        if not isinstance(rows, list):
+            errs.append(f"{name}: {key!r} must be a list of defect rows, got {type(rows).__name__}")
+            continue
+        label = "disagreement" if key == "disagreements" else key
+        for i, g in enumerate(rows):
+            errs.extend(_validate_disagreement(g, i, name, cfg, book, decl_index, run_id, doc,
+                                               source_id, bind=bind, key=label))
+    # and the NEXT plausible key name fails loudly instead of silently: a
+    # top-level array of objects carrying `kind` is a defect list, whatever it is
+    # called.  No baseline file carries one (measured over all 2,672).
+    for other, value in doc.items():
+        if other in DEFECT_LISTS or other == "matches" or not isinstance(value, list):
+            continue
+        if any(isinstance(x, dict) and "kind" in x for x in value):
+            errs.append(
+                f"{name}: top-level {other!r} is an array of defect rows the gate does not "
+                f"validate — the keys that are gated and counted are "
+                f"{', '.join(repr(k) for k in DEFECT_LISTS)}"
+            )
     return errs
 
 
