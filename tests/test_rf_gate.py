@@ -226,6 +226,29 @@ class TestOperatorPassIsAnchored(BookTestCase):
         self.assertFalse(vf.has_operators(QUOTE_1.replace("<=", "")))
         self.assertFalse(vf.quote_ok(self.book, QUOTE_1.replace("<=", ""))[0])
 
+    def test_an_operator_at_the_quotes_own_EDGE_is_checked_too(self):
+        """A verbatim window is the whole quote, so its edges are its own.
+
+        The window was composed from the gaps BETWEEN its words only, so an
+        operator prepended or appended to an otherwise verbatim quote was still
+        certified as ``verbatim``: ``quote_ok(bk, QUOTE + ' ≠')`` passed.
+        """
+        for doctored in (QUOTE_1 + " ≠", "≥ " + QUOTE_1):
+            with self.subTest(quote=doctored[:12]):
+                ok, why = vf.quote_ok(self.book, doctored)
+                self.assertFalse(ok, "an edge operator was certified")
+                self.assertIn("OPERATOR", why)
+                self.assertIn("does not", why)  # the quote carries one the book lacks
+
+    def test_a_partial_windows_edges_stay_out_of_scope(self):
+        """The unmatched remainder has no book span, so its operators cannot be
+        compared: the quote below keeps its real operators and only its invented
+        tail carries one, and that tail is already named as UNVERIFIED."""
+        m = vf.quote_match(self.book, QUOTE_1 + " and therefore m(X) = 1 holds for every such set")
+        self.assertTrue(m.ok, m.why)
+        self.assertTrue(m.why.startswith("partial"), m.why)
+        self.assertIn("UNVERIFIED", m.why)
+
     def test_the_negated_glyphs_are_in_the_operator_table(self):
         for glyph in "∉∌⊄⊅⊃⊇⊊⊋≰≱≢∀∃∅":
             with self.subTest(glyph=glyph):
@@ -277,6 +300,23 @@ class TestPageRecurrenceIsRefused(BookTestCase):
     def test_the_whole_document_fails_on_a_running_head_passage(self):
         errs = self.errs(doc_for(RUNNING_HEAD))
         self.assertTrue(any("book_passage_quote" in e and "running head" in e for e in errs), errs)
+
+    def test_the_recurrence_ceiling_is_a_per_run_key_like_the_others(self):
+        """A source may legitimately repeat a short sentence, so there is a way out.
+
+        ``check_operators``, ``bind_item_page`` and the two quote-length keys are
+        all per-run; this refusal was the one new rule with no escape, and it fires
+        for every preset including the two ``*-legacy`` ones.
+        """
+        self.assertEqual(self.cfg.max_match_pages, vf.MAX_MATCH_PAGES)
+        loose = gate_cfg("attack-vac", self.book_path, max_match_pages=len(PAGES) + 1)
+        self.assertEqual(loose.max_match_pages, len(PAGES) + 1)
+        self.assertFalse(vf.quote_ok(self.book, RUNNING_HEAD)[0])
+        self.assertEqual(vf.validate_doc(doc_for(RUNNING_HEAD), "x.json", loose, self.books), [])
+        # 0 turns the rule off, the way `max_quote_chars: 0` already does
+        self.assertTrue(vf.quote_match(self.book, RUNNING_HEAD, max_pages=0).ok)
+        off = gate_cfg("attack-vac", self.book_path, max_match_pages=0)
+        self.assertEqual(vf.validate_doc(doc_for(RUNNING_HEAD), "x.json", off, self.books), [])
 
     def test_a_flat_string_book_binds_nothing_and_does_not_pretend_to(self):
         """``pair/`` and ``detect/`` hand in a flat string; they must still work."""
@@ -654,6 +694,42 @@ class TestTheGateRunsNoProgramTheWorkerChose(WorktreeTestCase):
 
         self.assertEqual(vf._GIT_SAFE_CONFIG, gitsafe.SAFE_CONFIG)
         self.assertEqual(vf._GIT_SAFE_ENV, gitsafe.SAFE_ENV)
+
+    def test_the_gate_says_when_nothing_checked_ownership(self):
+        """The rule that catches emptying a neighbour's findings file is opt-in.
+
+        ``verify_findings.py --changed-files`` is what the tend config runs, and
+        with no ``--task-id`` the pair rule alone cannot see a rewrite of another
+        worker's file.  That state has to be legible in the OK line, not implied by
+        its absence, because the invocation in templates/tend/ passes no task id.
+        """
+        self.write_own_pair()
+        self.git("add", "-A")
+        self.git("commit", "-qm", "mine")
+        outside = tempfile.TemporaryDirectory(dir=TMPDIR)
+        self.addCleanup(outside.cleanup)
+        home = pathlib.Path(outside.name)
+        book = home / "text.txt"
+        book.write_text(BOOK, encoding="utf-8")
+        cfg = gate_cfg("attack-vac", book)
+        (home / "gate.json").write_text(json.dumps(cfg.data), encoding="utf-8")
+        (self.root / "findings" / "carol.json").write_text(
+            json.dumps(doc_for()), encoding="utf-8")
+        script = str(SKILL / "scripts" / "gate" / "verify_findings.py")
+        argv = [sys.executable, script, "--gate-config", str(home / "gate.json"),
+                "--root", str(self.root), "--changed-files", "--base", "main",
+                # alice's landed file is a stub, so name the one this contribution
+                # wrote: the changed-file half of the gate is what is under test
+                "--findings", str(self.root / "findings" / "carol.json")]
+        bare = subprocess.run(argv, capture_output=True, text=True,
+                              env={**self.env, "TEND_TASK_ID": ""})
+        self.assertEqual(bare.returncode, 0, bare.stdout + bare.stderr)
+        self.assertIn("OWNERSHIP UNCHECKED", bare.stdout)
+        self.assertIn("--task-id", bare.stdout)
+        named = subprocess.run(argv + ["--task-id", "carol"], capture_output=True, text=True,
+                               env=self.env)
+        self.assertEqual(named.returncode, 0, named.stdout + named.stderr)
+        self.assertIn("ownership checked against task carol", named.stdout)
 
     def test_no_bare_git_invocation_in_the_tree(self):
         """Tree-wide, not one adapter attribute: the hole was in the gate.
