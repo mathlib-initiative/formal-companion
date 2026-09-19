@@ -18,6 +18,14 @@ as it was:
   checks off, by default, on the box that holds the companion checkouts;
 * preflight printed ``tend --version`` and compared it with nothing.
 
+A second pass added the cases an independent review of that work found: a
+non-string id coerced into a legal path, a nested workspace whose guard `cf
+status` never looked at, a standing warning about a deliberate ``--no-git``, a
+before-digest recomputed from a moving local checkout, a run.yaml record that
+claimed to know whether the sandbox was bypassed, a worker allowlist that denied
+the gate its own prompt orders it to run, and a refused remote step whose record
+went out with the exception.
+
 Stdlib unittest only, no network, and nothing outside a temp directory.
 """
 from __future__ import annotations
@@ -93,6 +101,12 @@ class WorkspacePathIdsTest(unittest.TestCase):
     HOSTILE = ("../../../../tmp/pwned", "/etc/cron.d/evil", "..", ".", "", "   ",
                "a/b", "a\\b", "\x00evil")
 
+    #: a non-string is a CALLER that lost its id. `str(value)` would have coerced
+    #: these into the legal names `sources/None` and `sources/7`, where the
+    #: unvalidated code raised TypeError: the hardening must not turn a loud
+    #: programming error into a quietly wrong path.
+    NOT_STRINGS = (None, 7, 0, b"bytes", Path("/etc"), ["a"])
+
     def test_no_accessor_can_be_walked_out_of_the_workspace(self):
         paths = WorkspacePaths(root=self.ROOT)
         for label, call in self.ACCESSORS:
@@ -100,6 +114,15 @@ class WorkspacePathIdsTest(unittest.TestCase):
                 with self.subTest(accessor=label, id=bad):
                     with self.assertRaises(CfError):
                         call(paths, bad)
+
+    def test_a_non_string_id_is_refused_and_not_coerced(self):
+        paths = WorkspacePaths(root=self.ROOT)
+        for label, call in self.ACCESSORS:
+            for bad in self.NOT_STRINGS:
+                with self.subTest(accessor=label, id=bad):
+                    with self.assertRaises(CfError) as caught:
+                        call(paths, bad)
+                    self.assertIn("not a string", caught.exception.message)
 
     def test_the_reviewers_three_one_liners(self):
         """The exact values the finding printed: /tmp/pwned, /etc, and a sibling."""

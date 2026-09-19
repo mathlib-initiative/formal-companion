@@ -45,8 +45,18 @@ def _safe_id(value: str, kind: str = "id") -> str:
 
     A separator is refused first, so ``..`` can only ever be the whole string:
     an interior dot (``smith-analysis-1.2``) is a legal name and stays legal.
+
+    A non-string is refused BEFORE anything is coerced.  ``str(value)`` would have
+    turned ``None`` into ``sources/None`` and ``7`` into ``sources/7``, where the
+    unvalidated code raised ``TypeError`` outright: a hardening pass must not turn
+    a loud programming error into a quietly wrong path (CLAUDE.md S4, "low
+    confidence is a refusal").
     """
-    text = str(value)
+    if not isinstance(value, str):
+        raise CfError(f"unsafe {kind} {value!r}: it is not a string",
+                      hint="ids are strings: a discovered (slugified) id, or one typed with "
+                           "--source/--name. A None here is a caller that lost its id")
+    text = value
     if not text or not text.strip():
         problem = "it is empty"
     elif "/" in text or "\\" in text:
