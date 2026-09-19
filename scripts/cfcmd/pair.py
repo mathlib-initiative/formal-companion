@@ -362,7 +362,13 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
         sources={source_id: {"text": str(paths.source_text(source_id)),
                              "sha256": source_sha,
                              "images_dir": str(images) if images.is_dir() else None,
-                             "page_offset": offset}}))
+                             "page_offset": offset,
+                             # the PINNED-TEXT page per item, which is what the
+                             # gate binds a quote to.  `pages` above is the
+                             # PRINTED page, for detect's own printed_page field:
+                             # the two differ by `offset` and swapping them puts
+                             # every item that far from its own quotes.
+                             "item_pages": presets_mod.item_pages(index_by_item)}}))
     books, problems = vf.load_sources(cfg)
     for doc in docs:
         problems += vf.validate_doc(doc, mech_corpus.slug(doc["item"]) + ".json", cfg, books)

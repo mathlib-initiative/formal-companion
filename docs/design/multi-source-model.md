@@ -1018,8 +1018,12 @@ Rows and files carry the source everywhere it can be ambiguous:
 - `pairs/<source_id>/*`: the source is in the path **and** in each row.
 - `runs/<id>/run.yaml`: `sources: [<id>, …]` plus per-task `source_id`.
 - `runs/<id>/gate.json`: `sources: {<id>: {text, sha256, text_sha256,
-  page_offset, images_dir}}` — the gate picks the text by the document's
-  `source_id`.
+  page_offset, images_dir, item_pages}}` — the gate picks the text by the
+  document's `source_id`. `item_pages` is `{item: page OF THE PINNED TEXT}`
+  (`items.json`'s `pdf_page`, never its printed `page`), the first of the three
+  routes the gate uses to bind a quote to the page its item is stated on. The
+  gate also reads a top-level `max_match_pages`: how many pages the matched text
+  may occur on before it is refused as a running head (0 turns that off).
 - findings documents and every `disagreements[]` row: `source_id`, `source_sha`.
 - ledger rows, routed rows, tally rows, union entries: `source_id`,
   `source_sha`.
@@ -1678,7 +1682,12 @@ def gate_config(preset: Preset, *, run_id: str, sources: Mapping[str, Mapping],
                 repos: list[str], decl_index: str | None = None) -> dict:
     """gate.json `sources` block:
        {source_id: {"text": <path>, "sha256": …, "text_sha256": …,
-                    "images_dir": …, "page_offset": int}}"""
+                    "images_dir": …, "page_offset": int,
+                    "item_pages": {item: pdf_page}}}
+       plus a top-level "max_match_pages": int (0 = off)."""
+def item_pages(items: Mapping[str, Mapping]) -> dict[str, int]:
+    """{item: pdf_page} for that block, from an items_index — the PINNED-TEXT
+    page, never items.json's printed `page`."""
 
 # gate/verify_findings.py   (rsynced to a host with no cflib: keep it stdlib-only)
 class GateConfig:
