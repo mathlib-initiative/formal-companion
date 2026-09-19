@@ -59,6 +59,16 @@ BOOK_TEXT = ("Exercise 1.2.4. Let d >= 1 and let E be an elementary subset of R^
              "Show that the elementary measure is finitely additive.\n")
 BOOK_QUOTE = "Show that the elementary measure is finitely additive."
 
+#: an item whose NAME contains a colon.  The baseline corpus holds exactly one,
+#: and a label parser that takes the last colon-separated field truncates it to
+#: the tail of its parenthetical -- which is the same broken join, for a shape
+#: that really occurs.
+COLON_ITEM = ("In-text convention, book p. 29 (Exercise 1.2.5: extension of "
+              "Jordan inner measure to unbounded sets)")
+#: an item whose name contains an underscore, which the legacy spelling of a
+#: label (``chal0:Exercise_1.2.4``) turns into a space
+UNDERSCORE_ITEM = "In-text convention, book p. 71 (outer_measure normalisation)"
+
 
 def scratch(case: unittest.TestCase) -> Path:
     path = Path(tempfile.mkdtemp(dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
@@ -149,6 +159,107 @@ def cf(*argv) -> tuple[int, str]:
     return rc, buf.getvalue()
 
 
+def write_journal(case: unittest.TestCase, rows: list, labels: dict) -> Path:
+    """A ``wf_*`` directory holding ``journal.jsonl`` and its agent labels."""
+    wf = scratch(case) / "wf_x"
+    wf.mkdir()
+    for agent_id, label in labels.items():
+        (wf / f"agent-{agent_id}.meta.json").write_text(
+            json.dumps({"label": label}), encoding="utf-8")
+    (wf / "journal.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    return wf
+
+
+def orphan_journal(case: unittest.TestCase) -> Path:
+    """One recovered item and one ruling that names a different item."""
+    return write_journal(case, [
+        {"type": "result", "agentId": "a1", "value": {
+            "item": "Exercise 1.2.4", "book_located": True, "matches": [],
+            "disagreements": [], "coverage_notes": ""}},
+        {"type": "result", "agentId": "a2", "value": {
+            "ruling_survives": False, "evidence": "e"}},
+    ], {"a1": "work:Exercise 1.2.4", "a2": "chal0:Exercise 9.9.9#0"})
+
+
+# ---------------------------------------------------------------------------
+# rendering one `label:` expression out of workflows/*.js
+#
+# The round-trip has to be driven by the expressions the scripts really contain,
+# not by a hand-written table of labels: a table is how the contract came to
+# pin `chal0:Exercise_1.2.4` while the script emitted `chal0:Exercise 1.2.4#0`.
+
+_SLICE = re.compile(r"^\((?P<inner>.+)\)\.slice\((?P<start>\d+),\s*(?P<stop>\d+)\)$")
+_GROUP = re.compile(r"^\((?P<inner>.+)\)$")
+_INCR = re.compile(r"^(?P<name>[A-Za-z_][\w.]*)\s*\+\s*(?P<add>\d+)$")
+
+
+def _split_plus(expression: str) -> list:
+    """Top-level ``+`` operands of a JS string concatenation."""
+    out, depth, quote, buf = [], 0, "", ""
+    for ch in expression:
+        if quote:
+            buf += ch
+            if ch == quote:
+                quote = ""
+            continue
+        if ch in "'\"":
+            quote, buf = ch, buf + ch
+            continue
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "+" and depth == 0:
+            out.append(buf.strip())
+            buf = ""
+            continue
+        buf += ch
+    out.append(buf.strip())
+    return [term for term in out if term]
+
+
+def _term(term: str, env: dict) -> str:
+    if len(term) >= 2 and term[0] == term[-1] == "'":
+        return term[1:-1]
+    sliced = _SLICE.match(term)
+    if sliced:
+        value = _term("(" + sliced.group("inner") + ")", env)
+        return value[int(sliced.group("start")):int(sliced.group("stop"))]
+    grouped = _GROUP.match(term)
+    if grouped:
+        inner = grouped.group("inner")
+        incr = _INCR.match(inner)
+        if incr:
+            return str(int(env[incr.group("name")]) + int(incr.group("add")))
+        if "||" in inner:
+            for alternative in (a.strip() for a in inner.split("||")):
+                value = _term(alternative, env)
+                if value:
+                    return value
+            return ""
+        return _term(inner, env)
+    if term not in env:
+        raise AssertionError(f"the label renderer has no value for {term!r}")
+    return str(env[term])
+
+
+def render_js_label(expression: str, env: dict) -> str:
+    """Evaluate one ``label:`` expression from ``workflows/*.js`` against *env*."""
+    return "".join(_term(term, env) for term in _split_plus(expression))
+
+
+def label_env(item: str) -> dict:
+    """Values for every identifier the declared label expressions read."""
+    return {
+        "t.item": item, "f.item": item, "did": item + "#1",
+        "d.label": item, "d.item": item, "u.label": item, "u.item": item,
+        "k": 0, "i": 3, "l": "book",
+        "a.title": "an assessment of the elementary measure findings",
+        "l.key": "corpus-numbers",
+    }
+
+
 # ---------------------------------------------------------------------------
 # 1. the label / id contract
 
@@ -171,7 +282,39 @@ class TestLabelContract(unittest.TestCase):
          "numbers-independent", None),
         # the original's format, which the corpus on disk still carries
         ("chal0:Exercise_1.2.4", "chal", "Exercise_1.2.4", "Exercise 1.2.4", None),
+        # an item whose own name contains a colon: the LAST field is a fragment
+        # of it, and `item_full` is the reading that names the item.  Both are
+        # candidates, which is what `label_item_candidates` is for.
+        ("chal0:" + COLON_ITEM + "#0", "chal",
+         "extension of Jordan inner measure to unbounded sets)#0",
+         "extension of Jordan inner measure to unbounded sets)", 0),
+        ("F0:book:" + COLON_ITEM, "F",
+         "extension of Jordan inner measure to unbounded sets)",
+         "extension of Jordan inner measure to unbounded sets)", None),
     )
+
+    #: every declared label expression -> does the label it renders NAME an item?
+    #: `critic` names nothing, a verify lens key is not an item, and an
+    #: assessment title is truncated to 24 characters on purpose.
+    CARRIES_ITEM = {
+        "'work:' + t.item": True,
+        "'chal' + k + ':' + did": True,
+        "'chal' + k + ':' + f.item": True,
+        "'F' + i + ':' + l + ':' + f.item": True,
+        "'F' + i + ':reconcile:' + f.item": True,
+        "'F' + i + ':skeptic-content:' + f.item": True,
+        "'F' + i + ':skeptic-convention:' + f.item": True,
+        "'D' + i + ':reader' + (k + 1) + ':' + (d.label || d.item || '')": True,
+        "'D' + i + ':reconcile:' + (d.label || d.item || '')": True,
+        "'U' + i + ':' + (u.label || u.item || '')": True,
+        "'A' + i + ':' + (a.title || '').slice(0, 24)": False,
+        "'critic'": False,
+        "'verify:' + (l.key || i)": False,
+    }
+
+    #: item names to render each expression with.  The plain one is the shape
+    #: everyone tests; the other two are the shapes that break a parser.
+    ITEM_NAMES = ("Exercise 1.2.4", COLON_ITEM, UNDERSCORE_ITEM)
 
     def test_every_literal_label_expression_is_in_the_shipped_script(self):
         """The contract is asserted against the .js, not against a Python copy.
@@ -204,23 +347,67 @@ class TestLabelContract(unittest.TestCase):
                 self.assertEqual(parsed["item"], item)
                 self.assertEqual(parsed["disagreement"], disagreement)
 
+    def test_every_declared_label_expression_is_given_a_round_trip_case(self):
+        declared = {expression
+                    for expressions in harvest_journal.JS_LABEL_EXPRESSIONS.values()
+                    for expression in expressions}
+        self.assertEqual(declared, set(self.CARRIES_ITEM),
+                         "a declared label expression with no round-trip case is a "
+                         "contract nobody checks; add it to CARRIES_ITEM")
+
+    def test_every_declared_expression_round_trips_the_item_it_names(self):
+        """Rendered from the .js expressions, not from a hand-written label list.
+
+        A table of labels is how the old test came to pin one side of the
+        contract; an expression whose rendered label does not round-trip -- an
+        item with a colon in its name, say -- was invisible to it.
+        """
+        for expression, carries in self.CARRIES_ITEM.items():
+            for item in self.ITEM_NAMES:
+                with self.subTest(expression=expression, item=item):
+                    label = render_js_label(expression, label_env(item))
+                    candidates = harvest_journal.label_item_candidates(label)
+                    if not carries:
+                        self.assertNotIn(item, candidates, label)
+                        continue
+                    self.assertIn(item, candidates, label)
+                    # and the join the harvest really performs uses them
+                    linked = harvest_journal.link_challenges(
+                        {item: {"item": item}},
+                        [{"ruling_survives": True, "_label": label}])
+                    self.assertEqual(len(linked[item]), 1, label)
+
     def test_a_fleet_local_challenge_ruling_links_to_its_item(self):
         """The regression: `chal0:<item>#<index>` matched nothing at all."""
-        items = {"Exercise 1.2.4": {"item": "Exercise 1.2.4",
-                                    "disagreements": [{"concept": "c"}]}}
-        rows = [{"ruling_survives": False, "evidence": "e",
-                 "disagreement_id": "Exercise 1.2.4#0",
-                 "_label": "chal0:Exercise 1.2.4#0"},
-                {"ruling_survives": True, "evidence": "e2",
-                 "_label": "chal1:Exercise 1.2.4#0"}]
-        linked = harvest_journal.link_challenges(items, rows)
-        self.assertEqual(len(linked["Exercise 1.2.4"]), 2)
-        self.assertEqual([c["link_method"] for c in linked["Exercise 1.2.4"]],
-                         ["disagreement-id", "label-item"])
-        summary = harvest_journal.summarise(items, linked, rows)
-        self.assertEqual(summary["challenge_results"], 2)
-        self.assertEqual(summary["items_refuted_by_any"], 1)
-        self.assertEqual(summary["challenges_unlinked"], 0)
+        for item in ("Exercise 1.2.4", COLON_ITEM):
+            with self.subTest(item=item):
+                items = {item: {"item": item, "disagreements": [{"concept": "c"}]}}
+                rows = [{"ruling_survives": False, "evidence": "e",
+                         "disagreement_id": item + "#0",
+                         "_label": "chal0:" + item + "#0"},
+                        {"ruling_survives": True, "evidence": "e2",
+                         "_label": "chal1:" + item + "#0"}]
+                linked = harvest_journal.link_challenges(items, rows)
+                self.assertEqual(len(linked[item]), 2)
+                self.assertEqual([c["link_method"] for c in linked[item]],
+                                 ["disagreement-id", "label-item"])
+                summary = harvest_journal.summarise(items, linked, rows)
+                self.assertEqual(summary["challenge_results"], 2)
+                self.assertEqual(summary["items_refuted_by_any"], 1)
+                self.assertEqual(summary["challenges_unlinked"], 0)
+
+    def test_a_disagreement_id_is_split_not_parsed_as_a_label(self):
+        """An id is `<item>#<index>`; reading it as a label truncated the item."""
+        self.assertEqual(harvest_journal.split_disagreement_id(COLON_ITEM + "#4"),
+                         (COLON_ITEM, 4))
+        self.assertEqual(harvest_journal.split_disagreement_id(COLON_ITEM),
+                         (COLON_ITEM, None))
+        items = {COLON_ITEM: {"item": COLON_ITEM, "disagreements": []}}
+        # the label is gone (a lost meta file); only the row's own id is left
+        linked = harvest_journal.link_challenges(
+            items, [{"ruling_survives": True, "disagreement_id": COLON_ITEM + "#0"}])
+        self.assertEqual([c["link_method"] for c in linked[COLON_ITEM]],
+                         ["disagreement-id"])
 
     def test_the_legacy_truncated_prefix_still_links(self):
         item = "Exercise 1.2.4 part (iii) of the elementary measure"
@@ -249,14 +436,7 @@ class TestLabelContract(unittest.TestCase):
 
 class TestJournalRecovery(unittest.TestCase):
     def _journal(self, rows: list[dict], labels: dict[str, str]) -> Path:
-        wf = scratch(self) / "wf_x"
-        wf.mkdir()
-        for agent_id, label in labels.items():
-            (wf / f"agent-{agent_id}.meta.json").write_text(
-                json.dumps({"label": label}), encoding="utf-8")
-        (wf / "journal.jsonl").write_text(
-            "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
-        return wf
+        return write_journal(self, rows, labels)
 
     def test_an_adjudication_journal_recovers_its_rows(self):
         """A killed `cf adjudicate` or `cf challenge` run recovered nothing at all."""
@@ -319,6 +499,86 @@ class TestJournalRecovery(unittest.TestCase):
         record = json.loads(next(dest.glob("*.json")).read_text(encoding="utf-8"))
         self.assertEqual(record["schema_version"], 7)
         self.assertEqual(record["run_id"], "its-own")
+
+
+class TestWhoRefusesOrphanedRulings(unittest.TestCase):
+    """The refusal belongs to the command that WRITES a corpus, and only there.
+
+    ``link_challenges`` refuses by default so a run's adversarial half cannot be
+    dropped in silence -- but a read-only progress query must report what it
+    found, and a partial loss must show up in the counts of the command that did
+    build the corpus.
+    """
+
+    def test_a_status_query_reports_the_orphans_instead_of_refusing(self):
+        from run import status as run_status
+
+        counts = run_status.journal_counts(orphan_journal(self))
+        self.assertEqual(counts["items"], 1)
+        self.assertEqual(counts["challenge_rows_seen"], 1)
+        self.assertEqual(counts["challenges_unlinked"], 1)
+        self.assertEqual(counts["unmatched_labels"], ["chal0:Exercise 9.9.9#0"])
+
+    def test_the_status_command_prints_the_journal_line_and_exits_zero(self):
+        ws = make_workspace(self)
+        rc, out = cf("run", "demo", "--status", "--journal", str(orphan_journal(self)),
+                     "--workspace", str(ws["root"]))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("challenges_unlinked=1", out)
+
+    def test_cf_harvest_reports_a_partial_loss_in_its_counts(self):
+        """The half of the defect a zero-link refusal cannot catch.
+
+        With SOME rulings linked, `cf harvest --journal` printed a plausible
+        `challenge_results=1` and said nothing about the ruling it discarded.
+        """
+        ws = make_workspace(self)
+        wf = write_journal(self, [
+            {"type": "result", "agentId": "a1", "value": {
+                "item": "Exercise 1.2.4", "book_located": True, "matches": [],
+                "disagreements": [], "coverage_notes": ""}},
+            {"type": "result", "agentId": "a2", "value": {
+                "ruling_survives": True, "evidence": "e",
+                "disagreement_id": "Exercise 1.2.4#0"}},
+            {"type": "result", "agentId": "a3", "value": {
+                "ruling_survives": False, "evidence": "e"}},
+        ], {"a1": "work:Exercise 1.2.4", "a2": "chal0:Exercise 1.2.4#0",
+            "a3": "chal1:Exercise 9.9.9#0"})
+        rc, out = cf("harvest", "demo", "--journal", str(wf),
+                     "--workspace", str(ws["root"]))
+        self.assertEqual(rc, 0, out)
+        line = [l for l in out.splitlines() if l.startswith("journal:")][0]
+        self.assertIn("challenge_results=1", line)
+        self.assertIn("challenge_rows_seen=2", line)
+        self.assertIn("challenges_unlinked=1", line)
+        self.assertIn("unmatched_labels=['chal1:Exercise 9.9.9#0']", line)
+
+    def test_cf_harvest_refuses_when_nothing_links_and_names_its_own_escape(self):
+        ws = make_workspace(self)
+        wf = orphan_journal(self)
+        with self.assertRaises(CfError) as ctx:
+            cf("harvest", "demo", "--journal", str(wf), "--workspace", str(ws["root"]))
+        self.assertIn("--allow-unlinked-challenges", str(ctx.exception.hint))
+        rc, out = cf("harvest", "demo", "--journal", str(wf), "--workspace",
+                     str(ws["root"]), "--allow-unlinked-challenges")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("challenges_unlinked=1", out)
+
+    def test_the_standalone_script_renders_the_refusal_not_a_traceback(self):
+        """`harvest_journal.py` is run by hand; a traceback hides the hint."""
+        wf = orphan_journal(self)
+        dest = scratch(self) / "corpus"
+        argv = [sys.executable, str(SCRIPTS / "harvest" / "harvest_journal.py"),
+                str(wf), "--dest", str(dest)]
+        proc = subprocess.run(argv, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertTrue(proc.stderr.startswith("error: "), proc.stderr)
+        self.assertIn("--allow-unlinked-challenges", proc.stderr)
+        allowed = subprocess.run(argv + ["--allow-unlinked-challenges"],
+                                 capture_output=True, text=True)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertIn('"challenges_unlinked": 1', allowed.stdout)
 
 
 # ---------------------------------------------------------------------------

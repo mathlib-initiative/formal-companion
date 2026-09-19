@@ -37,6 +37,12 @@ def register(subparsers) -> None:
     p.add_argument("--from", dest="source", help="host:/path/to/findings, or a local directory")
     p.add_argument("--journal", help="recover a killed local Workflow run from its wf_* directory")
     p.add_argument("--queue", help="with --journal: the queue args, to list what is left")
+    # The escape from the unlinked-challenge refusal belongs in the command that
+    # also writes the receipt, runs the gate and recomputes the tally; sending
+    # the operator to the standalone script gets them a corpus with none of them.
+    p.add_argument("--allow-unlinked-challenges", action="store_true",
+                   help="with --journal: recover the items even when no challenge ruling "
+                        "attaches to one (the orphans are counted in the journal summary)")
     p.add_argument("--verify-sha", action="store_true",
                    help="also compare source checksums (catches truncated transfers)")
     p.add_argument("--execute", action="store_true", help="required when the source is remote")
@@ -232,10 +238,16 @@ def _from_journal(workspace, args, dest: Path, data: dict | None = None) -> dict
         source_id = next(iter(sources))
     source_sha = sources.get(source_id, "")
     items, challenge_rows = harvest_journal.read_journal(workflow_dir)
-    challenges = harvest_journal.link_challenges(items, challenge_rows)
+    challenges = harvest_journal.link_challenges(
+        items, challenge_rows,
+        strict=not getattr(args, "allow_unlinked_challenges", False))
     written = harvest_journal.write_corpus(items, challenges, dest, args.run_id,
                                            source_id=source_id, source_sha=source_sha)
-    summary = harvest_journal.summarise(items, challenges)
+    # The rows travel with the counts: without them a PARTIAL loss -- a refuter
+    # that dropped disagreement_id, an item whose name the label truncated --
+    # prints a plausible `challenge_results=N` and says nothing about the M
+    # rulings that were read off disk and discarded.
+    summary = harvest_journal.summarise(items, challenges, challenge_rows)
     if args.queue:
         todo = harvest_journal.remaining(Path(args.queue), items)
         summary["remaining"] = len(todo)
