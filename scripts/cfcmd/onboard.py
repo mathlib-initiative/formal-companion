@@ -32,7 +32,7 @@ from cflib.jsonio import write_jsonl
 from cflib.log import format_table
 from cflib.registry import Registry, entry_from_claim
 from cflib.templates import copy_template, render_template
-from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
+from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, derived_roots_for, from_args
 from cflib.jsonio import atomic_write
 
 #: Sensible starting points per adapter kind; edit adapter.yaml afterwards.
@@ -108,8 +108,16 @@ def run(args) -> int:
     _check_adapter_implemented(kind)
     registry = Registry.load(workspace)
     claims = discovery.discover_sources(repo, adapter=kind)
-    result = discovery.resolve_claims(claims, repo=repo, workspace=workspace,
-                                      registry=registry, download=args.download)
+    #: The repo being onboarded is not in `workspace.companions` yet -- `upsert_companion`
+    #: runs further down -- so the search roots DERIVED from it would only exist from the
+    #: second run on, and the identical command would then discover a different set of
+    #: PDFs each time: run 1 left the anchor edition with no text (no quote gate, no
+    #: anchor check), run 2 found it in the sibling repo and prepared it.  Deriving them
+    #: here makes run 1 and run 2 search the same set.
+    result = discovery.resolve_claims(
+        claims, repo=repo, workspace=workspace, registry=registry, download=args.download,
+        library_paths=list(dict.fromkeys(
+            list(workspace.library_paths) + derived_roots_for(repo))))
     result.name = name
     result.adapter = kind
     result.adapter_confidence = adapter_confidence
