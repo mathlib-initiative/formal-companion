@@ -174,15 +174,16 @@ def run(args) -> int:
         "items": str(items_path),
     }
     chapter = _audited_chapter(workspace, source_id, stages)
+    page_offset = int(workspace.offset(source_id) or 0) if source_id else 0
     summary["cheap"] = _run_cheap(
         args, paths, detect_dir, name, rows, items_path, stages, kinds,
-        source_id, source_sha, chapter=chapter,
+        source_id, source_sha, chapter=chapter, page_offset=page_offset,
     )
     exit_code = 0
     if args.lean:
         summary["lean"], exit_code = _run_lean(
             args, paths, detect_dir, name, rows, stages, kinds, source_id, source_sha,
-            entry, adapter
+            entry, adapter, items_path, page_offset=page_offset,
         )
 
     _write_state(workspace, name, summary)
@@ -391,7 +392,7 @@ def _audited_chapter(workspace, source_id: str, stages):
 # cheap tier
 # --------------------------------------------------------------------------
 def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
-               source_id, source_sha, *, chapter=None) -> dict:
+               source_id, source_sha, *, chapter=None, page_offset: int = 0) -> dict:
     """def-coverage + body proxies; writes pairs/<source_id>/def-coverage.<name>.json."""
     definitions = def_coverage.load_items(items_path, kind="Definition", chapter=chapter, kinds=kinds)
     if not definitions:
@@ -495,14 +496,17 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
     if rows_out:
         emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="cheap",
                                source_id=source_id, source_sha=source_sha, counts=counts,
-                               items_pages=_items_pages(items_path, kinds))
+                               items_pages=_items_pages(items_path, kinds),
+                               item_pdf_pages=_item_pdf_pages(items_path, kinds),
+                               page_offset=page_offset)
         if emitted:
             result["corpus"] = emitted
     return result
 
 
 def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier: str,
-                 source_id: str, source_sha, counts: dict, items_pages: dict) -> dict | None:
+                 source_id: str, source_sha, counts: dict, items_pages: dict,
+                 item_pdf_pages: dict, page_offset: int) -> dict | None:
     """Publish the detector's rows into ``corpus/<run-id>/``, gated.
 
     Stage 8's own gate (stage_map.md): a hit only counts once it "joins the
@@ -520,7 +524,8 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
     gate_result = None
     if not args.no_gate:
         gate_result = _gate_documents(paths, docs, run_id=run_id, companion=name,
-                                      source_id=source_id, source_sha=source_sha)
+                                      source_id=source_id, source_sha=source_sha,
+                                      item_pdf_pages=item_pdf_pages, page_offset=page_offset)
         if not gate_result["ok"]:
             warn(f"the mechanical gate refused {len(gate_result['problems'])} thing(s); "
                  f"corpus/{run_id} was NOT written")
@@ -549,8 +554,16 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
 
 
 def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
-                    source_id: str, source_sha) -> dict:
-    """Validate detector documents against the `mechanical` preset, in memory."""
+                    source_id: str, source_sha, item_pdf_pages: dict | None = None,
+                    page_offset: int = 0) -> dict:
+    """Validate detector documents against the `mechanical` preset, in memory.
+
+    The source block carries ``item_pages`` -- the gate's first and best route
+    from an item to the page its quotes must be on -- and the source's
+    ``page_offset``.  Both were missing, so every document the detector emitted
+    was checked against a text the gate had to search for the item's own heading
+    in, and page reasoning ran as though the edition had no front matter.
+    """
     from gate import verify_findings as vf
     from plan import presets as presets_mod
 
@@ -558,7 +571,11 @@ def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
         presets_mod.get("mechanical"),
         run_id=run_id,
         sources={source_id: {"text": str(paths.source_text(source_id)),
-                             "sha256": source_sha or ""}},
+                             "sha256": source_sha or "",
+                             "page_offset": page_offset,
+                             # pages of the PINNED TEXT (items.json `pdf_page`),
+                             # not the printed pages a finding cites
+                             "item_pages": dict(item_pdf_pages or {})}},
         repos=[companion],
     )
     cfg = vf.GateConfig(config)
@@ -568,6 +585,32 @@ def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
         problems.extend(vf.validate_doc(doc, name, cfg, books))
     return {"ok": not problems, "preset": "mechanical", "problems": problems,
             "sources": cfg.source_ids(), "documents": len(docs)}
+
+
+def _item_pdf_pages(items_source, kinds) -> dict[str, int]:
+    """``{item id: page of the PINNED TEXT}`` -- items.json's ``pdf_page``.
+
+    This is what the gate's ``sources.<id>.item_pages`` means: the page a quote
+    must be found on in ``sources/<id>/text.txt``.  It is NOT :func:`_items_pages`,
+    which returns the PRINTED page a finding cites; for the pinned Tao edition
+    the two differ by the source's 16-page front matter, so passing the printed
+    one would put every item 16 pages from its own quotes and the gate would
+    refuse real findings.
+    """
+    data = read_json(items_source) if isinstance(items_source, (str, Path)) else items_source
+    if isinstance(data, dict):
+        data = data.get("items", data)
+    entries = data.values() if isinstance(data, dict) else (data or [])
+    out: dict[str, int] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        base = item_base(entry.get("item") or entry.get("id") or entry.get("label") or "",
+                         kinds or DEFAULT_KINDS)
+        page = entry.get("pdf_page")
+        if base and isinstance(page, int):
+            out[base] = page
+    return out
 
 
 def _items_pages(items_source, kinds) -> dict[str, int]:
@@ -612,7 +655,7 @@ def _first_page(entry: dict) -> int | None:
 # lean tier
 # --------------------------------------------------------------------------
 def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, source_sha,
-              entry, adapter) -> tuple[dict, int]:
+              entry, adapter, items_path, page_offset: int = 0) -> tuple[dict, int]:
     """ORDER_VIOLATION / SAME_STAGE_PRIMITIVE over deps.json. Never runs lake."""
     if not stages.available:
         # Unlike the cheap tier this one IS the stage table: with no prefixes
@@ -685,7 +728,9 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, sou
     if rows_out:
         emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="lean",
                                source_id=source_id, source_sha=source_sha,
-                               counts=counts, items_pages={})
+                               counts=counts, items_pages={},
+                               item_pdf_pages=_item_pdf_pages(items_path, kinds),
+                               page_offset=page_offset)
     exit_code = _report_unclassified(report, stages, args.allow_unclassified)
     return (
         {
