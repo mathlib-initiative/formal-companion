@@ -256,9 +256,17 @@ def source_block(spec: "Mapping[str, Any] | str") -> dict:
     """Normalise one ``gate.json`` ``sources.<id>`` body.
 
     A caller may pass the whole mapping or just the text path; the gate needs
-    the five keys below and nothing else, and a missing ``page_offset`` is 0
+    the six keys below and nothing else, and a missing ``page_offset`` is 0
     rather than an exception because a source whose offset is unknown still has
     a quote gate worth running.
+
+    ``item_pages`` is ``{item: page of the pinned text}`` -- items.json's
+    ``pdf_page``, not its printed ``page`` -- and it is the gate's first and best
+    route from an item to the page its quotes must be on.  It is passed through
+    here because the block was built from a fixed set of keys that silently
+    dropped it, so the route existed in the gate and was unreachable from every
+    caller, and every run fell back to searching the pinned text for the item's
+    own heading.
     """
     if isinstance(spec, str):
         spec = {"text": spec}
@@ -268,6 +276,7 @@ def source_block(spec: "Mapping[str, Any] | str") -> dict:
         "text_sha256": spec.get("text_sha256") or None,
         "images_dir": str(spec["images_dir"]) if spec.get("images_dir") else None,
         "page_offset": int(spec.get("page_offset") or spec.get("offset") or 0),
+        "item_pages": dict(spec.get("item_pages") or {}),
     }
 
 
@@ -282,11 +291,12 @@ def gate_config(
     """Build the ``gate.json`` the out-of-tree gate reads.
 
     ``sources`` maps ``source_id`` -> ``{text, sha256, text_sha256, images_dir,
-    page_offset}`` (docs/design/multi-source-model.md S6.2).  It is a MAP, not a
-    single book, because a run may span more than one source and the gate picks
-    the text to check a quote against by the document's own ``source_id`` --
-    checking every quote against one concatenated text would let a quote from
-    the 2011 draft pass as the published book's.
+    page_offset, item_pages}`` (docs/design/multi-source-model.md S6.2, plus the
+    ``item_pages`` map the spec's five keys predate).  It is a MAP, not a single
+    book, because a run may span more than one source and the gate picks the text
+    to check a quote against by the document's own ``source_id`` -- checking every
+    quote against one concatenated text would let a quote from the 2011 draft pass
+    as the published book's.
     """
     blocks = {str(sid): source_block(body) for sid, body in dict(sources or {}).items()}
     if not blocks:
@@ -312,6 +322,12 @@ def gate_config(
         "require_finding_id": preset.require_finding_id,
         "require_passage_quote": preset.require_passage_quote,
         "check_operators": preset.check_operators,
+        # Bind every quote to the page its own item is stated on.  Off for the
+        # *-legacy presets for the same reason as the operator pass: measured with
+        # the source's own page_offset (16), 16 of the 2,985 bindable quotes of the
+        # imported corpus, in 16 files, sit further than PAGE_BIND_WINDOW pages
+        # from their item, and those rows are already landed.
+        "bind_item_page": not preset.legacy,
         "findings_dir": "findings",
         "decl_index": decl_index,
         "kind_rules": preset.kind_rules or {},
