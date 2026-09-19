@@ -319,6 +319,20 @@ class TestAgreementMeansTheSameComplaint(unittest.TestCase):
         self.assertEqual(doc["same_locus_count"], 0)
         self.assertIn("same_locus", doc)
 
+    def test_the_document_counts_entries_and_loci_separately(self):
+        """The kind is in the key, so ``count`` can RISE where the pre-kind
+        file's fell: one locus faulted two ways by two runs is two entries.
+        ``locus_count`` is the figure comparable with that file."""
+        root = scratch(self)
+        runs = {}
+        for run in ("run-a", "run-b"):
+            runs[run] = root / "corpus" / run
+            write_doc(runs[run], "Exercise 1.2.9",
+                      [defect(kind="CONTENT"), defect(kind="VACUITY")])
+        doc = agreed_mod.build(runs)
+        self.assertEqual(doc["count"], 2)
+        self.assertEqual(doc["locus_count"], 1)
+
 
 # ---------------------------------------------------------------------------
 # gates-correctness#6

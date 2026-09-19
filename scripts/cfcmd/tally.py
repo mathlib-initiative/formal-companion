@@ -149,7 +149,11 @@ def _write_agreed(workspace, args, runs: dict[str, Path]) -> None:
     out = Path(workspace.paths.agreed_high_json)
     out.parent.mkdir(parents=True, exist_ok=True)
     write_json(out, doc, indent=1, sort_keys=True)
-    log.info(f"agreed (the same complaint in >= {args.min_runs} runs): {doc['count']} loci, "
+    # "entries", not "loci": the key is (source_id, repo, item, kind), so one
+    # locus faulted with two kinds is two entries and this count can rise where
+    # the pre-kind file's fell. `locus_count` is the comparable figure.
+    log.info(f"agreed (the same complaint in >= {args.min_runs} runs): {doc['count']} entries "
+             f"over {doc['locus_count']} loci, "
              f"{doc['cross_family']} agreed across run families -> {out}")
     if doc["same_locus_count"]:
         # the weaker signal, named: several runs faulted the locus with different
