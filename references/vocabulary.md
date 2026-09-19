@@ -97,8 +97,8 @@ These came with the multi-source model (`docs/design/multi-source-model.md`); th
 | `DISCOVERY_SIGNALS` | `formalization_yaml` `ledger_source` `official_source_json` `graph_json` `prose` `filesystem` `citation` | S1–S7: which repo signal produced a claim. All seven run for every adapter kind |
 | `PDF_FOUND_IN` | `repo_declared` `repo_cache` `workspace_store` `library_path` `download` `none` | which step of the search order located the bytes — in search order, so it doubles as a provenance ranking |
 | `OFFSET_METHODS` | `running_head_mode` `declared` `manual` `registry` `unknown` | how a page offset was arrived at. `manual` means a human typed it through `cf sources set`, and the confidence beside it is not an inference |
-| `ADAPTER_KINDS` | `docstring_tags` `attribution_table` `ledger_nodes` `custom` | what an `adapter.yaml` may legally say |
-| `IMPLEMENTED_ADAPTER_KINDS` | `docstring_tags` `attribution_table` | what v1 can actually parse. `cf onboard` refuses the difference **before** writing anything |
+| `ADAPTER_KINDS` | `docstring_tags` `attribution_table` `blueprint_tex` `ledger_nodes` `custom` | what an `adapter.yaml` may legally say |
+| `IMPLEMENTED_ADAPTER_KINDS` | `docstring_tags` `attribution_table` `blueprint_tex` | what v1 can actually parse. `cf onboard` refuses the difference **before** writing anything |
 | `WRITE_POLICIES` | `read_only` `branch_only` `branch_and_pr` | v1 is findings-only; peers stay `read_only` either way |
 | `ANCHOR_CONVENTIONS` | `docstring` `ledger` `none` | where a page anchor comes from, and whether anchor-agreement can decide an edition at all |
 
