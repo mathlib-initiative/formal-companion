@@ -2,22 +2,33 @@ You are the worker for task file `tasks/$TEND_TASK_ID.yaml`.
 
 Read that task, do the adjudication it describes in `$TEND_WORKTREE_PATH` (the current git worktree), write the single findings JSON it names, and set the task file's status to `complete` when finished.
 
-Before you commit, run the validation gate yourself and fix anything it reports:
+Before you commit, run the validation gate yourself:
 
 ```bash
 {{gate_command}}
 ```
 
+`exit 1` means the gate rejected your findings: fix what it names. Any other non-zero exit means the gate itself could not run (a missing config, an unreadable source text) — that is an infrastructure fault, not a verdict on your work: stop, finish with status `blocked`, quote what the gate printed, and do **not** weaken or delete findings to get it to pass.
+
 The worktree is on your own branch checked out from local `main`. Commit your work yourself; anything left uncommitted at session end will not be published. The orchestrator owns merging your branch into `main`.
 
 Change **only** `findings/$TEND_TASK_ID.json` and `tasks/$TEND_TASK_ID.yaml`. A contribution that touches any other path is rejected mechanically before review.
 
-When done, call the `final_result` tool exactly once with schema_version=1, status ('completed', 'blocked', or 'needs_review'), a non-empty summary, and any files_changed, validation, tasks_created, or notes you can report. If you could not locate the book passage, use 'needs_review' and say so.
-
 ## How to finish (required)
-
-Your stdout is not read. Finish by writing **`.tend/agent_result.json`** in the worktree:
+{{#if finish_via_tool}}
+Call the `final_result` tool **exactly once**, with schema_version=1, status (`completed`, `blocked` or `needs_review`), a non-empty summary, and any files_changed, validation, tasks_created or notes you can report. If you could not locate the book passage, use `needs_review` and say so. This is the only channel that is read — do not also write a result file.
+{{/if}}
+{{#if finish_via_file}}
+Your stdout is not read, and there is no `final_result` tool on this bridge. Finish by writing **`.tend/agent_result.json`** in the worktree, last, after committing:
 
 {"schema_version": 1, "status": "completed", "summary": "one or two sentences on what you found", "files_changed": ["findings/<id>.json", "tasks/<id>.yaml"]}
 
-`status` is `completed` (findings written and the gate passes), `needs_review` (written but you are unsure, e.g. you could not locate the passage), or `blocked` (you could not do the work at all — say why in `summary`). Write this file last, after committing.
+`status` is `completed` (findings written and the gate passes), `needs_review` (written but you are unsure, e.g. you could not locate the passage), or `blocked` (you could not do the work at all — say why in `summary`, and say so if the gate itself was broken).
+{{/if}}
+{{#if finish_via_stdout}}
+There is no `final_result` tool on this bridge and no result file is read. Finish by printing **one JSON object as the last thing in your output**, after committing:
+
+{"schema_version": 1, "status": "completed", "summary": "one or two sentences on what you found", "files_changed": ["findings/<id>.json", "tasks/<id>.yaml"]}
+
+`status` is `completed` (findings written and the gate passes), `needs_review` (written but you are unsure, e.g. you could not locate the passage), or `blocked` (you could not do the work at all — say why in `summary`, and say so if the gate itself was broken).
+{{/if}}

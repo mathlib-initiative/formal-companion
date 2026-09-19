@@ -30,6 +30,7 @@ from typing import Any
 
 from cflib.paths import skill_root, templates_dir
 
+from . import models
 from .presets import Preset
 from .render import render_file
 
@@ -85,22 +86,41 @@ def make_tend_root(
     prompts: dict[str, str] | None = None,
     agent: dict[str, Any] | None = None,
     task_count: int = 0,
+    model: str | None = None,
     tdir: pathlib.Path | None = None,
     gate_src: pathlib.Path | None = None,
     bridges_src: pathlib.Path | None = None,
     decl_index_src: pathlib.Path | None = None,
 ) -> dict[str, Any]:
-    """Write the tend root. Returns {"files": [...], "warnings": [...]}"""
+    """Write the tend root. Returns {"files": [...], "warnings": [...]}
+
+    ``model`` is the run's RESOLVED worker model (``cf plan-run --model`` wins,
+    then the workspace, then the preset -- see ``plan.models.resolve``).  It
+    reaches the agents two ways, because the two backends read different things:
+    the generated ``.tend/worker-agent.yaml`` for the tend-agent backend, and
+    ``CF_MODEL`` in the wrapper for the agentbox and claude-p bridges.  Recording
+    a model in run.yaml that the bridge never received is worse than recording
+    none: a regression comparison would compare two tiers claiming one id.
+
+    The ``model:`` block in the generated ``.tend/*-agent.yaml`` belongs to the
+    tend-agent backend alone -- ``config.yaml`` sends every other bridge through
+    ``bin/<role>-agent.sh``, which carries ``CF_MODEL`` -- so its Anthropic
+    ``provider``/``api`` pair is that backend's, and a codex preset's yaml names
+    the run's model under it deliberately: two files in one root disagreeing
+    about which tier ran is the defect this argument exists to close.  Nothing
+    reads that block unless the preset's ``bridge`` is ``tend-agent``.
+    """
     import json
 
     tdir = pathlib.Path(tdir or (templates_dir() / "tend"))
     gate_src = pathlib.Path(gate_src or (skill_root() / "scripts" / "gate"))
     bridges_src = pathlib.Path(bridges_src or (skill_root() / "scripts" / "run"))
+    model = model or preset.model
     agent = {
         "agent_provider": "anthropic",
         "agent_api": "anthropic_messages",
-        "agent_model": "claude-sonnet-4-5",
-        "reviewer_agent_model": "claude-sonnet-4-5",
+        "agent_model": model or models.DEFAULTS["tend_worker"],
+        "reviewer_agent_model": model or models.DEFAULTS["tend_reviewer"],
         "worker_effort": "low",
         "reviewer_effort": "low",
         "max_output_tokens": 32768,
@@ -123,7 +143,7 @@ def make_tend_root(
         "max_workers": preset.max_workers,
         "max_reviewers": preset.max_reviewers,
         "bridge": preset.bridge,
-        "model": preset.model or "(bridge default)",
+        "model": model or "(bridge default)",
         "book_access": preset.book_access,
         "sources_inline": ", ".join(sorted(gate_config.get("sources") or {})) or "(none)",
         "task_count": task_count,
@@ -164,8 +184,11 @@ def make_tend_root(
             env_lines += f"export CF_AGENT_HOST={host}\n"
         if agent.get("agentbox_profile"):
             env_lines += f"export CF_AGENTBOX_PROFILE={agent['agentbox_profile']}\n"
-        if preset.model:
-            env_lines += f"export CF_MODEL={preset.model}\n"
+        # Every bridge passes its model flag only when CF_MODEL is set, so this
+        # is the line that makes `--model` reach the agent instead of only
+        # reaching run.yaml.
+        if model:
+            env_lines += f"export CF_MODEL={model}\n"
         for role in ("worker", "reviewer"):
             files.append(
                 _write_exec(

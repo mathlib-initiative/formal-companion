@@ -1,6 +1,6 @@
 You are reviewing contribution worktree $TEND_WORKTREE_ID for task file `tasks/$TEND_TASK_ID.yaml` in worktree $TEND_WORKTREE_PATH (the current git worktree).
 
-Inspect the findings JSON the worker wrote and the task status. Do not merge.
+Inspect the findings JSON the worker wrote and the task status. Do not merge, and do not write `verdict.json` yourself.
 
 Verify independently, per your system prompt: the book quotes are real and decisive, the CONTENT vs CONVENTION classification is right in both directions, and the worker read the actual Lean rather than the summarised signature. You may run the gate to re-check quote verification mechanically:
 
@@ -8,23 +8,32 @@ Verify independently, per your system prompt: the book quotes are real and decis
 {{gate_command}}
 ```
 
-but that gate only proves the quotes exist — judging whether they *decide the question* is your job.
-
-Do not write verdict.json yourself. When the review is complete, call the `final_result` tool exactly once. Use schema_version=1, verdict 'approve' or 'request_changes', and non-empty notes. For request_changes, include non-empty feedback_text with actionable feedback for the worker — name the specific finding and why it does not survive. Do not provide a separate prose-only final answer.
+but that gate only proves the quotes exist — judging whether they *decide the question* is your job. `exit 1` is a verdict on the findings; any other non-zero exit means the gate could not run, which is an infrastructure fault and not grounds for rejecting the worker.
 
 ## How to finish (required)
-
-Your stdout is not read. Finish by writing **`.tend/agent_result.json`** in the worktree:
+{{#if finish_via_tool}}
+Call the `final_result` tool **exactly once**, with schema_version=1, verdict `approve` or `request_changes`, and non-empty notes. For `request_changes`, include non-empty feedback_text that names the specific finding and why it does not survive. This is the only channel that is read: do not also write a result file, and do not give a prose-only final answer.
+{{/if}}
+{{#if finish_via_file}}
+Your stdout is not read, and there is no `final_result` tool on this bridge. Finish by writing **`.tend/agent_result.json`** in the worktree:
 
 {"schema_version": 1, "verdict": "approve", "notes": "per-finding walkthrough of what you verified", "feedback_text": ""}
 
 `verdict` is `approve` or `request_changes`. When requesting changes, `feedback_text` must be non-empty and name the specific finding and why it does not survive. Do not merge anything.
+{{/if}}
+{{#if finish_via_stdout}}
+There is no `final_result` tool on this bridge and no result file is read. Finish by printing **one JSON object as the last thing in your output**:
+
+{"schema_version": 1, "verdict": "approve", "notes": "per-finding walkthrough of what you verified", "feedback_text": ""}
+
+`verdict` is `approve` or `request_changes`. When requesting changes, `feedback_text` must be non-empty and name the specific finding and why it does not survive. Do not merge anything.
+{{/if}}
 {{#if final_line}}
 
 
 ## Final line (required)
 
-Whether or not you manage to write `.tend/agent_result.json`, **end your output with exactly
+Whether or not you manage to record the verdict above, **end your output with exactly
 one line**, nothing after it:
 
 VERDICT: approve
