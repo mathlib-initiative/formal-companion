@@ -299,10 +299,9 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
     # artifact is listed under Stage 3 and Stage 8 of design/stage_map.md), so
     # this is a superset of pair/def_coverage.py's schema -- `bridge_only_decls`
     # and the descriptive keys are kept so either writer leaves a file both
-    # readers accept. Both writers now MERGE (keys they do not own survive) and
-    # both classify with cflib.vocab.DEFINITIONAL_KEYWORDS, so the two agree by
-    # construction rather than by luck.
-    # TODO(cf): collapse the two implementations into this one.
+    # readers accept. Both writers MERGE (keys they do not own survive) and both
+    # classify through detect.def_coverage.is_definitional, so stated /
+    # bridge_only / missing no longer depend on which command ran last.
     out = {
         "source_id": source_id,
         "source_sha": source_sha,
