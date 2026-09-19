@@ -320,7 +320,7 @@ def prior_finding_mix(local: Mapping[str, Any] | None) -> str:
     mix = IMPORTED_ANCHOR_MIX
     return (f"In the one campaign measured so far — {IMPORTED_CALIBRATION['campaign']} — a "
             f"differential run returned {mix['anchors']} page-anchor findings against the "
-            f"audited repository and {mix['statements']} statement-level ones — the cheap "
+            f"audited repository and {mix['statements']} statement-level ones: the cheap "
             "finding crowded out the real one. That figure is imported, not a measurement of "
             "this corpus; page anchors are checked mechanically here either way.")
 
@@ -347,7 +347,10 @@ def content_delta_list(preset: Preset, examples: Sequence[str] | None = None) ->
     if preset.wants_page_anchors:
         parts.append("a wrong page anchor")
     body = "; ".join(parts) + "."
-    shapes = [e.rstrip(".") for e in (examples or NEUTRAL_EXAMPLES) if str(e).strip()]
+    # The per-source illustrations, when a human recorded any. Without them the
+    # taxonomy above stands on its own rather than repeating itself in the
+    # book-neutral wording, which `example_deltas` already carries.
+    shapes = [e.rstrip(".") for e in (examples or ()) if str(e).strip()]
     if shapes:
         body += "\n\nWhat that looks like in this material: " + "; ".join(shapes) + "."
     return body
