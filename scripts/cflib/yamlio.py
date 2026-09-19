@@ -57,20 +57,37 @@ _KEY_RE = re.compile(r"^(?P<key>(?:\"[^\"]*\"|'[^']*'|[^:#]+?))\s*:(?:\s+(?P<val
 
 
 def _strip_comment(line: str) -> str:
-    out, quote = [], None
-    for i, ch in enumerate(line):
+    """Drop a trailing `` # comment``, but never one inside a quoted scalar.
+
+    The backslash step is why this cannot be a ``split(" #")``: the writer escapes
+    a quote mark inside a double-quoted scalar as ``\\"``, and reading that quote
+    as the CLOSING one left the rest of the value looking like a comment.  A
+    harvested title of the shape ``" #x\\`` -- a leading quote mark, a ` #`, and a
+    trailing backslash -- then came back as just the backslash here while PyYAML
+    read it whole, so the two readers disagreed about a file cf wrote itself.
+    """
+    out, quote, i, n = [], None, 0, len(line)
+    while i < n:
+        ch = line[i]
         if quote:
             out.append(ch)
+            if quote == '"' and ch == "\\" and i + 1 < n:
+                out.append(line[i + 1])
+                i += 2
+                continue
             if ch == quote:
                 quote = None
+            i += 1
             continue
         if ch in "\"'":
             quote = ch
             out.append(ch)
+            i += 1
             continue
         if ch == "#" and (i == 0 or line[i - 1] in " \t"):
             break
         out.append(ch)
+        i += 1
     return "".join(out).rstrip()
 
 
@@ -109,14 +126,30 @@ def _scalar(tok: str) -> Any:
 
 _ESCAPES = {"n": "\n", "t": "\t", "r": "\r", "0": "\0", "\\": "\\", '"': '"', "/": "/"}
 
+#: ``\xNN`` / ``\uNNNN`` / ``\UNNNNNNNN``, the numeric escapes PyYAML resolves.
+_NUMERIC_ESCAPES = {"x": 2, "u": 4, "U": 8}
+
 
 def _unescape(text: str) -> str:
-    """Handle the double-quoted escapes the skill's own files use."""
+    """Handle the double-quoted escapes the skill's own files use.
+
+    The numeric forms are here because the writer emits them: a control
+    character in a harvested book title is written as ``\\x1f`` and PyYAML
+    resolves it, so the fallback reader has to resolve it too or the two readers
+    disagree about the same file.
+    """
     out, i = [], 0
     while i < len(text):
         ch = text[i]
         if ch == "\\" and i + 1 < len(text):
             nxt = text[i + 1]
+            width = _NUMERIC_ESCAPES.get(nxt)
+            if width:
+                digits = text[i + 2:i + 2 + width]
+                if len(digits) == width and all(c in "0123456789abcdefABCDEF" for c in digits):
+                    out.append(chr(int(digits, 16)))
+                    i += 2 + width
+                    continue
             out.append(_ESCAPES.get(nxt, "\\" + nxt))
             i += 2
             continue
@@ -152,6 +185,35 @@ def _split_flow(text: str) -> list[str]:
 #: an anchor (``&name``) or alias (``*name``) in a *value* position
 _ANCHOR_RE = re.compile(r"(?:^|:\s+|-\s+)[&*][A-Za-z_]")
 
+
+def _mask_quoted(line: str) -> str:
+    """*line* with the inside of every quoted scalar blanked, length preserved.
+
+    The anchor/alias check runs on this rather than on the raw line.  A
+    double-quoted value that happens to contain ``: &x`` is not an anchor, and the
+    writer emits exactly that for a harvested title carrying a colon and an
+    ampersand -- so the fallback reader used to refuse a file cf had just written
+    while PyYAML read it back unchanged.
+    """
+    out, quote, i, n = [], None, 0, len(line)
+    while i < n:
+        ch = line[i]
+        if quote:
+            if quote == '"' and ch == "\\" and i + 1 < n:
+                out.append("xx")
+                i += 2
+                continue
+            out.append(ch if ch == quote else "x")
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
 #: a value that opens a literal/folded block scalar: ``|``, ``|-``, ``>2+``, ...
 _BLOCK_OPEN_RE = re.compile(r"(?:^|:\s*|-\s+)[|>][0-9]*[-+]?$")
 
@@ -185,7 +247,7 @@ def load_yaml_minimal(text: str, where: str = "<yaml>") -> Any:
         if not stripped.strip():
             continue
         content = stripped.strip()
-        if _ANCHOR_RE.search(content):
+        if _ANCHOR_RE.search(_mask_quoted(content)):
             raise CfError(f"{where}:{n}: YAML anchors/aliases are not supported by the fallback reader",
                           hint="install PyYAML (pip install pyyaml) or simplify the file")
         lines.append((indent, content, n))
@@ -199,7 +261,13 @@ def load_yaml_minimal(text: str, where: str = "<yaml>") -> Any:
     return value
 
 
-def _block_scalar(text: str, start_line: int, indent: int, fold: bool) -> str:
+def _block_scalar(text: str, start_line: int, indent: int, fold: bool, strip: bool = False) -> str:
+    """The body of a ``|``/``>`` block scalar, read straight from the raw text.
+
+    ``strip`` is the ``-`` chomping indicator.  Without it the fallback reader
+    always appended the final newline that ``|`` implies, so a string the writer
+    had emitted as ``|-`` came back one character longer than it went in.
+    """
     out = []
     for raw in text.splitlines()[start_line:]:
         if raw.strip() and (len(raw) - len(raw.lstrip())) <= indent:
@@ -207,7 +275,11 @@ def _block_scalar(text: str, start_line: int, indent: int, fold: bool) -> str:
         out.append(raw[indent + 2:] if len(raw) > indent + 2 else raw.strip())
     while out and not out[-1].strip():
         out.pop()
-    return (" ".join(x.strip() for x in out) if fold else "\n".join(out) + "\n") if out else ""
+    if not out:
+        return ""
+    if fold:
+        return " ".join(x.strip() for x in out)
+    return "\n".join(out) if strip else "\n".join(out) + "\n"
 
 
 def _parse_block(lines, i: int, indent: int, where: str, text: str):
@@ -233,7 +305,8 @@ def _parse_map(lines, i: int, indent: int, where: str, text: str):
         val = (m.group("val") or "").strip()
         i += 1
         if val in {"|", "|-", ">", ">-"}:
-            out[key] = _block_scalar(text, lineno, ind, fold=val.startswith(">"))
+            out[key] = _block_scalar(text, lineno, ind, fold=val.startswith(">"),
+                                     strip=val.endswith("-"))
             while i < len(lines) and lines[i][0] > ind:
                 i += 1
         elif val == "":
@@ -258,7 +331,15 @@ def _parse_seq(lines, i: int, indent: int, where: str, text: str):
             raise CfError(f"{where}:{lineno}: unexpected indentation in sequence")
         rest = content[1:].strip()
         i += 1
-        if rest == "":
+        if rest in {"|", "|-", ">", ">-"}:
+            # `- |` is a shape the WRITER emits (a multi-line string inside a
+            # list), and the reader used to take the indicator as the item's
+            # value and then abort on the body's indentation.
+            out.append(_block_scalar(text, lineno, ind, fold=rest.startswith(">"),
+                                     strip=rest.endswith("-")))
+            while i < len(lines) and lines[i][0] > ind:
+                i += 1
+        elif rest == "":
             if i < len(lines) and lines[i][0] > ind:
                 item, i = _parse_block(lines, i, lines[i][0], where, text)
                 out.append(item)
@@ -289,8 +370,8 @@ def dump_yaml(obj: Any, indent: int = 0) -> str:
             return pad + "{}\n"
         out = []
         for k, v in obj.items():
-            if isinstance(v, str) and "\n" in v:
-                out.append(f"{pad}{k}: |\n" + _block_lines(v, indent + 2))
+            if isinstance(v, str) and "\n" in v and _block_safe(v):
+                out.append(f"{pad}{k}: {_block_head(v)}\n" + _block_lines(v, indent + 2))
             elif isinstance(v, (dict, list)) and v:
                 out.append(f"{pad}{k}:\n{dump_yaml(v, indent + 2)}")
             else:
@@ -306,8 +387,8 @@ def dump_yaml(obj: Any, indent: int = 0) -> str:
                 out.append(pad + "- " + body[indent + 2:])
             elif isinstance(v, list) and v:
                 out.append(f"{pad}-\n{dump_yaml(v, indent + 2)}")
-            elif isinstance(v, str) and "\n" in v:
-                out.append(f"{pad}- |\n" + _block_lines(v, indent + 2))
+            elif isinstance(v, str) and "\n" in v and _block_safe(v):
+                out.append(f"{pad}- {_block_head(v)}\n" + _block_lines(v, indent + 2))
             else:
                 out.append(f"{pad}- {_fmt_scalar(v)}\n")
         return "".join(out)
@@ -319,6 +400,64 @@ def _block_lines(text: str, indent: int) -> str:
     pad = " " * indent
     body = text[:-1] if text.endswith("\n") else text
     return "".join(f"{pad}{line}\n" if line else "\n" for line in body.split("\n"))
+
+
+def _block_head(text: str) -> str:
+    """``|`` or ``|-``: a body that does not end in a newline must be chomped."""
+    return "|" if text.endswith("\n") else "|-"
+
+
+def _block_safe(text: str) -> bool:
+    """Whether a literal block scalar reproduces *text* byte for byte.
+
+    Three shapes it cannot: a first line that starts with whitespace (its indent
+    would be read as the block's own, and PyYAML refuses the file outright), a
+    body whose LAST line carries no non-space character, and any control character
+    other than the line breaks.  Those go through the double-quoted writer
+    instead, which is uglier but lossless -- and a workspace.yaml cf cannot read
+    back is worse than an ugly line.
+
+    The last-line rule covers both an empty final line (only ``|+`` keeps it, and
+    neither reader implements ``+``) and one that is whitespace-only but NOT
+    empty, which is the same defect wearing a disguise: ``"a\\n "`` passes every
+    other check, is written as ``|-``, and the fallback reader's own trailing-blank
+    chomp then drops it while PyYAML keeps it -- so the two readers disagreed about
+    a file cf wrote itself.
+    """
+    body = text[:-1] if text.endswith("\n") else text
+    if not body.split("\n")[-1].strip():
+        return False
+    if _CONTROL_RE.search(body.replace("\n", "")):
+        return False
+    first = next((line for line in body.split("\n") if line), "")
+    return first == first.lstrip()
+
+
+#: Characters a plain YAML scalar may not carry: C0 controls, DEL, the C1 block
+#: (NEL is a line break in YAML 1.1), the Unicode line/paragraph separators and
+#: the BOM.  PyYAML rejects the file rather than reading them back.
+_CONTROL_RE = re.compile("[\x00-\x1f\x7f-\x9f  ﻿]")
+
+_CONTROL_NAMED = {"\n": "\\n", "\t": "\\t", "\r": "\\r", "\0": "\\0"}
+
+#: Anything PyYAML would type as a number rather than hand back as a string.
+#: The fallback reader only understands decimals, so an unquoted `0x10` meant
+#: 16 with PyYAML installed and "0x10" without it.
+_NUMBER_LOOKALIKE = re.compile(
+    r"[+-]?(?:[\d.][\d._]*|0[xX][0-9a-fA-F_]+|0[oObB][0-7_]+|\.(?:inf|Inf|INF|nan|NaN|NAN))")
+
+
+def _escape_control(match: "re.Match[str]") -> str:
+    ch = match.group(0)
+    if ch in _CONTROL_NAMED:
+        return _CONTROL_NAMED[ch]
+    code = ord(ch)
+    return "\\x%02x" % code if code < 0x100 else "\\u%04x" % code
+
+
+def _double_quoted(s: str) -> str:
+    escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+    return '"' + _CONTROL_RE.sub(_escape_control, escaped) + '"'
 
 
 def _fmt_scalar(v: Any) -> str:
@@ -334,10 +473,22 @@ def _fmt_scalar(v: Any) -> str:
     #: an ISO date is quoted too: PyYAML types `2026-09-16` as a datetime.date
     #: while the fallback reader keeps a string, so an unquoted one makes
     #: workspace.yaml mean two different things depending on what is installed.
-    if s == "" or re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`]", s) or s.lower() in {
+    #:
+    #: A leading quote mark and a control character are quoted because titles are
+    #: HARVESTED, not typed: a companion whose metadata says `"An Introduction"`
+    #: or carries a tab used to be written out bare, and then Registry.load()
+    #: raised `invalid YAML` on the workspace's own registry.yaml (or, worse,
+    #: read the title back without its quotes).
+    #: The leading set is every character YAML reserves as the FIRST one of a plain
+    #: scalar. `,` is in it because a flow indicator cannot open a node even in
+    #: block context: a title harvested as ", and other notes" was written bare and
+    #: PyYAML then refused the whole file ("expected the node content, but found
+    #: ','"), which is the same defect as the tab.
+    if s == "" or re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`,]", s) or s.lower() in {
         "true", "false", "null", "yes", "no", "on", "off", "~"
-    } or re.fullmatch(r"[+-]?[\d.]+", s) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    } or _NUMBER_LOOKALIKE.fullmatch(s) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) \
+            or _CONTROL_RE.search(s) or s[:1] in "\"'":
+        return _double_quoted(s)
     return s
 
 

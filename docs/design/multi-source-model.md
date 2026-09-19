@@ -178,10 +178,10 @@ budget: {billing_path, max_cost_usd, require_consent}
 policy: {publish_unchallenged, redact_quotes_on_export, allow_remote,
          allow_download, require_confirmed_sources}
 
-library_paths:                   # where `cf onboard` may look for a PDF it was told about
-  - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf
+library_paths:                   # where `cf onboard` may look for a PDF it was told about,
+  - ~/Downloads                  # PLUS the derived roots: the workspace's own sources/ store,
+                                 # and <p>/**/sources + <p>/**/.lake/official-pdf for the
+                                 # parent <p> of every onboarded repo (never the bare <p>)
 ```
 
 Renames inside the config blocks: `defaults.book_access` → `defaults.source_access`
@@ -369,8 +369,6 @@ policy:
 
 library_paths:
   - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf
 ```
 
 The differential surface falls straight out: `shared_sources()` returns
@@ -679,9 +677,20 @@ when no sha is known the first candidate that fingerprints successfully wins.
    `<workspace>/sources/*.pdf`. `rank = 2`, `workspace_store`.
 4. **`workspace.yaml library_paths`** — each pattern expanded with `~` and
    `glob`, depth-capped at 4 levels below the pattern's fixed prefix, at most
-   5000 files scanned per pattern, `*.pdf` only. Defaults:
-   `~/Downloads`, `~/Desktop/**/sources`, `~/Desktop/**/.lake/official-pdf`.
-   `rank = 3`, `library_path`.
+   5000 files scanned per pattern, `*.pdf` only. The configured list is joined
+   by the DERIVED roots — this workspace's own `sources/` store, plus
+   `<p>/**/sources` and `<p>/**/.lake/official-pdf` for the parent directory
+   `<p>` of every onboarded companion repo — so a sibling checkout holding the
+   PDF is reachable on any layout. Those two shapes, and never the bare `<p>`:
+   this list is also the allowlist for an absolute path a repo names (rank 0),
+   and the parent of a checkout kept on the desktop is the whole desktop, so a
+   bare parent would widen the allowlist rather than narrow it. The only shipped
+   entry is `~/Downloads`. `rank = 3`, `library_path`.
+
+   The repo currently being onboarded contributes its own derived roots too,
+   before it is registered as a companion: otherwise the first `cf onboard`
+   searched without them and the second searched with them, and two identical
+   commands differed in whether the anchor edition had any text at all.
 5. **download** — the registry's `download_url`, **only** when all of:
    `--download` was passed, `policy.allow_download` is not `false`… (the flag
    alone suffices; the policy key exists to let a workspace forbid it
@@ -703,7 +712,8 @@ On this machine, step 1 finds `tao-measure-lean/sources/tao-measure-theory.pdf`
 does **not** exist, so step 2 finds `.lake/official-pdf/gsm-126-tao5-measure-book.pdf`
 (`64498329…`). Onboarding `tao-measure-lean` second finds the published edition
 already in the workspace store (step 3) — or, onboarding it first, at step 4
-via `~/Desktop/**/.lake/official-pdf`.
+via the derived root that `measure_theory`'s own checkout sits in, once that
+companion has been onboarded too.
 
 ### 4.5 Fingerprinting (`fingerprint`)
 
@@ -752,6 +762,19 @@ error: cannot decide which edition ours anchors to
 hint:  re-run with `cf onboard <repo> --anchor-source <id>`, or check whether the
        companion's anchors are internally consistent at all (`cf pair`)
 ```
+
+The refusal is where a mechanical decision was really *attempted*. `cf onboard`
+elects twice: once before extraction, where there are no rows and rule 3 is all
+there is, and once after, against the rows this run just wrote. The first
+election warns and keeps its 0.6 pick; the second refuses. Refusing at the first
+refused every *first* onboard of any two-edition work, flags or not, because rule
+3 scores 0.6 whether or not the editions are actually distinguishable — an anchor
+that is undetermined until extraction is not an undecidable one. Both runs of the
+identical command still end the same way: run 1 refuses after extracting, and run
+2 scores the same rows at the first election and refuses there. The second
+election covers **every** cluster of two or more editions, not only the anchor's
+own, because the anchor may win a single-candidate cluster while another work's
+editions are the undecided pair.
 
 The bundled-but-not-anchored edition is recorded in
 `companions.<name>.bundled_sources` and given `role: reference` in `sources:`,
@@ -1079,7 +1102,7 @@ sources discovered
       edition  AMS GSM 126, author's preliminary AMS version (published pagination)
       from     CLAUDE.md#L48-L55 (sha prefix), formalization.yaml#sources (title/licence)
       pdf      ~/Desktop/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
-               found in: library_path (~/Desktop/**/.lake/official-pdf)
+               found in: library_path (<the derived root measure_theory sits in>)
       offset   16                                confidence 0.996  (244/245 running heads)
       kinds    Definition Lemma Theorem Proposition Corollary Exercise Example Remark
       errata   https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/

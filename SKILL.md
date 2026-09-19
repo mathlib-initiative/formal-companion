@@ -128,6 +128,7 @@ checkout actually has.
 | command | one line |
 |---|---|
 | `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No source flags**; only `--name`, `--no-git`, `--allow-nested`, `--force` |
+| `doctor [--json]` | check this machine's prerequisites (python floor, git, poppler's `pdftotext`/`pdftoppm`, `curl`, optional node and PyYAML) and print the PDF search roots. Exit 2 when a required one is missing, 0 when only optional ones are. Needs no workspace |
 | `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
 | `sources list` | one row per source: id, sha8, edition, offset ± confidence, kinds, items, errata, companions, role, confirmed |
 | `sources show <id>` | the full record: provenance, licence, `same_work` siblings, the page map, the prepared artifacts |
