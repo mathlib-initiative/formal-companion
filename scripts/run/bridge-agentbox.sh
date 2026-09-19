@@ -18,8 +18,17 @@
 #   CF_AGENTBOX_PROFILE    agentbox profile name      (default: $USER)
 #   CF_MODEL               model id passed to the host (claude: --model, codex: -m)
 #   CF_PROMPT_DIR          prompt directory           (default: $CF_BRIDGE_ROOT/prompts)
-#   CF_PERMISSION_FLAGS    claude permission flags    (default: --dangerously-skip-permissions)
-#   CF_ALLOWED_TOOLS       claude --allowedTools list (default: unset -> host default)
+#   CF_ALLOWED_TOOLS       claude --allowedTools list (default: the role allowlist below)
+#   CF_WORKER_TOOLS        worker allowlist           (default: Read,Glob,Grep,Edit,Write,Bash(git:*))
+#   CF_REVIEWER_TOOLS      reviewer allowlist         (default: Read,Glob,Grep,Bash(git:*))
+#   CF_CODEX_SANDBOX       codex --sandbox mode       (default: workspace-write)
+#   CF_ALLOW_SANDBOX_BYPASS=1  run with approvals and the sandbox OFF. An explicit
+#                          opt-in, NOT the default: the run host holds the companion
+#                          checkouts, and "these repositories are READ-ONLY" was a
+#                          sentence in a system prompt. `cf run` records the opt-in in
+#                          run.yaml (run.agents.permission_bypass) from the staged
+#                          wrapper, so a bypassed run is visible afterwards.
+#   CF_PERMISSION_FLAGS    claude permission flags, honoured only WITH that opt-in
 #   CF_GATE_DIR            out-of-tree gate directory (cf run rsyncs the gate there)
 #   CF_GATE_CMD            gate command normalize_result.py runs for the observable-state
 #                          fallback (default: python3 $CF_GATE_DIR/verify_findings.py, else
@@ -83,6 +92,20 @@ if [ -z "${CF_GATE_CMD:-}" ] && [ -n "${CF_GATE_DIR:-}" ]; then
   export CF_GATE_CMD="python3 $CF_GATE_DIR/verify_findings.py"
 fi
 
+# DENY BY DEFAULT, like bridge-claude-p.sh.  Both hosts used to be launched with
+# their permission and sandbox checks off -- the codex path unconditionally -- on a
+# box that holds the companion checkouts and the copyrighted source text, so
+# "these repositories are READ-ONLY" (worker-system.md) was enforced by nothing
+# but the prompt the agent had just been told to read.
+if [ "$ROLE" = reviewer ]; then
+  TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-Read,Glob,Grep,Bash(git:*)}}"
+else
+  TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)}}"
+fi
+BYPASS="${CF_ALLOW_SANDBOX_BYPASS:-0}"
+printf 'bridge-agentbox: role=%s host=%s bypass=%s tools=%s\n' \
+  "$ROLE" "$HOST" "$BYPASS" "$TOOLS" >>"$ERR"
+
 RESULT="$PWD/.tend/agent_result.json"
 mkdir -p "$PWD/.tend"; rm -f "$RESULT"
 RAW="$(mktemp)"
@@ -91,7 +114,14 @@ trap 'rm -f "$RAW"' EXIT
 if [ "$HOST" = codex ]; then
   # codex takes one prompt argument and no system-prompt flag, so the system block is
   # prepended; `printf '' |` keeps it from waiting on stdin (it hung the first attempt).
-  CODEX_ARGS=(exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox -C "$PWD")
+  CODEX_ARGS=(exec --skip-git-repo-check -C "$PWD")
+  if [ "$BYPASS" = 1 ]; then
+    CODEX_ARGS+=(--dangerously-bypass-approvals-and-sandbox)
+  else
+    # workspace-write keeps the agent's writes in the worktree it was given, which
+    # is exactly the invariant: the companion checkouts beside it are read-only.
+    CODEX_ARGS+=(--sandbox "${CF_CODEX_SANDBOX:-workspace-write}")
+  fi
   [ -n "${CF_MODEL:-}" ] && CODEX_ARGS+=(-m "$CF_MODEL")
   printf '' | agentbox host codex --profile "$PROFILE" -- "${CODEX_ARGS[@]}" \
     "$SYS
@@ -101,10 +131,14 @@ if [ "$HOST" = codex ]; then
 $PROMPT" >"$RAW" 2>>"$ERR"
 else
   CLAUDE_ARGS=(-p "$PROMPT" --append-system-prompt "$SYS" --output-format json)
-  # shellcheck disable=SC2206
-  CLAUDE_ARGS+=(${CF_PERMISSION_FLAGS---dangerously-skip-permissions})
+  if [ "$BYPASS" = 1 ]; then
+    # shellcheck disable=SC2206
+    CLAUDE_ARGS+=(${CF_PERMISSION_FLAGS---dangerously-skip-permissions})
+  else
+    CLAUDE_ARGS+=(--permission-mode acceptEdits)
+  fi
+  CLAUDE_ARGS+=(--allowedTools "$TOOLS")
   [ -n "${CF_MODEL:-}" ] && CLAUDE_ARGS+=(--model "$CF_MODEL")
-  [ -n "${CF_ALLOWED_TOOLS:-}" ] && CLAUDE_ARGS+=(--allowedTools "$CF_ALLOWED_TOOLS")
   agentbox host claude --profile "$PROFILE" -- "${CLAUDE_ARGS[@]}" >"$RAW" 2>>"$ERR"
 fi
 

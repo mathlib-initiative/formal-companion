@@ -339,5 +339,320 @@ class DumpDepsTrustTest(unittest.TestCase):
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertIn("lake env lean --run", res.stdout)
 
+
+# ==========================================================================
+# prompts-workflows#10 / security-safety#2 -- the bridge denies by default
+# ==========================================================================
+class AgentboxBridgePermissionsTest(unittest.TestCase):
+    SCRIPT = SCRIPTS / "run" / "bridge-agentbox.sh"
+
+    def setUp(self):
+        self.text = self.SCRIPT.read_text(encoding="utf-8")
+
+    def test_it_is_valid_bash(self):
+        self.assertEqual(subprocess.run(["bash", "-n", str(self.SCRIPT)],
+                                        capture_output=True, text=True).returncode, 0)
+
+    def _launch(self, *, role: str = "worker", host: str = "claude",
+                bypass: str | None = None) -> list[str]:
+        """Run the bridge with a fake `agentbox` on PATH; return the host's argv."""
+        from run.manifest import BYPASS_ENV
+
+        tmp = scratch(self)
+        prompts = tmp / "prompts"
+        prompts.mkdir()
+        (prompts / f"{role}-system.md").write_text("system\n", encoding="utf-8")
+        (prompts / f"{role}.md").write_text("task\n", encoding="utf-8")
+        bindir = tmp / "bin"
+        bindir.mkdir()
+        argv_file = tmp / "argv.txt"
+        (bindir / "agentbox").write_text(
+            '#!/bin/sh\nfor a in "$@"; do printf \'%s\\n\' "$a"; done > "$CF_TEST_ARGV"\n'
+            'printf \'{}\\n\'\n', encoding="utf-8")
+        (bindir / "agentbox").chmod(0o755)
+        worktree = tmp / "worktree"
+        worktree.mkdir()
+        env = dict(os.environ)
+        env.update({"PATH": f"{bindir}:{env['PATH']}", "CF_TEST_ARGV": str(argv_file),
+                    "CF_BRIDGE_ROOT": str(tmp), "CF_AGENT_HOST": host, "CF_ROLE": role,
+                    "CF_AGENTBOX_PROFILE": "examplebox"})
+        env.pop(BYPASS_ENV, None)
+        if bypass is not None:
+            env[BYPASS_ENV] = bypass
+        subprocess.run(["bash", str(self.SCRIPT), role], capture_output=True, text=True,
+                       cwd=str(worktree), env=env)
+        self.assertTrue(argv_file.exists(), "the fake agentbox was never reached")
+        return argv_file.read_text(encoding="utf-8").splitlines()
+
+    def test_claude_denies_by_default_and_bypasses_only_on_the_opt_in(self):
+        argv = self._launch(host="claude")
+        self.assertFalse([a for a in argv if a.startswith("--dangerously")], argv)
+        self.assertIn("--permission-mode", argv)
+        self.assertIn("acceptEdits", argv)
+        self.assertEqual(argv[argv.index("--allowedTools") + 1],
+                         "Read,Glob,Grep,Edit,Write,Bash(git:*)")
+        argv = self._launch(host="claude", bypass="1")
+        self.assertIn("--dangerously-skip-permissions", argv)
+
+    def test_codex_is_sandboxed_by_default_and_bypasses_only_on_the_opt_in(self):
+        argv = self._launch(host="codex")
+        self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", argv)
+        self.assertEqual(argv[argv.index("--sandbox") + 1], "workspace-write")
+        argv = self._launch(host="codex", bypass="1")
+        self.assertIn("--dangerously-bypass-approvals-and-sandbox", argv)
+        self.assertNotIn("--sandbox", argv)
+
+    def test_the_reviewer_gets_a_read_only_surface(self):
+        argv = self._launch(role="reviewer", host="claude")
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read,Glob,Grep,Bash(git:*)")
+
+    def test_the_worker_role_has_an_allowlist_like_the_local_bridge(self):
+        local = (SCRIPTS / "run" / "bridge-claude-p.sh").read_text(encoding="utf-8")
+        for tools in ("Read,Glob,Grep,Edit,Write,Bash(git:*)", "Read,Glob,Grep,Bash(git:*)"):
+            self.assertIn(tools, local)          # the reference posture
+            self.assertIn(tools, self.text)      # now the agentbox bridge too
+
+    def test_the_bypass_is_recorded_in_run_yaml(self):
+        from run import manifest
+        from run.manifest import BYPASS_ENV
+
+        run_dir = scratch(self) / "runs" / "demo"
+        bindir = run_dir / "tend-root" / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "worker-agent.sh").write_text(
+            "#!/bin/sh\nexport CF_AGENT_HOST=claude\n"
+            "export CF_ALLOWED_TOOLS=Read,Grep\n", encoding="utf-8")
+        facts = manifest.agent_permissions(run_dir)
+        self.assertFalse(facts["permission_bypass"])
+        self.assertEqual(facts["env"]["CF_ALLOWED_TOOLS"], "Read,Grep")
+
+        (bindir / "worker-agent.sh").write_text(
+            f"#!/bin/sh\nexport {BYPASS_ENV}=1\n", encoding="utf-8")
+        facts = manifest.agent_permissions(run_dir)
+        self.assertTrue(facts["permission_bypass"])
+        self.assertEqual(facts["bypass_exported_by"], ["worker-agent.sh"])
+
+
+# ==========================================================================
+# prompts-workflows#10 -- the transferred companion trees are hashed and checked
+# ==========================================================================
+class CompanionTreeIntegrityTest(unittest.TestCase):
+    def _tree(self) -> Path:
+        root = scratch(self) / "companion"
+        (root / "Mod").mkdir(parents=True)
+        (root / "Mod" / "A.lean").write_text("theorem a : True := trivial\n", encoding="utf-8")
+        (root / "lakefile.toml").write_text("name = \"mod\"\n", encoding="utf-8")
+        (root / ".git").mkdir()
+        (root / ".git" / "config").write_text("[core]\n", encoding="utf-8")
+        (root / ".lake").mkdir()
+        (root / ".lake" / "big.olean").write_bytes(b"\x00" * 16)
+        return root
+
+    def test_the_digest_covers_what_rsync_sends_and_nothing_else(self):
+        from run import manifest
+
+        root = self._tree()
+        digest = manifest.tree_digest(root, manifest.SOURCE_EXCLUDES)
+        self.assertEqual(digest["files"], 2)          # .git/ and .lake/ excluded
+        before = digest["sha256"]
+        (root / ".git" / "config").write_text("[core]\n\tfsmonitor = /bin/sh\n",
+                                              encoding="utf-8")
+        self.assertEqual(manifest.tree_digest(root, manifest.SOURCE_EXCLUDES)["sha256"],
+                         before, "an excluded file must not move the digest")
+        (root / "Mod" / "A.lean").write_text("theorem a : False := sorry\n", encoding="utf-8")
+        self.assertNotEqual(manifest.tree_digest(root, manifest.SOURCE_EXCLUDES)["sha256"],
+                            before, "an edited .lean file must move it")
+
+    def test_the_host_side_snippet_computes_the_same_digest(self):
+        """The two copies of the algorithm are pinned against each other."""
+        from run import manifest
+
+        root = self._tree()
+        expected = manifest.tree_digest(root, manifest.SOURCE_EXCLUDES)
+        res = subprocess.run([sys.executable, "-c", manifest.REMOTE_TREE_DIGEST_PY,
+                              str(root), expected["sha256"], *manifest.SOURCE_EXCLUDES],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("sha256=%s" % expected["sha256"], res.stdout)
+        self.assertIn("files=%d" % expected["files"], res.stdout)
+
+    def test_the_host_side_snippet_refuses_a_tree_that_changed(self):
+        from run import manifest
+
+        root = self._tree()
+        stale = manifest.tree_digest(root, manifest.SOURCE_EXCLUDES)["sha256"]
+        # what a chmod-and-edit looks like: 0444 is reversible by its owner
+        target = root / "Mod" / "A.lean"
+        target.chmod(0o444)
+        target.chmod(0o644)
+        target.write_text("theorem a : True := by trivial\n", encoding="utf-8")
+        res = subprocess.run([sys.executable, "-c", manifest.REMOTE_TREE_DIGEST_PY,
+                              str(root), stale, *manifest.SOURCE_EXCLUDES],
+                             capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("REFUSED", res.stderr)
+
+    def test_the_plan_hashes_each_repo_before_and_after(self):
+        from run import manifest, remote
+
+        host = {"name": "examplebox", "ssh": "tester@examplebox",
+                "remote_root": "/home/tester", "tend_cmd": "uv run",
+                "agentbox_profile": "", "disk_budget_bytes": 10 ** 10,
+                "tend_version_required": ""}
+        workspace_dir = scratch(self)
+        run_dir = workspace_dir / "runs" / "demo"
+        (run_dir / "tasks").mkdir(parents=True)
+        (run_dir / "tasks" / "t.yaml").write_text("id: t\n", encoding="utf-8")
+        repo = self._tree()
+        run = {"run_id": "demo", "sources": [], "remote": {}}
+        entries, _ = manifest.build_manifest(
+            workspace_dir=workspace_dir, skill_dir=REPO, run_id="demo", run=run,
+            host=host, include_sources=True, include_texts=False,
+            companions={"ours": str(repo)})
+        entry = [e for e in entries if e["name"] == "repo:ours"][0]
+        self.assertEqual(entry["tree_sha256"],
+                         manifest.tree_digest(repo, manifest.SOURCE_EXCLUDES)["sha256"])
+        steps = remote.plan_commands(
+            host=host, run_id="demo", run=run, entries=entries,
+            names=manifest.remote_names(run, "demo"),
+            budget={"max_cost": 5.0, "currency": "USD"},
+            concurrency={"workers": 1, "reviewers": 1})
+        checks = [s for s in steps if s.get("expected") == entry["tree_sha256"]]
+        self.assertEqual(sorted(s["stage"] for s in checks), ["monitor", "verify"])
+        for step in checks:
+            self.assertIn(entry["tree_sha256"], step["shell"])
+            self.assertTrue(step["record_output"])
+            self.assertTrue(step["safe"])
+
+    def test_a_dry_run_records_the_agent_posture_and_prints_the_checks(self):
+        """End to end through `cf run`: run.yaml gains the record, no transfer happens."""
+        root = scratch(self)
+        repo = self._tree()
+        source_id = "smith-analysis-2e"
+        (root / "workspace.yaml").write_text(
+            "version: 2\nworkspace:\n  name: demo\n"
+            "companions:\n  ours:\n"
+            f"    repo: {repo}\n"
+            "    adapter: docstring_tags\n"
+            f"    sources: [{source_id}]\n"
+            f"    anchor_source: {source_id}\n"
+            "sources:\n"
+            f"  {source_id}:\n"
+            f'    sha256: "{"b" * 64}"\n'
+            "    title: A Synthetic Analysis Text\n"
+            '    edition: "2nd edition"\n'
+            "    offset: 12\n"
+            "    role: audited\n"
+            "hosts:\n  allowlist: [examplebox]\n  remote_root: /home/tester\n"
+            "  examplebox:\n    ssh: tester@examplebox\n    tend_version: \">=0.4\"\n",
+            encoding="utf-8")
+        run_dir = root / "runs" / "demo"
+        (run_dir / "tasks").mkdir(parents=True)
+        (run_dir / "tasks" / "t.yaml").write_text("id: t\n", encoding="utf-8")
+        (run_dir / "run.yaml").write_text(
+            "run_id: demo\nmode: differential\nrepos: [ours]\nsources: []\n", encoding="utf-8")
+        bindir = run_dir / "tend-root" / "bin"
+        bindir.mkdir(parents=True)
+        (bindir / "worker-agent.sh").write_text("#!/bin/sh\nexport CF_AGENT_HOST=claude\n",
+                                                encoding="utf-8")
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        env.pop("CF_WORKSPACE", None)
+        res = subprocess.run(
+            [sys.executable, str(SCRIPTS / "cf.py"), "--workspace", str(root), "run", "demo",
+             "--host", "examplebox", "--i-have-consent", "--include-sources", "--max-cost", "5",
+             "--stage", "verify"],
+            capture_output=True, text=True, env=env, cwd=str(REPO))
+        self.assertEqual(res.returncode, 0, res.stdout + res.stderr)
+        self.assertIn("nothing was transferred", res.stdout)
+        from run import manifest
+
+        digest = manifest.tree_digest(repo, manifest.SOURCE_EXCLUDES)["sha256"]
+        self.assertIn(digest, res.stdout, "the plan must demand the digest it sent")
+        self.assertIn(">=0.4", res.stdout, "preflight must check tend's version")
+        recorded = (run_dir / "run.yaml").read_text(encoding="utf-8")
+        self.assertIn("permission_bypass", recorded)
+        self.assertIn(manifest.BYPASS_ENV, recorded)
+
+    def test_execute_records_the_digest_output_for_run_yaml(self):
+        import io
+
+        from run import remote
+
+        steps = [{"stage": "verify", "title": "repo:ours landed", "safe": True,
+                  "record_output": True, "expected": "d" * 64,
+                  "argv": [sys.executable, "-c", "print('tree sha256=%s' % ('d' * 64))"],
+                  "shell": "python3 -c ..."}]
+        out = remote.execute(steps, ["verify"], dry_run=False, stream=io.StringIO())
+        self.assertEqual(out[0]["expected"], "d" * 64)
+        self.assertIn("sha256=" + "d" * 64, out[0]["stdout"])
+
+
+# ==========================================================================
+# critic#6 (code half) -- preflight compares tend's version, it does not print it
+# ==========================================================================
+class TendVersionPreflightTest(unittest.TestCase):
+    def _host(self, required: str) -> dict:
+        return {"name": "examplebox", "ssh": "tester@examplebox",
+                "remote_root": "/home/tester", "tend_cmd": "uv run",
+                "agentbox_profile": "", "disk_budget_bytes": 10 ** 10,
+                "tend_version_required": required}
+
+    def _preflight(self, required: str) -> dict:
+        from run import remote
+
+        steps = remote.plan_commands(
+            host=self._host(required), run_id="demo", run={"run_id": "demo"}, entries=[],
+            names={"entrypoint": "demo", "tend_root": "demo-tend", "gate": "demo-gate",
+                   "sources": "sources", "repos": "repos"},
+            budget={"max_cost": 1.0, "currency": "USD"},
+            concurrency={"workers": 1, "reviewers": 1})
+        return [s for s in steps if s["stage"] == "preflight"][0]
+
+    def test_the_required_range_is_read_from_the_workspace(self):
+        from cflib.workspace import Workspace
+        from run import manifest
+
+        root = scratch(self)
+        (root / "workspace.yaml").write_text(
+            "version: 2\nworkspace:\n  name: demo\ncompanions: {}\nsources: {}\n"
+            "hosts:\n  allowlist: [examplebox]\n  examplebox:\n    ssh: tester@examplebox\n"
+            "    tend_version: \">=0.4,<0.6\"\n", encoding="utf-8")
+        host = manifest.resolve_host(Workspace.load(root), "examplebox")
+        self.assertEqual(host["tend_version_required"], ">=0.4,<0.6")
+
+    def test_preflight_compares_instead_of_only_printing(self):
+        step = self._preflight(">=0.4,<0.6")
+        self.assertIn("tend --version", step["shell"])
+        self.assertIn(">=0.4,<0.6", step["shell"])
+        self.assertTrue(step["record_output"])
+
+    def test_with_nothing_recorded_it_says_it_is_not_checking(self):
+        step = self._preflight("")
+        self.assertIn("NOT checked", step["shell"])
+        self.assertIn("tend_version", step["shell"])
+
+    def _check(self, version: str, spec: str) -> subprocess.CompletedProcess:
+        from run.remote import TEND_VERSION_CHECK
+
+        return subprocess.run([sys.executable, "-c", TEND_VERSION_CHECK, spec],
+                              input=version, capture_output=True, text=True)
+
+    def test_the_version_comparison_accepts_and_refuses(self):
+        for version, spec in (("tend 0.4.2", ">=0.4"), ("tend 0.5.0", ">=0.4,<0.6"),
+                              ("0.4", ">=0.4,<0.6"), ("tend version 1.2.3", "==1.2.3")):
+            with self.subTest(version=version, spec=spec):
+                self.assertEqual(self._check(version, spec).returncode, 0)
+        for version, spec in (("tend 0.3.9", ">=0.4"), ("tend 0.6.0", ">=0.4,<0.6"),
+                              ("tend 1.0", "==0.9"), ("tend (unknown)", ">=0.4")):
+            with self.subTest(version=version, spec=spec):
+                res = self._check(version, spec)
+                self.assertEqual(res.returncode, 1)
+                self.assertIn("REFUSED", res.stderr)
+
+    def test_the_refusal_names_what_settles_it(self):
+        res = self._check("tend 0.3.0", ">=0.4")
+        self.assertIn("hosts.<host>.tend_version", res.stderr)
+
+
 if __name__ == "__main__":                              # pragma: no cover
     unittest.main()
