@@ -178,5 +178,79 @@ class TestTwoClaimsAtOneIdAreVisible(unittest.TestCase):
         self.assertEqual(cov["collisions"], [])
 
 
+# ---------------------------------------------------------------------------
+# gates-correctness#5
+
+
+class TestAgreementMeansTheSameComplaint(unittest.TestCase):
+    """Two runs that both looked hard at page 71 have not corroborated anything."""
+
+    @staticmethod
+    def row(run: str, item_raw: str, kind: str, decl: str, **over) -> dict:
+        row = {"run": run, "mode": "differential", "repo": "ours",
+               "source_id": SOURCE_ID, "source_sha": SOURCE_SHA,
+               "item_raw": item_raw, "item": tally_mod.collapse_to_book_item(item_raw),
+               "kind": kind, "severity": "high", "decls": [decl] if decl else []}
+        row.update(over)
+        return row
+
+    def test_two_kinds_on_one_page_are_not_agreement(self):
+        rows = [self.row("A", "In-text, book p. 71", "CONTENT", "ours:First"),
+                self.row("B", "In-text remark, book p. 71", "VACUITY", "ours:Second")]
+        self.assertEqual(agreed_mod.agreed(rows), [])
+        weak = agreed_mod.same_locus(rows)
+        self.assertEqual(len(weak), 1)
+        self.assertEqual(weak[0]["item"], "In-text p.71")
+        self.assertEqual(weak[0]["runs"], ["A", "B"])
+        self.assertIn("different kinds", weak[0]["why_not_agreement"])
+
+    def test_two_sub_parts_with_disjoint_declarations_are_not_agreement(self):
+        rows = [self.row("A", "Exercise 1.1.2(i)", "CONTENT", "ours:First"),
+                self.row("B", "Exercise 1.1.2(iii)", "CONTENT", "ours:Second")]
+        self.assertEqual(agreed_mod.agreed(rows), [])
+        weak = agreed_mod.same_locus(rows)
+        self.assertEqual([e["item"] for e in weak], ["Exercise 1.1.2"])
+        self.assertIn("no declaration named by every run",
+                      weak[0]["why_not_agreement"])
+        # and the reviewer can see which part each run hit
+        self.assertEqual(weak[0]["by_run"]["A"]["items_raw"], ["Exercise 1.1.2(i)"])
+        self.assertEqual(weak[0]["by_run"]["B"]["items_raw"], ["Exercise 1.1.2(iii)"])
+
+    def test_the_same_complaint_about_one_declaration_still_agrees(self):
+        rows = [self.row("A", "Exercise 1.1.2(i)", "CONTENT", "ours:First"),
+                self.row("B", "Exercise 1.1.2", "CONTENT", "ours:First", mode="attack")]
+        entries = agreed_mod.agreed(rows)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["item"], "Exercise 1.1.2")
+        self.assertEqual(entries[0]["kind"], "CONTENT")
+        self.assertEqual(entries[0]["shared_decls"], ["ours:First"])
+        self.assertTrue(entries[0]["cross_family"])
+        self.assertEqual(entries[0]["items_raw"],
+                         ["Exercise 1.1.2", "Exercise 1.1.2(i)"])
+        self.assertEqual(agreed_mod.same_locus(rows), [],
+                         "a locus that agreed is not also reported as weaker evidence")
+
+    def test_rows_that_name_no_declaration_agree_on_the_locus_alone(self):
+        """There is nothing to intersect, so the ``_unattributed`` bucket keeps
+        the behaviour it had -- COVERAGE findings name no decl by construction."""
+        rows = [self.row("A", "Exercise 1.1.21", "COVERAGE", "", repo="_unattributed"),
+                self.row("B", "Exercise 1.1.21", "COVERAGE", "", repo="_unattributed")]
+        entries = agreed_mod.agreed(rows, substantive_only=False)
+        self.assertEqual([e["item"] for e in entries], ["Exercise 1.1.21"])
+        self.assertEqual(entries[0]["shared_decls"], [])
+
+    def test_the_document_states_the_key_it_used(self):
+        root = scratch(self)
+        write_doc(root / "corpus" / "run-a", "Exercise 1.2.9", [defect()])
+        write_doc(root / "corpus" / "run-b", "Exercise 1.2.9", [defect()])
+        doc = agreed_mod.build({"run-a": root / "corpus" / "run-a",
+                                "run-b": root / "corpus" / "run-b"})
+        self.assertIn("kind", doc["criteria"]["grouped_by"])
+        self.assertIn("declaration", doc["criteria"]["grouped_by"])
+        self.assertEqual(doc["count"], 1)
+        self.assertEqual(doc["same_locus_count"], 0)
+        self.assertIn("same_locus", doc)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
