@@ -920,9 +920,13 @@ class TestExportPolicyIsRead(unittest.TestCase):
         from cflib.workspace import Workspace
 
         policy = Workspace.load(self.workspace).policy
+        # `git` is not a template key: setUp passes --no-git, which records the
+        # choice as policy.git: false so `cf status` can report a repo-less
+        # workspace as deliberate instead of warning about it on every run.
         self.assertEqual(set(policy),
                          {"publish_unchallenged", "redact_quotes_on_export", "allow_remote",
-                          "allow_download", "require_confirmed_sources", "allow_errata_fetch"})
+                          "allow_download", "require_confirmed_sources", "allow_errata_fetch",
+                          "git"})
 
     def test_require_confirmed_sources_is_enforced_by_plan_run(self):
         """Discovery appends a new source with confirmed: false (R3).
