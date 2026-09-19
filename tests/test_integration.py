@@ -930,7 +930,10 @@ class TestExportPolicyIsRead(unittest.TestCase):
         with self.assertRaises(CfError) as ctx:
             plan_cmd._check_confirmed(ws, source)
         self.assertIn("not confirmed", str(ctx.exception))
-        self.assertIn("cf sources confirm", getattr(ctx.exception, "hint", ""))
+        # `cf sources confirm` is not a subcommand; the spelling that works is
+        # the one sources.py and status.py already print.
+        self.assertIn("cf sources set %s confirmed=true" % PUBLISHED_ID,
+                      getattr(ctx.exception, "hint", ""))
 
         # confirmed, or the policy off, and it plans
         ws.upsert_source(PUBLISHED_ID, confirmed=True)

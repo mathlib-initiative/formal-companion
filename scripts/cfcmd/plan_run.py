@@ -5,7 +5,9 @@
 
 Writes ``<workspace>/runs/<run-id>/``:
 
-    run.yaml        preset, mode, host, consent, models, counts, prompt shas
+    run.yaml        preset, mode, host, consent, the model AND where it came
+                    from, whether any conventions list was unconfirmed, the
+                    chapter narrowing, counts, prompt shas
     tasks/*.yaml    one tend task per item (title carries the evidence class)
     prompts/*.md    the five rendered prompts
     data/*.jsonl    the statement tables the workers read
@@ -44,6 +46,7 @@ from cflib.hashing import sha256_text
 from cflib.yamlio import write_yaml
 from plan import decl_index
 from plan import make_tasks as mt
+from plan import models as models_mod
 from plan import presets as presets_mod
 from plan import render_prompts as rp
 from plan.make_tend_root import TendRootPlan, make_tend_root
@@ -58,7 +61,11 @@ def register(subparsers):
     """cf.py discovery hook."""
     p = subparsers.add_parser(NAME, help=HELP, description=__doc__)
     p.add_argument("--workspace", help="workspace directory (default: $CF_WORKSPACE or cwd upward)")
-    p.add_argument("--preset", required=True, help="one of: " + ", ".join(sorted(presets_mod.PRESETS)))
+    p.add_argument("--preset", required=True,
+                   help="runnable: " + ", ".join(presets_mod.RUNNABLE)
+                        + " (gate-only, cannot be planned: "
+                        + ", ".join(f"{n} — {why}" for n, why in presets_mod.GATE_ONLY.items())
+                        + ")")
     p.add_argument("--host", default=LOCAL, help="run host; must be in workspace.yaml hosts.allowlist")
     p.add_argument("--model", default=None, help="model id to record and pass to the bridge")
     p.add_argument("--companion", help="the audited companion (required for attack presets)")
@@ -66,13 +73,19 @@ def register(subparsers):
                    help="the source this run audits; required only when the selected "
                         "companions share more than one")
     p.add_argument("--run-id", help="default: <preset>-<YYYY-MM-DD>")
-    p.add_argument("--chapters", default=None, help="comma-separated chapters for the differential universe")
+    p.add_argument("--chapters", default=None,
+                   help="comma-separated chapters to narrow the task universe to "
+                        "(both differential and attack presets; refused for a preset or a "
+                        "source that has no such chapter)")
     p.add_argument("--max-open-tasks", type=int, default=None,
                    help="chain depends_on so tend holds at most N worktrees at once")
     p.add_argument("--max-cost", type=float, default=None, help="USD ceiling recorded in run.yaml")
     p.add_argument("--i-have-consent", action="store_true",
                    help="the owner of --host has agreed to receive private sources and book text")
     p.add_argument("--force", action="store_true", help="replan into an existing run directory")
+    p.add_argument("--conventions-unconfirmed", action="store_true",
+                   help="plan although a companion's conventions.md carries no "
+                        "`confirmed_by:` stamp or no filled section (recorded in run.yaml)")
     p.add_argument("--allow-unreconciled", action="store_true",
                    help="plan a differential run although pairs/reconciliation.json is missing "
                         "or predates the task-universe gate (nothing then checks the task count)")
@@ -286,8 +299,113 @@ def _check_confirmed(ws, source) -> None:
         f"source {source.id!r} is not confirmed, and this workspace sets "
         "policy.require_confirmed_sources",
         hint=f"check what discovery inferred with `cf sources show {source.id}`, then "
-             f"`cf sources confirm {source.id}` -- or set the policy key to false",
+             f"`cf sources set {source.id} confirmed=true` -- or set the policy key to false",
     )
+
+
+def _chapters(args, camp, preset, source_id: str) -> tuple[list[int] | None, list[int] | None]:
+    """The chapter filter for this plan, and the EXPLICIT half of it.
+
+    ``--chapters`` used to be read by the differential branch only: an attack
+    plan accepted it, ignored it and planned the full universe, and a
+    differential plan narrowed its entries but not the universe the task count
+    is reconciled against, so the plan failed its own gate.  Both halves are
+    fixed here — the same list reaches the entries and the universe — and a
+    preset that cannot narrow refuses the flag by name instead of dropping it.
+
+    The DERIVED default (the source's own ``chapters``) stays entry-only: it is
+    the scope ``cf pair`` already reconciled against, so re-filtering the
+    universe with it could only disagree with a pinned count.
+    """
+    raw = getattr(args, "chapters", None)
+    explicit: list[int] | None = None
+    if raw:
+        if not preset.narrows_by_chapter:
+            raise CfError(
+                f"preset {preset.name!r} does not narrow its task universe by chapter",
+                hint="drop --chapters; presets that consume it: "
+                     + ", ".join(n for n in presets_mod.RUNNABLE
+                                 if presets_mod.get(n).narrows_by_chapter))
+        try:
+            explicit = [int(c) for c in str(raw).split(",") if str(c).strip()]
+        except ValueError:
+            raise CfError(
+                f"--chapters {raw!r} is not a comma-separated list of chapter numbers",
+                hint="e.g. --chapters 1 or --chapters 1,2") from None
+        if not explicit:
+            raise CfError("--chapters was given no chapter", hint="e.g. --chapters 1")
+        known = [int(c) for c in camp.chapters(source_id)]
+        unknown = [c for c in explicit if known and c not in known]
+        if unknown:
+            raise CfError(
+                f"source {source_id!r} has no chapter "
+                + ", ".join(str(c) for c in unknown),
+                hint="its chapters are " + ", ".join(str(c) for c in known)
+                     + f"; `cf sources set {source_id} chapters=…` changes the audited scope")
+    chapters = explicit or ([int(c) for c in camp.chapters(source_id)] or None)
+    return chapters, explicit
+
+
+def _local_fleet_limit(camp) -> int:
+    """The ceiling `cf run --local` enforces, from this workspace's own defaults."""
+    try:
+        from run import fleet_local
+        fallback = int(fleet_local.DEFAULT_MAX_ITEMS)
+    except Exception:  # pragma: no cover - the runner is in this package
+        fallback = 100
+    return int(camp.default("local_fleet_max_items", fallback) or fallback)
+
+
+def _source_examples(camp, source_id: str) -> list[str]:
+    """This source's own illustrations of a content delta, if a human wrote any.
+
+    ``sources.<id>.prompt_examples`` in workspace.yaml: prose for the prompt, not
+    a discovered fact, which is why it is read straight off the workspace document
+    and has no inference path.  Absent -- the normal case -- the prompt uses
+    book-neutral shapes instead of another book's objects (`ℝ` vs `ℝᵈ` taught a
+    topology companion to look for dimension hypotheses).
+    """
+    body = (camp.data.get("sources") or {}).get(source_id) or {}
+    raw = body.get("prompt_examples") if isinstance(body, dict) else None
+    if isinstance(raw, str):
+        raw = [raw]
+    return [str(e) for e in (raw or []) if str(e).strip()]
+
+
+def _check_conventions(rows: list[dict], override: bool) -> list[str]:
+    """Refuse a run whose companions have no CONFIRMED conventions list.
+
+    ``conventions.md`` is what the CONVENTION-vs-CONTENT judgement turns on, and
+    an unconfirmed one renders the worst prompt in the set: "a first pass was
+    wrong about 40% of the time by over-calling content" three lines above "treat
+    every delta as content until the owner confirms one". Those cannot both be
+    followed, and the actionable one maximises the failure the rest of the design
+    spends its budget suppressing -- so the run stops here instead of burning a
+    fleet and an adjudication pass to produce noise.
+
+    Unconfirmed means: no ``confirmed_by:`` front-matter, or every section the
+    prompts read is empty once the shipped ``(example)`` bullets are dropped
+    (which is the DEFAULT state, because `cf onboard` copies the template in).
+    Returns the names planned with the override, for run.yaml.
+    """
+    unconfirmed: list[tuple[str, str]] = []
+    for row in rows:
+        status = rp.conventions_status(row.get("conventions_md"))
+        if not status["ok"]:
+            unconfirmed.append((str(row["name"]), status["reason"]))
+    if not unconfirmed:
+        return []
+    listed = "; ".join(f"{name} ({why})" for name, why in unconfirmed)
+    if not override:
+        raise CfError(
+            f"{len(unconfirmed)} companion(s) have no confirmed conventions.md: {listed}",
+            hint="fill companions/<name>/conventions.md and stamp `confirmed_by:` "
+                 "(templates/conventions.md.example is the contract), or pass "
+                 "--conventions-unconfirmed to plan anyway -- it is recorded in run.yaml "
+                 "so the report can say the findings rest on an unconfirmed list")
+    print(f"warn planning with unconfirmed conventions: {listed}"
+          " -- every finding that rests on a convention is lower confidence")
+    return [name for name, _ in unconfirmed]
 
 
 def _dir_bytes(path: Path) -> int:
@@ -301,8 +419,12 @@ def run(args) -> int:
     camp = workspace_mod.from_args(args)
     preset = presets_mod.get(args.preset)
     if preset.bridge == "none":
+        # Not dead surface: these are the gates for corpora this tool did not
+        # plan, so the refusal says what each one IS for rather than only that it
+        # cannot be planned.
+        purpose = presets_mod.GATE_ONLY.get(preset.name, "gate-only")
         raise CfError(
-            f"preset {preset.name!r} is a gate-only preset",
+            f"preset {preset.name!r} is a gate-only preset ({purpose})",
             hint="runnable presets: " + ", ".join(presets_mod.RUNNABLE),
         )
     run_id = args.run_id or f"{preset.name}-{_dt.date.today().isoformat()}"
@@ -333,11 +455,11 @@ def run(args) -> int:
                  "fingerprinted -- a run cannot stamp findings with an edition nobody pinned"
             % source_id)
     host = _host_paths(camp, args.host, run_id, source_id)
+    model, model_source = models_mod.resolve(requested=args.model, preset=preset, workspace=camp)
+    model_warning = models_mod.unknown_warning(model, camp)
 
     # ---- entries -----------------------------------------------------------
-    chapters = [int(c) for c in args.chapters.split(",")] if args.chapters else None
-    if chapters is None:
-        chapters = [int(c) for c in camp.chapters(source_id)] or None
+    chapters, chapters_explicit = _chapters(args, camp, preset, source_id)
     kinds = camp.kinds(source_id)
     if preset.is_attack:
         targets = _queue_rows(
@@ -351,6 +473,19 @@ def run(args) -> int:
         # catch a drop inside make_tasks, never one between the companion's item
         # set and targets.<name>.json.
         expected_items = sorted({str(r.get("item")) for r in targets if r.get("item")})
+        if chapters_explicit:
+            # The narrowing the flag promises, on the branch that used to ignore
+            # it — applied to the entries AND to what they are reconciled against.
+            entries = [e for e in entries
+                       if mt.in_chapters(e.item, chapters_explicit, kinds)]
+            expected_items = [i for i in expected_items
+                              if mt.in_chapters(i, chapters_explicit, kinds)]
+            if not entries:
+                raise CfError(
+                    f"no target of {companion!r} is in chapter "
+                    + ", ".join(str(c) for c in chapters_explicit),
+                    hint=f"`cf pair` wrote pairs/{source_id}/targets.{companion}.json; "
+                         "drop --chapters or name a chapter it covers")
         expected_n = len(expected_items)
         universe = f"pairs/{source_id}/targets.{companion}.json"
     else:
@@ -369,11 +504,30 @@ def run(args) -> int:
         )
         expected_items, expected_n = _task_universe(p, args, source_id)
         universe = f"pairs/{source_id}/: queue.json + targets.*.json (items ∩ any-repo)"
+        if chapters_explicit and expected_n is not None:
+            if expected_items is None:
+                raise CfError(
+                    f"{p.reconciliation_json(source_id)} has no `task_universe_items`, so "
+                    "a --chapters run cannot be reconciled against it",
+                    hint="re-run `cf pair` (it writes the item list), drop --chapters, or "
+                         "pass --allow-unreconciled to plan a run nothing checks the size of")
+            expected_items = [i for i in expected_items
+                              if mt.in_chapters(i, chapters_explicit, kinds)]
+            expected_n = len(expected_items)
+            universe += " ∩ chapters " + ",".join(str(c) for c in chapters_explicit)
+            if not expected_n:
+                raise CfError(
+                    "the reconciled universe has no item in chapter "
+                    + ", ".join(str(c) for c in chapters_explicit),
+                    hint=f"`cf sources show {source_id}` prints the chapters this source "
+                         "covers; drop --chapters or name one of them")
 
     # ---- prompts -----------------------------------------------------------
     gate_command = (
         f"python3 {host['gate_dir']}/verify_findings.py --gate-config {host['gate_dir']}/gate.json"
     )
+    companion_rows = _companion_rows(camp, host)
+    unconfirmed = _check_conventions(companion_rows, bool(args.conventions_unconfirmed))
     ctx = rp.build_context(
         preset,
         run_id=run_id,
@@ -383,11 +537,15 @@ def run(args) -> int:
         source_sha=source_sha,
         source_edition=source.edition,
         page_offset=source.offset,
-        companions=_companion_rows(camp, host),
+        companions=companion_rows,
         gate_command=gate_command,
         errata_path=host["errata"],
         images_dir=host["images_dir"] if preset.needs_images else "",
         primary=companion or "",
+        # the calibration sentences come from THIS workspace's adjudicated rows
+        # when it has any, and say they are imported when it has none
+        ledger_dir=p.ledger_dir,
+        examples=_source_examples(camp, source_id),
     )
     prompts = rp.render_prompts(preset, ctx, p.prompts_dir(run_id))
 
@@ -467,16 +625,21 @@ def run(args) -> int:
         gate_dir=host["gate_dir"],
         prompts_dir=host["prompts_dir"],
     )
+    # The RESOLVED model reaches the agents: the tend-agent yaml's model_name and
+    # CF_MODEL for the bridges. `--model` used to change run.yaml and nothing
+    # else, so the record named a tier the fleet may never have been given.
     agent = {k: v for k, v in {
-        "agent_model": camp.model("worker"),
-        "reviewer_agent_model": camp.model("reviewer"),
+        "agent_model": model,
+        "reviewer_agent_model": camp.model("reviewer") or model,
         "agentbox_profile": camp.hosts.get("agentbox_profile"),
     }.items() if v}
     built = make_tend_root(
         plan, preset, run_id=run_id, gate_config=gate_remote,
-        prompts=prompts, agent=agent, task_count=len(tasks),
+        prompts=prompts, agent=agent, task_count=len(tasks), model=model,
         decl_index_src=index_path if remote_index else None,
     )
+    if model_warning:
+        built["warnings"].append(model_warning)
 
     # ---- run.yaml ----------------------------------------------------------
     entrypoint_bytes = _dir_bytes(p.tasks_dir(run_id)) + _dir_bytes(rd / "data")
@@ -519,6 +682,13 @@ def run(args) -> int:
             "sources": "sources",
             "repos": "repos",
         },
+        # An unconfirmed conventions list is the single biggest source of false
+        # positives, so a run planned over one says so in its own record and the
+        # report can mark every convention-dependent finding lower confidence.
+        "conventions": {
+            "unconfirmed": unconfirmed,
+            "override": "--conventions-unconfirmed" if unconfirmed else None,
+        },
         "consent": {
             "given": consent_given,
             "flag": "--i-have-consent",
@@ -526,7 +696,11 @@ def run(args) -> int:
             "note": "cf run refuses to start a remote run without this",
         },
         "bridge": preset.bridge,
-        "model": args.model or preset.model or camp.model("worker"),
+        "model": model,
+        # WHERE the model came from, so the record is falsifiable: a run that
+        # says `model_source: --model` was asked for that tier; one that says
+        # `workspace.models.worker` inherited it.
+        "model_source": model_source,
         "models": {"worker": camp.model("worker"), "reviewer": camp.model("reviewer")},
         "gate": {
             "command": gate_command,
@@ -541,6 +715,9 @@ def run(args) -> int:
             "count": len(tasks),
             "universe": universe,
             "expected": expected_n,
+            # the narrowing this plan was asked for, so a count can be explained
+            # without re-deriving it: null means "the source's whole scope"
+            "chapters": chapters_explicit,
             "differential": sum(1 for t in tasks if t.kind == "DIFFERENTIAL"),
             "single_source": sum(1 for t in tasks if t.kind == "SINGLE-SOURCE"),
             "attack": sum(1 for t in tasks if t.kind in ("hunt", "vac")),
@@ -581,7 +758,19 @@ def run(args) -> int:
     print(f"  source   : {source_id} ({source_sha[:8]}), offset {source.offset}")
     print(f"  universe : {universe}" + (f" (expected {expected_n})" if expected_n else ""))
     print(f"  gate     : {gate_command}")
+    print(f"  model    : {model or '(bridge default)'} (from {model_source})")
     print(f"  tend root: {plan.tend_root} (entrypoint {plan.entrypoint})")
+    # The size warning belongs HERE, not one command later: the limit lives in the
+    # workspace.yaml this command just read, and a plan with no host can only be
+    # executed locally. `cf run --local` used to be the first place a user heard
+    # that a 506-task plan does not fit.
+    local_limit = _local_fleet_limit(camp)
+    if args.host == LOCAL and len(tasks) > local_limit:
+        print(f"  note     : {len(tasks)} items is above local_fleet_max_items "
+              f"({local_limit}), so `cf run {run_id} --local` will refuse. Either plan it "
+              f"for a server (--host <alias> --i-have-consent), narrow it (--chapters), "
+              f"raise local_fleet_max_items in workspace.yaml, or accept a resume with "
+              f"`cf run {run_id} --local --force`")
     if not consent_given and args.host != LOCAL:
         print("  consent  : NOT given — `cf run` will refuse until --i-have-consent is recorded")
     for w in built["warnings"]:

@@ -165,15 +165,34 @@ check "differential task universe" "$(jget "pairs/$PUB/reconciliation.json" task
 
 # ---------------------------------------------------------------------------
 step "6. plan every preset"
+# Both companions' conventions.md are the shipped template, so nothing has been
+# confirmed by an owner: planning over an unconfirmed convention list is refused
+# and the override is recorded in run.yaml.
+$CF plan-run --preset differential-text --run-id x-unconfirmed -q >/dev/null 2>&1
+check "plan-run refuses unconfirmed conventions" "$?" "2"
 for P in differential-text differential-pdf differential-gpt; do
-  $CF plan-run --preset "$P" --run-id "p-$P" -q >/dev/null || FAILED=$((FAILED+1))
+  $CF plan-run --preset "$P" --run-id "p-$P" --conventions-unconfirmed -q >/dev/null \
+    || FAILED=$((FAILED+1))
   check "plan-run $P" "$(yget "runs/p-$P/run.yaml" tasks.count)" "383"
 done
 for P in attack-vac attack-hunt; do
-  $CF plan-run --preset "$P" --companion tao-measure-lean --run-id "p-$P" -q >/dev/null \
-    || FAILED=$((FAILED+1))
+  $CF plan-run --preset "$P" --companion tao-measure-lean --run-id "p-$P" \
+    --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
   check "plan-run $P" "$(yget "runs/p-$P/run.yaml" tasks.count)" "506"
 done
+# --chapters narrows an ATTACK universe too (it used to be accepted and ignored),
+# and the narrowing is recorded.  No figure is pinned here: the assertion is that
+# the narrowed run is smaller than the full one and not empty.
+$CF plan-run --preset attack-hunt --companion tao-measure-lean --run-id p-ch1 \
+  --chapters 1 --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
+check "plan-run --chapters narrows the attack universe" \
+      "$(py 'import sys
+sys.path.insert(0, sys.argv[1])
+from cflib.yamlio import read_yaml
+full = read_yaml("runs/p-attack-hunt/run.yaml")["tasks"]["count"]
+narrow = read_yaml("runs/p-ch1/run.yaml")["tasks"]["count"]
+print("narrower" if 0 < narrow < full else "%s vs %s" % (narrow, full))' "$SKILL/scripts")" "narrower"
+check "  and run.yaml records which chapters" "$(yget "runs/p-ch1/run.yaml" tasks.chapters)" "1"
 # the other three presets are gate-only scoring configs, not runnable plans
 for P in differential-legacy attack-legacy mechanical; do
   $CF plan-run --preset "$P" --run-id "x-$P" -q >/dev/null 2>&1
