@@ -33,8 +33,8 @@ from typing import Mapping, Sequence
 if __package__ in (None, ""):  # `python3 scripts/harvest/harvest.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harvest._compat import (CfError, hashing, iso_now, iter_finding_files,
-                             read_json, write_json)
+from harvest._compat import (NON_FINDING_FILES, CfError, hashing, iso_now,
+                             iter_finding_files, read_json, write_json)
 
 RECEIPT_NAME = "RECEIPT.json"
 #: how many missing names an error message spells out before truncating
@@ -85,7 +85,14 @@ def list_commands(source: dict, dest: Path) -> list[dict]:
 
 
 def source_names(source: dict) -> list[str]:
-    """The expected findings file names, read from the source itself."""
+    """The expected findings file names, read from the source itself.
+
+    The exclusion list is the one ``iter_finding_files`` uses at the
+    DESTINATION.  It has to be: the expected set is compared against that
+    listing, and when only one side filtered, a re-harvest (or an import of a
+    landed corpus, which carries its own RECEIPT.json and manifest.json) reported
+    those names as MISSING -- files that were on disk in both places.
+    """
     if source["kind"] == "remote":
         out = _run(["ssh", source["host"], f"ls -1 {shlex.quote(source['path'])}"],
                    "remote listing")
@@ -95,7 +102,8 @@ def source_names(source: dict) -> list[str]:
         if not directory.is_dir():
             raise CfError(f"source directory does not exist: {directory}")
         names = [p.name for p in sorted(directory.iterdir()) if p.is_file()]
-    return sorted(n for n in names if n.endswith(".json") and not n.startswith("."))
+    return sorted(n for n in names if n.endswith(".json") and not n.startswith(".")
+                  and n not in NON_FINDING_FILES)
 
 
 def source_shas(source: dict) -> dict[str, str]:
@@ -159,7 +167,7 @@ def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
     for path in iter_finding_files(dest):
         payload = read_json(path, default=None)
         if not isinstance(payload, dict):
-            continue
+            continue  # not silence: malformed_files() puts it on the receipt
         meta = payload.get("_meta") if isinstance(payload.get("_meta"), dict) else {}
         sid = str(payload.get("source_id") or meta.get("source_id") or "")
         sha = payload.get("source_sha") or meta.get("source_sha") \
@@ -189,6 +197,27 @@ def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
             "no_source": missing, "mismatched": mismatched, "unknown_source": unknown}
 
 
+def malformed_files(dest: Path) -> list[str]:
+    """Findings files in *dest* that cannot be read as a findings document.
+
+    A file that is valid JSON but not an object (``null``, a bare list) was
+    dropped without a word by both readers of the corpus, so the corpus was
+    quietly a file short -- the failure the whole receipt exists to prevent, in
+    the same "cleaner" direction.  The gate calls such a file an error; so does
+    the receipt, and ``complete`` is false while one is there.
+    """
+    bad: list[str] = []
+    for path in iter_finding_files(dest):
+        try:
+            payload = read_json(path, default=None)
+        except CfError:  # invalid JSON: read_json already refuses it
+            bad.append(path.name)
+            continue
+        if not isinstance(payload, dict):
+            bad.append(path.name)
+    return sorted(bad)
+
+
 def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: Path,
                   sources: Mapping[str, str] | None = None, previous: dict | None = None,
                   source_manifest: dict[str, str] | None = None,
@@ -204,6 +233,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
 
     * nothing is missing,
     * every file matches the remote byte for byte (when checksums were collected),
+    * every file that landed can be read as a findings document,
     * no finding was judged against another edition or an unknown source (unless
       ``allow_edition_mismatch``), and
     * the schema/quote gate passed, when one was run (``gate``).
@@ -218,6 +248,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         name for name, sha in (source_manifest or {}).items()
         if name in manifest and manifest[name] != sha
     )
+    malformed = malformed_files(dest)
     sources = {str(k): str(v) for k, v in dict(sources or {}).items()}
     edition = source_audit(dest, sources)
     edition_mismatch = list(edition.get("mismatched") or []) + list(
@@ -237,7 +268,9 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "extra": extra,
         "sha_mismatched": mismatched,
         "sha_verified": bool(source_manifest),
-        "complete": not missing and not mismatched and edition["ok"] and gate_ok,
+        "malformed": malformed,
+        "complete": (not missing and not mismatched and not malformed
+                     and edition["ok"] and gate_ok),
         "manifest_algo": "sha256",
         "manifest": manifest,
         "run_yaml": run_yaml or "",
@@ -269,6 +302,24 @@ def read_receipt(dest: Path) -> dict | None:
         return None
 
 
+def ungated_runs(runs: Mapping[str, str | Path]) -> list[str]:
+    """Which of *runs* landed with no schema/quote gate behind them.
+
+    ``RECEIPT.json``'s ``gate`` block is the only record that the findings were
+    validated against the source text, and nothing downstream used to read it:
+    a corpus harvested without a gate fed the tally, the adjudication and the
+    report with quotes never checked against ``text.txt``, and every number
+    looked the same as a gated one.  A run with no receipt at all counts as
+    ungated -- it is a directory nobody receipted.
+    """
+    out = []
+    for run_id, directory in dict(runs or {}).items():
+        receipt = read_receipt(Path(directory))
+        if not isinstance(receipt, dict) or not (receipt.get("gate") or {}):
+            out.append(str(run_id))
+    return sorted(out)
+
+
 def describe(receipt: dict) -> str:
     """One-screen summary of a receipt, complete or not."""
     lines = [
@@ -287,6 +338,10 @@ def describe(receipt: dict) -> str:
     if receipt["sha_mismatched"]:
         lines.append(f"  SHA MISMATCH {len(receipt['sha_mismatched'])}: "
                      f"{', '.join(receipt['sha_mismatched'][:MAX_NAMED])}")
+    if receipt.get("malformed"):
+        lines.append(f"  MALFORMED {len(receipt['malformed'])}: "
+                     f"{', '.join(receipt['malformed'][:MAX_NAMED])} -- valid JSON, but not a "
+                     f"findings document, so nothing in them is counted")
     edition = receipt.get("edition") or {}
     if edition.get("checked"):
         for sid, n in sorted((edition.get("by_source") or {}).items()):

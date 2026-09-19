@@ -60,6 +60,7 @@ from typing import Any, Mapping
 NON_FINDING_FILES = {
     "RECEIPT.json", "run.yaml", "run.json", "manifest.json",
     "tally.json", "journal-harvest.json", "gate.json", "gate.local.json",
+    "queue_remaining.json",
 }
 
 #: The exit vocabulary.  ``EXIT_GATE_BROKEN`` is the one that matters: the same

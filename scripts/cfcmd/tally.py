@@ -67,6 +67,17 @@ def run(args) -> int:
         print(json.dumps(result, indent=1, sort_keys=True))
     else:
         log.info(tally_mod.render(result, args.repo or None))
+    # The receipt's gate block is the only record that a corpus was validated
+    # against the source text, and nothing used to read it: an ungated run's
+    # numbers looked exactly like a gated one's.
+    if result.get("ungated"):
+        log.warn(f"ungated run(s): {', '.join(result['ungated'])} -- their RECEIPT.json carries "
+                 "no gate block, so no quote in them was checked against the source text. "
+                 "The counts above include them. Re-harvest those runs with a gate config.")
+    if result.get("finding_id_mismatches"):
+        log.warn(f"{len(result['finding_id_mismatches'])} row(s) carry a finding_id that is not "
+                 "the id their content hashes to. The computed id is the one counted and "
+                 "linked; see finding_id_mismatches in the tally file.")
 
     if not args.no_write:
         run_key = args.run[0] if len(args.run) == 1 else "all"
@@ -138,8 +149,17 @@ def _write_agreed(workspace, args, runs: dict[str, Path]) -> None:
     out = Path(workspace.paths.agreed_high_json)
     out.parent.mkdir(parents=True, exist_ok=True)
     write_json(out, doc, indent=1, sort_keys=True)
-    log.info(f"agreed (high in >= {args.min_runs} runs): {doc['count']} items, "
+    # "entries", not "loci": the key is (source_id, repo, item, kind), so one
+    # locus faulted with two kinds is two entries and this count can rise where
+    # the pre-kind file's fell. `locus_count` is the comparable figure.
+    log.info(f"agreed (the same complaint in >= {args.min_runs} runs): {doc['count']} entries "
+             f"over {doc['locus_count']} loci, "
              f"{doc['cross_family']} agreed across run families -> {out}")
+    if doc["same_locus_count"]:
+        # the weaker signal, named: several runs faulted the locus with different
+        # complaints, which is a reason to look and not corroboration
+        log.detail(f"  plus {doc['same_locus_count']} locus/loci several runs faulted with "
+                   f"DIFFERENT complaints (same_locus in that file; not counted as agreement)")
 
 
 def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
