@@ -432,8 +432,8 @@ class TestImportCorpus(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_import_refuses_an_empty_or_missing_directory(self):
-        # cf.main() RAISES for a library caller; the CLI wrapper in cf.py's
-        # __main__ block is what turns a CfError into exit 2.
+        # cf.main() RAISES for a library caller; cf.cli() is the wrapper that
+        # turns a CfError into exit 2.
         empty = self.tmp / "empty"
         empty.mkdir()
         with self.assertRaises(CfError):

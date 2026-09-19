@@ -108,7 +108,28 @@ NASTY_SCALARS = (
     "line\n",
     "tab\tin\tmiddle",
     "ünïcode",
+    # A final line that is whitespace-only but NOT empty passed the old
+    # `_block_safe`, was written as `|-`, and the fallback reader's trailing-blank
+    # chomp then dropped it while PyYAML kept it.
+    "a\n ",
+    "a\n  \nb",
+    # A leading quote mark AND ` #` AND a trailing backslash together: the minimal
+    # reader's comment stripper read the writer's `\"` as the CLOSING quote and cut
+    # the value at the ` #` that followed.
+    '" #_b\\',
+    # A flow indicator cannot OPEN a plain scalar even in block context, so a bare
+    # leading comma made PyYAML refuse the whole file.
+    ", and other notes",
+    # `: &c` inside a double-quoted scalar is not an anchor; the fallback reader's
+    # anchor check used to refuse a file the writer had just produced.
+    "Measure Theory: &c",
 )
+
+#: The alphabet the randomised half of the round-trip battery draws from: every
+#: character that means something to a YAML scanner, plus the control characters
+#: and separators a harvested title can carry.
+_FUZZ_ALPHABET = tuple("ab #:\"'\\|>-\n\t \r{}[]*&!%@`~,?0179.eE_x/") + (
+    "\x00", "\x1b", "\x85", "\u2028", "\ufeff", "ü")
 
 
 class TestYamlRoundTrip(unittest.TestCase):
@@ -126,6 +147,26 @@ class TestYamlRoundTrip(unittest.TestCase):
                                      f"PyYAML read {text!r} differently")
                     self.assertEqual(yamlio.load_yaml_minimal(text), obj,
                                      f"the fallback reader read {text!r} differently")
+
+    def test_a_random_battery_survives_both_readers(self):
+        """The property, not a list: whatever cf writes, both readers read back.
+
+        Seeded, so a failure is reproducible and the suite's runtime is fixed. The
+        hand-picked cases above are the ones this found; it stays because the next
+        scanner character someone forgets will not be on that list.
+        """
+        import random
+
+        rng = random.Random(20260919)
+        for _ in range(1500):
+            raw = "".join(rng.choice(_FUZZ_ALPHABET)
+                          for _ in range(rng.randint(0, 12)))
+            for wrap in (lambda v: {"t": v}, lambda v: [v],
+                         lambda v: {"a": {"b": [v, {"c": v}]}}):
+                obj = wrap(raw)
+                text = yamlio.dump_yaml(obj)
+                if yamlio.load_yaml(text) != obj or yamlio.load_yaml_minimal(text) != obj:
+                    self.fail(f"{raw!r} dumped to {text!r} does not round-trip")
 
     def test_the_two_readers_never_disagree_with_each_other(self):
         for raw in NASTY_SCALARS:
@@ -351,7 +392,7 @@ class TestLibrarySearchRoots(unittest.TestCase):
         # home subtree every audited repo could point into
         self.assertNotIn("~/Desktop/**/sources", text.split("library_paths:")[1])
 
-    def test_the_derived_roots_are_the_store_and_the_onboarded_repos_parents(self):
+    def test_the_derived_roots_are_the_store_and_two_shapes_under_each_parent(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp).resolve()
             ws = _workspace(root / "ws")
@@ -364,10 +405,42 @@ class TestLibrarySearchRoots(unittest.TestCase):
             ws.save()
             ws = Workspace.load(root / "ws", validate=False)
             derived = ws.derived_library_paths()
-            self.assertIn(str(repos), derived)
-            self.assertIn(str(root / "ws" / "sources"), derived)
-            self.assertIn(str(repos), ws.library_paths)
+            self.assertEqual(derived, [str(root / "ws" / "sources"),
+                                       str(repos / "**" / "sources"),
+                                       str(repos / "**" / ".lake" / "official-pdf")])
+            # the BARE parent is the thing that must not appear: library_paths is
+            # also the allowlist for an absolute path a repo names, and the parent
+            # of a checkout kept on the desktop is the whole desktop.
+            self.assertNotIn(str(repos), derived)
+            for entry in derived[1:]:
+                self.assertIn(entry, ws.library_paths)
             self.assertIn("~/Downloads", ws.library_paths)
+
+    def test_a_derived_root_reaches_a_sibling_repos_pdf_but_not_a_loose_one(self):
+        """The shapes have to keep resolving the PDF the old default resolved."""
+        from cflib import discovery
+        from cflib.workspace import derived_roots_for
+
+        with tempfile.TemporaryDirectory() as tmp:
+            repos = Path(tmp).resolve() / "checkouts"
+            (repos / "companion").mkdir(parents=True)
+            (repos / "sibling" / "sources").mkdir(parents=True)
+            (repos / "sibling" / ".lake" / "official-pdf").mkdir(parents=True)
+            wanted = repos / "sibling" / "sources" / "book.pdf"
+            cached = repos / "sibling" / ".lake" / "official-pdf" / "official.pdf"
+            loose = repos / "unrelated.pdf"
+            for path in (wanted, cached, loose):
+                path.write_bytes(b"%PDF-1.4\n")
+            discovery._LIBRARY_CACHE.clear()
+            try:
+                found = set()
+                for root in derived_roots_for(repos / "companion"):
+                    found |= set(discovery._expand_library(root))
+            finally:
+                discovery._LIBRARY_CACHE.clear()
+            self.assertIn(wanted, found)
+            self.assertIn(cached, found)
+            self.assertNotIn(loose, found, "a derived root is not the bare parent")
 
     def test_a_companion_whose_checkout_moved_is_skipped_not_walked(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -399,6 +472,11 @@ class TestLibrarySearchRoots(unittest.TestCase):
 class _FakeAdapter:
     """The `adapters.load` seam, reduced to what `cf onboard` calls."""
 
+    #: (item, page anchor) per extracted row. The anchor check scores these against
+    #: each candidate edition's items.json, so this is how a fixture decides whether
+    #: the anchor is mechanically decidable.
+    ROWS: tuple[tuple[str, int], ...] = (("Definition 1.1.1", 5),)
+
     def __init__(self, workspace=None):
         self.default_source_id = None
 
@@ -413,31 +491,52 @@ class _FakeAdapter:
     def dry_run(self, repo=None, *, sources=None):
         sid, _ = self._bind(sources)
         return {"declarations": 25, "tagged": 25, "items": 25, "rejects": [],
-                "sources": [], "rows_by_source": {sid: 1}}
+                "sources": [], "rows_by_source": {sid: len(self.ROWS)}}
 
     def extract(self, repo=None, *, sources=None):
         sid, sha = self._bind(sources)
-        yield {"item": "Definition 1.1.1", "item_raw": "Definition 1.1.1", "sub": "",
-               "item_kind": "Definition", "decl": "Foo", "kind": "def", "namespace": "",
-               "file": "A.lean", "line": 3, "statement": "theorem foo", "body": None,
-               "sorry": False, "sorry_class": "none", "page_anchor": 5,
-               "page_anchor_raw": "book p. 5", "anchor_source": "own", "repo": "ours",
-               "key": True, "anonymous": False, "private": False, "granularity": "item",
-               "source_id": sid, "source_sha": sha}
+        for n, (item, page) in enumerate(self.ROWS):
+            yield {"item": item, "item_raw": item, "sub": "",
+                   "item_kind": item.split()[0], "decl": f"Foo{n}", "kind": "def",
+                   "namespace": "", "file": "A.lean", "line": 3 + n,
+                   "statement": "theorem foo", "body": None,
+                   "sorry": False, "sorry_class": "none", "page_anchor": page,
+                   "page_anchor_raw": f"book p. {page}", "anchor_source": "own",
+                   "repo": "ours", "key": True, "anonymous": False, "private": False,
+                   "granularity": "item", "source_id": sid, "source_sha": sha}
 
     def key_inputs(self):
         return {"adapter_kind": "docstring_tags"}
 
 
-def _two_edition_repo(root: Path) -> Path:
-    """A companion that names TWO editions of one work and resolves neither PDF.
+#: Six items with the pages the PUBLISHED edition prints them on. The draft's
+#: items.json shifts every one, so the mechanical check has a clear winner.
+AGREEING_ROWS: tuple[tuple[str, int], ...] = (
+    ("Definition 1.1.1", 5), ("Definition 1.1.2", 7), ("Lemma 1.1.3", 9),
+    ("Theorem 1.1.4", 12), ("Exercise 1.1.5", 14), ("Proposition 1.1.6", 18),
+)
 
-    This is the shape the finding is about: the anchor cannot be decided
-    mechanically, because the edition whose pagination the docstrings follow has
-    no text on this machine to score them against.
+
+class _AgreeingAdapter(_FakeAdapter):
+    ROWS = AGREEING_ROWS
+
+
+def _two_edition_repo(root: Path) -> Path:
+    """A companion whose discovered sources are exactly TWO editions of one work.
+
+    This is the shape first-run#2 is about, and the cluster has to be the ANCHOR's
+    own: an earlier fixture also matched the unversioned `tao-measure` id, which
+    won its single-candidate cluster at confidence 1.0, so `_confirm_anchor`
+    returned early on `len(cluster) < 2` and the post-extraction path the finding
+    is about was never exercised at all. Naming a PDF on the published line is what
+    joins the title-only `formalization.yaml` claim to that edition (the documented
+    "one signal names the WORK, another names the FILE" join), leaving the two
+    registry editions and nothing else.
+
+    Neither PDF resolves, which is every machine that does not already keep a copy.
     """
     repo = root / "two-editions"
-    (repo / "Companion").mkdir(parents=True)
+    (repo / "Companion").mkdir(parents=True, exist_ok=True)
     (repo / "formalization.yaml").write_text(
         "version: v0.3\n"
         "sources:\n"
@@ -450,7 +549,8 @@ def _two_edition_repo(root: Path) -> Path:
     (repo / "CLAUDE.md").write_text(
         "- The source PDF is not committed (copyrighted). Two editions exist locally.\n"
         f"  An earlier *draft* (sha256 `{DRAFT_SHA[:8]}…`) and the published book\n"
-        f"  (sha256 `{PUBLISHED_SHA[:8]}…`). Both satisfy PDF page = book page + 16.\n"
+        f"  (`sources/measure-theory.pdf`, sha256 `{PUBLISHED_SHA[:8]}…`).\n"
+        "  Both satisfy PDF page = book page + 16.\n"
         "  **Book-page anchors in docstrings follow the PUBLISHED pagination.**\n",
         encoding="utf-8")
     for i in range(25):
@@ -460,8 +560,48 @@ def _two_edition_repo(root: Path) -> Path:
     return repo
 
 
-class TestOnboardIsIdempotent(unittest.TestCase):
-    """The identical command must not exit 0 and then 2."""
+def _rival_editions_beside_the_anchor_repo(root: Path) -> Path:
+    """A companion whose ANCHOR cluster is a single candidate, beside a rival pair.
+
+    Same repo as :func:`_two_edition_repo` without the PDF path, so the title-only
+    `formalization.yaml` claim stays a source of its own: three discovered ids, and
+    the one that wins the anchor (at `single_candidate`, confidence 1.0) is not in
+    the cluster that holds the two rival editions. `_confirm_anchor` used to re-elect
+    only the anchor's OWN cluster and returned early on `len(cluster) < 2`, so the
+    undecidable pair was never scored after extraction at all -- run 1 exited 0 and
+    run 2, which had rows at the pre-extraction site, exited 2.
+    """
+    repo = _two_edition_repo(root)
+    (repo / "CLAUDE.md").write_text(
+        "- The source PDF is not committed (copyrighted). Two editions exist locally.\n"
+        f"  An earlier *draft* (sha256 `{DRAFT_SHA[:8]}…`) and the published book\n"
+        f"  (sha256 `{PUBLISHED_SHA[:8]}…`). Both satisfy PDF page = book page + 16.\n"
+        "  **Book-page anchors in docstrings follow the PUBLISHED pagination.**\n",
+        encoding="utf-8")
+    return repo
+
+
+def _seed_items(workspace_root: Path, source_id: str, pages: dict[str, int]) -> None:
+    """Write a prepared source's items.json without needing a PDF or poppler.
+
+    `_prepare_source` returns early for a source with no PDF, leaving whatever is
+    already in `sources/<id>/`, so this is how a hermetic test gives the anchor
+    check something to score.
+    """
+    out = workspace_root / "sources" / source_id
+    out.mkdir(parents=True, exist_ok=True)
+    (out / "items.json").write_text(json.dumps({
+        "source_id": source_id,
+        "kinds": ["Definition", "Lemma", "Theorem", "Proposition", "Exercise"],
+        "count": len(pages),
+        "items": [{"item": item, "page": page} for item, page in pages.items()],
+    }), encoding="utf-8")
+
+
+class _OnboardCase(unittest.TestCase):
+    """A workspace, a two-edition companion, and `adapters.load` stubbed out."""
+
+    ADAPTER = _FakeAdapter
 
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -475,7 +615,7 @@ class TestOnboardIsIdempotent(unittest.TestCase):
         ws.data["library_paths"] = []
         ws.save()
         fake = types.ModuleType("adapters")
-        fake.load = lambda adapter_yaml, workspace=None: _FakeAdapter(workspace)
+        fake.load = lambda adapter_yaml, workspace=None: self.ADAPTER(workspace)
         self._saved = sys.modules.get("adapters")
         sys.modules["adapters"] = fake
 
@@ -486,12 +626,28 @@ class TestOnboardIsIdempotent(unittest.TestCase):
             sys.modules.pop("adapters", None)
         self.tmp.cleanup()
 
-    def _onboard(self):
+    def _onboard(self, *extra):
         err = io.StringIO()
         with redirect_stderr(err), redirect_stdout(io.StringIO()):
             rc = cf_main.cli(["onboard", str(self.repo), "--workspace", str(self.ws),
-                              "--no-errata", "-q"])
+                              "--no-errata", "-q", *extra])
         return rc, err.getvalue()
+
+    def _discovered_sources(self):
+        return sorted(Workspace.load(self.ws, validate=False).sources)
+
+
+class TestOnboardIsIdempotent(_OnboardCase):
+    """The identical command must not exit 0 and then 2."""
+
+    def test_the_fixture_really_is_two_editions_of_one_work(self):
+        """Without this the class pins nothing: see `_two_edition_repo`."""
+        rc, _ = self._onboard("--dry-run")
+        self.assertEqual(rc, 0)
+        rc, _ = self._onboard("--anchor-source", PUBLISHED_ID)
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._discovered_sources(),
+                         ["tao-measure-2011-draft", PUBLISHED_ID])
 
     def test_two_identical_onboards_give_the_same_exit_code(self):
         rc1, err1 = self._onboard()
@@ -511,16 +667,86 @@ class TestOnboardIsIdempotent(unittest.TestCase):
 
     def test_the_healthy_path_is_still_idempotent_and_exits_zero(self):
         """The refusal must not swallow the case where the anchor IS decidable."""
-        rc1, err1 = self._onboard_with_anchor()
-        rc2, _ = self._onboard_with_anchor()
+        rc1, err1 = self._onboard("--anchor-source", PUBLISHED_ID)
+        rc2, _ = self._onboard("--anchor-source", PUBLISHED_ID)
         self.assertEqual((rc1, rc2), (0, 0), err1)
 
-    def _onboard_with_anchor(self):
-        err = io.StringIO()
-        with redirect_stderr(err), redirect_stdout(io.StringIO()):
-            rc = cf_main.cli(["onboard", str(self.repo), "--workspace", str(self.ws),
-                              "--no-errata", "-q", "--anchor-source", PUBLISHED_ID])
-        return rc, err.getvalue()
+
+class TestARivalPairOutsideTheAnchorsCluster(_OnboardCase):
+    """The post-extraction check covers every multi-edition cluster, not just one."""
+
+    def setUp(self):
+        super().setUp()
+        self.repo = _rival_editions_beside_the_anchor_repo(self.root)
+
+    def test_the_undecidable_pair_is_refused_after_extraction_too(self):
+        for run in (1, 2):
+            rc, err = self._onboard()
+            with self.subTest(run=run):
+                self.assertEqual(rc, 2, err)
+                self.assertIn("cannot decide which edition", err)
+
+
+class TestAnAgreeingAnchorNeedsNoFlags(_OnboardCase):
+    """A two-edition work whose anchors DO agree has a FLAGLESS onboard path.
+
+    An anchor that is merely undetermined until this run has extracted is not an
+    undecidable one. Refusing the provisional pre-extraction election refused every
+    first onboard of any two-edition cluster, flags or not -- which is both of the
+    target companions, and `tests/e2e/multisource.sh`'s stated invariant that they
+    onboard with NO FLAGS.
+    """
+
+    ADAPTER = _AgreeingAdapter
+
+    def setUp(self):
+        super().setUp()
+        _seed_items(self.ws, PUBLISHED_ID, dict(AGREEING_ROWS))
+        # the same items, four pages earlier: the pre-publication pagination.
+        _seed_items(self.ws, "tao-measure-2011-draft",
+                    {item: page - 4 for item, page in AGREEING_ROWS})
+
+    def test_no_flags_exits_zero_twice_and_pins_the_agreeing_edition(self):
+        for run in (1, 2):
+            rc, err = self._onboard()
+            with self.subTest(run=run):
+                self.assertEqual(rc, 0, err)
+                companion = Workspace.load(self.ws).companion("two-editions")
+                self.assertEqual(companion.anchor_source, PUBLISHED_ID)
+
+    def test_the_two_runs_search_the_same_pdf_roots(self):
+        """Discovery must not widen between run 1 and run 2 (CLAUDE.md S4).
+
+        `derived_library_paths` reads `workspace.companions`, and `upsert_companion`
+        for the repo being onboarded runs AFTER the PDFs are resolved -- so run 1
+        searched without this repo's own roots and run 2 searched with them, and two
+        identical commands differed in whether the ANCHOR edition had text at all.
+        """
+        from cflib import discovery
+
+        seen: list[list[str]] = []
+        real = discovery.resolve_claims
+
+        def spy(claims, **kw):
+            seen.append(sorted(kw.get("library_paths") or []))
+            return real(claims, **kw)
+
+        discovery.resolve_claims = spy
+        try:
+            self.assertEqual(self._onboard()[0], 0)
+            self.assertEqual(self._onboard()[0], 0)
+        finally:
+            discovery.resolve_claims = real
+        self.assertEqual(len(seen), 2)
+        self.assertEqual(seen[0], seen[1], "run 1 and run 2 searched different roots")
+        for shape in ("**/sources", "**/.lake/official-pdf"):
+            self.assertIn(str(self.root / shape), seen[0])
+
+    def test_two_onboards_prepare_the_same_source_ids(self):
+        self.assertEqual(self._onboard()[0], 0)
+        first = self._discovered_sources()
+        self.assertEqual(self._onboard()[0], 0)
+        self.assertEqual(first, self._discovered_sources())
 
 
 # ---------------------------------------------------------------------------
