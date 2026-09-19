@@ -1,0 +1,48 @@
+# Machine-readable requirements for companion-faithfulness.
+#
+# The runtime contract was stated in README.md prose and enforced nowhere: no
+# `requires-python`, no dependency declaration, and nothing a tool could read.
+# This file is that declaration.
+#
+# It is deliberately NOT an installable distribution, and there is no
+# `[build-system]` or `[project.scripts]`:
+#
+#   * the skill is used by cloning it and symlinking the clone into the Claude
+#     Code skills directory (see README.md), never by `pip install`;
+#   * `cflib.paths.skill_root()` is `parents[2]` of `scripts/cflib/paths.py`, so
+#     an installed copy would look for templates/, references/ and registry/
+#     above site-packages and find none of them. A `cf` console script would
+#     install and then fail on the first `cf init`.
+#
+# `cf` on PATH is the `bin/cf` shim instead, which runs the checkout in place.
+# Turning this into a real distribution means moving the 13 stage packages under
+# one namespace and shipping templates/ as package data -- an L-sized change
+# every import in the tree touches, and not a prerequisite for either of those
+# two adoption blockers.
+
+[project]
+name = "companion-faithfulness"
+version = "0.2.0"                        # kept in step with scripts/cflib/__init__.py
+description = "Audit Lean 4 book companions against the sources they formalise (findings only)."
+readme = "README.md"
+requires-python = ">=3.11"               # scripts/cf.py enforces the same floor at startup
+license = { text = "Apache-2.0" }
+authors = [{ name = "the companion-faithfulness contributors" }]
+keywords = ["lean4", "mathlib", "formalization", "audit", "faithfulness"]
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+]
+
+# Standard library only (CLAUDE.md S3). PyYAML is used when importable and
+# `cflib.yamlio` has a fallback reader for the subset the skill writes, because
+# the gate and the task files are parsed on worker hosts that have nothing
+# installed. Do not move PyYAML out of the extras without changing that
+# paragraph -- and the fallback reader's tests.
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6"]
+test = ["pytest>=7"]

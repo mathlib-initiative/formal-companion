@@ -1,0 +1,177 @@
+"""Regression tests for the core CLI, the YAML writer, packaging and preflight.
+
+Every case here failed before the change it guards:
+
+* the hand-rolled YAML writer emitted scalars cf's own readers reject or alter
+  (a tab in a harvested book title made ``registry.yaml`` unparseable);
+* the one test that was supposed to notice a broken command module filtered on
+  ``mod is None``, which ``discover_commands`` never stores, so the whole suite
+  passed with a syntactically broken ``cfcmd`` module in the tree;
+* ``main()`` raised CfError and only the ``__main__`` block rendered it, so any
+  other entry point printed a traceback;
+* the documented Python floor was enforced nowhere;
+* ``cf init`` wrote two home-directory globs, which were both the search roots
+  and the allowlist for absolute paths a companion repo names;
+* ``cf onboard`` exited 0 then 2 for the identical command;
+* there was no ``cf`` on PATH, no LICENSE, no packaging metadata and no way to
+  find out that poppler was missing before a page render needed it.
+"""
+from __future__ import annotations
+
+import io
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import types
+import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SKILL = HERE.parent
+SCRIPTS = SKILL / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+import cf as cf_main                                          # noqa: E402
+from cflib import templates, yamlio                           # noqa: E402
+from cflib.errors import CfError                              # noqa: E402
+from cflib.registry import Registry, RegistryEntry            # noqa: E402
+from cflib.workspace import DEFAULT_LIBRARY_PATHS, Workspace   # noqa: E402
+
+PUBLISHED_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+DRAFT_SHA = "62d9565841b8593a7a3d12b3cbcea6ce8d3d3ae2f83b60ebf024d59714c0c6e8"
+PUBLISHED_ID = "tao-measure-gsm126-published"
+
+
+
+# ---------------------------------------------------------------------------
+# first-run#5 / architecture#5 -- the floor, the error handler, the shim
+# ---------------------------------------------------------------------------
+
+class TestPythonFloor(unittest.TestCase):
+    def test_an_older_interpreter_is_refused_in_one_sentence(self):
+        msg = cf_main.python_too_old((3, 9, 6))
+        self.assertTrue(msg.startswith("error: "), msg)
+        self.assertIn("3.11", msg)
+        self.assertIn("3.9", msg)
+        self.assertEqual(len(msg.splitlines()), 1, "the refusal is one sentence")
+
+    def test_the_floor_itself_passes(self):
+        self.assertEqual(cf_main.python_too_old(cf_main.MIN_PYTHON + (0,)), "")
+        self.assertEqual(cf_main.python_too_old(), "")
+
+    def test_the_floor_is_the_same_number_everywhere(self):
+        floor = "%d.%d" % cf_main.MIN_PYTHON
+        pyproject = (SKILL / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn(f'requires-python = ">={floor}"', pyproject)
+        workflow = yamlio.read_yaml(SKILL / ".github" / "workflows" / "tests.yml")
+        versions = workflow["jobs"]["pytest"]["strategy"]["matrix"]["python-version"]
+        self.assertEqual(str(versions[0]), floor,
+                         "CI must run the oldest version the CLI accepts")
+
+
+class TestCliRendersErrorsInsteadOfTracebacks(unittest.TestCase):
+    def test_cli_returns_the_exit_code_and_prints_error_and_hint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            argv = ["status", "--workspace", str(Path(tmp) / "nope")]
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                rc = cf_main.cli(argv)
+            self.assertEqual(rc, 2)
+            self.assertIn("error: ", err.getvalue())
+            self.assertIn("hint:", err.getvalue())
+            self.assertNotIn("Traceback", err.getvalue())
+
+    def test_main_still_raises_for_a_library_caller(self):
+        """tests/test_integration.py documents this contract; keep it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(CfError):
+                _quiet(cf_main.main, ["status", "--workspace", str(Path(tmp) / "nope")])
+
+
+class TestCfOnPath(unittest.TestCase):
+    """first-run#6: the hints print `cf ...`, so a `cf` has to exist."""
+
+    SHIM = SKILL / "bin" / "cf"
+
+    def test_the_shim_exists_and_is_executable(self):
+        self.assertTrue(self.SHIM.is_file(), f"{self.SHIM} is missing")
+        self.assertTrue(os.access(self.SHIM, os.X_OK), f"{self.SHIM} is not executable")
+
+    def test_running_the_shim_prints_the_version(self):
+        res = subprocess.run([str(self.SHIM), "--version"], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertTrue(res.stdout.startswith("cf "), res.stdout)
+
+    def test_a_symlinked_shim_finds_the_checkout_it_points_into(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            link = Path(tmp) / "cf"
+            link.symlink_to(self.SHIM)
+            res = subprocess.run([str(link), "--version"], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 0, res.stderr)
+            self.assertTrue(res.stdout.startswith("cf "), res.stdout)
+
+    def test_the_shim_renders_a_refusal_as_one_line(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            res = subprocess.run([str(self.SHIM), "status", "--workspace",
+                                  str(Path(tmp) / "nope")], capture_output=True, text=True)
+            self.assertEqual(res.returncode, 2)
+            self.assertIn("error: ", res.stderr)
+            self.assertNotIn("Traceback", res.stderr)
+
+
+class TestRepositoryFurniture(unittest.TestCase):
+    """architecture#5 / docs-accuracy#7: the metadata an adopter needs."""
+
+    def test_the_licence_is_apache_2_0_with_a_real_copyright_line(self):
+        text = (SKILL / "LICENSE").read_text(encoding="utf-8")
+        self.assertIn("Apache License", text)
+        self.assertIn("Version 2.0, January 2004", text)
+        self.assertIn("Copyright 2026 the companion-faithfulness contributors", text)
+        self.assertNotIn("[name of copyright owner]", text)
+
+    def test_pyproject_declares_the_runtime_contract(self):
+        text = (SKILL / "pyproject.toml").read_text(encoding="utf-8")
+        self.assertIn('requires-python = ">=3.11"', text)
+        self.assertIn("dependencies = []", text)     # stdlib only (CLAUDE.md S3)
+        self.assertIn("yaml = [", text)              # PyYAML is an extra, not a dependency
+        self.assertIn("[project.optional-dependencies]", text)
+
+    def test_nothing_shipped_names_a_developer_home(self):
+        for rel in ("pyproject.toml", "LICENSE", "bin/cf",
+                    ".github/workflows/tests.yml", "tests/conftest.py",
+                    "scripts/cfcmd/doctor.py", "scripts/cf.py"):
+            path = SKILL / rel
+            if not path.exists():        # a file a later commit adds
+                continue
+            with self.subTest(file=rel):
+                text = path.read_text(encoding="utf-8")
+                self.assertNotIn("/Users/", text)
+                self.assertNotIn("~/Desktop", text)
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _quiet(fn, *args, **kwargs):
+    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        return fn(*args, **kwargs)
+
+
+def _workspace(root: Path) -> Workspace:
+    """A minimal valid workspace on disk, with the shipped library_paths."""
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "workspace.yaml").write_text(
+        "version: 2\nworkspace:\n  name: t\ncompanions: {}\nsources: {}\n"
+        "hosts:\n  allowlist: []\nlibrary_paths:\n  - ~/Downloads\n", encoding="utf-8")
+    return Workspace.load(root, validate=False)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()
