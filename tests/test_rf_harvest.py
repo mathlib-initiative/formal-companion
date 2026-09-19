@@ -252,5 +252,66 @@ class TestAgreementMeansTheSameComplaint(unittest.TestCase):
         self.assertIn("same_locus", doc)
 
 
+# ---------------------------------------------------------------------------
+# gates-correctness#6
+
+
+class TestGroupByFindingIdLinksAcrossRuns(unittest.TestCase):
+    """`--group-by finding-id` is the flag an operator reaches for for precision.
+
+    It had no test, and it answered "everything is new": the run id is the first
+    part of the hash, so one defect found twice had two ids.
+    """
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.runs = {}
+        for run in ("run-a", "run-b"):
+            directory = self.root / "corpus" / run
+            write_doc(directory, "Exercise 1.2.9", [defect()])
+            self.runs[run] = directory
+        self.rows = tally_mod.collect(self.runs)
+
+    def test_the_stored_ids_really_do_differ_by_run(self):
+        self.assertEqual(len({r["finding_id"] for r in self.rows}), 2)
+        self.assertEqual(len({r["defect_key"] for r in self.rows}), 1)
+
+    def test_one_defect_in_two_runs_is_one_entry(self):
+        entries = union_mod.union(self.rows, group_by="finding-id")
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["runs"], ["run-a", "run-b"])
+        self.assertEqual(union_mod.summary(entries)["multi_run"], 1)
+        self.assertEqual(len(entries[0]["finding_ids"]), 2, "one id per run, kept")
+        self.assertEqual(len(entries[0]["defect_keys"]), 1)
+
+    def test_a_re_found_defect_is_not_new(self):
+        for group_by in ("item-kind", "finding-id"):
+            with self.subTest(group_by=group_by):
+                self.assertEqual(
+                    union_mod.union(self.rows, group_by=group_by,
+                                    baseline_runs=["run-a"], new_only=True),
+                    [])
+
+    def test_it_still_separates_two_defects_the_default_key_merges(self):
+        """This is what the exact grouping is FOR: same item, same kind, two decls."""
+        other = self.root / "corpus" / "run-c"
+        write_doc(other, "Exercise 1.2.9",
+                  [defect(unfaithful_decls=["ours:Foo.bar"]),
+                   defect(unfaithful_decls=["ours:Other.decl"])])
+        rows = tally_mod.collect({"run-c": other})
+        self.assertEqual(len(union_mod.union(rows, group_by="item-kind")), 1)
+        self.assertEqual(len(union_mod.union(rows, group_by="finding-id")), 2)
+
+    def test_rows_with_no_run_independent_key_are_refused_not_mis_grouped(self):
+        stripped = [{k: v for k, v in row.items() if k != "defect_key"}
+                    for row in self.rows]
+        with self.assertRaises(CfError) as caught:
+            union_mod.union(stripped, group_by="finding-id")
+        self.assertIn("--group-by item-kind", str(caught.exception.hint))
+        # one run needs no cross-run linking, so it is allowed
+        one = [r for r in stripped if r["run"] == "run-a"]
+        self.assertEqual(len(union_mod.union(one, group_by="finding-id")), 1)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
