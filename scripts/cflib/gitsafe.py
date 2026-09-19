@@ -4,8 +4,15 @@ New code (design S4.2 / references/onboarding-contract.md: "a companion tree is
 read as DATA").
 
 A companion repo is an untrusted tree: `cf` clones nothing, builds nothing and
-writes nothing there, and the whole audit rests on the repo being *read*.  Plain
-``git -C <repo> …`` breaks that.  Several porcelain commands refresh the index
+writes nothing there, and the whole audit rests on the repo being *read*.
+
+(One documented exception, and it is not run by `cf`: ``scripts/detect/dump_deps.sh``
+is a command line `cf detect-proxies --lean` PRINTS for an operator to run, and
+``lake env lean --run`` there executes the companion's lakefile and toolchain as
+the invoking user.  Its header says so; it belongs only against a repo you trust
+or inside a sandbox.)
+
+Plain ``git -C <repo> …`` breaks the read-only boundary too.  Several porcelain commands refresh the index
 first, and an index refresh runs ``core.fsmonitor`` -- a command named in the
 repository's own ``.git/config``.  ``git check-ignore --stdin`` is one of them,
 so the first thing `cf onboard <repo>` did to a tree it had never seen was to
