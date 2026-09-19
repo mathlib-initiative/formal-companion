@@ -321,14 +321,44 @@ def ledger_coverage(rows: Iterable[dict], findings: Iterable[dict]) -> dict:
     source, so the pair is belt and braces -- but a row imported from a v1
     ledger can carry a stale four-part id, and joining on the pair makes that
     show up as an uncovered finding rather than as a false match.
+
+    A finding is covered only when its id is UNAMBIGUOUS.  The id does not hash
+    the claim, so two different defects on one declaration of one item share it:
+    counting distinct ids answered, one CONVENTION row then closed both and the
+    coverage report said 2 findings, 2 covered, 0 missing -- a false clean, in
+    the same direction every counting error in this pipeline has gone.  The
+    findings at a colliding id are reported as missing, with the collision named
+    in ``collisions``, so ``route`` holds the file back until each claim has its
+    own row.
     """
+    from ledger.findings import claim_key
+
     def _key(row: dict) -> tuple:
         return (str(row.get("source_id") or ""), str(row.get("finding_id") or ""))
 
     answered = {_key(r) for r in rows}
     findings = list(findings)
-    covered = [f for f in findings if _key(f) in answered]
-    missing = [f for f in findings if _key(f) not in answered]
+    by_key: dict[tuple, list[dict]] = {}
+    for f in findings:
+        by_key.setdefault(_key(f), []).append(f)
+
+    covered: list[dict] = []
+    missing: list[dict] = []
+    collisions: list[dict] = []
+    for key, group in by_key.items():
+        claims = {claim_key(f) for f in group}
+        if len(claims) > 1:
+            collisions.append({
+                "finding_id": key[1],
+                "source_id": key[0],
+                "item": str(group[0].get("item") or ""),
+                "kind": str(group[0].get("kind") or ""),
+                "claims": len(claims),
+                "answered": key in answered,
+            })
+            missing.extend(group)
+            continue
+        (covered if key in answered else missing).extend(group)
     return {
         "findings": len(findings),
         "covered": len(covered),
@@ -339,6 +369,8 @@ def ledger_coverage(rows: Iterable[dict], findings: Iterable[dict]) -> dict:
             sid: sorted({f["item"] for f in missing if str(f.get("source_id") or "") == sid})
             for sid in sorted({str(f.get("source_id") or "") for f in missing})
         },
+        # ids carrying two claims: one ledger row cannot adjudicate both
+        "collisions": sorted(collisions, key=lambda c: (c["source_id"], c["finding_id"])),
     }
 
 
@@ -419,11 +451,22 @@ def main(argv: list[str] | None = None) -> int:
         [paths.corpus()] if os.path.isdir(paths.corpus()) else []
     )
     index = None
+    collisions: list[dict] = []
     if corpora:
-        index = findings_mod.index_by_id(findings_mod.load_findings(corpora))
+        index = findings_mod.index_by_id(findings_mod.load_findings(corpora),
+                                        collisions=collisions)
     report = validate_ledger_dir(paths, args.companion, index=index, sources=shas)
     for err in report["errors"]:
         print(str(err), file=sys.stderr)
+    for clash in collisions:
+        # one id, two claims: the index kept one of them, so a row addressed to
+        # this id answers only the claim it happens to have kept
+        print(
+            "[id_collision] %s (%s %s) carries %d distinct claims; one ledger row cannot "
+            "adjudicate both" % (clash["finding_id"][:12], clash["source_id"], clash["item"],
+                                 clash["claims"]),
+            file=sys.stderr,
+        )
     print(
         "%s: %d accepted + %d refuted rows, %d error(s)"
         % (args.companion, report["accepted"], report["refuted"], len(report["errors"]))
