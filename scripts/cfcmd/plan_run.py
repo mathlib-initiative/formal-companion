@@ -86,6 +86,10 @@ def register(subparsers):
     p.add_argument("--conventions-unconfirmed", action="store_true",
                    help="plan although a companion's conventions.md carries no "
                         "`confirmed_by:` stamp or no filled section (recorded in run.yaml)")
+    p.add_argument("--allow-sandbox-bypass", action="store_true",
+                   help="stage CF_ALLOW_SANDBOX_BYPASS=1 into the generated bin/*.sh "
+                        "wrappers, so the agents run with approvals and the sandbox OFF "
+                        "(recorded in run.yaml; default is the bridge's deny-by-default)")
     p.add_argument("--allow-unreconciled", action="store_true",
                    help="plan a differential run although pairs/reconciliation.json is missing "
                         "or predates the task-universe gate (nothing then checks the task count)")
@@ -415,6 +419,28 @@ def _dir_bytes(path: Path) -> int:
     return sum(p.stat().st_size for p in path.rglob("*") if p.is_file()) if path.exists() else 0
 
 
+def _item_pages(p, source_id: str) -> dict[str, int]:
+    """``{item: pdf_page}`` for this run's gate.json, or ``{}`` if unprepared.
+
+    The gate's first and best route from an item to the page its quotes must be
+    on.  Absent it the gate searches the pinned text for the item's own heading,
+    which is what leaves 26 of the baseline's 3,019 quotes unplaceable, so this
+    is worth reading items.json for -- but a source that has none is planned
+    anyway with the fallback, because the map is an optimisation of the bind and
+    not a precondition of it.
+    """
+    from sources.prepare_source import items_index, load_items
+
+    path = p.source_items(source_id)
+    if not path.exists():
+        return {}
+    try:
+        return presets_mod.item_pages(items_index(load_items(str(path.parent))))
+    except (OSError, ValueError, FileNotFoundError) as exc:
+        log.detail(f"item_pages: {path} is unreadable ({exc}); the gate will bind by heading")
+        return {}
+
+
 # --------------------------------------------------------------------------- #
 # the command
 # --------------------------------------------------------------------------- #
@@ -605,6 +631,7 @@ def run(args) -> int:
             "text_sha256": source.text_sha256,
             "images_dir": host["images_dir"] if preset.needs_images else None,
             "page_offset": source.offset,
+            "item_pages": _item_pages(p, source_id),
         }},
         repos=repos,
         decl_index=remote_index,
@@ -636,11 +663,16 @@ def run(args) -> int:
         "reviewer_agent_model": camp.model("reviewer") or model,
         "agentbox_profile": camp.hosts.get("agentbox_profile"),
     }.items() if v}
+    allow_bypass = bool(getattr(args, "allow_sandbox_bypass", False))
     built = make_tend_root(
         plan, preset, run_id=run_id, gate_config=gate_remote,
         prompts=prompts, agent=agent, task_count=len(tasks), model=model,
+        allow_sandbox_bypass=allow_bypass,
         decl_index_src=index_path if remote_index else None,
     )
+    if allow_bypass:
+        print("warn --allow-sandbox-bypass: the staged wrappers run the agents with "
+              "approvals and the sandbox OFF on the run host")
     if model_warning:
         built["warnings"].append(model_warning)
 
@@ -699,6 +731,14 @@ def run(args) -> int:
             "note": "cf run refuses to start a remote run without this",
         },
         "bridge": preset.bridge,
+        # WHAT THE AGENTS MAY DO, decided here because this is what writes the
+        # wrappers: false means the bridge's deny-by-default reached the host.
+        # `cf run` re-reads the staged wrappers rather than trusting this line.
+        "agents": {
+            "allow_sandbox_bypass": allow_bypass,
+            "flag": "--allow-sandbox-bypass",
+            "env": "CF_ALLOW_SANDBOX_BYPASS",
+        },
         "model": model,
         # WHERE the model came from, so the record is falsifiable: a run that
         # says `model_source: --model` was asked for that tier; one that says
