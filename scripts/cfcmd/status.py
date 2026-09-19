@@ -74,9 +74,22 @@ def run(args) -> int:
             raise CfError(f"unknown source {args.source!r}",
                           hint=f"known: {', '.join(workspace.source_ids()) or '(none)'}")
     if not sources:
-        log.info("sources   : none yet")
-        log.info("")
-        log.info("next:  cf onboard <path to a companion repo>")
+        #: An unreadable registry is not an empty workspace.  `cf status` catches the
+        #: CfError further down so that a broken file cannot kill the one command you
+        #: run to find out what is broken -- but falling through to "none yet" reported
+        #: a workspace whose overlay names sources as having none, which is worse than
+        #: failing.  Say which it is.
+        unreadable = _registry_error(workspace)
+        if unreadable:
+            log.warn(f"sources   : UNKNOWN -- {workspace.paths.registry_yaml} could not be read")
+            log.info(f"            {unreadable}")
+            log.info("")
+            log.info("next:  fix that file (it is written by cf, so this is a bug worth "
+                     "reporting), then re-run `cf status`")
+        else:
+            log.info("sources   : none yet")
+            log.info("")
+            log.info("next:  cf onboard <path to a companion repo>")
     else:
         log.info("")
         log.info(format_table(SOURCE_COLUMNS, [
@@ -181,6 +194,16 @@ def _print_unconfirmed(workspace) -> None:
         log.info(f"      confirm with:  cf sources show {ref.id}")
         log.info(f"                     cf sources set {ref.id} confirmed=true")
         log.info("      or promote it into the skill's registry/sources.yaml")
+
+
+def _registry_error(workspace) -> str:
+    """The first line of the error `Registry.load` raises, or "" when it loads."""
+    from cflib.registry import Registry
+    try:
+        Registry.load(workspace)
+    except Exception as exc:  # noqa: BLE001 - any breakage here is a report, not a crash
+        return str(exc).strip().splitlines()[0]
+    return ""
 
 
 def _print_registry_problems(workspace) -> None:
