@@ -101,6 +101,14 @@ def make_tend_root(
     ``CF_MODEL`` in the wrapper for the agentbox and claude-p bridges.  Recording
     a model in run.yaml that the bridge never received is worse than recording
     none: a regression comparison would compare two tiers claiming one id.
+
+    The ``model:`` block in the generated ``.tend/*-agent.yaml`` belongs to the
+    tend-agent backend alone -- ``config.yaml`` sends every other bridge through
+    ``bin/<role>-agent.sh``, which carries ``CF_MODEL`` -- so its Anthropic
+    ``provider``/``api`` pair is that backend's, and a codex preset's yaml names
+    the run's model under it deliberately: two files in one root disagreeing
+    about which tier ran is the defect this argument exists to close.  Nothing
+    reads that block unless the preset's ``bridge`` is ``tend-agent``.
     """
     import json
 
