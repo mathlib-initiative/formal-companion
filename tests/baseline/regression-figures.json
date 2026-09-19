@@ -1,0 +1,191 @@
+{
+ "version": 1,
+ "what": "The audit's pinned arithmetic, in one machine-readable place. Each figure is a number some test asserts against a local baseline nobody else has; recording them here makes them reviewable and diffable without the data, and tests/test_rf_benchmark.py checks that the record and the asserts still agree.",
+ "what_this_is_not": "A measurement anyone can reproduce. These are facts about ONE edition of Tao's book and ONE imported corpus; the reproducible numbers live in tests/e2e/answer-key.json, which is about a synthetic fixture.",
+ "rule": "None of these may move unless a finding says the number is wrong. Two of them are the traps the item grammar exists to prevent: chapter_1_items (411, not 410) and differential_task_universe (383, not 382).",
+ "environment": {
+  "CF_BOOK_TXT": "the pinned edition's extracted text",
+  "CF_MT": "the checkout carrying the pinned PDF",
+  "CF_BASELINE_CORPUS": "the v1 run tree (findings, findings-gpt, findings-pdf, findings-hunt, findings-vac)",
+  "CF_BASELINE_DIFF": "the differential tree (ours/teorth/adam.jsonl)",
+  "CF_TML": "the first companion checkout"
+ },
+ "figures": {
+  "source_items_total": {
+   "value": 442,
+   "what": "numbered items in the whole pinned edition",
+   "needs": ["CF_MT"],
+   "asserted_in": ["tests/test_sources_pair.py"]
+  },
+  "chapter_1_items": {
+   "value": 411,
+   "what": "Chapter-1 items, Exercise 1.3.19 among them",
+   "why_it_matters": "the baseline's literal-single-space regex found 410 and the task generator dropped the missing one silently",
+   "needs": ["CF_BOOK_TXT", "CF_MT"],
+   "asserted_in": ["tests/test_sources_pair.py"]
+  },
+  "chapter_1_items_single_space_regex": {
+   "value": 410,
+   "what": "what the pre-fix regex found, kept as the documented defect",
+   "needs": ["CF_BOOK_TXT"],
+   "asserted_in": ["tests/test_sources_pair.py"]
+  },
+  "differential_task_universe": {
+   "value": 383,
+   "what": "differential tasks over the pinned edition (225 paired + 158 single-source)",
+   "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
+   "asserted_in": ["tests/test_plan_gate.py", "tests/test_sources_pair.py"]
+  },
+  "differential_pairs": {
+   "value": 225,
+   "what": "items two or more companions formalise",
+   "needs": ["CF_BASELINE_DIFF", "CF_MT"],
+   "asserted_in": ["tests/test_plan_gate.py", "tests/test_sources_pair.py"]
+  },
+  "differential_single_source": {
+   "value": 158,
+   "what": "items exactly one companion formalises",
+   "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
+   "asserted_in": ["tests/test_plan_gate.py"]
+  },
+  "gated_files_differential": {
+   "value": 1146,
+   "what": "converted v1 files that pass the differential-legacy gate",
+   "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
+   "asserted_in": ["tests/test_plan_gate.py"]
+  },
+  "gated_files_attack": {
+   "value": 1526,
+   "what": "converted v1 files that pass the attack-legacy gate",
+   "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
+   "asserted_in": ["tests/test_plan_gate.py"]
+  },
+  "corpus_findings": {
+   "value": 2672,
+   "what": "findings files in the five imported v1 runs (382 + 382 + 382 + 763 + 763)",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/e2e/multisource.sh", "tests/test_rf_benchmark.py"]
+  },
+  "ours_rows": {
+   "value": 72,
+   "what": "tally rows naming an `ours:` declaration",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py", "tests/e2e/multisource.sh"]
+  },
+  "ours_raw_items": {
+   "value": 40,
+   "what": "distinct raw item labels behind those rows",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py", "tests/e2e/multisource.sh"]
+  },
+  "ours_raw_substantive": {
+   "value": 17,
+   "what": "of those items, the ones with a CONTENT/VACUITY/SUSPECTED_ERRATA/PROXY finding",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "ours_raw_high": {
+   "value": 3,
+   "what": "of those items, the ones with a high-severity finding",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "ours_collapsed_items": {
+   "value": 39,
+   "what": "the same rows counted by book item rather than by the worker's label",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py"]
+  },
+  "ours_class_content_vac": {
+   "value": 16,
+   "what": "disposition class: items with a CONTENT or VACUITY finding",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py"]
+  },
+  "ours_class_page_anchor": {
+   "value": 22,
+   "what": "disposition class: items whose only complaint was pagination -- 22 of the 40",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py"]
+  },
+  "teorth_rows": {
+   "value": 147,
+   "what": "tally rows naming a `teorth:` declaration",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py"]
+  },
+  "teorth_raw_items": {
+   "value": 71,
+   "what": "distinct raw item labels behind those rows",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py"]
+  },
+  "teorth_raw_substantive": {
+   "value": 62,
+   "what": "substantive items by raw label",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py"]
+  },
+  "teorth_raw_high": {
+   "value": 25,
+   "what": "high-severity items by raw label",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py"]
+  },
+  "teorth_collapsed_substantive": {
+   "value": 41,
+   "what": "substantive items BY BOOK ITEM. 41/19, not the 40/18 of the runs before 2026-09-18: one in-text label stopped collapsing onto the numbered item it merely cites (a de-conflation, not a new finding)",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "teorth_collapsed_high": {
+   "value": 19,
+   "what": "high-severity items by book item (see teorth_collapsed_substantive)",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "adam_rows": {
+   "value": 7,
+   "what": "tally rows naming an `adam:` declaration",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "adam_raw_items": {
+   "value": 5,
+   "what": "distinct raw item labels behind those rows",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "adam_raw_high": {
+   "value": 1,
+   "what": "high-severity items",
+   "needs": ["CF_BASELINE_CORPUS"],
+   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+  },
+  "def_coverage_stated": {
+   "value": 32,
+   "what": "Chapter-1 Definitions the first companion states natively",
+   "needs": ["CF_BASELINE_DIFF", "CF_MT"],
+   "asserted_in": ["tests/test_sources_pair.py", "tests/e2e/multisource.sh"]
+  },
+  "def_coverage_bridge_only": {
+   "value": 4,
+   "what": "Definitions it only ever consumes through bridges",
+   "needs": ["CF_BASELINE_DIFF", "CF_MT"],
+   "asserted_in": ["tests/test_sources_pair.py", "tests/e2e/multisource.sh"]
+  },
+  "def_coverage_missing": {
+   "value": 0,
+   "what": "Definitions no declaration is tagged to",
+   "needs": ["CF_BASELINE_DIFF", "CF_MT"],
+   "asserted_in": ["tests/test_sources_pair.py", "tests/e2e/multisource.sh"]
+  },
+  "adapter_rows_first_companion": {
+   "value": 1157,
+   "comparison": ">=",
+   "what": "statement rows the docstring_tags adapter extracts (ours.jsonl had 1,157; the repo has grown since, so this is a floor)",
+   "needs": ["CF_TML"],
+   "asserted_in": ["tests/test_adapters.py"]
+  }
+ }
+}
