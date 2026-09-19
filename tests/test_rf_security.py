@@ -462,7 +462,7 @@ class AgentboxBridgePermissionsTest(unittest.TestCase):
                                         capture_output=True, text=True).returncode, 0)
 
     def _launch(self, *, role: str = "worker", host: str = "claude",
-                bypass: str | None = None) -> list[str]:
+                bypass: str | None = None, env: dict | None = None) -> list[str]:
         """Run the bridge with a fake `agentbox` on PATH; return the host's argv."""
         from run.manifest import BYPASS_ENV
 
@@ -480,13 +480,17 @@ class AgentboxBridgePermissionsTest(unittest.TestCase):
         (bindir / "agentbox").chmod(0o755)
         worktree = tmp / "worktree"
         worktree.mkdir()
-        env = dict(os.environ)
-        env.update({"PATH": f"{bindir}:{env['PATH']}", "CF_TEST_ARGV": str(argv_file),
-                    "CF_BRIDGE_ROOT": str(tmp), "CF_AGENT_HOST": host, "CF_ROLE": role,
-                    "CF_AGENTBOX_PROFILE": "examplebox"})
-        env.pop(BYPASS_ENV, None)
+        environ = dict(os.environ)
+        environ.update({"PATH": f"{bindir}:{environ['PATH']}", "CF_TEST_ARGV": str(argv_file),
+                        "CF_BRIDGE_ROOT": str(tmp), "CF_AGENT_HOST": host, "CF_ROLE": role,
+                        "CF_AGENTBOX_PROFILE": "examplebox"})
+        for key in (BYPASS_ENV, "CF_GATE_CMD", "CF_GATE_DIR", "CF_ALLOWED_TOOLS",
+                    "CF_WORKER_TOOLS", "CF_REVIEWER_TOOLS"):
+            environ.pop(key, None)
+        environ.update(env or {})
         if bypass is not None:
-            env[BYPASS_ENV] = bypass
+            environ[BYPASS_ENV] = bypass
+        env = environ
         subprocess.run(["bash", str(self.SCRIPT), role], capture_output=True, text=True,
                        cwd=str(worktree), env=env)
         self.assertTrue(argv_file.exists(), "the fake agentbox was never reached")
@@ -520,7 +524,26 @@ class AgentboxBridgePermissionsTest(unittest.TestCase):
             self.assertIn(tools, local)          # the reference posture
             self.assertIn(tools, self.text)      # now the agentbox bridge too
 
-    def test_the_bypass_is_recorded_in_run_yaml(self):
+    def test_the_default_worker_allowlist_permits_its_own_gate_run(self):
+        """worker.md orders the worker to run the gate before committing; an
+        allowlist that denied it would cost a rework turn per task."""
+        gate = "/home/tester/demo-gate"
+        argv = self._launch(host="claude", env={
+            "CF_GATE_CMD": f"python3 {gate}/verify_findings.py --gate-config {gate}/gate.json"})
+        tools = argv[argv.index("--allowedTools") + 1].split(",")
+        self.assertIn(f"Bash(python3 {gate}/verify_findings.py:*)", tools)
+        # narrow on purpose: python3 in general stays denied, because the worker
+        # must not be able to substitute its own gate
+        self.assertNotIn("Bash(python3:*)", tools)
+        # and the gate is derived, not baked in: no CF_GATE_CMD, no entry
+        argv = self._launch(host="claude")
+        self.assertEqual(argv[argv.index("--allowedTools") + 1],
+                         "Read,Glob,Grep,Edit,Write,Bash(git:*)")
+
+    def test_the_bypass_record_says_only_what_the_wrapper_can_tell_it(self):
+        """Tri-state, not a boolean: nothing in the repo stages the opt-in, so a
+        bare `false` claimed a fact `cf run` cannot know -- the environment that
+        launches tend on the host can set it with no wrapper involved."""
         from run import manifest
         from run.manifest import BYPASS_ENV
 
@@ -531,14 +554,24 @@ class AgentboxBridgePermissionsTest(unittest.TestCase):
             "#!/bin/sh\nexport CF_AGENT_HOST=claude\n"
             "export CF_ALLOWED_TOOLS=Read,Grep\n", encoding="utf-8")
         facts = manifest.agent_permissions(run_dir)
-        self.assertFalse(facts["permission_bypass"])
+        self.assertFalse(facts["permission_bypass_in_wrapper"])
+        self.assertIn("not requested in the staged wrapper", facts["permission_bypass"])
+        self.assertIn("host can still set it", facts["permission_bypass"])
         self.assertEqual(facts["env"]["CF_ALLOWED_TOOLS"], "Read,Grep")
+        # and it must not tell the operator to edit a file the repo generates
+        self.assertNotIn("in the wrapper to opt out", facts["default"])
 
         (bindir / "worker-agent.sh").write_text(
             f"#!/bin/sh\nexport {BYPASS_ENV}=1\n", encoding="utf-8")
         facts = manifest.agent_permissions(run_dir)
-        self.assertTrue(facts["permission_bypass"])
+        self.assertTrue(facts["permission_bypass_in_wrapper"])
+        self.assertIn("requested", facts["permission_bypass"])
         self.assertEqual(facts["bypass_exported_by"], ["worker-agent.sh"])
+
+    def test_the_bridge_header_does_not_promise_a_record_it_cannot_keep(self):
+        self.assertNotIn("so a bypassed run is visible afterwards", self.text)
+        self.assertIn("whether the STAGED WRAPPER", self.text)
+        self.assertIn("agentbox-<role>.err is the record that is", self.text)
 
 
 # ==========================================================================

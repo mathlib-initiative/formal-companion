@@ -19,15 +19,22 @@
 #   CF_MODEL               model id passed to the host (claude: --model, codex: -m)
 #   CF_PROMPT_DIR          prompt directory           (default: $CF_BRIDGE_ROOT/prompts)
 #   CF_ALLOWED_TOOLS       claude --allowedTools list (default: the role allowlist below)
-#   CF_WORKER_TOOLS        worker allowlist           (default: Read,Glob,Grep,Edit,Write,Bash(git:*))
+#   CF_WORKER_TOOLS        worker allowlist           (default: Read,Glob,Grep,Edit,Write,Bash(git:*)
+#                          plus the CF_GATE_CMD program itself -- the worker prompt
+#                          tells the worker to run the gate before it commits, and an
+#                          allowlist that denied that would cost a rework turn per
+#                          task. Nothing wider: python3 in general is NOT allowlisted.)
 #   CF_REVIEWER_TOOLS      reviewer allowlist         (default: Read,Glob,Grep,Bash(git:*))
 #   CF_CODEX_SANDBOX       codex --sandbox mode       (default: workspace-write)
 #   CF_ALLOW_SANDBOX_BYPASS=1  run with approvals and the sandbox OFF. An explicit
 #                          opt-in, NOT the default: the run host holds the companion
 #                          checkouts, and "these repositories are READ-ONLY" was a
-#                          sentence in a system prompt. `cf run` records the opt-in in
-#                          run.yaml (run.agents.permission_bypass) from the staged
-#                          wrapper, so a bypassed run is visible afterwards.
+#                          sentence in a system prompt. `cf run` records in run.yaml
+#                          (run.agents.permission_bypass) whether the STAGED WRAPPER
+#                          asks for it; nothing stages it today, so a bypass exported
+#                          in the shell that launches tend here is not in that record.
+#                          The bypass= line this script appends to
+#                          $ROOT/agentbox-<role>.err is the record that is.
 #   CF_PERMISSION_FLAGS    claude permission flags, honoured only WITH that opt-in
 #   CF_GATE_DIR            out-of-tree gate directory (cf run rsyncs the gate there)
 #   CF_GATE_CMD            gate command normalize_result.py runs for the observable-state
@@ -97,10 +104,24 @@ fi
 # box that holds the companion checkouts and the copyrighted source text, so
 # "these repositories are READ-ONLY" (worker-system.md) was enforced by nothing
 # but the prompt the agent had just been told to read.
+#
+# The worker's default also permits the GATE COMMAND, and only that: worker.md
+# says "run the validation gate yourself and fix anything it reports" before
+# committing, so a default that denied it would send every task back for a rework
+# turn it did not need. It is the gate script by absolute path, not Bash(python3:*)
+# -- the whole point of the out-of-tree gate is that the worker cannot substitute
+# its own.
 if [ "$ROLE" = reviewer ]; then
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-Read,Glob,Grep,Bash(git:*)}}"
 else
-  TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)}}"
+  # CF_GATE_CMD is what the generated wrapper actually stages (CF_GATE_DIR is not),
+  # so the allowlist entry is derived from it: the program, without its --flags.
+  GATE_TOOL=""
+  case "${CF_GATE_CMD:-}" in
+    "" | *,*) ;;    # unset, or a path an --allowedTools list cannot carry anyway
+    *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;
+  esac
+  TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)$GATE_TOOL}}"
 fi
 BYPASS="${CF_ALLOW_SANDBOX_BYPASS:-0}"
 printf 'bridge-agentbox: role=%s host=%s bypass=%s tools=%s\n' \
