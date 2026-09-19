@@ -189,6 +189,12 @@ if [ -d "$CORPUS" ]; then
   $CF import-corpus --run-id guess --from "$CORPUS/findings" --no-tally -q >/dev/null 2>&1
   check "import refuses to guess the edition" "$?" "2"
 
+  # The gate runs on import unless --no-gate, so these go in under the presets
+  # written FOR an imported v1 corpus: differential-legacy keeps PAGE_ANCHOR in
+  # KINDS because those three runs emitted it (20 rows), and attack-legacy does
+  # not run the operator pass, which flags 2 of findings-vac's 763 quotes. Under
+  # a runnable preset the gate refuses them, which is the gate being right about
+  # a legacy corpus, not a reason to import ungated.
   import_one () {  # <run-id> <dir> <mode> <preset> <expected>
     $CF import-corpus --run-id "$1" --from "$CORPUS/$2" --mode "$3" --preset "$4" \
        --source "$PUB" --repos ours,teorth,adam --no-tally -q >/dev/null \
@@ -196,12 +202,14 @@ if [ -d "$CORPUS" ]; then
     check "import $1" "$(jget "corpus/$1/RECEIPT.json" actual.count)" "$5"
     check "  complete, every file accounted for" \
           "$(jget "corpus/$1/RECEIPT.json" complete)" "True"
+    check "  and it passed the gate on the way in" \
+          "$(jget "corpus/$1/RECEIPT.json" gate.ok)" "True"
   }
-  import_one batch1     findings      differential differential-text 382
-  import_one batch-gpt  findings-gpt  differential differential-gpt  382
-  import_one batch-pdf  findings-pdf  differential differential-pdf  382
-  import_one batch-hunt findings-hunt attack       attack-hunt       763
-  import_one batch-vac  findings-vac  attack       attack-vac        763
+  import_one batch1     findings      differential differential-legacy 382
+  import_one batch-gpt  findings-gpt  differential differential-legacy 382
+  import_one batch-pdf  findings-pdf  differential differential-legacy 382
+  import_one batch-hunt findings-hunt attack       attack-legacy       763
+  import_one batch-vac  findings-vac  attack       attack-legacy       763
   check "  2,672 findings in all" \
         "$(py 'import json,glob
 print(sum(json.load(open(p))["actual"]["count"]
