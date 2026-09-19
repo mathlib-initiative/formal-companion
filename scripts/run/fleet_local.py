@@ -27,9 +27,15 @@ from pathlib import Path
 if __package__ in (None, ""):  # `python3 scripts/run/fleet_local.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from run._compat import CfError, read_yaml, write_json
+from run._compat import CfError, read_yaml, skill_root, write_json
 
 DEFAULT_MAX_ITEMS = 100
+
+#: the local runner, as `Workflow({ scriptPath: ... })` must name it
+WORKFLOW_SCRIPT = "workflows/fleet-local.workflow.js"
+
+#: the corpus schema version the out-of-tree gate demands of every findings file
+DEFAULT_SCHEMA_VERSION = 2
 
 
 def task_args(run_dir: Path) -> list[dict]:
@@ -161,10 +167,15 @@ def build(
         items = item_args(run_dir, item_meta, note_single_source=not attack,
                           source_id=source_id, name_source=True)
     if len(items) > max_items and not force:
+        # Name the three real options. The old hint said "run it on the server
+        # with `cf run`" -- the command that had just failed -- and told an
+        # operator a war story about somebody else's run instead of a flag.
         raise CfError(
             f"{len(items)} items is too many for the local Workflow fleet (limit {max_items})",
-            hint="run it on the server with `cf run`, or pass --force and expect to resume "
-                 "after the session limit (batch 1 died at 129 of 225 agents)",
+            hint=f"send it to a server with `cf run {run_id} --host <alias> --i-have-consent` "
+                 "(hosts come from workspace.yaml hosts.allowlist); or pass --force to stage all "
+                 f"{len(items)} locally and expect to resume after the session limit; or raise "
+                 f"`defaults.local_fleet_max_items` in workspace.yaml above {len(items)}",
         )
     args = {
         "run_id": run_id,
@@ -191,8 +202,11 @@ WORKFLOW_KEYS: dict[str, tuple[str, ...]] = {
     "source": ("source_id", "title", "source_sha", "text", "pages_dir",
                "page_offset", "errata"),
     "repos": ("name", "repo", "statements", "conventions"),
-    "gate": ("command", "config", "kinds", "witness_required", "quote_min_chars",
-             "scratch_dir"),
+    # `kinds`, `verdicts` and `schema_version` are the RUN'S GATE: the workflow
+    # builds the worker's structured-output enums from them instead of carrying a
+    # second hand-written copy that drifts from the preset's.
+    "gate": ("command", "config", "kinds", "verdicts", "schema_version",
+             "witness_required", "quote_min_chars", "scratch_dir"),
     "items": ("item", "source_id", "repos", "pdf_pages", "note"),
 }
 
@@ -220,12 +234,19 @@ def write(run_dir: Path, args: dict) -> Path:
 def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
                  gate_config: str = "<run>/gate.local.json",
                  corpus_dir: str = "corpus/<run-id>") -> str:
-    """What the operator must do next -- cf.py cannot launch a Workflow itself."""
+    """What the operator must do next -- cf.py cannot launch a Workflow itself.
+
+    The script path is ABSOLUTE, via ``cflib.paths.skill_root()``: ``cf`` defaults
+    its workspace to the current directory and a workspace has no ``workflows/``
+    directory, so a relative path here resolves against the wrong root (the two
+    sibling commands, ``cf adjudicate`` and ``cf report``, already print an
+    absolute one).
+    """
     return "\n".join([
         f"{count} items staged for the local fleet.",
         "",
         "The Workflow tool cannot be launched from cf.py; run it from a Claude Code session:",
-        "  script: workflows/fleet-local.workflow.js",
+        f"  script: {skill_root() / WORKFLOW_SCRIPT}",
         f"  args:   {args_path}",
         "",
         "  - subagents must be model 'opus' (Fable-default runs lost agents to the session limit)",
