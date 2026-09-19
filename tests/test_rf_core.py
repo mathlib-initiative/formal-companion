@@ -337,6 +337,62 @@ class TestSuiteIsHermetic(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# first-run#3 -- the search roots are derived, not one machine's layout
+# ---------------------------------------------------------------------------
+
+class TestLibrarySearchRoots(unittest.TestCase):
+    def test_the_shipped_default_names_no_absolute_layout(self):
+        self.assertEqual(list(DEFAULT_LIBRARY_PATHS), ["~/Downloads"])
+        text = templates.render_template("workspace.yaml.example", {
+            "workspace_name": "t", "created": '"2026-01-01"'})
+        data = yamlio.load_yaml_minimal(text)
+        self.assertEqual(data["library_paths"], ["~/Downloads"])
+        # the glob that walked the developer's Desktop, and made the allowlist a
+        # home subtree every audited repo could point into
+        self.assertNotIn("~/Desktop/**/sources", text.split("library_paths:")[1])
+
+    def test_the_derived_roots_are_the_store_and_the_onboarded_repos_parents(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            ws = _workspace(root / "ws")
+            self.assertEqual(ws.derived_library_paths(), [str(root / "ws" / "sources")])
+
+            repos = root / "checkouts"
+            (repos / "some-companion").mkdir(parents=True)
+            ws.upsert_companion("some-companion", repo=str(repos / "some-companion"),
+                                adapter="docstring_tags", sources=[])
+            ws.save()
+            ws = Workspace.load(root / "ws", validate=False)
+            derived = ws.derived_library_paths()
+            self.assertIn(str(repos), derived)
+            self.assertIn(str(root / "ws" / "sources"), derived)
+            self.assertIn(str(repos), ws.library_paths)
+            self.assertIn("~/Downloads", ws.library_paths)
+
+    def test_a_companion_whose_checkout_moved_is_skipped_not_walked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            ws = _workspace(root / "ws")
+            ws.upsert_companion("gone", repo=str(root / "not-here"),
+                                adapter="docstring_tags", sources=[])
+            ws.save()
+            ws = Workspace.load(root / "ws", validate=False)
+            self.assertEqual(ws.derived_library_paths(), [str(root / "ws" / "sources")])
+
+    def test_cf_init_prints_the_effective_search_roots(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ws"
+            out = io.StringIO()
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                rc = cf_main.main(["init", str(root), "--no-git"])
+            self.assertEqual(rc, 0)
+            printed = out.getvalue()
+            self.assertIn("pdf search roots", printed)
+            self.assertIn("~/Downloads", printed)
+            self.assertIn(str(root / "sources"), printed)
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 

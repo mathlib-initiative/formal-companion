@@ -80,7 +80,10 @@ _SECTION_COMMENTS: dict[str, str] = {
     "library_paths": (
         "# Where `cf onboard` may look for a PDF a repo names but does not commit. Searched\n"
         "# in order after the repo's own paths and caches and the workspace store; matched\n"
-        "# by sha when one is known, by filename/title otherwise.\n"
+        "# by sha when one is known, by filename/title otherwise. This list is ALSO the\n"
+        "# allowlist for an absolute path a companion repo names in its own files, so add to\n"
+        "# it deliberately; the roots derived from this workspace (its sources/ store and the\n"
+        "# parent of every onboarded repo) are searched too. `cf doctor` prints the set.\n"
     ),
 }
 
@@ -535,11 +538,49 @@ class Workspace:
 
     @property
     def library_paths(self) -> list[str]:
-        """Directories `cf onboard` may search for a PDF a repo names."""
+        """Directories `cf onboard` may search for a PDF a repo names.
+
+        The configured list plus :meth:`derived_library_paths`.  This is also the
+        allowlist for an absolute path a companion repo names in its own files
+        (:func:`cflib.discovery.search_order`), which is why the derived half is
+        DERIVED and not a home subtree.  The two home-directory globs it replaces
+        let any audited repo point the extractor at anything under them, and
+        only worked at all on a machine that keeps its checkouts there.
+        """
         raw = self.data.get("library_paths")
-        if raw is None:
-            return list(DEFAULT_LIBRARY_PATHS)
-        return [str(p) for p in raw]
+        configured = list(DEFAULT_LIBRARY_PATHS) if raw is None else [str(p) for p in raw]
+        out = list(configured)
+        for path in self.derived_library_paths():
+            if path not in out:
+                out.append(path)
+        return out
+
+    def derived_library_paths(self) -> list[str]:
+        """Search roots this workspace has already been told about.
+
+        Its own ``sources/`` store, and the parent directory of every onboarded
+        companion repo: onboarding ``<somewhere>/<companion>`` is how the user
+        says ``<somewhere>`` holds their companions, so the sibling repo that
+        carries the PDF is reachable on any layout instead of only under one
+        person's home-directory layout.  A repo path that is not a directory (a stale
+        entry, a checkout that moved) is skipped rather than walked.
+
+        The trade-off is deliberate and it is the widest thing here: a companion
+        checked out directly in ``$HOME`` makes ``$HOME`` a search root, and the
+        walk is depth- and count-capped but not free.  It is still narrower than
+        the home-directory globs it replaces, because every root is a
+        directory the user handed to `cf onboard`, and `cf init` / `cf doctor`
+        print the effective set rather than leaving it in a file nobody opens.
+        """
+        out: list[str] = [str(self.root / "sources")]
+        for ref in self.companions.values():
+            repo = Path(str(ref.repo)).expanduser()
+            if not str(ref.repo) or not repo.is_dir():
+                continue
+            parent = str(repo.resolve().parent)
+            if parent not in out:
+                out.append(parent)
+        return out
 
     # -- validation ----------------------------------------------------
     def validate(self, *, structural_only: bool = False) -> list[str]:
@@ -640,11 +681,13 @@ class Workspace:
         return problems
 
 
-#: Searched by `cf onboard` for a PDF a repo names but does not commit.
+#: Searched by `cf onboard` for a PDF a repo names but does not commit, when
+#: workspace.yaml names no ``library_paths`` at all.  One home-relative entry and
+#: nothing else: the rest of the search roots are derived from the workspace
+#: (:meth:`Workspace.derived_library_paths`), because this list doubles as the
+#: allowlist for absolute paths a companion repo names in its own files.
 DEFAULT_LIBRARY_PATHS: tuple[str, ...] = (
     "~/Downloads",
-    "~/Desktop/**/sources",
-    "~/Desktop/**/.lake/official-pdf",
 )
 
 
