@@ -57,20 +57,37 @@ _KEY_RE = re.compile(r"^(?P<key>(?:\"[^\"]*\"|'[^']*'|[^:#]+?))\s*:(?:\s+(?P<val
 
 
 def _strip_comment(line: str) -> str:
-    out, quote = [], None
-    for i, ch in enumerate(line):
+    """Drop a trailing `` # comment``, but never one inside a quoted scalar.
+
+    The backslash step is why this cannot be a ``split(" #")``: the writer escapes
+    a quote mark inside a double-quoted scalar as ``\\"``, and reading that quote
+    as the CLOSING one left the rest of the value looking like a comment.  A
+    harvested title of the shape ``" #x\\`` -- a leading quote mark, a ` #`, and a
+    trailing backslash -- then came back as just the backslash here while PyYAML
+    read it whole, so the two readers disagreed about a file cf wrote itself.
+    """
+    out, quote, i, n = [], None, 0, len(line)
+    while i < n:
+        ch = line[i]
         if quote:
             out.append(ch)
+            if quote == '"' and ch == "\\" and i + 1 < n:
+                out.append(line[i + 1])
+                i += 2
+                continue
             if ch == quote:
                 quote = None
+            i += 1
             continue
         if ch in "\"'":
             quote = ch
             out.append(ch)
+            i += 1
             continue
         if ch == "#" and (i == 0 or line[i - 1] in " \t"):
             break
         out.append(ch)
+        i += 1
     return "".join(out).rstrip()
 
 
@@ -168,6 +185,35 @@ def _split_flow(text: str) -> list[str]:
 #: an anchor (``&name``) or alias (``*name``) in a *value* position
 _ANCHOR_RE = re.compile(r"(?:^|:\s+|-\s+)[&*][A-Za-z_]")
 
+
+def _mask_quoted(line: str) -> str:
+    """*line* with the inside of every quoted scalar blanked, length preserved.
+
+    The anchor/alias check runs on this rather than on the raw line.  A
+    double-quoted value that happens to contain ``: &x`` is not an anchor, and the
+    writer emits exactly that for a harvested title carrying a colon and an
+    ampersand -- so the fallback reader used to refuse a file cf had just written
+    while PyYAML read it back unchanged.
+    """
+    out, quote, i, n = [], None, 0, len(line)
+    while i < n:
+        ch = line[i]
+        if quote:
+            if quote == '"' and ch == "\\" and i + 1 < n:
+                out.append("xx")
+                i += 2
+                continue
+            out.append(ch if ch == quote else "x")
+            if ch == quote:
+                quote = None
+            i += 1
+            continue
+        if ch in "\"'":
+            quote = ch
+        out.append(ch)
+        i += 1
+    return "".join(out)
+
 #: a value that opens a literal/folded block scalar: ``|``, ``|-``, ``>2+``, ...
 _BLOCK_OPEN_RE = re.compile(r"(?:^|:\s*|-\s+)[|>][0-9]*[-+]?$")
 
@@ -201,7 +247,7 @@ def load_yaml_minimal(text: str, where: str = "<yaml>") -> Any:
         if not stripped.strip():
             continue
         content = stripped.strip()
-        if _ANCHOR_RE.search(content):
+        if _ANCHOR_RE.search(_mask_quoted(content)):
             raise CfError(f"{where}:{n}: YAML anchors/aliases are not supported by the fallback reader",
                           hint="install PyYAML (pip install pyyaml) or simplify the file")
         lines.append((indent, content, n))
@@ -366,14 +412,20 @@ def _block_safe(text: str) -> bool:
 
     Three shapes it cannot: a first line that starts with whitespace (its indent
     would be read as the block's own, and PyYAML refuses the file outright), a
-    body ending in a blank line (only ``|+`` keeps it, and neither reader
-    implements ``+``), and any control character other than the line breaks.
-    Those go through the double-quoted writer instead, which is uglier but
-    lossless -- and a workspace.yaml cf cannot read back is worse than an ugly
-    line.
+    body whose LAST line carries no non-space character, and any control character
+    other than the line breaks.  Those go through the double-quoted writer
+    instead, which is uglier but lossless -- and a workspace.yaml cf cannot read
+    back is worse than an ugly line.
+
+    The last-line rule covers both an empty final line (only ``|+`` keeps it, and
+    neither reader implements ``+``) and one that is whitespace-only but NOT
+    empty, which is the same defect wearing a disguise: ``"a\\n "`` passes every
+    other check, is written as ``|-``, and the fallback reader's own trailing-blank
+    chomp then drops it while PyYAML keeps it -- so the two readers disagreed about
+    a file cf wrote itself.
     """
     body = text[:-1] if text.endswith("\n") else text
-    if not body or body.endswith("\n"):
+    if not body.split("\n")[-1].strip():
         return False
     if _CONTROL_RE.search(body.replace("\n", "")):
         return False
@@ -427,7 +479,12 @@ def _fmt_scalar(v: Any) -> str:
     #: or carries a tab used to be written out bare, and then Registry.load()
     #: raised `invalid YAML` on the workspace's own registry.yaml (or, worse,
     #: read the title back without its quotes).
-    if s == "" or re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`]", s) or s.lower() in {
+    #: The leading set is every character YAML reserves as the FIRST one of a plain
+    #: scalar. `,` is in it because a flow indicator cannot open a node even in
+    #: block context: a title harvested as ", and other notes" was written bare and
+    #: PyYAML then refused the whole file ("expected the node content, but found
+    #: ','"), which is the same defect as the tab.
+    if s == "" or re.search(r"[:#\[\]{}]|^\s|\s$|^[-?&*!|>%@`,]", s) or s.lower() in {
         "true", "false", "null", "yes", "no", "on", "off", "~"
     } or _NUMBER_LOOKALIKE.fullmatch(s) or re.fullmatch(r"\d{4}-\d{2}-\d{2}", s) \
             or _CONTROL_RE.search(s) or s[:1] in "\"'":
