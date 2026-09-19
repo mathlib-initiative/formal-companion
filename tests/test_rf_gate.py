@@ -449,5 +449,220 @@ class TestQuoteLengthCeiling(BookTestCase):
         self.assertIn("too short", why)
 
 
+# --------------------------------------------------------------------------- #
+# gates-correctness#7 + security-safety#1 — the changed-files half of the gate
+# --------------------------------------------------------------------------- #
+class WorktreeTestCase(unittest.TestCase):
+    """A real git worktree with one worker's landed pair already on ``main``."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=TMPDIR)
+        self.root = pathlib.Path(self.tmp.name)
+        self.env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x"}
+        self.git("init", "-q", "-b", "main")
+        (self.root / "findings").mkdir()
+        (self.root / "tasks").mkdir()
+        (self.root / "findings" / "alice.json").write_text(
+            json.dumps({"schema_version": 2, "disagreements": [{"kind": "CONTENT"}]}),
+            encoding="utf-8")
+        (self.root / "tasks" / "alice.yaml").write_text("id: alice\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "alice's finding lands")
+        self.git("checkout", "-q", "-b", "carol")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=self.root, check=True, env=self.env,
+                       capture_output=True, text=True)
+
+    def write_own_pair(self):
+        (self.root / "findings" / "carol.json").write_text("{}\n")
+        (self.root / "tasks" / "carol.yaml").write_text("id: carol\n")
+
+    def entries(self):
+        got, errs = vf.changed_entries(self.root, "main")
+        self.assertEqual(errs, [])
+        return got
+
+
+class TestChangedFilesSeesDeletions(WorktreeTestCase):
+    """`git diff --name-only` erased A/M/D, so a destructive change set passed.
+
+    All three of these exited 0 before the fix, and the pure deletion could not
+    even be told apart from an empty contribution.
+    """
+
+    def test_a_pure_deletion_is_refused(self):
+        self.git("rm", "-q", "findings/alice.json", "tasks/alice.yaml")
+        self.git("commit", "-qm", "drop alice")
+        entries = self.entries()
+        self.assertEqual(entries.get("findings/alice.json"), "D")
+        problems = vf.check_changed(entries)
+        self.assertTrue(any("deleted" in p for p in problems), problems)
+        self.assertTrue(any("no findings file was written" in p for p in problems), problems)
+
+    def test_a_deletion_beside_the_workers_own_addition_is_refused(self):
+        self.write_own_pair()
+        self.git("rm", "-q", "findings/alice.json", "tasks/alice.yaml")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "mine in, alice's out")
+        problems = vf.check_changed(self.entries())
+        self.assertTrue(any("findings/alice.json" in p and "deleted" in p for p in problems),
+                        problems)
+
+    def test_a_rename_away_is_refused(self):
+        self.git("mv", "findings/alice.json", "findings/carol.json")
+        self.git("mv", "tasks/alice.yaml", "tasks/carol.yaml")
+        self.git("commit", "-qm", "rename alice to me")
+        problems = vf.check_changed(self.entries())
+        self.assertTrue(any("findings/alice.json" in p for p in problems), problems)
+
+    def test_emptying_another_workers_finding_is_refused_by_the_task_id(self):
+        (self.root / "findings" / "alice.json").write_text('{"disagreements": []}\n')
+        (self.root / "tasks" / "alice.yaml").write_text(
+            "id: alice\nstatus: complete\nnote: rebased\n")
+        self.write_own_pair()
+        self.git("add", "-A")
+        self.git("commit", "-qm", "tidy up")
+        entries = self.entries()
+        self.assertEqual(vf.check_changed(entries), [],
+                         "the pair rule alone cannot see this")
+        problems = vf.check_changed(entries, task_id="carol")
+        self.assertTrue(any("findings/alice.json" in p and "not to this worker's" in p
+                            for p in problems), problems)
+
+    def test_a_workers_own_pair_still_passes_with_its_task_id(self):
+        self.write_own_pair()
+        self.git("add", "-A")
+        self.git("commit", "-qm", "mine")
+        self.assertEqual(vf.check_changed(self.entries(), task_id="carol"), [])
+
+    def test_the_task_id_comes_from_the_environment_by_default(self):
+        self.write_own_pair()
+        self.git("add", "-A")
+        self.git("commit", "-qm", "mine")
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        for task_id, code in (("carol", 0), ("alice", 1)):
+            with self.subTest(task_id=task_id):
+                proc = subprocess.run(
+                    [sys.executable, script, "--base", "main", "--root", str(self.root)],
+                    capture_output=True, text=True,
+                    env={**self.env, "TEND_TASK_ID": task_id})
+                self.assertEqual(proc.returncode, code, proc.stdout + proc.stderr)
+
+    def test_a_missing_base_ref_still_fails_closed(self):
+        entries, errs = vf.changed_entries(self.root, "no-such-branch")
+        self.assertEqual(entries, {})
+        self.assertTrue(errs and "fails closed" in errs[0])
+
+    def test_changed_paths_keeps_its_old_shape_for_existing_callers(self):
+        self.write_own_pair()
+        paths, errs = vf.changed_paths(self.root, "main")
+        self.assertEqual(errs, [])
+        self.assertIsInstance(paths, set)
+        self.assertEqual(paths, {"findings/carol.json", "tasks/carol.yaml"})
+        self.assertEqual(vf.check_changed(paths), [])  # a bare set: no statuses
+
+
+class TestTheGateRunsNoProgramTheWorkerChose(WorktreeTestCase):
+    """The gate runs git inside the worktree it is judging.
+
+    An index refresh runs ``core.fsmonitor``, named in that worktree's own
+    ``.git/config``, and the payload lives under ``.git/`` where the changed-files
+    check never looks — so the gate passed the contribution clean while executing
+    the worker's program.  Verified before the fix: the file below was written.
+    """
+
+    def arm(self) -> pathlib.Path:
+        proof = self.root / ".git" / "proof.txt"
+        hook = self.root / ".git" / "x.sh"
+        hook.write_text("#!/bin/sh\necho ran > %s\n" % proof, encoding="utf-8")
+        hook.chmod(0o755)
+        self.git("config", "core.fsmonitor", str(hook))
+        self.write_own_pair()
+        return proof
+
+    def test_no_hook_of_the_worktree_is_executed(self):
+        proof = self.arm()
+        paths, errs = vf.changed_paths(self.root, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(paths, {"findings/carol.json", "tasks/carol.yaml"})
+        self.assertFalse(proof.exists(), "the gate executed a program the worker chose")
+
+    def test_the_inlined_pins_are_gitsafes_own(self):
+        from cflib import gitsafe
+
+        self.assertEqual(vf._GIT_SAFE_CONFIG, gitsafe.SAFE_CONFIG)
+        self.assertEqual(vf._GIT_SAFE_ENV, gitsafe.SAFE_ENV)
+
+    def test_no_bare_git_invocation_in_the_tree(self):
+        """Tree-wide, not one adapter attribute: the hole was in the gate.
+
+        The allowlist is documented, not incidental: ``cflib/gitsafe.py`` IS the
+        boundary, and ``cfcmd/init.py`` acts on the user's own workspace repo,
+        never on a companion.
+        """
+        allowed = {"cflib/gitsafe.py", "cfcmd/init.py"}
+        offenders = []
+        for path in sorted((SKILL / "scripts").rglob("*.py")):
+            rel = path.relative_to(SKILL / "scripts").as_posix()
+            if rel in allowed:
+                continue
+            body = path.read_text(encoding="utf-8")
+            for m in re.finditer(r"""\[\s*["']git["']""", body):
+                window = body[m.start():m.start() + 120]
+                if "SAFE_CONFIG" not in window:
+                    line = body[:m.start()].count("\n") + 1
+                    offenders.append(f"{rel}:{line}")
+        self.assertEqual(offenders, [], "bare git invocation(s) outside gitsafe")
+
+
+# --------------------------------------------------------------------------- #
+# architecture#7 — 'your findings are bad' is not 'the gate is broken'
+# --------------------------------------------------------------------------- #
+class TestExitCodes(BookTestCase):
+    """One code for both meant a mis-rsynced gate read to a worker as a verdict."""
+
+    def gate_dir(self, doc) -> list[str]:
+        (self.root / "findings").mkdir(exist_ok=True)
+        (self.root / "findings" / "exercise-2-3-4.json").write_text(
+            json.dumps(doc), encoding="utf-8")
+        cfgp = self.root / "gate.json"
+        cfgp.write_text(json.dumps(self.cfg.data), encoding="utf-8")
+        return ["--gate-config", str(cfgp), "--root", str(self.root), "--quiet"]
+
+    def test_a_clean_run_is_zero_and_a_rejected_finding_is_one(self):
+        argv = self.gate_dir(doc_for())
+        self.assertEqual(vf.main(argv), vf.EXIT_OK)
+        self.assertEqual(vf.main(self.gate_dir(doc_for(RUNNING_HEAD))), vf.EXIT_REJECTED)
+
+    def test_a_missing_gate_config_is_not_a_rejected_finding(self):
+        argv = self.gate_dir(doc_for())
+        argv[1] = str(self.root / "nope.json")
+        self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
+
+    def test_an_unreadable_source_text_is_not_a_rejected_finding(self):
+        argv = self.gate_dir(doc_for())
+        self.book_path.unlink()
+        self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
+
+    def test_a_source_text_override_naming_no_source_is_not_a_rejected_finding(self):
+        argv = self.gate_dir(doc_for())
+        self.assertEqual(vf.main(argv + ["--source-text", "no-such-source=/tmp/x.txt"]),
+                         vf.EXIT_GATE_BROKEN)
+
+    def test_a_missing_base_ref_is_not_a_rejected_finding(self):
+        argv = self.gate_dir(doc_for())
+        self.assertEqual(vf.main(argv + ["--changed-files", "--base", "no-such-branch"]),
+                         vf.EXIT_GATE_BROKEN)
+
+    def test_the_three_codes_are_distinct(self):
+        self.assertEqual(sorted({vf.EXIT_OK, vf.EXIT_REJECTED, vf.EXIT_GATE_BROKEN}),
+                         [0, 1, 3])
+
+
 if __name__ == "__main__":
     unittest.main()

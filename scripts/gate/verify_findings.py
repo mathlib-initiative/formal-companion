@@ -27,7 +27,16 @@ Three things changed on purpose, per the design critique:
 Deliberately stdlib-only and self-contained (no ``cflib`` import): it is rsynced
 to a server and must run there with nothing installed.
 
-Exit status: 0 when every file validates, 1 otherwise (errors on stderr).
+Exit status (errors on stderr):
+
+* 0  every file validated;
+* 1  the findings were REJECTED — fix them;
+* 3  the gate itself could not run (no gate.json, unreadable source text, a
+  ``--source-text`` that names no source of this gate, a missing base ref for the
+  changed-files check).  A worker must answer this by stopping and reporting
+  blocked, never by editing its findings: an infrastructure failure used to be
+  indistinguishable from "your quotes are wrong", and the plausible response to a
+  gate that cannot be satisfied is to delete findings until it passes.
 """
 
 from __future__ import annotations
@@ -35,6 +44,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import pathlib
 import re
 import sys
@@ -51,6 +61,15 @@ NON_FINDING_FILES = {
     "RECEIPT.json", "run.yaml", "run.json", "manifest.json",
     "tally.json", "journal-harvest.json", "gate.json", "gate.local.json",
 }
+
+#: The exit vocabulary.  ``EXIT_GATE_BROKEN`` is the one that matters: the same
+#: command string is handed to every worker and reviewer with "run the validation
+#: gate yourself and fix anything it reports", so a mis-rsynced gate or a missing
+#: source text must not read to them as an audit verdict.  Anything but 1 means
+#: the gate is broken -- stop and report blocked, do not change the findings.
+EXIT_OK = 0
+EXIT_REJECTED = 1
+EXIT_GATE_BROKEN = 3
 
 #: Every key a findings document may carry its defect rows under.  ``harvest/
 #: tally.py`` (FINDING_LISTS) and ``ledger/findings.py`` count BOTH of these, so
@@ -1015,49 +1034,134 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
 # changed-files check (kept in this file on purpose: only verify_findings.py and
 # gate.json are transferred to the run host, so the check must travel with them)
 # --------------------------------------------------------------------------- #
+#: The git config and environment pins, COPIED from ``cflib.gitsafe`` (SAFE_CONFIG
+#: / SAFE_ENV) rather than imported, for the same reason ``finding_id`` is inlined
+#: here: only this file and ``gate.json`` are transferred to the run host, where
+#: there is no ``cflib``.  They are not optional decoration.  ``--root`` is the
+#: worktree the worker OWNS, and several git commands refresh the index first,
+#: which runs ``core.fsmonitor`` -- a program named in that worktree's own
+#: ``.git/config``.  A worker with ``Bash(git:*)`` (the tightest documented tool
+#: allowlist) could therefore make the gate execute its code, from under ``.git/``
+#: where the changed-files check cannot see it: verified, both ``git diff`` and
+#: ``git ls-files`` fired the hook bare and neither does with these pins.  Keep in
+#: step with gitsafe; ``tests/test_rf_gate.py`` asserts they are identical.
+_GIT_SAFE_CONFIG: tuple[str, ...] = (
+    "-c", "core.fsmonitor=",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "diff.external=",
+    "-c", "core.pager=cat",
+    "-c", "core.sshCommand=",
+    "-c", "core.askPass=",
+)
+_GIT_SAFE_ENV: dict[str, str] = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_OPTIONAL_LOCKS": "0",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+
+
 def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
+    """One read-only git command in ``cwd``, with the boundary pinned."""
     import subprocess
 
-    proc = subprocess.run(["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False)
+    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *args], cwd=str(cwd),
+                          capture_output=True, text=True, check=False,
+                          env={**os.environ, **_GIT_SAFE_ENV})
     return proc.returncode, (proc.stdout or "")
 
 
-def changed_paths(root: pathlib.Path, base: str) -> tuple[set[str], list[str]]:
-    """Paths this contribution changed against ``base``, including uncommitted work."""
+def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list[str]]:
+    """``{path: status}`` for this contribution against ``base``, plus untracked work.
+
+    The statuses are git's own: ``A`` added, ``M`` modified, ``D`` deleted, ``R``
+    renamed (recorded against the old path, with the new one as an addition).
+    ``git diff --name-only`` erased them, so the check could not tell a
+    contribution that added its own pair from one that also deleted another
+    worker's landed findings -- which is the failure ``harvest.py`` exists
+    because of, reachable at the merge gate and silent in the direction of
+    "cleaner".
+    """
     code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
     if code != 0:
-        return set(), [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
+        return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
     errs: list[str] = []
-    paths: set[str] = set()
-    code, out = _git(["diff", "--name-only", base], root)
+    entries: dict[str, str] = {}
+    code, out = _git(["diff", "--name-status", base], root)
     if code != 0:
         errs.append(f"git diff against {base} failed")
-    paths.update(p for p in out.splitlines() if p.strip())
+    for line in out.splitlines():
+        if not line.strip():
+            continue
+        parts = line.split("\t")
+        status = parts[0].strip()[:1]
+        if status == "R" and len(parts) >= 3:
+            entries[parts[1]] = "R"
+            entries[parts[2]] = "A"
+        elif status and len(parts) >= 2 and parts[1].strip():
+            entries[parts[1]] = status
+        else:
+            errs.append(f"could not parse `git diff --name-status` line {line!r} "
+                        f"(the check fails closed)")
     _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
-    paths.update(p for p in out.splitlines() if p.strip())
-    return paths, errs
+    for path in out.splitlines():
+        if path.strip():
+            entries.setdefault(path, "A")
+    return entries, errs
 
 
-def check_changed(paths: set[str], *, allow_empty: bool = False) -> list[str]:
+def changed_paths(root: pathlib.Path, base: str) -> tuple[set[str], list[str]]:
+    """The paths alone — :func:`changed_entries` without the statuses."""
+    entries, errs = changed_entries(root, base)
+    return set(entries), errs
+
+
+def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = False,
+                  task_id: str = "") -> list[str]:
     """Only ``findings/<id>.json`` and ``tasks/<id>.yaml`` may change, in pairs.
 
     This is the other half of moving the gate out of tree: the original run let
     a worker commit anything in its worktree, including the gate itself.
+
+    ``paths`` may be the ``{path: status}`` map :func:`changed_entries` returns,
+    and then every deletion and rename is refused as well — a contribution adds
+    its own pair and removes nothing.  ``task_id`` (the worker's own, from
+    ``--task-id`` or ``TEND_TASK_ID``) requires every touched stem to be that
+    task's, which is what catches emptying a neighbour's findings file.
     """
+    statuses = dict(paths) if isinstance(paths, dict) else {}
     problems: list[str] = []
+    written: set[str] = set()
     findings: set[str] = set()
     tasks: set[str] = set()
-    for p in sorted(paths):
+    for p in sorted(set(paths)):
+        status = statuses.get(p, "")
         parts = p.split("/")
         if len(parts) == 2 and parts[0] == "findings" and parts[1].endswith(".json"):
-            findings.add(parts[1][: -len(".json")])
+            stem = parts[1][: -len(".json")]
+            findings.add(stem)
+            if status not in ("D", "R"):
+                written.add(stem)
         elif len(parts) == 2 and parts[0] == "tasks" and parts[1].endswith((".yaml", ".yml")):
-            tasks.add(parts[1].rsplit(".", 1)[0])
+            stem = parts[1].rsplit(".", 1)[0]
+            tasks.add(stem)
         else:
             problems.append(f"changed path {p!r} is outside findings/<id>.json and tasks/<id>.yaml")
-    for stem in sorted(findings - tasks):
+            continue
+        if status in ("D", "R"):
+            gone = "deleted" if status == "D" else "renamed away"
+            problems.append(
+                f"changed path {p!r} was {gone} — a contribution writes its own findings and "
+                f"task file and removes nothing; another worker's landed findings are not "
+                f"yours to drop"
+            )
+        if task_id and stem != task_id:
+            problems.append(
+                f"changed path {p!r} belongs to task {stem!r}, not to this worker's {task_id!r} "
+                f"— change only findings/{task_id}.json and tasks/{task_id}.yaml"
+            )
+    for stem in sorted(written - tasks):
         problems.append(f"findings/{stem}.json has no tasks/{stem}.yaml in the same change set")
-    if not findings and not allow_empty:
+    if not written and not allow_empty:
         problems.append("no findings file was written")
     return problems
 
@@ -1145,6 +1249,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--base", default="main", help="branch the changed-files check compares against")
     ap.add_argument(
+        "--task-id",
+        default=os.environ.get("TEND_TASK_ID", ""),
+        help="with --changed-files: the worker's own task id, so a contribution that "
+             "touches another task's findings/<id>.json or tasks/<id>.yaml is refused "
+             "(default: $TEND_TASK_ID)",
+    )
+    ap.add_argument(
         "--allow-empty",
         action="store_true",
         help="with --changed-files: tolerate a change set with no findings file",
@@ -1154,8 +1265,9 @@ def main(argv: list[str] | None = None) -> int:
 
     gate_path = pathlib.Path(args.gate_config).expanduser()
     if not gate_path.exists():
-        print(f"FAIL: gate config missing at {gate_path}", file=sys.stderr)
-        return 1
+        print(f"FAIL: gate config missing at {gate_path} (the gate could not run: "
+              f"this is not a finding of yours)", file=sys.stderr)
+        return EXIT_GATE_BROKEN
     cfg = GateConfig.load(gate_path)
     for spec in args.source_text or []:
         sid, sep, path = str(spec).partition("=")
@@ -1164,7 +1276,7 @@ def main(argv: list[str] | None = None) -> int:
         if not sid or not cfg.source(sid):
             print(f"FAIL: --source-text {spec!r} names no source of this gate "
                   f"({', '.join(cfg.source_ids()) or 'none'})", file=sys.stderr)
-            return 1
+            return EXIT_GATE_BROKEN
         cfg.source(sid)["text"] = pathlib.Path(path).expanduser()
     if args.findings_dir:
         cfg.findings_dir = args.findings_dir
@@ -1173,16 +1285,19 @@ def main(argv: list[str] | None = None) -> int:
     if errs:
         for e in errs:
             print(f"FAIL: {e}", file=sys.stderr)
-        return 1
+        return EXIT_GATE_BROKEN
 
     decl_index = _load_decl_index(cfg.decl_index) if cfg.decl_index else None
 
     root = pathlib.Path(args.root).resolve()
     problems: list[str] = []
+    broken: list[str] = []
     if args.changed_files:
-        paths, cerrs = changed_paths(root, args.base)
+        entries, cerrs = changed_entries(root, args.base)
+        broken.extend(cerrs)
         problems.extend(cerrs)
-        problems.extend(check_changed(paths, allow_empty=args.allow_empty))
+        problems.extend(check_changed(entries, allow_empty=args.allow_empty,
+                                      task_id=args.task_id))
 
     if args.findings:
         files = [pathlib.Path(f) for f in args.findings]
@@ -1194,7 +1309,7 @@ def main(argv: list[str] | None = None) -> int:
     if not files and not problems:
         if not args.quiet:
             print("no findings files here; nothing to validate")
-        return 0
+        return EXIT_OK
 
     partial: list[str] = []
     notes: list[str] = []
@@ -1213,7 +1328,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"VALIDATION FAILED ({len(problems)} problem(s)):", file=sys.stderr)
         for p in problems:
             print("  - " + p, file=sys.stderr)
-        return 1
+        # A change set the check could not even read is an infrastructure failure
+        # wearing a validation failure's clothes.
+        return EXIT_GATE_BROKEN if broken else EXIT_REJECTED
     if not args.quiet:
         for note in partial:
             print("  ~ " + note)
@@ -1230,7 +1347,7 @@ def main(argv: list[str] | None = None) -> int:
             f"every book quote matched the text ({len(partial)} only in part, listed above; "
             f"{ops}; {bind})"
         )
-    return 0
+    return EXIT_OK
 
 
 if __name__ == "__main__":
