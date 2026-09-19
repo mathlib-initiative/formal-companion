@@ -38,6 +38,13 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     Returns ``{ok, config, preset, files, problems, partial}``; ``problems`` is
     the same list ``verify_findings.main`` would print, so the receipt records
     exactly what the gate said.
+
+    An EMPTY directory is a gate failure, not a pass: a gate asked to validate a
+    corpus and given nothing to validate has not approved anything, and
+    ``files: 0, problems: [], ok: True`` is how an empty corpus receipted as
+    complete.  The rule lives here rather than in ``cf harvest``'s wrapper so
+    that every caller inherits it -- the tests call this function directly, and
+    so would any future one.
     """
     dest = Path(dest)
     cfg_path = Path(gate_config).expanduser()
@@ -65,6 +72,9 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
         partial.extend(vf.partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars,
                                          max_pages=cfg.max_match_pages))
         notes.extend(vf.binding_notes(doc, f.name, cfg, book))
+    if not files:
+        problems.append(f"{dest}: the gate found no findings to validate (an empty corpus is "
+                        f"not a clean one)")
     return {
         "ok": not problems,
         "config": str(cfg_path),
