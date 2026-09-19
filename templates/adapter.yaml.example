@@ -9,6 +9,8 @@ commit: {{ commit }}
 #                       teorth/analysis)
 # attribution_table  -- a machine-readable item -> declaration map plus snippets
 #                       (measure_theory pdf-overlay data)
+# blueprint_tex      -- a leanblueprint manuscript: \lean{} / \leanok inside the
+#                       statement environments of blueprint/**/*.tex
 # ledger_nodes       -- a source-node -> formalization ledger; needs `cf curate`
 #                       first because its granularity is node, not item
 # custom             -- any script emitting row schema v2
@@ -33,13 +35,32 @@ exclude:
   - ".lake/**/*.lean"
   - "**/.lake/**/*.lean"
 
-# Where the book tag lives and how it is spelled.
+# Where the book tag lives and how it is spelled (docstring_tags only).
 tag:
   position: docstring_start         # docstring_start | docstring_anywhere | table
   pattern: null                     # optional regex override; null = the kind list
+  # true accepts only a backtick-wrapped tag (the tao-measure-lean convention),
+  # which is what keeps a prose mention of "Lemma 1.2.5" out of the table. Set it
+  # false for repos that write the label bare at the start of the docstring
+  # (teorth/analysis). `cf onboard` MEASURES both spellings and writes the winner
+  # here, so this is what the repo does, not a default.
+  require_backticks: {{ require_backticks }}
+  # How far past a docstring that does not OPEN with a tag to keep looking for a
+  # backticked one; 0 = the whole docstring. A leading tag always wins.
+  inline_window: 0
+  # How much of the sentence after the tag counts as the item's own anchor.
+  clause_window: 140
   # Prefer the item's OWN page over a cross-reference ("previewed on book p. 20"
   # once gave Exercise 1.2.17 the wrong anchor).
   page_pattern: "(?:book\\s+)?(?:pp?\\.|pages?)\\s*(\\d+)"
+
+# blueprint_tex only: where the item id comes from.
+#   auto   -- LaTeX's own numbering when the \newtheorem declarations and the
+#             chapter order make it recoverable, else the \label
+#   number -- force "Lemma 2.3"        label -- force "lem:foo"
+# `cf onboard` prints which one it used; the two do not mix in one table.
+blueprint:
+  locator: auto
 
 # anchor: docstring (page in the docstring) | ledger (page in an export)
 #       | none (item label only, e.g. teorth)
