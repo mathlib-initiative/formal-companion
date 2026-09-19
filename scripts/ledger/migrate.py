@@ -1,10 +1,10 @@
 """Map v1 ledger rows (batch 1, hand-transcribed) onto the v2 ledger schema.
 
-Ported from: the shapes written by hand in
-/Users/jack/Desktop/tao-differential/accepted.adam.jsonl (item, adam_decls,
-finding_summary, verdict, severity, resolution, reason, confidence) and
-refuted.adam.jsonl (item, kind, unfaithful_decls, original_concept, verdict,
-severity, confidence, reason, evidence, action, method).
+Ported from: the shapes written by hand in a v1 workspace's
+``accepted.<name>.jsonl`` (item, adam_decls, finding_summary, verdict, severity,
+resolution, reason, confidence) and ``refuted.<name>.jsonl`` (item, kind,
+unfaithful_decls, original_concept, verdict, severity, confidence, reason,
+evidence, action, method).
 
 Nothing here writes to the baseline: it reads those files and returns v2 rows,
 so the 2026-09-04/05 adjudication can be validated, re-routed and re-reported by
@@ -57,8 +57,19 @@ def split_resolution(value: Any) -> tuple[str | None, str]:
     return token, note
 
 
-def _decls(row: dict, repo: str) -> list[str]:
-    """Collect declarations from either v1 spelling and prefix bare names."""
+def _decls(row: dict, repo: str) -> tuple[list[str], list[str]]:
+    """Declarations from either v1 spelling, as ``(matching form, as written)``.
+
+    Both are needed and they are not interchangeable.  The ledger row carries the
+    normalised form, because routing and matching compare on it; the
+    ``finding_id`` hashes each declaration AS WRITTEN (``.strip()`` and nothing
+    else), the way the corpus, ``convert_v1``, the gate and ``harvest.tally`` all
+    do.  ``compat.normalise_decl`` strips INTERIOR whitespace, so hashing it
+    re-keyed every row whose declaration carries a space -- the anonymous
+    ``example «Exercise 1.2.1 (countable union)» at …`` shape -- and an unlinked
+    v1 row then got an id no reader of the corpus could ever compute.  The two
+    lists are parallel: the repo prefix goes on both.
+    """
     raw: list[str] = []
     for value in (row.get("unfaithful_decls") or []):
         raw.append(str(value))
@@ -66,15 +77,19 @@ def _decls(row: dict, repo: str) -> list[str]:
         for value in (row.get(key) or []):
             raw.append(str(value))
     out: list[str] = []
-    for d in raw:
-        d = compat.normalise_decl(d)
+    written: list[str] = []
+    for value in raw:
+        d = compat.normalise_decl(value)
         if not d:
             continue
+        w = str(value).strip()
         if ":" not in d and repo:
             d = "%s:%s" % (repo, d)
+            w = "%s:%s" % (repo, w)
         if d not in out:
             out.append(d)
-    return out
+            written.append(w)
+    return out, written
 
 
 def match_finding(
@@ -133,7 +148,7 @@ def map_v1_row(
     """
     findings = list(findings or [])
     item = compat.normalise_item(row.get("item"))
-    decls = _decls(row, repo)
+    decls, decls_as_written = _decls(row, repo)
     kind = str(row.get("kind") or "").strip()
     finding = match_finding(findings, item, decls, kind, source_id=source_id) if findings else None
     if finding is not None:
@@ -148,7 +163,11 @@ def map_v1_row(
                 if compat.decl_repo(d) == repo
             ]
     else:
-        fid = compat.finding_id(run_id, str(row.get("source_id") or source_id), item, kind, decls)
+        # AS WRITTEN, not the matching form: see :func:`_decls`.  This row matched
+        # no finding, so this id is the only one it will ever have, and it has to
+        # be the id the same defect hashes to everywhere else.
+        fid = compat.finding_id(run_id, str(row.get("source_id") or source_id), item, kind,
+                                decls_as_written)
 
     verdict = map_verdict(row.get("verdict"))
     resolution, note = split_resolution(row.get("resolution"))
