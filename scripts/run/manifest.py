@@ -447,10 +447,18 @@ def agent_permissions(run_dir: Path) -> dict:
     """What the staged wrappers will hand the agent hosts, for run.yaml's record.
 
     ``bridge-agentbox.sh`` denies by default (a role allowlist, and ``codex``
-    sandboxed) and takes the approvals-and-sandbox bypass as an explicit opt-in.
-    The opt-in is an environment variable exported by the wrapper `cf plan-run`
-    staged, so it is read back here: a run that ran with the checks off has to say
-    so in its own record, where the receipt's ``run_yaml_sha`` pins it.
+    sandboxed) and takes the approvals-and-sandbox bypass as an explicit opt-in,
+    read from the environment.  This reads the wrappers `cf plan-run` staged,
+    because that is the only channel `cf run` can see.
+
+    It is therefore a THREE-state record, not a boolean.  The wrappers are
+    generated (`cf plan-run` writes "Regenerate rather than edit" into them) and
+    nothing stages the variable today, so a bare ``permission_bypass: false``
+    would have claimed a fact this command cannot know: an operator who exports
+    ``CF_ALLOW_SANDBOX_BYPASS=1`` in the shell that launches tend on the host gets
+    a bypassed run, and the wrappers say nothing about it.  What the host does
+    record either way is the bridge's own ``bypass=`` line in
+    ``<tend-root>/agentbox-<role>.err``.
     """
     bindir = Path(run_dir) / "tend-root" / "bin"
     wrappers = sorted(p for p in bindir.glob("*.sh")) if bindir.is_dir() else []
@@ -477,13 +485,20 @@ def agent_permissions(run_dir: Path) -> dict:
             if key == BYPASS_ENV and value == "1":
                 bypass_from.append(path.name)
     return {
-        "permission_bypass": bool(bypass_from),
+        "permission_bypass": (f"requested: the staged wrapper exports {BYPASS_ENV}=1"
+                              if bypass_from else
+                              "not requested in the staged wrapper (the environment that "
+                              "launches tend on the host can still set it; the bridge logs "
+                              "bypass= to agentbox-<role>.err)"),
+        "permission_bypass_in_wrapper": bool(bypass_from),
         "bypass_env": BYPASS_ENV,
         "bypass_exported_by": bypass_from,
         "wrappers": [p.name for p in wrappers],
         "env": found,
         "default": "deny by default: role allowlist for claude, --sandbox for codex "
-                   f"(set {BYPASS_ENV}=1 in the wrapper to opt out, deliberately)",
+                   f"(to opt out, export {BYPASS_ENV}=1 in the environment that starts "
+                   "tend on the host -- the bin/*.sh wrappers are generated per run and a "
+                   "re-plan overwrites an edit to them)",
     }
 
 
