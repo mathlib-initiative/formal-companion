@@ -31,8 +31,9 @@
 #                          checkouts, and "these repositories are READ-ONLY" was a
 #                          sentence in a system prompt. `cf run` records in run.yaml
 #                          (run.agents.permission_bypass) whether the STAGED WRAPPER
-#                          asks for it; nothing stages it today, so a bypass exported
-#                          in the shell that launches tend here is not in that record.
+#                          asks for it; `cf plan-run --allow-sandbox-bypass` is what
+#                          stages it, so a bypass exported in the shell that launches
+#                          tend here instead is not in that record.
 #                          The bypass= line this script appends to
 #                          $ROOT/agentbox-<role>.err is the record that is.
 #   CF_PERMISSION_FLAGS    claude permission flags, honoured only WITH that opt-in
