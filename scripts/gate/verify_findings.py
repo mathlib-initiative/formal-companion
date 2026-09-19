@@ -96,7 +96,10 @@ MAX_QUOTE_CHARS = 3000
 WINDOW_FRACTION = 0.6
 MIN_WINDOW_WORDS = 6
 #: how many pages the matched text may occur on before the gate refuses it: a
-#: running head or a table-of-contents line recurs, a passage does not.
+#: running head or a table-of-contents line recurs, a passage does not.  Per run
+#: from gate.json (``max_match_pages``) like the two quote-length keys, because a
+#: source may have a short sentence it legitimately repeats; 0 turns the refusal
+#: off, exactly as ``max_quote_chars: 0`` does.
 MAX_MATCH_PAGES = 5
 #: how far the page a quote matched on may sit from the page its item is stated
 #: on.  An item's statement runs over a page break and pdftotext puts the odd
@@ -240,13 +243,26 @@ def _split_operators(stream: list[str]) -> tuple[list[str], list[list[str]]]:
     return words, gaps
 
 
-def _with_operators(words: list[str], gaps: list[list[str]], start: int, length: int) -> str:
-    """``words[start:start+length]`` spelled with the operators between them."""
+def _with_operators(words: list[str], gaps: list[list[str]], start: int, length: int,
+                    *, edges: bool = False) -> str:
+    """``words[start:start+length]`` spelled with the operators between them.
+
+    ``edges`` also takes the operators BEFORE the first word and AFTER the last.
+    Only the whole-quote (verbatim) window may ask for them: there the edges are
+    the quote's own boundary, so an operator prepended or appended to an otherwise
+    verbatim quote (``m(E) <= m(F) ≠``) has to occur in the book too.  Inside a
+    partial window the edge operators belong to the unmatched remainder, which has
+    no book span to compare against, so they stay out.
+    """
     out: list[str] = []
+    if edges:
+        out.extend(gaps[start])
     for j in range(start, start + length):
         if j > start:
             out.extend(gaps[j])
         out.append(words[j])
+    if edges:
+        out.extend(gaps[start + length])
     return " ".join(out)
 
 
@@ -280,10 +296,14 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
     is the whole point: the old pass ran an independent 50%-window search over the
     operator stream, so any six operator-free tokens anywhere in the quote
     satisfied it and a single flipped ``≤`` → ``≥`` passed as *verbatim*.
+    A verbatim match is checked WITH its edges, so an operator prepended or
+    appended to an otherwise verbatim quote is refused too; a partial window is
+    not, because its edge operators sit in the unmatched remainder.
     Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
     (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
-    sign the extraction dropped), against 2 under the old one, and the two
-    ``*-legacy`` presets keep ``check_operators`` off for exactly that reason.
+    sign the extraction dropped), against 2 under the old one, and the edges add
+    none of those 5 even though 117 of the quotes carry a boundary operator.  The
+    two ``*-legacy`` presets keep ``check_operators`` off for exactly that reason.
     """
     qwords, gaps = _split_operators(norm_operators(q).split())
     if qwords != words:
@@ -291,9 +311,12 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
         # cannot be anchored.  Refusing here would reject a real quote over a
         # normalisation bug; the word pass still applies.
         return ""
-    if _with_operators(qwords, gaps, start, length) in bk.ops:
+    whole = start == 0 and length == len(qwords)
+    if _with_operators(qwords, gaps, start, length, edges=whole) in bk.ops:
         return ""
     carried = [t for j in range(start + 1, start + length) for t in gaps[j]]
+    if whole:
+        carried = gaps[start] + carried + gaps[start + length]
     book = _book_operators(bk.ops, words[start:start + length])
     if book is None:
         return ("words match the book but their OPERATORS could not be located there "
@@ -406,7 +429,8 @@ class QuoteMatch:
 
 
 def quote_match(book: "BookText | str", q: str, *,
-                max_chars: int = MAX_QUOTE_CHARS) -> QuoteMatch:
+                max_chars: int = MAX_QUOTE_CHARS,
+                max_pages: int = MAX_MATCH_PAGES) -> QuoteMatch:
     """Locate ``q`` in the book text: verbatim, or a 60% window.
 
     Four passes:
@@ -422,11 +446,11 @@ def quote_match(book: "BookText | str", q: str, *,
     3. the **operator** pass: when the book was loaded with an operator
        normalisation, the matched window spelled with the quote's own operators
        must occur in it, so a flipped, dropped or added operator is refused.
-    4. the **page** pass: a window that occurs on more than
-       :data:`MAX_MATCH_PAGES` pages is a running head or a contents line, not a
-       passage.  Measured over the baseline corpus: the most a real quote recurs
-       is 5 pages, while this source's own permission line is on all 265 and its
-       section running heads on 9 to 25.
+    4. the **page** pass: a window that occurs on more than ``max_pages`` pages
+       (:data:`MAX_MATCH_PAGES`, per run from gate.json; 0 = off) is a running
+       head or a contents line, not a passage.  Measured over the baseline
+       corpus: the most a real quote recurs is 5 pages, while this source's own
+       permission line is on all 265 and its section running heads on 9 to 25.
     """
     bk = BookText.coerce(book)
     n = norm(q)
@@ -458,7 +482,7 @@ def quote_match(book: "BookText | str", q: str, *,
         if problem:
             return QuoteMatch(False, problem, needle=needle, chars=chars)
     pages = bk.pages_matching(needle)
-    if len(pages) > MAX_MATCH_PAGES:
+    if max_pages and len(pages) > max_pages:
         return QuoteMatch(
             False,
             f"matched text occurs on {len(pages)} pages ({pages[0]}, {pages[1]}, … , "
@@ -588,6 +612,10 @@ class GateConfig:
         # permits more may raise it, and 0 turns the refusal off.
         self.long_quote_chars: int = int(data.get("long_quote_chars", LONG_QUOTE_CHARS))
         self.max_quote_chars: int = int(data.get("max_quote_chars", MAX_QUOTE_CHARS))
+        # The page-recurrence refusal, per run for the same reason: a source with a
+        # short, legitimately repeated sentence needs a documented way out, and 0
+        # turns the rule off.
+        self.max_match_pages: int = int(data.get("max_match_pages", MAX_MATCH_PAGES))
         self.findings_dir: str = data.get("findings_dir", "findings")
         self.decl_index: str | None = data.get("decl_index")
         rules = dict(DEFAULT_KIND_RULES)
@@ -834,7 +862,8 @@ def validate_doc(
     bind = PageBind(cfg, source_id, book, doc.get("item"))
     passage = doc.get("book_passage_quote")
     if cfg.require_passage_quote or passage:
-        found = quote_match(book, passage or "", max_chars=cfg.max_quote_chars)
+        found = quote_match(book, passage or "", max_chars=cfg.max_quote_chars,
+                            max_pages=cfg.max_match_pages)
         if not found.ok:
             errs.append(f"{name}: book_passage_quote {found.why}")
         else:
@@ -939,7 +968,8 @@ def _validate_disagreement(
 
     if rule.get("quote", True) or g.get("book_quote"):
         optional = "" if rule.get("quote", True) else f" (optional for {kind}, but must be real)"
-        found = quote_match(book, g.get("book_quote", ""), max_chars=cfg.max_quote_chars)
+        found = quote_match(book, g.get("book_quote", ""), max_chars=cfg.max_quote_chars,
+                            max_pages=cfg.max_match_pages)
         if not found.ok:
             errs.append(f"{where}.book_quote {found.why}{optional}")
         elif bind is not None:
@@ -981,7 +1011,8 @@ def _validate_disagreement(
 
 
 def partial_quotes(doc: Any, name: str, book: "BookText | str", *,
-                   max_chars: int = MAX_QUOTE_CHARS) -> list[str]:
+                   max_chars: int = MAX_QUOTE_CHARS,
+                   max_pages: int = MAX_MATCH_PAGES) -> list[str]:
     """Quotes in ``doc`` that matched only as a window — what nobody verified.
 
     The gate prints these on success.  A quote that is 70% genuine and 30%
@@ -994,7 +1025,7 @@ def partial_quotes(doc: Any, name: str, book: "BookText | str", *,
     if not isinstance(doc, dict):
         return out
     for where, q in _quotes_of(doc):
-        found = quote_match(book, q, max_chars=max_chars)
+        found = quote_match(book, q, max_chars=max_chars, max_pages=max_pages)
         if found.ok and found.why.startswith("partial"):
             out.append(f"{name}: {where} {found.why}")
     return out
@@ -1028,7 +1059,8 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
     bind = PageBind(cfg, doc_source_id(doc, cfg), bk, doc.get("item"))
     said_unbound = False
     for where, q in _quotes_of(doc):
-        found = quote_match(bk, q, max_chars=cfg.max_quote_chars)
+        found = quote_match(bk, q, max_chars=cfg.max_quote_chars,
+                            max_pages=cfg.max_match_pages)
         if cfg.long_quote_chars and found.chars > cfg.long_quote_chars:
             out.append(f"over-long quote: {name}: {where} is {found.chars} characters "
                        f"(at most a sentence or two, {cfg.long_quote_chars})")
@@ -1146,14 +1178,12 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     statuses = dict(paths) if isinstance(paths, dict) else {}
     problems: list[str] = []
     written: set[str] = set()
-    findings: set[str] = set()
     tasks: set[str] = set()
     for p in sorted(set(paths)):
         status = statuses.get(p, "")
         parts = p.split("/")
         if len(parts) == 2 and parts[0] == "findings" and parts[1].endswith(".json"):
             stem = parts[1][: -len(".json")]
-            findings.add(stem)
             if status not in ("D", "R"):
                 written.add(stem)
         elif len(parts) == 2 and parts[0] == "tasks" and parts[1].endswith((".yaml", ".yml")):
@@ -1336,7 +1366,8 @@ def main(argv: list[str] | None = None) -> int:
             continue
         problems.extend(validate_doc(doc, f.name, cfg, books, decl_index))
         book = _book_for(books, doc_source_id(doc, cfg))
-        partial.extend(partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars))
+        partial.extend(partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars,
+                                      max_pages=cfg.max_match_pages))
         notes.extend(binding_notes(doc, f.name, cfg, book))
 
     if problems:
@@ -1362,6 +1393,14 @@ def main(argv: list[str] | None = None) -> int:
             f"every book quote matched the text ({len(partial)} only in part, listed above; "
             f"{ops}; {bind})"
         )
+        # The ownership rule is the half of the changed-files check that catches
+        # emptying a neighbour's findings file, and it is silent without a task
+        # id: say so here, because this is the invocation the tend config uses.
+        if args.changed_files:
+            owner = (f"ownership checked against task {args.task_id}" if args.task_id else
+                     "OWNERSHIP UNCHECKED — pass --task-id $TEND_TASK_ID so a contribution "
+                     "that rewrites another task's findings file is refused")
+            print(f"  changed files: {owner}")
     return EXIT_OK
 
 

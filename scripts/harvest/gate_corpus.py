@@ -62,7 +62,8 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
             continue
         problems.extend(vf.validate_doc(doc, f.name, cfg, books, decl_index))
         book = vf._book_for(books, vf.doc_source_id(doc, cfg))
-        partial.extend(vf.partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars))
+        partial.extend(vf.partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars,
+                                         max_pages=cfg.max_match_pages))
         notes.extend(vf.binding_notes(doc, f.name, cfg, book))
     return {
         "ok": not problems,
