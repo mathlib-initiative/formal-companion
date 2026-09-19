@@ -603,7 +603,11 @@ class BaselineAnalyzeStagesTest(unittest.TestCase):
         diff = Path(BASELINE_DIFF)
         cls.raw = json.loads((diff / "adam-detector" / "deps.json").read_text())
         cls.rows = _read_jsonl(diff / "adam.jsonl")
-        cls.stages = StageTable.for_source(PUBLISHED_ID)
+        # the broad scan needs the COMPANION half of the table (that repo's own
+        # module layout), which is no longer shipped inside the source's table:
+        # in a workspace it is companions/<name>/stage-overlay.json
+        cls.stages = StageTable.for_source(PUBLISHED_ID).with_companion_overlay(
+            Path(__file__).resolve().parent / "data" / "stage-overlay.adam.json")
         cls.deps = DepsIndex(cls.raw)
         cls.report = analyze_stages.analyze(cls.deps, cls.stages, cls.rows)
 
