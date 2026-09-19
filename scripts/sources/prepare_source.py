@@ -1,4 +1,4 @@
-"""pdftotext -> text.txt + pages/ + meta.json + items.json, for ONE source.
+"""source text -> text.txt + pages/ + meta.json + items.json, for ONE source.
 
 Ported from: recovered/b174aa13_L5589_Bash.txt (``pdftotext -layout`` + the
 ``\\f`` page count), recovered/b174aa13_L6099_Bash.txt (the Definition heading
@@ -12,7 +12,13 @@ eight Chapter-1 kinds).  Generalised per design/stage_map.md Stage 1:
   the hard-coded +16 / Tao list, and never typed by a user;
 * every item records where it was found (pdf page, printed page, line), so the
   mechanical anchor check in pair/anchor_check.py has something to check
-  against, and every downstream artifact can carry ``source_id``/``source_sha``.
+  against, and every downstream artifact can carry ``source_id``/``source_sha``;
+* the NUMBERING is inferred too (``1.2.3`` / ``3.4`` / ``7`` / ``2.3.4.1`` are
+  four real book conventions), and a label deeper than it is reported as a
+  reject rather than truncated onto a shorter item's key;
+* a source that is already text (``.tex``, ``.md``, ``.html``, a ``pdftotext``
+  dump) skips poppler entirely; when it has no page breaks it is prepared as an
+  unpaginated source, located by section and line (``sources/locator.py``).
 
 Run: ``cf onboard <repo>`` (which calls this), or ``cf sources refresh <id>``.
 """
@@ -35,6 +41,17 @@ from .compat import (
     utcnow,
     write_json,
 )
+from .locator import (
+    FORMAT_PDF,
+    LOCATOR_PAGE,
+    LOCATOR_SECTION,
+    PAGINATION_FORMFEED,
+    PAGINATION_NONE,
+    detect_pagination,
+    heading_paths,
+    locate,
+    source_format,
+)
 
 #: kinds whose headings start a numbered item.  A LAST RESORT only: the kinds of
 #: a source are inferred from its own headings (cflib.inference.infer_kinds) and
@@ -56,15 +73,55 @@ _SUB_RE = r"(?:\((?P<sub>[ivxlcdm]{1,6}|\d{1,3}|[a-z])\))?"
 #: a parenthetical title on the same line: ``Definition 1.1.1 (Piecewise ...)``
 _TITLE_RE = re.compile(r"^[ \t]*\(([^)\n]{1,160})\)")
 
+#: what a source whose numbering was not inferred falls back to: ``1.2`` or
+#: ``1.2.3``, the grammar every existing corpus was keyed with
+DEFAULT_SEGMENTS: tuple[int, int] = (2, 3)
 
-def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3) -> re.Pattern:
-    """The whitespace-tolerant numbered-heading regex.
 
-    ``parts=3`` means ``1.2.3`` (Tao's shared per-section counter); ``parts=2``
-    also accepts ``1.2`` for books that number per chapter.
+def segments_for(parts: int = 3, segments=None) -> tuple[int, int]:
+    """``(min, max)`` numeric segments, from the source's numbering or ``parts``.
+
+    ``segments`` is what ``cflib.inference.infer_numbering`` found (also carried
+    in ``items.json``/``meta.json`` as ``numbering``); ``parts`` is the older
+    spelling and still means what it meant -- 3 is ``1.2`` or ``1.2.3``, 2 is
+    ``1.2`` only.
     """
+    if segments is None:
+        return DEFAULT_SEGMENTS if parts >= 3 else (2, 2)
+    if isinstance(segments, dict):
+        low = int(segments.get("min_segments") or DEFAULT_SEGMENTS[0])
+        high = int(segments.get("max_segments") or low)
+    elif isinstance(segments, int):
+        low = high = segments
+    else:
+        seq = tuple(segments)
+        low = int(seq[0])
+        high = int(seq[1]) if len(seq) > 1 else low
+    low = max(1, min(low, 4))
+    return low, max(low, min(high, 4))
+
+
+def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3,
+                  *, segments=None) -> re.Pattern:
+    """The whitespace-tolerant numbered-heading regex for ONE numbering.
+
+    ``segments=(min, max)`` is the source's own numbering: ``(2, 3)`` is Tao's
+    ``1.2.3``, ``(1, 1)`` a book numbering ``Theorem 7``, ``(4, 4)`` one
+    numbering ``Lemma 2.3.4.1``.  ``parts`` is the older spelling and still
+    works.
+
+    The ``deep`` group is the point of the whole thing: it matches the segments
+    a label carries BEYOND the numbering, so a deeper label is caught and
+    reported instead of being matched down to its first three segments.  Without
+    it ``Theorem 2.3.4.5`` still matched -- as ``Theorem 2.3.4`` -- and every
+    item of that section collapsed onto one key with no reject anywhere.
+    """
+    low, high = segments_for(parts, segments)
     alt = "|".join(re.escape(k) for k in kinds)
-    num = r"\d+(?:\.\d+)" + ("{1,2}" if parts >= 3 else "")
+    if high <= 1:
+        num = r"\d+"
+    else:
+        num = r"\d+(?:\.\d+){%d,%d}" % (low - 1, high - 1)
     # `\f` as well as `\n`: pdftotext puts the form feed BETWEEN the pages, so an
     # item that begins a page has `\f` and not a newline immediately before it and
     # was invisible to the index -- a heading nothing can pair, nothing can put in
@@ -72,6 +129,7 @@ def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3) -> re.Pat
     # no item that way (442 labels either way), so this changes no pinned count.
     return re.compile(
         r"(?:^|[\n\f])[ \t]*(?P<label>(?P<kind>" + alt + r")[ \t]+(?P<num>" + num + r"))"
+        + r"(?P<deep>(?:\.\d+)+)?"
         + _SUB_RE
         + r"(?=[ \t.,:;()]|$)"
     )
@@ -107,32 +165,77 @@ def find_items(
     *,
     offset: int = 0,
     parts: int = 3,
+    segments=None,
+    pagination: str = PAGINATION_FORMFEED,
+    suffix: str = "",
 ) -> list[dict]:
-    """Every numbered heading in ``text``, one row per item.
+    """Every numbered heading in ``text``, one row per item (see :func:`find_headings`)."""
+    return find_headings(text, kinds, offset=offset, parts=parts, segments=segments,
+                         pagination=pagination, suffix=suffix)[0]
+
+
+def find_headings(
+    text: str,
+    kinds: Sequence[str] = SOURCE_KINDS,
+    *,
+    offset: int = 0,
+    parts: int = 3,
+    segments=None,
+    pagination: str = PAGINATION_FORMFEED,
+    suffix: str = "",
+) -> tuple[list[dict], list[dict]]:
+    """``(rows, rejects)``: every numbered heading, and every one refused.
 
     A label can occur at line start more than once (a cross-reference wrapped
     onto a new line, a running footer).  Occurrences are all recorded; the row's
-    page is chosen by :func:`_choose_occurrence`, which prefers the occurrence
+    page is chosen by :func:`_resolve_occurrences`, which prefers the occurrence
     inside the page span of the item's own section -- the "first hit" rule puts
     ``Exercise 1.4.29`` on PDF page 77 (a footer cross-reference in S1.3)
     instead of 111.
+
+    A heading whose number is DEEPER than the source's numbering goes on the
+    reject list (``too_many_segments``) and becomes no row at all: the caller
+    reports it, exactly as the item grammar's reject list is reported, because
+    the alternative -- matching its first segments -- merges distinct book items
+    onto one audit key.
+
+    When ``pagination`` is ``none`` the source has no pages: ``pdf_page`` and
+    ``page`` are ``None``, and each row carries the heading path it sits under
+    (``locator``) plus its line.  Every page-dependent stage must ask
+    ``locator.require_pagination`` before using a page from such a source.
     """
+    paginated = pagination != PAGINATION_NONE
     pages = split_pages(text)
     starts = _page_starts(pages)
     lines = _line_starts(text)
+    anchors = [] if paginated else heading_paths(text, suffix)
     seen: dict[str, dict] = {}
-    for m in heading_regex(kinds, parts).finditer(text):
-        label = normalise_item(m.group("label"))
+    rejects: list[dict] = []
+    high = segments_for(parts, segments)[1]
+    for m in heading_regex(kinds, parts, segments=segments).finditer(text):
         pos = m.start("label")
-        pdf_page = bisect.bisect_right(starts, pos)  # 1-based
         line = bisect.bisect_right(lines, pos)  # 1-based
+        if m.group("deep"):
+            rejects.append({
+                "raw": normalise_item(m.group("label") + m.group("deep")),
+                "reason": "too_many_segments",
+                "kind": m.group("kind"),
+                "number": m.group("num") + m.group("deep"),
+                "max_segments": high,
+                "line": line,
+            })
+            continue
+        label = normalise_item(m.group("label"))
+        pdf_page = bisect.bisect_right(starts, pos) if paginated else None
         occ = {
             "pdf_page": pdf_page,
-            "page": pdf_page - offset,
+            "page": (pdf_page - offset) if paginated else None,
             "line": line,
             "sub": "(%s)" % m.group("sub").lower() if m.group("sub") else "",
             "title": _title_at(text, m.end()),
         }
+        if not paginated:
+            occ["locator"] = locate(anchors, pos)
         row = seen.setdefault(
             label,
             {
@@ -149,10 +252,12 @@ def find_items(
         row["chapter"] = nums[0]
         row["section"] = nums[1] if len(nums) > 1 else None
         row["index"] = nums[2] if len(nums) > 2 else None
+        if len(nums) > 3:
+            row["levels"] = list(nums)
         items.append(row)
     items.sort(key=lambda r: item_sort_key(r["item"]))
-    _resolve_occurrences(items)
-    return items
+    _resolve_occurrences(items, paginated=paginated)
+    return items, rejects
 
 
 def _title_at(text: str, pos: int) -> str:
@@ -162,26 +267,31 @@ def _title_at(text: str, pos: int) -> str:
     return m.group(1).strip() if m else ""
 
 
-def _resolve_occurrences(items: list[dict]) -> None:
+def _resolve_occurrences(items: list[dict], *, paginated: bool = True) -> None:
     """Pick one page/line per item and flag the ambiguous ones.
 
     Items with a single line-start occurrence fix the page span of their
     (chapter, section); an ambiguous item then takes the earliest occurrence
     inside that span, falling back to the earliest occurrence overall.
+
+    An unpaginated source has no page to span, so the same rule runs on the LINE
+    number instead -- the ordering it needs is "further into the text", which a
+    line gives just as well as a page.
     """
+    where = "pdf_page" if paginated else "line"
     span: dict[tuple, list[int]] = {}
     for row in items:
         if len(row["occurrences"]) == 1:
             key = (row["chapter"], row["section"])
-            span.setdefault(key, []).append(row["occurrences"][0]["pdf_page"])
+            span.setdefault(key, []).append(row["occurrences"][0][where])
     bounds = {k: (min(v), max(v)) for k, v in span.items()}
     for row in items:
-        occ = sorted(row["occurrences"], key=lambda o: o["pdf_page"])
+        occ = sorted(row["occurrences"], key=lambda o: o[where])
         chosen = occ[0]
         if len(occ) > 1:
             lo, hi = bounds.get((row["chapter"], row["section"]), (None, None))
             if lo is not None:
-                inside = [o for o in occ if lo <= o["pdf_page"] <= hi]
+                inside = [o for o in occ if lo <= o[where] <= hi]
                 if inside:
                     chosen = inside[0]
         row["pdf_page"] = chosen["pdf_page"]
@@ -190,9 +300,10 @@ def _resolve_occurrences(items: list[dict]) -> None:
         row["sub"] = chosen["sub"]
         row["title"] = chosen["title"] or next((o["title"] for o in occ if o["title"]), "")
         row["ambiguous"] = len(occ) > 1
-        row["occurrences"] = [
-            {"pdf_page": o["pdf_page"], "page": o["page"], "line": o["line"]} for o in occ
-        ]
+        keep = ["pdf_page", "page", "line"] + ([] if paginated else ["locator"])
+        if not paginated:
+            row["locator"] = chosen.get("locator", "")
+        row["occurrences"] = [{k: o.get(k) for k in keep} for o in occ]
 
 
 def pdftotext(pdf: str, out_txt: str, *, layout: bool = True) -> str:
@@ -206,6 +317,25 @@ def pdftotext(pdf: str, out_txt: str, *, layout: bool = True) -> str:
         raise RuntimeError("pdftotext failed (%s): %s" % (proc.returncode, proc.stderr.strip()))
     with open(out_txt, "r", encoding="utf-8", errors="ignore") as fh:
         return fh.read()
+
+
+def read_source_text(path: str, out_txt: str) -> str:
+    """The source's text, whatever the source is: PDF through poppler, else read.
+
+    A manuscript that is already text is COPIED to ``text.txt`` rather than
+    converted, so ``text_sha256`` still fingerprints exactly the bytes every
+    later stage quotes from -- and a source with no text layer and no poppler
+    fails here, where the message can say so, instead of producing an empty
+    table two stages later.
+    """
+    if source_format(path) == FORMAT_PDF:
+        return pdftotext(path, out_txt)
+    with open(path, "r", encoding="utf-8", errors="ignore") as fh:
+        text = fh.read()
+    os.makedirs(os.path.dirname(os.path.abspath(out_txt)) or ".", exist_ok=True)
+    with open(out_txt, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    return text
 
 
 def prepare(
@@ -241,6 +371,13 @@ def prepare(
     below 0.9 the caller asks rather than guesses, because an offset wrong by one
     is exactly the defect this audit exists to catch.
 
+    ``pdf`` may also be a manuscript that is already text (``.txt``, ``.md``,
+    ``.tex``, ``.html``): poppler is skipped, and a text with no ``\\f`` page
+    breaks is prepared as an UNPAGINATED source -- no offset inference, items
+    located by heading path and line, ``pagination: none`` in the payload.  The
+    page-dependent stages refuse on that flag rather than compute a page nothing
+    supports (``sources/locator.py``).
+
     Idempotent: a second run with the same PDF (sha), offset and kind list re-uses
     the existing outputs and reports ``skipped``.  ``expect_sha`` is the SOURCE
     GATE -- workspace.yaml pins the sha and a different PDF is refused rather than
@@ -249,7 +386,8 @@ def prepare(
     """
     pdf = os.path.abspath(pdf)
     if not os.path.exists(pdf):
-        raise FileNotFoundError("no such PDF: %s" % pdf)
+        raise FileNotFoundError("no such source file: %s" % pdf)
+    fmt = source_format(pdf)
     sha = sha256_file(pdf)
     if expect_sha and sha != expect_sha:
         raise ValueError(
@@ -291,9 +429,12 @@ def prepare(
         payload["skipped"] = True
         return payload
 
-    text = pdftotext(pdf, txt_path)
+    text = read_source_text(pdf, txt_path)
     pages = split_pages(text)
-    if write_pages:
+    pagination = PAGINATION_FORMFEED if fmt == FORMAT_PDF else detect_pagination(text)
+    paginated = pagination != PAGINATION_NONE
+    suffix = os.path.splitext(pdf)[1].lower()
+    if write_pages and paginated:
         _write_pages(out_dir, pages)
 
     warnings: list[str] = []
@@ -303,22 +444,40 @@ def prepare(
     offset_method = "declared" if offset is not None else "manual"
     histogram: dict = {}
     voting_pages = 0
+    numbering: dict = {}
+
+    if not paginated:
+        # There is no printed page here, so there is no offset to be confident
+        # about -- and no reason to make the caller refuse a source for failing a
+        # page check it cannot take.  The doubt this source DOES carry is
+        # recorded where it belongs: `pagination: none`, which every
+        # page-dependent feature must refuse on (locator.require_pagination).
+        if declared is not None or (offset not in (None, 0)):
+            raise ValueError(
+                "%s: a page offset is not applicable for an unpaginated source "
+                "(pagination: none); it has no printed pages to shift" % source_id)
+        offset = 0
+        offset_method = "none"
+        offset_confidence = 1.0
 
     if infer:
-        # a human's override supersedes the repo's prose: only one of the two is
-        # ever cross-checked against the pages, and it is whichever was given.
-        guess = _infer_offset(pages, declared=(offset if offset is not None else declared))
-        if guess is not None:
-            if offset is None:
-                offset = guess.offset
-                offset_method = "running_head_mode"
-            else:
-                offset_method = "declared"
-            offset_confidence = guess.confidence
-            histogram = {str(k): v for k, v in sorted(guess.histogram.items(),
-                                                      key=lambda kv: -kv[1])[:6]}
-            voting_pages = guess.voting_pages
-        inferred_kinds, structural_kinds = _infer_kinds(text)
+        if paginated:
+            # a human's override supersedes the repo's prose: only one of the two is
+            # ever cross-checked against the pages, and it is whichever was given.
+            guess = _infer_offset(pages, declared=(offset if offset is not None else declared))
+            if guess is not None:
+                if offset is None:
+                    offset = guess.offset
+                    offset_method = "running_head_mode"
+                else:
+                    offset_method = "declared"
+                offset_confidence = guess.confidence
+                histogram = {str(k): v for k, v in sorted(guess.histogram.items(),
+                                                          key=lambda kv: -kv[1])[:6]}
+                voting_pages = guess.voting_pages
+        numbering = _infer_numbering(text)
+        min_segments = int(numbering.get("min_segments") or 2) if numbering else 2
+        inferred_kinds, structural_kinds = _infer_kinds(text, min_segments=min_segments)
         kind_counts = inferred_kinds
         if kinds is None:
             kinds = tuple(inferred_kinds) or SOURCE_KINDS
@@ -334,12 +493,17 @@ def prepare(
     if kinds is None:
         kinds = SOURCE_KINDS
 
-    items = find_items(text, kinds, offset=offset, parts=parts)
+    items, rejects = find_headings(text, kinds, offset=offset, parts=parts,
+                                   segments=numbering or None, pagination=pagination,
+                                   suffix=suffix)
+    if rejects:
+        warnings.append("headings_deeper_than_the_numbering: %d" % len(rejects))
     by_kind: dict[str, int] = {}
     by_chapter: dict[str, int] = {}
     for row in items:
         by_kind[row["kind"]] = by_kind.get(row["kind"], 0) + 1
         by_chapter[str(row["chapter"])] = by_chapter.get(str(row["chapter"]), 0) + 1
+    completeness = _item_completeness([r["number"] for r in items])
     write_json(
         items_path,
         {
@@ -347,10 +511,14 @@ def prepare(
             "source_sha": sha,
             "offset": offset,
             "kinds": list(kinds),
+            "numbering": numbering,
+            "pagination": pagination,
+            "locator": LOCATOR_PAGE if paginated else LOCATOR_SECTION,
             "count": len(items),
             "by_kind": by_kind,
             "by_chapter": by_chapter,
             "ambiguous": [r["item"] for r in items if r.get("ambiguous")],
+            "rejects": rejects,
             "created": utcnow(),
             "items": items,
         },
@@ -360,26 +528,34 @@ def prepare(
         "sha256": sha,
         "edition": edition or os.path.basename(pdf),
         "source_pdf": pdf,
-        "pages": len(pages),
+        "source_format": fmt,
+        "pagination": pagination,
+        "locator": LOCATOR_PAGE if paginated else LOCATOR_SECTION,
+        "pages": len(pages) if paginated else 0,
         "offset": offset,
         "offset_confidence": round(float(offset_confidence), 4),
         "offset_method": offset_method,
         "offset_declared": declared,
         "offset_voting_pages": voting_pages,
         "offset_histogram": histogram,
-        "printed_page_rule": "printed = pdf_page - %d" % offset,
+        "printed_page_rule": ("printed = pdf_page - %d" % offset if paginated
+                              else "not applicable for an unpaginated source"),
         "kinds": list(kinds),
         "kind_counts": kind_counts,
         "structural_kinds": structural_kinds,
         "kind_warnings": [w for w in warnings if w.startswith("kinds")],
+        "numbering": numbering,
         "item_number_parts": parts,
+        "item_completeness": completeness.get("completeness", 0.0),
+        "item_completeness_detail": completeness,
+        "item_rejects": rejects,
         "text_sha256": sha256_text(text),
         "text_bytes": len(text.encode("utf-8")),
         "items": len(items),
-        "page_files": "pdf" if write_pages else "none",
+        "page_files": "pdf" if (write_pages and paginated) else "none",
         "warnings": warnings,
         "created": utcnow(),
-        "tool": "pdftotext -layout",
+        "tool": "pdftotext -layout" if fmt == FORMAT_PDF else "read (%s)" % (suffix or "text"),
     }
     write_json(meta_json, payload)
     payload["skipped"] = False
@@ -395,12 +571,34 @@ def _infer_offset(pages, declared=None):
     return infer_offset(pages, declared=declared)
 
 
-def _infer_kinds(text):
+def _infer_kinds(text, *, min_segments=2):
     try:
         from cflib.inference import infer_kinds
     except Exception:  # pragma: no cover
         return {}, {}
-    return infer_kinds(text)
+    return infer_kinds(text, min_segments=min_segments)
+
+
+def _infer_numbering(text) -> dict:
+    """``cflib.inference.infer_numbering`` as the dict items.json stores.
+
+    ``{}`` when cflib is not importable, which leaves every caller on
+    :data:`DEFAULT_SEGMENTS` -- the grammar this stage has always applied.
+    """
+    try:
+        from cflib.inference import infer_numbering
+    except Exception:  # pragma: no cover - stand-alone use without cflib
+        return {}
+    return infer_numbering(text).to_dict()
+
+
+def _item_completeness(numbers) -> dict:
+    """``cflib.inference.item_completeness``; ``{}`` without cflib."""
+    try:
+        from cflib.inference import item_completeness
+    except Exception:  # pragma: no cover - stand-alone use without cflib
+        return {}
+    return item_completeness(numbers)
 
 
 def _write_pages(out_dir: str, pages: Sequence[str]) -> None:
