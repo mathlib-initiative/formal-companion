@@ -377,7 +377,7 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
     log.ok(f"prepared  sources/{source_id}/   text {payload['pages']} pages, "
            f"{payload['items']} items, offset {payload['offset']} "
            f"(confidence {confidence:.3f}, {payload['offset_method']})")
-    _refuse_an_empty_source(source_id, ref, payload)
+    _refuse_an_empty_source(source_id, ref, payload, workspace)
     _teach_the_overlay(workspace, source_id, sha256=ref.sha256, bytes=ref.bytes,
                        pages=payload["pages"], offset=payload["offset"],
                        offset_confidence=confidence, offset_method=payload["offset_method"],
@@ -446,24 +446,68 @@ def _teach_the_overlay(workspace, source_id: str, **learned) -> None:
                    f"offset {learned.get('offset')}, {len(learned.get('kinds') or [])} kinds")
 
 
-def _refuse_an_empty_source(source_id: str, ref, payload: dict) -> None:
-    """A PDF with no items in it is not this source -- most likely not a source at all.
+def _refuse_an_empty_source(source_id: str, ref, payload: dict, workspace=None) -> None:
+    """A source table that is not a source table -- empty, or almost empty.
 
     `locate_pdf` can only rank the candidates it finds; the text is the last
     check, and it is a decisive one.  A document whose own headings number
     nothing, or none of the kinds the repo tags, cannot be paired, cannot answer
     a quote gate and cannot carry a page anchor -- so adopting it would mean
     auditing a companion against the wrong document in silence.
+
+    ``items == 0`` used to be the whole guard, and it is the case that almost
+    never happens: a real book's prose always numbers SOMETHING.  A 404-page book
+    whose numbering puts the kind after the number prepared 24 items -- 0.09 of
+    the slots its own sections number -- and was adopted without a word, with
+    `kind_counts` reading `Now: 5, See: 3` on disk the whole time.  Two more
+    signals are therefore refusals now, both already computed and both with a
+    named settlement:
+
+    * every declared kind missing from the text (`kinds_not_in_text` /
+      `kinds_not_inferred`): the kind list belongs to another book;
+    * `item_completeness` below `MIN_ITEM_COMPLETENESS`: the grammar read prose,
+      not headings.
     """
-    if payload.get("items"):
-        return
     kind_warnings = payload.get("kind_warnings") or []
-    raise SourceError(
-        f"{source_id}: {ref.pdf} has 0 numbered items in its text "
-        f"({payload.get('pages')} pages, kinds {', '.join(payload.get('kinds') or []) or 'none'})"
-        + (f"; {kind_warnings[0]}" if kind_warnings else ""),
-        hint=f"this is almost certainly not the document this companion formalises. "
-             f"Name the right PDF: cf sources add <pdf> --for <companion>")
+    kinds = list(payload.get("kinds") or [])
+    if not payload.get("items"):
+        raise SourceError(
+            f"{source_id}: {ref.pdf} has 0 numbered items in its text "
+            f"({payload.get('pages')} pages, kinds {', '.join(kinds) or 'none'})"
+            + (f"; {kind_warnings[0]}" if kind_warnings else ""),
+            hint=f"this is almost certainly not the document this companion formalises. "
+                 f"Name the right source: cf sources add <source> --for <companion>")
+    body = ((workspace.data.get("sources") or {}).get(source_id) or {}) if workspace else {}
+    if body.get("completeness_ok"):
+        return
+    counts = payload.get("kind_counts") or {}
+    seen = ", ".join(f"{k}: {n}" for k, n in list(counts.items())[:3]) or "nothing"
+    absent: list[str] = []
+    for warning in kind_warnings:
+        if warning.startswith("kinds_not_in_text:"):
+            absent = [k.strip() for k in warning.split(":", 1)[1].split(",") if k.strip()]
+    if "kinds_not_inferred" in (payload.get("warnings") or []) or (
+            kinds and len(absent) >= len(kinds)):
+        raise SourceError(
+            f"{source_id}: not one of the {len(kinds)} kinds this source declares "
+            f"({', '.join(kinds)}) heads a numbered item in its text; what heads them is {seen}",
+            hint=f"that kind list is another book's. Read the right one off this text: "
+                 f"cf sources set {source_id} kinds=<comma-separated> (or "
+                 f"cf sources set {source_id} completeness_ok=true if the table really is "
+                 f"this small)")
+    measured = payload.get("item_completeness")
+    if measured is None:
+        return                        # prepared before this check existed; not re-judged
+    if float(measured) < inference.MIN_ITEM_COMPLETENESS:
+        detail = payload.get("item_completeness_detail") or {}
+        raise SourceError(
+            f"{source_id}: {payload['items']} items is {float(measured):.3f} of the "
+            f"{detail.get('expected', 0)} slots this source's own numbering counts "
+            f"(below {inference.MIN_ITEM_COMPLETENESS}); what heads its numbered lines is {seen}",
+            hint=f"the grammar read prose, not headings -- usually the kind list or the "
+                 f"numbering: cf sources set {source_id} kinds=<comma-separated>, or "
+                 f"cf sources set {source_id} completeness_ok=true if this really is the "
+                 f"whole table")
 
 
 def _errata_provenance(entry, ref, method: str) -> str:
