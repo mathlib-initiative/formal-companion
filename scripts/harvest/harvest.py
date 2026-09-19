@@ -269,6 +269,24 @@ def read_receipt(dest: Path) -> dict | None:
         return None
 
 
+def ungated_runs(runs: Mapping[str, str | Path]) -> list[str]:
+    """Which of *runs* landed with no schema/quote gate behind them.
+
+    ``RECEIPT.json``'s ``gate`` block is the only record that the findings were
+    validated against the source text, and nothing downstream used to read it:
+    a corpus harvested without a gate fed the tally, the adjudication and the
+    report with quotes never checked against ``text.txt``, and every number
+    looked the same as a gated one.  A run with no receipt at all counts as
+    ungated -- it is a directory nobody receipted.
+    """
+    out = []
+    for run_id, directory in dict(runs or {}).items():
+        receipt = read_receipt(Path(directory))
+        if not isinstance(receipt, dict) or not (receipt.get("gate") or {}):
+            out.append(str(run_id))
+    return sorted(out)
+
+
 def describe(receipt: dict) -> str:
     """One-screen summary of a receipt, complete or not."""
     lines = [
