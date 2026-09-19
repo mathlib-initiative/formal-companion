@@ -200,6 +200,11 @@ def _local_item_meta(workspace, data: dict) -> tuple[dict[str, dict], str | None
     paths = workspace.paths
     companion = data.get("companion")
     source_id = _run_source(workspace, data)
+    if not source_id:
+        # `_local` refuses a run.yaml that names no source, with the flag that
+        # settles it; that refusal must be what the user sees, not the path
+        # helpers' "unsafe source_id ''" from the queue path built on the way.
+        return {}, None
     files: list[Path] = []
     if str(data.get("mode") or "").startswith("attack") and companion:
         files.append(paths.targets_json(source_id, str(companion)))
