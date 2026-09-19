@@ -740,7 +740,7 @@ FLEET_ARGS = {
     "run_id": "demo",
     "source": {k: SOURCE_BLOCK[k] for k in
                ("source_id", "title", "source_sha", "text", "pages_dir",
-                "page_offset", "errata")},
+                "page_offset", "errata", "errata_withheld")},
     "repos": [{"name": "ours", "repo": "/r/ours", "statements": "/c/ours.jsonl",
                "conventions": "total functions"}],
     "mode": "differential",
@@ -854,6 +854,25 @@ class TestFleetLocalBody(unittest.TestCase):
         self.assertIn("disagreement_id : Exercise 1.2.4#1", chal["prompt"])
         self.assertIn("Copy disagreement_id through unchanged", chal["prompt"])
         self.assertIn("disagreement_id", chal["schema"]["required"])
+
+    def test_a_withheld_errata_is_named_to_the_local_worker_too(self):
+        """The two adjudication workflows say why there is no errata; this one did not.
+
+        `cf run --local` already withheld an unconfirmed repo-supplied errata
+        and put the reason in args, but the script never read the key -- so the
+        local worker, alone among the three, was told nothing at all.
+        """
+        out = self._run({"work:Exercise 1.2.4": WORK_RESULT})
+        work = [c for c in out["calls"] if c["phase"] == "Work"][0]
+        self.assertIn(workflow_args.ERRATA_WITHHELD, work["prompt"])
+
+    def test_a_confirmed_errata_is_named_as_a_path_and_not_as_withheld(self):
+        args = json.loads(json.dumps(FLEET_ARGS))
+        args["source"]["errata"] = "/w/sources/errata.md"
+        out = self._run({"work:Exercise 1.2.4": WORK_RESULT}, args)
+        work = [c for c in out["calls"] if c["phase"] == "Work"][0]
+        self.assertIn("/w/sources/errata.md", work["prompt"])
+        self.assertNotIn(workflow_args.ERRATA_WITHHELD, work["prompt"])
 
     def test_every_emitted_label_parses(self):
         out = self._run({
@@ -1266,6 +1285,20 @@ class TestExtractFinalJson(unittest.TestCase):
                 rc, out, err = self._extract(text)
                 self.assertEqual(rc, 0, err)
                 self.assertEqual(json.loads(out), self.PAYLOAD)
+
+    def test_the_fenced_block_really_is_preferred(self):
+        """The docstring's contract, now the implemented one.
+
+        A fenced payload followed by a bare object -- a worker quoting the draft
+        it discarded -- used to hand the orchestrator the draft, because the
+        fenced candidates were tried last and so could never win.
+        """
+        draft = dict(self.PAYLOAD, status="draft", summary="first attempt")
+        rc, out, err = self._extract(
+            "```json\n%s\n```\nEarlier I had written %s, which I discarded."
+            % (json.dumps(self.PAYLOAD), json.dumps(draft)))
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(json.loads(out), self.PAYLOAD)
 
     def test_it_is_still_fail_closed(self):
         for text in ("I could not finish the task.",

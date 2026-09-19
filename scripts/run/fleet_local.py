@@ -152,12 +152,16 @@ def build(
     ``tests/test_harvest.py`` asserts the two stay in step.
 
     ``source`` is the ONE source block (``source_id``, ``title``,
-    ``source_sha``, ``text``, ``pages_dir``, ``page_offset``, ``errata``) the
-    workflow prints into its context: a local fleet is planned for one source,
-    and naming it is what lets the gate check the quotes against the right text.
+    ``source_sha``, ``text``, ``pages_dir``, ``page_offset``, ``errata``,
+    ``errata_withheld``) the workflow prints into its context: a local fleet is
+    planned for one source, and naming it is what lets the gate check the quotes
+    against the right text.
     """
     attack = str(mode or "").startswith("attack")
     source = dict(source)
+    # An absent errata and a WITHHELD one are different facts, and the prompt
+    # renders the second; a caller that knows of neither still supplies the key.
+    source.setdefault("errata_withheld", "")
     source_id = str(source.get("source_id") or "")
     items = item_args(run_dir, item_meta, note_single_source=not attack,
                       source_id=source_id)
@@ -199,8 +203,11 @@ def build(
 WORKFLOW_KEYS: dict[str, tuple[str, ...]] = {
     "args": ("run_id", "source", "repos", "mode", "gate", "model",
              "challenge", "challenge_model", "pairs", "items"),
+    # `errata_withheld` travels even when empty: the two adjudication workflows
+    # already print WHY an errata is absent, and a local worker told nothing at
+    # all cannot tell "no errata exists" from "one exists and was withheld".
     "source": ("source_id", "title", "source_sha", "text", "pages_dir",
-               "page_offset", "errata"),
+               "page_offset", "errata", "errata_withheld"),
     "repos": ("name", "repo", "statements", "conventions"),
     # `kinds`, `verdicts` and `schema_version` are the RUN'S GATE: the workflow
     # builds the worker's structured-output enums from them instead of carrying a

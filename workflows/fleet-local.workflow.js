@@ -81,7 +81,8 @@ ${A.pairs ? '- Paired rows for this item: grep -F \'"item": "<ITEM>"\' ' + A.pai
   and one file per page at ${C.pages_dir}/pNNN.txt (PDF page = printed page + ${C.page_offset}).
   Another edition of the same work may exist; every quote is checked against THIS text and no other.
   Locate the item (e.g. grep -n 'Exercise 1.2.4') and READ THE ACTUAL PASSAGE; never work from memory of the book.
-${C.errata ? '- The published errata: ' + C.errata + '. A statement that differs from the printed text may be following an erratum.' : ''}
+${C.errata ? '- The published errata: ' + C.errata + '. A statement that differs from the printed text may be following an erratum.'
+  : (C.errata_withheld ? '- The published errata: ' + C.errata_withheld : '')}
 
 CONVENTION deltas are NOT faithfulness bugs. Per repository they are listed above; in addition, never report: a
 strictly MORE general statement that specialises to the book's (record it, mark CONVENTION_ONLY, note "strictly

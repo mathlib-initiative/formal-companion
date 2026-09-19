@@ -80,14 +80,15 @@ def _objects(text: str):
 def extract_payload(text: str, required: tuple) -> "dict | None":
     """The last JSON object in *text* that carries every key in *required*.
 
-    A fenced block is preferred (it is what the prompt asks for); otherwise the
-    balanced objects are tried from the LAST one backwards, because a final
-    message that revises itself means the last object.  Still fail-closed: an
-    object without the contract keys is not a payload.
+    A fenced block is preferred -- it is what the prompt asks for, and an
+    unbalanced brace in the surrounding prose ("I opened a { here") defeats the
+    balanced scan entirely.  Otherwise the balanced objects are tried from the
+    LAST one backwards, because a final message that revises itself means the
+    last object.  Still fail-closed: an object without the contract keys is not
+    a payload.
     """
-    candidates = [m.group("body") for m in _FENCE.finditer(text)]
-    candidates += _objects(text)
-    for raw in reversed(candidates):
+    fenced = [m.group("body") for m in _FENCE.finditer(text)]
+    for raw in list(reversed(fenced)) + list(reversed(_objects(text))):
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
