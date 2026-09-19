@@ -118,9 +118,12 @@ policy:
 # subtrees to every audited repo, and only resolved on one machine's layout.
 #
 # `cf init` adds nothing but ~/Downloads. The roots DERIVED from what this
-# workspace already holds -- its own sources/ store and the parent directory of
-# every onboarded companion repo -- are searched as well without being listed
-# here; `cf init` and `cf doctor` print the effective set. Add a root with
-# `cf sources add <pdf> --for <companion>`, or by editing this list.
+# workspace already holds are searched as well without being listed here: its own
+# sources/ store, and for the parent directory <p> of every onboarded companion
+# repo, `<p>/**/sources` and `<p>/**/.lake/official-pdf` -- the two places a
+# companion's PDF actually sits, never the bare <p>, which for a checkout kept on
+# the desktop would be the whole desktop. `cf init` and `cf doctor` print the
+# effective set. Add a root with `cf sources add <pdf> --for <companion>`, or by
+# editing this list.
 library_paths:
   - ~/Downloads

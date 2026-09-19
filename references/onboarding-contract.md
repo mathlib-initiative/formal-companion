@@ -91,7 +91,7 @@ records which step won in `sources.<id>.discovered.pdf_found_in`:
 | 0 | every path the repo names, resolved against the repo root and `~`-expanded | `repo_declared` |
 | 1 | the repo's own caches: the same basename elsewhere in the repo, `.lake/official-pdf/`, `sources/`, `pdf-overlay/vendor/` | `repo_cache` |
 | 2 | the workspace's own store, `<workspace>/sources/` | `workspace_store` |
-| 3 | `workspace.yaml library_paths` — glob patterns, `~`-expanded, depth-capped, `*.pdf` only, joined by the derived roots (this workspace's `sources/` store and the parent directory of every onboarded repo). Only `~/Downloads` is shipped: the list is also the allowlist for rank 0, so a home subtree in it hands that subtree to every audited repo. `cf init` and `cf doctor` print the effective set | `library_path` |
+| 3 | `workspace.yaml library_paths` — glob patterns, `~`-expanded, depth-capped, `*.pdf` only, joined by the derived roots: this workspace's `sources/` store, and `<p>/**/sources` + `<p>/**/.lake/official-pdf` for the parent `<p>` of every onboarded repo (including the one being onboarded, so run 1 and run 2 search the same set), never the bare `<p>`. Only `~/Downloads` is shipped: the list is also the allowlist for rank 0, so a home subtree in it hands that subtree to every audited repo. `cf init` and `cf doctor` print the effective set | `library_path` |
 | 4 | the registry's `download_url`, **only** with `--download`, a workspace policy that allows it, and a licence note saying the author publishes it | `download` |
 
 Within a rank: sha match first, then a registry `aliases.filenames` hit, then
