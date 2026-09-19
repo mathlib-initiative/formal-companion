@@ -326,10 +326,16 @@ def ledger_coverage(rows: Iterable[dict], findings: Iterable[dict]) -> dict:
     the claim, so two different defects on one declaration of one item share it:
     counting distinct ids answered, one CONVENTION row then closed both and the
     coverage report said 2 findings, 2 covered, 0 missing -- a false clean, in
-    the same direction every counting error in this pipeline has gone.  The
-    findings at a colliding id are reported as missing, with the collision named
-    in ``collisions``, so ``route`` holds the file back until each claim has its
-    own row.
+    the same direction every counting error in this pipeline has gone.  Both
+    findings at a colliding id are now counted as missing and the id is named in
+    ``collisions`` (``validate_ledger``'s CLI prints an ``[id_collision]`` line
+    for each).  A ledger row can only be addressed TO the id, so such an id
+    cannot be cleared by adjudicating it harder: the way out is to split the
+    finding -- give the second claim its own declaration, item or kind -- so that
+    the two claims get two ids.  Nothing else calls this function yet; ``route``
+    still builds its own first-wins ``finding_id -> ledger row`` lookup
+    (``route/route.py``), so a colliding id there is handed one row for both
+    findings, which is the remaining half of this fix.
     """
     from ledger.findings import claim_key
 
