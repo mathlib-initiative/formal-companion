@@ -147,7 +147,8 @@ PDF_FOUND_IN = ("repo_declared", "repo_cache", "workspace_store", "library_path"
 OFFSET_METHODS = frozenset({"running_head_mode", "declared", "manual", "registry", "unknown"})
 
 # --- adapter kinds and policies (Stage 0 contract)
-ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes", "custom"})
+ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex",
+                           "ledger_nodes", "custom"})
 
 #: Adapter kinds v1 actually IMPLEMENTS.  ``ADAPTER_KINDS`` is the vocabulary --
 #: what an adapter.yaml may legally say -- and it is deliberately wider, because
@@ -156,7 +157,7 @@ ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes"
 #: BEFORE it writes anything; otherwise it registered a companion nothing could
 #: parse and the next ``cf extract`` failed for the whole workspace.
 #: ``tests/test_cflib`` asserts this equals ``adapters.api.registry()``.
-IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table"})
+IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex"})
 GRANULARITIES = frozenset({"item", "node"})
 WRITE_POLICIES = ("read_only", "branch_only", "branch_and_pr")
 WRITE_POLICY_SET = frozenset(WRITE_POLICIES)
