@@ -48,6 +48,109 @@ DRAFT_SHA = "62d9565841b8593a7a3d12b3cbcea6ce8d3d3ae2f83b60ebf024d59714c0c6e8"
 PUBLISHED_ID = "tao-measure-gsm126-published"
 
 
+# ---------------------------------------------------------------------------
+# architecture#1 -- the writer and the readers must agree
+# ---------------------------------------------------------------------------
+
+#: Scalars that have to survive dump -> load. The first four are the reported
+#: defect (a harvested title with a control character, or one that arrives
+#: already quoted); the rest are the shapes YAML types for you if they are not
+#: quoted, and the block-scalar chomping cases.
+NASTY_SCALARS = (
+    "An Introduction to\tMeasure Theory",
+    '"quoted"',
+    "'single'",
+    "a\rb",
+    "a\x00b",
+    "x\x7fy",
+    "a\x85b",
+    "a b",
+    "﻿bom",
+    "\x1b[31mred",
+    "",
+    " lead",
+    "tail ",
+    "-lead",
+    "no",
+    "yes",
+    "Off",
+    "null",
+    "~",
+    "0755",
+    "0x10",
+    "1_000",
+    ".inf",
+    "3.14",
+    "1e5",
+    "2026-09-16",
+    "# hash",
+    "a: b",
+    "[1]",
+    "{}",
+    "*star",
+    "&amp",
+    "!bang",
+    "|pipe",
+    ">gt",
+    "%pct",
+    "@at",
+    "`tick",
+    "back\\slash",
+    'q"mid',
+    "a\nb",
+    "a\nb\n",
+    "a\n\nb\n",
+    "a\n  indented\nb\n",
+    "  leading\nb\n",
+    "a\ntrailing  \n",
+    "a\nb\n\n",
+    "\na\n",
+    "line\n",
+    "tab\tin\tmiddle",
+    "ünïcode",
+)
+
+
+class TestYamlRoundTrip(unittest.TestCase):
+    """dump_yaml -> load_yaml AND load_yaml_minimal, byte for byte."""
+
+    def test_every_nasty_scalar_survives_both_readers(self):
+        for raw in NASTY_SCALARS:
+            for label, wrap in (("mapping value", lambda v: {"t": v}),
+                                ("sequence item", lambda v: [v]),
+                                ("nested", lambda v: {"a": {"b": [v, {"c": v}]}})):
+                obj = wrap(raw)
+                text = yamlio.dump_yaml(obj)
+                with self.subTest(scalar=raw, position=label):
+                    self.assertEqual(yamlio.load_yaml(text), obj,
+                                     f"PyYAML read {text!r} differently")
+                    self.assertEqual(yamlio.load_yaml_minimal(text), obj,
+                                     f"the fallback reader read {text!r} differently")
+
+    def test_the_two_readers_never_disagree_with_each_other(self):
+        for raw in NASTY_SCALARS:
+            text = yamlio.dump_yaml({"t": raw})
+            with self.subTest(scalar=raw):
+                self.assertEqual(yamlio.load_yaml(text), yamlio.load_yaml_minimal(text))
+
+    def test_the_bytes_do_not_depend_on_whether_pyyaml_is_installed(self):
+        """workspace.yaml and registry.yaml are committed and hand-diffed."""
+        source = (SCRIPTS / "cflib" / "yamlio.py").read_text(encoding="utf-8")
+        writer = source.split("# writer", 1)[1]
+        self.assertNotIn("HAVE_PYYAML", writer)
+        self.assertNotIn("_pyyaml", writer)
+
+    def test_a_harvested_title_with_a_tab_does_not_brick_the_overlay(self):
+        """The end-to-end repro: append_overlay then Registry.load()."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ws"
+            self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+            title = "An Introduction to\tMeasure Theory"
+            Registry.load(root).append_overlay(
+                root, RegistryEntry(id="tao-meas-2011", sha256="a" * 64, title=title))
+            reloaded = Registry.load(root)
+            self.assertEqual(reloaded.entries["tao-meas-2011"].title, title)
+
 
 # ---------------------------------------------------------------------------
 # architecture#3 -- a broken command module must be loud
