@@ -1020,9 +1020,13 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
         if not found.ok:
             continue
         note = bind.note(name, where, found)
-        if note and not (said_unbound and not bind.pages):
-            out.append(note)
-            said_unbound = said_unbound or not bind.pages
+        if not note:
+            continue
+        if bind.pages:
+            out.append(note)          # this one quote straddles a page break
+        elif not said_unbound:
+            out.append(note)          # the item itself is unplaceable: say it once
+            said_unbound = True
     return out
 
 
