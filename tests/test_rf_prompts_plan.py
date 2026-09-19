@@ -388,7 +388,8 @@ class TestConventionsMustBeConfirmed(unittest.TestCase):
                 "- (example) boxes are `Fin d → Set ℝ`.\n", encoding="utf-8")
             status = rp.conventions_status(path)
         self.assertFalse(status["ok"])
-        self.assertIn("every section", status["reason"])
+        self.assertIn("(1-4)", status["reason"])
+        self.assertIn("empty", status["reason"])
 
     def test_confirmed_by_unconfirmed_is_not_a_confirmation(self):
         self.assertEqual(rp.confirmed_by("confirmed_by: unconfirmed\n"), "")
@@ -782,6 +783,168 @@ class TestGateOnlyPresetsAreLabelledNotDeleted(PlanRunCase):
             self.plan(preset="attack-legacy")
         self.assertIn("import-only", str(cm.exception))
         self.assertIn("cf import-corpus", str(cm.exception))
+
+
+# --------------------------------------------------------------------------- #
+# review of the above: shipped text may not assert what the repo does not do
+# --------------------------------------------------------------------------- #
+def _md_section(path: pathlib.Path, number: str) -> str | None:
+    """The body of the ``## <number>.`` / ``### <number>`` section, or None."""
+    import re
+
+    lines = (path.read_text(encoding="utf-8")).splitlines()
+    head = re.compile(r"^(#{2,3})\s+`?" + re.escape(number) + r"[.\s]")
+    body: list[str] | None = None
+    depth = 0
+    for line in lines:
+        found = head.match(line)
+        if found and body is None:
+            depth, body = len(found.group(1)), []
+            continue
+        if body is not None:
+            other = re.match(r"^(#{1,6})\s", line)
+            if other and len(other.group(1)) <= depth:
+                break
+            body.append(line)
+    return "\n".join(body) if body is not None else None
+
+
+class TestTheModelTableCitesASpecThatSaysIt(unittest.TestCase):
+    """CLAUDE.md S3: a module header points at the spec section it implements.
+
+    The header cited design S7.2, which is ``cf onboard <repo>`` — what it
+    prints. A module whose whole subject is shipped text asserting a provenance
+    it does not have cannot itself carry a false citation.
+    """
+
+    DESIGN = pathlib.Path("docs/design/multi-source-model.md")
+    METHOD = pathlib.Path("references/method.md")
+
+    def _cited(self, doc: str, name: str) -> list[str]:
+        import re
+
+        return re.findall(re.escape(name) + r"\s+S(\d+(?:\.\d+)?)", doc)
+
+    def test_every_section_the_header_cites_contains_the_claim(self):
+        doc = models_mod.__doc__ or ""
+        design = self._cited(doc, str(self.DESIGN))
+        method = self._cited(doc, str(self.METHOD))
+        self.assertTrue(design, doc)
+        self.assertTrue(method, doc)
+        for number in design:
+            body = _md_section(SKILL / self.DESIGN, number)
+            self.assertIsNotNone(body, f"design S{number} does not exist")
+            self.assertIn("run.yaml", body, f"design S{number} does not specify run.yaml")
+        for number in method:
+            body = _md_section(SKILL / self.METHOD, number)
+            self.assertIsNotNone(body, f"method S{number} does not exist")
+            self.assertIn("model ids unrecorded in the run metadata", body,
+                          f"method S{number} is not the claim this module closes")
+
+    def test_the_section_that_was_cited_before_is_about_something_else(self):
+        """Guards the resolver itself: S7.2 would have passed a laxer check."""
+        body = _md_section(SKILL / self.DESIGN, "7.2")
+        self.assertIsNotNone(body)
+        self.assertNotIn("run.yaml", body)
+
+
+class TestThePinnedIdsAreNotReportedAsUnknown(PlanRunCase):
+    """skill-design#8 scoped the warning to `--model`, not to a preset's pin."""
+
+    def test_a_codex_preset_does_not_warn_on_a_stock_workspace(self):
+        self.assertEqual(self.plan(preset="attack-vac"), 0)
+        doc = self.run_yaml()
+        self.assertEqual(doc["model"], models_mod.DEFAULTS["worker_codex"])
+        self.assertEqual(
+            [w for w in doc["warnings"] if "not one of workspace.yaml models" in w], [],
+            doc["warnings"])
+
+    def test_every_shipped_default_is_known_and_a_typo_is_not(self):
+        ws = type("W", (), {"models": {"worker": "claude-sonnet-5"}})()
+        for shipped in models_mod.DEFAULTS.values():
+            self.assertIsNone(models_mod.unknown_warning(shipped, ws), shipped)
+        self.assertIsNotNone(models_mod.unknown_warning("claude-sonnet-5-typo", ws))
+
+
+class TestDocstringsDoNotClaimAnUnwiredCheck(unittest.TestCase):
+    def test_tend_agent_model_says_the_comparison_is_not_wired(self):
+        """It said `cf run` compares the two; nothing outside plan/ reads it."""
+        consumers = sorted(
+            str(p.relative_to(SKILL))
+            for p in (SKILL / "scripts").rglob("*.py")
+            if p.parent.name != "plan" and "tend_agent_model" in p.read_text(encoding="utf-8"))
+        doc = models_mod.tend_agent_model.__doc__ or ""
+        if consumers:  # someone wired it: the docstring may then say so
+            self.assertNotIn("not wired yet", doc, consumers)
+        else:
+            self.assertIn("not wired yet", doc)
+            self.assertNotIn("compares this with", doc)
+
+    def test_the_tend_agent_yaml_model_block_says_whose_it_is(self):
+        """A codex preset's yaml names a GPT id under an Anthropic provider."""
+        from plan import make_tend_root as mtr
+
+        doc = " ".join((mtr.make_tend_root.__doc__ or "").split())
+        self.assertIn(
+            "Nothing reads that block unless the preset's ``bridge`` is ``tend-agent``", doc)
+        tmpl = (SKILL / "templates" / "tend" / "worker-agent.yaml.tmpl").read_text(
+            encoding="utf-8")
+        self.assertIn("provider: {{agent_provider}}", tmpl)
+        self.assertIn("{{agent_model}}", tmpl)
+        # and config.yaml is what actually launches an agent, for every bridge
+        cfg = (SKILL / "templates" / "tend" / "config.yaml.tmpl").read_text(encoding="utf-8")
+        self.assertIn("bin/worker-agent.sh", cfg)
+
+
+class TestTheRefusalNamesTheSectionsThatAreEmpty(unittest.TestCase):
+    ONLY_SECTION_7 = (
+        "confirmed_by: A. Owner\n\n## 7. Known-and-accepted deltas\n\n"
+        "- the bundled subtype in `Foo` is deliberate; the owner accepted it in 2026.\n"
+    )
+
+    def test_a_known_deltas_only_file_is_refused_without_contradicting_itself(self):
+        """Section 7 reaches a prompt, so "every section" was the wrong reason."""
+        with tempfile.TemporaryDirectory(dir=TMPDIR) as d:
+            path = pathlib.Path(d) / "conventions.md"
+            path.write_text(self.ONLY_SECTION_7, encoding="utf-8")
+            status = rp.conventions_status(path)
+            rendered = _render("attack-hunt",
+                               companions=[{"name": "ours", "path": "/srv/repos/ours",
+                                            "conventions_md": path}])["worker-system.md"]
+        self.assertFalse(status["ok"])
+        self.assertIn("(1-4)", status["reason"])
+        # the file that was called empty does render a block
+        self.assertIn("Refuted on sight", rendered)
+        self.assertIn("the bundled subtype in `Foo` is deliberate", rendered)
+
+    def test_the_sections_the_reason_names_are_the_ones_it_counts(self):
+        self.assertEqual(rp.CONSUMED_SECTIONS,
+                         ("total_functions", "standing", "sorry", "scope"))
+        self.assertNotIn("known_deltas", rp.CONSUMED_SECTIONS)
+
+
+class TestTheShippedNotesCarryTheDenominator(unittest.TestCase):
+    """docs-accuracy#6: the figure never travels without its sample size."""
+
+    def setUp(self):
+        self.text = (SKILL / "templates" / "PRESETS.md").read_text(encoding="utf-8")
+
+    def test_no_paragraph_states_the_rate_without_its_sample_size(self):
+        import re
+
+        for para in re.split(r"\n\s*\n", self.text):
+            if re.search(r"\b40\s*%", para):
+                self.assertIn("10 adjudicated", " ".join(para.split()), para)
+
+    def test_the_per_source_examples_slot_is_documented(self):
+        """A new workspace key that changes two sentences of every prompt."""
+        self.assertIn("sources.<id>.prompt_examples", self.text)
+        self.assertIn("NEUTRAL_EXAMPLES", self.text)
+
+    def test_the_e2e_check_reads_the_chapter_numbers_not_the_length(self):
+        """`yget` prints len() for a list, so `yget … tasks.chapters` is a count."""
+        script = (SKILL / "tests" / "e2e" / "multisource.sh").read_text(encoding="utf-8")
+        self.assertNotIn("yget \"runs/p-ch1/run.yaml\" tasks.chapters", script)
 
 
 if __name__ == "__main__":
