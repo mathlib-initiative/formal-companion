@@ -1,0 +1,453 @@
+{
+ "version": 1,
+ "source_id": "anonymous-elementary-sets",
+ "source_sha": "0de15de43744e8a5d2193833bcc7d7fe78a1cb9bc0d85b22c2e7ba700dda668e",
+ "title": "Elementary Notes on Sets (generated fixture)",
+ "fixture": "tests/e2e/make_pdf.py writes the booklet; tests/e2e/make_notes_repos.py writes notes-a and notes-b and plants the defects below with scripts/score/mutate.py.",
+ "what_this_is": "The ground truth for the two synthetic companions: eight planted defects, three decoys that must not be reported, and every remaining locus marked clean. `cf score` joins findings to it on (source_id, repo, item, kind), which is run-independent, so the same key scores a model fleet and the model-free detector alike.",
+ "what_this_is_not": "A measurement of any real companion. The defects here were planted by a script into a fixture; a score over it measures a configuration against this fixture and nothing else (references/method.md S10).",
+ "how_to_reproduce": [
+  "bash tests/e2e/synthetic.sh            # builds the workspace and scores it",
+  "cf detect-proxies notes-a --stages tests/e2e/stages.anonymous-elementary-sets.json",
+  "cf detect-proxies notes-b --stages tests/e2e/stages.anonymous-elementary-sets.json",
+  "cf score --run detect-notes-a-cheap --run detect-notes-b-cheap --run anchor-check-anonymous-elementary-sets --answer-key tests/e2e/answer-key.json"
+ ],
+ "recorded_scores": {
+  "mechanical": {
+   "what": "`cf detect-proxies` for both companions plus the PAGE_ANCHOR rows `cf pair` writes -- no model anywhere.",
+   "runs": [
+    "detect-notes-a-cheap",
+    "detect-notes-b-cheap",
+    "anchor-check-anonymous-elementary-sets"
+   ],
+   "precision": 1.0,
+   "recall": 0.5,
+   "f1": 0.6667,
+   "note": "it finds every defect of the three kinds it can see and none of the four it cannot, which is the point: the free detector's recall ceiling is the mechanical half of the key."
+  }
+ },
+ "entries": [
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.3.1",
+   "kind": "PROXY",
+   "expect": "defect",
+   "class": "proxy_definition",
+   "seed": 0,
+   "decls": [
+    "notes-a:jordanInner"
+   ],
+   "mechanical": true,
+   "why": "the booklet defines the Jordan inner measure as a supremum of elementary measures; this hands back the library's own jordanContent, so every later statement about it holds by construction."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.1.5",
+   "kind": "CONTENT",
+   "expect": "defect",
+   "class": "strengthened_hypothesis",
+   "seed": 0,
+   "decls": [
+    "notes-a:union_elementary"
+   ],
+   "mechanical": false,
+   "why": "the booklet asks only that a finite union of boxes is elementary; this adds a positivity hypothesis it never states, so the exercise is proved about less than it asks."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.3.2",
+   "kind": "PROXY",
+   "expect": "defect",
+   "class": "proxy_definition",
+   "seed": 0,
+   "decls": [
+    "notes-b:jordanOuter"
+   ],
+   "mechanical": true,
+   "why": "the booklet defines the Jordan outer measure as an infimum of elementary measures; this hands back the library's own jordanContent."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.4.1",
+   "kind": "COVERAGE",
+   "expect": "defect",
+   "class": "missing_item",
+   "seed": 0,
+   "decls": [
+    "notes-b:lebesgueOuter"
+   ],
+   "mechanical": true,
+   "why": "the booklet states Definition 1.4.1 (Lebesgue outer measure) and notes-b tags no declaration to it: the concept is neither defined nor used under the book's name."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.2.6",
+   "kind": "CONTENT",
+   "expect": "defect",
+   "class": "dropped_dimension",
+   "seed": 0,
+   "decls": [
+    "notes-b:measure_translation"
+   ],
+   "mechanical": false,
+   "why": "translation invariance is stated for every shift k; this pins k to 1, so the exercise is proved for one translation instead of all of them."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.3.7",
+   "kind": "VACUITY",
+   "expect": "defect",
+   "class": "vacuity",
+   "seed": 0,
+   "decls": [
+    "notes-b:not_jordan"
+   ],
+   "mechanical": false,
+   "why": "the booklet asks for a bounded set that is NOT Jordan measurable; the negation is dropped and what is left holds by rfl."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.4.4",
+   "kind": "PAGE_ANCHOR",
+   "expect": "defect",
+   "class": "wrong_page_anchor",
+   "seed": 0,
+   "decls": [
+    "notes-b:countable_null"
+   ],
+   "mechanical": true,
+   "why": "the booklet prints Exercise 1.4.4 on page 10; the docstring anchors it at page 4, so a worker sent to the anchor reads the wrong page."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Lemma 1.4.2",
+   "kind": "CONTENT",
+   "expect": "defect",
+   "class": "reversed_inequality",
+   "seed": 0,
+   "decls": [
+    "notes-b:lebesgue_subadditive"
+   ],
+   "mechanical": false,
+   "why": "the booklet's Lemma 1.4.2 is countable SUBadditivity; the inequality is stated the other way round, which is a different (and false) claim."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.1.1",
+   "expect": "clean",
+   "class": "convention_alias",
+   "decls": [
+    "notes-a:box",
+    "notes-a:boxAlt"
+   ],
+   "why": "notes-a carries a second, equivalent spelling (boxAlt) of the same definition. A naming convention, not a difference of content."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.1.2",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:elementary"
+   ],
+   "why": "both companions state Definition 1.1.2 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.2.1",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:measure"
+   ],
+   "why": "both companions state Definition 1.2.1 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.3.2",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:jordanOuter"
+   ],
+   "why": "notes-a states Definition 1.3.2 faithfully; the planted defect at this item is notes-b's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.3.3",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:jordanMeasurable"
+   ],
+   "why": "both companions state Definition 1.3.3 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Definition 1.4.1",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:lebesgueOuter"
+   ],
+   "why": "notes-a states Definition 1.4.1 faithfully; the planted defect at this item is notes-b's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.1.6",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:boolean_algebra"
+   ],
+   "why": "both companions state Exercise 1.1.6 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.2.6",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:measure_translation"
+   ],
+   "why": "notes-a states Exercise 1.2.6 faithfully; the planted defect at this item is notes-b's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.2.7",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:measure_point"
+   ],
+   "why": "both companions state Exercise 1.2.7 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.3.6",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:elementary_jordan"
+   ],
+   "why": "both companions state Exercise 1.3.6 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.3.7",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:not_jordan"
+   ],
+   "why": "notes-a states Exercise 1.3.7 faithfully; the planted defect at this item is notes-b's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Exercise 1.4.4",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:countable_null"
+   ],
+   "why": "notes-a states Exercise 1.4.4 faithfully; the planted defect at this item is notes-b's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Lemma 1.1.3",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:box_elementary"
+   ],
+   "why": "both companions state Lemma 1.1.3 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Lemma 1.1.4",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:boolean_closure"
+   ],
+   "why": "both companions state Lemma 1.1.4 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Lemma 1.2.2",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:measure_well_defined"
+   ],
+   "why": "both companions state Lemma 1.2.2 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-a",
+   "item": "Lemma 1.4.2",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-a:lebesgue_subadditive"
+   ],
+   "why": "notes-a states Lemma 1.4.2 faithfully; the planted defect at this item is notes-b's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.1.1",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:box"
+   ],
+   "why": "both companions state Definition 1.1.1 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.1.2",
+   "expect": "clean",
+   "class": "convention_alias",
+   "decls": [
+    "notes-b:elementary",
+    "notes-b:elementaryAlt"
+   ],
+   "why": "notes-b carries a second, equivalent spelling (elementaryAlt) of the same definition. A naming convention, not a difference of content."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.2.1",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:measure"
+   ],
+   "why": "both companions state Definition 1.2.1 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.3.1",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:jordanInner"
+   ],
+   "why": "notes-b states Definition 1.3.1 faithfully; the planted defect at this item is notes-a's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Definition 1.3.3",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:jordanMeasurable"
+   ],
+   "why": "both companions state Definition 1.3.3 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.1.5",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:union_elementary"
+   ],
+   "why": "notes-b states Exercise 1.1.5 faithfully; the planted defect at this item is notes-a's."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.1.6",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:boolean_algebra"
+   ],
+   "why": "both companions state Exercise 1.1.6 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.2.7",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:measure_point"
+   ],
+   "why": "both companions state Exercise 1.2.7 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Exercise 1.3.6",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:elementary_jordan"
+   ],
+   "why": "both companions state Exercise 1.3.6 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Lemma 1.1.3",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:box_elementary"
+   ],
+   "why": "both companions state Lemma 1.1.3 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Lemma 1.1.4",
+   "expect": "clean",
+   "class": "",
+   "decls": [
+    "notes-b:boolean_closure"
+   ],
+   "why": "both companions state Lemma 1.1.4 faithfully."
+  },
+  {
+   "source_id": "anonymous-elementary-sets",
+   "repo": "notes-b",
+   "item": "Lemma 1.2.2",
+   "expect": "clean",
+   "class": "convention_rename",
+   "decls": [
+    "notes-b:measureWellDefined"
+   ],
+   "why": "the same lemma as notes-a's, spelled measureWellDefined instead of measure_well_defined. A CONVENTION-only difference: a differential that files it is a false positive."
+  }
+ ]
+}
