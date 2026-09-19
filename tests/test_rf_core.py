@@ -524,6 +524,73 @@ class TestOnboardIsIdempotent(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# skill-design#3 -- cf doctor
+# ---------------------------------------------------------------------------
+
+class TestDoctor(unittest.TestCase):
+    def test_it_checks_every_dependency_the_code_gates_on(self):
+        from cfcmd import doctor
+
+        names = [row["name"] for row in doctor.check()]
+        for expected in ("python", "git", "pdftotext", "pdftoppm", "curl", "node", "PyYAML"):
+            self.assertIn(expected, names)
+        required = {row["name"] for row in doctor.check() if row["required"]}
+        self.assertEqual(required, {"python", "git", "pdftotext", "pdftoppm", "curl"})
+
+    def test_a_missing_required_tool_is_one_actionable_line_and_exit_2(self):
+        rc, out, err = self._run(missing={"pdftoppm"})
+        self.assertEqual(rc, 2)
+        self.assertIn("pdftoppm is missing", err)
+        self.assertIn("poppler", err)
+        self.assertIn("MISSING", out)
+
+    def test_only_optional_things_missing_is_exit_0(self):
+        rc, out, err = self._run(missing={"node"})
+        self.assertEqual(rc, 0)
+        self.assertIn("node is missing", out + err)
+
+    def test_json_output_carries_the_same_verdict(self):
+        rc, out, _ = self._run(missing={"curl"}, extra=["--json"])
+        self.assertEqual(rc, 2)
+        payload = json.loads(out)
+        self.assertFalse(payload["ok"])
+        self.assertIn("curl", [c["name"] for c in payload["checks"] if not c["ok"]])
+
+    def test_it_works_with_no_workspace_at_all(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            rc, out, _ = self._run(missing=set(), workspace=str(Path(tmp) / "nope"))
+            self.assertEqual(rc, 0)
+            self.assertNotIn("pdf search roots", out)
+
+    def test_it_prints_the_search_roots_when_there_is_a_workspace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "ws"
+            self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+            rc, out, _ = self._run(missing=set(), workspace=str(root))
+            self.assertEqual(rc, 0)
+            self.assertIn("pdf search roots", out)
+            self.assertIn("~/Downloads", out)
+
+    def _run(self, *, missing: set, extra=(), workspace=None):
+        real_which = shutil.which
+
+        def fake_which(name, *a, **kw):
+            return None if name in missing else real_which(name, *a, **kw)
+
+        argv = ["doctor", *extra]
+        if workspace:
+            argv += ["--workspace", workspace]
+        out, err = io.StringIO(), io.StringIO()
+        shutil.which = fake_which
+        try:
+            with redirect_stdout(out), redirect_stderr(err):
+                rc = cf_main.cli(argv)
+        finally:
+            shutil.which = real_which
+        return rc, out.getvalue(), err.getvalue()
+
+
+# ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
 
