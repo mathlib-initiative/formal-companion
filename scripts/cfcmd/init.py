@@ -46,7 +46,8 @@ detect/*/deps.json
 
 # corpus/ is deliberately NOT ignored: the findings corpus is the calibration
 # baseline and must be durable. It quotes 1-3 book sentences per finding, so the
-# repo stays local (see the pre-push hook) and exports run with --redact-quotes.
+# workspace itself stays local (no remote; the pre-push hook is only a reminder)
+# and what is shared is an export: `cf route --redact-quotes`.
 #
 # registry.yaml is NOT ignored either: it is metadata about editions (shas, URLs,
 # page maps), never a line of the text itself.
@@ -56,15 +57,26 @@ __pycache__/
 .DS_Store
 """
 
+#: how a cf-installed pre-push hook is recognised again, including one written by
+#: an older version whose text has since been reworded.  `cf status` and
+#: `_install_hook` both key on this rather than on byte equality.
+HOOK_MARKER = "CF_ALLOW_PUSH"
+
 PRE_PUSH_HOOK = """\
 #!/bin/sh
 # Installed by `cf init`. This workspace repo holds copyrighted book quotes,
 # private Lean statements and UNCHALLENGED findings; it is not meant to be
 # pushed anywhere. Set CF_ALLOW_PUSH=1 for a deliberate, reviewed exception.
+#
+# THIS HOOK IS A REMINDER, NOT THE CONTROL. `git push --no-verify` skips it, a
+# fresh clone of this repo does not carry it, and nothing reinstalls it. The
+# control is that the workspace repo has no remote -- `cf init` refuses one
+# unless workspace.yaml sets policy.allow_remote, and `cf status` prints whether
+# a remote has appeared since.
 if [ "$CF_ALLOW_PUSH" != "1" ]; then
     echo "pre-push refused: workspace repositories have no remote by default." >&2
     echo "  book quotes + unchallenged findings live here; export instead" >&2
-    echo "  (cf report --redact-quotes), or set CF_ALLOW_PUSH=1 to override." >&2
+    echo "  (cf route --redact-quotes), or set CF_ALLOW_PUSH=1 to override." >&2
     exit 1
 fi
 exit 0
@@ -192,10 +204,10 @@ def _refuse_nested_git(root: Path, *, allow_nested: bool) -> None:
     top = _git_toplevel(_nearest_existing(root))
     if not top or top == root:
         return
-    remotes = _remotes(top)
-    if remotes:
+    remote_names = remotes(top)
+    if remote_names:
         raise CfError(
-            f"{root} is inside the git repo {top}, which has a remote ({remotes[0]})",
+            f"{root} is inside the git repo {top}, which has a remote ({remote_names[0]})",
             hint="a workspace holds verbatim book quotes and UNCHALLENGED findings; put it "
                  "outside that repo. --allow-nested does NOT override this.")
     if not allow_nested:
@@ -206,19 +218,51 @@ def _refuse_nested_git(root: Path, *, allow_nested: bool) -> None:
                  "workspace's ignore rules in the enclosing repo instead")
 
 
-def _remotes(repo: Path) -> list[str]:
+def remotes(repo: Path) -> list[str]:
+    """The workspace repo's remote names (empty when it has none, or is not a repo).
+
+    Plain ``git`` on purpose and not ``cflib.gitsafe``: this is the operator's own
+    workspace repository, not a companion tree whose ``.git/config`` is untrusted.
+    """
     res = subprocess.run(["git", "-C", str(repo), "remote"], capture_output=True, text=True)
     return res.stdout.split() if res.returncode == 0 else []
+
+
+def hook_state(repo: Path) -> str:
+    """Is the cf pre-push reminder in *repo*?  ``cf``/``foreign``/``absent``/``no-hooks-dir``.
+
+    A reminder is only worth anything if its absence is visible, and the two ways
+    it goes missing silently are a hooks directory that is not there and somebody
+    else's hook already occupying the path.  `cf status` prints this on every run.
+    """
+    hook = repo / ".git" / "hooks" / "pre-push"
+    if not hook.parent.is_dir():
+        return "no-hooks-dir"
+    if not hook.exists():
+        return "absent"
+    body = hook.read_text(encoding="utf-8", errors="replace")
+    return "cf" if HOOK_MARKER in body else "foreign"
 
 
 def _install_hook(repo: Path) -> None:
     """Install the pre-push guard in *repo* (never overwrites an existing hook)."""
     hook = repo / ".git" / "hooks" / "pre-push"
-    if not hook.parent.is_dir():
+    state = hook_state(repo)
+    if state == "no-hooks-dir":
         log.warn(f"{hook.parent} does not exist; no pre-push guard installed")
         return
-    if hook.exists():
-        log.detail(f"{hook} exists; left untouched")
+    if state == "foreign":
+        # This used to be log.detail, i.e. invisible at default verbosity, and
+        # `cf init` still exited 0: the workspace looked guarded while somebody
+        # else's hook was the only thing on the push path.
+        log.warn(f"{hook} already exists and is NOT the cf guard; left untouched -- this "
+                 f"workspace has no cf pre-push reminder")
+        log.info(f"     inspect it, then either add the same check to it yourself, or move "
+                 f"it aside and re-run `cf init {repo}` (which installs the guard when the "
+                 f"path is free)")
+        return
+    if state == "cf":
+        log.detail(f"{hook} is already the cf guard; left untouched")
         return
     atomic_write(hook, PRE_PUSH_HOOK)
     hook.chmod(0o755)
@@ -252,19 +296,23 @@ def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False
         log.ok(f"git init {root} (no remote)")
     else:
         log.detail("git repo already present")
-    remotes = _remotes(root)
-    if remotes and not allow_remote:
-        # workspace.yaml policy.allow_remote (false by default) is the rule; the
-        # hook is the enforcement. Both, or the policy block is decoration.
+    remote_names = remotes(root)
+    if remote_names and not allow_remote:
+        # THIS REFUSAL is the control: workspace.yaml policy.allow_remote (false
+        # by default) plus `cf init` refusing a workspace repo that has a remote.
+        # The pre-push hook below is only a reminder -- `git push --no-verify`
+        # skips it, a fresh clone does not carry it, and a remote added after
+        # `cf init` never passes through here at all (`cf status` reports both
+        # facts on every run, which is what catches that case).
         raise CfError(
-            f"this workspace repo has a remote ({remotes[0]}) and workspace.yaml sets "
+            f"this workspace repo has a remote ({remote_names[0]}) and workspace.yaml sets "
             "policy.allow_remote: false",
             hint="book quotes and UNCHALLENGED findings live here; run "
-                 f"`git -C {root} remote remove {remotes[0]}`, or set policy.allow_remote: true "
-                 "in workspace.yaml and take responsibility for every push")
-    if remotes:
-        log.warn(f"this workspace repo has a remote ({remotes[0]}) and policy.allow_remote is "
-                 "true: book quotes and unchallenged findings must not be pushed")
+                 f"`git -C {root} remote remove {remote_names[0]}`, or set policy.allow_remote: "
+                 "true in workspace.yaml and take responsibility for every push")
+    if remote_names:
+        log.warn(f"this workspace repo has a remote ({remote_names[0]}) and policy.allow_remote "
+                 "is true: book quotes and unchallenged findings must not be pushed")
     _install_hook(root)
 
 

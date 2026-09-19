@@ -201,5 +201,87 @@ class ErrataFetchCapsTest(unittest.TestCase):
         # the raw HTML is still kept verbatim: that is why this fetcher exists
         self.assertIn("<li>", (out_dir / "errata.raw.html").read_text(encoding="utf-8"))
 
+
+# ==========================================================================
+# security-safety#5 -- the hook is a reminder, and its absence must be visible
+# ==========================================================================
+class NoPushGuardTest(unittest.TestCase):
+    def _workspace(self) -> Path:
+        root = scratch(self) / "ws"
+        self._cf("init", str(root))
+        return root
+
+    def _cf(self, *args) -> subprocess.CompletedProcess:
+        env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+        env.pop("CF_WORKSPACE", None)
+        return subprocess.run([sys.executable, str(SCRIPTS / "cf.py"), *args],
+                              capture_output=True, text=True, env=env, cwd=str(REPO))
+
+    def test_a_foreign_pre_push_hook_is_reported_not_swallowed(self):
+        root = scratch(self) / "ws"
+        root.mkdir(parents=True)
+        subprocess.run(["git", "init", "-q", str(root)], check=True,
+                       capture_output=True, text=True)
+        hook = root / ".git" / "hooks" / "pre-push"
+        hook.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        hook.chmod(0o755)
+        res = self._cf("init", str(root))
+        self.assertEqual(res.returncode, 0, res.stderr)
+        # it used to be log.detail ("hook exists; left untouched"), i.e. invisible
+        # at default verbosity, and cf init still exited 0
+        self.assertIn("NOT the cf guard", res.stdout + res.stderr)
+        self.assertEqual(hook.read_text(encoding="utf-8"), "#!/bin/sh\nexit 0\n")
+
+    def test_status_reports_no_remote_and_the_hook_every_run(self):
+        root = self._workspace()
+        res = self._cf("--workspace", str(root), "status")
+        self.assertEqual(res.returncode, 0, res.stderr)
+        self.assertIn("no remote", res.stdout)
+        self.assertIn("cf pre-push reminder installed", res.stdout)
+
+    def test_status_warns_about_a_remote_added_after_init(self):
+        """The case nothing caught: `cf init` refused one, then one appeared."""
+        root = self._workspace()
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin",
+                        str(scratch(self) / "bare.git")], check=True,
+                       capture_output=True, text=True)
+        res = self._cf("--workspace", str(root), "status")
+        self.assertIn("remote origin", res.stdout)
+        self.assertIn("HAS a remote", res.stderr)
+        self.assertIn("stays local", res.stderr)
+
+    def test_status_warns_when_the_hook_has_gone(self):
+        root = self._workspace()
+        (root / ".git" / "hooks" / "pre-push").unlink()
+        res = self._cf("--workspace", str(root), "status")
+        self.assertIn("NO cf pre-push reminder", res.stdout + res.stderr)
+        self.assertIn("--no-verify", res.stderr)
+
+    def test_status_json_carries_both_facts(self):
+        root = self._workspace()
+        res = self._cf("--workspace", str(root), "status", "--json")
+        git = json.loads(res.stdout)["workspace"]["git"]
+        self.assertEqual(git["remotes"], [])
+        self.assertEqual(git["pre_push_hook"], "cf")
+
+    def test_the_hook_and_the_docs_say_which_one_is_the_control(self):
+        from cfcmd import init as init_cmd
+
+        self.assertIn("--no-verify", init_cmd.PRE_PUSH_HOOK)
+        self.assertIn("REMINDER, NOT THE CONTROL", init_cmd.PRE_PUSH_HOOK)
+        traps = (REPO / "references" / "traps.md").read_text(encoding="utf-8")
+        self.assertNotIn('because "no remote" is a default and not a control', traps)
+        self.assertIn("the workspace itself stays local", traps)
+
+    def test_hook_state_recognises_an_older_cf_hook(self):
+        """Byte equality would call every workspace made by an older cf 'foreign'."""
+        from cfcmd import init as init_cmd
+
+        root = self._workspace()
+        hook = root / ".git" / "hooks" / "pre-push"
+        hook.write_text('#!/bin/sh\nif [ "$CF_ALLOW_PUSH" != "1" ]; then exit 1; fi\n',
+                        encoding="utf-8")
+        self.assertEqual(init_cmd.hook_state(root), "cf")
+
 if __name__ == "__main__":                              # pragma: no cover
     unittest.main()

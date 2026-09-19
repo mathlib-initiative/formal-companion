@@ -11,6 +11,12 @@ writes what it learned about a source nobody had catalogued with
 ``confirmed: false``, and the only place that would otherwise be visible is a
 YAML file nobody reads.
 
+The first line reports the two facts the workspace's copyright story rests on --
+whether this repo has a remote, and whether the cf pre-push reminder is in place.
+`cf init` refuses a remote at creation time and that refusal is the control, but
+a remote added afterwards passes through nothing: printing it on every run is
+what catches it.
+
     cf status
     cf status --companion ours
     cf status --source tao-measure-gsm126-published
@@ -67,6 +73,7 @@ def run(args) -> int:
 
     facts = _workspace_facts(workspace)
     log.info(f"workspace : {workspace.root}   ({facts['name']})")
+    _print_git_guard(facts["git"])
     sources = _source_facts(workspace)
     if args.source:
         sources = [s for s in sources if s["id"] == args.source]
@@ -221,7 +228,51 @@ def _workspace_facts(workspace) -> dict:
         "sources": workspace.source_ids(),
         "shared_sources": workspace.shared_sources(),
         "hosts_allowlist": workspace.host_allowlist,
+        "git": _git_guard_facts(workspace),
     }
+
+
+def _git_guard_facts(workspace) -> dict:
+    """Does this workspace repo have a remote, and is the cf pre-push hook there?
+
+    Read fresh from the repo every time, because both facts can change after
+    `cf init` -- `git remote add` and a hook somebody moved aside go through no
+    cf command at all.
+    """
+    from cfcmd.init import hook_state, remotes
+
+    root = workspace.root
+    return {
+        "root": str(root),
+        "repo": (root / ".git").exists(),
+        "remotes": remotes(root) if (root / ".git").exists() else [],
+        "pre_push_hook": hook_state(root) if (root / ".git").exists() else "no-repo",
+        "allow_remote": bool((workspace.policy or {}).get("allow_remote", False)),
+    }
+
+
+def _print_git_guard(git: dict) -> None:
+    """One line, every run: the workspace itself stays local, or it does not."""
+    if not git["repo"]:
+        log.warn("this workspace is not a git repo: no history for the corpus and no pre-push "
+                 "reminder -- `cf init <workspace>` sets both up")
+        return
+    hook = {"cf": "cf pre-push reminder installed",
+            "foreign": "pre-push hook is NOT the cf one",
+            "absent": "NO cf pre-push reminder",
+            "no-hooks-dir": "no .git/hooks directory, so no reminder"}[git["pre_push_hook"]]
+    if git["remotes"]:
+        log.info(f"git       : remote {', '.join(git['remotes'])}   ({hook})")
+        log.warn("this workspace repo HAS a remote: corpus/ quotes the source and the ledgers "
+                 "hold unchallenged findings, so the workspace itself stays local -- run "
+                 f"`git -C {git.get('root', '<workspace>')} remote remove {git['remotes'][0]}`, "
+                 "and share findings with `cf route --redact-quotes` instead")
+    else:
+        log.info(f"git       : no remote (the workspace stays local)   ({hook})")
+    if git["pre_push_hook"] != "cf":
+        log.warn(f"{hook}: the reminder that a push carries book quotes is missing. It is only a "
+                 "reminder -- `git push --no-verify` and a fresh clone both defeat it, and having "
+                 "no remote is the real control -- but re-run `cf init <workspace>` to restore it")
 
 
 def _source_facts(workspace) -> list[dict]:
