@@ -181,7 +181,11 @@ def same_locus(rows: Sequence[dict], min_runs: int = 2, min_severity: str = "hig
 
 
 def build(runs: dict[str, str | Path], source_id: str | None = None, **kwargs) -> dict:
-    """``{generated_at, criteria, entries, same_locus}`` for reports/agreed_high.json."""
+    """``{generated_at, criteria, entries, same_locus}`` for reports/agreed_high.json.
+
+    ``count`` counts ENTRIES and ``locus_count`` the distinct
+    ``(source_id, repo, item)`` loci behind them; see the comment on both.
+    """
     rows = collect(runs, sources=[source_id] if source_id else None)
     entries = agreed(rows, source_id=source_id, **kwargs)
     weaker = same_locus(rows, source_id=source_id, **kwargs)
@@ -198,7 +202,12 @@ def build(runs: dict[str, str | Path], source_id: str | None = None, **kwargs) -
                            "with a declaration named by every run"),
             "same_locus_grouped_by": "source_id + repo + item (sub-parts collapsed)",
         },
+        # ENTRIES, not loci: the key includes the kind, so one item faulted with
+        # CONTENT by two runs and with VACUITY by two runs is two entries.  The
+        # pre-kind file counted loci, so ``count`` is not comparable with it --
+        # ``locus_count`` is, and it is the smaller number.
         "count": len(entries),
+        "locus_count": len({(e["source_id"], e["repo"], e["item"]) for e in entries}),
         # an in-text label the grammar could not canonicalise cannot agree with
         # the same item under another spelling: reported, never dropped.
         "unjoinable": unjoinable(rows),
