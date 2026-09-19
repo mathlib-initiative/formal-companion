@@ -104,7 +104,9 @@ def register(subparsers) -> None:
         description=__doc__.split("\n\n")[1] if __doc__ else None)
     p.add_argument("directory", help="workspace directory to create (outside every repo)")
     p.add_argument("--name", help="workspace name (default: the directory name)")
-    p.add_argument("--no-git", action="store_true", help="do not run git init")
+    p.add_argument("--no-git", action="store_true",
+                   help="do not run git init (recorded as policy.git: false, so `cf status` "
+                        "reports the missing repo as a choice and not as a problem)")
     p.add_argument("--allow-nested", action="store_true",
                    help="create the workspace inside an existing git repo anyway; the pre-push "
                         "hook and the ignore rules are then installed in THAT repo. Refused "
@@ -137,6 +139,8 @@ def run(args) -> int:
             "workspace_name": args.name or root.name,
             "created": _quote(date.today().isoformat()),
         })
+        if args.no_git:
+            text = _record_no_git(text)
         atomic_write(workspace_yaml, text)
         log.ok(f"wrote {workspace_yaml}")
 
@@ -156,8 +160,30 @@ def run(args) -> int:
     return 0
 
 
+#: what `cf init --no-git` adds to workspace.yaml's policy block.  Without it the
+#: only thing `cf status` could say about a repo-less workspace was a warning, so
+#: a documented flag produced a standing instruction to undo it.
+NO_GIT_POLICY = (
+    "  # `cf init --no-git` created this workspace: it has no git repo of its own,\n"
+    "  # so there is no history for the corpus and no pre-push reminder. `cf status`\n"
+    "  # reports that as a choice rather than a warning.\n"
+    "  git: false\n"
+)
+
+
 def _quote(text: str) -> str:
     return '"' + text.replace('"', '\\"') + '"'
+
+
+def _record_no_git(text: str) -> str:
+    """Record ``--no-git`` as ``policy.git: false`` in the rendered workspace.yaml."""
+    lines = text.splitlines(keepends=True)
+    for i, line in enumerate(lines):
+        if line.startswith("policy:"):
+            lines.insert(i + 1, NO_GIT_POLICY)
+            return "".join(lines)
+    sep = "" if text.endswith("\n") else "\n"          # pragma: no cover - the template has one
+    return text + sep + "\npolicy:\n" + NO_GIT_POLICY
 
 
 def _write_if_absent(path: Path, text: str, force: bool) -> None:
@@ -201,7 +227,7 @@ def _refuse_nested_git(root: Path, *, allow_nested: bool) -> None:
     """
     if (root / ".git").exists():
         return
-    top = _git_toplevel(_nearest_existing(root))
+    top = git_toplevel(_nearest_existing(root))
     if not top or top == root:
         return
     remote_names = remotes(top)
@@ -282,7 +308,7 @@ def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False
     """
     git_dir = root / ".git"
     if not git_dir.exists():
-        top = _git_toplevel(root)
+        top = git_toplevel(root)
         if top and top != root:
             # _refuse_nested_git() already refused the cases that must not happen.
             log.warn(f"{root} is inside {top}: guarding THAT repo instead of running git init")
@@ -333,7 +359,13 @@ def _append_ignore(outer: Path, workspace: Path) -> None:
     log.ok(f"ignored {marker} in {path}")
 
 
-def _git_toplevel(path: Path) -> Path | None:
+def git_toplevel(path: Path) -> Path | None:
+    """The repository *path* is inside, if any.
+
+    Public because `cf status` needs it: a workspace created with
+    ``--allow-nested`` has no ``.git`` of its own and the pre-push reminder lives
+    in the ENCLOSING repo, so the repo whose remote matters is this one.
+    """
     res = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
                          capture_output=True, text=True)
     return Path(res.stdout.strip()) if res.returncode == 0 and res.stdout.strip() else None
