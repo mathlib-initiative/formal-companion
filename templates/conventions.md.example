@@ -1,14 +1,24 @@
 # House conventions -- {{ name }}
 
+confirmed_by: unconfirmed
+confirmed_at:
+
 Sources: _(list this companion's `sources` from workspace.yaml, and say which
 one its page anchors follow -- `cf status` prints both)_
 
 Written at onboarding (draft it from the repo's CLAUDE.md, README and module
 headers), then **confirmed by the repo owner**. Every attack and differential
 prompt is rendered with this file inlined, and the adjudication COMMON block
-quotes it. It is the list that decides CONVENTION vs CONTENT, and roughly 40%
-of first-pass findings are wrong because a convention was read as a defect --
-an unconfirmed list is the single biggest source of false positives.
+quotes it. It is the list that decides CONVENTION vs CONTENT, and on the one
+campaign measured so far 4 of 10 adjudicated first-pass findings were wrong
+because a convention was read as a defect -- an unconfirmed list is the single
+biggest source of false positives.
+
+**`cf plan-run` refuses while `confirmed_by:` says `unconfirmed`**, or while
+every section the prompts read is still `(example)` placeholders: replace it
+with who signed the list off (and `confirmed_at:` with the date), or plan with
+`--conventions-unconfirmed`, which is recorded in `run.yaml` so the report can
+say the findings rest on a list nobody confirmed.
 
 Delete what does not apply; do not leave a section empty and unexplained.
 

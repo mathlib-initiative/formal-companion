@@ -235,7 +235,7 @@ def differential_entries(
         parsed, _ = cfitems.try_parse(item, kinds)
         if parsed is None or not parsed.numbered or parsed.in_text:
             continue
-        if chapters and parsed.chapter not in set(chapters):
+        if not in_chapters(item, chapters, kinds):
             continue
         if require_in_book and in_book.get(item, True) is False:
             continue
@@ -253,6 +253,28 @@ def differential_entries(
             )
         )
     return out
+
+
+def in_chapters(item: str, chapters: Sequence[int] | None,
+                kinds: Sequence[str] = cfitems.DEFAULT_KINDS) -> bool:
+    """Whether a raw item label belongs to one of ``chapters`` (no filter -> True).
+
+    ONE definition of the chapter filter, because it now has to be applied in
+    three places at once — the differential entries, an attack run's targets, and
+    the expected item universe the task count is reconciled against. Applying it
+    to the entries alone is what made ``plan-run --chapters 1`` fail its own
+    reconciliation gate ("383 tasks vs 403 items").
+
+    A label with no chapter (``In-text, book p. 18``) is dropped by any filter:
+    the flag means "only these chapters' items", and a narrowed run that still
+    carried every unanchored In-text target would not be narrowed at all.
+    """
+    if not chapters:
+        return True
+    parsed, _ = cfitems.try_parse(item, kinds)
+    if parsed is None or parsed.chapter is None:
+        return False
+    return parsed.chapter in {int(c) for c in chapters}
 
 
 def _parses(item: str, kinds: Sequence[str]) -> bool:
@@ -413,6 +435,11 @@ def render_task(
         "gate_command": ctx.get("gate_command", ""),
         "kinds_inline": " or ".join(preset.kinds),
         "companion": ctx.get("companion", entry.repos[0] if entry.repos else ""),
+        # Asked only when the gate would accept the answer: the single-source task
+        # used to invite a page-anchor check on every preset, including the two
+        # whose kinds do not list PAGE_ANCHOR.
+        "anchor_question": (" Is the page anchor correct?"
+                            if preset.wants_page_anchors else ""),
     }
     if preset.task_style == "attack":
         probe = render_file(
