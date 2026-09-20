@@ -192,7 +192,12 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
    `finding_id_mismatches` row. What the gate does enforce on **every** preset is that an id that
    IS written is the right one: it recomputes and refuses a present-but-wrong `finding_id`, so the
    recovered run that stamped `"finding_id": "00…00"` on every row would now be rejected rather
-   than stored verbatim. Measured over the imported baseline: 347 of 347 defect rows carry an id
+   than stored verbatim. That is **every** preset including the two `*-legacy` ones, where
+   `cf harvest --no-gate` is the escape for an import whose stored ids are known-wrong — so a
+   re-import of such a corpus lands with `harvest.tally`'s `finding_id_stored` /
+   `finding_id_mismatches` record rather than being refused. A value that is present but is not a
+   string is refused the same way, by name, because reading a worker-written field means its type is
+   the worker's too. Measured over the imported baseline: 347 of 347 defect rows carry an id
    after `convert_v1.py` and all 347 match, so nothing already landed is refused.
 5. **`NO_WEAKNESS_FOUND` is folded into `NO_DEFECT_FOUND`** by `convert_v1.py`; the v2 vocabulary
    has one no-defect verdict. The gate still accepts `NO_WEAKNESS_FOUND` when a legacy preset
