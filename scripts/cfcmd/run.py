@@ -359,6 +359,13 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
         companions=manifest.companion_repos(workspace, data.get("repos")))
     warnings += notes
     warnings += manifest.gate_config_warnings(Path(workspace.root), args.run_id, host, data)
+    # The bypass was asked for at PLAN time, possibly days earlier and by someone
+    # else: only run.yaml and the manifest fields carried it, and the printed plan
+    # said nothing, so an operator typing --execute could not see that the agents
+    # will run with approvals and the sandbox off.
+    permissions = manifest.agent_permissions(run_yaml_path.parent)
+    if permissions["permission_bypass_in_wrapper"]:
+        warnings.append(permissions["permission_bypass"])
     # The model the record claims and the model the root launches, before
     # anything is transferred: a dry run prints it, --execute refuses.
     mismatch = _check_model(run_yaml_path.parent, data, execute=bool(args.execute))
