@@ -316,22 +316,34 @@ def _adapters_api():
     detection is core behaviour (`cf onboard` cannot even choose a parser without
     it), so the real package is imported beside the stand-in and the stand-in is
     handed straight back.
+
+    The stand-in is tested for FIRST, before the ``adapters.api`` shortcut, and
+    ``registry()`` is called while the real package is still in ``sys.modules``.
+    Both halves matter: any process that has imported the package at all leaves
+    ``adapters.api`` cached, so the shortcut used to return early and the dance
+    never ran; and ``registry()`` imports the shipped adapter modules on first
+    call, which needs a parent with a ``__path__``.  Getting either wrong makes
+    detection raise ``ImportError: cannot import name 'attribution_table' from
+    'adapters'`` for every test class that onboards behind a stand-in, and makes
+    a green suite a matter of which test file imported the adapters first.
     """
     import importlib
     import sys
 
-    mod = sys.modules.get("adapters.api")
-    if mod is not None and hasattr(mod, "registry"):
-        return mod
     stand_in = sys.modules.get("adapters")
     if stand_in is not None and not hasattr(stand_in, "__path__"):
         del sys.modules["adapters"]
         try:
-            return importlib.import_module("adapters.api")
+            mod = importlib.import_module("adapters.api")
+            mod.registry()
+            return mod
         except Exception:                                 # pragma: no cover - adapters absent
             return None
         finally:
             sys.modules["adapters"] = stand_in
+    mod = sys.modules.get("adapters.api")
+    if mod is not None and hasattr(mod, "registry"):
+        return mod
     try:
         return importlib.import_module("adapters.api")
     except Exception:                                     # pragma: no cover - adapters absent
@@ -378,6 +390,12 @@ def detect_report(repo: str | Path) -> list[str]:
     was found, not which convention was nearly matched.  These lines are the
     ranked scores followed by one "looked for / found" line per kind, each
     naming the override that would settle it.
+
+    A detector that RAISED is printed too.  ``detect_all`` records the exception
+    under ``evidence["error"]`` with score 0, and a report that filtered on
+    ``score > 0`` swallowed exactly the reason the user is reading it for: the
+    repo was called unrecognisable while the crash that made it so went
+    unmentioned in the one place that exists to say why.
     """
     repo = Path(repo)
     api = _adapters_api()
@@ -385,11 +403,17 @@ def detect_report(repo: str | Path) -> list[str]:
         return ["  the adapters package is not importable; no convention could be measured"]
 
     out: list[str] = []
-    scored = {k: v for k, v in api.detect_all(repo).items() if v[0] > 0}
+    measured = api.detect_all(repo)
+    scored = {k: v for k, v in measured.items() if v[0] > 0}
     if scored:
         out.append("  scores:")
         for kind, (score, evidence) in sorted(scored.items(), key=lambda kv: (-kv[1][0], kv[0])):
             out.append(f"    {kind:<20s} {score:.2f}  {evidence.get('reason', '')}".rstrip())
+    failed = {k: v[1]["error"] for k, v in sorted(measured.items()) if v[1].get("error")}
+    if failed:
+        out.append("  failed:")
+        for kind, error in failed.items():
+            out.append(f"    {kind:<20s} could not be measured: {error}")
     out.append("  looked for:")
     for kind, lines in sorted(api.explain_all(repo).items()):
         for line in lines or [f"{kind}: nothing this convention keys on"]:
