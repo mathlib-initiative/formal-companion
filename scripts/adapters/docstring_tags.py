@@ -214,10 +214,19 @@ class DocstringTagsAdapter(Adapter):
         line = (f"docstring tags: {max(backticked, bare)}/{documented} documented files "
                 f"({backticked} backticked, {bare} bare)")
         if bare > backticked:
-            line += " -- set tag.require_backticks: false in adapter.yaml"
             if documented and bare / documented < MIN_BARE_FRACTION:
-                line += (f" (only {bare / documented:.0%} of them, below the "
-                         f"{MIN_BARE_FRACTION:.0%} that reads as a convention)")
+                # Below the floor the measurement KEEPS the backticked spelling,
+                # so `--adapter docstring_tags` writes require_backticks: true.
+                # Saying "set it false in adapter.yaml" without saying that read
+                # as a promise the tool would write false, and the user found
+                # true in the file it had just generated.
+                line += (f" -- {bare / documented:.0%} bare, below the "
+                         f"{MIN_BARE_FRACTION:.0%} that reads as a convention: "
+                         "`--adapter docstring_tags` writes tag.require_backticks: true, "
+                         "edit it to false in the generated adapter.yaml")
+            else:
+                line += (" -- the bare spelling is the habit here, so "
+                         "`--adapter docstring_tags` writes tag.require_backticks: false")
         return [line]
 
     # -- config ------------------------------------------------------------
