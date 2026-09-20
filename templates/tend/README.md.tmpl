@@ -19,6 +19,18 @@ recording the prompt shas that were actually used.
 (`scripts/run/` in the skill); `.tend/` holds the `tend-agent` fallback configuration, used only
 when the bridge is `tend-agent`.
 
+The gate takes the worker's task id from `$TEND_TASK_ID` and refuses a contribution that rewrites
+another task's findings file. Whether tend exports that variable into a validation command's
+environment is **unverified**: read the gate's `changed files:` line on the first task of the smoke
+test below — `ownership checked against task <id>` means it does, and `ownership: single-stem rule`
+means it does not, and only the weaker rule (one task's pair per contribution) is running.
+
+Both gate commands in `config.yaml` are the same argv, and `batched_merge: true` means the
+pre-merge change set carries one findings/task pair **per batched task**. So the stem count refuses
+several stems only when one of the paths was already on `{{merge_target_branch}}`: a batch of new
+pairs merges, and a contribution that rewrites or empties a neighbour's landed pair is still refused
+by name.
+
 Start with a **1/1 smoke test** and watch one task through worker → gate → reviewer → merge
 before raising the limits:
 

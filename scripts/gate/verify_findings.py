@@ -579,9 +579,10 @@ class GateConfig:
                 # own heading in the pinned text when this is absent, so nothing
                 # has to ship beside gate.json, and that fallback is what leaves 26
                 # of the baseline's 3,019 quotes unplaceable.  ``presets.
-                # source_block`` passes the map through; no caller in the tree
-                # fills it in yet (see the handoff note on plan_run.py and
-                # pair.py), so every run today binds by the heading search.
+                # source_block`` passes the map through and ``presets.item_pages``
+                # builds it; `cf plan-run`, `cf pair` and `cf harvest` fill it from
+                # the source's own items.json, and a corpus imported against a
+                # source this workspace never prepared still binds by the heading.
                 "item_pages": dict(body.get("item_pages") or {}),
             }
         self.repos: list[str] = list(data.get("repos") or [])
@@ -1000,12 +1001,29 @@ def _validate_disagreement(
             f"{where}: kind {kind} is mechanical-only — it may only come from anchor_check.py"
         )
 
-    if cfg.require_finding_id:
+    # A finding_id that is PRESENT is always recomputed and compared, on every
+    # preset.  `require_finding_id` is off for the five runnable presets because
+    # nothing tells a worker how to compute a sha256 and no helper ships with the
+    # gate, so demanding the field would fail every task for a field no prompt
+    # asks for -- but that left the comparison dead on a real fleet, and a run
+    # that wrote `"finding_id": "00"*32` on every row had it stored verbatim.
+    # Measured over the imported baseline: 347 of 347 defect rows carry an id
+    # after convert_v1 and every one matches, so nothing landed is refused.
+    got = g.get("finding_id")
+    if cfg.require_finding_id or got:
         want = finding_id(run_id, source_id, doc.get("item", ""),
                           str(kind), [d for d in decls if isinstance(d, str)])
-        got = g.get("finding_id")
         if not got:
-            errs.append(f"{where}: missing finding_id")
+            # naming the expected id is what makes the requirement answerable:
+            # there is no other way to learn it from inside a worktree.
+            errs.append(f"{where}: missing finding_id (this row's is {want})")
+        elif not isinstance(got, str):
+            # Reading the field on every preset means its TYPE is the worker's
+            # too, and `got[:12]` on a JSON number or object is a traceback out
+            # of `cf harvest`, `cf pair` and the tend validation command where
+            # the gate owes a named refusal instead.
+            errs.append(f"{where}: finding_id must be the 64-character hex string "
+                        f"sha256(run_id, source_id, item, kind, sorted decls), got {got!r}")
         elif got != want:
             errs.append(f"{where}: finding_id {got[:12]}… != computed {want[:12]}…")
     return errs
@@ -1175,11 +1193,30 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     its own pair and removes nothing.  ``task_id`` (the worker's own, from
     ``--task-id`` or ``TEND_TASK_ID``) requires every touched stem to be that
     task's, which is what catches emptying a neighbour's findings file.
+
+    With no ``task_id`` the SINGLE-STEM rule stands in for it: a contribution may
+    touch the pair of exactly one stem, so two stems are refused by name.  It is
+    weaker than the ownership rule — it cannot tell whose stem the one stem is —
+    but it is the half that works when nobody knows the task id, and whether tend
+    exports ``TEND_TASK_ID`` into a validation command's environment has never
+    been verified against a running orchestrator.
+
+    The count is ADDITION-AWARE, because the tend config runs this same argv for
+    the per-contribution ``validation_commands`` and for the
+    ``pre_merge_validation_commands`` of a ``batched_merge: true`` root: a batched
+    pre-merge change set carries one findings/task pair per batched task, so a
+    bare stem count would refuse the whole batch and no flag could relax it.  A
+    change set in which every touched path is newly ADDED is therefore allowed to
+    carry several stems; one that rewrites, empties, deletes or renames a path
+    that was already on the base branch is still refused by name, which is the
+    case the rule exists for.  A caller that passes a bare set of paths knows no
+    statuses, so it keeps the strict count.
     """
     statuses = dict(paths) if isinstance(paths, dict) else {}
     problems: list[str] = []
     written: set[str] = set()
     tasks: set[str] = set()
+    seen: set[str] = set()
     for p in sorted(set(paths)):
         status = statuses.get(p, "")
         parts = p.split("/")
@@ -1193,6 +1230,7 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
         else:
             problems.append(f"changed path {p!r} is outside findings/<id>.json and tasks/<id>.yaml")
             continue
+        seen.add(stem)
         if status in ("D", "R"):
             gone = "deleted" if status == "D" else "renamed away"
             problems.append(
@@ -1207,9 +1245,37 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
             )
     for stem in sorted(written - tasks):
         problems.append(f"findings/{stem}.json has no tasks/{stem}.yaml in the same change set")
+    if not task_id and len(seen) > 1:
+        # Only a path that was already on the base branch makes a second stem a
+        # refusal: see the ADDITION-AWARE paragraph above — a batched pre-merge
+        # change set is many stems of pure additions, and refusing it would stop
+        # every batched merge.
+        touched = sorted(p for p in set(paths) if statuses.get(p, "") != "A")
+        if touched:
+            problems.append(
+                f"changed paths belong to {len(seen)} tasks ({', '.join(sorted(seen))}) and no "
+                f"task id says which stem is this worker's, and this contribution did not add "
+                f"{', '.join(touched)} — a contribution writes one findings/<id>.json and one "
+                f"tasks/<id>.yaml; pass --task-id <id> (or export TEND_TASK_ID) to check "
+                f"ownership instead of counting stems"
+            )
     if not written and not allow_empty:
         problems.append("no findings file was written")
     return problems
+
+
+def ownership_line(task_id: str) -> str:
+    """Which ownership rule judged a passing contribution, for the OK line.
+
+    Both gate entry points print it, and neither may imply the other's rule ran:
+    with a task id every touched stem had to be that task's, and without one only
+    the single-stem count did — and that count lets a batched pre-merge change set
+    of pure additions through, so it is the weaker half in two ways, not one.
+    """
+    if task_id:
+        return f"ownership checked against task {task_id}"
+    return ("ownership: single-stem rule (no task id); pass --task-id or export "
+            "TEND_TASK_ID for the full check")
 
 
 def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[str]]:
@@ -1299,7 +1365,8 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("TEND_TASK_ID", ""),
         help="with --changed-files: the worker's own task id, so a contribution that "
              "touches another task's findings/<id>.json or tasks/<id>.yaml is refused "
-             "(default: $TEND_TASK_ID)",
+             "(default: $TEND_TASK_ID). Without one only the single-stem rule runs: "
+             "two stems are refused, but nothing can tell whose the one stem is",
     )
     ap.add_argument(
         "--allow-empty",
@@ -1395,13 +1462,11 @@ def main(argv: list[str] | None = None) -> int:
             f"{ops}; {bind})"
         )
         # The ownership rule is the half of the changed-files check that catches
-        # emptying a neighbour's findings file, and it is silent without a task
-        # id: say so here, because this is the invocation the tend config uses.
+        # emptying a neighbour's findings file, and without a task id only the
+        # weaker single-stem rule ran: say which one judged this contribution,
+        # because this is the invocation the tend config uses.
         if args.changed_files:
-            owner = (f"ownership checked against task {args.task_id}" if args.task_id else
-                     "OWNERSHIP UNCHECKED — pass --task-id $TEND_TASK_ID so a contribution "
-                     "that rewrites another task's findings file is refused")
-            print(f"  changed files: {owner}")
+            print(f"  changed files: {ownership_line(args.task_id)}")
     return EXIT_OK
 
 

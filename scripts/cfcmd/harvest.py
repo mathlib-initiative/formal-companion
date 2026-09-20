@@ -192,10 +192,12 @@ def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
                          f"{exc.hint or ''}".strip())
                 return None
         result = gate_mod.gate_corpus(dest, cfg)
-        if not result.get("files"):
-            # A gate asked to validate a directory and given nothing to validate
-            # has not passed anything: `files: 0, problems: [], ok: True` is how
-            # an empty corpus used to receipt as complete.
+        if not result.get("files") and result.get("ok"):
+            # The rule itself lives in `gate_corpus`, so every caller inherits it;
+            # this is the backstop for a gate result that reached here from
+            # somewhere else still claiming ok on nothing.  `files: 0,
+            # problems: [], ok: True` is how an empty corpus used to receipt as
+            # complete.
             result = dict(result)
             result["ok"] = False
             result["problems"] = list(result.get("problems") or []) + [
@@ -205,6 +207,26 @@ def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
         return result
 
     return _run_gate
+
+
+def _source_item_pages(workspace, source_id: str) -> dict:
+    """``{item: pdf_page}`` for one source, or ``{}`` when it is not prepared.
+
+    An imported corpus is gated against a source this workspace may only have
+    partly prepared, so a missing or unreadable items.json leaves the gate with
+    its heading-search fallback rather than failing the harvest.
+    """
+    from plan import presets as presets_mod
+    from sources.prepare_source import items_index, load_items
+
+    path = workspace.paths.source_items(source_id)
+    if not path.exists():
+        return {}
+    try:
+        return presets_mod.item_pages(items_index(load_items(str(path.parent))))
+    except (OSError, ValueError, FileNotFoundError) as exc:
+        log.detail(f"  gate: {path} is unreadable ({exc}); quotes bind by heading search")
+        return {}
 
 
 def write_local_gate(workspace, dest: Path, *, run_id: str, preset: str, sources,
@@ -235,6 +257,10 @@ def write_local_gate(workspace, dest: Path, *, run_id: str, preset: str, sources
             "text_sha256": source.text_sha256,
             "images_dir": str(images) if obj.needs_images and images.is_dir() else None,
             "page_offset": source.offset,
+            # PINNED-TEXT pages (items.json `pdf_page`), which is what the gate
+            # binds a quote to; without them it falls back to searching the text
+            # for the item's own heading.
+            "item_pages": _source_item_pages(workspace, source_id),
         }
     # The quote gate compares every quote with the source TEXT.  A workspace that
     # has not prepared one cannot have a gate built for it, and a config naming a

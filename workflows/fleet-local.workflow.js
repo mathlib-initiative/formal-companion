@@ -124,7 +124,7 @@ const ADJ_SCHEMA = {
     source_sha: { type: 'string', description: 'exactly `' + (C.source_sha || '') + '`' },
     item: { type: 'string' },
     book_located: { type: 'boolean', description: 'you found and read the actual passage in the book text' },
-    book_passage_quote: { type: 'string', description: 'VERBATIM 1-3 sentences from the book (machine-verified)' },
+    book_passage_quote: { type: 'string', description: 'VERBATIM 1-2 sentences from the book, at most 600 characters (machine-verified)' },
     matches: { type: 'array', items: { type: 'object', required: ['concept', 'decls', 'verdict'], properties: {
       concept: { type: 'string' },
       decls: { type: 'array', items: { type: 'object', required: ['repo', 'decl'], properties: {
@@ -140,7 +140,7 @@ const ADJ_SCHEMA = {
         repos_involved: { type: 'array', items: { type: 'string' } },
         faithful: { type: 'array', items: { type: 'string' }, description: 'every repo whose statement IS faithful here (a LIST, possibly empty)' },
         unfaithful_decls: { type: 'array', items: { type: 'string' }, description: 'repo:decl for each side judged unfaithful' },
-        book_quote: { type: 'string', description: 'VERBATIM from the book -- the sentence that decides it' },
+        book_quote: { type: 'string', description: 'VERBATIM from the book -- the sentence that decides it, at most 600 characters' },
         witness: { type: 'object', properties: {
           object: { type: 'string', description: 'the concrete object or instance that separates the two statements' },
           why: { type: 'string', description: 'why it satisfies one and not the other' },
@@ -191,13 +191,14 @@ ${t.note ? 'ITEM NOTE: ' + t.note : ''}
 Procedure:
 1. Pull this item's rows from the statement tables above. List every declaration from every repository.
 2. Find the item in the book and read the FULL passage (statement, hypotheses, any "Let ..." preamble, sub-parts).
-   Quote 1-3 sentences VERBATIM into book_passage_quote -- this is verified mechanically, so copy exactly.
+   Quote 1-2 sentences VERBATIM into book_passage_quote, at most 600 characters -- this is verified mechanically, so copy
+   exactly. The gate records anything longer as over-long and refuses a quote over 3,000 characters.
 3. Match declarations by mathematical concept. One book item often contains several concepts and one repository may
    split it differently. Unmatched declarations go in coverage_notes, not disagreements.
 4. For each matched concept decide AGREE / CONVENTION_ONLY / CONTENT_DELTA (or SINGLE_SOURCE_OK / SINGLE_SOURCE_DELTA /
    NO_DEFECT_FOUND in the one-repository modes). Be precise about what differs.
 5. For every content-level delta write a disagreement: which repositories, which are faithful (a LIST), which
-   declarations are unfaithful (repo:decl), the deciding book sentence VERBATIM, your reasoning, severity, a concrete
+   declarations are unfaithful (repo:decl), the deciding book sentence VERBATIM (at most 600 characters), your reasoning, severity, a concrete
    fix${GATE.witness_required ? ', and a WITNESS object -- required in this mode' : ''}.
 6. If you cannot locate the passage, set book_located=false and say why. Do not guess the book's wording.
 7. Stamp the record: schema_version ${SCHEMA_VERSION}, run_id \`${A.run_id || ''}\`, source_id \`${C.source_id || ''}\`,

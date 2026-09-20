@@ -70,13 +70,20 @@ class Preset:
     max_reviewers: int = 4
     # gate
     kind_rules: dict[str, dict[str, Any]] = field(default_factory=dict)
+    #: demand a ``finding_id`` on every defect row.  True only for `mechanical`,
+    #: whose rows are written by this tool.  A fleet worker is never asked for one
+    #: (no prompt teaches the hash and no helper ships with the gate), and the
+    #: corpus's authority for the id is ``harvest.tally``'s recompute, which keeps
+    #: a disagreeing stored value as ``finding_id_stored``.  The gate still
+    #: recomputes and refuses an id that IS written and is wrong, on every preset.
     require_finding_id: bool = False
     #: demand a verbatim book_passage_quote on every document.  Off for
     #: `mechanical`: a detector never read the book's prose.
     require_passage_quote: bool = True
     #: run the gate's operator pass (a flipped <=/>=/=/!= is refused).  Off only
     #: for the two *-legacy presets: the imported 2011-draft corpus carries
-    #: pdftotext artifacts in two of its 3,019 quotes that predate the check.
+    #: pdftotext artifacts in 5 of its 3,019 quotes that predate the check (2 was
+    #: the old independent window search; 5 is the anchored pass that replaced it).
     check_operators: bool = True
     legacy: bool = False
     note: str = ""
@@ -337,6 +344,27 @@ def source_block(spec: "Mapping[str, Any] | str") -> dict:
     }
 
 
+def item_pages(items: "Mapping[str, Any] | None") -> dict[str, int]:
+    """``{item: pdf_page}`` for a gate source block, from an items index.
+
+    ``items`` is ``{item label: row}`` -- ``sources.prepare_source.items_index``
+    over a source's ``items.json``, or the same shape a caller already holds.
+    The value taken is ``pdf_page`` and never ``page``: ``prepare_source`` writes
+    both (``page = pdf_page - offset``), the gate compares this number against
+    the pages it split the PINNED TEXT into, and handing it the printed page
+    would place every item of an offset source that many pages from its own
+    quotes and refuse real findings.  Rows with no ``pdf_page`` are left out, so
+    the gate falls back to its heading search for them rather than binding to 0.
+    """
+    out: dict[str, int] = {}
+    for item, row in dict(items or {}).items():
+        page = row.get("pdf_page") if isinstance(row, dict) else None
+        if isinstance(page, bool) or not isinstance(page, int) or page <= 0:
+            continue
+        out[str(item)] = int(page)
+    return out
+
+
 def gate_config(
     preset: Preset,
     *,
@@ -348,8 +376,8 @@ def gate_config(
     """Build the ``gate.json`` the out-of-tree gate reads.
 
     ``sources`` maps ``source_id`` -> ``{text, sha256, text_sha256, images_dir,
-    page_offset, item_pages}`` (docs/design/multi-source-model.md S6.2, plus the
-    ``item_pages`` map the spec's five keys predate).  It is a MAP, not a single
+    page_offset, item_pages}`` (docs/design/multi-source-model.md S6.2).  It is a
+    MAP, not a single
     book, because a run may span more than one source and the gate picks the text
     to check a quote against by the document's own ``source_id`` -- checking every
     quote against one concatenated text would let a quote from the 2011 draft pass

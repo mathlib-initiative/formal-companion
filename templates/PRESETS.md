@@ -171,7 +171,9 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
    weaken its own gate. A second command, `check_changed_files.py`, refuses any contribution that
    touches anything but `findings/<task>.json` and `tasks/<task>.yaml`.
 2. **`gate.json` replaces the hard-wired constants**: a `sources` block (one entry per source the
-   run touches: text path, `sha256`, `text_sha256`, page offset, images dir), the repo list,
+   run touches: text path, `sha256`, `text_sha256`, page offset, images dir, and `item_pages` —
+   `{item: pdf_page}` of the pinned text, which is how a quote is bound to the page its item is
+   stated on), the repo list,
    KINDS, VERDICTS, severities, witness requirement and the per-kind rule matrix. The gate picks
    the text by the document's `source_id`, so one run can span more than one source without ever
    checking a quote against the wrong book.
@@ -182,6 +184,21 @@ default : everything else            late sections = {1.5, 1.6, 1.7}
 4. **`faithful` is a list**, `witness` is an object, `source_id` + `source_sha` are stamped, and
    `finding_id = sha256(run_id, source_id, item, kind, sorted(unfaithful_decls))` — five parts,
    because an item is the pair `(source_id, item)`.
+   **Who computes it.** `require_finding_id` (the field must be PRESENT) is on for `mechanical`
+   alone, whose rows this tool writes. No runnable preset demands it: no prompt teaches an agent
+   the hash, no helper ships beside the gate, and a required field nobody can produce would fail
+   every task. The corpus's authority for the id is `harvest.tally`'s recompute, which keeps a
+   disagreeing stored value as `finding_id_stored` and reports it as a
+   `finding_id_mismatches` row. What the gate does enforce on **every** preset is that an id that
+   IS written is the right one: it recomputes and refuses a present-but-wrong `finding_id`, so the
+   recovered run that stamped `"finding_id": "00…00"` on every row would now be rejected rather
+   than stored verbatim. That is **every** preset including the two `*-legacy` ones, where
+   `cf harvest --no-gate` is the escape for an import whose stored ids are known-wrong — so a
+   re-import of such a corpus lands with `harvest.tally`'s `finding_id_stored` /
+   `finding_id_mismatches` record rather than being refused. A value that is present but is not a
+   string is refused the same way, by name, because reading a worker-written field means its type is
+   the worker's too. Measured over the imported baseline: 347 of 347 defect rows carry an id
+   after `convert_v1.py` and all 347 match, so nothing already landed is refused.
 5. **`NO_WEAKNESS_FOUND` is folded into `NO_DEFECT_FOUND`** by `convert_v1.py`; the v2 vocabulary
    has one no-defect verdict. The gate still accepts `NO_WEAKNESS_FOUND` when a legacy preset
    lists it, so the baseline corpus validates unchanged.

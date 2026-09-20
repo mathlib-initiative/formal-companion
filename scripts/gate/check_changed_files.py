@@ -28,7 +28,7 @@ import sys
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from verify_findings import (EXIT_GATE_BROKEN, EXIT_OK, EXIT_REJECTED,  # noqa: E402
-                            changed_entries, check_changed)
+                            changed_entries, check_changed, ownership_line)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,7 +39,10 @@ def main(argv: list[str] | None = None) -> int:
         "--task-id",
         default=os.environ.get("TEND_TASK_ID", ""),
         help="the worker's own task id: a contribution that touches another task's "
-             "findings/<id>.json or tasks/<id>.yaml is refused (default: $TEND_TASK_ID)",
+             "findings/<id>.json or tasks/<id>.yaml is refused (default: $TEND_TASK_ID). "
+             "Without one only the single-stem rule runs: two stems are refused once one "
+             "of the paths was already on --base (a batched pre-merge set of new pairs "
+             "passes), but nothing can tell whose the one stem is",
     )
     ap.add_argument(
         "--allow-empty",
@@ -63,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
         # its findings, so it gets its own exit code.
         return EXIT_GATE_BROKEN if errs else EXIT_REJECTED
     if not args.quiet:
-        owner = f" of task {args.task_id}" if args.task_id else " (no --task-id: ownership unchecked)"
-        print(f"OK: contribution touched only {len(entries)} allowed path(s){owner}")
+        print(f"OK: contribution touched only {len(entries)} allowed path(s) — "
+              f"{ownership_line(args.task_id)}")
     return EXIT_OK
 
 
