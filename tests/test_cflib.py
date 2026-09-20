@@ -1705,6 +1705,8 @@ class TestTemplates(unittest.TestCase):
             "name": "ours", "repo": "/r", "commit": "null", "adapter": "docstring_tags",
             "granularity": "item", "glob": '"**/*.lean"', "anchor": "docstring",
             "write_policy": "read_only", "owner": '"jack"',
+            # the tag spelling `cf onboard` MEASURES per repo, not a default
+            "require_backticks": "true",
             "source_default": PUBLISHED_ID, "source_map": ""})
         data = yamlio.load_yaml_minimal(text)
         self.assertEqual(data["sources"]["default"], PUBLISHED_ID)

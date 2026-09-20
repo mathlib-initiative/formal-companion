@@ -302,57 +302,157 @@ class DiscoveryResult:
 # S4.2 adapter detection
 # --------------------------------------------------------------------------
 
+def _adapters_api():
+    """The real ``adapters.api`` module, or None when there is none to import.
+
+    Imported lazily and never at module scope: nothing in cflib may depend on
+    ``scripts/adapters/`` being importable (``cflib.adapters_api``), and this is
+    the one place in discovery that reads it.
+
+    The dance around ``sys.modules`` is for a caller that has REPLACED the
+    top-level ``adapters`` module with a stand-in exposing only ``load()`` --
+    which is how the suite onboards a repo without running a real parser.  A
+    stand-in has no ``__path__``, so importing the submodule through it fails;
+    detection is core behaviour (`cf onboard` cannot even choose a parser without
+    it), so the real package is imported beside the stand-in and the stand-in is
+    handed straight back.
+
+    The stand-in is tested for FIRST, before the ``adapters.api`` shortcut, and
+    ``registry()`` is called while the real package is still in ``sys.modules``.
+    Both halves matter: any process that has imported the package at all leaves
+    ``adapters.api`` cached, so the shortcut used to return early and the dance
+    never ran; and ``registry()`` imports the shipped adapter modules on first
+    call, which needs a parent with a ``__path__``.  Getting either wrong makes
+    detection raise ``ImportError: cannot import name 'attribution_table' from
+    'adapters'`` for every test class that onboards behind a stand-in, and makes
+    a green suite a matter of which test file imported the adapters first.
+    """
+    import importlib
+    import sys
+
+    stand_in = sys.modules.get("adapters")
+    if stand_in is not None and not hasattr(stand_in, "__path__"):
+        del sys.modules["adapters"]
+        try:
+            mod = importlib.import_module("adapters.api")
+            mod.registry()
+            return mod
+        except Exception:                                 # pragma: no cover - adapters absent
+            return None
+        finally:
+            sys.modules["adapters"] = stand_in
+    mod = sys.modules.get("adapters.api")
+    if mod is not None and hasattr(mod, "registry"):
+        return mod
+    try:
+        return importlib.import_module("adapters.api")
+    except Exception:                                     # pragma: no cover - adapters absent
+        return None
+
+
+def _adapter_classes() -> dict:
+    """``{kind: Adapter class}``, or ``{}`` when the adapters package is absent."""
+    api = _adapters_api()
+    if api is None:                                       # pragma: no cover - adapters absent
+        return {}
+    try:
+        return dict(api.registry())
+    except Exception:                                     # pragma: no cover - broken adapter
+        return {}
+
+
 def detect_scores(repo: Path) -> dict[str, tuple[float, dict]]:
-    """``{kind: (score, evidence)}`` -- the shipped heuristics of design S4.2."""
+    """``{kind: (score, evidence)}`` -- design S4.2, one entry per REGISTERED kind.
+
+    The heuristic that recognises a convention lives on that convention's
+    adapter (``adapters.api.Adapter.detect``); this is the ranking loop over
+    them, so adding a convention is adding a file rather than editing the core
+    as well.  Only kinds an adapter actually implements can appear, which is the
+    behaviour change: a repo carrying a ``source-formalization-ledger.json`` used
+    to score a flat 0.9 for the unimplemented ``ledger_nodes``, win on the
+    maximum, and be refused at onboarding even when ``docstring_tags`` would
+    have read it.
+    """
     repo = Path(repo)
-    scores: dict[str, tuple[float, dict]] = {}
+    api = _adapters_api()
+    if api is None:                                       # pragma: no cover - adapters absent
+        warn("the adapters package is not importable: no convention can be detected")
+        return {}
+    return {kind: (score, evidence)
+            for kind, (score, evidence) in api.detect_all(repo).items() if score > 0}
 
-    overlay_data = sorted((repo / "pdf-overlay" / "data").glob("*.json")) if (
-        repo / "pdf-overlay" / "data").is_dir() else []
-    official = repo / "pdf-overlay" / "official-source.json"
-    if overlay_data and official.exists():
-        scores["attribution_table"] = (0.98, {
-            "reason": f"{len(overlay_data)} pdf-overlay/data/*.json + official-source.json",
-            "files": ["pdf-overlay/data", "pdf-overlay/official-source.json"]})
 
-    ledger = repo / "source-formalization-ledger.json"
-    if ledger.exists() and not (repo / "pdf-overlay").is_dir():
-        scores["ledger_nodes"] = (0.9, {"reason": "source-formalization-ledger.json, no pdf-overlay/",
-                                        "files": ["source-formalization-ledger.json"]})
+def detect_report(repo: str | Path) -> list[str]:
+    """Why every kind scored what it did -- the lines a refusal prints.
 
-    lean_files = _lean_files(repo, limit=400)
-    if len(lean_files) >= 20:
-        sampled = min(len(lean_files), 200)
-        tagged, documented = _count_tagged(lean_files, sample=sampled)
-        score = min(0.95, 0.6 + 0.35 * (tagged / documented if documented else 0.0))
-        if tagged:
-            scores["docstring_tags"] = (round(score, 4), {
-                "reason": f"{tagged} of {documented} sampled .lean files with a docstring open "
-                          f"one with a book tag ({sampled - documented} carry no docstring)",
-                "lean_files": len(lean_files), "sampled": sampled,
-                "documented": documented, "tagged": tagged})
-    return scores
+    Onboarding is the front door, and "cannot tell what kind of companion this
+    is" told the user only that it had failed: not what was looked for, not what
+    was found, not which convention was nearly matched.  These lines are the
+    ranked scores followed by one "looked for / found" line per kind, each
+    naming the override that would settle it.
+
+    A detector that RAISED is printed too.  ``detect_all`` records the exception
+    under ``evidence["error"]`` with score 0, and a report that filtered on
+    ``score > 0`` swallowed exactly the reason the user is reading it for: the
+    repo was called unrecognisable while the crash that made it so went
+    unmentioned in the one place that exists to say why.
+    """
+    repo = Path(repo)
+    api = _adapters_api()
+    if api is None:                                       # pragma: no cover - adapters absent
+        return ["  the adapters package is not importable; no convention could be measured"]
+
+    out: list[str] = []
+    measured = api.detect_all(repo)
+    scored = {k: v for k, v in measured.items() if v[0] > 0}
+    if scored:
+        out.append("  scores:")
+        for kind, (score, evidence) in sorted(scored.items(), key=lambda kv: (-kv[1][0], kv[0])):
+            out.append(f"    {kind:<20s} {score:.2f}  {evidence.get('reason', '')}".rstrip())
+    failed = {k: v[1]["error"] for k, v in sorted(measured.items()) if v[1].get("error")}
+    if failed:
+        out.append("  failed:")
+        for kind, error in failed.items():
+            out.append(f"    {kind:<20s} could not be measured: {error}")
+    out.append("  looked for:")
+    for kind, lines in sorted(api.explain_all(repo).items()):
+        for line in lines or [f"{kind}: nothing this convention keys on"]:
+            out.append(f"    {line}")
+    from .vocab import ADAPTER_KINDS
+
+    declared = sorted(set(ADAPTER_KINDS) - set(api.registry()))
+    if declared:
+        out.append(f"  declared in the vocabulary but not implemented in v1: {', '.join(declared)} "
+                   "(references/onboarding-contract.md)")
+    return out
 
 
 def detect_adapter(repo: str | Path) -> tuple[str, float, dict]:
     """Which convention this repo follows. Refuses a tie or a weak best guess."""
     repo = Path(repo)
     scores = detect_scores(repo)
+    kinds = sorted(_adapter_classes()) or sorted(scores)
+    flags = " | ".join(f"--adapter {k}" for k in kinds) or "--adapter <kind>"
     if not scores:
         raise DiscoveryError(
-            f"cannot tell what kind of companion {repo} is",
-            hint="pass `cf onboard <repo> --adapter docstring_tags|attribution_table`; "
+            "\n".join([f"cannot tell what kind of companion {repo} is"] + detect_report(repo)),
+            hint=f"pass one of `{flags}` to `cf onboard <repo>`; "
                  "see references/onboarding-contract.md for what each kind needs")
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1][0], kv[0]))
     (kind, (score, evidence)) = ranked[0]
     if len(ranked) > 1 and abs(ranked[1][1][0] - score) < 1e-9:
         raise DiscoveryError(
-            f"{repo}: {kind} and {ranked[1][0]} both score {score:.2f}",
-            hint="pass --adapter to say which convention to read")
+            "\n".join([f"{repo}: {kind} and {ranked[1][0]} both score {score:.2f}"]
+                      + detect_report(repo)),
+            hint=f"pass `--adapter {kind}` or `--adapter {ranked[1][0]}` to say which "
+                 "convention to read")
     if score < MIN_ADAPTER_CONFIDENCE:
         raise DiscoveryError(
-            f"{repo}: best adapter guess {kind} scores only {score:.2f}",
-            hint="pass --adapter to say which convention to read")
+            "\n".join([f"{repo}: best adapter guess {kind} scores only {score:.2f}, "
+                       f"below the {MIN_ADAPTER_CONFIDENCE} a guess has to clear"]
+                      + detect_report(repo)),
+            hint=f"pass `--adapter {kind}` to read it as that convention anyway, "
+                 f"or one of `{flags}`")
     evidence = dict(evidence)
     evidence["scores"] = {k: v[0] for k, v in scores.items()}
     return kind, score, evidence
@@ -384,41 +484,23 @@ def _walk(repo: Path, suffix: str, *, limit: int = 4000) -> list[Path]:
     return out
 
 
-def _lean_files(repo: Path, limit: int = 400) -> list[Path]:
-    """The repo's own .lean files, sorted (the score must not depend on readdir order)."""
+def lean_files(repo: Path, limit: int = 400) -> list[Path]:
+    """The repo's own .lean files, sorted (the score must not depend on readdir order).
+
+    Public because an adapter's :meth:`detect` needs it and the walk (which
+    prunes ``.lake/packages`` and the other vendor trees) belongs here, with the
+    rest of "read the repo", rather than being copied into every convention.
+    """
     out = [p for p in _walk(repo, ".lean", limit=limit * 4) if ".lake" not in p.parts]
     return sorted(out)[:limit]
 
 
-def _count_tagged(files: Sequence[Path], sample: int = 200) -> tuple[int, int]:
-    """``(files whose docstrings open with a book tag, files that HAVE a docstring)``.
-
-    The denominator counts only files that carry a docstring at all.  A file with
-    none is not evidence against the convention: tao-measure-lean has 154 Lean
-    files of which 112 are generated blueprint stubs with no docstring, and
-    counting those would score a repo whose every documented declaration is
-    tagged at 0.70 instead of 0.95.
-    """
-    try:
-        from adapters.itemtag import find_tag  # type: ignore
-    except Exception:                                    # pragma: no cover - adapters absent
-        find_tag = None
-    tagged = with_docstring = 0
-    for path in files[:sample]:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:                                   # pragma: no cover
-            continue
-        heads = [m.group(1).strip() for m in re.finditer(r"/--(.{0,120})", text, re.S)]
-        if not heads:
-            continue
-        with_docstring += 1
-        for head in heads:
-            if find_tag(head) if find_tag is not None else re.match(
-                    r"`?(?:[A-Z][a-z]{2,15}\s+\d+\.\d+|In-text)", head):
-                tagged += 1
-                break
-    return tagged, with_docstring
+def tex_files(repo: Path, subdir: str = "blueprint", limit: int = 400) -> list[Path]:
+    """The repo's ``<subdir>/**/*.tex``, sorted; empty when there is no such tree."""
+    root = Path(repo) / subdir
+    if not root.is_dir():
+        return []
+    return sorted(p for p in _walk(root, ".tex", limit=limit))[:limit]
 
 
 # --------------------------------------------------------------------------
@@ -443,9 +525,13 @@ def discover_sources(repo: str | Path, *, adapter: str | None = None) -> list[So
     claims += _s6_filesystem(repo)
     claims += _s7_citations(repo)
     if adapter:
-        bonus = {"attribution_table": ("official_source_json", "ledger_source"),
-                 "ledger_nodes": ("ledger_source",),
-                 "docstring_tags": ("formalization_yaml", "graph_json")}.get(adapter, ())
+        # The signals a convention owns are declared ONCE, on its adapter class
+        # (``PRIMARY_SIGNALS``), which is also what ranks the claims in
+        # ``Adapter.discover_sources``.  A second hand-written table here is how
+        # the two drifted apart: this one gave attribution_table no bonus for the
+        # `citation` signal its own class lists.
+        cls = _adapter_classes().get(adapter)
+        bonus = tuple(getattr(cls, "PRIMARY_SIGNALS", ()) or ()) if cls is not None else ()
         for claim in claims:
             if claim.signal in bonus:
                 claim.confidence = min(1.0, claim.confidence + 0.05)

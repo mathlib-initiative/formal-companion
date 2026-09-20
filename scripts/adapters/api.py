@@ -44,7 +44,7 @@ from cflib.hashing import sha256_file, sha256_text
 from . import yamlio
 
 __all__ = ["Adapter", "AdapterError", "SourceBinding", "load", "from_config", "register",
-           "registry", "sha_of_files"]
+           "registry", "detect_all", "explain_all", "sha_of_files"]
 
 _REGISTRY: dict[str, type["Adapter"]] = {}
 
@@ -58,10 +58,56 @@ def register(cls: type["Adapter"]) -> type["Adapter"]:
 
 
 def registry() -> dict[str, type["Adapter"]]:
-    """All known adapter kinds (imports the shipped adapters on first call)."""
-    if not _REGISTRY:
-        from . import attribution_table, docstring_tags  # noqa: F401
+    """All known adapter kinds; importing the shipped adapters is what registers them.
+
+    The imports are not guarded on ``_REGISTRY`` being empty.  They were, and a
+    caller that had already imported ONE adapter module (which registers it) then
+    got that one kind and no other, because the guard read the registry as
+    already populated -- so ``registry()`` reported a different set depending on
+    what had been imported first.  Re-importing a loaded module is a dict lookup.
+    """
+    from . import attribution_table, blueprint_tex, docstring_tags  # noqa: F401
+
     return dict(_REGISTRY)
+
+
+def detect_all(repo: str | Path) -> dict[str, tuple[float, dict]]:
+    """``{kind: (score, evidence)}`` -- every registered kind's own verdict.
+
+    The heuristic that recognises a convention lives on that convention's
+    adapter (:meth:`Adapter.detect`); this is the loop over them that
+    :func:`cflib.discovery.detect_scores` calls.  A kind the vocabulary names
+    but no adapter implements cannot appear here, which is the point: a repo
+    carrying a ``source-formalization-ledger.json`` used to be auto-classified
+    as the unimplemented ``ledger_nodes`` and refused at onboarding even when
+    ``docstring_tags`` would have read it.
+
+    A detector that raises is skipped with its exception recorded under
+    ``error``: one unreadable convention must not stop the others from scoring.
+    The recording is not decoration -- :func:`cflib.discovery.detect_report`
+    prints those lines under ``failed:``, because a crashed detector that leaves
+    no trace tells the user the repo is unrecognisable and hides the reason.
+    """
+    out: dict[str, tuple[float, dict]] = {}
+    for kind, cls in sorted(registry().items()):
+        try:
+            score, evidence = cls.detect(repo)
+        except Exception as exc:  # noqa: BLE001 - see the docstring
+            out[kind] = (0.0, {"error": f"{exc.__class__.__name__}: {exc}"})
+            continue
+        out[kind] = (round(float(score or 0.0), 4), dict(evidence or {}))
+    return out
+
+
+def explain_all(repo: str | Path) -> dict[str, list[str]]:
+    """``{kind: ["looked for / found" lines]}`` for a repo nothing claimed."""
+    out: dict[str, list[str]] = {}
+    for kind, cls in sorted(registry().items()):
+        try:
+            out[kind] = [str(line) for line in (cls.explain(repo) or [])]
+        except Exception as exc:  # noqa: BLE001 - a diagnostic must not raise
+            out[kind] = [f"{kind}: could not be measured ({exc.__class__.__name__}: {exc})"]
+    return out
 
 
 class Adapter(CoreAdapter):

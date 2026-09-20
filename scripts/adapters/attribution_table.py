@@ -93,6 +93,37 @@ class AttributionTableAdapter(Adapter):
     #: first by :meth:`discover_sources`; the rest still run.
     PRIMARY_SIGNALS = ("ledger_source", "official_source_json", "citation")
 
+    # -- detection (design S4.2) -------------------------------------------
+    #: The overlay layout is unambiguous -- a directory of region files NEXT TO
+    #: a file naming the source they were measured against is not something a
+    #: repo grows by accident -- so the score is a near-certainty and the
+    #: constant lives with the adapter that reads those files.
+    DETECT_SCORE = 0.98
+
+    @classmethod
+    def _overlay(cls, repo: str | Path) -> tuple[list, bool]:
+        """``(pdf-overlay/data/*.json, official-source.json exists)``."""
+        root = Path(repo)
+        data = root / "pdf-overlay" / "data"
+        files = sorted(data.glob("*.json")) if data.is_dir() else []
+        return files, (root / "pdf-overlay" / "official-source.json").exists()
+
+    @classmethod
+    def detect(cls, repo: str | Path) -> tuple[float, dict]:
+        files, official = cls._overlay(repo)
+        if not (files and official):
+            return 0.0, {}
+        return cls.DETECT_SCORE, {
+            "reason": f"{len(files)} pdf-overlay/data/*.json + official-source.json",
+            "files": ["pdf-overlay/data", "pdf-overlay/official-source.json"],
+        }
+
+    @classmethod
+    def explain(cls, repo: str | Path) -> list[str]:
+        files, official = cls._overlay(repo)
+        return [f"attribution table: pdf-overlay/data/*.json: {len(files)}; "
+                f"pdf-overlay/official-source.json: {'present' if official else 'absent'}"]
+
     # -- config ------------------------------------------------------------
     def validate_config(self) -> None:
         if not self.config.get("repo"):
