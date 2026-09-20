@@ -154,6 +154,10 @@ done
 check "planted defects it found"    "$(jget reports/score.all.json totals.true_positives)" "4"
 check "  and false positives"       "$(jget reports/score.all.json totals.false_positives)" "0"
 check "decoys reported"             "$(jget reports/score.all.json decoys_reported)" "0"
+# The key judges the 18 items the companions formalise; the booklet prints 28.
+# Nothing the mechanical tier emits lands on the other 10, and if something did
+# it would be counted here rather than charged against precision.
+check "reported outside the key"     "$(jget reports/score.all.json not_judged_reported)" "0"
 # The measurement the repo had no instrument for: the four defects no mechanical
 # rule can see are the four it misses, and the score says so out loud.
 check "the kinds it cannot see are missed, not hidden" \

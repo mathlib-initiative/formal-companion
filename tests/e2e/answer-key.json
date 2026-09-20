@@ -4,8 +4,24 @@
  "source_sha": "0de15de43744e8a5d2193833bcc7d7fe78a1cb9bc0d85b22c2e7ba700dda668e",
  "title": "Elementary Notes on Sets (generated fixture)",
  "fixture": "tests/e2e/make_pdf.py writes the booklet; tests/e2e/make_notes_repos.py writes notes-a and notes-b and plants the defects below with scripts/score/mutate.py.",
- "what_this_is": "The ground truth for the two synthetic companions: eight planted defects, three decoys that must not be reported, and every remaining locus marked clean. `cf score` joins findings to it on (source_id, repo, item, kind), which is run-independent, so the same key scores a model fleet and the model-free detector alike.",
- "what_this_is_not": "A measurement of any real companion. The defects here were planted by a script into a fixture; a score over it measures a configuration against this fixture and nothing else (references/method.md S10).",
+ "what_this_is": "The ground truth for the two synthetic companions over the 18 booklet items either of them formalises: eight planted defects, three decoys that must not be reported, and every remaining locus of those 18 items marked clean. `cf score` joins findings to it on (source_id, repo, item, kind), which is run-independent, so the same key scores a model fleet and the model-free detector alike.",
+ "what_this_is_not": "A measurement of any real companion. The defects here were planted by a script into a fixture; a score over it measures a configuration against this fixture and nothing else (references/method.md S10). Nor is it a judgement on the whole booklet: the 10 items under `not_judged` are outside both companions' scope and the key says nothing about them.",
+ "not_judged": {
+  "what": "Booklet items neither companion formalises, so no locus of theirs is judged either way. `cf score` marks a finding on one of them `item_in_key: false` and counts it in `not_judged_reported`, so it is visible as outside the measurement rather than quietly charged against precision.",
+  "why_none_exist_today": "The task universe is the 18 items above and `cf detect-proxies`' def-coverage ranges only over the 7 Definitions, all of which are formalised, so nothing the mechanical tier can emit lands here. A model fleet can, which is what the flag is for.",
+  "items": [
+   "Remark 1.1.7",
+   "Theorem 1.2.3",
+   "Corollary 1.2.4",
+   "Corollary 1.2.5",
+   "Example 1.2.8",
+   "Proposition 1.3.4",
+   "Theorem 1.3.5",
+   "Remark 1.3.8",
+   "Theorem 1.4.3",
+   "Example 1.4.5"
+  ]
+ },
  "how_to_reproduce": [
   "bash tests/e2e/synthetic.sh            # builds the workspace and scores it",
   "cf detect-proxies notes-a --stages tests/e2e/stages.anonymous-elementary-sets.json",

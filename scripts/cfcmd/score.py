@@ -16,8 +16,10 @@ It reads corpus documents only, so it works on the MECHANICAL rows `cf
 detect-proxies` and `cf pair` write with no model in the loop -- which is what
 makes the free detector's score reproducible by anyone.
 
-Writes ``reports/score.<run>.json``; ``--no-write`` prints only.  Exit code 2 is
-a user error; ``--fail-under <F1>`` turns a drop into exit code 1, for CI.
+Writes ``reports/score.<run>.json`` -- named after the run or the corpus
+directory when exactly one was given, ``score.all.json`` when several were;
+``--no-write`` prints only.  Exit code 2 is a user error; ``--fail-under <F1>``
+turns a drop into exit code 1, for CI.
 """
 from __future__ import annotations
 
@@ -71,7 +73,11 @@ def run(args) -> int:
         log.info(score_mod.render(result))
 
     if not args.no_write:
-        run_key = args.run[0] if (len(args.run) == 1 and not args.corpus) else "all"
+        # Named after the ONE source when there was one, whichever flag named it:
+        # `--corpus <dir>` twice in a workspace used to write score.all.json both
+        # times and the second overwrote the first with no warning.
+        keys = list(dirs)
+        run_key = keys[0] if len(keys) == 1 else "all"
         out = Path(paths.score_json(run_key))
         write_json(out, result, indent=1, sort_keys=True)
         log.detail(f"-> {out}")

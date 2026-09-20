@@ -20,7 +20,12 @@ What the numbers mean, and what they do not:
   because there is no denominator.  Recall is 0.0, which is a measurement;
 * a false positive that lands on a decoy is named as one, so "the fleet files
   CONVENTION differences as defects" is a countable claim rather than an
-  impression.
+  impression;
+* a key judges the loci it LISTS and no others.  A finding on an item no entry
+  judges is marked ``item_in_key: false`` and counted in
+  ``not_judged_reported``, next to the existing ``repo_in_key``, so a number
+  quoted off a key that covers part of a book cannot be read as a number over
+  the whole of it.
 """
 from __future__ import annotations
 
@@ -93,6 +98,11 @@ def score(rows: Iterable[Mapping], key: Mapping, *, kinds=None) -> dict:
             where = _entry_locus(entry, kinds)[:3]
             clean_at.setdefault(where, entry)
     keyed_repos = {str(e.get("repo") or "") for e in entries}
+    # A key judges the loci it lists and no others.  A finding on an item the key
+    # never judged is not evidence that the fleet was wrong -- it is outside the
+    # measurement -- so it is counted where a reader can see it rather than
+    # charged silently against precision.
+    keyed_loci = {_entry_locus(e, kinds)[:3] for e in entries}
 
     reported: dict[tuple, dict] = {}
     for row in rows:
@@ -133,6 +143,7 @@ def score(rows: Iterable[Mapping], key: Mapping, *, kinds=None) -> dict:
             "decoy_class": (decoy or {}).get("class", ""),
             "why_clean": (decoy or {}).get("why", ""),
             "repo_in_key": repo in keyed_repos,
+            "item_in_key": ident[:3] in keyed_loci,
         })
 
     misses = [
@@ -154,6 +165,7 @@ def score(rows: Iterable[Mapping], key: Mapping, *, kinds=None) -> dict:
         "by_kind": by_kind,
         "by_class": by_class,
         "decoys_reported": sum(1 for fp in false_positives if fp["on_decoy"]),
+        "not_judged_reported": sum(1 for fp in false_positives if not fp["item_in_key"]),
         "rows_read": sum(s["rows"] for s in reported.values()),
         "loci_reported": len(reported),
         "hits": hits,
@@ -231,5 +243,7 @@ def render(result: Mapping) -> str:
             tail = f" -- on the {fp['decoy_class']} decoy" if fp["on_decoy"] else ""
             if not fp["repo_in_key"]:
                 tail = " -- this repo is not in the answer key"
+            elif not fp["item_in_key"]:
+                tail = " -- the answer key does not judge this item"
             lines.append(f"  {fp['repo']} {fp['item']} {fp['kind']}{tail}")
     return "\n".join(lines)

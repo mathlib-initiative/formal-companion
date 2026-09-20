@@ -86,6 +86,26 @@ def booklet_items() -> list[str]:
     return ["%s %s" % (kind, number) for kind, number, _title, _body in make_pdf.ITEMS]
 
 
+#: the docstring tag `cf onboard`'s docstring_tags adapter reads off a module
+TAG_RE = re.compile(r"`(?P<item>[A-Z][A-Za-z]+ \d+(?:\.\d+)+)`")
+
+
+def tagged_items(*names: str) -> set:
+    """The book items these fixture companions tag, read off the fixture itself.
+
+    The expectation for "which items are in the task universe" has to come from
+    somewhere other than the document under test: two fields of one
+    reconciliation report agreeing with each other says nothing about either.
+    """
+    out = set()
+    for name in names:
+        for _module, text, _record in fixture.modules_for(name):
+            found = TAG_RE.search(text)
+            if found:                       # an untagged helper, or a removed tag
+                out.add(found.group("item"))
+    return out
+
+
 def run_cf(*argv) -> tuple[int, str]:
     """Run one cf command in-process; returns (exit code, stdout)."""
     import cf as cf_main
@@ -368,6 +388,20 @@ class AnswerKeyMatchesTheFixtureTests(unittest.TestCase):
             out.append(mutate.parse_declaration(text).name)
         return out
 
+    def test_the_key_says_which_booklet_items_it_does_not_judge(self):
+        """The boundary of the measurement, recorded rather than implied.
+
+        The key judges the 18 items the companions formalise.  The booklet prints
+        28, and a score quoted off this key is not a statement about the other
+        10 -- so they are listed, and `cf score` flags a finding on one of them
+        ``item_in_key: false`` instead of charging it against precision.
+        """
+        judged = {e["item"] for e in self.key["entries"]}
+        self.assertEqual(judged, tagged_items("notes-a", "notes-b"))
+        self.assertEqual(self.key["not_judged"]["items"],
+                         [i for i in booklet_items() if i not in judged])
+        self.assertTrue(self.key["not_judged"]["what"])
+
     def test_the_key_names_only_items_the_booklet_prints(self):
         problems = key_mod.check_against_items(
             self.key, booklet_items(),
@@ -491,6 +525,25 @@ class ScoreArithmeticTests(unittest.TestCase):
         rows = [self._row("notes-a", "Definition 1.3.2", "PROXY")]
         result = score_mod.score(rows, self.KEY)
         self.assertFalse(result["false_positives"][0]["repo_in_key"])
+
+    def test_an_item_the_key_never_judges_is_flagged_not_silently_charged(self):
+        """A key covers the loci it lists; a number off it is about those loci.
+
+        Here the repo IS in the key and the item is not, which is the case a
+        partial key produces: a COVERAGE row about a book item no companion was
+        ever expected to formalise.
+        """
+        rows = [self._row("notes-b", "Remark 1.1.7", "COVERAGE")]
+        result = score_mod.score(rows, self.KEY)
+        fp = result["false_positives"][0]
+        self.assertTrue(fp["repo_in_key"])
+        self.assertFalse(fp["item_in_key"])
+        self.assertEqual(result["not_judged_reported"], 1)
+        self.assertIn("the answer key does not judge this item", score_mod.render(result))
+        # a locus the key does judge is not flagged
+        judged = score_mod.score([self._row("notes-b", "Lemma 1.2.2", "CONTENT")], self.KEY)
+        self.assertTrue(judged["false_positives"][0]["item_in_key"])
+        self.assertEqual(judged["not_judged_reported"], 0)
 
     def test_two_runs_reporting_one_defect_are_one_true_positive(self):
         """The join has no run id in it, which is what makes a key reusable."""
@@ -860,6 +913,22 @@ class SyntheticPipelineTests(unittest.TestCase):
             run_cf("score", "--run", "no-such-run", "--answer-key", str(ANSWER_KEY),
                    "--workspace", str(self.ws))
         self.assertIn("no-such-run", str(caught.exception))
+
+    def test_a_corpus_scoring_is_named_after_the_corpus(self):
+        """Two `--corpus` scorings in one workspace must not overwrite each other.
+
+        The report used to be ``score.all.json`` for anything but a single
+        ``--run``, so the second corpus silently replaced the first.
+        """
+        copy = pathlib.Path(tmp_dir("cf-corpus-")) / "notes-a-mechanical"
+        shutil.copytree(self.ws / "corpus" / "detect-notes-a-cheap", copy)
+        rc, _out = run_cf("score", "--corpus", str(copy), "--answer-key",
+                          str(ANSWER_KEY), "--workspace", str(self.ws), "-q")
+        self.assertEqual(rc, 0)
+        named = self.ws / "reports" / "score.notes-a-mechanical.json"
+        self.assertTrue(named.exists(), sorted(p.name for p in (self.ws / "reports").iterdir()))
+        self.assertEqual(json.loads(named.read_text(encoding="utf-8"))["totals"]
+                         ["true_positives"], 1)
 
     def test_fail_under_turns_a_drop_into_a_nonzero_exit(self):
         rc, _out = run_cf("score", "--run", "detect-notes-b-cheap", "--answer-key",
