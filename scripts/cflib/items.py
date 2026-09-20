@@ -27,7 +27,9 @@ sub-part is carried separately so ``Exercise 1.1.6(i)`` and
 How many numeric segments a label may carry is the SOURCE's numbering, not a
 constant: ``Theorem 7``, ``Theorem 3.4`` and ``Lemma 2.3.4.1`` are all real
 book numbering, and ``cflib.inference.infer_numbering`` reads a source's own
-headings to find out which one it uses.  Callers that know the source pass it
+headings to find out which one it uses, and ``cf sources set <id>
+numbering=<min>,<max>`` is the override for a book whose deeper labels are too
+few to be inferred from.  Callers that know the source pass it
 in; ``DEFAULT_NUMBERING`` is what a caller that does not know gets, and it is
 the two-or-three-segment grammar this parser has always applied.  A label
 DEEPER than the numbering allows is rejected (``too_many_segments``), never
@@ -90,22 +92,34 @@ def numbering_range(numbering=None) -> tuple[int, int]:
     Accepts what a source records: ``None`` (use :data:`DEFAULT_NUMBERING`), a
     ``(min, max)`` pair, a single int (exactly that many), or the mapping
     ``items.json``/``meta.json`` store (``{"min_segments": …, "max_segments":
-    …}``).  Out-of-range values are clamped rather than raised on, because this
-    reads a number off disk that a human may have edited.
+    …}``).  Unusable values -- out of range, non-numeric, an EMPTY mapping --
+    fall back rather than raise, because this reads a number off disk that a
+    human may have edited.
+
+    The empty mapping is the case that matters: ``items.json`` stores
+    ``numbering: {}`` whenever the preparing host had no ``cflib`` to infer
+    with, and in exactly that case the table was built with
+    :data:`DEFAULT_NUMBERING`.  Collapsing ``{}`` onto its ``min_segments``
+    would tell a caller that reads the stored value the source is numbered
+    ``(2, 2)``, and every three-segment label in the baseline corpus would come
+    back ``too_many_segments`` -- a mass reject out of a missing default.
     """
-    if numbering is None:
-        lo, hi = DEFAULT_NUMBERING
-    elif isinstance(numbering, int):
-        lo = hi = numbering
-    elif isinstance(numbering, dict):
-        lo = int(numbering.get("min_segments") or DEFAULT_NUMBERING[0])
-        hi = int(numbering.get("max_segments") or lo)
-    else:
-        seq = tuple(numbering)
-        lo = int(seq[0])
-        hi = int(seq[1]) if len(seq) > 1 else lo
-    lo = max(1, min(int(lo), MAX_NUMBER_SEGMENTS))
-    hi = max(lo, min(int(hi), MAX_NUMBER_SEGMENTS))
+    if not numbering:
+        return DEFAULT_NUMBERING
+    try:
+        if isinstance(numbering, int):
+            lo = hi = numbering
+        elif isinstance(numbering, dict):
+            lo = int(numbering.get("min_segments") or DEFAULT_NUMBERING[0])
+            hi = int(numbering.get("max_segments") or lo)
+        else:
+            seq = tuple(numbering)
+            lo = int(seq[0])
+            hi = int(seq[1]) if len(seq) > 1 else lo
+        lo = max(1, min(int(lo), MAX_NUMBER_SEGMENTS))
+        hi = max(lo, min(int(hi), MAX_NUMBER_SEGMENTS))
+    except (TypeError, ValueError):
+        return DEFAULT_NUMBERING
     return lo, hi
 
 
@@ -258,7 +272,9 @@ def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS,
                             {"kind": kind, "rest": rest[:60], "min_segments": low})
     if len(levels) > high:
         return None, Reject(raw, REJECT_TOO_MANY_SEGMENTS,
-                            {"kind": kind, "number": num.group(1), "max_segments": high})
+                            {"kind": kind, "number": num.group(1),
+                             "min_segments": low, "max_segments": high,
+                             "segments": len(levels)})
     chapter = levels[0]
     section = levels[1] if len(levels) > 1 else None
     number = levels[2] if len(levels) > 2 else None
@@ -319,9 +335,14 @@ def parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS, *, numbering=None) -> 
         hint = ("fix the tag in the companion repo, or add the kind to "
                 "workspace.yaml sources.<id>.kinds")
         if reject.reason == REJECT_TOO_MANY_SEGMENTS:
+            # `cf sources refresh --force` would NOT settle this: it re-runs
+            # infer_numbering over the same text and reaches the same depth.
+            # The only thing that can say "the book really numbers this deep"
+            # is the override, which stamps `numbering_method: manual`.
             hint = (f"this source's numbering has at most "
                     f"{reject.context.get('max_segments')} numeric segments; if the book really "
-                    f"numbers this deep, re-prepare it: cf sources refresh <id> --force")
+                    f"numbers this deep: cf sources set <id> numbering="
+                    f"{reject.context.get('min_segments')},{reject.context.get('segments')}")
         raise ItemGrammarError(raw, reject.reason, hint=hint)
     return item
 
