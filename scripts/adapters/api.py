@@ -84,6 +84,9 @@ def detect_all(repo: str | Path) -> dict[str, tuple[float, dict]]:
 
     A detector that raises is skipped with its exception recorded under
     ``error``: one unreadable convention must not stop the others from scoring.
+    The recording is not decoration -- :func:`cflib.discovery.detect_report`
+    prints those lines under ``failed:``, because a crashed detector that leaves
+    no trace tells the user the repo is unrecognisable and hides the reason.
     """
     out: dict[str, tuple[float, dict]] = {}
     for kind, cls in sorted(registry().items()):
