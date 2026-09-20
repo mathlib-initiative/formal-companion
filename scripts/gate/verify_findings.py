@@ -1017,6 +1017,13 @@ def _validate_disagreement(
             # naming the expected id is what makes the requirement answerable:
             # there is no other way to learn it from inside a worktree.
             errs.append(f"{where}: missing finding_id (this row's is {want})")
+        elif not isinstance(got, str):
+            # Reading the field on every preset means its TYPE is the worker's
+            # too, and `got[:12]` on a JSON number or object is a traceback out
+            # of `cf harvest`, `cf pair` and the tend validation command where
+            # the gate owes a named refusal instead.
+            errs.append(f"{where}: finding_id must be the 64-character hex string "
+                        f"sha256(run_id, source_id, item, kind, sorted decls), got {got!r}")
         elif got != want:
             errs.append(f"{where}: finding_id {got[:12]}… != computed {want[:12]}…")
     return errs
