@@ -342,12 +342,13 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
     ref = workspace.source(source_id)
     out_dir = workspace.paths.source_dir(source_id)
     if ref.pdf is None or not Path(ref.pdf).exists():
-        log.warn(f"{source_id}: no PDF on this machine -- text, items, the quote gate and the "
-                 f"anchor check cannot run")
-        log.info(f"         once you have it: cf sources add <pdf> --for <companion>")
+        log.warn(f"{source_id}: no source file on this machine -- text, items, the quote gate "
+                 f"and the anchor check cannot run")
+        log.info(f"         once you have it: cf sources add <source> --for <companion>")
         return
     from sources import prepare_source
 
+    body = (workspace.data.get("sources") or {}).get(source_id) or {}
     payload = prepare_source.prepare(
         str(ref.pdf), str(out_dir),
         source_id=source_id,
@@ -357,6 +358,10 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
                 else None),
         declared=declared_offset,
         kinds=list(ref.kinds) if ref.kinds and ref.registry != "local" else None,
+        # the numbering depth is inferred like the kinds are, and overridden the
+        # same way: `cf sources set <id> numbering=3,4` for a book whose deeper
+        # labels are too few for the inference to see.
+        segments=body.get("numbering") or None,
         edition=ref.edition,
         expect_sha=ref.sha256 or "",
         force=force,
