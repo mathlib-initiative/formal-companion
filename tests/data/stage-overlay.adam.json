@@ -1,0 +1,68 @@
+{
+ "_note": "Test fixture: the COMPANION half of the stage table for the companion the recorded adam-detector reports were produced from. It used to sit inside scripts/detect/mathlib_stages/tao-measure-gsm126-published.json, which is a table about the WORK; in a real workspace it lives at companions/<name>/stage-overlay.json (templates/detect/stage-overlay.json.tmpl is the shape). It is kept here so the broad-scan regression still pins the recorded report.",
+ "companion": "adam",
+ "source_id": "tao-measure-gsm126-published",
+ "_repo_module_stages_note": "ORDERED; FIRST match wins. Ported verbatim from adam-detector/analyze2.py MOD_SEC (L40-43).",
+ "repo_module_stages": [
+  [
+   "MeasureTheory.Tao.Elementary",
+   1
+  ],
+  [
+   "MeasureTheory.Tao.Jordan",
+   1
+  ],
+  [
+   "MeasureTheory.Tao.Riemann",
+   1
+  ],
+  [
+   "MeasureTheory.Tao.Lebesgue",
+   2
+  ],
+  [
+   "MeasureTheory.Tao.Integration",
+   3
+  ],
+  [
+   "MeasureTheory.Tao.Abstract",
+   4
+  ],
+  [
+   "MeasureTheory.Tao.Convergence",
+   5
+  ],
+  [
+   "MeasureTheory.Tao.Differentiation",
+   6
+  ],
+  [
+   "MeasureTheory.Tao.Companion.Differentiation",
+   6
+  ],
+  [
+   "MeasureTheory.Tao.Extension",
+   7
+  ],
+  [
+   "MeasureTheory.Tao.Product",
+   7
+  ]
+ ],
+ "_native_tokens_note": "Identifier fragments of the companion's own constructions, used to tell 'the body still builds the book's object' from 'the body IS the library's object'. Ported from analyze2.py NATIVE (L283-284).",
+ "native_tokens": [
+  "elementaryMeasure",
+  "elementaryContent",
+  "JordanOuter",
+  "JordanInner",
+  "jordanMeasure",
+  "boxCoverCost",
+  "finiteBoxCoverCost",
+  "OpenExcessLebesgueMeasurable",
+  "upperIntegral",
+  "lowerIntegral",
+  "OrderedRiemannCriterion",
+  "DarbouxIntegrableOn",
+  "piecewiseConstantIntegral"
+ ]
+}
