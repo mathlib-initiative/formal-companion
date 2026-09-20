@@ -1,6 +1,13 @@
 r"""Regression tests for adapter detection, the adapter registry and blueprints.
 
-Every case here failed before the change it guards:
+Most cases here fail against the branch point; four pin an invariant that already
+held (the implemented vocabulary against the registry, every kind detection can
+emit being registered, every method CLAUDE.md names existing, and a bare-label
+repo extracting rows once the flag is set by hand) and are kept as invariants
+rather than advertised as guards.  The eighteen blueprint cases cannot run at the
+branch point at all: the module does not exist there.
+
+What the rest guard:
 
 * the tag spelling was hard-coded.  A companion that writes the book label bare
   at the start of the docstring -- the second convention ``adapters.itemtag``
@@ -9,13 +16,18 @@ Every case here failed before the change it guards:
   ``cf extract`` found one tag in two thousand docstrings;
 * "cannot tell what kind of companion this is" was the whole of the refusal: not
   what was looked for, not what was found, not which convention was nearly
-  matched, and not the override that would settle it;
+  matched, and not the override that would settle it -- and a detector that
+  CRASHED was recorded and then filtered out of the very report that exists to
+  say why nothing matched;
 * the adapter-kind vocabulary was written out by hand in four places, and the
   two the tests did not pin had drifted: a repo carrying a
   ``source-formalization-ledger.json`` was auto-classified as the unimplemented
   ``ledger_nodes`` and refused, even when ``docstring_tags`` would have read it;
 * ``Adapter.detect`` existed, was documented in CLAUDE.md with the wrong
   signature, and was called by nothing;
+* making detection a loop over the registry broke it behind the stand-in
+  ``adapters`` module several test classes onboard with, and the suite stayed
+  green only by import order;
 * the most common item-to-declaration convention in the Lean ecosystem --
   ``\lean{}`` / ``\leanok`` inside a leanblueprint manuscript -- had no adapter,
   and ``blueprint`` appeared in the tree only as noise to exclude.
@@ -26,6 +38,7 @@ import os
 import re
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -95,6 +108,47 @@ def _backticked_repo(root: Path) -> Path:
     return repo
 
 
+def _partly_tagged_repo(root: Path, name: str = "partly") -> Path:
+    """Half its documented files tagged: 0.6 + 0.35 * 20/40 = 0.775.
+
+    Deliberately BELOW the flat 0.9 the unimplemented ``ledger_nodes`` used to
+    score, because that is the only shape in which the papercut reproduces -- a
+    fully tagged tree already beat 0.9 and was never refused.
+    """
+    repo = root / name
+    (repo / "Src").mkdir(parents=True)
+    for i in range(20):
+        (repo / "Src" / f"S{i:03d}.lean").write_text(
+            f"/-- `Lemma 1.2.{i + 1}` (book p. {20 + i}) -/\n"
+            f"theorem lem{i} : True := trivial\n", encoding="utf-8")
+    for i in range(20):
+        (repo / "Src" / f"P{i:03d}.lean").write_text(
+            f"/-- A helper with no book label. -/\ntheorem helper{i} : True := trivial\n",
+            encoding="utf-8")
+    return repo
+
+
+#: the score ``_partly_tagged_repo`` must produce, and the flat score the
+#: unimplemented kind used to win with
+PARTLY_TAGGED_SCORE = 0.775
+OLD_LEDGER_NODES_SCORE = 0.9
+
+
+def _few_bare_labels_repo(root: Path, name: str = "mentions") -> Path:
+    """A repo whose bare labels are prose mentions, not a convention (2 of 62)."""
+    repo = root / name
+    (repo / "Src").mkdir(parents=True)
+    for i in range(60):
+        (repo / "Src" / f"P{i:03d}.lean").write_text(
+            "/-- A helper with no book label. -/\ntheorem h : True := trivial\n",
+            encoding="utf-8")
+    for i in range(2):
+        (repo / "Src" / f"M{i:03d}.lean").write_text(
+            f"/-- Theorem 1.{i + 1} of the paper motivates this. -/\n"
+            f"theorem m{i} : True := trivial\n", encoding="utf-8")
+    return repo
+
+
 class TestBothTagSpellingsAreScored(unittest.TestCase):
     """The spelling is a fact about the repo, not a default (generality#3)."""
 
@@ -130,23 +184,33 @@ class TestBothTagSpellingsAreScored(unittest.TestCase):
         """
         from adapters.docstring_tags import MIN_BARE_FRACTION
 
-        root = tmpdir("cf-rf-adapters-fewbare-")
-        repo = root / "mentions"
-        (repo / "Src").mkdir(parents=True)
-        for i in range(60):
-            (repo / "Src" / f"P{i:03d}.lean").write_text(
-                "/-- A helper with no book label. -/\ntheorem h : True := trivial\n",
-                encoding="utf-8")
-        for i in range(2):
-            (repo / "Src" / f"M{i:03d}.lean").write_text(
-                f"/-- Theorem 1.{i + 1} of the paper motivates this. -/\n"
-                f"theorem m{i} : True := trivial\n", encoding="utf-8")
+        repo = _few_bare_labels_repo(tmpdir("cf-rf-adapters-fewbare-"))
         _files, _sampled, backticked, bare, documented = DocstringTagsAdapter._measure(repo)
         self.assertEqual((backticked, bare), (0, 2))
         self.assertLess(bare / documented, MIN_BARE_FRACTION)
         self.assertEqual(DocstringTagsAdapter.detect(repo), (0.0, {}))
         with self.assertRaises(CfError):
             discovery.detect_adapter(repo)
+
+    def test_a_sub_floor_repo_is_told_the_edit_is_by_hand(self):
+        """The refusal has to describe the file `--adapter` really writes.
+
+        Below the habit floor the measurement KEEPS the backticked spelling, so
+        `cf onboard --adapter docstring_tags` writes ``require_backticks: true``.
+        A line reading "set tag.require_backticks: false in adapter.yaml" read as
+        a promise that the tool would write false, and the user found true in the
+        file it had just generated.
+        """
+        line = DocstringTagsAdapter.explain(
+            _few_bare_labels_repo(tmpdir("cf-rf-adapters-subfloor-")))[0]
+        self.assertIn("writes tag.require_backticks: true", line)
+        self.assertIn("edit it to false in the generated adapter.yaml", line)
+
+    def test_a_repo_whose_habit_is_bare_is_not_told_to_edit_anything(self):
+        """The same line, the other way: here the tool writes false by itself."""
+        line = DocstringTagsAdapter.explain(self.bare)[0]
+        self.assertIn("writes tag.require_backticks: false", line)
+        self.assertNotIn("edit it", line)
 
     def test_a_backticked_repo_keeps_the_strict_spelling(self):
         score, evidence = DocstringTagsAdapter.detect(self.ticked)
@@ -209,6 +273,14 @@ class TestOnboardWritesTheDetectedSpelling(unittest.TestCase):
         repo = _backticked_repo(self.root)
         text = self._adapter_yaml(repo, "ticked")
         self.assertRegex(text, r"require_backticks:\s*true")
+
+    def test_a_sub_floor_repo_gets_true_which_is_what_the_refusal_said(self):
+        """The generated file and the refusal line agree, so the hand edit is expected."""
+        repo = _few_bare_labels_repo(self.root)
+        text = self._adapter_yaml(repo, "subfloor", "docstring_tags")
+        self.assertRegex(text, r"require_backticks:\s*true")
+        self.assertIn("edit it to false in the generated adapter.yaml",
+                      DocstringTagsAdapter.explain(repo)[0])
 
     def test_the_written_yaml_is_readable_and_drives_the_adapter(self):
         from cflib.adapters_api import load as load_adapter
@@ -288,10 +360,70 @@ class TestTheRefusalIsDiagnostic(unittest.TestCase):
         self.assertIn("docstring_tags scores only 0.40", str(ctx.exception))
         self.assertIn("--adapter docstring_tags", ctx.exception.hint or "")
 
+    def test_a_detector_that_raised_is_not_swallowed(self):
+        """A crashed detector is invisible in the report that exists to say why.
+
+        ``detect_all`` records the exception with score 0, and a report filtering
+        on ``score > 0`` printed the ordinary "looked for" lines and never the
+        word the user needs: the repo was called unrecognisable while the reason
+        it could not be measured went unmentioned.
+        """
+        class _Explodes(DocstringTagsAdapter):
+            kind = "docstring_tags"
+
+            @classmethod
+            def detect(cls, repo):
+                raise RuntimeError("detector exploded")
+
+        original = adapters_api._REGISTRY["docstring_tags"]
+        adapters_api._REGISTRY["docstring_tags"] = _Explodes
+        try:
+            report = "\n".join(discovery.detect_report(_backticked_repo(self.root)))
+        finally:
+            adapters_api._REGISTRY["docstring_tags"] = original
+        self.assertIn("failed:", report)
+        self.assertIn("docstring_tags", report)
+        self.assertIn("RuntimeError: detector exploded", report)
+
 
 # ---------------------------------------------------------------------------
 # architecture#6 -- one place per adapter kind, not four
 # ---------------------------------------------------------------------------
+
+class TestDetectionSurvivesAStandInAdaptersModule(unittest.TestCase):
+    """Detection is core behaviour, so it must work behind the suite's stand-in.
+
+    Several test classes onboard a repo without a real parser by REPLACING the
+    top-level ``adapters`` module with a stand-in exposing only ``load()``.  Once
+    ``detect_scores`` became a loop over ``adapters.api.registry()``, that
+    stand-in broke detection outright -- ``registry()`` imports the shipped
+    adapter modules, and a stand-in has no ``__path__`` -- so every such class
+    died with ``ImportError: cannot import name 'attribution_table' from
+    'adapters'``.  The suite looked green only because another test file had
+    already left the submodules in ``sys.modules``: green by import order.
+    """
+
+    def test_detect_scores_reads_the_real_package_beside_the_stand_in(self):
+        repo = _backticked_repo(tmpdir("cf-rf-adapters-standin-"))
+        saved = {name: mod for name, mod in sys.modules.items()
+                 if name == "adapters" or name.startswith("adapters.")}
+        stand_in = types.ModuleType("adapters")
+        stand_in.load = lambda *args, **kwargs: None      # all the stand-in offers
+        for name in saved:
+            del sys.modules[name]
+        sys.modules["adapters"] = stand_in
+        try:
+            scores = discovery.detect_scores(repo)
+            report = "\n".join(discovery.detect_report(repo))
+        finally:
+            for name in [n for n in sys.modules
+                         if n == "adapters" or n.startswith("adapters.")]:
+                del sys.modules[name]
+            sys.modules.update(saved)
+        self.assertIs(sys.modules["adapters"], saved["adapters"])
+        self.assertIn("docstring_tags", scores)
+        self.assertIn("looked for:", report)
+
 
 class TestDetectionIsALoopOverTheRegistry(unittest.TestCase):
 
@@ -323,12 +455,21 @@ class TestDetectionIsALoopOverTheRegistry(unittest.TestCase):
         self.assertIn("ledger_nodes", str(ctx.exception))
 
     def test_a_ledger_repo_that_docstring_tags_can_read_is_read(self):
-        """The papercut: a readable repo refused because of a file beside it."""
+        """The papercut: a readable repo refused because of a file beside it.
+
+        The fixture is only half tagged on purpose.  A fully tagged tree scores
+        0.95 and already beat the flat 0.9 of the unimplemented ``ledger_nodes``,
+        so it never reproduced the refusal; 20 of 40 documented files scores
+        0.775, which the flat 0.9 used to win against on the maximum.
+        """
         root = tmpdir("cf-rf-adapters-ledger2-")
-        repo = _backticked_repo(root)
+        repo = _partly_tagged_repo(root)
         (repo / "source-formalization-ledger.json").write_text("{}", encoding="utf-8")
+        scores = discovery.detect_scores(repo)
+        self.assertEqual(scores["docstring_tags"][0], PARTLY_TAGGED_SCORE)
+        self.assertLess(PARTLY_TAGGED_SCORE, OLD_LEDGER_NODES_SCORE)
         kind, score, _ = discovery.detect_adapter(repo)
-        self.assertEqual(kind, "docstring_tags")
+        self.assertEqual((kind, score), ("docstring_tags", PARTLY_TAGGED_SCORE))
         self.assertGreaterEqual(score, discovery.MIN_ADAPTER_CONFIDENCE)
 
     def test_the_confidence_bonus_comes_from_the_adapter_class(self):
@@ -531,6 +672,30 @@ class TestBlueprintTexAdapter(unittest.TestCase):
         self.assertNotIn("ok A", statement)
         self.assertIn("marked point", statement)
 
+    def test_an_escaped_percent_does_not_truncate_the_statement(self):
+        r"""``\%`` is the per-cent sign; only a bare ``%`` starts a comment.
+
+        Stripping from an escaped percent cut the statement at the first
+        "50\% of", and `statement` is what the quote gate quotes and a
+        faithfulness finding compares against the Lean -- so the loss shows up as
+        a wrong audit rather than as a failure.  No blueprint to hand uses
+        ``\%``, which is why this is a test and not luck.
+        """
+        repo = _blueprint_repo(tmpdir("cf-rf-adapters-bp5-"))
+        path = repo / "blueprint" / "src" / "chapters" / "two.tex"
+        path.write_text(path.read_text(encoding="utf-8").replace(
+            "Every gadget is a widget.",
+            "At least 50\\% of gadgets are widgets, and the rest are not.\n"
+            "  % a note to the author, never to the reader"), encoding="utf-8")
+        adapter = adapters_api.from_config({
+            "adapter": "blueprint_tex", "name": "bp", "repo": str(repo),
+            "sources": {"default": "s"}})
+        statement = {r["item"]: r for r in adapter.extract(sources={"s": SHA})}[
+            "Theorem 1.1"]["statement"]
+        self.assertIn("50\\%", statement)
+        self.assertIn("the rest are not", statement)
+        self.assertNotIn("a note to the author", statement)
+
     def test_leanok_is_the_status_and_a_missing_one_is_a_gap(self):
         rows = {r["item"]: r for r in self.rows()}
         self.assertFalse(rows["Lemma 2.2"]["sorry"])
@@ -542,7 +707,7 @@ class TestBlueprintTexAdapter(unittest.TestCase):
 
     def test_an_unformalised_statement_is_counted_not_invented(self):
         counts = self.adapter.dry_run(sources={"s": SHA})
-        self.assertEqual(counts["declarations"], 4)
+        self.assertEqual(counts["statements"], 4)
         self.assertEqual(counts["tagged"], 3)
         self.assertEqual(counts["untagged"], 1)
         self.assertEqual(counts["items"], 3)
@@ -550,6 +715,23 @@ class TestBlueprintTexAdapter(unittest.TestCase):
         self.assertEqual(counts["statement_leanok"], 2)
         self.assertEqual(counts["proof_leanok"], 1)
         self.assertEqual(counts["locator"], "number")
+
+    def test_the_two_counters_do_not_share_one_key(self):
+        """`declarations` means the same thing in every kind's dry_run.
+
+        It used to be this kind's count of statement ENVIRONMENTS while
+        docstring_tags used it for Lean declarations found, and both are written
+        into state.json -- so whoever compared two companions' state.json was
+        comparing two different measurements under one name.
+        """
+        counts = self.adapter.dry_run(sources={"s": SHA})
+        rows = self.rows()
+        self.assertEqual(counts["statements"], counts["tagged"] + counts["untagged"])
+        self.assertEqual(counts["declarations"], len({r["decl"] for r in rows}))
+        from cflib.adapters_api import DRY_RUN_REQUIRED_KEYS
+
+        for key in DRY_RUN_REQUIRED_KEYS:
+            self.assertIn(key, counts)
 
     def test_the_locator_falls_back_to_the_label_and_says_so(self):
         """No \\newtheorem declarations: LaTeX's numbering is not recoverable."""
@@ -582,7 +764,7 @@ class TestBlueprintTexAdapter(unittest.TestCase):
     def test_order_files_puts_the_master_s_inputs_first(self):
         src = self.repo / "blueprint" / "src"
         files = sorted(src.rglob("*.tex"))
-        ordered = order_files(files, self.repo)
+        ordered = order_files(files)
         self.assertEqual([p.name for p in ordered][:3],
                          ["common.tex", "two.tex", "one.tex"])
 
