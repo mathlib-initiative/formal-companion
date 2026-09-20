@@ -13,8 +13,15 @@ Two findings:
   of the WORK develops a concept) with companion-level ones (one repo's module
   layout and identifier vocabulary).
 
-Everything here is hermetic: a synthetic two-item source and a synthetic
-companion in a temp directory, no baseline, no network, no Lean.
+The independent review of that work is pinned here too: a bootstrapped table is
+inert until a human edits it (it used to carry a live placeholder object and
+invent findings against it), an unscoped run audits every chapter instead of
+fabricating Chapter 1 and records the scope it used, a scan with no companion
+vocabulary says its evidence will be empty, the one classifier answers a legacy
+row with a number in it, and the shipped templates name no real construction.
+
+Everything here is hermetic: a synthetic source and a synthetic companion in a
+temp directory, no baseline, no network, no Lean.
 """
 from __future__ import annotations
 
@@ -74,6 +81,19 @@ class OneDeclarationClassifierTest(unittest.TestCase):
         """Not "two patterns that happen to agree": the same compiled object."""
         self.assertIs(pair_cov.def_regex(), detect_cov.def_signature())
         self.assertIs(pair_cov.def_regex(), detect_cov.DEF_SIGNATURE)
+
+    #: Rows only a hand-built or legacy statements table produces -- the same
+    #: path the signature fallback is reachable on at all.  ``cf pair`` used to
+    #: coerce both fields and the surviving classifier did not, so unifying the
+    #: two turned a verdict into an AttributeError / TypeError from inside it.
+    NON_STRING_ROWS = ({"kind": 3}, {"statement": 123}, {"kind": 3, "statement": 123})
+
+    def test_a_numeric_kind_or_statement_gets_a_verdict_not_a_traceback(self):
+        pattern = pair_cov.def_regex()
+        for row in self.NON_STRING_ROWS:
+            with self.subTest(row=row):
+                self.assertFalse(detect_cov.is_definitional(row))
+                self.assertFalse(pair_cov._is_definitional(row, pattern))
 
     def test_a_custom_keyword_list_still_reaches_the_one_classifier(self):
         """`pair.def_coverage(keywords=...)` writes `keywords` into the file."""
@@ -135,19 +155,41 @@ _STAGE_TABLE = {
 }
 
 
-def _make_workspace(root: Path, *, stage_table: bool = True) -> None:
-    """A one-source, one-companion workspace on disk."""
+#: A Chapter-2 Definition and the one theorem tagged to it.  No table places it
+#: and no workspace scope mentions it: it is the item a fabricated ``chapter: 1``
+#: dropped out of the coverage split without saying so.
+_CHAPTER_TWO_ITEM = {
+    "item": "Definition 2.1.1", "kind": "Definition", "number": "2.1.1",
+    "chapter": 2, "section": 1, "index": 1, "pdf_page": 41, "page": 25,
+    "occurrences": [{"pdf_page": 41, "page": 25, "line": 4}],
+}
+_CHAPTER_TWO_STATEMENT = {
+    "item": "Definition 2.1.1", "decl": "Booklet.about_baz", "repo": COMPANION,
+    "statement": "theorem about_baz : True := trivial", "file": "Booklet/C.lean",
+    "line": 7, "sorry": False, "source_id": SOURCE_ID, "source_sha": SOURCE_SHA,
+}
+
+
+def _make_workspace(root: Path, *, stage_table: bool = True, chapters: bool = True,
+                    extra_items=(), extra_statements=()) -> None:
+    """A one-source, one-companion workspace on disk.
+
+    ``chapters=False`` leaves ``sources.<id>.chapters`` out of workspace.yaml, the
+    state a book nobody has scoped yet is in.
+    """
     (root / "companions" / COMPANION).mkdir(parents=True)
     (root / "repos" / COMPANION).mkdir(parents=True)
     (root / "sources" / SOURCE_ID).mkdir(parents=True)
+    statements = [*_STATEMENTS, *extra_statements]
+    items = [*_items(), *extra_items]
     (root / "companions" / COMPANION / "statements.jsonl").write_text(
-        "".join(json.dumps(r) + "\n" for r in _STATEMENTS), encoding="utf-8")
+        "".join(json.dumps(r) + "\n" for r in statements), encoding="utf-8")
     (root / "companions" / COMPANION / "state.json").write_text(
         json.dumps({"name": COMPANION}), encoding="utf-8")
     (root / "sources" / SOURCE_ID / "items.json").write_text(json.dumps({
         "source_id": SOURCE_ID, "source_sha": SOURCE_SHA, "offset": 16,
         "kinds": ["Definition", "Lemma", "Theorem", "Exercise", "Remark"],
-        "count": len(_items()), "items": _items(),
+        "count": len(items), "items": items,
     }), encoding="utf-8")
     # the mechanical gate fails closed without the pinned text
     (root / "sources" / SOURCE_ID / "text.txt").write_text(
@@ -165,7 +207,9 @@ def _make_workspace(root: Path, *, stage_table: bool = True) -> None:
         f'    sha256: "{SOURCE_SHA}"\n'
         "    title: A Synthetic Booklet\n"
         '    edition: "first"\n'
-        "    offset: 16\n    chapters: [1]\n    role: audited\n"
+        "    offset: 16\n"
+        + ("    chapters: [1]\n" if chapters else "")
+        + "    role: audited\n"
         "    kinds: [Definition, Lemma, Theorem, Exercise, Remark]\n",
         encoding="utf-8")
     if stage_table:
@@ -187,6 +231,9 @@ class _WorkspaceCase(unittest.TestCase):
     """A fresh fixture workspace per test, with the command's logging muted."""
 
     STAGE_TABLE = True
+    CHAPTERS = True
+    EXTRA_ITEMS: tuple = ()
+    EXTRA_STATEMENTS: tuple = ()
 
     def setUp(self):
         from cflib import log
@@ -198,7 +245,34 @@ class _WorkspaceCase(unittest.TestCase):
         # resolved: the commands record absolute paths, and on macOS /var is a
         # symlink to /private/var, so an unresolved root compares unequal
         self.root = Path(tmp.name).resolve()
-        _make_workspace(self.root, stage_table=self.STAGE_TABLE)
+        _make_workspace(self.root, stage_table=self.STAGE_TABLE, chapters=self.CHAPTERS,
+                        extra_items=self.EXTRA_ITEMS,
+                        extra_statements=self.EXTRA_STATEMENTS)
+
+    def warnings(self) -> list:
+        """Collect the command's `warn` lines (logging itself is muted)."""
+        from cfcmd import detect_proxies
+
+        messages: list[str] = []
+        original = detect_proxies.warn
+        detect_proxies.warn = messages.append
+        self.addCleanup(setattr, detect_proxies, "warn", original)
+        return messages
+
+    def give_the_first_row_a_body(self, body: str) -> None:
+        """Put a definition body on the row tagged to ``Definition 1.1.1``."""
+        statements = self.root / "companions" / COMPANION / "statements.jsonl"
+        rows = [json.loads(line) for line in
+                statements.read_text(encoding="utf-8").splitlines() if line.strip()]
+        rows[0]["body"] = body
+        statements.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    def finding_rows(self) -> list:
+        """``detect/<name>/findings.cheap.jsonl`` without its ``_meta`` head row."""
+        path = self.root / "detect" / COMPANION / "findings.cheap.jsonl"
+        rows = [json.loads(line) for line in
+                path.read_text(encoding="utf-8").splitlines() if line.strip()]
+        return rows[1:]
 
     def detect(self, *extra) -> int:
         from cfcmd import detect_proxies
@@ -276,10 +350,10 @@ class StageTableSplitTest(unittest.TestCase):
         table = StageTable.for_source("tao-measure-gsm126-published")
         overlaid = table.with_companion_overlay({
             "repo_module_stages": [["Booklet.Early", 1]],
-            "native_tokens": ["boxCoverCost"],
+            "native_tokens": ["myOwnCoverCost"],
         })
         self.assertEqual(overlaid.stage_of_repo_module("Booklet.Early.Sizes"), 1)
-        self.assertEqual(overlaid.native_tokens, ["boxCoverCost"])
+        self.assertEqual(overlaid.native_tokens, ["myOwnCoverCost"])
         # the source-level half is untouched, and the shipped table is not mutated
         self.assertEqual(overlaid.module_stages, table.module_stages)
         self.assertEqual(table.repo_module_stages, [])
@@ -328,10 +402,7 @@ class DetectWithoutAStageTableTest(_WorkspaceCase):
 
     def test_the_findings_are_still_written(self):
         self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
-        rows = [json.loads(line) for line in
-                (self.root / "detect" / COMPANION / "findings.cheap.jsonl")
-                .read_text(encoding="utf-8").splitlines() if line.strip()]
-        self.assertEqual([r["item"] for r in rows[1:]], ["Definition 1.2.3"])
+        self.assertEqual([r["item"] for r in self.finding_rows()], ["Definition 1.2.3"])
 
     def test_the_lean_tier_refuses_and_names_the_flag(self):
         deps = self.root / "detect" / COMPANION / "deps.json"
@@ -354,6 +425,10 @@ class DetectWithoutAStageTableTest(_WorkspaceCase):
         self.assertNotIn("native_tokens", table)
         # it is a candidate a human edits, and it says so
         self.assertTrue(any(k.startswith("_") for k in table))
+        # nothing in it is live: an example object would be scanned for
+        self.assertIs(table["_unedited"], True)
+        self.assertEqual(table["module_stages"], [])
+        self.assertEqual(table["mathlib_objects"], {})
         with self.assertRaises(CfError) as ctx:
             self.detect("--init-stage-table")
         self.assertIn(str(written), str(ctx.exception) + str(getattr(ctx.exception, "hint", "")))
@@ -364,16 +439,98 @@ class DetectWithoutAStageTableTest(_WorkspaceCase):
             SOURCE_ID, extra_dirs=[self.root / "detect" / "mathlib_stages"])
         self.assertEqual(table.source_id, SOURCE_ID)
         self.assertTrue(table.available)
+        self.assertTrue(table.unedited)
+
+    # -- the skeleton is inert until a human edits it ----------------------
+    #: An ordinary Lean body that happens to name a generic library identifier.
+    #: The skeleton's example object was live and its label was `size`, which
+    #: `_token_pattern` matches in any `*.size`, so bootstrapping a table and
+    #: running the detector emitted a PROXY row citing a constant that exists in
+    #: no library -- into corpus/ and the tally, by default.
+    GENERIC_BODY = "def foo (xs : Array Nat) : Nat := xs.size"
+
+    def test_an_unedited_skeleton_scans_nothing_and_invents_nothing(self):
+        self.give_the_first_row_a_body(self.GENERIC_BODY)
+        self.assertEqual(self.detect("--init-stage-table"), 0)
+        self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
+        cov = self.coverage()
+        scan = cov["_meta"]["body_proxy_scan"]
+        self.assertFalse(scan["ran"])
+        self.assertIn("_unedited", scan["reason"])
+        self.assertEqual(cov["proxy_candidates"], [])
+        self.assertEqual([r["kind"] for r in self.finding_rows()], ["COVERAGE"])
+
+    def test_deleting_the_marker_turns_the_table_on(self):
+        """The marker gates the scan, not the emptiness: a filled-in table works."""
+        self.give_the_first_row_a_body(self.GENERIC_BODY)
+        self.assertEqual(self.detect("--init-stage-table"), 0)
+        written = self.root / "detect" / "mathlib_stages" / f"{SOURCE_ID}.json"
+        table = json.loads(written.read_text(encoding="utf-8"))
+        del table["_unedited"]
+        table["module_stages"] = [["Lib.Measure", 2]]
+        table["mathlib_objects"] = {
+            "Lib.Measure.size": {"label": "size", "module": "Lib.Measure", "stage": 2}}
+        written.write_text(json.dumps(table), encoding="utf-8")
+
+        self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
+        cov = self.coverage()
+        self.assertTrue(cov["_meta"]["body_proxy_scan"]["ran"])
+        self.assertEqual([c["decl"] for c in cov["proxy_candidates"]], ["Booklet.foo"])
+
+    def test_the_lean_tier_refuses_an_unedited_skeleton_too(self):
+        self.assertEqual(self.detect("--init-stage-table"), 0)
+        deps = self.root / "detect" / COMPANION / "deps.json"
+        deps.parent.mkdir(parents=True, exist_ok=True)
+        deps.write_text(json.dumps({"repo_constants": [], "referenced": []}), encoding="utf-8")
+        with self.assertRaises(CfError) as ctx:
+            self.detect("--lean", "--no-emit-corpus", "--no-tally")
+        self.assertIn("_unedited", str(ctx.exception))
+
+
+class DefCoverageScopeIsNotFabricatedTest(_WorkspaceCase):
+    """No table and no recorded chapters must not quietly audit Chapter 1.
+
+    ``_audited_chapter`` fell back to the table's scalar ``chapter``, which
+    defaults to 1, so the first run on a new book reported a complete coverage
+    split for a scope nobody had chosen and the file recorded no scope at all.
+    """
+
+    STAGE_TABLE = False
+    CHAPTERS = False
+    EXTRA_ITEMS = (_CHAPTER_TWO_ITEM,)
+    EXTRA_STATEMENTS = (_CHAPTER_TWO_STATEMENT,)
+
+    def test_an_unscoped_run_audits_every_chapter_and_records_that(self):
+        self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
+        cov = self.coverage()
+        self.assertEqual(sorted(cov["bridge_only"]),
+                         ["Definition 1.2.3", "Definition 2.1.1"])
+        self.assertIsNone(cov["_meta"]["chapter"])
+        self.assertIn("Definition 2.1.1", [r["item"] for r in self.finding_rows()])
+
+
+class DefCoverageScopeIsTheWorkspacesTest(_WorkspaceCase):
+    """...and a scope the workspace DOES record still narrows the audit."""
+
+    STAGE_TABLE = False
+    EXTRA_ITEMS = (_CHAPTER_TWO_ITEM,)
+    EXTRA_STATEMENTS = (_CHAPTER_TWO_STATEMENT,)
+
+    def test_a_recorded_scope_is_honoured_and_recorded(self):
+        self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
+        cov = self.coverage()
+        self.assertEqual(cov["bridge_only"], ["Definition 1.2.3"])
+        self.assertEqual(cov["_meta"]["chapter"], 1)
 
 
 class CompanionOverlayIsReadFromTheWorkspaceTest(_WorkspaceCase):
     """`companions/<name>/stage-overlay.json`, beside conventions.md."""
 
-    def test_the_overlay_is_applied_to_the_body_scan(self):
+    def _overlaid_run(self) -> dict:
         (self.root / "companions" / COMPANION / "stage-overlay.json").write_text(
             json.dumps({"companion": COMPANION, "source_id": SOURCE_ID,
                         "repo_module_stages": [["Booklet.A", 1]],
-                        "native_tokens": ["boxCoverCost"]}), encoding="utf-8")
+                        "native_tokens": ["myOwnCoverCost"]}), encoding="utf-8")
         statements = self.root / "companions" / COMPANION / "statements.jsonl"
         rows = [json.loads(line) for line in
                 statements.read_text(encoding="utf-8").splitlines() if line.strip()]
@@ -382,7 +539,10 @@ class CompanionOverlayIsReadFromTheWorkspaceTest(_WorkspaceCase):
         statements.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
 
         self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
-        cov = self.coverage()
+        return self.coverage()
+
+    def test_the_overlay_is_applied_to_the_body_scan(self):
+        cov = self._overlaid_run()
         self.assertTrue(cov["_meta"]["body_proxy_scan"]["ran"])
         self.assertEqual(cov["_meta"]["companion_overlay"],
                          str(self.root / "companions" / COMPANION / "stage-overlay.json"))
@@ -393,6 +553,23 @@ class CompanionOverlayIsReadFromTheWorkspaceTest(_WorkspaceCase):
         cov = self.coverage()
         self.assertTrue(cov["_meta"]["body_proxy_scan"]["ran"])
         self.assertIsNone(cov["_meta"]["companion_overlay"])
+
+    def test_a_scan_with_no_companion_vocabulary_says_the_evidence_is_empty(self):
+        """`native_tokens` left the shipped table; a run that relied on it is told.
+
+        The scan still runs and still emits PROXY rows, so no count moves -- what
+        is lost is `native_tokens_in_body`, which is how a reader tells "the body
+        still builds the work's object" from "the body IS the library's object".
+        """
+        messages = self.warnings()
+        self.assertEqual(self.detect("--no-emit-corpus", "--no-tally"), 0)
+        self.assertTrue([m for m in messages if "native_tokens_in_body" in m], messages)
+        self.assertTrue([m for m in messages if "stage-overlay.json" in m], messages)
+
+    def test_an_overlay_that_maps_them_is_not_warned_about(self):
+        messages = self.warnings()
+        self._overlaid_run()
+        self.assertEqual([m for m in messages if "native_tokens" in m], [])
 
 
 # ==========================================================================
@@ -435,6 +612,31 @@ class GateSourceBlockCarriesPinnedTextPagesTest(_WorkspaceCase):
         # and it survives source_block()'s key filter
         self.assertEqual(presets_mod.source_block(block)["item_pages"],
                          block["item_pages"])
+
+
+class ShippedTemplatesCarryNoCompanionVocabularyTest(unittest.TestCase):
+    """CLAUDE.md S1: examples in templates are synthetic.
+
+    The whole point of splitting the stage table was that a published copy of
+    this skill must not carry a private companion's own construction names --
+    and the overlay template's ``native_tokens`` example was seeded from the very
+    list the split deleted from the shipped table.  The recorded fixture is the
+    one place those names may sit, and its ``_note`` says what it is; the real
+    names are read from there so this test does not restate them.
+    """
+
+    def test_no_detect_template_names_a_real_construction(self):
+        recorded = json.loads((REPO / "tests" / "data" / "stage-overlay.adam.json")
+                              .read_text(encoding="utf-8"))
+        tokens = [str(t) for t in recorded["native_tokens"]]
+        self.assertTrue(tokens)
+        templates = sorted((REPO / "templates" / "detect").glob("*.tmpl"))
+        self.assertTrue(templates)
+        for template in templates:
+            text = template.read_text(encoding="utf-8")
+            for token in tokens:
+                with self.subTest(template=template.name, token=token):
+                    self.assertNotIn(token, text)
 
 
 if __name__ == "__main__":  # pragma: no cover
