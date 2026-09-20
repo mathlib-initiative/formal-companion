@@ -171,16 +171,18 @@ It stops and names the override rather than guessing.
 ```sh
 cf sources set <id> offset=16              # inferred offset confidence was below 0.9
 cf sources set <id> chapters=1,2           # pin the scope instead of deriving it
+cf sources set <id> numbering=3,4          # the book numbers deeper than its headings showed
 cf sources set <id> confirmed=true         # you checked a discovered entry
 cf onboard <repo> --anchor-source <id>     # two editions scored too close to call
 cf onboard <repo> --adapter docstring_tags # no adapter scored above 0.5
-cf sources add <pdf> --for <companion>     # the repo names a source it does not identify
+cf sources add <source> --for <companion>  # the repo names a source it does not identify
 cf sources remove <id>                    # undo one that should not be here (loads a broken workspace)
 cf onboard <repo> --download               # fetch from the author's own site (licence permitting)
 ```
 
 Every override stamps its own trace: `offset_method: manual`,
-`scope_method: manual`, `confirmed: false` until a human says otherwise.
+`scope_method: manual`, `numbering_method: manual`, `completeness_method:
+manual`, `confirmed: false` until a human says otherwise.
 
 ## The workspace directory model
 

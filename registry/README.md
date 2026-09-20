@@ -78,11 +78,12 @@ sources:
 ```
 
 A source need not be a paginated PDF. A manuscript that is already text (an
-arXiv `.tex`, notes in Markdown or HTML, a `pdftotext` dump kept as a file) is
-added the same way — `cf sources add <source> --for <companion>` — and if it
-carries no page breaks it is **unpaginated**: `pages: 0`, `offset: 0`,
-`offset_method: none`, and no `page_map_to`, because it has no printed page for a
-map to shift. Its items are located by heading path and line instead, recorded
+arXiv `.tex`, notes in Markdown, reStructuredText or HTML, a `pdftotext` dump
+kept as a file — `.txt .md .markdown .tex .html .htm .rst`, exactly the set
+`scripts/sources/locator.py` accepts) is added the same way — `cf sources add
+<source> --for <companion>` — and if it carries no page breaks it is
+**unpaginated**: `pages: 0`, `offset: 0`, `offset_method: none`, and no
+`page_map_to`, because it has no printed page for a map to shift. Its items are located by heading path and line instead, recorded
 as `locator: section` in the workspace's `sources/<id>/items.json`; the
 workspace row (never this file) carries `source_format` and `pagination`. Every
 page-dependent feature refuses on such a source by name rather than compute a
