@@ -20,8 +20,10 @@
 #
 # What it does NOT cover, so nobody reads green here as more than it is: the
 # baseline-backed tests (they need private corpora and skip), `cf run --execute`,
-# the Tao half of `tests/e2e/multisource.sh` (two private checkouts), and
-# anything touching a real companion repo.
+# `render_pages.render()` and the pdftoppm path (only its two refusals are
+# asserted; `pdftotext` is stubbed out in the pytest jobs and exercised only
+# indirectly by the synthetic job), the Tao half of `tests/e2e/multisource.sh`
+# (two private checkouts), and anything touching a real companion repo.
 name: tests
 
 on:

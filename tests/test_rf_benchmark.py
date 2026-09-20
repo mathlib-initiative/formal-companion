@@ -383,7 +383,7 @@ class AnswerKeyMatchesTheFixtureTests(unittest.TestCase):
         """Declarations the companion TAGS to a book item (post-mutation names)."""
         out = []
         for _module, text, _record in self.modules[name]:
-            if not re.search(r"`[A-Z][A-Za-z]+ \d+(?:\.\d+)+`", text):
+            if not TAG_RE.search(text):
                 continue                          # the tag was removed: nothing is tagged
             out.append(mutate.parse_declaration(text).name)
         return out
@@ -440,7 +440,7 @@ class AnswerKeyMatchesTheFixtureTests(unittest.TestCase):
         wrong = []
         for name, modules in self.modules.items():
             for _module, text, _record in modules:
-                tag = re.search(r"`(?P<item>[A-Z][A-Za-z]+ \d+(?:\.\d+)+)`", text)
+                tag = TAG_RE.search(text)
                 page = re.search(r"Book p\.[ \t]*(\d+)", text)
                 if not tag or not page:
                     continue
@@ -822,8 +822,15 @@ class SyntheticPipelineTests(unittest.TestCase):
         self.assertEqual(recon["source_sha"], BOOKLET_SHA)
 
     def test_the_task_universe_is_the_items_at_least_one_repo_formalises(self):
+        """The invariant, against the fixture -- not the report against itself.
+
+        ``task_universe`` and ``items_in_scope_and_any_repo`` are both assigned
+        ``len(matched)`` in pair/compare.py, so comparing them cannot fail.  The
+        set the fixture tags is an independent expectation.
+        """
         recon = self._json("pairs", SOURCE_ID, "reconciliation.json")
-        self.assertEqual(recon["task_universe"], recon["items_in_scope_and_any_repo"])
+        self.assertEqual(set(recon["task_universe_items"]),
+                         tagged_items("notes-a", "notes-b"))
         self.assertEqual(recon["task_universe"], 18)
 
     def test_the_queue_carries_a_page_hint_per_item(self):
@@ -955,8 +962,13 @@ class BaselineFiguresRecordTests(unittest.TestCase):
 
     The figures are facts about one private corpus and one edition, so they can
     never be re-derived by a stranger.  Recording them makes them reviewable and
-    diffable; checking each one against the test that asserts it is what stops
+    diffable; checking each one against the ASSERTION that pins it is what stops
     the record and the suite disagreeing.
+
+    The assertion text, not the bare number: searching a test module for `0`, `1`
+    or `3` matches dozens of unrelated lines, so a record pinned that way stays
+    green after the real assert is deleted -- and ``def_coverage_missing`` (0) is
+    written ``cov["missing"], []``, which carries no digit at all.
     """
 
     @classmethod
@@ -964,14 +976,33 @@ class BaselineFiguresRecordTests(unittest.TestCase):
         cls.doc = json.loads(FIGURES.read_text(encoding="utf-8"))
         cls.figures = cls.doc["figures"]
 
+    @staticmethod
+    def _flat(text: str) -> str:
+        """Whitespace-insensitive, so realigning a table is not a drift report."""
+        return re.sub(r"\s+", " ", text).strip()
+
     def test_every_figure_says_what_it_is_and_where_it_is_asserted(self):
         for name, figure in self.figures.items():
             self.assertIsInstance(figure["value"], int, name)
             self.assertTrue(figure["what"], name)
             self.assertTrue(figure["needs"], name)
             self.assertTrue(figure["asserted_in"], name)
-            for path in figure["asserted_in"]:
-                self.assertTrue((pathlib.Path(_REPO) / path).exists(), path)
+            for where in figure["asserted_in"]:
+                self.assertTrue((pathlib.Path(_REPO) / where["file"]).exists(), where["file"])
+                self.assertTrue(where["assert"].strip(), name)
+
+    def test_every_recorded_assertion_is_more_than_the_number_itself(self):
+        """The failure mode the snippets exist to close, asserted directly.
+
+        A snippet of just the value would grep as broadly as the old bare-number
+        search did, so it would not detect the assert being deleted either.
+        """
+        for name, figure in self.figures.items():
+            for where in figure["asserted_in"]:
+                snippet = where["assert"]
+                letters = re.sub(r"[^A-Za-z]", "", snippet)
+                self.assertGreaterEqual(len(letters), 4, "%s: %r names nothing"
+                                        % (name, snippet))
 
     def test_the_headline_figures_are_all_recorded(self):
         for name in ("chapter_1_items", "differential_task_universe", "corpus_findings",
@@ -984,11 +1015,20 @@ class BaselineFiguresRecordTests(unittest.TestCase):
         self.assertEqual(self.figures["corpus_findings"]["value"], 2672)
 
     def test_each_recorded_figure_still_appears_in_the_test_that_pins_it(self):
-        """The record and the asserts move together or a test fails."""
+        """The record and the asserts move together or a test fails.
+
+        Delete or edit the assertion and this fails, naming the figure that now
+        has no test behind it.
+        """
         for name, figure in self.figures.items():
             pattern = re.compile(r"(?<![\d.])%d(?![\d.])" % figure["value"])
-            for path in figure["asserted_in"]:
+            for where in figure["asserted_in"]:
+                path = where["file"]
                 text = (pathlib.Path(_REPO) / path).read_text(encoding="utf-8")
+                self.assertIn(self._flat(where["assert"]), self._flat(text),
+                              "%s: %s no longer asserts it" % (name, path))
+                # second line: the bare value, which catches a snippet recorded
+                # against a file that no longer carries the number at all.
                 self.assertRegex(text, pattern, "%s: %s no longer carries %d"
                                  % (name, path, figure["value"]))
 
