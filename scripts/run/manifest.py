@@ -505,7 +505,7 @@ def agent_permissions(run_dir: Path) -> dict:
     read from the environment.  This reads the wrappers `cf plan-run` staged,
     because that is the only channel `cf run` can see.
 
-    It is therefore a THREE-state record, not a boolean.  ``cf plan-run
+    It is therefore a sentence and not a bare ``false``.  ``cf plan-run
     --allow-sandbox-bypass`` is what stages the variable, so a wrapper that
     exports it says the opt-in was asked for deliberately and recorded in
     run.yaml.  Its absence is still not ``false``: the wrappers are generated
