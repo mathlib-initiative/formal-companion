@@ -1,6 +1,6 @@
 """What locates an item in a source: a printed page, or a heading path.
 
-New code (docs/design/multi-source-model.md S5).  The source model was written
+New code (docs/design/multi-source-model.md S5.7).  The source model was written
 for a typeset PDF all the way down -- ``pdftotext``, running heads, ``printed =
 pdf_page - offset``, ``In-text p.<n>`` -- and a manuscript that has no printed
 page (an arXiv ``.tex``, lecture notes in Markdown, an HTML chapter, a
@@ -18,6 +18,9 @@ source possible, and the refusal that keeps it honest:
                              section it is in
 * :func:`require_pagination` the CfError every page-dependent feature owes the
                              user instead of a crash or a plausible number
+* :func:`require_pdf`        the same for a feature that needs the PDF ITSELF
+                             (page images), which page breaks in a text dump
+                             do not supply
 
 The rule is the repo's own (CLAUDE.md S4): a page-dependent feature run against
 a source that has no pages REFUSES and names what settles it.  An offset of 0
@@ -47,6 +50,11 @@ FORMAT_PDF = "pdf"
 FORMAT_TEXT = "text"
 
 _MD_HEADING = re.compile(r"^[ \t]*(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$", re.MULTILINE)
+#: reStructuredText underline headings: a title line under a rule of its own
+#: length or longer.  Only the four unambiguous rule characters are accepted --
+#: a wider set would read prose separators and table rules as section heads.
+_RST_HEADING = re.compile(r"^[ \t]*(\S[^\n]*?)[ \t]*\n[ \t]*(([=~^\-])\3+)[ \t]*$",
+                          re.MULTILINE)
 _TEX_HEADING = re.compile(
     r"^[ \t]*\\(chapter|section|subsection|subsubsection)\*?\{([^}\n]{1,160})\}", re.MULTILINE)
 _HTML_HEADING = re.compile(r"<h([1-6])[^>]*>(.*?)</h\1>", re.I | re.S)
@@ -87,11 +95,18 @@ def heading_paths(text: str, fmt_suffix: str) -> list[tuple[int, str]]:
     it is stable under re-flowing, a reader can find it, and it is the only
     locator an HTML or TeX manuscript actually has.  A plain ``.txt`` exposes no
     markup, so it returns nothing and its items keep their line number.
+
+    Every suffix :func:`source_format` accepts either has a branch here or is
+    plain text by nature: an accepted markup with no branch would silently give
+    every item an empty locator, which is the one answer this module exists to
+    avoid.
     """
     suffix = (fmt_suffix or "").lower()
     if suffix in (".md", ".markdown"):
         found = [(m.start(), len(m.group(1)), m.group(2).strip())
                  for m in _MD_HEADING.finditer(text or "")]
+    elif suffix == ".rst":
+        found = _rst_headings(text or "")
     elif suffix == ".tex":
         levels = {"chapter": 1, "section": 2, "subsection": 3, "subsubsection": 4}
         found = [(m.start(), levels[m.group(1)], m.group(2).strip())
@@ -110,6 +125,28 @@ def heading_paths(text: str, fmt_suffix: str) -> list[tuple[int, str]]:
             stack.pop()
         stack.append((level, title))
         out.append((pos, " > ".join(t for _, t in stack)))
+    return out
+
+
+def _rst_headings(text: str) -> list[tuple[int, int, str]]:
+    """``[(offset, level, title), …]`` for reStructuredText underline headings.
+
+    reST does not fix which rule character means which level -- a document
+    declares that by using them, so the level is the order in which a character
+    is first seen.  The rule must be at least as long as the title it underlines
+    (docutils warns otherwise), which is also what keeps a ``---`` separator in
+    prose from being read as a section head.
+    """
+    order: list[str] = []
+    out: list[tuple[int, int, str]] = []
+    for m in _RST_HEADING.finditer(text):
+        title, rule = m.group(1).strip(), m.group(2)
+        if not title or len(rule) < len(title):
+            continue
+        char = m.group(3)
+        if char not in order:
+            order.append(char)
+        out.append((m.start(1), order.index(char) + 1, title))
     return out
 
 
@@ -147,6 +184,48 @@ def require_pagination(meta, feature: str, *, source_id: str = "", settle: str =
         "%s%s is not applicable for an unpaginated source (pagination: none)" % (who, feature),
         settle or ("this source is located by section and line; prepare the paginated edition "
                    "instead: cf sources add <pdf> --for <companion>"))
+
+
+def format_of(path_or_meta) -> str:
+    """``"pdf"`` / ``"text"`` for a path, a prepared ``meta.json`` or a format.
+
+    ``""`` when nothing on hand says -- a source `cf sources add` recorded but
+    nothing has prepared yet -- so a caller can tell "not a PDF" from "not
+    known", and only refuse on the first.
+    """
+    if isinstance(path_or_meta, dict):
+        value = str(path_or_meta.get("source_format") or "")
+        if value in (FORMAT_PDF, FORMAT_TEXT):
+            return value
+        path_or_meta = path_or_meta.get("source_pdf") or path_or_meta.get("pdf") or ""
+    text = str(path_or_meta or "")
+    if text in (FORMAT_PDF, FORMAT_TEXT):
+        return text
+    if not text:
+        return ""
+    try:
+        return source_format(text)
+    except ValueError:
+        return ""
+
+
+def require_pdf(path_or_meta, feature: str, *, source_id: str = "", settle: str = "") -> None:
+    """Refuse ``feature`` on a source that is not a PDF, naming what settles it.
+
+    Pagination is not enough for every page-dependent feature: a ``pdftotext``
+    dump kept as ``.txt`` carries its form feeds, so it is ``pagination:
+    formfeed`` and passes :func:`require_pagination` -- but page IMAGES are
+    rendered from the PDF itself, and handing ``pdftoppm`` a manuscript raised
+    ``Couldn't read xref table`` as an unhandled traceback where a refusal
+    belonged.
+    """
+    fmt = format_of(path_or_meta)
+    if fmt in ("", FORMAT_PDF):
+        return
+    who = ("%s: " % source_id) if source_id else ""
+    raise _cf_error(
+        "%s%s needs a PDF; this source is a text manuscript (%s)" % (who, feature, fmt),
+        settle or ("render the PDF edition instead: cf sources add <pdf> --for <companion>"))
 
 
 def _cf_error(message: str, hint: str):

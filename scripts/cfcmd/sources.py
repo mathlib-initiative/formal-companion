@@ -12,14 +12,17 @@ exceptions:
 
 ``cf sources set`` marks what it touches: an overridden offset gets
 ``offset_method: manual``, an overridden scope gets ``scope_method: manual``, an
-accepted small table gets ``completeness_method: manual``, and the override is
-recorded in the source's ``meta.json`` -- so a number a human typed is never
-mistaken later for one the text supports.
+overridden numbering depth gets ``numbering_method: manual``, an accepted small
+table gets ``completeness_method: manual``, and the override is recorded in the
+source's ``meta.json`` -- so a number a human typed is never mistaken later for
+one the text supports.
 
 A source is a PDF or a manuscript that is already text (``.tex``, ``.md``,
-``.html``, a ``pdftotext`` dump): see ``scripts/sources/locator.py``.  A text
-with no page breaks is UNPAGINATED, and the page-dependent parts of this command
-(``--images``, ``offset=``) refuse on it by name rather than invent a page.
+``.rst``, ``.html``, a ``pdftotext`` dump): see ``scripts/sources/locator.py``.
+A text with no page breaks is UNPAGINATED, and the page-dependent parts of this
+command (``offset=``) refuse on it by name rather than invent a page.
+``--images`` refuses on any manuscript, paginated or not: page images come from
+the PDF, and form feeds in a text dump are not one.
 
 (This command replaces ``cf book``: there is no single book any more.)
 """
@@ -55,10 +58,41 @@ SETTABLE = {
     # this small (a booklet, one chapter of a reader) stays adoptable, and says
     # who vouched for it -- `completeness_method: manual`.
     "completeness_ok": lambda v: str(v).lower() in {"1", "true", "yes", "on"},
+    # the escape hatch for `too_many_segments`: the numbering is inferred from
+    # the source's own headings, so a book whose four-level labels are too few
+    # to clear MIN_DEPTH_SHARE drops them as rejects and re-inferring cannot
+    # change that.  `numbering=3,4` says the book really numbers this deep.
+    "numbering": lambda v: _numbering_value(v),
     "kinds": lambda v: [k.strip() for k in v.split(",") if k.strip()],
     "chapters": lambda v: [int(c.strip()) for c in v.split(",") if c.strip()],
     "pdf": str,
 }
+
+#: the deepest numbering the item grammar carries (`cflib.items.MAX_NUMBER_SEGMENTS`)
+MAX_NUMBERING = 4
+
+
+def _numbering_value(raw: str) -> list[int]:
+    """``"3,4"`` -> ``[3, 4]``; ``"4"`` -> ``[4, 4]``. Raises on anything else.
+
+    Typed by a human, so it is checked here rather than clamped on the way in:
+    a silently clamped depth would put the same headings back on the reject list
+    and leave the user reading the same refusal.
+    """
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    if not 1 <= len(parts) <= 2 or not all(p.isdigit() for p in parts):
+        raise ValueError("expected <min>,<max> numeric segments, e.g. 3,4")
+    low = int(parts[0])
+    high = int(parts[-1])
+    if not 1 <= low <= high <= MAX_NUMBERING:
+        raise ValueError(f"numeric segments must run 1..{MAX_NUMBERING} with min <= max")
+    return [low, high]
+
+
+def _text_suffixes() -> str:
+    """``".txt .md .markdown .tex .html .htm .rst"`` -- exactly what is accepted."""
+    from sources.locator import TEXT_SUFFIXES
+    return " ".join(TEXT_SUFFIXES)
 
 
 def register(subparsers) -> None:
@@ -72,9 +106,12 @@ def register(subparsers) -> None:
     show.add_argument("--json", action="store_true", dest="as_json")
 
     add = sub.add_parser("add", help="add a source by hand (the exception, not the path)")
+    # the accepted set is read off `locator.TEXT_SUFFIXES` rather than retyped:
+    # a help string that advertised fewer formats than the code accepts is how a
+    # suffix with no heading pattern got in unnoticed.
     add.add_argument("source", help="path to the source: a PDF, or a manuscript that is "
-                                    "already text (.txt .md .tex .html) -- never copied "
-                                    "into the skill repo")
+                                    "already text (%s) -- never copied into the skill repo"
+                                    % _text_suffixes())
     add.add_argument("--for", dest="companion", required=True,
                      help="the companion this source is audited against")
     add.add_argument("--anchor", action="store_true",
@@ -87,8 +124,8 @@ def register(subparsers) -> None:
     st = sub.add_parser("set", help="override a discovered field")
     st.add_argument("source_id")
     st.add_argument("assignments", nargs="+", metavar="key=value",
-                    help="offset=16 errata_url=... chapters=1,2 kinds=A,B confirmed=true "
-                         "completeness_ok=true")
+                    help="offset=16 errata_url=... chapters=1,2 kinds=A,B numbering=3,4 "
+                         "confirmed=true completeness_ok=true")
 
     rm = sub.add_parser("remove", help="drop a source from this workspace")
     rm.add_argument("source_id")
@@ -98,7 +135,9 @@ def register(subparsers) -> None:
     refresh = sub.add_parser("refresh", help="re-prepare text, page map, items and errata")
     refresh.add_argument("source_id", nargs="?", help="default: every source")
     refresh.add_argument("--force", action="store_true")
-    refresh.add_argument("--images", action="store_true", help="also render page images (local only)")
+    refresh.add_argument("--images", action="store_true",
+                         help="also render page images (local only; needs the PDF itself, so it "
+                              "refuses on a text manuscript)")
     refresh.add_argument("--image-pages", default="", help="PDF pages to render, e.g. 20-40,55")
     refresh.add_argument("--dpi", type=int, default=150)
     refresh.add_argument("--no-errata", action="store_true")
@@ -126,12 +165,15 @@ def _list(workspace, args) -> int:
     rows = []
     for sid, ref in sources.items():
         items = _item_count(workspace, sid)
+        # an unpaginated source has no printed page, so `offset 0  conf 1.00`
+        # would state the same relation `cf sources show` refuses to print.
+        paginated = _is_paginated(workspace, sid)
         rows.append([
             sid,
             short(ref.sha256, 8) if ref.sha256 else "-",
             (ref.edition or "")[:34],
-            ref.offset,
-            f"{ref.offset_confidence:.2f}",
+            ref.offset if paginated else "-",
+            f"{ref.offset_confidence:.2f}" if paginated else "-",
             len(ref.kinds),
             items if items is not None else "-",
             "yes" if workspace.paths.source_errata_md(sid).exists() else "no",
@@ -315,6 +357,8 @@ def _set(workspace, args) -> int:
         changes["scope_method"] = "manual"
     if "completeness_ok" in changes:
         changes["completeness_method"] = "manual"
+    if "numbering" in changes:
+        changes["numbering_method"] = "manual"
     # the same rule for the errata URL: a URL a human typed is CONFIRMED, and
     # only a confirmed URL is fetched without being asked (a repo-supplied one
     # is an outbound request the repo chose, and text that reaches prompts).
@@ -333,7 +377,7 @@ def _set(workspace, args) -> int:
         meta.setdefault("overrides", []).append({"at": _now(), "changes": changes})
         write_json(meta_path, meta)
         log.detail(f"recorded the override in {meta_path}")
-    if "offset" in changes or "kinds" in changes:
+    if {"offset", "kinds", "numbering"} & set(changes):
         log.info(f"re-prepare so items.json follows: cf sources refresh {ref.id}")
     return 0
 
@@ -415,8 +459,12 @@ def _refresh(workspace, args) -> int:
     for source_id in ids:
         ref = workspace.source(source_id)
         if args.images:
-            # pdftoppm renders PAGES; a manuscript with none cannot answer that.
+            # pdftoppm renders PAGES *of a PDF*, and the two conditions are not
+            # the same one: a pdftotext dump kept as .txt has form feeds, so it
+            # is paginated, and handing its bytes to pdftoppm raised
+            # "Couldn't read xref table" as a traceback.
             _require_pagination(workspace, source_id, "page images (--images)")
+            _require_pdf(workspace, source_id, "page images (--images)")
         _prepare_source(workspace, source_id, force=args.force, no_errata=args.no_errata)
         if args.images and ref.pdf:
             from sources import render_pages
@@ -447,6 +495,21 @@ def _require_pagination(workspace, source_id: str, feature: str) -> None:
                        source_id=source_id)
 
 
+def _require_pdf(workspace, source_id: str, feature: str) -> None:
+    """Refuse a feature that needs the PDF itself on a text manuscript.
+
+    Same three places to ask as the pagination guard, in the same order: the
+    prepared ``meta.json`` read the file, the workspace row recorded what
+    `cf sources add` was given, and the path on disk is the last word for a
+    source neither of them describes.
+    """
+    from sources.locator import require_pdf
+    meta = read_json(workspace.paths.source_meta(source_id), default={}) or {}
+    body = (workspace.data.get("sources") or {}).get(source_id) or {}
+    fmt = meta.get("source_format") or body.get("source_format") or body.get("pdf") or ""
+    require_pdf(fmt, feature, source_id=source_id)
+
+
 def _fingerprint(path: Path) -> dict:
     """``discovery.fingerprint`` for a PDF; the same shape for a text manuscript.
 
@@ -465,7 +528,8 @@ def _fingerprint(path: Path) -> dict:
         fmt = source_format(str(path))
     except ValueError as exc:
         raise CfError(str(exc),
-                      hint="give the PDF, or the manuscript itself (.txt .md .tex .html)") from exc
+                      hint="give the PDF, or the manuscript itself (%s)"
+                           % _text_suffixes()) from exc
     if fmt == FORMAT_PDF:
         data = discovery.fingerprint(path)
         data["source_format"] = FORMAT_PDF
@@ -483,6 +547,15 @@ def _fingerprint(path: Path) -> dict:
 def _item_count(workspace, source_id: str):
     data = read_json(workspace.paths.source_items(source_id), default={}) or {}
     return data.get("count")
+
+
+def _is_paginated(workspace, source_id: str) -> bool:
+    """Does this source have printed pages? (prepared meta first, then the row)."""
+    from sources.locator import is_paginated
+    meta = read_json(workspace.paths.source_meta(source_id), default={}) or {}
+    body = (workspace.data.get("sources") or {}).get(source_id) or {}
+    pagination = meta.get("pagination") or body.get("pagination")
+    return is_paginated({"pagination": pagination} if pagination else {})
 
 
 def _parse_pages(spec: str) -> list[int]:
