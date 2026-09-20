@@ -160,11 +160,17 @@ def is_definitional(row: Mapping, pattern: re.Pattern | None = None) -> bool:
     caller that was given its own keyword list (see :func:`def_signature`); the
     ``kind`` path is not a parameter, because an adapter's ``kind`` means the
     same thing to every caller.
+
+    Both fields are coerced to ``str``, which cannot change a verdict for the
+    text the schema promises: a hand-built or legacy statements table -- the same
+    path the signature fallback is reachable on at all -- may carry a number
+    where the schema wants a string, and the answer there is a verdict, not an
+    ``AttributeError`` raised from inside a classifier.
     """
-    kind = (row.get("kind") or "").strip().lower()
+    kind = str(row.get("kind") or "").strip().lower()
     if kind:
         return kind in DEFINITIONAL_KINDS
-    return bool((pattern or DEF_SIGNATURE).match(row.get("statement") or ""))
+    return bool((pattern or DEF_SIGNATURE).match(str(row.get("statement") or "")))
 
 
 # --------------------------------------------------------------------------
