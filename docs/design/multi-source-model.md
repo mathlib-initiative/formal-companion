@@ -107,7 +107,8 @@ workspace:
 companions:                      # MAP keyed by companion name (was a LIST)
   <name>:
     repo: <abs path>             # required; never written to
-    adapter: <adapter kind>      # required; docstring_tags | attribution_table | ledger_nodes | custom
+    adapter: <adapter kind>      # required; docstring_tags | attribution_table | blueprint_tex |
+                                 #   ledger_nodes | custom
     sources: [<source_id>, …]    # required, >=1, ordered; the sources this companion is audited against
     anchor_source: <source_id>   # required; MUST be one of `sources`; whose pagination the repo's
                                  #   page anchors follow (§4.6)
