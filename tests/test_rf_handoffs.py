@@ -244,6 +244,65 @@ class TestSingleStemRuleWithoutATaskId(WorktreeCase):
         self.assertIn("single-stem rule", out.stdout)
 
 
+class TestABatchedPreMergeSetIsNotOneContribution(WorktreeCase):
+    """The stem count also runs on a change set that is not one contribution.
+
+    ``templates/tend/config.yaml.tmpl`` gives ``validation_commands`` and
+    ``pre_merge_validation_commands`` the same argv and ships ``batched_merge:
+    true``, so the pre-merge change set against ``merge_target_branch`` carries one
+    findings/task pair PER BATCHED TASK and no task id.  A bare stem count refuses
+    that whole batch, and no flag relaxes it; the 1/1 smoke test cannot show it,
+    because at limits 1/1 there is nothing to batch.  So the count asks whether any
+    touched path was already on the base branch, which is the case the rule is for.
+    """
+
+    def batch(self, *stems: str) -> dict:
+        for stem in stems:
+            self.write_pair(stem)
+        self.git("add", "-A")
+        self.git("commit", "-qm", "batched merge")
+        return self.entries()
+
+    def test_a_batch_of_new_pairs_passes_with_no_task_id(self):
+        entries = self.batch("carol", "dave", "erin")
+        self.assertEqual(sorted(set(entries.values())), ["A"])
+        self.assertEqual(vf.check_changed(entries), [])
+
+    def test_a_rewritten_neighbour_inside_a_batch_is_still_refused_by_name(self):
+        (self.root / "findings" / "alice.json").write_text(
+            '{"disagreements": []}\n', encoding="utf-8")
+        entries = self.batch("carol", "dave")
+        problems = vf.check_changed(entries)
+        named = [p for p in problems if "belong to 3 tasks" in p]
+        self.assertTrue(named, problems)
+        self.assertIn("findings/alice.json", named[0])
+        self.assertIn("--task-id", named[0])
+
+    def test_a_deleted_neighbour_inside_a_batch_is_still_refused(self):
+        self.write_pair("carol")
+        self.write_pair("dave")
+        self.git("rm", "-q", "findings/alice.json", "tasks/alice.yaml")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "batched merge, alice dropped")
+        problems = vf.check_changed(self.entries())
+        self.assertTrue(any("deleted" in p for p in problems), problems)
+        self.assertTrue(any("belong to 3 tasks" in p for p in problems), problems)
+
+    def test_a_caller_with_no_statuses_keeps_the_strict_count(self):
+        """``changed_paths`` throws the statuses away, so it cannot tell a new
+        pair from a rewritten one and must stay strict."""
+        problems = vf.check_changed({"findings/carol.json", "tasks/carol.yaml",
+                                     "findings/dave.json", "tasks/dave.yaml"})
+        self.assertTrue(any("belong to 2 tasks" in p for p in problems), problems)
+
+    def test_the_two_documents_an_operator_reads_say_so(self):
+        readme = (SKILL / "templates" / "tend" / "README.md.tmpl").read_text(encoding="utf-8")
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        for text in (readme, runbook):
+            self.assertIn("batched_merge", text)
+            self.assertIn("per batched task", text)
+
+
 class TestTheUnverifiedExportIsWrittenDown(unittest.TestCase):
     """(c) and (d) of the hand-off: say plainly that the export is unverified."""
 
@@ -458,6 +517,12 @@ class TestRecordedFiguresAndTheSpec(unittest.TestCase):
         # and the sentence that stops the printed-page mistake being re-made
         self.assertIn("never its printed `page`", spec)
 
+    def test_the_runbook_prints_the_same_block(self):
+        """An operator reading the runbook must not learn a five-key block the
+        spec and the code have since grown out of."""
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        self.assertIn("page_offset, images_dir, item_pages", runbook)
+
 
 # --------------------------------------------------------------------------- #
 # H5 gates-correctness#4 — a written finding_id is always the right one
@@ -509,6 +574,23 @@ class TestFindingIdIsCheckedWhenItIsWritten(unittest.TestCase):
     def test_the_right_id_passes(self):
         self.assertEqual(self.errs(self.doc(self.real_id())), [])
 
+    def test_a_non_string_id_is_refused_and_does_not_crash_the_gate(self):
+        """Reading the field on every preset makes its TYPE the worker's too.
+
+        ``got[:12]`` raised ``TypeError`` on a JSON number or boolean and
+        ``KeyError`` on an object, out of ``cf harvest`` (``gate_corpus`` calls
+        ``validate_doc`` in a bare loop), out of ``cf pair``'s mechanical
+        validation, and out of the tend validation command as a traceback where
+        the repo's rule is a named refusal.
+        """
+        for bad in (12345, True, 3.5, {"x": 1}, ["a" * 64]):
+            with self.subTest(bad=bad):
+                errs = self.errs(self.doc(bad))
+                self.assertTrue(
+                    any("finding_id must be the 64-character hex string" in e for e in errs),
+                    errs)
+                self.assertTrue(any(repr(bad) in e for e in errs), errs)
+
     def test_a_required_and_missing_id_names_the_expected_one(self):
         """There is no other way to learn it from inside a worktree."""
         cfg = gate_cfg("attack-vac", self.book, source={"item_pages": {ITEM: ITEM_PDF_PAGE}},
@@ -522,6 +604,19 @@ class TestFindingIdIsCheckedWhenItIsWritten(unittest.TestCase):
         self.assertIn("require_finding_id", notes)
         self.assertIn("finding_id_stored", notes)
         self.assertIn("present-but-wrong", notes)
+
+    def test_the_notes_own_the_wider_scope_they_shipped(self):
+        """The refusal has no gate.json key to switch it off, so it also judges
+        the two import-only presets.  ``harvest.tally.computed_finding_id`` names
+        the recompute as the remedy for a corpus of known-wrong stored ids; if
+        PRESETS.md left the scope implicit the two documents would read as
+        offering different remedies for the same historical failure.
+        """
+        notes = (SKILL / "templates" / "PRESETS.md").read_text(encoding="utf-8")
+        self.assertIn("*-legacy", notes)
+        self.assertIn("cf harvest --no-gate", notes)
+        for name in ("differential-legacy", "attack-legacy"):
+            self.assertFalse(presets_mod.get(name).require_finding_id, name)
 
 
 # --------------------------------------------------------------------------- #
@@ -688,6 +783,118 @@ class TestSandboxBypassCanBeStaged(unittest.TestCase):
         body = (SKILL / "scripts" / "run" / "bridge-agentbox.sh").read_text(encoding="utf-8")
         self.assertNotIn("nothing stages it today", body)
         self.assertIn("--allow-sandbox-bypass", body)
+
+    def test_the_record_describes_two_states_and_not_three(self):
+        """The rewritten docstring asserted a THREE-state record in its first
+        sentence and named two states in its last; the dict backs the two."""
+        from run import manifest
+
+        doc = " ".join((manifest.agent_permissions.__doc__ or "").split())
+        self.assertNotIn("THREE-state", doc)
+        self.assertIn("two states this can distinguish", doc)
+        facts = manifest.agent_permissions(self.build())
+        self.assertIsInstance(facts["permission_bypass_in_wrapper"], bool)
+
+
+class TestTheRunPlanNamesTheBypass(unittest.TestCase):
+    """The bypass is asked for at PLAN time; `cf run` is a later command.
+
+    ``run.yaml`` and the manifest's ``permission_bypass*`` fields recorded it, but
+    the printed plan named tasks, budget, disk, transfer and warnings and nothing
+    about agent permissions -- so an operator driving ``cf run --execute`` against a
+    root planned days earlier by someone else never saw that the agents will run
+    with approvals and the sandbox off.  The only warning was the one `cf plan-run`
+    printed at plan time, into a terminal that is long gone.
+    """
+
+    HOST = "examplebox"
+
+    def workspace(self, *, bypass: bool) -> pathlib.Path:
+        import hashlib
+
+        root = scratch(self)
+        repo = root / "repos" / "ours"
+        repo.mkdir(parents=True)
+        sha = hashlib.sha256(BOOK.encode("utf-8")).hexdigest()
+        (root / "workspace.yaml").write_text(
+            "version: 2\n"
+            "workspace:\n  name: demo\n"
+            "companions:\n"
+            "  ours:\n"
+            f"    repo: {repo}\n"
+            "    adapter: docstring_tags\n"
+            f"    sources: [{SOURCE_ID}]\n"
+            f"    anchor_source: {SOURCE_ID}\n"
+            "sources:\n"
+            f"  {SOURCE_ID}:\n"
+            f'    sha256: "{sha}"\n'
+            "    title: A Book\n"
+            '    edition: "2nd edition"\n'
+            f"    offset: {OFFSET}\n"
+            "    role: audited\n"
+            f"hosts:\n  allowlist: [{self.HOST}]\n  remote_root: /srv/audit\n"
+            f"  {self.HOST}:\n    ssh: operator@{self.HOST}\n"
+            "budget:\n  max_cost_usd: 25\n", encoding="utf-8")
+        sdir = root / "sources" / SOURCE_ID
+        sdir.mkdir(parents=True)
+        (sdir / "text.txt").write_text(BOOK, encoding="utf-8")
+
+        preset = presets_mod.get("attack-hunt")
+        run_dir = root / "runs" / "demo"
+        (run_dir / "tasks").mkdir(parents=True)
+        (run_dir / "tasks" / "t1.yaml").write_text(
+            "schema_version: 1\nid: t1\ntitle: \"attack: " + ITEM + "\"\n"
+            f"item: {ITEM}\ndescription: |\n  attack\n", encoding="utf-8")
+        (run_dir / "run.yaml").write_text(
+            "run_id: demo\n"
+            "mode: attack\n"
+            f"preset: {preset.name}\n"
+            "companions: [ours]\n"
+            "repos: [ours]\n"
+            "source_access: text\n"
+            f"host:\n  kind: remote\n  name: {self.HOST}\n"
+            "sources:\n"
+            f"  - id: {SOURCE_ID}\n"
+            f'    sha256: "{sha}"\n'
+            f"    offset: {OFFSET}\n"
+            "gate:\n"
+            f"  config: {run_dir / 'gate.json'}\n"
+            "  out_of_tree: true\n"
+            "tasks:\n  count: 1\n"
+            "remote:\n  entrypoint: demo\n  tend_root: demo-tend\n", encoding="utf-8")
+
+        plan = mtr.TendRootPlan(
+            local=run_dir / "tend-root", tend_root="/srv/audit/demo-tend",
+            entrypoint="/srv/audit/demo", gate_dir="/srv/audit/demo-gate",
+            prompts_dir="/srv/audit/demo-tend/prompts")
+        mtr.make_tend_root(plan, preset, run_id="demo",
+                           gate_config={"sources": {SOURCE_ID: {}}},
+                           allow_sandbox_bypass=bypass)
+        return root
+
+    def plan_output(self, *, bypass: bool) -> str:
+        """The dry-run plan `cf run` prints, stdout and stderr together."""
+        import contextlib
+        import io
+
+        import cf as cf_main
+
+        root = self.workspace(bypass=bypass)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = cf_main.main(["run", "demo", "--host", self.HOST, "--i-have-consent",
+                               "--workspace", str(root)])
+        self.assertEqual(rc, 0, out.getvalue() + err.getvalue())
+        return out.getvalue() + err.getvalue()
+
+    def test_the_dry_run_plan_names_the_staged_bypass(self):
+        text = self.plan_output(bypass=True)
+        self.assertIn("--allow-sandbox-bypass", text)
+        self.assertIn("CF_ALLOW_SANDBOX_BYPASS=1", text)
+
+    def test_a_default_root_says_nothing_about_it(self):
+        """Deny-by-default is the quiet case: a warning on every run is noise."""
+        self.assertNotIn("CF_ALLOW_SANDBOX_BYPASS", self.plan_output(bypass=False))
 
 
 # --------------------------------------------------------------------------- #
