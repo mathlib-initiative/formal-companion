@@ -274,10 +274,14 @@ the worktree the worker can edit — and the pre-merge pass additionally checks
 {"sources": {"widget-theory-2e": {"text": "sources/widget-theory-2e/text.txt",
                                   "sha256": "<64 hex>", "text_sha256": "<64 hex>",
                                   "page_offset": 16,
-                                  "images_dir": "sources/widget-theory-2e/images"}},
+                                  "images_dir": "sources/widget-theory-2e/images",
+                                  "item_pages": {"Exercise 1.2.4": 24}}},
  "KINDS": ["CONTENT", "VACUITY", "SUSPECTED_ERRATA"], "VERDICTS": ["…"],
  "require_witness": true, "check_operators": true}
 ```
+
+`item_pages` maps an item label to its page **of the pinned text** (`items.json`'s `pdf_page`, the
+printed page plus the offset: 8 + 16 = 24 here), never the printed page; the page bind reads it.
 
 `verify_findings.py` is rsynced to a host that has no `cflib` on its path, so it re-implements the
 lookup and the `finding_id` byte-joining itself. Both must stay byte-identical to `cflib`; the

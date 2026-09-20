@@ -92,9 +92,10 @@ Those two lines move together or not at all.
   new flag. Overrides stay in `cf sources set` / `cf sources add`, and each one
   stamps its own `*_method: manual`.
 - **Low confidence is a refusal.** Below `MIN_OFFSET_CONFIDENCE` (0.9),
-  `MIN_ANCHOR_AGREEMENT` (0.80), `MIN_ANCHOR_MARGIN` (0.05) or
-  `MIN_ADAPTER_CONFIDENCE` (0.5), the command stops and names the flag that
-  settles it. A plausible default here is worse than no answer.
+  `MIN_ANCHOR_AGREEMENT` (0.80), `MIN_ANCHOR_MARGIN` (0.05),
+  `MIN_ADAPTER_CONFIDENCE` (0.5) or `MIN_ITEM_COMPLETENESS` (0.6), the command
+  stops and names the flag that settles it. A plausible default here is worse
+  than no answer.
 - **One state file per companion.** `companions/<name>/state.json`, written
   through `cflib.state` (atomic read-modify-write), version 2: a per-source
   `{sha, rows, items}` map and an `anchor_source`, never one top-level sha.
