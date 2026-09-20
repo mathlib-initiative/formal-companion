@@ -49,6 +49,7 @@ from cflib import inference, items as cf_items                         # noqa: E
 from cflib.errors import CfError, ItemGrammarError, SourceError        # noqa: E402
 from cflib.workspace import Workspace                                  # noqa: E402
 from cfcmd.onboard import _refuse_an_empty_source                      # noqa: E402
+from cfcmd.sources import LIST_COLUMNS                                 # noqa: E402
 from sources import compat, locator, prepare_source                    # noqa: E402
 
 KINDS = ("Definition", "Lemma", "Theorem", "Proposition", "Corollary",
@@ -122,7 +123,11 @@ class TestADeeperLabelIsRefusedNotTruncated(unittest.TestCase):
         self.assertEqual(payload["numbering"]["max_segments"], 3)
         self.assertEqual(payload["items"], 40)
         self.assertEqual(len(payload["item_rejects"]), 2)
-        self.assertIn("headings_deeper_than_the_numbering: 2", payload["warnings"])
+        warning = next(w for w in payload["warnings"]
+                       if w.startswith("headings_deeper_than_the_numbering: 2"))
+        # a dropped heading names the ONE thing that can bring it back: refresh
+        # would re-infer the same depth off the same text.
+        self.assertIn("cf sources set deep numbering=3,4", warning)
         written = json.loads((out / "prepared" / "items.json").read_text(encoding="utf-8"))
         self.assertEqual([r["number"] for r in written["rejects"]], ["2.3.4.1", "2.3.4.2"])
         # the merge that used to happen: all five folded onto the ONE key 2.3.4
@@ -132,9 +137,11 @@ class TestADeeperLabelIsRefusedNotTruncated(unittest.TestCase):
                           and len(r["occurrences"]) > 1])
 
     def test_parse_names_the_command_that_settles_a_deep_label(self):
+        """`cf sources refresh --force` re-infers the SAME depth; only the override settles it."""
         with self.assertRaises(ItemGrammarError) as caught:
             cf_items.parse("Theorem 2.3.4.5", KINDS)
-        self.assertIn("cf sources refresh", caught.exception.hint)
+        self.assertIn("cf sources set <id> numbering=2,4", caught.exception.hint)
+        self.assertNotIn("refresh", caught.exception.hint)
 
 
 class TestNumberingIsPerSource(unittest.TestCase):
@@ -174,6 +181,22 @@ class TestNumberingIsPerSource(unittest.TestCase):
         self.assertEqual(cf_items.numbering_range({"min_segments": 1, "max_segments": 4}), (1, 4))
         self.assertEqual(cf_items.numbering_range(7), (4, 4))          # clamped, never raised on
         self.assertEqual(cf_items.numbering_range((3, 1)), (3, 3))     # hi < lo is lo
+        # `numbering: {}` is what a host with no cflib stores, and that run used
+        # the DEFAULT -- reading it back as (2, 2) would reject every
+        # three-segment label in the baseline corpus.
+        self.assertEqual(cf_items.numbering_range({}), cf_items.DEFAULT_NUMBERING)
+        self.assertEqual(prepare_source.segments_for(3, {}), cf_items.DEFAULT_NUMBERING)
+        item, reject = cf_items.try_parse("Exercise 1.3.19", KINDS, numbering={})
+        self.assertIsNone(reject)
+        self.assertEqual(item.id, "Exercise 1.3.19")
+
+    def test_a_hand_edited_numbering_falls_back_instead_of_raising(self):
+        """The docstring promises tolerance of a value a human edited on disk."""
+        for bad in ({"min_segments": "x"}, {"max_segments": None, "min_segments": "2.5"},
+                    ("a", "b"), "3,4"):
+            self.assertEqual(cf_items.numbering_range(bad), cf_items.DEFAULT_NUMBERING, bad)
+            self.assertEqual(prepare_source.segments_for(3, bad),
+                             prepare_source.DEFAULT_SEGMENTS, bad)
 
     def test_find_items_follows_the_sources_numbering(self):
         flat = _synthetic("Theorem %d")
@@ -190,6 +213,97 @@ class TestNumberingIsPerSource(unittest.TestCase):
         self.assertEqual(prepare_source.segments_for(2), (2, 2))
         self.assertEqual(prepare_source.segments_for(3, {"min_segments": 3,
                                                          "max_segments": 3}), (3, 3))
+
+
+class TestTheNumberingOverride(unittest.TestCase):
+    """The refusal named a command that could not settle it.
+
+    ``numbering`` is inferred with a refusal attached, but unlike the offset,
+    the kinds and the scope it had no override: ``cf sources refresh --force``
+    re-reads the same text and reaches the same depth, so a book whose deeper
+    labels are too few to clear ``MIN_DEPTH_SHARE`` dropped its real items on
+    every run with no way to say "it really numbers this deep".
+    """
+
+    #: 20 three-level items plus 2 four-level ones: depth 4 is 2 headings, under
+    #: `min_count`, so the inference says (3, 3) and the two are rejects.
+    TEXT = _synthetic("Theorem 1.1.%d", 20) + _synthetic("Theorem 1.1.9.%d", 2)
+
+    def test_the_inference_alone_drops_the_two_deep_items_on_every_run(self):
+        guess = inference.infer_numbering(self.TEXT)
+        self.assertEqual((guess.min_segments, guess.max_segments), (3, 3))
+        out = _tmp(self, "cf-numov-")
+        src = out / "book.tex"
+        src.write_text(self.TEXT, encoding="utf-8")
+        first = prepare_source.prepare(str(src), str(out / "p"), source_id="bk")
+        again = prepare_source.prepare(str(src), str(out / "p"), source_id="bk", force=True)
+        for payload in (first, again):
+            self.assertEqual(payload["items"], 20)
+            self.assertEqual(len(payload["item_rejects"]), 2)
+
+    def test_the_override_takes_precedence_and_says_a_human_set_it(self):
+        out = _tmp(self, "cf-numov2-")
+        src = out / "book.tex"
+        src.write_text(self.TEXT, encoding="utf-8")
+        prepare_source.prepare(str(src), str(out / "p"), source_id="bk")
+        payload = prepare_source.prepare(str(src), str(out / "p"), source_id="bk",
+                                         segments=[3, 4])
+        self.assertFalse(payload.get("skipped"), "a cached table must not answer a new numbering")
+        self.assertEqual(payload["numbering"]["max_segments"], 4)
+        self.assertEqual(payload["numbering"]["method"], "manual")
+        self.assertEqual(payload["items"], 22)
+        self.assertEqual(payload["item_rejects"], [])
+
+    def test_the_override_is_settable_and_stamps_its_own_method(self):
+        root = _tmp(self, "cf-numset-")
+        self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+        workspace = Workspace.load(root, validate=False)
+        workspace.upsert_source("bk", sha256="c" * 64, title="t", edition="e")
+        workspace.save()
+        rc = _quiet(cf_main.cli, ["sources", "set", "bk", "numbering=3,4",
+                                  "--workspace", str(root)])
+        self.assertEqual(rc, 0)
+        body = (Workspace.load(root, validate=False).data.get("sources") or {})["bk"]
+        self.assertEqual(body["numbering"], [3, 4])
+        self.assertEqual(body["numbering_method"], "manual")
+
+    def test_a_numbering_that_is_not_a_range_is_refused_not_clamped(self):
+        root = _tmp(self, "cf-numbad-")
+        self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+        workspace = Workspace.load(root, validate=False)
+        workspace.upsert_source("bk", sha256="c" * 64, title="t", edition="e")
+        workspace.save()
+        for bad in ("numbering=deep", "numbering=0,2", "numbering=3,9", "numbering=4,3"):
+            rc = _quiet(cf_main.cli, ["sources", "set", "bk", bad, "--workspace", str(root)])
+            self.assertEqual(rc, 2, bad)
+        body = (Workspace.load(root, validate=False).data.get("sources") or {})["bk"]
+        self.assertNotIn("numbering", body)
+
+    def test_the_workspace_row_reaches_prepare(self):
+        """The override is inert unless `cf onboard`/`refresh` hands it to prepare."""
+        from cfcmd.onboard import _prepare_source
+        from cflib.hashing import sha256_file
+        root = _tmp(self, "cf-numwire-")
+        self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+        src = root / "book.tex"
+        src.write_text(self.TEXT, encoding="utf-8")
+        workspace = Workspace.load(root, validate=False)
+        workspace.upsert_source("bk", sha256=sha256_file(src), title="t", edition="e",
+                                pdf=str(src))
+        workspace.save()
+
+        _quiet(_prepare_source, workspace, "bk", force=False, no_errata=True)
+        items = json.loads((root / "sources" / "bk" / "items.json").read_text(encoding="utf-8"))
+        self.assertEqual(items["count"], 20)
+
+        self.assertEqual(_quiet(cf_main.cli, ["sources", "set", "bk", "numbering=3,4",
+                                              "--workspace", str(root)]), 0)
+        workspace = Workspace.load(root, validate=False)
+        _quiet(_prepare_source, workspace, "bk", force=False, no_errata=True)
+        items = json.loads((root / "sources" / "bk" / "items.json").read_text(encoding="utf-8"))
+        self.assertEqual(items["count"], 22, "the override never reached prepare()")
+        self.assertEqual(items["numbering"]["method"], "manual")
+        self.assertEqual(items["rejects"], [])
 
 
 class TestTheCompatViewCarriesEveryLevel(unittest.TestCase):
@@ -251,6 +365,35 @@ class TestInferKindsIsCaseInsensitive(unittest.TestCase):
     def test_an_all_caps_ams_head_is_a_kind_not_an_invisible_line(self):
         kinds, _structural = inference.infer_kinds(_synthetic("THEOREM 1.%d", 5))
         self.assertEqual(kinds, {"Theorem": 5}, "before the fix this was {}")
+
+    def test_an_all_caps_head_becomes_a_ROW_not_just_a_counted_word(self):
+        """Half a fix is worse than none: infer_kinds saw them, find_items did not.
+
+        ``infer_kinds`` folds case, so an AMS book infers ``Theorem``; the item
+        table's own alternation did not, so it matched nothing, ``kinds_not_in_text``
+        no longer fired, and the refusal read "0 numbered items ... kinds Theorem"
+        -- naming the kind as present.
+        """
+        text = _synthetic("THEOREM 1.2.%d", 19)
+        rows = prepare_source.find_items(text, ("Theorem",))
+        self.assertEqual(len(rows), 19, "before the fix this was 0")
+        self.assertEqual(rows[0]["item"], "Theorem 1.2.1")
+        self.assertEqual({r["kind"] for r in rows}, {"Theorem"})
+
+    def test_the_canonical_id_is_the_sources_own_spelling_not_the_typesetters(self):
+        mixed = _synthetic("THEOREM 1.2.%d", 3) + _synthetic("Theorem 1.3.%d", 3)
+        rows = prepare_source.find_items(mixed, ("Theorem",))
+        self.assertEqual([r["item"] for r in rows],
+                         ["Theorem 1.2.1", "Theorem 1.2.2", "Theorem 1.2.3",
+                          "Theorem 1.3.1", "Theorem 1.3.2", "Theorem 1.3.3"])
+        self.assertEqual(prepare_source.canonical_kind("SATZ", KINDS), "Satz")
+        self.assertEqual(prepare_source.canonical_kind("McShane", ("McShane",)), "McShane")
+
+    def test_a_deep_all_caps_heading_is_rejected_under_its_canonical_name(self):
+        _rows, rejects = prepare_source.find_headings(_synthetic("THEOREM 2.3.4.%d", 4),
+                                                      ("Theorem",))
+        self.assertEqual([r["kind"] for r in rejects], ["Theorem"] * 4)
+        self.assertEqual(rejects[0]["raw"], "Theorem 2.3.4.1")
 
     def test_the_two_spellings_of_one_kind_are_one_kind(self):
         text = _synthetic("THEOREM 1.%d", 4) + _synthetic("Theorem 2.%d", 3)
@@ -717,6 +860,28 @@ class TestTheLocator(unittest.TestCase):
         self.assertEqual(locator.detect_pagination("a\fb"), locator.PAGINATION_FORMFEED)
         self.assertEqual(locator.detect_pagination("a b"), locator.PAGINATION_NONE)
 
+    def test_every_accepted_suffix_has_a_locator_or_is_plain_text(self):
+        """An accepted markup with no branch gives every row an empty locator."""
+        bodies = {
+            ".md": "# One\n\ntext\n", ".markdown": "# One\n\ntext\n",
+            ".tex": "\\section{One}\ntext\n", ".html": "<h1>One</h1>", ".htm": "<h1>One</h1>",
+            ".rst": "One\n===\n\ntext\n",
+        }
+        for suffix in locator.TEXT_SUFFIXES:
+            if suffix == ".txt":
+                continue                       # no markup to read: line numbers locate it
+            self.assertIn(suffix, bodies, f"{suffix} is accepted but has no heading pattern")
+            self.assertTrue(locator.heading_paths(bodies[suffix], suffix), suffix)
+
+    def test_rst_underline_headings_nest_by_the_rule_character(self):
+        text = ("Chapter one\n===========\n\nprose\n\nA section\n---------\n\n"
+                "more\n\nChapter two\n===========\n")
+        self.assertEqual([path for _pos, path in locator.heading_paths(text, ".rst")],
+                         ["Chapter one", "Chapter one > A section", "Chapter two"])
+
+    def test_an_rst_rule_shorter_than_its_line_is_not_a_heading(self):
+        self.assertEqual(locator.heading_paths("a long line of prose\n---\n", ".rst"), [])
+
     def test_heading_paths_are_read_per_markup(self):
         md = locator.heading_paths("# One\ntext\n## Two\ntext\n# Three\n", ".md")
         self.assertEqual([path for _pos, path in md], ["One", "One > Two", "Three"])
@@ -743,6 +908,21 @@ class TestTheLocator(unittest.TestCase):
         self.assertIn("notes", str(caught.exception))
         self.assertIn("cf sources add", getattr(caught.exception, "hint", "") or "")
 
+    def test_require_pdf_refuses_a_manuscript_that_happens_to_have_pages(self):
+        """Pagination is not the same question: a pdftotext dump has form feeds."""
+        locator.require_pdf("book.pdf", "page images (--images)")
+        locator.require_pdf({"source_format": locator.FORMAT_PDF}, "page images (--images)")
+        locator.require_pdf("", "page images (--images)")       # unknown: not this guard's call
+        with self.assertRaises(CfError) as caught:
+            locator.require_pdf({"source_format": locator.FORMAT_TEXT,
+                                 "pagination": locator.PAGINATION_FORMFEED},
+                                "page images (--images)", source_id="dump")
+        self.assertIn("needs a PDF", str(caught.exception))
+        self.assertIn("dump", str(caught.exception))
+        self.assertIn("cf sources add <pdf>", getattr(caught.exception, "hint", "") or "")
+        with self.assertRaises(CfError):
+            locator.require_pdf("dump.txt", "page images (--images)")
+
 
 class TestTheSourcesCommandSpeaksOfSourcesNotPdfs(unittest.TestCase):
     def test_the_add_positional_is_named_source_and_names_both_kinds(self):
@@ -751,15 +931,63 @@ class TestTheSourcesCommandSpeaksOfSourcesNotPdfs(unittest.TestCase):
         self.assertIn(".tex", action.help)
         self.assertIn("PDF", action.help)
 
+    def test_the_add_help_lists_exactly_what_is_accepted(self):
+        action = _find_action(cf_main.build_parser()[0], ["sources", "add"], "source")
+        for suffix in locator.TEXT_SUFFIXES:
+            self.assertIn(suffix, action.help, suffix)
+
     def test_completeness_ok_is_settable(self):
         action = _find_action(cf_main.build_parser()[0], ["sources", "set"], "assignments")
         self.assertIn("completeness_ok=true", action.help)
+
+    def test_numbering_is_settable(self):
+        action = _find_action(cf_main.build_parser()[0], ["sources", "set"], "assignments")
+        self.assertIn("numbering=3,4", action.help)
 
     def test_images_refuse_on_an_unpaginated_source(self):
         root = self._unpaginated_workspace("cf-img-")
         rc = _quiet(cf_main.cli, ["sources", "refresh", "notes", "--images",
                                   "--workspace", str(root)])
         self.assertEqual(rc, 2)
+
+    def test_images_refuse_on_a_text_manuscript_that_carries_page_breaks(self):
+        """`--images` shelled pdftoppm at the manuscript: an unhandled traceback."""
+        root = _tmp(self, "cf-imgtxt-")
+        self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+        dump = root / "dump.txt"
+        dump.write_text("\f".join("Theorem 1.%d.1 x.\n" % n for n in range(1, 7)),
+                        encoding="utf-8")
+        workspace = Workspace.load(root, validate=False)
+        workspace.upsert_source("dumpsrc", sha256="d" * 64, title="t", edition="e",
+                                pdf=str(dump), source_format=locator.FORMAT_TEXT,
+                                pagination=locator.PAGINATION_FORMFEED)
+        workspace.save()
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc = cf_main.cli(["sources", "refresh", "dumpsrc", "--images",
+                              "--workspace", str(root)])
+        self.assertEqual(rc, 2, "a refusal, not a pdftoppm traceback")
+        self.assertIn("needs a PDF", err.getvalue())
+
+    def test_the_list_row_of_an_unpaginated_source_prints_no_offset(self):
+        """`offset 0  conf 1.00` is the relation `cf sources show` refuses to print."""
+        root = self._unpaginated_workspace("cf-list-")
+        workspace = Workspace.load(root, validate=False)
+        # exactly what an unpaginated source records: offset 0, method none,
+        # confidence 1.0 -- certainty about a number that means nothing here.
+        workspace.upsert_source("notes", offset=0, offset_confidence=1.0,
+                                offset_method="none")
+        workspace.save()
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            rc = cf_main.cli(["sources", "list", "--workspace", str(root)])
+        self.assertEqual(rc, 0)
+        row = next(line for line in out.getvalue().splitlines() if line.startswith("notes"))
+        columns = row.split()
+        offset_at = LIST_COLUMNS.index("offset")
+        self.assertEqual(columns[offset_at], "-", row)
+        self.assertEqual(columns[LIST_COLUMNS.index("conf")], "-", row)
+        self.assertNotIn("1.00", row)
 
     def test_an_offset_override_refuses_on_an_unpaginated_source(self):
         root = self._unpaginated_workspace("cf-off-")
@@ -777,6 +1005,74 @@ class TestTheSourcesCommandSpeaksOfSourcesNotPdfs(unittest.TestCase):
                                 pagination=locator.PAGINATION_NONE)
         workspace.save()
         return root
+
+
+class TestTheUserFacingStringsSpeakOfSourcesNotPdfs(unittest.TestCase):
+    """A manuscript is a source now; the prose that still said PDF was wrong."""
+
+    def test_a_missing_source_file_is_not_called_a_missing_pdf(self):
+        from cfcmd.onboard import _prepare_source
+        root = _tmp(self, "cf-nopdf-")
+        self.assertEqual(_quiet(cf_main.main, ["init", str(root), "--no-git", "-q"]), 0)
+        workspace = Workspace.load(root, validate=False)
+        workspace.upsert_source("bk", sha256="e" * 64, title="t", edition="e")
+        workspace.save()
+        from cflib import log
+        log.set_level(1)                       # `cf init -q` above silenced the module
+        self.addCleanup(log.set_level, 1)
+        said = io.StringIO()
+        with redirect_stdout(said), redirect_stderr(said):
+            _prepare_source(workspace, "bk", force=False, no_errata=True)
+        said = said.getvalue()
+        self.assertIn("no source file on this machine", said)
+        self.assertIn("cf sources add <source> --for <companion>", said)
+        self.assertNotIn("<pdf>", said)
+
+    def test_the_top_level_epilogue_says_source(self):
+        _parser, epilogue = cf_main.build_parser()[0], cf_main.build_parser()[0].epilog
+        self.assertIn("fingerprints the source", epilogue)
+        self.assertNotIn("fingerprints the PDF", epilogue)
+
+
+class TestTheDocsStateTheGrammarThatIsImplemented(unittest.TestCase):
+    """SKILL.md is the passage most agents read; it stated the old grammar.
+
+    Not a style check: the sentence names the key every stage of the audit is
+    built on, and it said two-or-three fixed levels long after the depth became
+    a per-source inference.
+    """
+
+    DOCS = ("SKILL.md", "README.md", "docs/design/multi-source-model.md",
+            "references/vocabulary.md")
+
+    def _read(self, name: str) -> str:
+        return (SKILL / name).read_text(encoding="utf-8")
+
+    def test_the_grammar_is_stated_the_same_way_everywhere_it_is_stated(self):
+        for name in ("SKILL.md", "docs/design/multi-source-model.md",
+                     "references/vocabulary.md"):
+            body = self._read(name)
+            self.assertIn("<Kind> <n>[.<n>", body, name)
+            self.assertNotIn("<Kind> <c>.<s>.<n>", body, name)
+
+    def test_no_shipped_doc_still_asks_for_a_pdf_positional(self):
+        for name in self.DOCS:
+            self.assertNotIn("sources add <pdf", self._read(name), name)
+
+    def test_the_numbering_and_completeness_refusals_are_in_the_binding_spec(self):
+        spec = self._read("docs/design/multi-source-model.md")
+        self.assertIn("### 5.5 Numbering depth from headings", spec)
+        self.assertIn("### 5.6 Item completeness", spec)
+        self.assertIn("MIN_ITEM_COMPLETENESS", spec)
+        self.assertIn("infer_numbering", spec)
+        for field in ("source_format", "pagination", "completeness_ok", "completeness_method",
+                      "numbering_method"):
+            self.assertIn(field, spec, field)
+
+    def test_the_skill_inference_table_lists_the_new_inferences(self):
+        table = self._read("SKILL.md")
+        self.assertIn("MIN_ITEM_COMPLETENESS", table)
+        self.assertIn("infer_numbering", table)
 
 
 def _find_action(parser, path: list[str], dest: str):
