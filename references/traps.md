@@ -53,6 +53,11 @@ on this machine — 265 pages each, 245 voting pages with 244 agreeing on 16 (0.
 with 248 agreeing (0.9960). A guessed 16 at 0.71 would produce exactly the class of defect the
 audit exists to find, so the command refuses and names `cf sources set <id> offset=N`, which stamps
 `offset_method: manual` so a reader can tell an inference from a claim.
+*The case with no offset at all:* a source that is not a paginated document (a `.tex` manuscript,
+notes in Markdown, an HTML chapter) has no printed page, so it carries `pagination: none`,
+`offset_method: none` and `locator: section`, and every page-dependent feature refuses on it by
+name — `offset=`, `--images`, a page bind — instead of computing from a 0 that nothing supports
+(`scripts/sources/locator.py`).
 *Evidence:* the run prompts' "You can SEE the page" block; `sources/<id>/meta.json`
 `offset_histogram` and `offset_voting_pages`.
 

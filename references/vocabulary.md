@@ -271,12 +271,29 @@ launching.
 `::` is the one separator (`cflib.items.QUALIFIED_SEP`); `split_qualified()` is its inverse and
 raises on a string without it. A function that takes a bare item string takes a `source_id` too.
 
-Grammar for the item half: `"<Kind> <c>.<s>.<n>"` with an optional sub-part suffix `(iv)` / `(3)`,
-where `<Kind>` comes from **that source's** kind list — inferred from the source's own headings and
-stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definition`, `Lemma`, `Theorem`,
-`Proposition`, `Corollary`, `Exercise`, `Example`, `Remark`, plus per-source extras such as
-`Claim`, `Strategy`). Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and
-reported but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
+Grammar for the item half: `"<Kind> <n>[.<n>…]"` with an optional sub-part suffix `(iv)` / `(3)` /
+`(a)`, where `<Kind>` comes from **that source's** kind list — inferred from the source's own
+headings and stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definition`, `Lemma`,
+`Theorem`, `Proposition`, `Corollary`, `Exercise`, `Example`, `Remark`, plus per-source extras such
+as `Claim`, `Strategy`). Kind inference folds case, so an AMS-style `THEOREM 1.2` head counts as
+`Theorem`. Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and reported
+but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
+
+- **How many numbers is the source's numbering, not a constant.** `Theorem 7`, `Theorem 3.4`,
+  `Definition 1.2.3` and `Lemma 2.3.4.1` are four real book conventions; `cflib.inference.
+  infer_numbering` reads the depth off the source's own headings and it is stored as
+  `numbering: {min_segments, max_segments, …}` in `sources/<id>/items.json` and `meta.json`, so
+  every stage reads one definition. A caller that does not know the source gets
+  `items.DEFAULT_NUMBERING` — two or three segments, the grammar the existing corpus was keyed
+  with, so a re-parse of the baseline is byte-identical, and an empty stored mapping (a host
+  without `cflib` inferred nothing) reads back as that default rather than as `(2, 2)`.
+  `cf sources set <id> numbering=<min>,<max>` is the override, stamping `numbering_method:
+  manual`: it is the one inference a re-run cannot settle, because re-running reads the same
+  headings and reaches the same depth.
+- **A label deeper than the numbering is a reject, never a truncation.** `Theorem 2.3.4.5` under a
+  three-segment numbering is `too_many_segments`, not `Theorem 2.3.4` with a stray `.5`: the old
+  behaviour merged every item of a section onto one audit key with nothing on any reject list,
+  which is the one failure shape that produces wrong results rather than missing ones.
 
 - Parsing is **whitespace-tolerant**: `Exercise    1.3.19` is the same item as `Exercise 1.3.19`.
   A single-space regex in the legacy task generator dropped exactly that item and published a

@@ -130,10 +130,18 @@ sources:                         # MAP keyed by source_id (§3)
     edition: <str>               # required; the human label that distinguishes it from siblings
     isbn: <str|null>
     kinds: [<Kind>, …]           # item kinds the strict grammar accepts for THIS source
+    numbering: [<min>, <max>]    # OVERRIDE only: numeric segments a label may carry (§5.5).
+                                 #   Absent means "read it off the headings"
+    numbering_method: manual     # present only when `numbering` was typed
+    source_format: pdf | text    # §5.7; a manuscript that is already text is a source too
+    pagination: formfeed | none  # §5.7; `none` = no printed page, items located by section
     offset: <int>                # printed page = pdf page - offset
     offset_confidence: <0..1>    # §5.1; < 0.9 means `cf sources set` was required
-    offset_method: running_head_mode | declared | manual
-    pages: <int|null>            # PDF page count
+    offset_method: running_head_mode | declared | manual | none
+                                 #   `none` = unpaginated, so there is no offset to be sure of
+    completeness_ok: <bool>      # §5.6 override: this table really is this small
+    completeness_method: manual  # present only when `completeness_ok` was set
+    pages: <int|null>            # PDF page count; 0 for an unpaginated source
     text_sha256: <64 hex|null>   # sha of the pdftotext -layout output (catches a poppler change)
     bytes: <int|null>
     errata_url: <url|null>
@@ -834,16 +842,28 @@ disagreement is a refusal quoting both.
 ### 5.2 Item kinds from headings
 
 ```
-HEADING = r"^[ \t]*([A-Z][a-z]{2,15})\s+(\d+)\.(\d+)(?:\.(\d+))?\.?(?=[\s.(])"
+ANY_HEADING = r"^[ \t]*([A-Z][A-Za-z]{2,15})\s+(\d+(?:\.\d+)*)\.?(?=[\s.(]|$)"
 ```
 
-Count matches per capitalised word over the whole text. Drop the structural
-words `Chapter Section Subsection Part Figure Table Page Appendix Volume Step
-Case Equation` into `structural_kinds` (reported, never used as item kinds).
-Keep the rest with `count >= min_count` (default 3), ordered by count. The
-result is written to `meta.json.kind_counts` and becomes the source's `kinds:`.
-A kind in the registry that the text does not produce is kept (the registry is
-the more careful record) but flagged in `meta.json.kind_warnings`.
+Count matches per capitalised word over the whole text, keeping only headings
+at least as deep as the source's own numbering (§5.5). Case is folded onto one
+spelling per word (`canonical_kind_word`: `THEOREM` → `Theorem`, `McShane`
+untouched), because an AMS-style ALL-CAPS head is the same kind set differently
+and was otherwise invisible. Drop the structural words `Chapter Section
+Subsection Part Figure Table Page Appendix Volume Step Case Equation` into
+`structural_kinds` (reported, never used as item kinds). Keep the rest with
+`count >= min_count` (default 3), ordered by count. The result is written to
+`meta.json.kind_counts` and becomes the source's `kinds:`. A kind in the
+registry that the text does not produce is kept (the registry is the more
+careful record) but flagged in `meta.json.kind_warnings`.
+
+The leading capital stays required: `pdftotext -layout` wraps body lines, so a
+continuation can start with any lower-case word and `and 1.2.3` is not a
+heading. The heading regex that builds the item TABLE
+(`sources.prepare_source.heading_regex`) matches its kind alternation
+case-insensitively for the same reason and canonicalises the matched word
+against this source's declared `kinds` at the match site — never in
+`items.clean()`, which is frozen.
 
 ### 5.3 Scope from what the companions tag
 
@@ -888,16 +908,123 @@ Definition 1.5.11 once). After the fetch, the raw HTML is checked for the word
 which is where the errata live, so this resolves at confidence 1.0 from the
 registry and is corroborated by both repos.
 
+### 5.5 Numbering depth from headings
+
+How many numeric segments an item label carries is the **source's**, not a
+constant. `Theorem 7`, `Theorem 3.4`, `Definition 1.2.3` and `Lemma 2.3.4.1`
+are four real book conventions, and reading a book with the wrong one either
+finds nothing or — the failure that produces *wrong* results rather than
+missing ones — matches a deep label down to its first segments and merges
+every item of a section onto one audit key.
+
+```
+infer_numbering(text, min_count=3, min_share=MIN_DEPTH_SHARE) ->
+  NumberingGuess(min_segments, max_segments, confidence, headings, counts, method)
+```
+
+Count `ANY_HEADING` matches by segment depth (structural words excluded). A
+depth is part of the numbering when it carries at least `min_count` (3)
+headings **and** `MIN_DEPTH_SHARE` (0.05) of them — which drops the handful of
+stray one-number lines a typeset book always has (`Let 2`, `Bibliography 1`;
+both Tao editions carry four) without dropping a real appendix convention.
+`confidence` is the share of headings the accepted depths account for. A text
+with no numbered heading at all returns `DEFAULT_NUMBERING` `(2, 3)` at
+confidence 0.0 with `method: "default"`.
+
+The result is stored as `numbering: {min_segments, max_segments, confidence,
+headings, counts, method}` in both `items.json` and `meta.json`, so every stage
+reads one definition. `cflib.items` takes it as the `numbering=` keyword;
+`items.DEFAULT_NUMBERING` `(2, 3)` is what a caller that does not know the
+source gets, and it is the grammar the existing corpus was keyed with, so a
+re-parse of the baseline is byte-identical. **An empty mapping means "nothing
+was inferred" and reads back as `DEFAULT_NUMBERING`, never as `(2, 2)`** — a
+host without `cflib` writes `numbering: {}` and its table really was built with
+the default.
+
+A label deeper than `max_segments` is a **reject**, `too_many_segments`, and
+becomes no row at all; the caller reports it exactly as the item grammar's
+reject list is reported. Both Tao editions infer `(3, 3)` at confidence > 0.95
+and produce zero such rejects, so nothing in the corpus moves.
+
+This is the one inference a re-run cannot settle, because re-running reads the
+same headings and reaches the same depth. Its override is therefore
+`cf sources set <id> numbering=<min>,<max>`, which stamps `numbering_method:
+manual` on the workspace row and `method: "manual"` on the stored dict; both
+the `too_many_segments` refusal and the `headings_deeper_than_the_numbering`
+warning name it.
+
+### 5.6 Item completeness
+
+The only wrong-document guard used to be `items == 0`, which a real book almost
+never trips: a 404-page book whose numbering puts the kind *after* the number
+(`3.22 theorem`) prepared a table a fraction of a percent of its own size and
+was adopted in silence. A book's numbering is its own denominator:
+
+```
+item_completeness(numbers) -> {found, expected, completeness, groups, worst}
+
+    slots[prefix] = {last index seen}        # prefix = every segment but the last
+    expected     = Σ max(slots[prefix])      # "items run up to 1.3.21" ⇒ 21 slots
+    found        = Σ |{i ∈ slots[prefix] : 1 ≤ i ≤ max}|
+    completeness = found / expected
+```
+
+The slots of one numeric prefix are **pooled across kinds**, deliberately
+deviating from a per-`(kind, chapter, section)` denominator: whether a book runs
+one counter per section (Tao: `Definition 1.3.8` then `Lemma 1.3.9`) or one per
+kind is its own convention, and this estimate does not get to dictate it.
+Pooling reads the numbering the most complete way it can be read, so the score
+is a floor on what was found, never an accusation.
+
+Below `MIN_ITEM_COMPLETENESS` (**0.6**) `cf onboard` / `cf sources refresh`
+refuse, in the same style as the offset rule: say which signal fired, echo the
+top few `kind_counts` so the user can see the grammar read prose rather than
+headings, and name the settlement — `cf sources set <id> kinds=…`, or
+`cf sources set <id> completeness_ok=true`, which stamps `completeness_method:
+manual`. Measured, not chosen: both Tao editions score **0.9961** (254 of the
+255 slots their sections number) and the kind-after-number book scores 0.086,
+so the floor sits an order of magnitude above the bad case and 0.39 below the
+good one.
+
+A source declaring kinds of which the text uses none (`kinds_not_in_text`
+covering every one, or `kinds_not_inferred`) is refused by the same function,
+before the completeness figure is consulted: that kind list belongs to another
+book.
+
+### 5.7 Source format and pagination
+
+A source need not be a paginated PDF. `sources/locator.py` holds the two facts
+that make a manuscript a source and the refusals that keep it honest:
+
+- `source_format(path)` → `pdf` | `text`, from the suffix alone (a human named
+  the file; sniffing the bytes could prepare a different document than the one
+  they meant). The accepted text suffixes are `locator.TEXT_SUFFIXES`, and
+  every one of them either has a branch in `heading_paths` or is plain text by
+  nature.
+- `detect_pagination(text)` → `formfeed` when the text carries `\f` page breaks
+  (a `pdftotext` dump kept as a file still has its pages, and everything
+  page-dependent then works exactly as it does on the PDF), else `none`.
+
+An unpaginated source has `pages: 0`, `offset: 0`, `offset_method: none`,
+`locator: section`, and its items carry a heading path plus a line instead of a
+`pdf_page`. Page-dependent features refuse on it by name rather than compute
+from a zero nothing supports: `require_pagination(meta, feature)` for an
+offset, a page bind or a printed-page anchor. Page IMAGES ask a second question,
+because form feeds are not a PDF: `require_pdf(meta, feature)` refuses
+`cf sources refresh --images` on any text manuscript, paginated or not.
+
 ---
 
 ## 6. Item namespacing and the on-disk layout
 
 ### 6.1 The namespacing rule
 
-An item is the pair **`(source_id, item)`**. The item half keeps the strict
-grammar of `cflib/items.py` unchanged — `<Kind> <c>.<s>.<n>` with an optional
-sub-part, or `In-text p.<n>` — because the grammar is per-source and the kinds
-list is per-source.
+An item is the pair **`(source_id, item)`**. The item half follows the strict
+grammar of `cflib/items.py` — `<Kind> <n>[.<n>…]`, one to four numeric levels
+with the depth inferred per source and stored as `numbering` (§5.5), with an
+optional sub-part, or `In-text p.<n>` — because the grammar is per-source and
+the kinds list is per-source. A label deeper than the source's numbering is a
+reject (`too_many_segments`), never truncated onto a shorter item's key.
 
 **The item half has two normal forms, and a join must use the right one.**
 `items.clean(label)` is the ID form: whitespace only, what `finding_id` hashes,
@@ -987,10 +1114,12 @@ inlines the function for a host without `cflib`), `sources/compat.py`,
     text.txt                     pdftotext -layout output          (was book/<id>/book.txt)
     pages/pNNN.txt               one file per PDF page
     images/pNNN.png              only when rendered
-    items.json                   {source_id, source_sha, offset, kinds, count, by_kind,
-                                  by_chapter, ambiguous, items:[…]}
-    meta.json                    identity + pagination + inference + provenance
-                                                                   (was book/<id>/book.json)
+    items.json                   {source_id, source_sha, offset, kinds, numbering,
+                                  pagination, locator, count, by_kind, by_chapter,
+                                  ambiguous, rejects, items:[…]}
+    meta.json                    identity + source_format + pagination + locator +
+                                 inference (offset, kinds, numbering, item_completeness)
+                                 + provenance        (was book/<id>/book.json)
     errata.md                    rendered verbatim
     errata.raw.html              the bytes curl returned
     errata.json                  fetch metadata (url, status, shas, changed)
@@ -1053,9 +1182,9 @@ holding `workspace.yaml`), `-v`, `-q`. No `--campaign`, no `$CF_CAMPAIGN`.
 | `onboard <repo> [--name N] [--adapter K] [--download] [--anchor-source ID] [--dry-run] [--force]` | discover → register → prepare → extract, printing every inference and its confidence |
 | `sources list` | one row per source: id, sha8, edition, offset±conf, kinds, items, errata, companions, confirmed |
 | `sources show <id>` | the full record, its `same_work` siblings, its `page_map_to`, its provenance and its prepared artifacts |
-| `sources add <pdf\|url> --for <companion> [--anchor] [--download]` | add a source by hand (the exception); fingerprints, registers, prepares, and appends to that companion's `sources` |
-| `sources set <id> key=value …` | override a field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `confirmed=true`); sets the matching `*_method: manual` and records the override in `meta.json` |
-| `sources refresh [<id>] [--force] [--images] [--no-errata]` | re-prepare text / page map / items / errata for one or every source. **This replaces `cf book`** |
+| `sources add <source> --for <companion> [--anchor] [--download]` | add a source by hand (the exception); fingerprints, registers, prepares, and appends to that companion's `sources`. `<source>` is a PDF or a manuscript that is already text (§5.7) |
+| `sources set <id> key=value …` | override a field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `numbering=3,4`, `completeness_ok=true`, `confirmed=true`); sets the matching `*_method: manual` and records the override in `meta.json` |
+| `sources refresh [<id>] [--force] [--images] [--no-errata]` | re-prepare text / page map / items / errata for one or every source. `--images` needs the PDF itself and refuses on a text manuscript. **This replaces `cf book`** |
 | `extract [--companion X]` | adapters → `statements.jsonl`; rows carry `source_id` + `source_sha` |
 | `pair [--source ID] [--only a,b] [--chapter N]` | **iterates the shared sources**: one `pairs/<source_id>/` per source with ≥2 companions, plus per-source coverage/targets/anchors for single-companion sources |
 | `plan-run --preset P [--source ID] [--companion X] [--host H]` | a run is scoped to one source; `--source` is required only when the selected companions share more than one |

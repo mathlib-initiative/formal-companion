@@ -452,7 +452,10 @@ class ItemId:
 
 
 def _from_cf_item(raw, obj) -> ItemId:
-    parts = tuple(
+    # `number_levels` carries EVERY numeric segment: rebuilding the number from
+    # chapter/section/number alone would drop the fourth level of a book that
+    # numbers `Lemma 2.3.4.1`, which is the truncation the grammar now refuses.
+    parts = getattr(obj, "number_levels", None) or tuple(
         x for x in (obj.chapter, obj.section, obj.number) if x is not None
     )
     number = ".".join(str(x) for x in parts)
@@ -538,11 +541,24 @@ def item_sort_key(key: str) -> tuple:
 
     String-in / tuple-out, and total: it must never raise on a key that came
     from a repo tag, because sorting happens before the reject list is applied.
+
+    The dotted run is taken WHOLE, so ``Theorem 2.3.4.10`` sorts after
+    ``Theorem 2.3.4.9`` instead of falling back to the label and ordering them
+    as strings.  A book that numbers ``Theorem 7`` has no dotted run at all, so a
+    single number IMMEDIATELY after the kind counts too -- otherwise every item
+    of such a source tied in the 99s and items.json came out in string order
+    (``Theorem 10`` before ``Theorem 9``).  Both patterns leave ``In-text p.71``
+    where it was, in the 99s with the other unnumbered labels: ``p.71`` has no
+    leading digit and nothing but whitespace may sit between kind and number.
     """
-    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", key or "")
-    nums = tuple(int(x) for x in m.groups() if x) if m else (99, 99, 99)
-    nums = nums + (0,) * (3 - len(nums))
+    m = re.search(r"(\d+(?:\.\d+)+)", key or "") or _FLAT_NUM.match(key or "")
+    nums = tuple(int(x) for x in m.group(1).split(".")) if m else (99, 99, 99)
+    nums = nums + (0,) * max(0, 3 - len(nums))
     return (nums, key or "")
+
+
+#: ``Theorem 7`` / ``Exercise 3(a)`` -- a source numbered per chapter, not per section
+_FLAT_NUM = re.compile(r"^[A-Za-z][A-Za-z.\-]*[ \t]+(\d+)(?![\d.])")
 
 
 _PAGE_NUM = re.compile(r"(\d+)\s*(?:[-–—]\s*(\d+))?")
