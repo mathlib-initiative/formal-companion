@@ -286,53 +286,6 @@
    null
   ]
  ],
- "repo_module_stages": [
-  [
-   "MeasureTheory.Tao.Elementary",
-   1
-  ],
-  [
-   "MeasureTheory.Tao.Jordan",
-   1
-  ],
-  [
-   "MeasureTheory.Tao.Riemann",
-   1
-  ],
-  [
-   "MeasureTheory.Tao.Lebesgue",
-   2
-  ],
-  [
-   "MeasureTheory.Tao.Integration",
-   3
-  ],
-  [
-   "MeasureTheory.Tao.Abstract",
-   4
-  ],
-  [
-   "MeasureTheory.Tao.Convergence",
-   5
-  ],
-  [
-   "MeasureTheory.Tao.Differentiation",
-   6
-  ],
-  [
-   "MeasureTheory.Tao.Companion.Differentiation",
-   6
-  ],
-  [
-   "MeasureTheory.Tao.Extension",
-   7
-  ],
-  [
-   "MeasureTheory.Tao.Product",
-   7
-  ]
- ],
- "_repo_module_stages_note": "COMPANION-SPECIFIC (measure_theory's MeasureTheory.Tao.* layout), used only by the optional broad scan. A workspace may override this file with detect/mathlib_stages/<source_id>.json of its own; a published copy of this skill should carry only the source-level module_stages.",
  "mathlib_objects": {
   "MeasureTheory.MeasureSpace.volume": {
    "label": "volume",
@@ -390,20 +343,5 @@
    "stage": 7
   }
  },
- "native_tokens": [
-  "elementaryMeasure",
-  "elementaryContent",
-  "JordanOuter",
-  "JordanInner",
-  "jordanMeasure",
-  "boxCoverCost",
-  "finiteBoxCoverCost",
-  "OpenExcessLebesgueMeasurable",
-  "upperIntegral",
-  "lowerIntegral",
-  "OrderedRiemannCriterion",
-  "DarbouxIntegrableOn",
-  "piecewiseConstantIntegral"
- ],
- "_native_tokens_note": "COMPANION-SPECIFIC: identifier fragments of the companion's own constructions, used to tell 'the body still builds the book's object' from 'the body IS the library's object'. Belongs with the companion's conventions.md once onboarding writes one."
+ "_companion_facts_note": "This table describes the WORK only. One companion's own module layout (repo_module_stages) and its own identifier vocabulary (native_tokens) are facts about that repository, not about the book: they live in the workspace at companions/<name>/stage-overlay.json (beside conventions.md) and are applied by StageTable.with_companion_overlay. templates/detect/stage-overlay.json.tmpl is the shape."
 }

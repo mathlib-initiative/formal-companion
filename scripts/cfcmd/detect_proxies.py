@@ -18,6 +18,21 @@ Two tiers:
     ``dump_deps.sh`` command line and stops, because producing it needs a built
     ``.lake`` that the skill must not build or modify.
 
+The **stage table** (``detect/mathlib_stages/<source_id>.json``, in the workspace
+or shipped with the skill) says which section of the *work* first develops a
+concept.  A new book does not need one to be audited: without a table the
+coverage split still runs and the body-proxy scan reports that it was SKIPPED and
+why, with exit 0 -- an empty ``proxy_candidates`` must not read as "no proxies
+found" when nothing was scanned.  ``--init-stage-table`` writes a candidate table
+for a human to fill in; until they do, its ``_unedited`` marker makes it count as
+no table, because a skeleton's placeholder objects would invent hits instead of
+reporting none.  The Lean tier IS the table, so it refuses without one.
+
+One **companion's** own facts -- its module layout and the identifiers of its own
+constructions -- are not facts about the work, so they live in the workspace at
+``companions/<name>/stage-overlay.json`` (``--overlay`` overrides) and never in
+the shipped table.
+
 Every run is scoped to ONE source (``--source``, defaulting to the companion's
 anchor source when it has only one): the detector reads that source's items.json
 and stamps every row with its id and sha, so the rows can be gated against the
@@ -28,7 +43,7 @@ Outputs, all inside the workspace directory::
     pairs/<source_id>/def-coverage.<name>.json
     detect/<name>/findings.cheap.jsonl
     detect/<name>/report_keydefs.json
-    detect/<name>/report_broad_defs.json      (--broad, when the stage table maps the repo's modules)
+    detect/<name>/report_broad_defs.json      (--broad, when the overlay maps the repo's modules)
     detect/<name>/findings.lean.jsonl
     corpus/detect-<name>-<tier>/<item>.json   (default; --no-emit-corpus to skip)
     corpus/detect-<name>-<tier>/RECEIPT.json
@@ -55,6 +70,7 @@ if str(_SCRIPTS) not in sys.path:  # pragma: no cover - import side effect
     sys.path.insert(0, str(_SCRIPTS))
 
 from cflib import workspace as cf_workspace  # noqa: E402
+from cflib import paths as cf_paths  # noqa: E402
 from cflib import state as cf_state  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_jsonl, write_json, write_jsonl  # noqa: E402
@@ -87,6 +103,13 @@ def register(subparsers) -> object:
                     help="the source to detect against (default: the companion's anchor source; "
                          "required when it has more than one)")
     ap.add_argument("--stages", help="explicit stage table json (overrides the source's)")
+    ap.add_argument("--init-stage-table", action="store_true",
+                    help="write a candidate stage table for the source into "
+                         "<workspace>/detect/mathlib_stages/<source_id>.json for a human to "
+                         "fill in, then stop (refuses to overwrite an existing one); the "
+                         "skeleton counts as no table until its `_unedited` key is deleted")
+    ap.add_argument("--overlay", help="the companion's stage-overlay.json (default: "
+                                      "companions/<name>/stage-overlay.json when it exists)")
     ap.add_argument("--statements", help="statements.jsonl override")
     ap.add_argument("--items", help="items.json override")
     ap.add_argument("--run-id", help="run id stamped into findings (default: detect-<name>-<tier>)")
@@ -127,6 +150,8 @@ def run(args) -> int:
 
     if args.render_dump_deps:
         return _render_dump_deps(detect_dir, name, entry, adapter, args)
+    if args.init_stage_table:
+        return _init_stage_table(paths, workspace, source_id, source)
 
     statements = Path(args.statements) if args.statements else paths.statements_jsonl(name)
     if not statements.exists():
@@ -141,7 +166,7 @@ def run(args) -> int:
             hint=f"run `cf sources refresh {source_id}` first, or pass --items",
         )
 
-    stages = _load_stages(args, paths.detect_dir, source_id)
+    stages = _load_stages(args, paths, name, source_id, workspace)
     rows = _rows_for_source(read_jsonl(statements, skip_meta=True), source_id)
 
     summary: dict = {
@@ -152,15 +177,16 @@ def run(args) -> int:
         "items": str(items_path),
     }
     chapter = _audited_chapter(workspace, source_id, stages)
+    page_offset = int(workspace.offset(source_id) or 0) if source_id else 0
     summary["cheap"] = _run_cheap(
         args, paths, detect_dir, name, rows, items_path, stages, kinds,
-        source_id, source_sha, chapter=chapter,
+        source_id, source_sha, chapter=chapter, page_offset=page_offset,
     )
     exit_code = 0
     if args.lean:
         summary["lean"], exit_code = _run_lean(
             args, paths, detect_dir, name, rows, stages, kinds, source_id, source_sha,
-            entry, adapter
+            entry, adapter, items_path, page_offset=page_offset,
         )
 
     _write_state(workspace, name, summary)
@@ -251,58 +277,170 @@ def _read_yaml(path: Path) -> dict:
         return {}
 
 
-def _load_stages(args, detect_dir: Path, source_id: str) -> StageTable:
-    """A workspace-local stage table wins over the one shipped with the skill."""
+def _load_stages(args, paths, name: str, source_id: str, workspace) -> StageTable:
+    """The source's stage table, the companion's overlay, the workspace's scope.
+
+    A workspace-local table wins over the one shipped with the skill, and a
+    missing table is NOT fatal: the def-coverage half of this command needs no
+    stage table, so the run continues and the body-proxy scan reports that it
+    was skipped (generality: a new book must be auditable before a human has
+    written 68 module prefixes for it).
+
+    A table still carrying ``_unedited`` -- the marker ``--init-stage-table``
+    writes -- is treated as a missing one rather than as an empty one, because
+    the skeleton's example ``mathlib_objects`` entry does not make the scan find
+    nothing: it makes the scan report every body that names the example's label
+    and cite a library constant that exists nowhere.
+    """
     if args.stages:
-        return StageTable.load(args.stages)
-    if not source_id:
+        stages = StageTable.load(args.stages)
+    elif not source_id:
         raise CfError(
             "no source id",
             hint="pass --source <id> or --stages <path to a stage table>",
         )
-    return StageTable.for_source(source_id, extra_dirs=[detect_dir / "mathlib_stages"])
+    else:
+        stages = StageTable.for_source(
+            source_id, extra_dirs=[paths.detect_dir / "mathlib_stages"], required=False)
+    if stages.unedited:
+        stages = StageTable.absent(
+            source_id or stages.source_id,
+            f"the stage table at {stages.path} is still the --init-stage-table skeleton: "
+            'fill in module_stages and mathlib_objects and delete "_unedited"')
+    return _scope_stages(stages, workspace, source_id).with_companion_overlay(
+        _overlay_path(args, paths, name))
+
+
+def _overlay_path(args, paths, name: str) -> Path | None:
+    """``companions/<name>/stage-overlay.json``: this companion's half of the table."""
+    if args.overlay:
+        return Path(args.overlay)
+    candidate = paths.companion_dir(name) / "stage-overlay.json"
+    return candidate if candidate.exists() else None
+
+
+def _scope_stages(stages: StageTable, workspace, source_id: str) -> StageTable:
+    """Scope the table to the chapters workspace.yaml says are audited.
+
+    The audited scope belongs to the workspace (``sources.<id>.chapters``), not
+    to the table: a Chapter-1 table is still right about S1.k in a run that
+    audits two chapters, and narrowing to the table's own chapter would return
+    ``None`` for -- and so silently suppress every hit in -- the others.
+    """
+    chapters = list(workspace.chapters(source_id)) if source_id else []
+    return stages.scoped_to_chapters(chapters) if chapters else stages
+
+
+def _init_stage_table(paths, workspace, source_id: str, source) -> int:
+    """Write a candidate stage table for ``source_id`` for a human to fill in.
+
+    The detector's one per-book setup cost is this file, and until now the only
+    way to get one was to copy the shipped Tao table and edit 68 module
+    prefixes.  This writes the template with everything the workspace already
+    knows (the id, the sibling editions, the title, the audited chapters) filled
+    in and the two judgement calls -- which library module belongs to which
+    section, and which library constants ARE the work's concepts -- left EMPTY,
+    with their shapes in the adjacent notes.  It never guesses them: a wrong
+    stage silently suppresses or invents hits.  The skeleton carries
+    ``_unedited``, and while that key is there the table counts as no table, so a
+    run between bootstrapping and filling it in reports the body-proxy scan as
+    skipped instead of scanning against placeholders.
+    """
+    destination = paths.detect_dir / "mathlib_stages" / f"{source_id}.json"
+    if destination.exists():
+        raise CfError(
+            f"a stage table for {source_id!r} already exists: {destination}",
+            hint="edit it, or delete it first; --init-stage-table never overwrites one",
+        )
+    template = cf_paths.templates_dir() / "detect" / "stage-table.json.tmpl"
+    siblings = sorted({source_id, *(r for r in workspace.source_ids()
+                                    if r != source_id and _same_work(workspace, r, source_id))})
+    text = template.read_text(encoding="utf-8")
+    for key, value in (
+        ("source_id", json.dumps(source_id)[1:-1]),
+        ("source_ids", json.dumps(siblings)),
+        ("title", json.dumps(str(source.title or source_id))[1:-1]),
+        ("chapters", json.dumps([int(c) for c in workspace.chapters(source_id)] or [1])),
+    ):
+        text = text.replace("{{" + key + "}}", value)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(text, encoding="utf-8")
+    ok(f"wrote {destination}")
+    info("fill in `module_stages` (library module prefix -> the section of this work that "
+         'first develops it) and `mathlib_objects`, delete "_unedited", then re-run '
+         "`cf detect-proxies`")
+    info("until then the body-proxy scan reports itself as skipped: an unedited skeleton "
+         "would have it scan against placeholder objects")
+    info(f"this companion's own module layout goes in "
+         f"{cf_paths.templates_dir() / 'detect' / 'stage-overlay.json.tmpl'}'s shape at "
+         f"companions/<name>/stage-overlay.json")
+    return 0
+
+
+def _same_work(workspace, other: str, source_id: str) -> bool:
+    """Two source ids that are editions of one work share a title.
+
+    A stage is which SECTION develops a concept, so one table serves both; the
+    candidate lists them and the human deletes what does not belong.
+    """
+    try:
+        return (str(workspace.source(other).title or "").strip().lower()
+                == str(workspace.source(source_id).title or "").strip().lower() != "")
+    except CfError:  # pragma: no cover - source_ids() only yields known ids
+        return False
 
 
 def _audited_chapter(workspace, source_id: str, stages):
-    """The chapter def-coverage is scoped to.
+    """The chapter def-coverage is scoped to; ``None`` means every chapter.
 
     ``workspace.yaml sources.<id>.chapters`` is the single source of scope,
     because ``cf pair`` writes the SAME ``pairs/<source_id>/def-coverage.<name>.json``
     and reads it from there: when the two disagreed, an unscoped ``cf pair``
     reported 32 stated / 7 bridge-only / 1 missing for the same repo this
     command scored 32 / 4 / 0, and the file meant whichever command ran last.
-    The stage table's own chapter is the fallback for a source with no scope.
+
+    The fallback is the table's chapter SET, and only when there IS a table.  A
+    scalar ``chapter`` defaulting to 1 fabricated a scope instead: a first run
+    on a new book -- no table, no recorded chapters -- reported a complete
+    coverage split that had silently audited Chapter 1 of it, and a hand-written
+    table saying ``chapters: [1, 2]`` staged both while def-coverage scored one.
+    The resolved scope is written to the file's ``_meta.chapter``, so "coverage
+    above is complete" can be checked.
     """
-    chapters = list(workspace.chapters(source_id))
-    if len(chapters) == 1:
-        return int(chapters[0])
-    if len(chapters) > 1:
-        return None          # multi-chapter scope: do not narrow to one
-    return stages.chapter
+    chapters = list(workspace.chapters(source_id)) or (
+        list(stages.chapters) if stages.available else [])
+    return int(chapters[0]) if len(chapters) == 1 else None
 
 
 # --------------------------------------------------------------------------
 # cheap tier
 # --------------------------------------------------------------------------
 def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
-               source_id, source_sha, *, chapter=None) -> dict:
+               source_id, source_sha, *, chapter=None, page_offset: int = 0) -> dict:
     """def-coverage + body proxies; writes pairs/<source_id>/def-coverage.<name>.json."""
     definitions = def_coverage.load_items(items_path, kind="Definition", chapter=chapter, kinds=kinds)
+    scope = f"chapter {chapter}" if chapter is not None else "any chapter"
     if not definitions:
-        warn(f"items.json names no Definition items for chapter {chapter}")
+        warn(f"items.json names no Definition items for {scope}")
     coverage = def_coverage.compute_def_coverage(definitions, rows, kinds=kinds)
-    candidates = def_coverage.body_proxy_candidates(rows, stages, kinds=kinds)
-    shadowed = def_coverage.shadowed_object_labels(rows, stages)
+    # The coverage split needs no stage table; the body-proxy scan does, because
+    # "same-or-later stage" is the whole rule.  Without one the scan is SKIPPED
+    # and says so -- an empty `proxy_candidates` that means "no table" must not
+    # read as "no proxies".
+    scan = {"ran": stages.available, "reason": "" if stages.available
+            else stages.unavailable_reason}
+    candidates = (def_coverage.body_proxy_candidates(rows, stages, kinds=kinds)
+                  if stages.available else [])
+    shadowed = def_coverage.shadowed_object_labels(rows, stages) if stages.available else []
     bodies = sum(1 for r in rows if r.get("body") and def_coverage.is_definitional(r))
 
     # pairs/def-coverage.<name>.json is written by `cf pair` as well (the same
     # artifact is listed under Stage 3 and Stage 8 of design/stage_map.md), so
     # this is a superset of pair/def_coverage.py's schema -- `bridge_only_decls`
     # and the descriptive keys are kept so either writer leaves a file both
-    # readers accept. Both writers now MERGE (keys they do not own survive) and
-    # both classify with cflib.vocab.DEFINITIONAL_KEYWORDS, so the two agree by
-    # construction rather than by luck.
-    # TODO(cf): collapse the two implementations into this one.
+    # readers accept. Both writers MERGE (keys they do not own survive) and both
+    # classify through detect.def_coverage.is_definitional, so stated /
+    # bridge_only / missing no longer depend on which command ran last.
     out = {
         "source_id": source_id,
         "source_sha": source_sha,
@@ -320,7 +458,15 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
             "companion": name,
             "source_id": source_id,
             "source_sha": source_sha,
+            # the scope this run actually audited (null = every chapter).  The
+            # top-level `chapter` is owned by both writers of this file; this one
+            # is the detector's own record, so "coverage above is complete" is
+            # checkable against the chapter it was complete for.
+            "chapter": chapter,
             "stage_table_source": stages.source_id,
+            "stage_table": str(stages.path) if stages.path else None,
+            "companion_overlay": str(stages.overlay_path) if stages.overlay_path else None,
+            "body_proxy_scan": scan,
             "definitions": len(definitions),
             "definitional_rows_with_body": bodies,
             "shadowed_objects": shadowed,
@@ -342,13 +488,27 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
         "definitional_rows_with_body": bodies,
     }
     info(
-        f"{name}/{source_id}: {counts['definitions']} Definitions -- {counts['stated']} stated, "
-        f"{counts['bridge_only']} bridge-only, {counts['missing']} missing; "
-        f"{counts['proxy_candidates']} body proxy candidate(s)"
+        f"{name}/{source_id}: {counts['definitions']} Definitions in {scope} -- "
+        f"{counts['stated']} stated, {counts['bridge_only']} bridge-only, "
+        f"{counts['missing']} missing; {counts['proxy_candidates']} body proxy candidate(s)"
     )
-    if bodies == 0 and rows:
+    if not scan["ran"]:
+        warn("the body-proxy scan was SKIPPED: " + scan["reason"])
+        warn("definition coverage above is complete; `proxy_candidates` is empty because "
+             "nothing was scanned, not because nothing was found")
+    elif bodies == 0 and rows:
         warn("no definitional row carries a `body`: the body-proxy scan saw nothing "
              "(v1 statement tables have no body field)")
+    if scan["ran"] and not stages.native_tokens:
+        # `native_tokens` moved out of the shipped table into the companion's own
+        # overlay, and a workspace that relied on the shipped one loses the
+        # distinction between "the body still builds the work's object" and "the
+        # body IS the library's object" rather than a count: the rows still
+        # emit, with an empty `native_tokens_in_body`.
+        warn(f"no native_tokens for {name}: a proxy candidate's `native_tokens_in_body` "
+             f"will be empty because this companion's own vocabulary is unmapped")
+        warn(f"map it in {paths.companion_dir(name) / 'stage-overlay.json'} "
+             f"(templates/detect/stage-overlay.json.tmpl is the shape)")
     if shadowed:
         warn(f"{name} defines its own {', '.join(shadowed)}: only namespace-qualified "
              "occurrences of the library constant count as evidence for those")
@@ -371,18 +531,22 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
             ),
         )
         ok(f"wrote {path} ({len(rows_out)} rows)")
-    result = {"counts": counts, "coverage_file": str(coverage_path), "findings": len(rows_out)}
+    result = {"counts": counts, "coverage_file": str(coverage_path), "findings": len(rows_out),
+              "body_proxy_scan": scan}
     if rows_out:
         emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="cheap",
                                source_id=source_id, source_sha=source_sha, counts=counts,
-                               items_pages=_items_pages(items_path, kinds))
+                               items_pages=_items_pages(items_path, kinds),
+                               item_pdf_pages=_item_pdf_pages(items_path, kinds),
+                               page_offset=page_offset)
         if emitted:
             result["corpus"] = emitted
     return result
 
 
 def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier: str,
-                 source_id: str, source_sha, counts: dict, items_pages: dict) -> dict | None:
+                 source_id: str, source_sha, counts: dict, items_pages: dict,
+                 item_pdf_pages: dict, page_offset: int) -> dict | None:
     """Publish the detector's rows into ``corpus/<run-id>/``, gated.
 
     Stage 8's own gate (stage_map.md): a hit only counts once it "joins the
@@ -400,7 +564,8 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
     gate_result = None
     if not args.no_gate:
         gate_result = _gate_documents(paths, docs, run_id=run_id, companion=name,
-                                      source_id=source_id, source_sha=source_sha)
+                                      source_id=source_id, source_sha=source_sha,
+                                      item_pdf_pages=item_pdf_pages, page_offset=page_offset)
         if not gate_result["ok"]:
             warn(f"the mechanical gate refused {len(gate_result['problems'])} thing(s); "
                  f"corpus/{run_id} was NOT written")
@@ -429,8 +594,18 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
 
 
 def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
-                    source_id: str, source_sha) -> dict:
-    """Validate detector documents against the `mechanical` preset, in memory."""
+                    source_id: str, source_sha, item_pdf_pages: dict | None = None,
+                    page_offset: int = 0) -> dict:
+    """Validate detector documents against the `mechanical` preset, in memory.
+
+    The source block carries ``item_pages`` -- items.json's ``pdf_page``, the
+    gate's first and best route from an item to the page a quote must be on --
+    and the source's ``page_offset``.  Detector rows carry no ``book_quote``
+    today (``detect/findings.py``) and the gate consults the page bind only per
+    quote, so nothing binds yet; the map is filled in here so the route is
+    correct for the first row that does carry one, and so a printed page is
+    never passed in its place.
+    """
     from gate import verify_findings as vf
     from plan import presets as presets_mod
 
@@ -438,7 +613,11 @@ def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
         presets_mod.get("mechanical"),
         run_id=run_id,
         sources={source_id: {"text": str(paths.source_text(source_id)),
-                             "sha256": source_sha or ""}},
+                             "sha256": source_sha or "",
+                             "page_offset": page_offset,
+                             # pages of the PINNED TEXT (items.json `pdf_page`),
+                             # not the printed pages a finding cites
+                             "item_pages": dict(item_pdf_pages or {})}},
         repos=[companion],
     )
     cfg = vf.GateConfig(config)
@@ -448,6 +627,33 @@ def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
         problems.extend(vf.validate_doc(doc, name, cfg, books))
     return {"ok": not problems, "preset": "mechanical", "problems": problems,
             "sources": cfg.source_ids(), "documents": len(docs)}
+
+
+def _item_pdf_pages(items_source, kinds) -> dict[str, int]:
+    """``{item id: page of the PINNED TEXT}`` -- items.json's ``pdf_page``.
+
+    This is what the gate's ``sources.<id>.item_pages`` means: the page a quote
+    must be found on in ``sources/<id>/text.txt``.  It is NOT :func:`_items_pages`,
+    which returns the PRINTED page a finding cites; for the pinned Tao edition
+    the two differ by the source's 16-page front matter, so the printed one would
+    place every item 16 pages from its own quotes.  Nothing binds while the
+    detector's rows carry no quote, which is why the wrong map would have been
+    invisible until the first row that does.
+    """
+    data = read_json(items_source) if isinstance(items_source, (str, Path)) else items_source
+    if isinstance(data, dict):
+        data = data.get("items", data)
+    entries = data.values() if isinstance(data, dict) else (data or [])
+    out: dict[str, int] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        base = item_base(entry.get("item") or entry.get("id") or entry.get("label") or "",
+                         kinds or DEFAULT_KINDS)
+        page = entry.get("pdf_page")
+        if base and isinstance(page, int):
+            out[base] = page
+    return out
 
 
 def _items_pages(items_source, kinds) -> dict[str, int]:
@@ -492,8 +698,20 @@ def _first_page(entry: dict) -> int | None:
 # lean tier
 # --------------------------------------------------------------------------
 def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, source_sha,
-              entry, adapter) -> tuple[dict, int]:
+              entry, adapter, items_path, page_offset: int = 0) -> tuple[dict, int]:
     """ORDER_VIOLATION / SAME_STAGE_PRIMITIVE over deps.json. Never runs lake."""
+    if not stages.available:
+        # Unlike the cheap tier this one IS the stage table: with no prefixes
+        # every module is foundations, so the two rules would report nothing and
+        # a clean report would mean "not checked".
+        raise CfError(
+            f"the Lean tier needs a stage table for {source_id!r}: {stages.unavailable_reason}",
+            # the reason names the file when there is an unedited one to finish,
+            # so the flags below are the routes for when there is no file at all
+            hint=f"finish the table the reason names, or write one with `cf detect-proxies "
+                 f"{name} --source {source_id} --init-stage-table`, or pass --stages "
+                 f"<path to a stage table>",
+        )
     deps_path = Path(args.deps) if args.deps else detect_dir / "deps.json"
     if not deps_path.exists():
         raise CfError(
@@ -525,7 +743,10 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, sou
         broad = analyze_stages.broad_scan(deps, stages)
         write_json(detect_dir / "report_broad_defs.json", broad)
         if not broad and not stages.repo_module_stages:
-            warn("the stage table has no repo_module_stages for this companion; broad scan skipped")
+            warn(f"no repo_module_stages for {name}: the broad scan found nothing because this "
+                 f"companion's module layout is unmapped")
+            warn(f"map it in {paths.companion_dir(name) / 'stage-overlay.json'} "
+                 f"(templates/detect/stage-overlay.json.tmpl is the shape)")
 
     rows_out: list[dict] = []
     counts = {
@@ -553,7 +774,9 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, sou
     if rows_out:
         emitted = _emit_corpus(args, paths, name, rows_out, run_id=run_id, tier="lean",
                                source_id=source_id, source_sha=source_sha,
-                               counts=counts, items_pages={})
+                               counts=counts, items_pages={},
+                               item_pdf_pages=_item_pdf_pages(items_path, kinds),
+                               page_offset=page_offset)
     exit_code = _report_unclassified(report, stages, args.allow_unclassified)
     return (
         {

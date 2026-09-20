@@ -27,9 +27,10 @@ needs no Lean environment because the row already carries the body.
 """
 from __future__ import annotations
 
+import functools
 import re
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Mapping, Sequence
 
 from detect import findings as find_rows
 from detect._compat import (
@@ -46,14 +47,34 @@ from detect.stages import StageTable
 #: ONE definition, in cflib.vocab: pair/def_coverage.py writes the same file.
 DEFINITIONAL_KEYWORDS = vocab.DEFINITIONAL_KEYWORDS
 
-#: The baseline's signature test (recovered L6099 ``DEFKIND``) plus ``instance``
-#: and the remaining Lean modifiers. Applied to ``statement`` when a row has no
-#: explicit ``kind``.
-DEF_SIGNATURE = re.compile(
-    r"^\s*(?:@\[[^\]]*\]\s*)*"
-    r"(?:private |protected |noncomputable |nonrec |unsafe |partial |scoped |local )*"
-    r"(" + "|".join(DEFINITIONAL_KEYWORDS) + r")\b"
-)
+#: Lean modifiers that may precede the declaration keyword.  ``local `` is one of
+#: them: ``local instance foo : Bar := x`` states a notion.
+_MODIFIERS = r"(?:private |protected |noncomputable |nonrec |unsafe |partial |scoped |local )*"
+
+
+@functools.lru_cache(maxsize=8)
+def _compile_signature(keywords: tuple[str, ...]) -> re.Pattern:
+    """The baseline's signature test (recovered L6099 ``DEFKIND``), compiled once."""
+    return re.compile(r"^\s*(?:@\[[^\]]*\]\s*)*" + _MODIFIERS
+                      + r"(" + "|".join(keywords) + r")\b")
+
+
+def def_signature(keywords: Sequence[str] = DEFINITIONAL_KEYWORDS) -> re.Pattern:
+    """The ONE signature regex, for ``keywords`` (default: the shared vocabulary).
+
+    ``pair/def_coverage.py`` writes the same ``def-coverage.<name>.json`` and
+    used to carry its own copy of this pattern.  The copies had drifted -- it
+    allowed at most one attribute group and did not list ``local `` -- so
+    ``local instance foo`` and ``@[simp] @[inline] def volume`` were definitional
+    to one writer and bridge-only to the other, and the file meant whichever
+    command ran last.  Both writers now call this function.
+    """
+    return _compile_signature(tuple(keywords))
+
+
+#: The signature test for the shared keyword vocabulary. Applied to ``statement``
+#: when a row has no explicit ``kind``.
+DEF_SIGNATURE = def_signature()
 
 #: row ``kind`` values (adapters emit these) that count as definitional
 DEFINITIONAL_KINDS = set(vocab.DEFINITIONAL_KINDS)
@@ -125,17 +146,31 @@ def index_by_item(rows: Iterable[dict], kinds: Sequence[str] = DEFAULT_KINDS) ->
     return out
 
 
-def is_definitional(row: dict) -> bool:
-    """Does this row *state* a concept?
+def is_definitional(row: Mapping, pattern: re.Pattern | None = None) -> bool:
+    """Does this row *state* a concept?  THE definitional classifier.
 
     Prefers the adapter's ``kind`` field; falls back to the signature regex
     that produced the baseline table, so v1 rows (which carry only
     ``statement``) classify identically.
+
+    Both def-coverage producers -- ``cf detect-proxies`` and ``cf pair``, which
+    write the same ``pairs/<source_id>/def-coverage.<name>.json`` -- call this
+    one function, so ``stated`` / ``bridge_only`` / ``missing`` cannot depend on
+    which of the two ran last.  ``pattern`` overrides the signature test for a
+    caller that was given its own keyword list (see :func:`def_signature`); the
+    ``kind`` path is not a parameter, because an adapter's ``kind`` means the
+    same thing to every caller.
+
+    Both fields are coerced to ``str``, which cannot change a verdict for the
+    text the schema promises: a hand-built or legacy statements table -- the same
+    path the signature fallback is reachable on at all -- may carry a number
+    where the schema wants a string, and the answer there is a verdict, not an
+    ``AttributeError`` raised from inside a classifier.
     """
-    kind = (row.get("kind") or "").strip().lower()
+    kind = str(row.get("kind") or "").strip().lower()
     if kind:
         return kind in DEFINITIONAL_KINDS
-    return bool(DEF_SIGNATURE.match(row.get("statement") or ""))
+    return bool((pattern or DEF_SIGNATURE).match(str(row.get("statement") or "")))
 
 
 # --------------------------------------------------------------------------

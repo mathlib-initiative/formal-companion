@@ -1,0 +1,15 @@
+{
+ "_note": "ONE companion's half of the stage table: facts about this repository, not about the work. Put it at companions/<name>/stage-overlay.json, beside conventions.md. The source-level half (module_stages, mathlib_objects, stage_beyond_book, the chapter scope) stays in the source's stage table and may NOT be restated here -- cf detect-proxies refuses an overlay that sets a source-level key.",
+ "companion": "{{companion}}",
+ "source_id": "{{source_id}}",
+ "_repo_module_stages_note": "ORDERED; FIRST match wins. [this repo's module prefix, the section of the work it formalises]. Used only by the optional --broad scan, which asks which of the repo's own definitions come from a module later than the concept they realise.",
+ "repo_module_stages": [
+  ["Booklet.Basic", 1],
+  ["Booklet.Advanced", 4]
+ ],
+ "_native_tokens_note": "Identifier fragments of this repo's OWN constructions -- the names below are synthetic, replace them with the repo's. They tell 'the body still builds the work's object' from 'the body IS the library's object': a proxy candidate whose term also names one of these is weaker evidence, and the finding row says so. Leave them unmapped and every candidate's `native_tokens_in_body` is empty, which cf detect-proxies warns about rather than passing off as 'no native construction'.",
+ "native_tokens": [
+  "myOwnCoverCost",
+  "myOwnContent"
+ ]
+}
