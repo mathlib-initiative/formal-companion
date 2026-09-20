@@ -70,9 +70,9 @@ cf plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
 - `runs/<run-id>/prompts/*.md` — worker-system, worker, worker-revision, reviewer-system, reviewer,
   rendered from `templates/prompts/` with the companion's `conventions.md` injected.
 - `runs/<run-id>/gate.json` — `KINDS`, `VERDICTS`, witness requirement, a `sources` block
-  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir}}`) and the allowed repo
-  prefixes. The gate picks the text by the document's `source_id`; the two paths the legacy gate
-  hard-wired (the book file and the repo-name regex) are fields here.
+  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir, item_pages}}`) and the
+  allowed repo prefixes. The gate picks the text by the document's `source_id`; the two paths the
+  legacy gate hard-wired (the book file and the repo-name regex) are fields here.
 - a tend root — `config.yaml`, `.tend/*.yaml`, `bin/` (the two bridges, the normaliser, the
   out-of-tree gate invocation).
 
