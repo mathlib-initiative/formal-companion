@@ -309,6 +309,9 @@ class WorkspacePaths:
     def union_json(self, name: str) -> Path:
         return self.reports_dir / f"union.{_safe_id(name, 'companion name')}.json"
 
+    def score_json(self, run_id: str) -> Path:
+        return self.reports_dir / f"score.{_safe_id(run_id, 'run_id')}.json"
+
     @property
     def agreed_high_json(self) -> Path:
         return self.reports_dir / "agreed_high.json"

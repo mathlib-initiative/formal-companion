@@ -12,11 +12,18 @@
 #     task files on a worker host with nothing installed, so one job runs the
 #     suite with PyYAML absent.
 #
+# The third job is the end-to-end demonstration a stranger can run:
+# tests/e2e/synthetic.sh builds a public-domain booklet and two Lean companions
+# of it that carry eight planted defects, onboards them with no flags, and scores
+# the model-free detector against tests/e2e/answer-key.json. It needs poppler and
+# nothing else, and it is what stops the quick start rotting.
+#
 # What it does NOT cover, so nobody reads green here as more than it is: the
-# baseline-backed tests (they need private corpora and skip), `prepare_source`
-# and the pdftotext/pdftoppm paths (double-gated on a private path, so poppler is
-# not installed here), `cf run --execute`, `tests/e2e/multisource.sh`, and
-# anything touching a real companion repo.
+# baseline-backed tests (they need private corpora and skip), `cf run --execute`,
+# `render_pages.render()` and the pdftoppm path (only its two refusals are
+# asserted; `pdftotext` is stubbed out in the pytest jobs and exercised only
+# indirectly by the synthetic job), the Tao half of `tests/e2e/multisource.sh`
+# (two private checkouts), and anything touching a real companion repo.
 name: tests
 
 on:
@@ -84,3 +91,20 @@ jobs:
       # CLAUDE.md S7's gate. It does not load tests/conftest.py, so it is also
       # the check that no test needs that hook to pass.
       - run: python -m unittest discover -s tests
+
+  synthetic-e2e:
+    name: synthetic end-to-end (booklet, planted defects, score)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The one external requirement of the synthetic half.  The script skips
+      # with a message when pdftotext is absent; CF_REQUIRE_POPPLER makes that a
+      # failure here, so a missing package cannot read as a pass.
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: tests/e2e/synthetic.sh
+        env:
+          CF_REQUIRE_POPPLER: "1"
+        run: bash tests/e2e/synthetic.sh
