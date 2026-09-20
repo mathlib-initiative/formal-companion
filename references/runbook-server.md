@@ -70,9 +70,9 @@ cf plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
 - `runs/<run-id>/prompts/*.md` — worker-system, worker, worker-revision, reviewer-system, reviewer,
   rendered from `templates/prompts/` with the companion's `conventions.md` injected.
 - `runs/<run-id>/gate.json` — `KINDS`, `VERDICTS`, witness requirement, a `sources` block
-  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir}}`) and the allowed repo
-  prefixes. The gate picks the text by the document's `source_id`; the two paths the legacy gate
-  hard-wired (the book file and the repo-name regex) are fields here.
+  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir, item_pages}}`) and the
+  allowed repo prefixes. The gate picks the text by the document's `source_id`; the two paths the
+  legacy gate hard-wired (the book file and the repo-name regex) are fields here.
 - a tend root — `config.yaml`, `.tend/*.yaml`, `bin/` (the two bridges, the normaliser, the
   out-of-tree gate invocation).
 
@@ -89,7 +89,22 @@ What it does, in order — and each step is one you can also do by hand:
 4. **Smoke test 1/1.** Set limits to one worker and one reviewer, start the run, and watch exactly
    one task through worker → gate → reviewer → merge. Do not launch hundreds of tasks blind: model
    ids that have never been exercised from this machine fail immediately and repeatedly.
-5. Only then raise the limits to the preset's concurrency.
+5. **Read that task's gate output once per tend version.** Its last line is `changed files: …`.
+   `ownership checked against task <id>` means the orchestrator exported `TEND_TASK_ID` into the
+   validation command's environment and the full ownership rule is running. `ownership: single-stem
+   rule` means it did not: only the weaker rule (one task's findings/task pair per contribution) is
+   in force, so a worker that rewrites a neighbour's landed findings file inside its own single
+   stem is not caught. **Whether tend exports it has never been verified here**, and it is a
+   property of the orchestrator version, not of the run — so check it again after an upgrade. To
+   restore the full rule, append `--task-id <the id>` to both gate commands in the tend root's
+   `config.yaml` by whatever substitution that version supports; an argv list is not shell-expanded,
+   so a literal `$TEND_TASK_ID` element makes the gate refuse every run. The same argv serves
+   `validation_commands` and `pre_merge_validation_commands`, and with `batched_merge: true` a
+   pre-merge change set carries one findings/task pair per batched task: the stem count therefore
+   only refuses several stems when one of the paths was already on the merge target, so a batch of
+   new pairs merges and a rewritten neighbour is still named. A 1/1 smoke test cannot exercise that
+   — there is nothing to batch at limits 1/1 — so read the pre-merge gate output again after step 6.
+6. Only then raise the limits to the preset's concurrency.
 
 ```bash
 # the manual equivalents, for when you are debugging rather than driving

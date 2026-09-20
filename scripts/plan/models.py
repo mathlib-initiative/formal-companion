@@ -139,11 +139,11 @@ def unknown_warning(model: str | None, workspace: Any) -> str | None:
 def tend_agent_model(tend_root: pathlib.Path | str, role: str = "worker") -> str | None:
     """The ``model_name`` in a generated ``.tend/<role>-agent.yaml``.
 
-    Exposed so that ``cf run`` can refuse when this and ``run.yaml``'s ``model``
-    disagree -- run.yaml used to record a model the bridge never received
-    (references/method.md S10: "the yields belong to the models that produced
-    them"). That check itself belongs in ``cfcmd/run.py`` and is not wired yet;
-    this is the reader it needs.
+    ``cfcmd/run.py`` (``_check_model``) compares it with ``run.yaml``'s ``model``
+    before anything is transferred: a dry run prints the disagreement and
+    ``--execute`` refuses, because run.yaml used to record a model the bridge
+    never received (references/method.md S10: "the yields belong to the models
+    that produced them").
     """
     path = pathlib.Path(tend_root) / ".tend" / f"{role}-agent.yaml"
     if not path.exists():

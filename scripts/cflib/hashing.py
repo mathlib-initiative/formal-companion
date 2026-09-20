@@ -58,8 +58,12 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
     """The stable id every finding carries -- the ONE definition.
 
     ``sha256("\\n".join([run_id, source_id, clean(item), kind, *sorted(decls)]))``.
-    Deterministic across runs of the same defect, so union/agreed/adjudication
-    link by id instead of by a 22-character label prefix.
+    Deterministic for one defect WITHIN one run: ``run_id`` is the first part, so
+    the same defect found by two runs gets two ids, and this is NOT the key that
+    joins them.  That key is ``harvest.tally.defect_key`` -- the same five parts
+    with the run id empty -- and it is what union, agreed and adjudication match
+    across runs; an id links a ledger or routed row back to the finding of ONE
+    run, which is the job it is content-addressed for.
 
     Three details are load-bearing and must not drift:
 
