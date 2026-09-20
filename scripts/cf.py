@@ -73,8 +73,8 @@ workspace directory:
 A workspace holds N COMPANIONS and M SOURCES; a companion is audited against a
 LIST of sources, and a differential is possible exactly where two companions'
 source lists overlap.  Nothing about a source is typed in: `cf onboard <repo>`
-discovers it, fingerprints the PDF and infers the page offset, the item kinds
-and the errata page.
+discovers it, fingerprints the source and infers the page offset, the item
+kinds, the numbering depth and the errata page.
 
 typical program:
   cf doctor                             # git, poppler and curl on PATH?

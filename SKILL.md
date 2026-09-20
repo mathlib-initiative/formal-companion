@@ -63,13 +63,16 @@ page is exactly the defect class this audit exists to find.
 | which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven signals, `references/onboarding-contract.md` §0) |
 | which edition | sha256 of the actual PDF bytes, looked up in `registry/sources.yaml` |
 | the page offset | the mode of the running-head votes, with a confidence; below 0.9 it refuses (`cflib.inference.MIN_OFFSET_CONFIDENCE`) |
-| the item kinds | the capitalised words that really head numbered items in this source's text |
+| the item kinds | the capitalised words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
+| the numbering depth | how many numeric segments this source's own headings carry, stored as `numbering`; a deeper label is a reject, never a truncation (`cflib.inference.infer_numbering`) |
+| whether the table is the book | items found against the slots the numbering itself counts; below 0.6 it refuses (`cflib.inference.MIN_ITEM_COMPLETENESS`) |
 | the errata URL | the registry, corroborated by the book page the repo cites; fetched with `curl`, raw HTML kept. A URL the REPO supplies waits for `--fetch-errata`: the page reaches workers as authoritative text |
 | the audited scope | the chapters the companions actually tag |
 | the anchor edition | scoring the repo's own page anchors against each candidate edition; prose only corroborates |
 
 Overrides exist and are the exception: `cf sources set <id> offset=16`,
-`cf sources add <pdf> --for <companion>`, `cf onboard --adapter`,
+`cf sources set <id> numbering=3,4`, `cf sources set <id> completeness_ok=true`,
+`cf sources add <source> --for <companion>`, `cf onboard --adapter`,
 `--anchor-source`.
 
 ## Two directories, never mixed
@@ -132,8 +135,8 @@ checkout actually has.
 | `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
 | `sources list` | one row per source: id, sha8, edition, offset ± confidence, kinds, items, errata, companions, role, confirmed |
 | `sources show <id>` | the full record: provenance, licence, `same_work` siblings, the page map, the prepared artifacts |
-| `sources add <pdf> --for <companion>` | add a source by hand; fingerprints, registers, prepares, appends to that companion's list |
-| `sources set <id> key=value …` | override a discovered field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `confirmed=true`); sets the matching `*_method: manual` |
+| `sources add <source> --for <companion>` | add a source by hand; fingerprints, registers, prepares, appends to that companion's list. A source is a PDF or a manuscript that is already text (`.txt .md .tex .html`), which is located by heading path instead of printed page |
+| `sources set <id> key=value …` | override a discovered field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `numbering=3,4`, `completeness_ok=true`, `confirmed=true`); sets the matching `*_method: manual` |
 | `sources remove <id>` | drop a source that should never have been registered: workspace.yaml, the overlay row and the prepared directory. Loads even a workspace its own validator rejects — it is the repair path |
 | `sources refresh [<id>]` | re-prepare text, page map, items and errata for one source or all of them. **This replaces the old `cf book`** |
 | `extract [--companion X]` | adapters → `statements.jsonl`; every row carries `source_id` + `source_sha`; no-op when (repo commit, adapter key) is unchanged |
@@ -228,9 +231,11 @@ One set, defined in `scripts/cflib/vocab.py`, documented in
   `open`
 
 **An item is the pair `(source_id, item)`.** The item half follows one strict
-grammar (`cflib/items.py`): `<Kind> <c>.<s>.<n>` with an optional sub-part, or
-`In-text p.<n>`, where the kind list is the *source's* — inferred from its own
-headings. Anything else is rejected with a reason and reported, never silently
+grammar (`cflib/items.py`): `<Kind> <n>[.<n>…]`, one to four numeric levels, the
+depth inferred per source and stored as `numbering`, with an optional sub-part —
+or `In-text p.<n>`, where the kind list is the *source's*, inferred from its own
+headings. A label deeper than the source's numbering is a reject, never a
+truncation. Anything else is rejected with a reason and reported, never silently
 turned into a key. Rows carry the two halves as two fields; where one string is
 needed the spelling is `source_id::item` (`cflib.items.qualified_item`), and a
 filename uses `qualified_slug`. A bare item string is never a cross-source key,
