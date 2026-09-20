@@ -15,7 +15,10 @@ eight Chapter-1 kinds).  Generalised per design/stage_map.md Stage 1:
   against, and every downstream artifact can carry ``source_id``/``source_sha``;
 * the NUMBERING is inferred too (``1.2.3`` / ``3.4`` / ``7`` / ``2.3.4.1`` are
   four real book conventions), and a label deeper than it is reported as a
-  reject rather than truncated onto a shorter item's key;
+  reject rather than truncated onto a shorter item's key.  ``cf sources set
+  <id> numbering=<min>,<max>`` is its override, stamped ``method: manual``:
+  re-running the inference reads the same headings and reaches the same depth,
+  so a book whose deeper labels are too few to be inferred from needs a human;
 * a source that is already text (``.tex``, ``.md``, ``.html``, a ``pdftotext``
   dump) skips poppler entirely; when it has no page breaks it is prepared as an
   unpaginated source, located by section and line (``sources/locator.py``).
@@ -85,20 +88,31 @@ def segments_for(parts: int = 3, segments=None) -> tuple[int, int]:
     in ``items.json``/``meta.json`` as ``numbering``); ``parts`` is the older
     spelling and still means what it meant -- 3 is ``1.2`` or ``1.2.3``, 2 is
     ``1.2`` only.
+
+    An EMPTY mapping means "nothing was inferred", which is what ``meta.json``
+    stores on a host with no ``cflib`` -- and that is exactly the run that used
+    :data:`DEFAULT_SEGMENTS`.  Reading it back as ``(2, 2)`` would say the
+    source is numbered one level shallower than the table on disk was built
+    with.  A value that cannot be read as a number falls back the same way,
+    because this reads a number a human may have hand-edited.
     """
-    if segments is None:
+    if not segments:
         return DEFAULT_SEGMENTS if parts >= 3 else (2, 2)
-    if isinstance(segments, dict):
-        low = int(segments.get("min_segments") or DEFAULT_SEGMENTS[0])
-        high = int(segments.get("max_segments") or low)
-    elif isinstance(segments, int):
-        low = high = segments
-    else:
-        seq = tuple(segments)
-        low = int(seq[0])
-        high = int(seq[1]) if len(seq) > 1 else low
-    low = max(1, min(low, 4))
-    return low, max(low, min(high, 4))
+    try:
+        if isinstance(segments, dict):
+            low = int(segments.get("min_segments") or DEFAULT_SEGMENTS[0])
+            high = int(segments.get("max_segments") or low)
+        elif isinstance(segments, int):
+            low = high = segments
+        else:
+            seq = tuple(segments)
+            low = int(seq[0])
+            high = int(seq[1]) if len(seq) > 1 else low
+        low = max(1, min(low, 4))
+        high = max(low, min(high, 4))
+    except (TypeError, ValueError):
+        return DEFAULT_SEGMENTS if parts >= 3 else (2, 2)
+    return low, high
 
 
 def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3,
@@ -115,9 +129,17 @@ def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3,
     reported instead of being matched down to its first three segments.  Without
     it ``Theorem 2.3.4.5`` still matched -- as ``Theorem 2.3.4`` -- and every
     item of that section collapsed onto one key with no reject anywhere.
+
+    The KIND word matches case-insensitively, because AMS-style books set their
+    heads ``THEOREM 1.2``.  ``cflib.inference.infer_kinds`` already folds case,
+    so such a book infers ``Theorem`` and then matched nothing here: 19 real
+    headings, 0 rows, and a refusal that listed ``Theorem`` among the kinds as
+    though it were present.  The matched word is canonicalised against this
+    source's own kind list at the match site (:func:`find_headings`), so the id
+    stays ``Theorem 1.2.1`` and the frozen normaliser is not involved.
     """
     low, high = segments_for(parts, segments)
-    alt = "|".join(re.escape(k) for k in kinds)
+    alt = "(?i:" + "|".join(re.escape(k) for k in kinds) + ")"
     if high <= 1:
         num = r"\d+"
     else:
@@ -133,6 +155,25 @@ def heading_regex(kinds: Sequence[str] = SOURCE_KINDS, parts: int = 3,
         + _SUB_RE
         + r"(?=[ \t.,:;()]|$)"
     )
+
+
+def canonical_kind(word: str, kinds: Sequence[str] = SOURCE_KINDS) -> str:
+    """The spelling of ``word`` this source declares (``THEOREM`` -> ``Theorem``).
+
+    The heading regex matches the kind word case-insensitively, so the matched
+    text may be in any case the typesetter chose; the id must not be.  The kind
+    list is the authority -- it is what ``infer_kinds`` read off this very text,
+    already folded onto one spelling per word -- so no re-casing rule is
+    invented here and a kind that is genuinely mixed-case (``McShane``) keeps
+    its capitals.  A word that matches no declared kind is returned as written,
+    which cannot happen through :func:`heading_regex` and is the honest answer
+    for a hand-built call.
+    """
+    low = str(word or "").lower()
+    for kind in kinds or ():
+        if str(kind).lower() == low:
+            return str(kind)
+    return str(word or "")
 
 
 def split_pages(text: str) -> list[str]:
@@ -215,17 +256,20 @@ def find_headings(
     for m in heading_regex(kinds, parts, segments=segments).finditer(text):
         pos = m.start("label")
         line = bisect.bisect_right(lines, pos)  # 1-based
+        # the kind word is matched in whatever case the book sets it in; the id
+        # carries the source's own spelling, never the typesetter's.
+        kind = canonical_kind(m.group("kind"), kinds)
         if m.group("deep"):
             rejects.append({
-                "raw": normalise_item(m.group("label") + m.group("deep")),
+                "raw": normalise_item(kind + " " + m.group("num") + m.group("deep")),
                 "reason": "too_many_segments",
-                "kind": m.group("kind"),
+                "kind": kind,
                 "number": m.group("num") + m.group("deep"),
                 "max_segments": high,
                 "line": line,
             })
             continue
-        label = normalise_item(m.group("label"))
+        label = normalise_item(kind + " " + m.group("num"))
         pdf_page = bisect.bisect_right(starts, pos) if paginated else None
         occ = {
             "pdf_page": pdf_page,
@@ -240,7 +284,7 @@ def find_headings(
             label,
             {
                 "item": label,
-                "kind": m.group("kind"),
+                "kind": kind,
                 "number": m.group("num"),
                 "occurrences": [],
             },
@@ -348,6 +392,7 @@ def prepare(
     kinds: Sequence[str] | None = None,
     edition: str = "",
     parts: int = 3,
+    segments=None,
     expect_sha: str = "",
     force: bool = False,
     write_pages: bool = True,
@@ -358,6 +403,15 @@ def prepare(
     ``offset=None`` and ``kinds=None`` mean INFER (docs/design/multi-source-model.md
     S5): the offset is the mode of ``pdf_page - running_head`` and the kinds are
     the capitalised words the source's own numbered headings use.
+
+    ``segments`` is the NUMBERING override (a human's ``cf sources set <id>
+    numbering=3,4``), and it takes precedence over the inference for the same
+    reason the offset override does: a book whose four-level labels are too few
+    to clear ``MIN_DEPTH_SHARE`` infers a three-level numbering and puts its
+    real items on the reject list, and re-running the inference cannot settle
+    that -- only a human who has the book can.  It is stored as ``numbering``
+    with ``method: "manual"``, so a depth somebody typed is never later read as
+    one the headings supported.
 
     ``offset`` is an OVERRIDE (a human's ``cf sources set offset=…``); ``declared``
     is the number the companion repo's own prose claims, and it is a CROSS-CHECK,
@@ -378,8 +432,8 @@ def prepare(
     page-dependent stages refuse on that flag rather than compute a page nothing
     supports (``sources/locator.py``).
 
-    Idempotent: a second run with the same PDF (sha), offset and kind list re-uses
-    the existing outputs and reports ``skipped``.  ``expect_sha`` is the SOURCE
+    Idempotent: a second run with the same PDF (sha), offset, kind list and
+    numbering re-uses the existing outputs and reports ``skipped``.  ``expect_sha`` is the SOURCE
     GATE -- workspace.yaml pins the sha and a different PDF is refused rather than
     silently re-pinned (the batch-1 anchor findings were made against the 2011
     draft).
@@ -412,12 +466,20 @@ def prepare(
         and str(previous.get("offset_method") or "") not in ("declared", "manual")
         if previous else False
     )
+    # the same trap one field over: a numbering somebody just typed must not be
+    # answered with the cached table the inference built without it.
+    numbering_over_guess = (
+        segments is not None
+        and segments_for(parts, previous.get("numbering")) != segments_for(parts, segments)
+        if previous else False
+    )
     unchanged = (
         previous
         and not force
         and previous.get("sha256") == sha
         and (offset is None or previous.get("offset") == offset)
         and not declared_over_guess
+        and not numbering_over_guess
         # a cached run that never saw this declaration never ran the cross-check
         and previous.get("offset_declared") == declared
         and (kinds is None or list(previous.get("kinds") or []) == list(kinds))
@@ -476,6 +538,10 @@ def prepare(
                                                           key=lambda kv: -kv[1])[:6]}
                 voting_pages = guess.voting_pages
         numbering = _infer_numbering(text)
+        if segments is not None:
+            # the override decides the depth the kinds are then read at too: a
+            # book numbered `Theorem 7` has no two-segment head to infer from.
+            numbering = _manual_numbering(segments, numbering)
         min_segments = int(numbering.get("min_segments") or 2) if numbering else 2
         inferred_kinds, structural_kinds = _infer_kinds(text, min_segments=min_segments)
         kind_counts = inferred_kinds
@@ -487,6 +553,8 @@ def prepare(
             missing = [k for k in kinds if k not in inferred_kinds]
             if missing:
                 warnings.append("kinds_not_in_text: " + ", ".join(missing))
+    elif segments is not None:
+        numbering = _manual_numbering(segments, numbering)
     if offset is None:
         offset = 0
         offset_confidence = 0.0
@@ -497,7 +565,14 @@ def prepare(
                                    segments=numbering or None, pagination=pagination,
                                    suffix=suffix)
     if rejects:
-        warnings.append("headings_deeper_than_the_numbering: %d" % len(rejects))
+        # a dropped heading names its own escape: re-running the inference would
+        # read the same text and reach the same depth, so only the override can
+        # say that the book really numbers this deep.
+        deepest = min(4, max(r["number"].count(".") + 1 for r in rejects))
+        warnings.append(
+            "headings_deeper_than_the_numbering: %d (if the book really numbers this deep: "
+            "cf sources set %s numbering=%d,%d)"
+            % (len(rejects), source_id, segments_for(parts, numbering or None)[0], deepest))
     by_kind: dict[str, int] = {}
     by_chapter: dict[str, int] = {}
     for row in items:
@@ -590,6 +665,20 @@ def _infer_numbering(text) -> dict:
     except Exception:  # pragma: no cover - stand-alone use without cflib
         return {}
     return infer_numbering(text).to_dict()
+
+
+def _manual_numbering(segments, inferred: dict | None = None) -> dict:
+    """The stored ``numbering`` dict for a depth a human set.
+
+    It keeps the inference's own counts beside the manual range, so the record
+    still shows what the headings said -- the override is the answer, not an
+    erasure of the evidence it overrode.
+    """
+    low, high = segments_for(3, segments)
+    guess = dict(inferred or {})
+    return {"min_segments": low, "max_segments": high, "confidence": 1.0,
+            "headings": int(guess.get("headings") or 0),
+            "counts": dict(guess.get("counts") or {}), "method": "manual"}
 
 
 def _item_completeness(numbers) -> dict:
