@@ -79,6 +79,12 @@ _LEANOK_RE = re.compile(r"\\leanok\b")
 #: in the middle of the statement the quote gate is going to quote.
 _STRIP_RE = re.compile(
     r"\\(?:leanok|label|lean|uses|proves|discussion)(?![A-Za-z])\s*(?:\{[^}]*\})?")
+#: A LaTeX comment runs to the end of the line -- but ``\%`` is the per-cent SIGN
+#: and the manuscript continues after it.  Stripping from an escaped percent
+#: truncated the statement at the first "50\% of gadgets", and `statement` is the
+#: text the quote gate quotes and a faithfulness finding compares against the
+#: Lean, so the loss would show up as a wrong audit rather than as a failure.
+_COMMENT_RE = re.compile(r"(?<!\\)%.*")
 _OPT_TITLE_RE = re.compile(r"\A\s*\[[^\]]*\]")
 _DECL_OK_RE = re.compile(r"^[^\s{}\\,]+$")
 
@@ -112,7 +118,7 @@ def newtheorems(text: str) -> dict[str, dict]:
     return out
 
 
-def order_files(files, root: Path) -> list[Path]:
+def order_files(files) -> list[Path]:
     r"""The .tex files in the order LaTeX reads them.
 
     A blueprint's master file (``content.tex``) lists its chapters with
@@ -120,6 +126,9 @@ def order_files(files, root: Path) -> list[Path]:
     them in that order, so reading the files in path order would number them
     wrongly.  Files the master does not name keep path order after the ones it
     does, and a tree with no master is simply path order.
+
+    Every ``\input`` is resolved against the file that wrote it, so the repo root
+    is not a parameter: the order is a property of the master file's own tree.
     """
     by_path = {p.resolve(): p for p in files}
     best: list[Path] = []
@@ -232,7 +241,7 @@ class BlueprintTexAdapter(Adapter):
         item decided yet: the locator needs the whole document before it can say
         whether the numbering is recoverable.
         """
-        files = order_files(self.source_files(repo), repo)
+        files = order_files(self.source_files(repo))
         declarations = {}
         texts: dict[Path, str] = {}
         for path in files:
@@ -325,7 +334,7 @@ class BlueprintTexAdapter(Adapter):
         """The environment body as manuscript: machinery stripped, space collapsed."""
         text = _OPT_TITLE_RE.sub("", body)
         text = _STRIP_RE.sub(" ", text)
-        text = re.sub(r"%.*", " ", text)
+        text = _COMMENT_RE.sub(" ", text)
         return re.sub(r"\s+", " ", text).strip()
 
     # -- the locator -------------------------------------------------------
@@ -383,7 +392,12 @@ class BlueprintTexAdapter(Adapter):
         counts["files_with_statements"] = len({s["file"] for s in statements})
         rows: list[dict] = []
         for s in statements:
-            counts["declarations"] += 1
+            # `statements` counts statement ENVIRONMENTS; `declarations` (below)
+            # counts Lean declaration names, which is what that key means in
+            # every other kind's dry_run and in state.json.  One key with two
+            # meanings across kinds is misread by whoever compares two
+            # companions' state.json, so this kind reports both.
+            counts["statements"] += 1
             if s["statement_ok"]:
                 counts["statement_leanok"] += 1
             if s["proof_ok"]:
@@ -416,6 +430,7 @@ class BlueprintTexAdapter(Adapter):
                     repo=self.name, key=True, anonymous=False, private=False,
                     granularity=granularity, source_sha=source_sha))
         counts["rows"] = len(rows)
+        counts["declarations"] = len({r["decl"] for r in rows})
         counts["items"] = len({(r["source_id"], r["item"]) for r in rows})
         return rows, counts, rejects, locator, declarations
 
@@ -427,6 +442,15 @@ class BlueprintTexAdapter(Adapter):
 
     def dry_run(self, repo: str | Path | None = None, *,
                 sources: "Mapping[str, str] | None" = None) -> dict:
+        """The counts `cf onboard` prints and state.json keeps.
+
+        ``statements`` is this kind's own counter -- the statement ENVIRONMENTS
+        the manuscript declares -- and ``declarations`` keeps the meaning it has
+        in every other kind (distinct Lean declaration names found), so the two
+        companions' state.json files compare on the same key.  ``tagged`` /
+        ``untagged`` count statements, as they do everywhere: with a
+        ``\\lean{}`` and without one.
+        """
         path = self.resolve_repo(repo)
         binding = self.bind(sources)
         rows, counts, rejects, locator, declarations = self._rows(path, binding)
@@ -437,6 +461,7 @@ class BlueprintTexAdapter(Adapter):
             "commit": self.repo_commit(path),
             "files": counts["files"],
             "files_with_statements": counts["files_with_statements"],
+            "statements": counts["statements"],
             "declarations": counts["declarations"],
             "tagged": counts["tagged"],
             "untagged": counts["untagged"],
