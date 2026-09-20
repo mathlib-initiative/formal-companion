@@ -39,6 +39,8 @@ from cflib.jsonio import atomic_write
 DEFAULTS = {
     "docstring_tags": {"glob": "**/*.lean", "anchor": "docstring", "granularity": "item"},
     "attribution_table": {"glob": "pdf-overlay/data/*.json", "anchor": "ledger", "granularity": "item"},
+    # A blueprint has no printed pages to anchor to: its manuscript IS the .tex.
+    "blueprint_tex": {"glob": "blueprint/**/*.tex", "anchor": "none", "granularity": "item"},
     "ledger_nodes": {"glob": "source-formalization-ledger.json", "anchor": "ledger", "granularity": "node"},
     "custom": {"glob": "", "anchor": "none", "granularity": "item"},
 }
@@ -70,7 +72,7 @@ def register(subparsers) -> None:
     p.add_argument("--force", action="store_true", help="rewrite adapter.yaml and re-prepare")
 
 
-def _check_adapter_implemented(kind: str) -> None:
+def _check_adapter_implemented(kind: str, repo: Path | None = None) -> None:
     """Refuse an adapter kind the vocabulary names but no code implements.
 
     ``references/onboarding-contract.md`` says ``cf onboard --adapter
@@ -79,14 +81,26 @@ def _check_adapter_implemented(kind: str) -> None:
     written adapter.yaml, conventions.md, state.json AND a workspace.yaml entry,
     and the next ``cf extract`` then aborted for the WHOLE workspace on a
     companion nothing could parse.  This runs before anything is written.
+
+    The hint names the implemented kind that scored best on THIS repo, with the
+    flag that selects it: being told that ledger_nodes is unimplemented while
+    docstring_tags would have read the repo, and not being told the second half,
+    is the refusal a user has to read the source to get past.
     """
     known = set(vocab.IMPLEMENTED_ADAPTER_KINDS)
     if kind in known:
         return
+    runner_up = ""
+    if repo is not None:
+        scores = discovery.detect_scores(repo)
+        if scores:
+            best = max(sorted(scores), key=lambda k: scores[k][0])
+            runner_up = (f" This repo scores {scores[best][0]:.2f} for {best}: "
+                         f"`cf onboard {repo} --adapter {best}` reads it as that convention.")
     raise CfError(
         f"adapter kind {kind!r} is declared in the vocabulary but not implemented in v1",
-        hint=("implemented kinds: " + ", ".join(sorted(known)) +
-              ". See references/onboarding-contract.md for what ledger_nodes still needs "
+        hint=("implemented kinds: " + ", ".join(sorted(known)) + "." + runner_up +
+              " See references/onboarding-contract.md for what ledger_nodes still needs "
               "(an item-level curation pass) and what `custom` would have to provide."),
     )
 
@@ -105,7 +119,7 @@ def run(args) -> int:
 
     # ---- discover ----------------------------------------------------
     kind, adapter_confidence, adapter_evidence = _detect(repo, args.adapter)
-    _check_adapter_implemented(kind)
+    _check_adapter_implemented(kind, repo)
     registry = Registry.load(workspace)
     claims = discovery.discover_sources(repo, adapter=kind)
     #: The repo being onboarded is not in `workspace.companions` yet -- `upsert_companion`
@@ -180,7 +194,8 @@ def run(args) -> int:
     workspace.save()
 
     # ---- adapter.yaml, conventions.md --------------------------------
-    adapter_yaml = _write_adapter_yaml(workspace, name, repo, kind, commit, audited, anchor, args)
+    adapter_yaml = _write_adapter_yaml(workspace, name, repo, kind, commit, audited, anchor, args,
+                                       evidence=adapter_evidence)
     conventions, written = copy_template("conventions.md.example", paths.conventions_md(name),
                                          {"name": name})
     log.ok(f"wrote {conventions}") if written else log.info(f"{conventions} exists; left untouched")
@@ -266,8 +281,22 @@ def _errata_allowed(workspace, args) -> bool:
 
 
 def _detect(repo: Path, override: str | None) -> tuple[str, float, dict]:
+    """The adapter kind, its confidence, and the evidence adapter.yaml is built from.
+
+    ``--adapter`` settles WHICH convention, not HOW the repo spells it: the
+    chosen kind is still measured, so the per-repo options detection found (the
+    bare-versus-backticked tag spelling) reach the generated adapter.yaml on the
+    manual path too.  Without that, `cf onboard <repo> --adapter docstring_tags`
+    on a bare-label companion wrote an adapter.yaml demanding backticks and
+    extracted one row in two thousand docstrings.
+    """
     if override:
-        return override, 1.0, {"reason": "--adapter"}
+        evidence = {"reason": "--adapter"}
+        scores = discovery.detect_scores(repo)
+        if override in scores:
+            evidence = {**scores[override][1], "reason": "--adapter",
+                        "detected_score": scores[override][0]}
+        return override, 1.0, evidence
     return discovery.detect_adapter(repo)
 
 
@@ -708,8 +737,31 @@ def _existing_rows(workspace, name: str) -> list[dict]:
 # adapter.yaml, dry run, extraction
 # ---------------------------------------------------------------------------
 
+def _detected_options(kind: str, evidence: dict) -> dict:
+    """The adapter.yaml values detection MEASURED, rather than defaulted.
+
+    ``tag.require_backticks`` is the whole of it today, and it is the reason the
+    second convention this skill names -- a repo that writes the book label bare
+    at the start of the docstring -- could not be onboarded by either path: the
+    template hard-coded the backticked spelling, so `cf extract` found one
+    backticked tag among 2,371 docstrings.  Nothing about a source or a repo is
+    typed in (CLAUDE.md S4): a spelling the detector can read is written down
+    with what it read.
+    """
+    if kind != "docstring_tags":
+        return {"require_backticks": "true"}
+    detected = evidence.get("require_backticks")
+    if detected is None:
+        return {"require_backticks": "true"}
+    bare, backticked = evidence.get("tagged_bare"), evidence.get("tagged_backticked")
+    note = ""
+    if bare is not None and backticked is not None:
+        note = f"   # detected: {backticked} backticked, {bare} bare"
+    return {"require_backticks": ("true" if detected else "false") + note}
+
+
 def _write_adapter_yaml(workspace, name: str, repo: Path, kind: str, commit, sources,
-                        anchor: str, args) -> Path:
+                        anchor: str, args, evidence: dict | None = None) -> Path:
     paths = workspace.paths
     adapter_yaml = paths.adapter_yaml(name)
     paths.companion_dir(name).mkdir(parents=True, exist_ok=True)
@@ -728,6 +780,7 @@ def _write_adapter_yaml(workspace, name: str, repo: Path, kind: str, commit, sou
         "write_policy": args.write_policy,
         "owner": _yaml_str(args.owner),
         "source_default": anchor,
+        **_detected_options(kind, dict(evidence or {})),
         # Commented-out placeholders: with more than one source bound and no map,
         # the attribution reads each source's items.json per row (adapters/api.py
         # SourceBinding._source_holding), so an uncommented rule is an OVERRIDE

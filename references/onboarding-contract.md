@@ -248,6 +248,51 @@ Two limits to state in `state.json` rather than discover later:
   scan the files the table maps to each item and emit `example@<file>:<line>`
   rows; otherwise the anonymous-realisation blind spot returns.
 
+### `blueprint_tex`
+
+A leanblueprint manuscript that writes the item→declaration map down instead of
+leaving it to be inferred: `\begin{theorem}\label{thm:x}` + `\lean{Foo.bar,
+Foo.baz}` + `\uses{def:y}` + `\leanok`. Config:
+
+```yaml
+adapter: blueprint_tex
+glob: "blueprint/**/*.tex"               # recursive: a chapter is blueprint/src/chapters/*.tex
+blueprint: {locator: auto, environments: [theorem, lemma, definition, proposition, corollary]}
+anchor: none
+```
+
+Detection: `blueprint/**/*.tex` — **recursively**, because the macros usually
+live in `blueprint/src/chapters/`, not beside the master file — scored
+`0.6 + 0.35 × (statement environments carrying \lean{} / all of them)`, capped
+at 0.95, and 0 when nothing carries one. `\newtheorem` scaffolding that defines
+`\lean` as a no-op therefore scores nothing, which is the right answer.
+
+Four things to know before onboarding one:
+
+- **The item is a LaTeX counter, not a dotted book number.** `blueprint.locator`
+  is `auto` by default: `number` when the preamble's `\newtheorem` declarations
+  and the master file's `\input` order together make the printed number
+  recoverable (`Lemma 2.3`, which then goes through the strict item grammar like
+  any other item), otherwise the `\label` is the item. `dry_run` reports which
+  (`locator`), and the two are never mixed — half a table keyed on `Lemma 2.3`
+  and half on `lem:foo` is two namespaces pretending to be one.
+- **`anchor: none`.** A blueprint has no separate published edition, so there is
+  no pagination to anchor to and no edition drift to check. Rows carry
+  `anchor_source: none`, and the finding kinds that make sense are
+  statement-versus-manuscript disagreement and a stale `\leanok` — not page
+  anchors. The environment body IS the manuscript, so the quote gate has
+  something to quote with no PDF.
+- **`\uses{}` is counted, not carried.** Row schema v2 has nowhere to hold a
+  dependency edge, so `dry_run` reports `uses_edges` rather than dropping them in
+  silence; a schema that can hold them is a separate change.
+- **The manuscript still has to be registered as a source.** `cf onboard` needs
+  a source before it will write anything, and a blueprint repo names no book and
+  ships no PDF — so a blueprint project whose manuscript is its own `.tex`
+  currently has no way through the front door. Until source discovery accepts a
+  `.tex` manuscript as a claim, this kind is usable as a library adapter
+  (`adapters.api.from_config(...).extract(...)`) rather than through
+  `cf onboard`.
+
 ### `ledger_nodes` (deferred in v1)
 
 A source-node → formalization ledger with prose locators. Its granularity is a

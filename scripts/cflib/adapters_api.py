@@ -79,12 +79,34 @@ class Adapter(ABC):
 
         ``cf onboard`` takes no --adapter in the common case: the kinds score
         themselves and the best one wins (a tie, or a best below 0.5, is a
-        refusal asking for the flag).  Until each adapter implements this, the
-        shipped heuristics live in :func:`cflib.discovery.detect_scores`.
+        refusal asking for the flag).  :func:`cflib.discovery.detect_scores`
+        calls this on every class in ``adapters.api.registry()``, so the
+        heuristic for a convention -- its globs, its floors, its score constants
+        -- lives on that convention's adapter and a new convention is a new
+        file.  The default is 0.0: a kind that cannot recognise itself is never
+        chosen automatically, only through ``--adapter``.
+
+        The evidence dict is printed by `cf onboard` and stored in state.json.
+        ``reason`` is the one line a human reads; everything else is the
+        measurement behind it.  A key the adapter names here can also be written
+        into the generated adapter.yaml, which is how a per-repo spelling of the
+        convention (``tag.require_backticks``) stops being a hard-coded default.
         """
-        from .discovery import detect_scores
-        score, evidence = detect_scores(Path(repo)).get(cls.kind, (0.0, {}))
-        return score, evidence
+        return 0.0, {}
+
+    @classmethod
+    def explain(cls, repo: str | Path) -> list[str]:
+        """Why this kind scored what it did -- the near-miss lines of a refusal.
+
+        One "looked for / found" line per signal this convention keys on, for a
+        repo it did NOT claim: ``pdf-overlay/official-source.json: absent``,
+        ``docstring tags: 0/102 documented files (0 backticked, 86 bare -- set
+        tag.require_backticks: false)``.  Without them the only thing an
+        unrecognised repo is told is that it was not recognised, and the user's
+        next move is to read the source.  Naming the override that would settle
+        it is the point: a line that only counts is half a diagnosis.
+        """
+        return []
 
     #: The repo signals (:data:`cflib.discovery.SIGNALS`) this convention reads
     #: as its own.  They are ranked first by :meth:`discover_sources`, and they

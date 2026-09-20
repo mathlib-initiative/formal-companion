@@ -138,13 +138,25 @@ Those two lines move together or not at all.
 
 ## 6. Adding an adapter
 
-Subclass `cflib.adapters_api.Adapter` in `scripts/adapters/`, set `kind`, and
-implement:
+Subclass `adapters.api.Adapter` (which is `cflib.adapters_api.Adapter` plus the
+repo/glob/config helpers every concrete adapter needs) in a new file under
+`scripts/adapters/`, set `kind`, and implement:
 
-- `detect(repo) -> float` — how confidently this repo uses the convention.
-  Return a real score; `cf onboard` picks the highest and refuses below 0.5.
-  Count a denominator that means something (files that *carry a docstring*, not
-  every `.lean` file in a tree that is mostly generated stubs).
+- `detect(cls, repo) -> (score, evidence)` — a **classmethod**: how confidently
+  this repo uses the convention, and the measurement behind the number.
+  `cflib.discovery.detect_scores` calls it on every class in
+  `adapters.api.registry()` and `cf onboard` picks the highest, refusing below
+  0.5, so detection is a loop over the adapters and a new convention adds no
+  line to the core. Count a denominator that means something (files that *carry
+  a docstring*, not every `.lean` file in a tree that is mostly generated
+  stubs), keep this convention's globs and score constants in this file, and put
+  any per-repo spelling the measurement found into `evidence` — `cf onboard`
+  writes those keys into the generated `adapter.yaml`, which is how
+  `tag.require_backticks` stopped being a hard-coded default.
+- `explain(cls, repo) -> [str]` — one "looked for / found" line per signal this
+  convention keys on, for a repo it did *not* claim, naming the override that
+  would settle it. These lines are the whole content of the refusal a user sees
+  when nothing matched.
 - `discover_sources(repo) -> [SourceClaim]` — the signals this convention
   exposes, each carrying the file it came from. Never invent a `sha256`; a
   truncated sha in prose is a `sha256_prefix`, which is a candidate.
@@ -158,10 +170,14 @@ implement:
 - extend `key_inputs()` with every export sha that changes the result, and the
   shas of the sources it is bound to.
 
-Register it in `scripts/adapters/__init__.py`'s `load()`, and add the kind to
+Decorate the class with `@adapters.api.register` and add its module to the
+import inside `adapters.api.registry()` (that import is what makes the kind
+exist before anything asks for it), then add the kind to
 `vocab.IMPLEMENTED_ADAPTER_KINDS` only when it really works — `ADAPTER_KINDS`
 is the wider vocabulary an `adapter.yaml` may legally say, and a test pins the
-narrower set against what `adapters.api.registry()` provides.
+narrower set against what `adapters.api.registry()` provides. `cf onboard` also
+needs a row in `cfcmd.onboard.DEFAULTS` (glob, anchor, granularity) and a
+default block in `templates/adapter.yaml.example` for anything it configures.
 
 ## 7. Tests
 
