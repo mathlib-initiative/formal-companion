@@ -29,7 +29,10 @@ would have shipped one private repository's module names.
 **A missing table is not a dead end.** :meth:`StageTable.for_source` with
 ``required=False`` returns an *unavailable* table instead of raising: the
 def-coverage half of ``cf detect-proxies`` needs no stage table at all, so the
-detector runs and the body-proxy scan reports that it was skipped and why.
+detector runs and the body-proxy scan reports that it was skipped and why.  A
+table that still carries the ``_unedited`` marker ``--init-stage-table`` writes
+counts as a missing one (:attr:`StageTable.unedited`), because a skeleton's
+placeholder entries would make the scan invent hits rather than report none.
 """
 from __future__ import annotations
 
@@ -62,6 +65,12 @@ class StageTable:
         self.available = available
         #: why there is no table, and the command that settles it
         self.unavailable_reason = unavailable_reason
+        #: True while the ``_unedited`` marker ``--init-stage-table`` writes is
+        #: still there.  A bootstrap skeleton is not an answer: its callers treat
+        #: it as NO table, because a placeholder ``mathlib_objects`` entry does
+        #: not leave the body-proxy scan empty -- it makes the scan report every
+        #: body that happens to name the placeholder's ``label``.
+        self.unedited = bool(data.get("_unedited"))
         #: where the companion-level half came from, when one was applied
         self.overlay_path = overlay_path
         self.source_id: str = str(data.get("source_id") or data.get("book") or "unknown")
@@ -113,7 +122,11 @@ class StageTable:
         that does (the body-proxy scan, the Lean tier) checks ``available`` and
         reports the skip instead of dying on an attribute.
         """
-        return cls({"source_id": source_id, "module_stages": [], "mathlib_objects": {}},
+        return cls({"source_id": source_id, "module_stages": [], "mathlib_objects": {},
+                    # no table asserts no chapter scope: the scope is the
+                    # workspace's, and a fabricated one would quietly audit
+                    # Chapter 1 of a book whose scope nobody has recorded
+                    "chapters": []},
                    path=None, available=False, unavailable_reason=reason)
 
     @classmethod

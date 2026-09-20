@@ -24,7 +24,9 @@ concept.  A new book does not need one to be audited: without a table the
 coverage split still runs and the body-proxy scan reports that it was SKIPPED and
 why, with exit 0 -- an empty ``proxy_candidates`` must not read as "no proxies
 found" when nothing was scanned.  ``--init-stage-table`` writes a candidate table
-for a human to fill in.  The Lean tier IS the table, so it refuses without one.
+for a human to fill in; until they do, its ``_unedited`` marker makes it count as
+no table, because a skeleton's placeholder objects would invent hits instead of
+reporting none.  The Lean tier IS the table, so it refuses without one.
 
 One **companion's** own facts -- its module layout and the identifiers of its own
 constructions -- are not facts about the work, so they live in the workspace at
@@ -104,7 +106,8 @@ def register(subparsers) -> object:
     ap.add_argument("--init-stage-table", action="store_true",
                     help="write a candidate stage table for the source into "
                          "<workspace>/detect/mathlib_stages/<source_id>.json for a human to "
-                         "fill in, then stop (refuses to overwrite an existing one)")
+                         "fill in, then stop (refuses to overwrite an existing one); the "
+                         "skeleton counts as no table until its `_unedited` key is deleted")
     ap.add_argument("--overlay", help="the companion's stage-overlay.json (default: "
                                       "companions/<name>/stage-overlay.json when it exists)")
     ap.add_argument("--statements", help="statements.jsonl override")
@@ -282,6 +285,12 @@ def _load_stages(args, paths, name: str, source_id: str, workspace) -> StageTabl
     stage table, so the run continues and the body-proxy scan reports that it
     was skipped (generality: a new book must be auditable before a human has
     written 68 module prefixes for it).
+
+    A table still carrying ``_unedited`` -- the marker ``--init-stage-table``
+    writes -- is treated as a missing one rather than as an empty one, because
+    the skeleton's example ``mathlib_objects`` entry does not make the scan find
+    nothing: it makes the scan report every body that names the example's label
+    and cite a library constant that exists nowhere.
     """
     if args.stages:
         stages = StageTable.load(args.stages)
@@ -293,6 +302,11 @@ def _load_stages(args, paths, name: str, source_id: str, workspace) -> StageTabl
     else:
         stages = StageTable.for_source(
             source_id, extra_dirs=[paths.detect_dir / "mathlib_stages"], required=False)
+    if stages.unedited:
+        stages = StageTable.absent(
+            source_id or stages.source_id,
+            f"the stage table at {stages.path} is still the --init-stage-table skeleton: "
+            'fill in module_stages and mathlib_objects and delete "_unedited"')
     return _scope_stages(stages, workspace, source_id).with_companion_overlay(
         _overlay_path(args, paths, name))
 
@@ -325,9 +339,12 @@ def _init_stage_table(paths, workspace, source_id: str, source) -> int:
     prefixes.  This writes the template with everything the workspace already
     knows (the id, the sibling editions, the title, the audited chapters) filled
     in and the two judgement calls -- which library module belongs to which
-    section, and which library constants ARE the work's concepts -- left as
-    clearly synthetic examples to replace.  It never guesses them: a wrong stage
-    silently suppresses or invents hits.
+    section, and which library constants ARE the work's concepts -- left EMPTY,
+    with their shapes in the adjacent notes.  It never guesses them: a wrong
+    stage silently suppresses or invents hits.  The skeleton carries
+    ``_unedited``, and while that key is there the table counts as no table, so a
+    run between bootstrapping and filling it in reports the body-proxy scan as
+    skipped instead of scanning against placeholders.
     """
     destination = paths.detect_dir / "mathlib_stages" / f"{source_id}.json"
     if destination.exists():
@@ -350,7 +367,10 @@ def _init_stage_table(paths, workspace, source_id: str, source) -> int:
     destination.write_text(text, encoding="utf-8")
     ok(f"wrote {destination}")
     info("fill in `module_stages` (library module prefix -> the section of this work that "
-         "first develops it) and `mathlib_objects`, then re-run `cf detect-proxies`")
+         'first develops it) and `mathlib_objects`, delete "_unedited", then re-run '
+         "`cf detect-proxies`")
+    info("until then the body-proxy scan reports itself as skipped: an unedited skeleton "
+         "would have it scan against placeholder objects")
     info(f"this companion's own module layout goes in "
          f"{cf_paths.templates_dir() / 'detect' / 'stage-overlay.json.tmpl'}'s shape at "
          f"companions/<name>/stage-overlay.json")
@@ -371,21 +391,25 @@ def _same_work(workspace, other: str, source_id: str) -> bool:
 
 
 def _audited_chapter(workspace, source_id: str, stages):
-    """The chapter def-coverage is scoped to.
+    """The chapter def-coverage is scoped to; ``None`` means every chapter.
 
     ``workspace.yaml sources.<id>.chapters`` is the single source of scope,
     because ``cf pair`` writes the SAME ``pairs/<source_id>/def-coverage.<name>.json``
     and reads it from there: when the two disagreed, an unscoped ``cf pair``
     reported 32 stated / 7 bridge-only / 1 missing for the same repo this
     command scored 32 / 4 / 0, and the file meant whichever command ran last.
-    The stage table's own chapter is the fallback for a source with no scope.
+
+    The fallback is the table's chapter SET, and only when there IS a table.  A
+    scalar ``chapter`` defaulting to 1 fabricated a scope instead: a first run
+    on a new book -- no table, no recorded chapters -- reported a complete
+    coverage split that had silently audited Chapter 1 of it, and a hand-written
+    table saying ``chapters: [1, 2]`` staged both while def-coverage scored one.
+    The resolved scope is written to the file's ``_meta.chapter``, so "coverage
+    above is complete" can be checked.
     """
-    chapters = list(workspace.chapters(source_id))
-    if len(chapters) == 1:
-        return int(chapters[0])
-    if len(chapters) > 1:
-        return None          # multi-chapter scope: do not narrow to one
-    return stages.chapter
+    chapters = list(workspace.chapters(source_id)) or (
+        list(stages.chapters) if stages.available else [])
+    return int(chapters[0]) if len(chapters) == 1 else None
 
 
 # --------------------------------------------------------------------------
@@ -395,8 +419,9 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
                source_id, source_sha, *, chapter=None, page_offset: int = 0) -> dict:
     """def-coverage + body proxies; writes pairs/<source_id>/def-coverage.<name>.json."""
     definitions = def_coverage.load_items(items_path, kind="Definition", chapter=chapter, kinds=kinds)
+    scope = f"chapter {chapter}" if chapter is not None else "any chapter"
     if not definitions:
-        warn(f"items.json names no Definition items for chapter {chapter}")
+        warn(f"items.json names no Definition items for {scope}")
     coverage = def_coverage.compute_def_coverage(definitions, rows, kinds=kinds)
     # The coverage split needs no stage table; the body-proxy scan does, because
     # "same-or-later stage" is the whole rule.  Without one the scan is SKIPPED
@@ -433,6 +458,11 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
             "companion": name,
             "source_id": source_id,
             "source_sha": source_sha,
+            # the scope this run actually audited (null = every chapter).  The
+            # top-level `chapter` is owned by both writers of this file; this one
+            # is the detector's own record, so "coverage above is complete" is
+            # checkable against the chapter it was complete for.
+            "chapter": chapter,
             "stage_table_source": stages.source_id,
             "stage_table": str(stages.path) if stages.path else None,
             "companion_overlay": str(stages.overlay_path) if stages.overlay_path else None,
@@ -458,9 +488,9 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
         "definitional_rows_with_body": bodies,
     }
     info(
-        f"{name}/{source_id}: {counts['definitions']} Definitions -- {counts['stated']} stated, "
-        f"{counts['bridge_only']} bridge-only, {counts['missing']} missing; "
-        f"{counts['proxy_candidates']} body proxy candidate(s)"
+        f"{name}/{source_id}: {counts['definitions']} Definitions in {scope} -- "
+        f"{counts['stated']} stated, {counts['bridge_only']} bridge-only, "
+        f"{counts['missing']} missing; {counts['proxy_candidates']} body proxy candidate(s)"
     )
     if not scan["ran"]:
         warn("the body-proxy scan was SKIPPED: " + scan["reason"])
@@ -469,6 +499,16 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
     elif bodies == 0 and rows:
         warn("no definitional row carries a `body`: the body-proxy scan saw nothing "
              "(v1 statement tables have no body field)")
+    if scan["ran"] and not stages.native_tokens:
+        # `native_tokens` moved out of the shipped table into the companion's own
+        # overlay, and a workspace that relied on the shipped one loses the
+        # distinction between "the body still builds the work's object" and "the
+        # body IS the library's object" rather than a count: the rows still
+        # emit, with an empty `native_tokens_in_body`.
+        warn(f"no native_tokens for {name}: a proxy candidate's `native_tokens_in_body` "
+             f"will be empty because this companion's own vocabulary is unmapped")
+        warn(f"map it in {paths.companion_dir(name) / 'stage-overlay.json'} "
+             f"(templates/detect/stage-overlay.json.tmpl is the shape)")
     if shadowed:
         warn(f"{name} defines its own {', '.join(shadowed)}: only namespace-qualified "
              "occurrences of the library constant count as evidence for those")
@@ -558,11 +598,13 @@ def _gate_documents(paths, docs: list[dict], *, run_id: str, companion: str,
                     page_offset: int = 0) -> dict:
     """Validate detector documents against the `mechanical` preset, in memory.
 
-    The source block carries ``item_pages`` -- the gate's first and best route
-    from an item to the page its quotes must be on -- and the source's
-    ``page_offset``.  Both were missing, so every document the detector emitted
-    was checked against a text the gate had to search for the item's own heading
-    in, and page reasoning ran as though the edition had no front matter.
+    The source block carries ``item_pages`` -- items.json's ``pdf_page``, the
+    gate's first and best route from an item to the page a quote must be on --
+    and the source's ``page_offset``.  Detector rows carry no ``book_quote``
+    today (``detect/findings.py``) and the gate consults the page bind only per
+    quote, so nothing binds yet; the map is filled in here so the route is
+    correct for the first row that does carry one, and so a printed page is
+    never passed in its place.
     """
     from gate import verify_findings as vf
     from plan import presets as presets_mod
@@ -593,9 +635,10 @@ def _item_pdf_pages(items_source, kinds) -> dict[str, int]:
     This is what the gate's ``sources.<id>.item_pages`` means: the page a quote
     must be found on in ``sources/<id>/text.txt``.  It is NOT :func:`_items_pages`,
     which returns the PRINTED page a finding cites; for the pinned Tao edition
-    the two differ by the source's 16-page front matter, so passing the printed
-    one would put every item 16 pages from its own quotes and the gate would
-    refuse real findings.
+    the two differ by the source's 16-page front matter, so the printed one would
+    place every item 16 pages from its own quotes.  Nothing binds while the
+    detector's rows carry no quote, which is why the wrong map would have been
+    invisible until the first row that does.
     """
     data = read_json(items_source) if isinstance(items_source, (str, Path)) else items_source
     if isinstance(data, dict):
@@ -663,8 +706,11 @@ def _run_lean(args, paths, detect_dir, name, rows, stages, kinds, source_id, sou
         # a clean report would mean "not checked".
         raise CfError(
             f"the Lean tier needs a stage table for {source_id!r}: {stages.unavailable_reason}",
-            hint=f"write one with `cf detect-proxies {name} --source {source_id} "
-                 f"--init-stage-table`, or pass --stages <path to a stage table>",
+            # the reason names the file when there is an unedited one to finish,
+            # so the flags below are the routes for when there is no file at all
+            hint=f"finish the table the reason names, or write one with `cf detect-proxies "
+                 f"{name} --source {source_id} --init-stage-table`, or pass --stages "
+                 f"<path to a stage table>",
         )
     deps_path = Path(args.deps) if args.deps else detect_dir / "deps.json"
     if not deps_path.exists():
