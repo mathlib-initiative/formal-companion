@@ -98,7 +98,12 @@ What it does, in order — and each step is one you can also do by hand:
    property of the orchestrator version, not of the run — so check it again after an upgrade. To
    restore the full rule, append `--task-id <the id>` to both gate commands in the tend root's
    `config.yaml` by whatever substitution that version supports; an argv list is not shell-expanded,
-   so a literal `$TEND_TASK_ID` element makes the gate refuse every run.
+   so a literal `$TEND_TASK_ID` element makes the gate refuse every run. The same argv serves
+   `validation_commands` and `pre_merge_validation_commands`, and with `batched_merge: true` a
+   pre-merge change set carries one findings/task pair per batched task: the stem count therefore
+   only refuses several stems when one of the paths was already on the merge target, so a batch of
+   new pairs merges and a rewritten neighbour is still named. A 1/1 smoke test cannot exercise that
+   — there is nothing to batch at limits 1/1 — so read the pre-merge gate output again after step 6.
 6. Only then raise the limits to the preset's concurrency.
 
 ```bash
