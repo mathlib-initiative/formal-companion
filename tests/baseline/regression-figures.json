@@ -1,6 +1,7 @@
 {
  "version": 1,
- "what": "The audit's pinned arithmetic, in one machine-readable place. Each figure is a number some test asserts against a local baseline nobody else has; recording them here makes them reviewable and diffable without the data, and tests/test_rf_benchmark.py checks that the record and the asserts still agree.",
+ "what": "The audit's pinned arithmetic, in one machine-readable place. Each figure is a number some test asserts against a local baseline nobody else has; recording them here makes them reviewable and diffable without the data.",
+ "self_check": "`asserted_in` records, per file, the ASSERTION TEXT as written. tests/test_rf_benchmark.py checks that text is still in that file (whitespace-insensitively), so deleting or editing the assert fails the pin -- a bare-number search would not: `0` and `1` and `3` occur by the dozen in these files, and `def_coverage_missing` is spelled `[]` rather than `0`. The bare value is checked too, as a second line.",
  "what_this_is_not": "A measurement anyone can reproduce. These are facts about ONE edition of Tao's book and ONE imported corpus; the reproducible numbers live in tests/e2e/answer-key.json, which is about a synthetic fixture.",
  "rule": "None of these may move unless a finding says the number is wrong. Two of them are the traps the item grammar exists to prevent: chapter_1_items (411, not 410) and differential_task_universe (383, not 382).",
  "environment": {
@@ -15,177 +16,255 @@
    "value": 442,
    "what": "numbered items in the whole pinned edition",
    "needs": ["CF_MT"],
-   "asserted_in": ["tests/test_sources_pair.py"]
+   "asserted_in": [
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(self.payload[\"items\"], 442)"}
+   ]
   },
   "chapter_1_items": {
    "value": 411,
    "what": "Chapter-1 items, Exercise 1.3.19 among them",
    "why_it_matters": "the baseline's literal-single-space regex found 410 and the task generator dropped the missing one silently",
    "needs": ["CF_BOOK_TXT", "CF_MT"],
-   "asserted_in": ["tests/test_sources_pair.py"]
+   "asserted_in": [
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(len(ch1), 411)"}
+   ]
   },
   "chapter_1_items_single_space_regex": {
    "value": 410,
    "what": "what the pre-fix regex found, kept as the documented defect",
    "needs": ["CF_BOOK_TXT"],
-   "asserted_in": ["tests/test_sources_pair.py"]
+   "asserted_in": [
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(len(found), 410)"}
+   ]
   },
   "differential_task_universe": {
    "value": 383,
    "what": "differential tasks over the pinned edition (225 paired + 158 single-source)",
    "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
-   "asserted_in": ["tests/test_plan_gate.py", "tests/test_sources_pair.py"]
+   "asserted_in": [
+    {"file": "tests/test_plan_gate.py", "assert": "self.assertEqual(len(tasks), 383)"},
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(recon[\"task_universe\"], 383)"}
+   ]
   },
   "differential_pairs": {
    "value": 225,
    "what": "items two or more companions formalise",
    "needs": ["CF_BASELINE_DIFF", "CF_MT"],
-   "asserted_in": ["tests/test_plan_gate.py", "tests/test_sources_pair.py"]
+   "asserted_in": [
+    {"file": "tests/test_plan_gate.py", "assert": "sum(1 for e in entries if not e.single_source), 225"},
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(len(self.result[\"pairs\"]), 225)"}
+   ]
   },
   "differential_single_source": {
    "value": 158,
    "what": "items exactly one companion formalises",
    "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
-   "asserted_in": ["tests/test_plan_gate.py"]
+   "asserted_in": [
+    {"file": "tests/test_plan_gate.py", "assert": "sum(1 for e in entries if e.single_source), 158"}
+   ]
   },
   "gated_files_differential": {
    "value": 1146,
    "what": "converted v1 files that pass the differential-legacy gate",
    "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
-   "asserted_in": ["tests/test_plan_gate.py"]
+   "asserted_in": [
+    {"file": "tests/test_plan_gate.py", "assert": "self._run(self.DIFFERENTIAL_DIRS, \"differential-legacy\", \"differential\", 1146)"}
+   ]
   },
   "gated_files_attack": {
    "value": 1526,
    "what": "converted v1 files that pass the attack-legacy gate",
    "needs": ["CF_BASELINE_CORPUS", "CF_BOOK_TXT"],
-   "asserted_in": ["tests/test_plan_gate.py"]
+   "asserted_in": [
+    {"file": "tests/test_plan_gate.py", "assert": "self._run(self.ATTACK_DIRS, \"attack-legacy\", \"attack\", 1526)"}
+   ]
   },
   "corpus_findings": {
    "value": 2672,
    "what": "findings files in the five imported v1 runs (382 + 382 + 382 + 763 + 763)",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/e2e/multisource.sh", "tests/test_rf_benchmark.py"]
+   "asserted_in": [
+    {"file": "tests/e2e/multisource.sh", "assert": "for p in glob.glob(\"corpus/batch*/RECEIPT.json\")))')\" \"2672\""},
+    {"file": "tests/test_rf_benchmark.py", "assert": "self.assertEqual(self.figures[\"corpus_findings\"][\"value\"], 2672)"}
+   ]
   },
   "ours_rows": {
    "value": 72,
    "what": "tally rows naming an `ours:` declaration",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(ours[\"rows\"], 72)"},
+    {"file": "tests/test_ledger_route.py", "assert": "(\"ours\", 72, 40, 31)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"ours rows\" \"$(tally ours rows)\" \"72\""}
+   ]
   },
   "ours_raw_items": {
    "value": 40,
    "what": "distinct raw item labels behind those rows",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(ours[\"raw\"][\"items\"], 40)"},
+    {"file": "tests/test_ledger_route.py", "assert": "(\"ours\", 72, 40, 31)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"ours items\" \"$(tally ours raw.items)\" \"40\""}
+   ]
   },
   "ours_raw_substantive": {
    "value": 17,
    "what": "of those items, the ones with a CONTENT/VACUITY/SUSPECTED_ERRATA/PROXY finding",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(ours[\"raw\"][\"substantive\"], 17)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"ours substantive\" \"$(tally ours raw.substantive)\" \"17\""}
+   ]
   },
   "ours_raw_high": {
    "value": 3,
    "what": "of those items, the ones with a high-severity finding",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(ours[\"raw\"][\"high\"], 3)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"ours high\" \"$(tally ours raw.high)\" \"3\""}
+   ]
   },
   "ours_collapsed_items": {
    "value": 39,
    "what": "the same rows counted by book item rather than by the worker's label",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(ours[\"collapsed\"][\"items\"], 39)"}
+   ]
   },
   "ours_class_content_vac": {
    "value": 16,
    "what": "disposition class: items with a CONTENT or VACUITY finding",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(classes[\"content_vac\"], 16)"}
+   ]
   },
   "ours_class_page_anchor": {
    "value": 22,
    "what": "disposition class: items whose only complaint was pagination -- 22 of the 40",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(classes[\"page_anchor\"], 22)"}
+   ]
   },
   "teorth_rows": {
    "value": 147,
    "what": "tally rows naming a `teorth:` declaration",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(teorth[\"rows\"], 147)"},
+    {"file": "tests/test_ledger_route.py", "assert": "(\"teorth\", 147, 71, 140)"}
+   ]
   },
   "teorth_raw_items": {
    "value": 71,
    "what": "distinct raw item labels behind those rows",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/test_ledger_route.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(teorth[\"raw\"][\"items\"], 71)"},
+    {"file": "tests/test_ledger_route.py", "assert": "(\"teorth\", 147, 71, 140)"}
+   ]
   },
   "teorth_raw_substantive": {
    "value": 62,
    "what": "substantive items by raw label",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(teorth[\"raw\"][\"substantive\"], 62)"}
+   ]
   },
   "teorth_raw_high": {
    "value": 25,
    "what": "high-severity items by raw label",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(teorth[\"raw\"][\"high\"], 25)"}
+   ]
   },
   "teorth_collapsed_substantive": {
    "value": 41,
    "what": "substantive items BY BOOK ITEM. 41/19, not the 40/18 of the runs before 2026-09-18: one in-text label stopped collapsing onto the numbered item it merely cites (a de-conflation, not a new finding)",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(teorth[\"collapsed\"][\"substantive\"], 41)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "\"$(tally teorth collapsed.substantive)\" \"41\""}
+   ]
   },
   "teorth_collapsed_high": {
    "value": 19,
    "what": "high-severity items by book item (see teorth_collapsed_substantive)",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(teorth[\"collapsed\"][\"high\"], 19)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "\"$(tally teorth collapsed.high)\" \"19\""}
+   ]
   },
   "adam_rows": {
    "value": 7,
    "what": "tally rows naming an `adam:` declaration",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(adam[\"rows\"], 7)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"adam rows\" \"$(tally adam rows)\" \"7\""}
+   ]
   },
   "adam_raw_items": {
    "value": 5,
    "what": "distinct raw item labels behind those rows",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(adam[\"raw\"][\"items\"], 5)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"adam items\" \"$(tally adam raw.items)\" \"5\""}
+   ]
   },
   "adam_raw_high": {
    "value": 1,
    "what": "high-severity items",
    "needs": ["CF_BASELINE_CORPUS"],
-   "asserted_in": ["tests/test_harvest.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_harvest.py", "assert": "self.assertEqual(adam[\"raw\"][\"high\"], 1)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"adam high\" \"$(tally adam raw.high)\" \"1\""}
+   ]
   },
   "def_coverage_stated": {
    "value": 32,
    "what": "Chapter-1 Definitions the first companion states natively",
    "needs": ["CF_BASELINE_DIFF", "CF_MT"],
-   "asserted_in": ["tests/test_sources_pair.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(len(cov[\"stated\"]), 32)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"def-coverage stated\" \"$(jget \"$DC\" stated)\" \"32\""}
+   ]
   },
   "def_coverage_bridge_only": {
    "value": 4,
    "what": "Definitions it only ever consumes through bridges",
    "needs": ["CF_BASELINE_DIFF", "CF_MT"],
-   "asserted_in": ["tests/test_sources_pair.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(len(cov[\"bridge_only\"]), 4)"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"def-coverage bridge-only\" \"$(jget \"$DC\" bridge_only)\" \"4\""}
+   ]
   },
   "def_coverage_missing": {
    "value": 0,
    "what": "Definitions no declaration is tagged to",
    "needs": ["CF_BASELINE_DIFF", "CF_MT"],
-   "asserted_in": ["tests/test_sources_pair.py", "tests/e2e/multisource.sh"]
+   "asserted_in": [
+    {"file": "tests/test_sources_pair.py", "assert": "self.assertEqual(cov[\"missing\"], [])"},
+    {"file": "tests/e2e/multisource.sh", "assert": "check \"def-coverage missing\" \"$(jget \"$DC\" missing)\" \"0\""}
+   ],
+   "spelled_as": "an empty list in the Python assert (`cov[\"missing\"], []`) and \"0\" in the shell check"
   },
   "adapter_rows_first_companion": {
    "value": 1157,
    "comparison": ">=",
    "what": "statement rows the docstring_tags adapter extracts (ours.jsonl had 1,157; the repo has grown since, so this is a floor)",
    "needs": ["CF_TML"],
-   "asserted_in": ["tests/test_adapters.py"]
+   "asserted_in": [
+    {"file": "tests/test_adapters.py", "assert": "self.assertGreaterEqual(len(self.rows), 1157, \"ours.jsonl had 1,157 rows\")"}
+   ]
   }
  }
 }
