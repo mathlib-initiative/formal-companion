@@ -15,7 +15,13 @@ supposed to agree with:
   every prompt defines as "your findings were rejected, fix them";
 * a quote spliced across a page break bound to no page, and an empty page list
   turns the item-page bind off;
-* a typographic dash at a quote's edge was read as a minus sign the book lacks;
+* a typographic dash at a quote's edge was read as a minus sign the book lacks
+  -- and then the guard against the reverse read a digit, and the word rule that
+  replaced it read ``lim``, ``inf`` and a LaTeX macro's letters as prose;
+* a read the boundary REFUSED arrived at one caller as "no repository here",
+  which turned the check that keeps recovered book text out of a tracked file
+  into permission to write it, and nothing announced the git version the refusal
+  rests on before a run blocked on it;
 * the unbound note told the operator the item names no printed page when it does
   and the run only lacks the offset;
 * the tend README claimed a guarantee the shipped configuration does not give.
@@ -25,6 +31,15 @@ this repo (CLAUDE.md S1).  Every test here runs without the private baselines.
 """
 
 from __future__ import annotations
+
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  This module
+# reaches `cfcmd.onboard` for one degradation case, and the rule is the module's,
+# not the case's.  The second spelling is for `python3 -m unittest tests.<module>`.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
 
 import contextlib
 import io
@@ -111,6 +126,40 @@ def quote_spliced_over(count: int) -> str:
     folios = " ".join("%d" % (41 + n) for n in range(1, count + 1))
     return ("for later use in section 6. " + folios + " " + RUNNING_HEAD + " "
             + PAGE_7.split("\n")[0])
+
+#: Six operands a sign can be written in front of, one sentence each, and for
+#: every one the quote that STARTS at the operand and the quote that ENDS on it.
+#: The digit column is the one FR#46's guard read; the next three are the
+#: spellings the same laundering survived in; the last two are the operands the
+#: WORD rule that replaced it still read as prose -- a display opening with a
+#: mathematical word, and a LaTeX macro at the trailing edge, whose letter run
+#: the tail pattern matched inside the backslash.
+SIGN_BOOK = (
+    "Lemma 4.2.1. For an elementary set we have 1 <= m(F) for every set F that covers it.\n"
+    "Lemma 4.2.2. By monotonicity we know m*(F) <= m*(E) whenever F is contained in E.\n"
+    "Lemma 4.2.3. From the previous display we obtain (1 <= m(F)) for every such cover.\n"
+    "Lemma 4.2.4. Under the stated hypotheses x <= y holds for every pair considered.\n"
+    "Lemma 4.2.5. By the previous display lim sup En is contained in E, and at each "
+    "stage the bound is an inf.\n"
+    "Lemma 4.2.6. Under the same hypotheses \\alpha <= m(F) is attained at that one set.\n\f"
+)
+SIGN_OPERANDS = (
+    ("a digit", "1 <= m(F) for every set F that covers it",
+     "For an elementary set we have 1"),
+    ("a starred term", "m*(F) <= m*(E) whenever F is contained in E",
+     "By monotonicity we know m*(F)"),
+    ("a parenthesised term", "(1 <= m(F)) for every such cover",
+     "From the previous display we obtain (1 <= m(F))"),
+    ("a single letter", "x <= y holds for every pair considered",
+     "Under the stated hypotheses x"),
+    ("a mathematical word", "lim sup En is contained in E, and at each stage the bound is an inf",
+     "By the previous display lim sup En is contained in E, and at each stage the bound is an inf"),
+    ("a LaTeX macro", "\\alpha <= m(F) is attained at that one set",
+     "Under the same hypotheses \\alpha"),
+)
+#: the six spellings of the sign, glued and spaced, at each edge
+SIGNS_BEFORE = ("-", "- ", "-  ", "− ", "— ", "— — ")
+SIGNS_AFTER = ("-", " -", "  -", " −", " —", " — —")
 
 BOGUS_ROW = {
     "concept": "invented",
@@ -219,6 +268,10 @@ class FilterDriverTestCase(unittest.TestCase):
         proof.unlink(missing_ok=True)
         return proof
 
+    #: what :meth:`a_git_that_ignores_the_config_environment` answers ``git
+    #: --version`` with: Debian 11's, the one the gate's own comments name
+    OLD_GIT = "2.30.2"
+
     def a_git_that_ignores_the_config_environment(self) -> pathlib.Path:
         """A ``git`` shim that drops ``GIT_CONFIG_*``: a git older than 2.31.
 
@@ -228,6 +281,10 @@ class FilterDriverTestCase(unittest.TestCase):
         repo checks the run host's git version (``cf doctor`` tests that git is on
         PATH), so the ``-c`` blanks are the floor under the pairs, and this shim
         is what stands on it.  Returns the directory to put in front of ``PATH``.
+
+        It answers ``--version`` with that version too, because a shim that drops
+        the pairs while reporting today's git is not a host anyone runs: the
+        refusal below is keyed to the version, so the simulation has to carry it.
         """
         real = shutil.which("git")
         if real is None:                                     # pragma: no cover
@@ -237,15 +294,44 @@ class FilterDriverTestCase(unittest.TestCase):
         shim = bin_dir / "git"
         shim.write_text(
             "#!/bin/sh\n"
+            # the version query carries the config pins like every other call
+            # here, so the flag is not always the first argument
+            'for a in "$@"; do\n'
+            '  if [ "$a" = "--version" ]; then echo "git version %s"; exit 0; fi\n'
+            "done\n"
             "unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS\n"
             "i=0\n"
             "while [ $i -lt 64 ]; do\n"
             "  unset GIT_CONFIG_KEY_$i GIT_CONFIG_VALUE_$i\n"
             "  i=$((i + 1))\n"
             "done\n"
-            'exec "%s" "$@"\n' % real, encoding="utf-8")
+            'exec "%s" "$@"\n' % (self.OLD_GIT, real), encoding="utf-8")
         shim.chmod(0o755)
         return bin_dir
+
+    @contextlib.contextmanager
+    def running_under(self, bin_dir: pathlib.Path):
+        """Run the block against the git in ``bin_dir``, cache and all.
+
+        Both copies ask ``git --version`` once per process, so a cache filled by
+        this machine's own git would make the shim invisible -- and a cache left
+        holding the shim's answer would make every later test in the process read
+        a 2.30.2 that is not there.  Cleared on both sides of the block.
+        """
+        from unittest import mock
+
+        def forget():
+            vf._git_version.cache_clear()
+            gitsafe.git_version.cache_clear()
+
+        forget()
+        self.addCleanup(forget)
+        path = "%s:%s" % (bin_dir, os.environ.get("PATH", ""))
+        try:
+            with mock.patch.dict(os.environ, {"PATH": path}):
+                yield {**self.env, "PATH": path}
+        finally:
+            forget()
 
 
 class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
@@ -373,16 +459,13 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
         Debian 11's git the worktree's ``filter.x.clean`` ran again, silently.
         Both channels go on every call now, and this is the one an old git reads.
         """
-        from unittest import mock
-
         proof = self.arm_filter(self.repo, "*.json filter=x\n")
         self.write_own_pair()
         self.make_stat_stale()
         unsafe_ran = self.bare_diff_fires(proof)
         bin_dir = self.a_git_that_ignores_the_config_environment()
         self.make_stat_stale()
-        with mock.patch.dict(os.environ,
-                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+        with self.running_under(bin_dir):
             paths, errs = vf.changed_entries(self.repo, "main")
         self.assertEqual(errs, [])
         self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
@@ -390,6 +473,91 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
                          "with GIT_CONFIG_* ignored, nothing blanked the driver")
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_an_equals_named_driver_on_an_old_git_stops_the_gate(self):
+        """The one square neither channel covers: ``=`` in the name, git < 2.31.
+
+        ``-c`` cannot express such a key and the environment pairs are ignored in
+        silence there, so the driver is armed whatever the gate passes: the gate
+        ran the worker's program, printed its OK line and exited 0.  The read is
+        refused instead, and a refusal is EXIT_GATE_BROKEN -- an infrastructure
+        failure, not a verdict on anyone's findings.
+        """
+        proof = self.arm_filter(self.repo, "*.json filter=a=b\n", driver="a=b")
+        self.write_own_pair()
+        self.make_stat_stale()
+        unsafe_ran = self.bare_diff_fires(proof)
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        self.make_stat_stale()
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        with self.running_under(bin_dir) as child_env:
+            entries, errs = vf.changed_entries(self.repo, "main")
+            self.assertEqual(entries, {})
+            self.assertEqual(len(errs), 1, errs)
+            self.assertIn("filter.a=b.clean", errs[0])
+            self.assertIn(self.OLD_GIT, errs[0])
+            self.assertIn("the gate could not run: this is not a finding of yours",
+                          errs[0])
+            self.assertFalse(proof.exists(), "the gate executed a program the worker chose")
+            # and through the shipped entry point, which is what the tend config
+            # runs: exit 3 (stop and report blocked), never 0 with an OK line
+            self.make_stat_stale()
+            proc = subprocess.run(
+                [sys.executable, script, "--base", "main", "--root", str(self.repo)],
+                capture_output=True, text=True, env={**child_env, "TEND_TASK_ID": "carol"})
+        self.assertEqual(proc.returncode, vf.EXIT_GATE_BROKEN, proc.stdout + proc.stderr)
+        self.assertNotIn("OK: contribution", proc.stdout)
+        self.assertIn("filter.a=b.clean", proc.stderr)
+        self.assertFalse(proof.exists(), "the shipped argv executed the worker's program")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_a_git_that_reads_the_pairs_is_not_refused_anything(self):
+        """The refusal is keyed to the version, so this host's git is unaffected.
+
+        Every other assertion in this class runs on the real git and passes the
+        ``a=b`` fixture, which is the proof; this one says the version gate itself
+        is what lets them.
+        """
+        self.assertGreaterEqual(vf._git_version() or (0,), vf._CONFIG_ENV_SINCE)
+        self.assertIsNone(vf._unexpressible_filter(["filter.a=b.clean"]))
+        self.assertIsNone(gitsafe.unexpressible_filter(["filter.a=b.clean"]))
+        self.assertTrue(gitsafe.honours_config_env())
+
+    def test_the_version_floor_is_the_same_on_both_sides_of_the_copy(self):
+        """The gate ships without cflib, so the two spellings must agree."""
+        self.assertEqual(vf._CONFIG_ENV_SINCE, gitsafe.CONFIG_ENV_SINCE)
+        self.assertEqual(vf._git_version(), gitsafe.git_version())
+        names = ["filter.x.clean", "filter.a=b.clean"]
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        with self.running_under(bin_dir):
+            self.assertEqual(vf._git_version(), (2, 30, 2))
+            self.assertEqual(vf._unexpressible_filter(names),
+                             gitsafe.unexpressible_filter(names))
+            self.assertEqual(vf._unexpressible_filter(names), "filter.a=b.clean")
+            # a name `-c` CAN express keeps its floor on that host, as before
+            self.assertIsNone(vf._unexpressible_filter(["filter.x.clean"]))
+
+    def test_an_unreadable_git_version_counts_as_an_old_one(self):
+        """A version that does not parse is not one a safety floor may rest on."""
+        from unittest import mock
+
+        bin_dir = self.root / "git-that-says-nothing"
+        bin_dir.mkdir(exist_ok=True)
+        shim = bin_dir / "git"
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+        vf._git_version.cache_clear()
+        gitsafe.git_version.cache_clear()
+        self.addCleanup(gitsafe.git_version.cache_clear)
+        self.addCleanup(vf._git_version.cache_clear)
+        with mock.patch.dict(os.environ,
+                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+            self.assertIsNone(vf._git_version())
+            self.assertIsNone(gitsafe.git_version())
+            self.assertEqual(vf._unexpressible_filter(["filter.a=b.clean"]),
+                             "filter.a=b.clean")
+            self.assertFalse(gitsafe.honours_config_env())
 
     def test_the_blanks_extend_a_count_the_callers_environment_already_carries(self):
         """A ``GIT_CONFIG_*`` the operator set is extended, never overwritten."""
@@ -487,8 +655,6 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         would leave a companion's driver armed there.  ``run()`` discovers the
         names once and spells them into both channels from that one list.
         """
-        from unittest import mock
-
         proof = self.arm_filter(self.repo, "*.lean filter=x\n")
         self.make_stat_stale()
         subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
@@ -497,8 +663,7 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         proof.unlink(missing_ok=True)
         bin_dir = self.a_git_that_ignores_the_config_environment()
         self.make_stat_stale()
-        with mock.patch.dict(os.environ,
-                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+        with self.running_under(bin_dir):
             gitsafe.run(self.repo, ["status", "--porcelain"])
         self.assertFalse(proof.exists(),
                          "with GIT_CONFIG_* ignored, nothing blanked the driver")
@@ -507,6 +672,80 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         self.assertEqual(gitsafe.filter_pin_args(["filter.a=b.clean"]), [])
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
+    def test_an_equals_named_driver_on_an_old_git_is_refused_not_read(self):
+        """The companion side of the square neither channel covers.
+
+        ``recheck/pin.py`` calls ``status --porcelain`` on a tree that may have
+        arrived with its ``.git/`` intact, so on a run host carrying Debian 11's
+        git a companion named ``a=b`` had its program executed by the read.  The
+        read stops instead: a non-zero status, no stdout, and the reason.
+        """
+        proof = self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
+        self.make_stat_stale()
+        subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
+                       capture_output=True, text=True, check=False, env=self.env)
+        unsafe_ran = proof.exists()
+        proof.unlink(missing_ok=True)
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        self.make_stat_stale()
+        with self.running_under(bin_dir):
+            res = gitsafe.run(self.repo, ["status", "--porcelain"])
+        self.assertEqual(res.returncode, gitsafe.REFUSED)
+        self.assertEqual(res.stdout, "")
+        self.assertIn("filter.a=b.clean", res.stderr)
+        self.assertIn(self.OLD_GIT, res.stderr)
+        self.assertFalse(proof.exists(),
+                         "with GIT_CONFIG_* ignored, nothing blanked the driver")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
+    def test_the_callers_of_a_refused_read_degrade_and_do_not_traceback(self):
+        """A refusal has to arrive as "no information", which is what they read.
+
+        ``gitsafe.run`` refuses by returning, not by raising, because three of its
+        callers catch only ``TimeoutExpired``: a new exception would have turned a
+        blanked driver into a traceback out of ``cf onboard`` and ``cf quotes``.
+
+        "No information" is not the same as "no repository", and one caller read
+        it that way: ``cf quotes --out`` asks ``rev-parse --show-toplevel`` for
+        the repo that would TRACK the destination, and a non-zero status alone
+        meant "nothing encloses this path", so the refusal turned the check that
+        stops recovered book text landing in a tracked file into permission to
+        write it.  The pin's recorded ``method`` is the other half: it said "not
+        a git checkout" of a checkout that is one, and threw the reason away.
+        """
+        from cfcmd import onboard as onboard_mod
+        from cfcmd import quotes as quotes_mod
+        from recheck import pin as pin_mod
+
+        self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        with self.running_under(bin_dir):
+            pinned = pin_mod.repo_pin(self.repo)
+            self.assertEqual((pinned["repo_commit"], pinned["dirty"]), (None, None))
+            self.assertIn("filter.a=b.clean", pinned["method"])
+            self.assertNotEqual(pinned["method"], "not a git checkout")
+            self.assertIsNone(onboard_mod._commit(self.repo))
+            # the destination is tracked by the repo whose driver was refused, so
+            # "I could not read" must come back as a path and refuse the write
+            out = self.repo / "quotes" / "hydrated.jsonl"
+            self.assertIsNotNone(quotes_mod._tracked_by_git(out),
+                                 "a refused read became permission to write")
+
+    def test_the_tracked_check_still_answers_on_a_git_that_reads_the_pairs(self):
+        """The guard above may not turn every ordinary answer into a refusal.
+
+        On this host's git the same destination is tracked (the repo does not
+        ignore it) and a path outside any repository is still ``None``.
+        """
+        from cfcmd import quotes as quotes_mod
+
+        self.assertEqual(quotes_mod._tracked_by_git(self.repo / "quotes" / "h.jsonl"),
+                         self.repo.resolve())
+        loose = self.root / "not-a-repo"
+        loose.mkdir()
+        self.assertIsNone(quotes_mod._tracked_by_git(loose / "h.jsonl"))
 
     def test_a_driver_is_pinned_only_once_it_is_named_and_never_raises(self):
         self.assertNotIn("filter.x.clean", gitsafe.filter_names(self.repo))
@@ -550,6 +789,60 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         with mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home)}):
             self.assertIn("filter.lfs.clean", gitsafe.filter_names(self.repo))
             self.assertIn("filter.lfs.clean", gitsafe.filter_env(self.repo).values())
+
+
+class TestTheGitVersionFloorIsAnnouncedBeforeARunBlocksOnIt(FilterDriverTestCase):
+    """The gate can now hard-stop on a run host whose git predates 2.31.
+
+    Its refusal says to install git 2.31 or later, which is right and far too
+    late: nothing named the floor beforehand -- `cf doctor` checked only that
+    git was on PATH, and the server runbook's preconditions did not mention a
+    version at all -- so an operator met the requirement for the first time as a
+    blocked run with every task stopped behind it.
+    """
+
+    @property
+    def floor(self) -> str:
+        return ".".join(str(n) for n in gitsafe.CONFIG_ENV_SINCE)
+
+    def test_cf_doctor_reports_the_version_beside_the_presence_check(self):
+        from cfcmd import doctor
+
+        rows = {row["name"]: row for row in doctor.check()}
+        self.assertIn("git", rows)
+        row = rows.get("git %s+" % self.floor)
+        self.assertIsNotNone(row, sorted(rows))
+        self.assertFalse(row["required"], "an old git warns; it does not fail `cf doctor`")
+        self.assertIn(self.floor, row["fix"])
+        version = gitsafe.git_version()
+        if version:                          # pragma: no branch - git is installed here
+            self.assertEqual(row["detail"], ".".join(str(n) for n in version))
+            self.assertEqual(row["ok"], version >= gitsafe.CONFIG_ENV_SINCE)
+
+    def test_an_old_git_reads_as_a_warning_with_its_own_version_shown(self):
+        from cfcmd import doctor
+
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        with self.running_under(bin_dir):
+            rows = {row["name"]: row for row in doctor.check()}
+        row = rows["git %s+" % self.floor]
+        self.assertFalse(row["ok"])
+        self.assertEqual(row["detail"], self.OLD_GIT)
+        self.assertFalse(row["required"])    # `cf doctor` still exits 0 for it
+
+    def test_the_warning_and_the_gates_refusal_name_the_same_remedy(self):
+        from cfcmd import doctor
+
+        remedy = "install git %s or later on the run host" % self.floor
+        row = {r["name"]: r for r in doctor.check()}["git %s+" % self.floor]
+        self.assertIn(remedy, row["fix"])
+        self.assertIn(remedy, vf._filter_refusal(pathlib.Path("wt"), "filter.a=b.clean"))
+
+    def test_the_server_runbook_records_the_floor_among_its_preconditions(self):
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        section = runbook.split("## 2. Preconditions")[1].split("\n## ")[0]
+        self.assertIn("git %s" % self.floor, section)
+        self.assertIn("GIT_CONFIG_COUNT", section)
 
 
 # --------------------------------------------------------------------------- #
@@ -735,11 +1028,18 @@ class TestTheGateCouldNotRunIsNotARejection(BookTestCase):
         self.assertIn("findings_dir must be a string", err.getvalue())
 
     def test_the_infrastructure_messages_read_alike(self):
-        """The three the fix wave added, plus every way the source text fails to
-        arrive: missing, unreadable, unconfigured, or not the pinned extraction."""
+        """Five sites now: the unreadable ``gate.json``, the findings directory
+        that is not one, and the three ways the source text fails to arrive
+        (missing or unreadable, unconfigured, not the pinned extraction) -- plus
+        :func:`_filter_refusal`, the driver no channel can blank.
+
+        A source-level pin, so the phrase has to sit on ONE source line at each
+        site: this count read 4 while the refusal's wording wrapped across two,
+        which is a pin that cannot see the site it was bumped for.
+        """
         source = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
             encoding="utf-8")
-        self.assertEqual(source.count("this is not a finding of yours"), 4)
+        self.assertEqual(source.count("this is not a finding of yours"), 5)
 
 
 # --------------------------------------------------------------------------- #
@@ -898,11 +1198,105 @@ class TestATypographicDashAtTheEdgeIsNotAnOperator(BookTestCase):
                     book, "In that case we have 1" + sign)[0])
 
     def test_a_dash_beside_a_word_is_still_punctuation_at_either_edge(self):
-        """The tightening is about numbers only: the case FR#46 fixed stands."""
+        """The tightening is about the operand: the case FR#46 fixed stands."""
         for d in ("— " + QUOTE_1, QUOTE_1 + " –", QUOTE_1 + " -",
-                  "− " + QUOTE_1, QUOTE_1 + " — "):
+                  "− " + QUOTE_1, QUOTE_1 + " — ", "— — " + QUOTE_1,
+                  '— "' + QUOTE_1):
             with self.subTest(quote=d[:6] + "..." + d[-6:]):
                 self.assertEqual(vf.quote_ok(self.book, d), (True, "verbatim"))
+
+    def test_a_sign_is_a_sign_in_front_of_any_operand_not_only_a_digit(self):
+        """The guard read a DIGIT, and a sign is a sign whatever it precedes.
+
+        ``-m*(F) <= m*(E) …`` was refused as an operator the book lacks while
+        ``- m*(F) <= m*(E) …`` -- the same flip, one space -- was stripped back to
+        the book's own words, certified *verbatim*, and carried through
+        ``validate_doc`` to exit 0 with "operators checked" on the receipt.  The
+        attacker writes the quote, so the attacker picks both the spacing and the
+        operand: six spellings of the sign over four operands, at both edges.
+        """
+        book = vf.BookText.from_text(SIGN_BOOK)
+        for what, head, tail in SIGN_OPERANDS:
+            with self.subTest(operand=what):
+                self.assertEqual(vf.quote_ok(book, head), (True, "verbatim"))
+                self.assertEqual(vf.quote_ok(book, tail), (True, "verbatim"))
+                for sign in SIGNS_BEFORE:
+                    ok, why = vf.quote_ok(book, sign + head)
+                    self.assertFalse(ok, f"a leading sign was laundered: {why}")
+                    self.assertIn("OPERATOR", why)
+                for sign in SIGNS_AFTER:
+                    ok, why = vf.quote_ok(book, tail + sign)
+                    self.assertFalse(ok, f"a trailing sign was laundered: {why}")
+                    self.assertIn("OPERATOR", why)
+
+    def test_a_display_opening_with_a_mathematical_word_is_not_prose(self):
+        """The word rule survived one WORD over, as the digit rule had one char.
+
+        ``sup``, ``inf``, ``lim``, ``dist``: a book of analysis opens a display
+        with one of these, 56 lines of the pinned source text do, and the
+        attacker picks the operand.  One sentence per word, the six spellings of
+        the sign over each, at the leading edge where the display begins.
+        """
+        for word in ("sup", "inf", "lim", "log", "max", "dist", "diam", "det"):
+            with self.subTest(word=word):
+                book = vf.BookText.from_text(
+                    "Lemma 4.3.1. By the previous display %s En is contained in E "
+                    "for every n considered.\n\f" % word)
+                quote = "%s En is contained in E for every n considered" % word
+                self.assertEqual(vf.quote_ok(book, quote), (True, "verbatim"))
+                for sign in SIGNS_BEFORE:
+                    ok, why = vf.quote_ok(book, sign + quote)
+                    self.assertFalse(ok, f"a leading sign was laundered: {why}")
+                    self.assertIn("OPERATOR", why)
+
+    def test_the_two_shapes_the_word_rule_refuses_are_recorded_costs(self):
+        """Refusing these two is the price of the rule, not a regression.
+
+        An em dash in front of prose beginning with a one-letter article, and a
+        trailing pdftotext hyphen after a closing bracket: both were stripped
+        while the rule read only the spacing.  A lone letter and a bracket are
+        exactly what a sign is written in front of, so the rule cannot tell them
+        from a flip -- it refuses, the finding is re-quoted, and the corpus
+        measurement says neither shape occurs there.  Named in the constant's
+        comment so the next reader does not read them as regressions, and
+        asserted here so nobody has to take the comment's word for it.
+        """
+        book = vf.BookText.from_text(
+            "Definition 1.2.1. A set E is said to be Jordan measurable when the two "
+            "elementary quantities agree (see Section 1.2) and nothing else is asked.\n\f")
+        prose = ("A set E is said to be Jordan measurable when the two elementary "
+                 "quantities agree")
+        self.assertEqual(vf.quote_ok(book, prose), (True, "verbatim"))
+        for quote in ("— " + prose, prose + " (see Section 1.2) -"):
+            with self.subTest(quote=quote[:10] + "..." + quote[-10:]):
+                ok, why = vf.quote_ok(book, quote)
+                self.assertFalse(ok, "the accepted cost has quietly changed: " + why)
+                self.assertIn("OPERATOR", why)
+        source = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
+            encoding="utf-8")
+        for named in ("A set E is said to be", "(see Section 1.2) -"):
+            self.assertIn(named, source, "the refused shape is not named in the comment")
+
+    def test_the_laundered_quote_does_not_reach_the_receipt(self):
+        """Not only ``quote_ok``: the document was ACCEPTED and the gate exited 0.
+
+        The receipt's "operators checked" was printed over a quote whose leading
+        operator the book does not carry, which is the whole value of the pass.
+        """
+        book_path = self.root / "signs.txt"
+        book_path.write_text(SIGN_BOOK, encoding="utf-8")
+        cfg = gate_cfg(book_path)
+        books, errs = vf.load_sources(cfg)
+        self.assertEqual(errs, [])
+        quote = SIGN_OPERANDS[1][1]          # the starred term, at the head
+        self.assertEqual(vf.validate_doc(doc_for(quote, item="Lemma 4.2.2"), "x.json",
+                                         cfg, books), [])
+        for sign in ("-", "- ", "− ", "— "):
+            with self.subTest(sign=sign):
+                errs = vf.validate_doc(doc_for(sign + quote, item="Lemma 4.2.2"),
+                                       "x.json", cfg, books)
+                self.assertEqual(len(errs), 2, errs)          # the quote in both places
+                self.assertTrue(all("OPERATOR" in e for e in errs), errs)
 
     def test_an_interior_operator_is_untouched_by_the_strip(self):
         flip = "— " + QUOTE_1.replace("<=", ">=")

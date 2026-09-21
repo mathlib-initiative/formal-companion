@@ -99,7 +99,10 @@ def _tracked_by_git(out: Path) -> Path | None:
     skill does not own, and ``check-ignore`` refreshes the index, which runs the
     ``core.fsmonitor`` command that repository's own config names (RULES: every
     git invocation on a repo you do not own goes through ``cflib.gitsafe``).  The
-    safety check must not be the execution vector.
+    safety check must not be the execution vector.  ``gitsafe.run`` also REFUSES
+    a read it cannot make safely (a content filter neither blanking channel
+    reaches), and that answer is read here exactly as a hang is: a safety
+    refusal may not become permission to write.
     """
     # `git -C` needs a directory that exists, and --out normally names a file in one
     # that does not yet: the check has to happen BEFORE the write.
@@ -108,10 +111,18 @@ def _tracked_by_git(out: Path) -> Path | None:
         here = here.parent
     try:
         found = gitsafe.run(here, ["rev-parse", "--show-toplevel"])
+        # A read the boundary REFUSED is not "there is no repo here": it is the
+        # same nothing a hang is, and a non-zero status alone would turn the
+        # refusal into permission to write into a tracked file.
+        if found.returncode == gitsafe.REFUSED:
+            return here
         repo = Path(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else None
         if not repo:
             return None
-        ignored = gitsafe.run(repo, ["check-ignore", "-q", str(out)]).returncode == 0
+        asked = gitsafe.run(repo, ["check-ignore", "-q", str(out)])
+        if asked.returncode == gitsafe.REFUSED:
+            return repo          # the same nothing, one call further on
+        ignored = asked.returncode == 0
     except subprocess.TimeoutExpired:
         # A git that hangs tells us nothing, and "nothing" here must mean "do not
         # write", so name the directory we were standing in.

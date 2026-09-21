@@ -160,6 +160,31 @@ release has something to say.
   missing from it.
 - the per-chapter "in task universe" column printed 0 where the total row
   printed a dash: nothing had computed the figure.
+- on a host whose git predates 2.31 the blanking of a content filter driver
+  whose name contains `=` reached it through neither channel, so such a driver
+  still ran on a read. The gate now refuses to read that worktree at all (exit
+  3, naming the driver and the git version) and `cflib.gitsafe` returns a
+  refusal instead of a read; on git 2.31 and later nothing changes.
+- a boundary dash was stripped as punctuation unless a DIGIT stood beside it, so
+  `- m*(F) ≤ m*(E)`, `- (1 ≤ m(F))` and `- x ≤ y` were still stripped back to the
+  book's own words and certified verbatim while the same flips written without
+  the space were refused. A dash at a quote's edge is now punctuation only when
+  the text beside it is an alphabetic word.
+- an alphabetic word was not enough either: the words a display opens with
+  (`lim`, `sup`, `inf`, `dist`, …) and the letter run inside a trailing LaTeX
+  macro read as prose, so `- lim sup En …` and `… \alpha -` were stripped back
+  to the book's own words and certified verbatim while the glued spellings were
+  refused. Those are operands now, at both edges.
+- `cf quotes hydrate --out` read a git read the safety boundary REFUSED as "no
+  repository encloses this path", so a refusal became permission to write
+  recovered book text into a tracked file — the one thing that check exists to
+  stop. A refused read means "do not write" now, as a hung git already did, and
+  `cf recheck`'s pin records the refusal's own reason instead of calling a
+  checkout "not a git checkout".
+- `cf doctor` reports `git --version` beside the presence check and warns below
+  2.31, the floor the gate's content-filter blanking rests on;
+  `references/runbook-server.md` §2 records it as a precondition. The
+  requirement used to be met for the first time as a blocked run.
 
 ## 0.2.0 — the multi-source model
 

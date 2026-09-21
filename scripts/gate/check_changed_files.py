@@ -14,7 +14,8 @@ worker commits to, so a worker that committed an edited gate passed both the
 validation and the pre-merge validation.
 
 Exit status: 0 when the change set is clean, 1 when the contribution is refused,
-3 when the check itself could not run (no such base ref, unreadable git output) —
+3 when the check itself could not run (no such base ref, unreadable git output,
+a worktree naming a content filter this host's git cannot be made to ignore) —
 a worker must answer a 3 by stopping and reporting blocked, never by deleting
 findings until the check goes quiet.
 """
