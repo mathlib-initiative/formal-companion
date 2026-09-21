@@ -115,8 +115,9 @@ release has something to say.
   recoverable only with a `cf sources remove` nothing named. Both prepare
   first now: a refusal leaves no binding and no overlay row, and removes a
   directory it prepared for a source the workspace did not already hold. A
-  source the workspace did already hold stays, and the refusal says so and names
-  the command that drops it.
+  source the workspace did already hold stays; `cf sources add` says so and names
+  the command that drops it, and `cf onboard` does the same for one the operator
+  named with `--source`.
 - `cf status` exited 2 on a companion directory that has an adapter but no
   `workspace.yaml` entry — the state a half-finished onboard or a copied
   directory leaves — one line after printing it as `not onboarded`. It prints it
@@ -143,8 +144,8 @@ release has something to say.
 - a quote spread over three or more pages of the source matched no page at all,
   which turned the item-page check off rather than refusing the finding; one
   folio-only page at the seam was enough to reach it.
-- a quote whose edge carries a sign written apart from its operand (`- 1` where
-  the source has `≤`) was certified verbatim.
+- a quote whose edge carries a sign written apart from its operand (`- 1 ≤ …`
+  where the source has `1 ≤ …`) was certified verbatim.
 - `cf report` dropped a corpus document `cf tally` refuses to read, publishing
   coverage figures that were a lower bound with nothing in the report saying so;
   it also dropped every examined item outside the audited chapters from those
