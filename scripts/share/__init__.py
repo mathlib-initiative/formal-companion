@@ -1,6 +1,6 @@
 """Stage 14 -- share a campaign without sharing the book.
 
-New code (docs/design/multi-source-model.md S6.2 is the layout it reads; there is
+New code (docs/design/archive/multi-source-model.md S6.2 is the layout it reads; there is
 no recovered original -- the baseline campaign was one directory on one laptop).
 
 The workspace directory is deliberately a git repo with NO remote, because

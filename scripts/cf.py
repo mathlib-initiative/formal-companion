@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """cf -- the companion-faithfulness workspace CLI.
 
-New code (design/architecture.md S8 item 1).  Run it through the shim on PATH,
-or by path:
+New code (CLAUDE.md S5 is the contract for adding one).  Run it through the
+shim on PATH, or by path:
 
     cf status
     python3 <skill>/scripts/cf.py status

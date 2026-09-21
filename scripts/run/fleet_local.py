@@ -12,7 +12,7 @@ elsewhere).  So this refuses to build a fleet larger than --max-items (100 by
 default) unless forced.
 
 Two things a Workflow script cannot do, which the caller must therefore do
-(design/critique.json, corrections): it has no filesystem or Node API, so the
+(the design critique, corrections): it has no filesystem or Node API, so the
 quote gate CANNOT run inside the script after each agent -- the worker must
 self-gate in its prompt, and the run is reconciled afterwards with
 ``harvest_journal.py`` -> ``verify_findings.py`` -> a second Workflow run for

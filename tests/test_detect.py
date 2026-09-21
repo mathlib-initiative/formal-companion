@@ -10,7 +10,7 @@ Two kinds of test:
       CF_BOOK_TXT=/Users/jack/Desktop/tao-differential/book.official.txt \\
           python3 -m unittest discover -s tests
 
-  The two anchors are the ones design/stage_map.md Stage 8 names: the cheap
+  The two anchors are the ones docs/design/stage_map.md Stage 8 names: the cheap
   tier must reproduce ``def-coverage.ours.json`` (32 stated / 4 bridge-only /
   0 missing), and ``analyze_stages`` over ``adam-detector/deps.json`` must
   reproduce the Definition 1.2.2 hit (``OpenExcessLebesgueMeasurable`` via

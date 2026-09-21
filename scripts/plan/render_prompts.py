@@ -453,7 +453,7 @@ def build_context(
     The prompt names the SOURCE, not "the book": a worker told to check a quote
     against "the book" when two editions of one work are on the host has no way
     to know which, and the anchor edition is not always the one the companion
-    ships (docs/design/multi-source-model.md S4.6).  ``source_id``, the edition
+    ships (docs/design/archive/multi-source-model.md S4.6).  ``source_id``, the edition
     label and the first eight characters of ``source_sha`` go in the header.
     """
     rows = list(companions)

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # STUB: the stock tend-agent bridge (API key through the gateway).
 #
-# This is the third backend named in design/decisions.json ("Fleet substrate"):
+# This is the third backend named in the design decisions record ("Fleet substrate"):
 # tend's own agent, billed to an Anthropic API key rather than a subscription.  It
 # is the only backend whose spend tend can actually see (`tend-control budget
 # --max-cost` counts tend-agent sessions only; agentbox hides the token and reports

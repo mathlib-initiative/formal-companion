@@ -24,7 +24,7 @@ the attack `verify_findings.py` is literally `# citation findings banned in the 
 
 ## 2. The gate: only two lines differ
 
-`scripts/verify_findings.py` is byte-identical across the three differential entrypoints
+The gate script is byte-identical across the three differential entrypoints
 (md5 `ca976440…`) and byte-identical across the two attack entrypoints (md5 `f4cc21a8…`).
 The whole diff is:
 
@@ -118,7 +118,7 @@ copies them into `<tend-root>/bin/` and points `config.yaml` at them.
 
 All five `config.yaml` files differ **only** in `entrypoint`, the two `bin/*.sh` paths and the two
 concurrency numbers. Shared: `workspace_mirror.enabled: false`, `validation_commands` ==
-`pre_merge_validation_commands` == `[python3, scripts/verify_findings.py]`,
+`pre_merge_validation_commands` == `[python3, <the entrypoint's gate script>]`,
 `merge_target_branch: main`, `merge_validation_worktree: true`, `seed_worktree_build: false`,
 `batched_merge: true`, `skip_build_validation_for_task_only_merges: false`,
 `budget: {currency: USD}`, `agent_oom_score_adj: 750`, `cleanup_closed_worktrees: true`.

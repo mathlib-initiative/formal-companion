@@ -10,7 +10,7 @@ which joined measure_theory's overlay artifacts:
     pdf-overlay/data/declaration-snippets.json       id -> file, line, statement
     source-formalization-ledger.json                 id -> kind, module, file
 
-Generalisations over the original cell (design/stage_map.md Stage 2):
+Generalisations over the original cell (docs/design/stage_map.md Stage 2):
 
 * the printed/PDF page offset is configuration, not the literal ``16``;
 * item labels go through the strict grammar (``cflib.items``) instead of a
@@ -19,7 +19,7 @@ Generalisations over the original cell (design/stage_map.md Stage 2):
 * ``statement`` is the signature and ``body`` the definition body, instead of
   one blob;
 * ``key()`` includes the ledger and target-refinement shas
-  (design/critique.json: "the extract key must include ledger sha and
+  (the design critique: "the extract key must include ledger sha and
   target-refinement sha for ledger repos"), and the dry run reports when the
   refinement was curated against a *different* ledger than the one on disk —
   the "ledger-node repos go stale after fixes" failure mode.

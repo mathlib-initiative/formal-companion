@@ -39,7 +39,7 @@ class SourceError(CfError):
 class DiscoveryError(CfError):
     """`cf onboard` could not decide something it refuses to guess at.
 
-    Discovery replaces typed metadata (docs/design/multi-source-model.md R2), so
+    Discovery replaces typed metadata (docs/design/archive/multi-source-model.md R2), so
     every thing it cannot establish -- the adapter kind, the page offset, which
     edition a repo's anchors follow -- is a refusal that names the evidence and
     the one flag that settles it, never a silent default.

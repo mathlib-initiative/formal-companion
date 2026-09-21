@@ -107,7 +107,7 @@ class TestCommandDiscovery(unittest.TestCase):
         mapping = cf_main.discover_commands(subparsers)
         # the command index of SKILL.md S"Command index". `book` is deleted: a
         # source is discovered by `cf onboard` and re-prepared by
-        # `cf sources refresh` (docs/design/multi-source-model.md S7).
+        # `cf sources refresh` (docs/design/archive/multi-source-model.md S7).
         for name in ("init", "onboard", "sources", "extract", "pair", "plan-run", "run",
                      "harvest", "import-corpus", "tally", "detect-proxies",
                      "adjudicate", "route", "report", "status"):
@@ -122,11 +122,14 @@ class TestCommandDiscovery(unittest.TestCase):
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
         cf_main.discover_commands(subparsers)
-        documented = set(re.findall(r"^\| `sources (\w+)",
+        # `[\w-]+`, not `\w+`: `sources validate-registry` parsed as "validate",
+        # which is not a subcommand, so a hyphenated row failed here rather than
+        # being checked.
+        documented = set(re.findall(r"^\| `sources ([\w-]+)",
                                     (HERE.parent / "SKILL.md").read_text(), re.M))
         self.assertIn("remove", documented, "cf sources remove is undocumented")
         extra = {"show": ["x"], "remove": ["x"], "set": ["x", "y=1"],
-                 "add": ["x.pdf", "--for", "ours"]}
+                 "add": ["x.pdf", "--for", "ours"], "promote": ["x"]}
         for sub in sorted(documented):
             with self.subTest(sub=sub):
                 args = parser.parse_args(["sources", sub, *extra.get(sub, [])])

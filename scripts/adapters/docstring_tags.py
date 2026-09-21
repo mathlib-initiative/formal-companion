@@ -5,7 +5,7 @@ Ported from
   scratchpad/recovered/b174aa13_L5564_Bash.txt  ``extract_teorth.py`` (teorth/analysis)
 
 Both originals were one-off cells; this adapter is the generalisation
-design/stage_map.md Stage 2 asks for, with their recorded defects fixed:
+docs/design/stage_map.md Stage 2 asks for, with their recorded defects fixed:
 
 1. ONE parser for every repo, handling ``private`` / ``protected`` /
    ``noncomputable`` / ``@[...]`` prefixes.  ``extract_ours``'s prefix list

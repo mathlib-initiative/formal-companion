@@ -1,6 +1,6 @@
 """companions/<name>/state.json: the durable per-companion state.
 
-New code (design/architecture.md S2).  Before the skill, this state lived in
+New code (docs/design/stage_map.md S4).  Before the skill, this state lived in
 prose handoffs and was re-derived by reading files, which is how counts drifted
 ("every counting error so far ran toward cleaner").  Every command writes its
 counts back here, atomically, and `cf status` prints nothing it did not read

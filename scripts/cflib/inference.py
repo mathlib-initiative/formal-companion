@@ -1,6 +1,6 @@
 """Inference: the numbers a user used to have to type.
 
-docs/design/multi-source-model.md R2 / S5.  Everything here is PURE -- text in,
+docs/design/archive/multi-source-model.md R2 / S5.  Everything here is PURE -- text in,
 numbers out -- so it is unit-testable without a PDF and its refusals are
 reproducible:
 

@@ -395,7 +395,7 @@ class TestRoutingRules(unittest.TestCase):
         self.assertIn("mechanical-only", routed["rows"][0]["withdrawn_reason"])
 
     def test_a_mechanical_anchor_row_is_the_oracle_and_always_routes(self):
-        """critique.json correction 2: route anchor_check rows, do not withdraw them."""
+        """the design critique, correction 2: route anchor_check rows, do not withdraw them."""
         for key in ("source", "provenance"):   # the new spelling and the legacy one
             rows, _ = self._findings([
                 finding_doc("Exercise 1.1.19", kind="PAGE_ANCHOR", severity="low",

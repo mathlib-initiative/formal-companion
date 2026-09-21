@@ -7,10 +7,10 @@ b174aa13_L5564 ``extract_teorth.py``), with the defects the design records
 fixed:
 
 * whitespace tolerance -- ``compare.norm`` used a single-space regex and
-  silently dropped ``Exercise    1.3.19`` (design/stage_map.md Stage 1/3);
+  silently dropped ``Exercise    1.3.19`` (docs/design/stage_map.md Stage 1/3);
 * a reject list -- ``norm`` fell through to ``return s``, so junk such as
   ``Corollary (Lemma 1.2.5 + Exercise 1.2.4)`` became a first-class key
-  (design/architecture.md Stage 3 "strict grammar + reject list");
+  (the strict grammar and its reject list; docs/design/stage_map.md S1.1);
 * sub-parts -- ``(i)``/``(iv)``/``(3)`` are parsed out instead of being
   glued into the key or thrown away by the title regex;
 * trailing code leak -- teorth rows like ``Definition 1.3.8 (Unsigned
@@ -557,7 +557,7 @@ QUALIFIED_SEP = "::"
 def qualified_item(source_id: str, item: "Item | str") -> str:
     """``"<source_id>::Exercise 1.3.19"`` -- an item id that cannot collide.
 
-    An item is the pair ``(source_id, item)`` (docs/design/multi-source-model.md
+    An item is the pair ``(source_id, item)`` (docs/design/archive/multi-source-model.md
     S6.1): ``Exercise 1.3.19`` means one thing in one source and something else
     in another, so a bare item string is NEVER used as a cross-source key.  Rows
     carry two fields; a task id, a log line or a finding payload -- anywhere only

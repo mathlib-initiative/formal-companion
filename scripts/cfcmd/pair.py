@@ -3,7 +3,7 @@
     python3 scripts/cf.py pair [--source <id>] [--only ours,adam] [--chapter 1]
 
 A workspace holds N companions and M sources, and a differential is possible
-exactly where two companions' source lists overlap (docs/design/multi-source-model.md
+exactly where two companions' source lists overlap (docs/design/archive/multi-source-model.md
 R1).  So this command does not pair "the campaign": it walks every source at
 least one companion is bound to -- ``workspace.shared_sources()`` plus the
 single-companion ones -- and writes one tree per source:
@@ -213,7 +213,7 @@ def _pair_one(workspace, source_id: str, wanted, args, per_companion: dict) -> b
         result["pairs"], source_id=source_id, offset=offset, max_pages=args.max_page_hints,
         book_items=index_by_item, printed_max=printed_max,
     )
-    # the attack runs address every tagged item, In-text included (decisions.json
+    # the attack runs address every tagged item, In-text included (the design decisions record,
     # "item scope"); the differential queue above stays numbered-only.
     all_index = dict(result["index"])
     all_index.update(result["intext"])
@@ -335,7 +335,7 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
                         offset: int, index_by_item) -> None:
     """Publish one source's mechanical PAGE_ANCHOR rows into ``corpus/<run-id>/``.
 
-    critique.json correction 2: "Route them as mechanical low-severity rows from
+    the design critique, correction 2: "Route them as mechanical low-severity rows from
     anchor_check.py against the pinned edition."  They could not be routed while
     they lived only in ``pairs/<id>/anchor-check.json``, which ``route`` reads as
     a withdrawal oracle and never as a source (its sources are ``corpus/<run>/``).

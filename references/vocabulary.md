@@ -9,6 +9,10 @@ touching it.
 The enums here are the single source of truth in code: `scripts/cflib/vocab.py`. Anything not
 listed is invalid and the schema gate rejects it.
 
+**Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
+verdicts, resolutions, source roles, re-check statuses) · §2 mapping tables from the five
+legacy vocabularies · §3 `finding_id`, the frozen rule · §4 item ids.
+
 ---
 
 ## 1. The canonical vocabulary
@@ -87,7 +91,7 @@ converter maps such a row to `refuted` and moves the prose into `reason`.
 
 ### 1.6 The source model
 
-These came with the multi-source model (`docs/design/multi-source-model.md`); they describe
+These came with the multi-source model (`docs/design/archive/multi-source-model.md`); they describe
 *sources*, not findings, but they are enums and they live in the same file.
 
 | enum | values | what it decides |
@@ -163,7 +167,7 @@ recorded in `findings.adam.jsonl`'s `_meta.withdrawn`). That is the whole point 
 source rather than assuming one: the rows stay importable and stay honest about what they were
 judged against.
 
-### 2.2 Corpus v1 (the five tend runs; `verify_findings.py` L18-20 and its attack variant)
+### 2.2 Corpus v1 (the five tend runs; the v1 gate's verdict set and its attack variant, now `plan/presets.py`'s `LEGACY_*_VERDICTS`)
 
 | legacy | canonical |
 |---|---|
@@ -174,7 +178,7 @@ judged against.
 | `book_passage_quote`, `book_quote` | unchanged — still a quote from a book; `source_id` + `source_sha` added, and they decide *which* text the quote gate checks it against |
 | `faithful` (enum) | list, as in §2.1 |
 | witness in prose inside `reasoning` | `witness: {d?, object, why}` — extracted where the text names one, else `witness: null` and `witness_extracted: false` |
-| `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/multi-source-model.md` §6.1 |
+| `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/archive/multi-source-model.md` §6.1 |
 | task-id file name (`exercise-1_1_1.json` / `exercise-1-1-17.json`) | `run_id` + `item`; the converter accepts dash **and** underscore slugs |
 
 ### 2.3 Challenge workflow (`challenge-batch1-findings-wf_c3f0e5d0-d65.js`)
