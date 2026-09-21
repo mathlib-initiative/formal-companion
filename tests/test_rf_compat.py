@@ -2,7 +2,7 @@
 
 One class per finding, named after what used to be wrong.
 
-* six ``compat`` shims carried 1,586 lines, about half of them a second
+* six ``compat`` shims carried 1,607 lines, 453 of them a second
   implementation behind ``try: from cflib ... except Exception``.  Those guards
   are bare, and the modules are only importable with ``scripts/`` on
   ``sys.path`` -- where ``cflib`` always resolves -- so the fallback could only
@@ -346,10 +346,14 @@ class TestTheShimsHaveADeadline(unittest.TestCase):
     caller across; never raise them.
     """
 
-    #: total non-blank lines across every shim.  1,586 before the fallback halves
-    #: went; leave headroom for nothing.
-    MAX_SHIM_LINES = 1160
-    #: modules that still import a shim rather than cflib directly
+    #: total NON-BLANK lines across every shim; 1,292 before the fallback halves
+    #: went (1,607 physical lines).  This is today's measured total with no
+    #: margin at all: a ceiling with slack in it is not a ratchet, because the
+    #: deleted second implementation could be pasted back under it and the suite
+    #: would stay green.  Adding a line to a shim is meant to fail here.
+    MAX_SHIM_LINES = 896
+    #: modules that still import a shim rather than cflib directly.  Also today's
+    #: measured count with no margin.
     MAX_CALLERS = 40
 
     def _callers(self) -> set[str]:
@@ -372,7 +376,9 @@ class TestTheShimsHaveADeadline(unittest.TestCase):
                     for p in SHIMS.values())
         self.assertLessEqual(
             total, self.MAX_SHIM_LINES,
-            "the compat shims grew; move callers onto cflib instead, then lower MAX_SHIM_LINES")
+            f"the compat shims are {total} non-blank lines, over the "
+            f"{self.MAX_SHIM_LINES}-line ceiling: move the caller onto cflib instead, "
+            "and lower MAX_SHIM_LINES when one moves")
 
     def test_the_caller_count_does_not_grow(self):
         callers = self._callers()
