@@ -866,7 +866,8 @@ class TestTheUngatedHintNamesNothingThatDoesNotWork(Workspace):
         self.assertIn("cf import-corpus --run-id <run-id> --from <dir> --preset", text)
         for command, flags in (("harvest", ("--gate-config", "--from", "--journal",
                                             "--execute")),
-                               ("import-corpus", ("--run-id", "--from", "--preset"))):
+                               ("import-corpus", ("--run-id", "--from", "--preset",
+                                                  "--source"))):
             with self.subTest(command=command):
                 rc, out, _err = cf(command, "--help")
                 self.assertEqual(rc, 0, "`cf %s` does not exist" % command)
@@ -874,36 +875,56 @@ class TestTheUngatedHintNamesNothingThatDoesNotWork(Workspace):
                     self.assertIn(flag, out, "`cf %s` does not take %s" % (command, flag))
 
     def test_the_hint_is_a_spelling_not_one_machine_s_paths(self):
-        """Every argument in it is an angle-bracketed placeholder (CLAUDE.md S1)."""
+        """Every argument in it is an angle-bracketed placeholder (CLAUDE.md S1).
+
+        ``<id>`` joined the list when the import branch gained the ``--source``
+        a multi-source workspace refuses without; the assertion still pins the
+        WHOLE set, so a real path in the hint fails here as before.
+        """
         self.assertNotRegex(tally_mod.REGATE_HINT, r"(^|\s)/\w")
         self.assertEqual(sorted(set(re.findall(r"<[a-z-]+>", tally_mod.REGATE_HINT))),
-                         ["<dir>", "<file>", "<preset>", "<run-id>"])
+                         ["<dir>", "<file>", "<id>", "<preset>", "<run-id>"])
+
+
+def build_import_workspace(case: unittest.TestCase, *source_ids: str) -> None:
+    """A workspace holding *source_ids*, plus one v1 findings file to import.
+
+    Taken out of one test class's setUp because the hint it exercises has to be
+    run in a workspace with MORE than one source too: that is the configuration
+    `cf import-corpus` refuses without ``--source``, and the one the hint's own
+    branch (an import that landed ``gate: null``) is most likely to be read in.
+    """
+    case.tmp = pathlib.Path(tempfile.mkdtemp(prefix="cf-rf-final-cli-", dir=TMPDIR)).resolve()
+    case.addCleanup(shutil.rmtree, case.tmp, True)
+    case.ws = case.tmp / "ws"
+    case.source = case.tmp / "findings"
+    case.source.mkdir(parents=True)
+    (case.source / "exercise-1-1-1.json").write_text(json.dumps({
+        "item": "Exercise 1.1.1", "book_located": True, "book_passage_quote": QUOTE,
+        "matches": [], "disagreements": [], "coverage_notes": ""}), encoding="utf-8")
+    case.assertEqual(cf("init", str(case.ws), "--no-git", "-q")[0], 0)
+    shas = {SOURCE_ID: SOURCE_SHA, OTHER_SOURCE_ID: OTHER_SOURCE_SHA}
+    blocks = "".join(
+        "  %s:\n" % sid
+        + '    sha256: "%s"\n' % shas[sid]
+        + "    title: A Book\n    edition: \"%s\"\n    offset: 16\n"
+          "    chapters: [1]\n    role: audited\n"
+          % ("first edition" if sid == SOURCE_ID else "second edition")
+        for sid in source_ids)
+    (case.ws / "workspace.yaml").write_text(
+        "version: 2\nworkspace:\n  name: ws\ncompanions: {}\nsources:\n" + blocks,
+        encoding="utf-8")
+    for sid in source_ids:
+        text = case.ws / "sources" / sid / "text.txt"
+        text.parent.mkdir(parents=True, exist_ok=True)
+        text.write_text("Exercise 1.1.1 (Boolean closure). " + QUOTE + "\n", encoding="utf-8")
 
 
 class TestTheHintIsRunAndItSettlesIt(unittest.TestCase):
     """The import branch of the hint, executed against a real ungated corpus."""
 
     def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="cf-rf-final-cli-",
-                                                 dir=TMPDIR)).resolve()
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.ws = self.tmp / "ws"
-        self.source = self.tmp / "findings"
-        self.source.mkdir(parents=True)
-        (self.source / "exercise-1-1-1.json").write_text(json.dumps({
-            "item": "Exercise 1.1.1", "book_located": True, "book_passage_quote": QUOTE,
-            "matches": [], "disagreements": [], "coverage_notes": ""}), encoding="utf-8")
-        self.assertEqual(cf("init", str(self.ws), "--no-git", "-q")[0], 0)
-        (self.ws / "workspace.yaml").write_text(
-            "version: 2\nworkspace:\n  name: ws\ncompanions: {}\nsources:\n"
-            "  %s:\n" % SOURCE_ID
-            + '    sha256: "%s"\n' % SOURCE_SHA
-            + "    title: A Book\n    edition: \"first edition\"\n    offset: 16\n"
-              "    chapters: [1]\n    role: audited\n",
-            encoding="utf-8")
-        text = self.ws / "sources" / SOURCE_ID / "text.txt"
-        text.parent.mkdir(parents=True, exist_ok=True)
-        text.write_text("Exercise 1.1.1 (Boolean closure). " + QUOTE + "\n", encoding="utf-8")
+        build_import_workspace(self, SOURCE_ID)
 
     def receipt(self, run_id: str) -> dict:
         return json.loads((self.ws / "corpus" / run_id / "RECEIPT.json").read_text())
@@ -965,6 +986,63 @@ class TestTheHintIsRunAndItSettlesIt(unittest.TestCase):
         self.assertIn("GATE FAILED run(s): bad", tallied)
         self.assertIn("gate FAILED for run(s): bad", warned)
         self.assertIn("RECEIPT.json gate.problems", warned)
+
+
+class TestTheImportHintIsRunInAMultiSourceWorkspace(unittest.TestCase):
+    """NEW#g-report-3: the same hint, in the workspace shape that refuses it.
+
+    `cf import-corpus` refuses a workspace with more than one source unless it
+    is told which one the findings read, and the remedy printed for the one
+    state it exists for -- an import that landed ``gate: null`` -- left the flag
+    out, so pasting it exited 2 and changed nothing.  The sibling class above
+    exercises the same sentence in a ONE-source workspace, which is why it
+    passed throughout.
+    """
+
+    def setUp(self):
+        build_import_workspace(self, SOURCE_ID, OTHER_SOURCE_ID)
+
+    def receipt(self, run_id: str) -> dict:
+        return json.loads((self.ws / "corpus" / run_id / "RECEIPT.json").read_text())
+
+    def test_the_workspace_refuses_the_import_without_the_flag(self):
+        """The refusal the hint has to answer, named by the command itself."""
+        rc, _out, err = cf_cli("import-corpus", "--run-id", "imp", "--from", str(self.source),
+                               "--workspace", str(self.ws), "--no-tally",
+                               "--preset", "differential-legacy")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("this workspace has 2 sources", err)
+        self.assertIn("--source", err)
+
+    def test_the_printed_invocation_settles_the_ungated_state(self):
+        rc, _out, err = cf("import-corpus", "--run-id", "imp", "--from", str(self.source),
+                           "--workspace", str(self.ws), "--no-tally", "--preset", "",
+                           "--source", SOURCE_ID)
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(self.receipt("imp")["gate"], "the fixture must start ungated")
+
+        rc, tallied, _err = cf("tally", "--workspace", str(self.ws), "--no-write")
+        self.assertEqual(rc, 0)
+        self.assertIn("UNGATED run(s): imp", tallied)
+        self.assertIn("cf import-corpus --run-id <run-id> --from <dir> --preset <preset> "
+                      "--source <id>", tallied)
+
+        # the sentence that was printed, run verbatim, with this run's own id,
+        # directory, preset and source substituted for the placeholders
+        rc, _out, err = cf_cli("import-corpus", "--run-id", "imp", "--from", str(self.source),
+                               "--workspace", str(self.ws), "--no-tally",
+                               "--preset", "differential-legacy", "--source", SOURCE_ID,
+                               "--repos", COMPANION, "--force")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.receipt("imp")["gate"]["ok"], self.receipt("imp")["gate"])
+
+        rc, tallied, _err = cf("tally", "--workspace", str(self.ws), "--no-write")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("UNGATED", tallied)
+
+    def test_the_one_source_workspace_may_still_drop_the_flag(self):
+        """The hint says so, so the sentence without it has to keep working."""
+        self.assertIn("drop `--source` in a one-source workspace", tally_mod.REGATE_HINT)
 
 
 class TestTheReportNamesNoPrivateAlias(unittest.TestCase):
