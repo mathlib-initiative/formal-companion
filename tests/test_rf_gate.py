@@ -919,10 +919,10 @@ class TestTheRecordedBaselineFiguresReDerive(unittest.TestCase):
         f, n = self.f, self.OFFSET
         self.assertEqual(f["unbound"][n], 26)
         # the 8 quotes that used to straddle a page break are bindable now that
-        # `pages_matching` searches runs of adjacent pages: an empty page list
-        # turned the bind off, which is all a quote spliced across a seam needed
-        # (none of these 8 spans three pages, so widening the runs past pairs
-        # moves no figure in this class)
+        # `pages_matching` reports the pages an occurrence touches: an empty page
+        # list turned the bind off, which is all a quote spliced across a seam
+        # needed (none of these 8 spans three pages, so reading the span off the
+        # joined text rather than widening runs moves no figure in this class)
         self.assertEqual(f["straddle"][n], 0)
         self.assertEqual(f["bindable"][n], 2993)
         self.assertEqual(f["beyond"][n], 16)

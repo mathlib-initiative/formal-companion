@@ -88,11 +88,29 @@ SPLICED_QUOTE = ("for later use in section 6. " + FOLIO_PAGE.strip() + " " +
                  RUNNING_HEAD + " " + PAGE_7.split("\n")[0])
 
 
-def book_with_a_folio_page() -> "vf.BookText":
-    """:data:`BOOK` with a folio-only page inserted before the last one."""
+def book_with_folio_pages(count: int = 1) -> "vf.BookText":
+    """:data:`BOOK` with ``count`` folio-only pages inserted before the last one.
+
+    More than one is the same attack a page wider: the run of short pages between
+    the two halves of a splice is the attacker's to choose, so no number of them
+    may turn the bind off.
+    """
+    folios = "".join("%d\n\f" % (41 + n) for n in range(1, count + 1))
     return vf.BookText.from_text(BOOK.replace(
         "\f" + RUNNING_HEAD + "\n\n" + PAGE_7,
-        "\f" + FOLIO_PAGE + "\f" + RUNNING_HEAD + "\n\n" + PAGE_7))
+        "\f" + folios + RUNNING_HEAD + "\n\n" + PAGE_7))
+
+
+def book_with_a_folio_page() -> "vf.BookText":
+    """:data:`BOOK` with a folio-only page inserted before the last one."""
+    return book_with_folio_pages(1)
+
+
+def quote_spliced_over(count: int) -> str:
+    """The wrong-page splice with ``count`` folio pages inside it."""
+    folios = " ".join("%d" % (41 + n) for n in range(1, count + 1))
+    return ("for later use in section 6. " + folios + " " + RUNNING_HEAD + " "
+            + PAGE_7.split("\n")[0])
 
 BOGUS_ROW = {
     "concept": "invented",
@@ -774,9 +792,49 @@ class TestAQuoteSplicedAcrossAPageBreakIsStillBound(BookTestCase):
         self.assertTrue(any("not the item's passage" in e for e in errs), errs)
         self.assertEqual(vf.binding_notes(doc_for(SPLICED_QUOTE), "x.json", self.cfg, book), [])
 
+    def test_a_longer_run_of_short_pages_at_the_seam_buys_nothing_either(self):
+        """Three folio pages instead of one: the same splice, two pages wider.
+
+        The search that replaced pairs widened run by run, so the answer to "one
+        page wider" was always "one more width" -- and the width the attacker
+        needs is the number of short pages he puts at the seam.  The pages an
+        occurrence touches are read off the join instead, so every width is the
+        same amount of work and none of them comes back ``[]``.
+        """
+        book = book_with_folio_pages(3)
+        quote = quote_spliced_over(3)
+        m = vf.quote_match(book, quote)
+        self.assertLess(len(quote), vf.MAX_QUOTE_CHARS)
+        self.assertEqual(m.pages, [6, 7, 8, 9, 10])
+        errs = vf.validate_doc(doc_for(quote, item=ITEM), "x.json", self.cfg,
+                               {SOURCE_ID: book})
+        self.assertTrue(any("not the item's passage" in e for e in errs), errs)
+        self.assertEqual(vf.binding_notes(doc_for(quote), "x.json", self.cfg, book), [])
+        # a splice wider than the recurrence ceiling is refused BY the ceiling --
+        # which is what bounding the search at a constant width would have cost,
+        # because past such a bound the answer is [] and [] is the silent pass
+        wide = vf.quote_match(book_with_folio_pages(5), quote_spliced_over(5))
+        self.assertFalse(wide.ok)
+        self.assertIn("occurs on 7 pages", wide.why)
+
+    def test_a_source_of_short_pages_does_not_make_the_search_quadratic(self):
+        """The widening was O(pages^2) when the pages are mostly folio-only.
+
+        Measured against the run search this replaced: 500 such pages and one
+        3,000-character needle took 1.1 s, and 2,000 pages 58 s -- per quote, with
+        the needle length the worker's to choose and the quote count per findings
+        file unbounded.  The bound below is thousands of times the work this does
+        (one pass over the source), so it fails only on a return to the sweep.
+        """
+        book = vf.BookText.from_text("\f".join("%d\n" % n for n in range(2000)))
+        started = time.monotonic()
+        self.assertEqual(book.pages_matching("x" * 3000), [])
+        self.assertLess(time.monotonic() - started, 5.0)
+
     def test_the_run_search_reports_the_narrowest_run_that_holds_the_quote(self):
-        """The widening stops at the first width that matches, so a quote inside
-        one page is still one page and the recurrence ceiling counts it once."""
+        """A whole-page hit wins, and between spliced occurrences the narrowest
+        does, so a quote inside one page is still one page and the recurrence
+        ceiling counts it once."""
         book = book_with_a_folio_page()
         self.assertEqual(vf.quote_match(book, QUOTE_1).pages, [1])
         self.assertEqual(vf.quote_match(book, STRADDLE_QUOTE.split(RUNNING_HEAD)[0]
