@@ -3,14 +3,22 @@
     cf report
     cf report --tally reports/tally.hunt.json --gh-json prs.json
 
-Two outputs, both mechanical:
+Four outputs, all mechanical:
 
 1. ``reports/handoff.<date>.md`` from ``templates/handoff.md``, filled ONLY from
    computed artifacts -- tally files, ledger rows, routed ``_meta``, state.json,
    run.yaml and saved ``gh`` output.  A figure with no artifact behind it is
    written as ``TODO(...)`` with the command that would produce it; this module
    never calls the network and never counts anything by reading prose.
-2. ``reports/verify-claims.args.json`` -- the args for
+2. ``reports/coverage.json`` -- every figure of the handoff's section 0, per
+   source and per chapter: items in the source, items in the audited scope, items
+   in the differential's task universe, items paired by two or more companions,
+   items a run examined, of those the ones whose run passed the quote gate, items
+   that carried a finding, and items in scope no run ever looked at.
+3. ``reports/unexamined.<source_id>.json``, one per source -- the items in scope
+   that no run examined, BY NAME.  A count can say "381 of 411"; only the names
+   say which item was missed, and the handoff points its reader at this file.
+4. ``reports/verify-claims.args.json`` -- the args for
    ``workflows/verify-claims.workflow.js``, whose lenses re-derive every claim in
    the draft from the same sources, with an independent second vote on the
    numbers.  An earlier pass of that workflow found 19 wrong claims out of 173.
@@ -80,6 +88,11 @@ def run(args) -> int:
     ctx = report["context"]
     paths = ctx["_paths"]
     print("wrote %s" % report["path"])
+    # Named, not written silently: the handoff tells its reader to open
+    # unexamined.<source_id>.json, and `cf report` used to print neither it nor
+    # coverage.json, so the reader had to guess that the file existed at all.
+    for path in report["coverage_files"]:
+        print("wrote %s" % path)
     if report["todos"]:
         print("  %d figure(s) have no artifact behind them yet:" % len(report["todos"]))
         for t in report["todos"][:12]:
