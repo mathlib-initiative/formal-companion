@@ -20,6 +20,14 @@ The baseline-backed cases skip cleanly when CF_BASELINE_CORPUS is unset.
 """
 from __future__ import annotations
 
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import io
 import json
 import os
