@@ -63,6 +63,11 @@ def repo_pin(repo: str | Path | None) -> dict:
         return {"repo_commit": None, "dirty": None, "method": "no checkout recorded"}
     try:
         head = gitsafe.run(repo, ["rev-parse", "HEAD"], timeout=30)
+        # a refusal is not "this is not a checkout": it is a checkout whose read
+        # the boundary would not make, and the recorded method has to say which
+        if head.returncode == gitsafe.REFUSED:
+            return {"repo_commit": None, "dirty": None,
+                    "method": head.stderr.strip() or "read refused"}
         if head.returncode != 0 or not head.stdout.strip():
             return {"repo_commit": None, "dirty": None, "method": "not a git checkout"}
         commit = head.stdout.strip()
