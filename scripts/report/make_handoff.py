@@ -36,11 +36,13 @@ documents and their receipts.  The task universe and the pairs are 383 and 225 o
 the pinned baseline; calling the wider one "paired" is the overclaim this section
 exists to prevent.
 
-Every one of those figures is over the audited scope, so the two kinds of counted
-document they do NOT cover are published beside them and rendered in the note --
-an item examined outside the audited chapters, and a document this reader could
-not parse at all (which `cf tally` refuses outright, and which makes every figure
-a lower bound).  A figure that silently excludes a counted document is the same
+Every one of those figures is over the audited scope AND over the sources this
+workspace holds, so the three kinds of counted document they do NOT cover are
+published beside them and rendered in the note -- an item examined outside the
+audited chapters, a document this reader could not parse at all (which `cf tally`
+refuses outright, and which makes every figure a lower bound), and a document
+naming a source the workspace does not hold, which has no source block to be
+counted in.  A figure that silently excludes a counted document is the same
 error as a figure with no artifact behind it, and it ran toward "cleaner" too.
 """
 
@@ -1221,9 +1223,24 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
 
 def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
                    receipts: dict[str, dict]) -> dict:
-    """Every source's denominator, plus the unattributed corpus documents."""
+    """Every source's denominator, plus the corpus no source block owns.
+
+    Three readers, and between them they consume EVERY key
+    :func:`load_examined` can produce: the ids this workspace holds, the ``""``
+    of a document nothing attributes, and -- :func:`_unknown_source_blocks` --
+    every other id.  That last one had no reader at all, and a block is keyed by
+    the document's own ``source_id`` or its run's receipt, so any id may land
+    there: `cf sources remove <id>` after a corpus was harvested under it, or an
+    import stamped with an id this workspace never had.  The whole block went
+    with it -- items examined, items with findings, the unreadable documents,
+    the ungated and gate-failed runs -- while `cf tally` went on counting the
+    same rows and §2 printed the run by name.  The gate fails CLOSED on an
+    unknown source; this failed open, which is the direction this module's own
+    docstring says the project got wrong three times.
+    """
     examined = load_examined(paths, runs, receipts)
-    sources = [source_coverage(cfg, paths, sid, examined) for sid in cfg.source_ids()]
+    held = list(cfg.source_ids())
+    sources = [source_coverage(cfg, paths, sid, examined) for sid in held]
     unattributed = examined.get("") or {}
     return {
         "created": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -1233,7 +1250,45 @@ def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
         # an unreadable document in a run whose receipt names two sources has no
         # source block to be reported under, and is the same lower bound there
         "unreadable_documents": sorted(unattributed.get("unreadable") or []),
+        "unknown_source_documents": _unknown_source_blocks(examined, held),
     }
+
+
+def _unknown_source_blocks(examined: dict[str, dict], held: Iterable[str]) -> list[dict]:
+    """The examined blocks keyed by a source id this workspace does not hold.
+
+    Everything the block carries is published, under the same names the source
+    blocks use, because every one of these figures is one §0 does not count and
+    `cf tally` does.  ``documents`` is the per-run document count and the
+    unreadable ones are NOT in it: a file nothing could parse was never
+    attributed to an item, so counting it here would say this report read
+    something it did not.  ``runs`` is every run that reached the block, not
+    only the ones with a per-run count: a run whose documents were all
+    unreadable -- or that landed none at all -- has no count, and is exactly the
+    run the remedy below is about.
+    """
+    known = set(held)
+    out = []
+    for sid in sorted(examined):
+        if not sid or sid in known:
+            continue
+        block = examined[sid]
+        run_blocks = block.get("runs") or {}
+        unreadable = sorted(block.get("unreadable") or [])
+        ungated = sorted(block.get("ungated_runs") or [])
+        failed = sorted(block.get("gate_failed_runs") or [])
+        out.append({
+            "source_id": sid,
+            "documents": sum(int((r or {}).get("examined") or 0) for r in run_blocks.values()),
+            "items_examined": len(block.get("examined") or ()),
+            "items_with_findings": len(block.get("with_findings") or ()),
+            "runs": sorted(set(run_blocks) | set(ungated) | set(failed)
+                           | {n.split("/", 1)[0] for n in unreadable}),
+            "unreadable_documents": unreadable,
+            "ungated_runs": ungated,
+            "gate_failed_runs": failed,
+        })
+    return out
 
 
 #: the cell of a source no companion is bound to: it owes no denominator
@@ -1379,14 +1434,7 @@ def render_coverage_table(coverage: dict) -> str:
 
 
 def _unreadable_lines(src: dict) -> list:
-    """The lower-bound sentence for one source, said in every shape it can be in.
-
-    Every branch of :func:`coverage_note` calls it, including the three that end
-    a source's note early (not under audit, an unpaired manuscript, no
-    items.json), because those are exactly the shapes where nothing else in the
-    document would say it: `cf report` printed the warning on the terminal while
-    the rendered handoff — the artifact that travels — said nothing.
-    """
+    """The lower-bound sentence for one source, said in every shape it can be in."""
     names = src.get("unreadable_documents") or []
     if not names:
         return []
@@ -1398,6 +1446,103 @@ def _unreadable_lines(src: dict) -> list:
             % (len(names), _capped_names(names))]
 
 
+def _outside_scope_lines(src: dict) -> list:
+    """What `cf tally` and §3 count and no figure in §0 does."""
+    names = src.get("examined_outside_scope") or []
+    if not names:
+        return []
+    found = len(src.get("with_findings_outside_scope") or ())
+    return ["  - %d examined item(s) lie OUTSIDE the audited chapter(s), in chapter(s) "
+            "%s (%d of them with findings): `cf tally` and §3 count them and no "
+            "figure above does — %s. All of them are named in "
+            "`reports/coverage.json` (`examined_outside_scope`)."
+            % (len(names), ", ".join(src.get("chapters_outside_scope") or []) or "?",
+               found, _capped_names(names))]
+
+
+def _gate_lines(src: dict) -> list:
+    """The two gate states, said apart.
+
+    "No gate ever ran" and "a gate ran and REJECTED" are disjoint (see
+    :func:`_record_gate_state`), so calling the second one unchecked would be a
+    second wrong statement about it.
+    """
+    lines = []
+    if src.get("ungated_runs"):
+        lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
+                     "text. %s" % (_capped_names(src["ungated_runs"]), tally_mod.REGATE_HINT))
+    if src.get("gate_failed_runs"):
+        lines.append("  - gate FAILED for run(s) %s: their quotes were checked against the "
+                     "source text and rejected (see `corpus/<run-id>/RECEIPT.json` "
+                     "gate.problems); their rows are counted above. Re-run those tasks or "
+                     "drop that corpus. %s"
+                     % (_capped_names(src["gate_failed_runs"]), tally_mod.REGATE_HINT))
+    return lines
+
+
+def _unstamped_lines(src: dict) -> list:
+    """Documents attributed from their run's receipt rather than their own stamp."""
+    if not src.get("unstamped_documents"):
+        return []
+    return ["  - %d corpus document(s) carry no `source_id` and were attributed from "
+            "their run's receipt." % src["unstamped_documents"]]
+
+
+def _caveat_lines(src: dict) -> list:
+    """Every caveat one source owes a reader, said in every shape it can be in.
+
+    Every branch of :func:`coverage_note` calls it, including the three that end
+    a source's note early (not under audit, an unpaired manuscript, no
+    items.json), because those are exactly the shapes where nothing else in the
+    document would say it: `cf tally` printed "UNGATED run(s)" and "GATE FAILED
+    run(s)" on the terminal while the rendered handoff — the artifact that
+    travels — said nothing, and "no quote in this corpus was checked against the
+    source text" is the safety claim the whole gate exists for.  One helper and
+    one call site per branch, because the hole was fixed for the unreadable
+    sentence alone and the other four stayed below the `continue`s.
+
+    The out-of-scope sentence is a no-op on two of the three early branches
+    (``scope_known`` is False for a manuscript with no pairing and for a source
+    with no ``items.json``, so the list is always empty there); the not-under-
+    audit branch is the one that gains it.
+    """
+    return (_unreadable_lines(src) + _outside_scope_lines(src) + _gate_lines(src)
+            + _unstamped_lines(src))
+
+
+def _unknown_source_lines(blocks: list) -> list:
+    """The corpus attributed to a source this workspace does not hold.
+
+    Beside the unattributed sentence, and for the same reason: these documents
+    are counted by `cf tally`, printed in §2 and in no figure of §0, so without
+    this line the reader meets them only as items §0 calls never examined.
+    """
+    if not blocks:
+        return []
+    docs = sum(int(b.get("documents") or 0) for b in blocks)
+    found = sum(int(b.get("items_with_findings") or 0) for b in blocks)
+    runs = sorted({r for b in blocks for r in (b.get("runs") or ())})
+    lines = ["- %d corpus document(s) in run(s) %s name source(s) %s that this workspace does "
+             "not hold, so no figure above counts them — `cf tally` does, %d of them with "
+             "findings, and an item behind one of them may be counted as never examined above. "
+             "Re-add the source (`cf sources add <source> --for <companion>`) or re-import that "
+             "corpus under an id this workspace holds (`cf import-corpus --run-id <run-id> "
+             "--from <dir> --source <id>`). All of them are named in "
+             "`reports/coverage.json` (`unknown_source_documents`)."
+             % (docs, _capped_names(runs),
+                _capped_names(b.get("source_id") for b in blocks), found)]
+    unreadable = sorted({n for b in blocks for n in (b.get("unreadable_documents") or ())})
+    if unreadable:
+        lines.append("  - a further %d document(s) in those run(s) could not be read at all "
+                     "(%s), so that count is itself a LOWER BOUND; `cf tally --run <run-id>` "
+                     "refuses them by name and says why."
+                     % (len(unreadable), _capped_names(unreadable)))
+    ungated = sorted({r for b in blocks for r in (b.get("ungated_runs") or ())})
+    failed = sorted({r for b in blocks for r in (b.get("gate_failed_runs") or ())})
+    lines.extend(_gate_lines({"ungated_runs": ungated, "gate_failed_runs": failed}))
+    return lines
+
+
 def coverage_note(coverage: dict) -> str:
     """The sentence a reader would otherwise have to guess, plus the caveats."""
     lines = []
@@ -1406,19 +1551,19 @@ def coverage_note(coverage: dict) -> str:
         if not src.get("under_audit", True):
             lines.append("- `%s`: not under audit — no companion is bound to it (`role: %s`), so "
                          "it needs no denominator." % (src["source_id"], src.get("role") or "?"))
-            lines.extend(_unreadable_lines(src))
+            lines.extend(_caveat_lines(src))
             continue
         if total is None and src.get("manuscript"):
             lines.append("- `%s`: a manuscript — its items are the tagged environments the "
                          "adapter reads, not numbered prose, so `items.json` is empty on purpose "
                          "and the only artifact that can count them is `pairs/%s/index.json`; "
                          "run `cf pair`." % (src["source_id"], src["source_id"]))
-            lines.extend(_unreadable_lines(src))
+            lines.extend(_caveat_lines(src))
             continue
         if total is None:
             lines.append("- `%s`: no `items.json` yet, so this report has no denominator for it "
                          "— %s." % (src["source_id"], todo("items", "cf onboard <repo>")))
-            lines.extend(_unreadable_lines(src))
+            lines.extend(_caveat_lines(src))
             continue
         chapters = (", ".join(str(c) for c in src["chapters_audited"])
                     if src["chapters_audited"] else "all")
@@ -1450,10 +1595,6 @@ def coverage_note(coverage: dict) -> str:
                          "the items behind it (`task_universe_items`), so the per-chapter cells "
                          "in that column are unknown rather than 0; re-run `cf pair` to itemise "
                          "it." % src.get("items_in_task_universe"))
-        # Before the gate sentences, because it is about the figures themselves:
-        # a document nothing here could read is one `cf tally` refuses, and a
-        # count over a corpus with one in it is a lower bound, not a count.
-        lines.extend(_unreadable_lines(src))
         # A manuscript is planned off its pairing index, so the chapter pin the
         # workspace carries narrowed nothing: saying "chapters audited 1" over a
         # source every chapter of which was planned and examined is the same
@@ -1464,33 +1605,9 @@ def coverage_note(coverage: dict) -> str:
                          "list narrows, so the figures above are over the whole pairing index."
                          % (", ".join(str(c) for c in src["chapters_pinned"]),
                             src["source_id"]))
-        if src.get("examined_outside_scope"):
-            names = src["examined_outside_scope"]
-            found = len(src.get("with_findings_outside_scope") or ())
-            lines.append("  - %d examined item(s) lie OUTSIDE the audited chapter(s), in chapter(s) "
-                         "%s (%d of them with findings): `cf tally` and §3 count them and no "
-                         "figure above does — %s. All of them are named in "
-                         "`reports/coverage.json` (`examined_outside_scope`)."
-                         % (len(names),
-                            ", ".join(src.get("chapters_outside_scope") or []) or "?",
-                            found, _capped_names(names)))
-        if src["ungated_runs"]:
-            lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
-                         "text. %s"
-                         % (", ".join("`%s`" % r for r in src["ungated_runs"]),
-                            tally_mod.REGATE_HINT))
-        # Said separately: for these runs the quotes WERE checked, and failed, so
-        # "no quote was checked" would be a second wrong statement about them.
-        if src.get("gate_failed_runs"):
-            lines.append("  - gate FAILED for run(s) %s: their quotes were checked against the "
-                         "source text and rejected (see `corpus/<run-id>/RECEIPT.json` "
-                         "gate.problems); their rows are counted above. Re-run those tasks or "
-                         "drop that corpus. %s"
-                         % (", ".join("`%s`" % r for r in src["gate_failed_runs"]),
-                            tally_mod.REGATE_HINT))
-        if src["unstamped_documents"]:
-            lines.append("  - %d corpus document(s) carry no `source_id` and were attributed from "
-                         "their run's receipt." % src["unstamped_documents"])
+        # The lines above explain a FIGURE; these say what the figures do not
+        # cover, and the same five are said on every branch above.
+        lines.extend(_caveat_lines(src))
         # Only where the reconciliation was asked: for a manuscript it is not a
         # second opinion (see :func:`source_coverage`), so the two can never
         # differ -- and the remedy this line names could not have closed it.
@@ -1512,6 +1629,7 @@ def coverage_note(coverage: dict) -> str:
                      "in `reports/coverage.json` (`unreadable_documents`)."
                      % (len(coverage["unreadable_documents"]),
                         _capped_names(coverage["unreadable_documents"])))
+    lines.extend(_unknown_source_lines(coverage.get("unknown_source_documents") or []))
     return "\n".join(lines) or todo("coverage", "cf pair && cf harvest")
 
 
