@@ -168,10 +168,10 @@ the mechanical one decides:
    the table. Prose alone, with no anchors to score, sets the anchor at
    confidence 0.6 and leaves the companion `confirmed: false`.
 
-Measured on `tao-measure-lean` at commit `250b856` (2026-09-16): published
-edition 0.89 (271 ok / 35 mismatched) against the draft's 0.66 (202 / 103) —
+Measured on `tao-measure-lean` at commit `250b856` (2026-09-21): published
+edition 0.91 (271 ok / 27 mismatched) against the draft's 0.68 (202 / 95) —
 a margin far above 0.05, because both editions share `offset: 16` and differ
-only by the one-page shift of ~65 items. Final `anchor_confidence` 0.9356 after
+only by the one-page shift of ~65 items. Final `anchor_confidence` 0.96 after
 the prose corroboration. The repo bundles the draft, so the draft is recorded
 in `bundled_sources` with `role: reference`: prepared so the page map can be
 checked, audited by nobody.
@@ -549,16 +549,16 @@ writes into `companions/<name>/state.json` (version 2):
 - `sources: {<source_id>: {sha, rows, items, at}}` and `anchor_source` — a map,
   not one top-level sha, because a companion may be bound to several sources.
 
-Measured on the two targets, 2026-09-16:
+Measured on the two targets, 2026-09-21, with this revision of the skill:
 
 | | `tao-measure-lean` @ `250b856` | `measure_theory` @ `9afe70f` |
 |---|---|---|
 | adapter | `docstring_tags` (0.93) | `attribution_table` (0.98) |
-| files scanned | 154 | — (table-driven) |
-| declarations | 2,207 (1,464 tagged, 743 untagged, 135 private) | 531 |
-| rows / items | 1,463 / 506 | 562 / 178 |
-| anchors | 573 own, 1 crossref, 889 none | from the overlay |
-| `sorry` | 730 (688 exercise, 42 gap) | 0 |
+| files scanned (`lean_files`; the dry run's `files` key is 112, the files that yielded rows) | 154 | — (table-driven) |
+| declarations | 1,556 (1,132 tagged, 424 untagged, 130 private) | 531 |
+| rows / items | 1,131 / 506 | 562 / 178 |
+| anchors | 524 own, 1 crossref, 606 none | from the overlay |
+| `sorry` | 516 (508 exercise, 8 gap) | 0 |
 | rejected tags | 1 (`Corollary (Lemma 1.2.5 + Exercise 1.2.4)`, `no_number`) | 32 unnumbered labels |
 
 The contract also calls for a **full declaration index** beside the table

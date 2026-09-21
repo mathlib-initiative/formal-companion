@@ -771,11 +771,10 @@ class CheckEditionTests(unittest.TestCase):
     def test_discovery_scores_editions_through_this_module(self):
         """S4.6 is decided HERE; ``cflib.discovery`` only ranks the table.
 
-        Verified against the real data on 2026-09-16: over tao-measure-lean's
-        1,464 extracted rows the published edition scores 271 ok / 35 mismatched
-        (0.886) and the 2011 draft 202 / 103 (0.662), and the inline copy
-        ``cflib.discovery`` still keeps agrees digit for digit -- so that copy
-        can go.
+        Verified against the real data on 2026-09-21: over tao-measure-lean's
+        1,131 extracted rows the published edition scores 271 ok / 27 mismatched
+        (0.909) and the 2011 draft 202 / 95 (0.680), and the inline copy in
+        ``cflib.discovery`` still agrees digit for digit -- so that copy can go.
         """
         from cflib import discovery
 
