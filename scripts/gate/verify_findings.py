@@ -1442,11 +1442,12 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     task's, which is what catches emptying a neighbour's findings file.
 
     With no ``task_id`` the SINGLE-STEM rule stands in for it: a contribution may
-    touch the pair of exactly one stem, so two stems are refused by name.  It is
-    weaker than the ownership rule — it cannot tell whose stem the one stem is —
-    but it is the half that works when nobody knows the task id, and whether tend
-    exports ``TEND_TASK_ID`` into a validation command's environment has never
-    been verified against a running orchestrator.
+    touch the pair of exactly one stem, so a second stem is refused by name once
+    some stem's findings file was already on the base — the condition the next
+    paragraph is about.  It is weaker than the ownership rule — it cannot tell
+    whose stem the one stem is — but it is the half that works when nobody knows
+    the task id, and whether tend exports ``TEND_TASK_ID`` into a validation
+    command's environment has never been verified against a running orchestrator.
 
     The count is ADDITION-AWARE **per stem**, because the tend config runs this
     same argv for the per-contribution ``validation_commands`` and for the

@@ -1018,6 +1018,13 @@ class TestTheReadmeDoesNotOverstateTheOwnershipRule(unittest.TestCase):
         self.assertIn("A lone stem is never refused here", doc)
         self.assertNotIn("one that rewrites, empties, deletes or renames a path "
                          "that was already on the base branch is still refused", doc)
+        # the summary sentence carried the superseded rule flat -- "two stems are
+        # refused by name", which is what the two --help strings had to be
+        # corrected out of.  A reader who stops at the first paragraph is told
+        # the batch is refused; the condition belongs in the sentence.
+        self.assertNotIn("so two stems are refused by name", doc)
+        self.assertIn("a second stem is refused by name once some stem's findings "
+                      "file was already on the base", doc)
 
 
 # --------------------------------------------------------------------------- #
