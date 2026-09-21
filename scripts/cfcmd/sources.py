@@ -1,6 +1,6 @@
 """cf sources -- list, show, add, set and refresh the workspace's sources.
 
-docs/design/multi-source-model.md S7.  `cf onboard` is the path; these are the
+docs/design/archive/multi-source-model.md S7.  `cf onboard` is the path; these are the
 exceptions:
 
     cf sources list                       one row per source

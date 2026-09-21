@@ -508,7 +508,9 @@ class TestRecordedFiguresAndTheSpec(unittest.TestCase):
         self.assertNotIn("two of its 3,019 quotes", comment)
 
     def test_the_spec_lists_the_gate_source_block_this_code_writes(self):
-        spec = (SKILL / "docs" / "design" / "multi-source-model.md").read_text(encoding="utf-8")
+        # docs/design/stage_map.md is the current spec; the 1,941-line design
+        # record this used to read is archived and no longer normative.
+        spec = (SKILL / "docs" / "design" / "stage_map.md").read_text(encoding="utf-8")
         keys = set(presets_mod.source_block("x"))
         self.assertIn("item_pages", keys)
         for passage in ("page_offset, images_dir, item_pages", '"item_pages": {item: pdf_page}'):

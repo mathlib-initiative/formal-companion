@@ -4,7 +4,7 @@ Ported from: recovered/b174aa13_L5762_Bash.txt part (C), which located every
 numbered item in two editions and flagged the items whose anchor in
 tao-measure-lean matched the 2011 draft page rather than the published page.
 
-Generalised per design/critique.json:
+Generalised per the design critique:
 
 * PAGE_ANCHOR is a MECHANICAL kind -- never an LLM finding.  22 of the 40
   differential-flagged items in batch 1 were pagination, which is exactly the
@@ -17,7 +17,7 @@ Generalised per design/critique.json:
   were genuinely corrected in PR #5);
 * :func:`check_edition` scores the SAME anchors against every candidate edition
   of one work.  That is the mechanical half of choosing a companion's anchor
-  source (docs/design/multi-source-model.md S4.6): tao-measure-lean bundles the
+  source (docs/design/archive/multi-source-model.md S4.6): tao-measure-lean bundles the
   2011 draft and anchors to the published book, and no prose sentence is allowed
   to settle that -- the pages do.
 """

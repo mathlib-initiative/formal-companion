@@ -1,11 +1,11 @@
 """Finding rows emitted by the detector (kinds ``PROXY`` and ``COVERAGE``).
 
-New code. Stage 8 of design/stage_map.md: "each hit [is] emitted as a finding
+New code. Stage 8 of docs/design/stage_map.md: "each hit [is] emitted as a finding
 row of kind ``PROXY`` with ``bridge: proved|fiat|none`` so it joins the corpus
 and the ledger like any other finding".
 
 These rows are *mechanical*: they carry no ``book_quote`` and no ``witness``,
-which is exactly why design/critique.json asks for a per-kind gate matrix
+which is exactly why the design critique asks for a per-kind gate matrix
 ("PROXY: bridge field + closure path as evidence; COVERAGE: item + items.json
 page"). The quote and witness keys are written as ``null`` so a reader can see
 the absence is deliberate rather than a dropped field.

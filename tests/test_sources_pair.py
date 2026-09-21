@@ -11,7 +11,7 @@ them is visible:
   0 missing, and 29 uncovered numbered items.
 
 They also pin the multi-source model's own promises
-(docs/design/multi-source-model.md):
+(docs/design/archive/multi-source-model.md):
 
 * ``prepare()`` INFERS the offset and the item kinds from the text -- nobody
   types ``16`` (R2);
@@ -206,7 +206,7 @@ class SourceItemsTests(unittest.TestCase):
         self.assertIn("Exercise 1.3.19", self.by_item)
 
     def test_single_space_regex_finds_only_410(self):
-        """Documents the defect this stage fixes (design/stage_map.md Stage 1)."""
+        """Documents the defect this stage fixes (docs/design/stage_map.md Stage 1)."""
         with open(book_text_path(), encoding="utf-8", errors="ignore") as fh:
             text = fh.read()
         found = set()

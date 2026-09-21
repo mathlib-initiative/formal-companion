@@ -2,7 +2,7 @@
 
 Ported from: recovered/b174aa13_L5589_Bash.txt (the queue_args builder: page
 hints from each repo's ``page_anchor``, ranges capped at +3 pages, ``+16`` to
-reach PDF pages, first six pages kept).  Generalised per design/stage_map.md
+reach PDF pages, first six pages kept).  Generalised per docs/design/stage_map.md
 Stage 3-4:
 
 * the offset and the printed-page bounds come from the SOURCE's ``meta.json``

@@ -6,7 +6,7 @@ and 5564; the ``adam.jsonl`` generator, transcript 11323fe3 line 3102); this
 command runs whichever adapter a companion declares, validates every row
 against schema v2 and records the counts in state.json.
 
-Idempotence (design/architecture.md S6): the table is keyed on
+Idempotence (docs/design/stage_map.md S4): the table is keyed on
 ``adapter.key()``, which hashes the adapter kind, its config, the repo commit,
 the SOURCE SHAS it is bound to *and* the content the adapter reads -- the
 globbed Lean sources, or the ledger / target-refinement / snippet / geometry
@@ -18,7 +18,7 @@ re-extracts anyway.
     cf extract --dry-run            # counts only, writes nothing
 
 Every row carries the pair ``(source_id, source_sha)``: a companion is audited
-against a LIST of sources (docs/design/multi-source-model.md R1/R4), the same
+against a LIST of sources (docs/design/archive/multi-source-model.md R1/R4), the same
 item label means different things in different sources, and a table whose rows
 do not say which source they are about cannot be paired, gated or tallied.
 

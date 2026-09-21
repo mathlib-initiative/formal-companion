@@ -2,7 +2,7 @@
 
 Ported from: nothing on disk -- the campaign's ``adam-detector/errata.md`` was a
 hand summary produced by a summarising fetch, and it silently dropped the
-Definition 1.5.11 entry (design/critique.json, corrections: "errata must be
+Definition 1.5.11 entry (the design critique, corrections: "errata must be
 fetched with a raw HTTP client (curl), never the summarising fetch tool").
 
 So this module:

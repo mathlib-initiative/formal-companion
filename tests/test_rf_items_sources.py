@@ -1042,14 +1042,14 @@ class TestTheDocsStateTheGrammarThatIsImplemented(unittest.TestCase):
     a per-source inference.
     """
 
-    DOCS = ("SKILL.md", "README.md", "docs/design/multi-source-model.md",
+    DOCS = ("SKILL.md", "README.md", "docs/design/archive/multi-source-model.md",
             "references/vocabulary.md")
 
     def _read(self, name: str) -> str:
         return (SKILL / name).read_text(encoding="utf-8")
 
     def test_the_grammar_is_stated_the_same_way_everywhere_it_is_stated(self):
-        for name in ("SKILL.md", "docs/design/multi-source-model.md",
+        for name in ("SKILL.md", "docs/design/archive/multi-source-model.md",
                      "references/vocabulary.md"):
             body = self._read(name)
             self.assertIn("<Kind> <n>[.<n>", body, name)
@@ -1060,7 +1060,7 @@ class TestTheDocsStateTheGrammarThatIsImplemented(unittest.TestCase):
             self.assertNotIn("sources add <pdf", self._read(name), name)
 
     def test_the_numbering_and_completeness_refusals_are_in_the_binding_spec(self):
-        spec = self._read("docs/design/multi-source-model.md")
+        spec = self._read("docs/design/archive/multi-source-model.md")
         self.assertIn("### 5.5 Numbering depth from headings", spec)
         self.assertIn("### 5.6 Item completeness", spec)
         self.assertIn("MIN_ITEM_COMPLETENESS", spec)

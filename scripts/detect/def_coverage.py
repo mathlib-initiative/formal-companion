@@ -218,7 +218,7 @@ def uncovered_items(
     """Numbered book items with no declaration in this companion (L6145).
 
     Reported as COVERAGE, never queued: for tao-measure-lean all 28 were
-    Remarks (design/decisions.json, "Item scope").
+    Remarks (the design decisions record, "Item scope").
     """
     tagged = set(index_by_item(rows, kinds))
     return sorted(set(all_items) - tagged, key=sort_key)

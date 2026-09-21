@@ -5,7 +5,7 @@ Rewrite of the ad hoc 2026-09-06 scripts that produced
 ``(item, kind, concept[:50])``, so the SAME defect found by two runs became two
 rows whenever the two agents phrased the concept differently -- visible in
 union.adam.json, where Exercise 1.6.39 appears twice with runs ``["c-text"]``
-and ``["c-pdf"]``.  design/critique.json names that defect: "concept is
+and ``["c-pdf"]``.  The design critique names that defect: "concept is
 LLM-written text, so the same defect in two runs gets different ids and
 cross-run linking cannot use it".
 

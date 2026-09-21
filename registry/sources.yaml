@@ -1,5 +1,5 @@
 version: 1
-# The SOURCE REGISTRY shipped with the skill (docs/design/multi-source-model.md S2).
+# The SOURCE REGISTRY shipped with the skill (docs/design/archive/multi-source-model.md S2).
 #
 # Curated and committed here; a WORKSPACE never writes to this file -- discovery
 # appends what it learns to <workspace>/registry.yaml with confirmed: false, and a

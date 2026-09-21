@@ -195,5 +195,5 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 | per-variant differences (gate kinds, prompt add-ons, bridge, concurrency) | diffing `config.yaml`, `prompts/*`, `bin/*` and `scripts/verify_findings.py` across the five roots |
 | 16 concurrent hosted sessions per account; 10–15 min/task; 16–24 h for 763 tasks; coordinate heavy jobs | `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §8 |
 | the gate fails closed without the book text, and the two hard-wired paths | same, §8; `~/Desktop/tao-diff-run/scripts/verify_findings.py` |
-| the local API-key bridge failure (20 requests, 18 retries, HTTP 404 on no credit) | design critique `critique.json`, risks |
-| gate out of tree + changed-files check; read-only source mounts; host allowlist and recorded consent | design critique `critique.json`, gaps 3 and 13, risks 2–3 |
+| the local API-key bridge failure (20 requests, 18 retries, HTTP 404 on no credit) | the design critique, risks |
+| gate out of tree + changed-files check; read-only source mounts; host allowlist and recorded consent | the design critique, gaps 3 and 13, risks 2–3 |

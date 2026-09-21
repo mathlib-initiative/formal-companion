@@ -87,7 +87,7 @@ converter maps such a row to `refuted` and moves the prose into `reason`.
 
 ### 1.6 The source model
 
-These came with the multi-source model (`docs/design/multi-source-model.md`); they describe
+These came with the multi-source model (`docs/design/archive/multi-source-model.md`); they describe
 *sources*, not findings, but they are enums and they live in the same file.
 
 | enum | values | what it decides |
@@ -174,7 +174,7 @@ judged against.
 | `book_passage_quote`, `book_quote` | unchanged — still a quote from a book; `source_id` + `source_sha` added, and they decide *which* text the quote gate checks it against |
 | `faithful` (enum) | list, as in §2.1 |
 | witness in prose inside `reasoning` | `witness: {d?, object, why}` — extracted where the text names one, else `witness: null` and `witness_extracted: false` |
-| `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/multi-source-model.md` §6.1 |
+| `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/archive/multi-source-model.md` §6.1 |
 | task-id file name (`exercise-1_1_1.json` / `exercise-1-1-17.json`) | `run_id` + `item`; the converter accepts dash **and** underscore slugs |
 
 ### 2.3 Challenge workflow (`challenge-batch1-findings-wf_c3f0e5d0-d65.js`)

@@ -1,6 +1,6 @@
 """cf status -- what this workspace knows, read from state.json only.
 
-New code (design/architecture.md S4).  `cf status` prints counts that were
+New code.  `cf status` prints counts that were
 written by the command that produced them; it never re-derives a number by
 reading findings, because every counting error in the audit so far ran toward
 "cleaner".  A number that is missing here means the stage has not run, not

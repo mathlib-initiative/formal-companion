@@ -44,7 +44,7 @@ entry's `licence.fetch` is `author_site` or `open` (`RegistryEntry.may_fetch`).
 ```yaml
 version: 1
 sources:
-  <source_id>:                  # the slug rule is docs/design/multi-source-model.md S3
+  <source_id>:                  # the slug rule is docs/design/archive/multi-source-model.md S3
     title: …                    # required
     authors: [ … ]
     edition: …                  # required: the label that distinguishes it from its siblings

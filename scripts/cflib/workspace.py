@@ -1,6 +1,6 @@
 """Load, validate and update workspace.yaml.
 
-Replaces ``cflib/campaign.py`` (docs/design/multi-source-model.md R1): the unit
+Replaces ``cflib/campaign.py`` (docs/design/archive/multi-source-model.md R1): the unit
 of organisation is a COMPANION with a LIST OF SOURCES, and the directory a user
 works in is a WORKSPACE holding N companions and M sources.
 
@@ -36,7 +36,7 @@ WORKSPACE_VERSION = 2
 
 #: `sources.<id>.role`: audited = a companion is checked against it; reference =
 #: prepared only so page_map_to can be checked (the bundled-but-not-anchored
-#: edition of docs/design/multi-source-model.md S4.6).
+#: edition of docs/design/archive/multi-source-model.md S4.6).
 ROLE_AUDITED = "audited"
 ROLE_REFERENCE = "reference"
 
@@ -305,7 +305,7 @@ class Workspace:
                 hint="nothing was written; this is a bug in the command that built this state")
         out = [f"# workspace.yaml -- N companions, M sources.\n"
                f"# Rewritten by cf on {date.today().isoformat()}; see\n"
-               f"# docs/design/multi-source-model.md for the schema.\n"]
+               f"# docs/design/archive/multi-source-model.md for the schema.\n"]
         for key, value in self.data.items():
             comment = _SECTION_COMMENTS.get(key)
             out.append("\n")
@@ -399,7 +399,7 @@ class Workspace:
             raise WorkspaceError(
                 "workspace.yaml `companions:` must be a map keyed by companion name",
                 hint="schema version 2 replaced the list with a map; see "
-                     "docs/design/multi-source-model.md S1.1")
+                     "docs/design/archive/multi-source-model.md S1.1")
         return {name: CompanionRef.from_dict(name, body) for name, body in raw.items()}
 
     def companion(self, name: str) -> CompanionRef:

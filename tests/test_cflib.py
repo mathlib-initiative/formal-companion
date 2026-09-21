@@ -15,7 +15,7 @@ environment names it:
 
 Nothing here touches the network, and nothing reads a PDF: discovery is
 exercised against FIXTURE repos that carry the same signals the two real
-companions carry (docs/design/multi-source-model.md S4.3).
+companions carry (docs/design/archive/multi-source-model.md S4.3).
 """
 from __future__ import annotations
 

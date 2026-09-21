@@ -3,7 +3,7 @@
 Used by ``cf detect-proxies`` (PROXY, COVERAGE) and by ``cf pair``
 (PAGE_ANCHOR, from ``pair/anchor_check.py``).
 
-New code.  design/stage_map.md Stage 8's gate is that each hit is "emitted as a
+New code.  docs/design/stage_map.md Stage 8's gate is that each hit is "emitted as a
 finding row of kind ``PROXY`` ... so it joins the corpus and the ledger like any
 other finding".  It did not: ``cf detect-proxies`` wrote ``detect/<name>/
 findings.*.jsonl`` and every downstream reader (``cf tally``, ``route``,

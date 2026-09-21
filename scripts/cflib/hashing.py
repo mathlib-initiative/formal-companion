@@ -1,6 +1,6 @@
 """sha256 helpers and the one canonical finding_id definition.
 
-New code. The finding_id rule comes from design/critique.json ("define
+New code. The finding_id rule comes from the design critique ("define
 finding_id as sha256(run-id, item, kind, sorted unfaithful_decls)"): the
 baseline's sha256(run-id, item, concept) was unstable because `concept` is
 LLM-written prose, so the same defect got a different id in every run.
@@ -69,7 +69,7 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
     Three details are load-bearing and must not drift:
 
     * ``source_id`` is a part, because an item is the pair ``(source_id, item)``
-      (docs/design/multi-source-model.md S6.1).  Without it, ``Exercise 1.3.19``
+      (docs/design/archive/multi-source-model.md S6.1).  Without it, ``Exercise 1.3.19``
       of one source and ``Exercise 1.3.19`` of another collide in one id -- and
       a workspace with two companions on two books would silently merge their
       findings.

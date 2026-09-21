@@ -4,7 +4,7 @@ Ported from: no single original -- this replaces the hand checking of
 /Users/jack/Desktop/tao-differential/{accepted,refuted}.adam.jsonl described in
 recovered/b174aa13_L5702_Bash.txt's `_meta` note ("transcribed decisions; no
 re-adjudication").  The rules it enforces are the Stage 7 gate from
-design/stage_map.md plus the critique's corrections:
+docs/design/stage_map.md plus the critique's corrections:
 
   * every row answers a REAL finding, linked by ``finding_id``
     (sha256(run_id, source_id, item, kind, sorted unfaithful_decls)) -- not by a

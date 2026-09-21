@@ -1,6 +1,6 @@
 """What locates an item in a source: a printed page, or a heading path.
 
-New code (docs/design/multi-source-model.md S5.7).  The source model was written
+New code (docs/design/archive/multi-source-model.md S5.7).  The source model was written
 for a typeset PDF all the way down -- ``pdftotext``, running heads, ``printed =
 pdf_page - offset``, ``In-text p.<n>`` -- and a manuscript that has no printed
 page (an arXiv ``.tex``, lecture notes in Markdown, an HTML chapter, a
