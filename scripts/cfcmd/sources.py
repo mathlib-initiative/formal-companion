@@ -351,8 +351,16 @@ def _add(workspace, args) -> int:
         except CfError:
             if source_id not in known_source_ids:
                 import shutil
+                prepared_dir = workspace.paths.source_dir(source_id)
+                # `_prepare_source` says `ok   prepared  sources/<id>/ ...` before
+                # it runs the wrong-document refusals, and that line is true right
+                # up until this rollback deletes the directory it names. Retract
+                # it by name rather than leaving the operator with an `ok` and a
+                # `warn` that contradict each other.
+                undone = " (sources/%s/ was removed again)" % source_id \
+                    if prepared_dir.exists() else ""
                 workspace.remove_source(source_id)
-                shutil.rmtree(workspace.paths.source_dir(source_id), ignore_errors=True)
+                shutil.rmtree(prepared_dir, ignore_errors=True)
                 if overlay_before is None:
                     overlay_path.unlink(missing_ok=True)
                 else:
@@ -360,7 +368,7 @@ def _add(workspace, args) -> int:
                 # No `workspace.save()`: nothing has written workspace.yaml yet on
                 # this path, and re-dumping it from memory is the one way to
                 # change a file the refusal is supposed to leave alone.
-                log.warn(f"{source_id} was not added; {args.companion} is unchanged")
+                log.warn(f"{source_id} was not added; {args.companion} is unchanged{undone}")
             else:
                 # The source was already here, so it is not this call's to remove:
                 # say so, and name the command that does remove it.
