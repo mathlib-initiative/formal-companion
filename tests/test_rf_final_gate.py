@@ -252,7 +252,11 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
     def test_no_content_filter_of_the_worktree_is_executed(self):
         proof = self.arm_filter(self.repo, "*.json filter=x\n")
         self.write_own_pair()
+        # without the stale stat the arming fires only when git happens to think
+        # the landed file is racily clean, and the test skips itself at random
+        self.make_stat_stale()
         unsafe_ran = self.bare_diff_fires(proof)
+        self.make_stat_stale()
         paths, errs = vf.changed_entries(self.repo, "main")
         self.assertEqual(errs, [])
         self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
