@@ -40,7 +40,11 @@ plus ``GIT_CONFIG_NOSYSTEM=1`` (ignore ``/etc/gitconfig``),
 
 The user's own ``~/.gitconfig`` is deliberately still read: it is the user's
 machine.  What is neutralised is the part of the configuration the *audited
-repository* controls.
+repository* controls -- with one exception, because git resolves a CONTENT
+filter by the name an attribute in the repo gives it, not by who configured the
+driver: :func:`filter_pins` blanks every named driver in every scope, the user's
+own included.  Its docstring says what that costs (git-lfs) and why a read-only
+audit pays it.
 """
 from __future__ import annotations
 
