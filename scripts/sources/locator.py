@@ -57,6 +57,7 @@ def text_suffixes_help() -> str:
     """
     return " ".join(TEXT_SUFFIXES)
 
+
 FORMAT_PDF = "pdf"
 FORMAT_TEXT = "text"
 
