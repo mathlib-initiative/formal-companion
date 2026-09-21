@@ -26,6 +26,15 @@ this repo (CLAUDE.md S1).  Every test here runs without the private baselines.
 
 from __future__ import annotations
 
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  This module
+# reaches `cfcmd.onboard` for one degradation case, and the rule is the module's,
+# not the case's.  The second spelling is for `python3 -m unittest tests.<module>`.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import contextlib
 import io
 import json
@@ -219,6 +228,10 @@ class FilterDriverTestCase(unittest.TestCase):
         proof.unlink(missing_ok=True)
         return proof
 
+    #: what :meth:`a_git_that_ignores_the_config_environment` answers ``git
+    #: --version`` with: Debian 11's, the one the gate's own comments name
+    OLD_GIT = "2.30.2"
+
     def a_git_that_ignores_the_config_environment(self) -> pathlib.Path:
         """A ``git`` shim that drops ``GIT_CONFIG_*``: a git older than 2.31.
 
@@ -228,6 +241,10 @@ class FilterDriverTestCase(unittest.TestCase):
         repo checks the run host's git version (``cf doctor`` tests that git is on
         PATH), so the ``-c`` blanks are the floor under the pairs, and this shim
         is what stands on it.  Returns the directory to put in front of ``PATH``.
+
+        It answers ``--version`` with that version too, because a shim that drops
+        the pairs while reporting today's git is not a host anyone runs: the
+        refusal below is keyed to the version, so the simulation has to carry it.
         """
         real = shutil.which("git")
         if real is None:                                     # pragma: no cover
@@ -237,15 +254,44 @@ class FilterDriverTestCase(unittest.TestCase):
         shim = bin_dir / "git"
         shim.write_text(
             "#!/bin/sh\n"
+            # the version query carries the config pins like every other call
+            # here, so the flag is not always the first argument
+            'for a in "$@"; do\n'
+            '  if [ "$a" = "--version" ]; then echo "git version %s"; exit 0; fi\n'
+            "done\n"
             "unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS\n"
             "i=0\n"
             "while [ $i -lt 64 ]; do\n"
             "  unset GIT_CONFIG_KEY_$i GIT_CONFIG_VALUE_$i\n"
             "  i=$((i + 1))\n"
             "done\n"
-            'exec "%s" "$@"\n' % real, encoding="utf-8")
+            'exec "%s" "$@"\n' % (self.OLD_GIT, real), encoding="utf-8")
         shim.chmod(0o755)
         return bin_dir
+
+    @contextlib.contextmanager
+    def running_under(self, bin_dir: pathlib.Path):
+        """Run the block against the git in ``bin_dir``, cache and all.
+
+        Both copies ask ``git --version`` once per process, so a cache filled by
+        this machine's own git would make the shim invisible -- and a cache left
+        holding the shim's answer would make every later test in the process read
+        a 2.30.2 that is not there.  Cleared on both sides of the block.
+        """
+        from unittest import mock
+
+        def forget():
+            vf._git_version.cache_clear()
+            gitsafe.git_version.cache_clear()
+
+        forget()
+        self.addCleanup(forget)
+        path = "%s:%s" % (bin_dir, os.environ.get("PATH", ""))
+        try:
+            with mock.patch.dict(os.environ, {"PATH": path}):
+                yield {**self.env, "PATH": path}
+        finally:
+            forget()
 
 
 class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
@@ -373,16 +419,13 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
         Debian 11's git the worktree's ``filter.x.clean`` ran again, silently.
         Both channels go on every call now, and this is the one an old git reads.
         """
-        from unittest import mock
-
         proof = self.arm_filter(self.repo, "*.json filter=x\n")
         self.write_own_pair()
         self.make_stat_stale()
         unsafe_ran = self.bare_diff_fires(proof)
         bin_dir = self.a_git_that_ignores_the_config_environment()
         self.make_stat_stale()
-        with mock.patch.dict(os.environ,
-                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+        with self.running_under(bin_dir):
             paths, errs = vf.changed_entries(self.repo, "main")
         self.assertEqual(errs, [])
         self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
@@ -390,6 +433,91 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
                          "with GIT_CONFIG_* ignored, nothing blanked the driver")
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_an_equals_named_driver_on_an_old_git_stops_the_gate(self):
+        """The one square neither channel covers: ``=`` in the name, git < 2.31.
+
+        ``-c`` cannot express such a key and the environment pairs are ignored in
+        silence there, so the driver is armed whatever the gate passes: the gate
+        ran the worker's program, printed its OK line and exited 0.  The read is
+        refused instead, and a refusal is EXIT_GATE_BROKEN -- an infrastructure
+        failure, not a verdict on anyone's findings.
+        """
+        proof = self.arm_filter(self.repo, "*.json filter=a=b\n", driver="a=b")
+        self.write_own_pair()
+        self.make_stat_stale()
+        unsafe_ran = self.bare_diff_fires(proof)
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        self.make_stat_stale()
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        with self.running_under(bin_dir) as child_env:
+            entries, errs = vf.changed_entries(self.repo, "main")
+            self.assertEqual(entries, {})
+            self.assertEqual(len(errs), 1, errs)
+            self.assertIn("filter.a=b.clean", errs[0])
+            self.assertIn(self.OLD_GIT, errs[0])
+            self.assertIn("the gate could not run: this is not a finding of yours",
+                          errs[0])
+            self.assertFalse(proof.exists(), "the gate executed a program the worker chose")
+            # and through the shipped entry point, which is what the tend config
+            # runs: exit 3 (stop and report blocked), never 0 with an OK line
+            self.make_stat_stale()
+            proc = subprocess.run(
+                [sys.executable, script, "--base", "main", "--root", str(self.repo)],
+                capture_output=True, text=True, env={**child_env, "TEND_TASK_ID": "carol"})
+        self.assertEqual(proc.returncode, vf.EXIT_GATE_BROKEN, proc.stdout + proc.stderr)
+        self.assertNotIn("OK: contribution", proc.stdout)
+        self.assertIn("filter.a=b.clean", proc.stderr)
+        self.assertFalse(proof.exists(), "the shipped argv executed the worker's program")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_a_git_that_reads_the_pairs_is_not_refused_anything(self):
+        """The refusal is keyed to the version, so this host's git is unaffected.
+
+        Every other assertion in this class runs on the real git and passes the
+        ``a=b`` fixture, which is the proof; this one says the version gate itself
+        is what lets them.
+        """
+        self.assertGreaterEqual(vf._git_version() or (0,), vf._CONFIG_ENV_SINCE)
+        self.assertIsNone(vf._unexpressible_filter(["filter.a=b.clean"]))
+        self.assertIsNone(gitsafe.unexpressible_filter(["filter.a=b.clean"]))
+        self.assertTrue(gitsafe.honours_config_env())
+
+    def test_the_version_floor_is_the_same_on_both_sides_of_the_copy(self):
+        """The gate ships without cflib, so the two spellings must agree."""
+        self.assertEqual(vf._CONFIG_ENV_SINCE, gitsafe.CONFIG_ENV_SINCE)
+        self.assertEqual(vf._git_version(), gitsafe.git_version())
+        names = ["filter.x.clean", "filter.a=b.clean"]
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        with self.running_under(bin_dir):
+            self.assertEqual(vf._git_version(), (2, 30, 2))
+            self.assertEqual(vf._unexpressible_filter(names),
+                             gitsafe.unexpressible_filter(names))
+            self.assertEqual(vf._unexpressible_filter(names), "filter.a=b.clean")
+            # a name `-c` CAN express keeps its floor on that host, as before
+            self.assertIsNone(vf._unexpressible_filter(["filter.x.clean"]))
+
+    def test_an_unreadable_git_version_counts_as_an_old_one(self):
+        """A version that does not parse is not one a safety floor may rest on."""
+        from unittest import mock
+
+        bin_dir = self.root / "git-that-says-nothing"
+        bin_dir.mkdir(exist_ok=True)
+        shim = bin_dir / "git"
+        shim.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        shim.chmod(0o755)
+        vf._git_version.cache_clear()
+        gitsafe.git_version.cache_clear()
+        self.addCleanup(gitsafe.git_version.cache_clear)
+        self.addCleanup(vf._git_version.cache_clear)
+        with mock.patch.dict(os.environ,
+                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+            self.assertIsNone(vf._git_version())
+            self.assertIsNone(gitsafe.git_version())
+            self.assertEqual(vf._unexpressible_filter(["filter.a=b.clean"]),
+                             "filter.a=b.clean")
+            self.assertFalse(gitsafe.honours_config_env())
 
     def test_the_blanks_extend_a_count_the_callers_environment_already_carries(self):
         """A ``GIT_CONFIG_*`` the operator set is extended, never overwritten."""
@@ -487,8 +615,6 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         would leave a companion's driver armed there.  ``run()`` discovers the
         names once and spells them into both channels from that one list.
         """
-        from unittest import mock
-
         proof = self.arm_filter(self.repo, "*.lean filter=x\n")
         self.make_stat_stale()
         subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
@@ -497,8 +623,7 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         proof.unlink(missing_ok=True)
         bin_dir = self.a_git_that_ignores_the_config_environment()
         self.make_stat_stale()
-        with mock.patch.dict(os.environ,
-                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+        with self.running_under(bin_dir):
             gitsafe.run(self.repo, ["status", "--porcelain"])
         self.assertFalse(proof.exists(),
                          "with GIT_CONFIG_* ignored, nothing blanked the driver")
@@ -507,6 +632,50 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         self.assertEqual(gitsafe.filter_pin_args(["filter.a=b.clean"]), [])
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
+    def test_an_equals_named_driver_on_an_old_git_is_refused_not_read(self):
+        """The companion side of the square neither channel covers.
+
+        ``recheck/pin.py`` calls ``status --porcelain`` on a tree that may have
+        arrived with its ``.git/`` intact, so on a run host carrying Debian 11's
+        git a companion named ``a=b`` had its program executed by the read.  The
+        read stops instead: a non-zero status, no stdout, and the reason.
+        """
+        proof = self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
+        self.make_stat_stale()
+        subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
+                       capture_output=True, text=True, check=False, env=self.env)
+        unsafe_ran = proof.exists()
+        proof.unlink(missing_ok=True)
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        self.make_stat_stale()
+        with self.running_under(bin_dir):
+            res = gitsafe.run(self.repo, ["status", "--porcelain"])
+        self.assertEqual(res.returncode, gitsafe.REFUSED)
+        self.assertEqual(res.stdout, "")
+        self.assertIn("filter.a=b.clean", res.stderr)
+        self.assertIn(self.OLD_GIT, res.stderr)
+        self.assertFalse(proof.exists(),
+                         "with GIT_CONFIG_* ignored, nothing blanked the driver")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
+    def test_the_callers_of_a_refused_read_degrade_and_do_not_traceback(self):
+        """A refusal has to arrive as "no information", which is what they read.
+
+        ``gitsafe.run`` refuses by returning, not by raising, because three of its
+        callers catch only ``TimeoutExpired``: a new exception would have turned a
+        blanked driver into a traceback out of ``cf onboard`` and ``cf quotes``.
+        """
+        from cfcmd import onboard as onboard_mod
+        from recheck import pin as pin_mod
+
+        self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        with self.running_under(bin_dir):
+            pinned = pin_mod.repo_pin(self.repo)
+            self.assertEqual((pinned["repo_commit"], pinned["dirty"]), (None, None))
+            self.assertIsNone(onboard_mod._commit(self.repo))
 
     def test_a_driver_is_pinned_only_once_it_is_named_and_never_raises(self):
         self.assertNotIn("filter.x.clean", gitsafe.filter_names(self.repo))

@@ -34,7 +34,8 @@ Exit status (errors on stderr):
 * 3  the gate itself could not run (no gate.json, a gate.json that does not
   parse or is not an object, unreadable source text, a ``--source-text`` that
   names no source of this gate, a ``decl_index`` that is missing or does not
-  parse, a missing base ref for the changed-files check).  The prompts name that
+  parse, a missing base ref for the changed-files check, a worktree naming a
+  content filter this host's git cannot be made to ignore).  The prompts name that
   list -- "a missing config, an unreadable source text, a missing index" -- so
   every one of them has to arrive as 3 rather than as the interpreter's 1 out of
   a traceback.  A worker must answer this by stopping and reporting blocked,
@@ -46,6 +47,7 @@ Exit status (errors on stderr):
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -1292,9 +1294,72 @@ def _filter_pin_args(names: list[str]) -> list[str]:
     (``references/runbook-server.md`` §2), where Debian 11's 2.30.2 is an ordinary
     answer.  ``-c`` covers every name without an ``=``; the environment pairs
     cover the ``=`` ones.  Neither channel is the other's superset, so both go on
-    every call.
+    every call -- and where neither reaches, which is an ``=`` name on such a
+    host, :func:`_unexpressible_filter` stops the read instead.
     """
     return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
+
+
+#: the git that learned ``GIT_CONFIG_COUNT`` and its pairs; before it they are
+#: ignored in silence, so the environment channel does not exist there.  Kept in
+#: step with ``cflib.gitsafe.CONFIG_ENV_SINCE``.
+_CONFIG_ENV_SINCE: tuple[int, int] = (2, 31)
+
+
+@functools.lru_cache(maxsize=1)
+def _git_version() -> "tuple[int, ...] | None":
+    """``git --version`` as a tuple of integers, asked once per process.
+
+    ``None`` when there is no git, when the call fails, or when the answer does
+    not parse, and the caller reads that as "older than anything": the run host's
+    git is nobody's to assume (``references/runbook-server.md`` §2), so a version
+    that cannot be read may not hold a safety floor up.
+
+    Carries the pins although ``--version`` reads no repository: every ``git``
+    this file spells carries them, and an exemption is how the next one loses them.
+    """
+    import subprocess
+
+    try:
+        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "--version"], capture_output=True,
+                             text=True, check=False, env={**os.environ, **_GIT_SAFE_ENV})
+    except OSError:
+        return None
+    found = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", got.stdout or "")
+    if got.returncode != 0 or not found:
+        return None
+    return tuple(int(part) for part in found.groups() if part is not None)
+
+
+def _unexpressible_filter(names: list[str]) -> "str | None":
+    """The first driver name NEITHER channel of the blanking reaches, if any.
+
+    A name carrying an ``=`` is invisible to ``-c`` (git splits at the first
+    ``=``), so the environment pairs are its only blank, and a git before
+    :data:`_CONFIG_ENV_SINCE` ignores those pairs in silence.  On such a host the
+    driver is armed whatever the gate passes, and the gate's own diff would run
+    it and then report the contribution clean -- so it stops instead.  ``None``
+    on a git that reads the pairs, which leaves every other host unchanged.
+    """
+    if (_git_version() or (0,)) >= _CONFIG_ENV_SINCE:
+        return None
+    return next((key for key in names if "=" in key), None)
+
+
+def _filter_refusal(cwd: pathlib.Path, key: str) -> str:
+    """Why the gate read nothing — an infrastructure failure, not a finding."""
+    version = _git_version()
+    shown = ".".join(str(n) for n in version) if version else "unreadable"
+    since = ".".join(str(n) for n in _CONFIG_ENV_SINCE)
+    return (f"the worktree {cwd} names the content filter {key!r}, whose '=' no "
+            f"`git -c` blank can express, and this git ({shown}) is older than the "
+            f"{since} that reads the GIT_CONFIG_* blanking which can — so reading "
+            f"the change set would run that driver (the gate could not run: this is "
+            f"not a finding of yours; install git {since} or later on the run host)")
+
+
+class _GateBroken(Exception):
+    """A read the gate cannot make safely, and so does not make."""
 
 
 def _filter_names(cwd: pathlib.Path) -> list[str]:
@@ -1371,10 +1436,17 @@ def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
 
     The worktree's filter drivers are discovered ONCE and spliced into both
     channels from that one list, so a call costs one ``git config --list``.
+
+    A driver neither channel reaches (:func:`_unexpressible_filter`) raises
+    :class:`_GateBroken` instead: no read at all beats a read that executes the
+    worker's program and then reports the contribution clean.
     """
     import subprocess
 
     names = _filter_names(cwd)
+    blocked = _unexpressible_filter(names)
+    if blocked is not None:
+        raise _GateBroken(_filter_refusal(cwd, blocked))
     environ = {**os.environ, **_GIT_SAFE_ENV}
     environ.update(_filter_pairs(names, environ))
     proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pin_args(names), *args],
@@ -1393,29 +1465,36 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
     worker's landed findings -- which is the failure ``harvest.py`` exists
     because of, reachable at the merge gate and silent in the direction of
     "cleaner".
+
+    A worktree this git cannot be read safely in returns no entries and one
+    error, which reaches the operator as EXIT_GATE_BROKEN: the change set is
+    unknown, and "unknown" may never arrive as "clean".
     """
-    code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
-    if code != 0:
-        return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
     errs: list[str] = []
     entries: dict[str, str] = {}
-    code, out = _git(["diff", "--name-status", base], root)
-    if code != 0:
-        errs.append(f"git diff against {base} failed")
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status = parts[0].strip()[:1]
-        if status == "R" and len(parts) >= 3:
-            entries[parts[1]] = "R"
-            entries[parts[2]] = "A"
-        elif status and len(parts) >= 2 and parts[1].strip():
-            entries[parts[1]] = status
-        else:
-            errs.append(f"could not parse `git diff --name-status` line {line!r} "
-                        f"(the check fails closed)")
-    _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
+    try:
+        code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
+        if code != 0:
+            return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
+        code, out = _git(["diff", "--name-status", base], root)
+        if code != 0:
+            errs.append(f"git diff against {base} failed")
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            status = parts[0].strip()[:1]
+            if status == "R" and len(parts) >= 3:
+                entries[parts[1]] = "R"
+                entries[parts[2]] = "A"
+            elif status and len(parts) >= 2 and parts[1].strip():
+                entries[parts[1]] = status
+            else:
+                errs.append(f"could not parse `git diff --name-status` line {line!r} "
+                            f"(the check fails closed)")
+        _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
+    except _GateBroken as exc:
+        return {}, [str(exc)]
     for path in out.splitlines():
         if path.strip():
             entries.setdefault(path, "A")
