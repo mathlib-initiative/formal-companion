@@ -45,6 +45,13 @@ MIN_ANCHOR_AGREEMENT = 0.80
 MIN_ANCHOR_MARGIN = 0.05
 MIN_ADAPTER_CONFIDENCE = 0.5
 
+#: :attr:`SourceClaim.discovered_by`, and the value `cf onboard` writes into
+#: ``sources.<id>.discovered.pdf_found_in`` for such a source.  Named here, with
+#: the field, because both the adapter that sets it and the command that reads it
+#: have to spell it the same way.
+DISCOVERED_BY_ADAPTER = "adapter"
+DISCOVERED_BY_MANUAL = "manual"
+
 #: a sha we cannot find is worth saying once per candidate, not 450 times: past
 #: this many `edition_mismatch` lines the search stops reporting and just keeps
 #: looking.
@@ -103,6 +110,27 @@ class SourceClaim:
     #: it is what `cf sources` has to fall back on when the PDF is not on this
     #: machine and :func:`cflib.inference.infer_kinds` has no text to read.
     kinds: tuple[str, ...] = ()
+    #: A source that IS files on this machine rather than a book to be located:
+    #: the absolute paths whose CONCATENATED bytes are the source, in reading
+    #: order.  A leanblueprint's manuscript is its own ``.tex`` tree and
+    #: `cf onboard --source <file>` names one outright, so neither has a PDF to
+    #: search for: :func:`resolve_claims` builds the body from these bytes and
+    #: never calls :func:`locate_pdf`, which is also why the ``pdf_hints``
+    #: boundary does not apply to them -- the repo is not choosing the path, the
+    #: adapter's own glob or the operator is.
+    files: tuple[str, ...] = ()
+    #: ``pdf`` / ``text`` and ``formfeed`` / ``none`` for such a source, read off
+    #: the bytes by `cf onboard` (``sources/locator.py`` owns both rules).
+    source_format: str = ""
+    pagination: str = ""
+    #: how the ADAPTER locates an item in this source (``number``, ``label``).
+    #: Provenance, recorded under ``discovered``: it is what the adapter keys its
+    #: rows on, never a fact about the source's own pages.
+    locator: str = ""
+    #: who named this source: :data:`DISCOVERED_BY_ADAPTER` (the companion's own
+    #: manuscript) or :data:`DISCOVERED_BY_MANUAL` (``cf onboard --source``).
+    #: Empty for a book the seven signals described.
+    discovered_by: str = ""
     confidence: float = 0.0
     sources: tuple[str, ...] = ()          # every file that contributed
 
@@ -139,6 +167,14 @@ class SourceClaim:
             # kinds are unioned, never picked: two signals that each see part of
             # the grammar (an adapter's tags, a sibling claim's) both saw it.
             kinds=_uniq(hi.kinds + lo.kinds),
+            # a claim that names its own bytes keeps them whichever side it was
+            # on: a corroborating prose claim with the higher confidence must not
+            # turn a manuscript back into a book nobody can find.
+            files=hi.files or lo.files,
+            source_format=pick("source_format"),
+            pagination=pick("pagination"),
+            locator=pick("locator"),
+            discovered_by=pick("discovered_by"),
             confidence=max(self.confidence, other.confidence),
             sources=_uniq(self.sources + other.sources),
         )
@@ -253,12 +289,23 @@ class DiscoveryResult:
             frm = (body.get("discovered") or {}).get("from") or []
             if frm:
                 out.append(f"      from     {', '.join(frm)}")
+            manuscript = body.get("manuscript_files") or []
             if body.get("pdf"):
                 out.append(f"      pdf      {body['pdf']}")
                 out.append(f"               found in: {(body.get('discovered') or {}).get('pdf_found_in')}")
+            elif manuscript:
+                # not "NOT FOUND": these bytes are in hand, they are simply not
+                # one file yet -- `cf onboard` concatenates them in this order.
+                out.append(f"      text     {len(manuscript)} file(s), concatenated in this order")
+                for path in manuscript[:8]:
+                    out.append(f"               {path}")
             else:
                 out.append("      pdf      NOT FOUND on this machine "
                            "(text, items and the quote gate cannot be prepared)")
+            if body.get("pagination"):
+                out.append(f"      pages    {body['pagination']}"
+                           + ("   (located by section and line, not by printed page)"
+                              if body["pagination"] == "none" else ""))
             if body.get("offset") is not None:
                 out.append(f"      offset   {body['offset']:<34d} confidence "
                            f"{float(body.get('offset_confidence') or 0):.3f}"
@@ -536,6 +583,78 @@ def discover_sources(repo: str | Path, *, adapter: str | None = None) -> list[So
             if claim.signal in bonus:
                 claim.confidence = min(1.0, claim.confidence + 0.05)
     return claims
+
+
+def discover_sources_with_adapter(repo: str | Path, *,
+                                  adapter: str | None = None) -> list[SourceClaim]:
+    """Every claim the repo makes, INCLUDING the ones only the adapter can make.
+
+    ``CLAUDE.md`` S6 promises every adapter a ``discover_sources(repo)`` and
+    `cf onboard` never called it: it called the module-level
+    :func:`discover_sources` instead, so a convention whose source is not a
+    published book could not contribute the one claim that would unblock it.  A
+    leanblueprint project is the whole of that case -- its manuscript IS its
+    ``.tex`` tree, so the seven signals find no title, no ISBN, no PDF and no
+    sha, and every blueprint repo stopped at "no source could be discovered".
+
+    The adapter may only ADD a claim here.  Its own ``discover_sources`` returns
+    these same seven signals (re-ranked, and enriched with the item kinds its
+    tags use), and adopting that reading would make the prepared item table of
+    every already-onboarded companion depend on the adapter's view of the
+    companion rather than on the source's own headings -- which is the opposite
+    of S4's "nothing about a source is typed in", and would move figures this
+    repo pins.  So a claim cflib's signals already produced is kept exactly as
+    cflib produced it, and only a genuinely new claim is appended.
+    """
+    repo = Path(repo)
+    claims = discover_sources(repo, adapter=adapter)
+    seen = {_claim_key(c) for c in claims}
+    for claim in _adapter_claims(repo, adapter):
+        key = _claim_key(claim)
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(claim)
+    return claims
+
+
+def _claim_key(claim: SourceClaim) -> tuple:
+    """What makes two claims the same claim, for the merge above."""
+    return (claim.signal, claim.path, claim.sha256, claim.sha256_prefix,
+            claim.title, tuple(claim.files), tuple(claim.pdf_hints))
+
+
+def _adapter_claims(repo: Path, adapter: str | None) -> list[SourceClaim]:
+    """``Adapter.discover_sources(repo)`` for one kind, or nothing.
+
+    The adapter is instantiated with the minimum a discovery pass needs (its
+    kind and the repo), because no ``adapter.yaml`` exists yet the first time
+    `cf onboard` runs -- writing one is a later step of the same command.  A kind
+    whose config check needs more than that, or whose reader raises, is reported
+    and skipped: source discovery must not be lost because one convention could
+    not measure a repo it does not claim.
+
+    EVERY kind is asked, including the ones that add nothing.  The base
+    implementation re-reads the repo's own tags (``observed_kinds``), which costs
+    about a second on a companion of a hundred files -- measured on a once-per-
+    companion command that already spends several seconds running ``pdftotext``.
+    The alternative is to ask only the kinds that override the method, which means
+    inspecting a class to decide whether to call its contract: get that wrong and
+    a future convention is silently back behind the wall this function exists to
+    remove, which is the more expensive mistake.
+    """
+    if not adapter:
+        return []
+    cls = _adapter_classes().get(adapter)
+    if cls is None:
+        return []
+    try:
+        instance = cls({"adapter": adapter, "name": repo.name, "repo": str(repo)})
+        return list(instance.discover_sources(repo))
+    except Exception as exc:                              # noqa: BLE001 - see the docstring
+        detail(f"{adapter}: discover_sources could not run "
+               f"({exc.__class__.__name__}: {exc}); using the repo signals only")
+        return []
 
 
 def _rel(repo: Path, path: Path) -> str:
@@ -1264,12 +1383,18 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         if _is_noise(claim):
             continue
         entry = _entry_for(claim, registry)
-        located = locate_pdf(claim, repo=repo, workspace=workspace, registry=registry,
-                             library_paths=library_paths, download=download, entry=entry,
-                             warnings=result.warnings)
+        # A claim that NAMES its files has nothing to search for: the bytes are
+        # already in hand (an adapter's own manuscript, or `cf onboard --source`),
+        # and a locate_pdf pass over them would rank a file against the filename
+        # it already is.
+        located = None if claim.files else locate_pdf(
+            claim, repo=repo, workspace=workspace, registry=registry,
+            library_paths=library_paths, download=download, entry=entry,
+            warnings=result.warnings)
         if located is not None and entry is None:
             entry = registry.by_sha(located.sha256)
-        if entry is None and located is None and claim.signal in ("prose", "citation"):
+        if entry is None and located is None and not claim.files \
+                and claim.signal in ("prose", "citation"):
             # Prose is evidence, not authority (rule 1). A sha quoted in a README
             # that matches no registry entry and no local PDF is reported, never
             # adopted: in measure_theory's README that string is the sha of
@@ -1343,7 +1468,7 @@ def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
 def _is_noise(claim: SourceClaim) -> bool:
     """Drop a claim that names nothing identifying at all."""
     return not any([claim.sha256, claim.sha256_prefix, claim.title, claim.pdf_hints,
-                    claim.urls, claim.book_page_url])
+                    claim.urls, claim.book_page_url, claim.files])
 
 
 def _entry_for(claim: SourceClaim, registry: Registry) -> RegistryEntry | None:
@@ -1403,15 +1528,33 @@ def _source_body(source_id: str, claim: SourceClaim, entry: RegistryEntry | None
                 body["pages"] = located.pages
             body["text_sha256"] = located.text_sha256
         body["pdf"] = str(located.path)
+    elif claim.files:
+        # The bytes are the source.  One file IS the source file; several are
+        # concatenated in this order by `cf onboard`, which is also what the sha
+        # covers -- so `manuscript_files` is the order, not merely the set.
+        body["sha256"] = claim.sha256
+        if claim.bytes is not None:
+            body["bytes"] = claim.bytes
+        if claim.source_format:
+            body["source_format"] = claim.source_format
+        if claim.pagination:
+            body["pagination"] = claim.pagination
+        if len(claim.files) == 1:
+            body["pdf"] = str(claim.files[0])
+        else:
+            body["manuscript_files"] = list(claim.files)
     elif claim.sha256:
         body["sha256"] = claim.sha256
     body["offset_hint"] = claim.offset_hint
     body["anchor_hint"] = claim.anchor_hint
     body["discovered"] = {
         "from": list(claim.sources),
-        "pdf_found_in": located.where if located is not None else "none",
+        "pdf_found_in": (located.where if located is not None
+                         else (claim.discovered_by or "none") if claim.files else "none"),
         "signal": claim.signal,
     }
+    if claim.locator:
+        body["discovered"]["locator"] = claim.locator
     return body
 
 

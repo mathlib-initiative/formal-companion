@@ -87,6 +87,12 @@ _STRIP_RE = re.compile(
 _COMMENT_RE = re.compile(r"(?<!\\)%.*")
 _OPT_TITLE_RE = re.compile(r"\A\s*\[[^\]]*\]")
 _DECL_OK_RE = re.compile(r"^[^\s{}\\,]+$")
+#: the manuscript's own name, for the source id it is registered under
+_TITLE_RE = re.compile(r"\\title\s*\{([^}\n]{1,160})\}")
+#: markup to drop out of that name.  A title is turned into a source id by
+#: `cflib.registry.source_id_for`, and ``Wikifunctions $\times$ Lean`` slugged to
+#: ``wikifunctions-times`` -- the id then names a macro rather than the work.
+_TEX_MARKUP_RE = re.compile(r"\\[A-Za-z]+\s*|[${}~^]|-{2,}")
 
 
 def _env_block_re(environments) -> re.Pattern[str]:
@@ -230,6 +236,78 @@ class BlueprintTexAdapter(Adapter):
 
     def source_files(self, repo: Path) -> list[Path]:
         return self.matching_files(repo, DEFAULT_GLOBS)
+
+    # -- discovery (design S4.3) -------------------------------------------
+    def discover_sources(self, repo: str | Path | None = None) -> list:
+        r"""The repo's seven signals, plus the manuscript this convention IS.
+
+        A blueprint names no book: no title page in a registry, no ISBN, no
+        publisher, no PDF, no sha quoted in prose -- and the text an audit quotes
+        is the ``.tex`` tree itself.  So the signals find nothing and `cf onboard`
+        stopped at "no source could be discovered" for every blueprint project,
+        which left this kind reachable only as a library.  The manuscript is
+        claimed here, where the reading order is already known.
+
+        The claim names the FILES, in :func:`order_files` order -- the master
+        file's ``\input`` order first, then any file the master does not name, in
+        path order -- and `cf onboard` concatenates exactly that sequence, with no
+        separator, and takes the sha256 of the result.  Every chapter is
+        therefore inside the source sha: one that moved only when the master
+        moved would stamp rows quoting an edited chapter with a sha they were not
+        read from, which is the wrong-edition attribution the model exists to
+        stop.  ``pagination`` is decided from those bytes by
+        ``sources/locator.py``; a ``.tex`` manuscript has no printed pages, so it
+        is unpaginated and its items are located by section and line.
+        """
+        path = self.resolve_repo(repo)
+        claims = list(super().discover_sources(path))
+        claim = self.manuscript_claim(path)
+        if claim is not None:
+            claims.append(claim)
+        return claims
+
+    def manuscript_claim(self, repo: str | Path | None = None):
+        """The ``SourceClaim`` for this repo's own manuscript, or None.
+
+        ``kinds`` are the ``\\newtheorem`` display words the manuscript actually
+        uses, which is the one fact about this source only the companion can
+        supply -- there is no published edition whose headings could be read
+        instead -- and ``locator`` says which key the rows will carry, so a
+        reader of ``statements.jsonl`` is told whether the items are ``Lemma
+        2.3`` or ``lem:foo`` before opening it.
+        """
+        from cflib.discovery import DISCOVERED_BY_ADAPTER, SourceClaim
+
+        path = self.resolve_repo(repo)
+        files = order_files(self.source_files(path))
+        if not files:
+            return None
+        statements, _declarations, _rejects = self._statements(path)
+        kinds = tuple(dict.fromkeys(s["display"] for s in statements if s["display"]))
+        title = ""
+        for candidate in files:
+            match = _TITLE_RE.search(candidate.read_text(encoding="utf-8", errors="ignore"))
+            if match:
+                title = re.sub(r"\s+", " ", _TEX_MARKUP_RE.sub(" ", match.group(1))).strip()
+                break
+        rel = [str(p.relative_to(path)) for p in files]
+        return SourceClaim(
+            # S6: files sitting in the repo.  Not a new signal -- the manuscript
+            # is exactly that, and the bonus this kind already gives `filesystem`
+            # is the bonus it should get.
+            signal="filesystem",
+            path=rel[0],
+            title=title or path.name,
+            edition="blueprint manuscript",
+            files=tuple(str(p) for p in files),
+            kinds=kinds,
+            locator=self._locator(statements, kinds),
+            discovered_by=DISCOVERED_BY_ADAPTER,
+            # high, and deliberately so: nothing about this claim is inferred
+            # from prose.  The files are the ones this adapter is about to parse.
+            confidence=0.9,
+            sources=tuple(rel),
+        )
 
     # -- parsing -----------------------------------------------------------
     def _statements(self, repo: Path) -> tuple[list[dict], dict, list[dict]]:
