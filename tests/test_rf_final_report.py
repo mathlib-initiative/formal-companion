@@ -39,6 +39,14 @@ and the four the confirmation pass found while attacking those fixes:
 * the per-chapter "in task universe" cell printed a hard 0 for a figure nothing
   had computed, where the total row printed "—".
 
+and four narrow shapes the review of those fixes reproduced, each one a place
+where a sentence above was said wrongly or not at all: the line summarising
+section 0 described both kinds of excluded document as one and claimed §3
+counts a document `cf tally` refuses; the lower-bound sentence went unsaid in
+every shape whose note ends early; two of the three name lists were uncapped
+where the third caps at eight; and a reconciliation that names a task universe
+it cannot itemise still printed 0 in every per-chapter row.
+
 The book, the companion and the findings below are invented: no source text and
 no companion's Lean lives in this repo (CLAUDE.md S1).  Every test here runs
 without the private baselines.
@@ -785,6 +793,150 @@ class TestTheLineUnderTheTableSaysWhichIsCountedWhere(Workspace):
     def test_the_tally_the_sentence_appeals_to_really_refuses_this_corpus(self):
         """"counted nowhere" is true only because `cf tally` will not read it."""
         self.assertEqual(cf_cli("tally", "--workspace", self.root, "--no-write")[0], 2)
+
+
+class TestTheLowerBoundIsSaidWhereTheRestOfTheNoteIsATodo(Workspace):
+    """The sentence sat after the branches that end a source's note early.
+
+    A source with no ``items.json`` has no denominator, so its note is one TODO
+    line and nothing else -- and a corpus document nothing could read was then
+    named on `cf report`'s terminal and in no line of the handoff, which is the
+    artifact that travels.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.dest = self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                                      gate={"ok": True, "checked": 1})
+        compat.write_text(os.path.join(self.dest, "exercise-1-1-1.json"), "[]\n")
+
+    def test_the_source_has_no_denominator_at_all(self):
+        cov = self.coverage()
+        self.assertIsNone(cov["items_in_source"])
+        self.assertEqual(cov["unreadable_documents"], ["hunt/exercise-1-1-1.json"])
+
+    def test_the_handoff_says_it_and_not_only_the_terminal(self):
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("LOWER BOUND", out)
+        text = self.handoff()["text"]
+        self.assertIn("LOWER BOUND", text)
+        self.assertIn("`hunt/exercise-1-1-1.json`", text)
+
+
+class TestALongListOfNamesIsCappedWhereverItIsPrinted(Workspace):
+    """One line of Markdown may not carry a whole malformed directory.
+
+    The out-of-scope sentence has capped at ``OUTSIDE_SCOPE_NAMES`` since it was
+    written, for exactly this reason; the two unreadable-document sentences
+    joined the full list, and a legacy import whose whole directory is the wrong
+    shape makes that list as long as the directory.
+    """
+
+    #: enough to pass the cap by 4
+    COUNT = 12
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([{"item": "Exercise 1.1.1", "page": 10, "chapter": 1,
+                           "kind": "Exercise"}])
+        self.dest = self.write_corpus("hunt", {
+            "exercise-1-1-%d.json" % n: document("Exercise 1.1.%d" % n)
+            for n in range(1, self.COUNT + 1)
+        }, gate={"ok": True, "checked": self.COUNT})
+        for n in range(1, self.COUNT + 1):
+            compat.write_text(os.path.join(self.dest, "exercise-1-1-%d.json" % n), "[]\n")
+
+    def write_unattributed_corpus(self) -> list:
+        """A second run whose receipt names TWO sources, so no source block owns it."""
+        directory = os.path.join(self.root, "corpus", "wide")
+        for n in range(1, self.COUNT + 1):
+            compat.write_text(os.path.join(directory, "exercise-2-1-%d.json" % n), "[]\n")
+        compat.write_json(os.path.join(directory, "RECEIPT.json"),
+                          {"run_id": "wide",
+                           "sources": {SOURCE_ID: SOURCE_SHA, OTHER_SOURCE_ID: OTHER_SOURCE_SHA},
+                           "actual": {"count": self.COUNT}, "complete": True,
+                           "gate": {"ok": True, "checked": self.COUNT}})
+        return sorted("wide/exercise-2-1-%d.json" % n for n in range(1, self.COUNT + 1))
+
+    def assert_capped(self, text: str, names: list) -> None:
+        cap = handoff_mod.OUTSIDE_SCOPE_NAMES
+        self.assertEqual(len(names), self.COUNT)
+        self.assertIn("and %d more" % (self.COUNT - cap), text)
+        for name in names[:cap]:
+            self.assertIn("`%s`" % name, text)
+        for name in names[cap:]:
+            self.assertNotIn("`%s`" % name, text)
+
+    def test_the_per_source_sentence_is_capped(self):
+        self.assert_capped(self.handoff()["text"], self.coverage()["unreadable_documents"])
+
+    def test_the_sentence_for_documents_no_source_owns_is_capped_too(self):
+        expected = self.write_unattributed_corpus()
+        handoff = self.handoff()
+        self.assertEqual(handoff["context"]["_coverage"]["unreadable_documents"], expected)
+        self.assert_capped(handoff["text"], expected)
+
+    def test_the_full_list_is_in_the_artifact_both_sentences_point_at(self):
+        self.write_unattributed_corpus()
+        self.handoff()
+        published = compat.read_json(os.path.join(self.root, "reports", "coverage.json"))
+        self.assertEqual(len(published["sources"][0]["unreadable_documents"]), self.COUNT)
+        self.assertEqual(len(published["unreadable_documents"]), self.COUNT)
+        self.assertIn("`reports/coverage.json` (`unreadable_documents`)", self.handoff()["text"])
+
+
+class TestATaskUniverseWithNoItemsBehindItIsNotZeroPerChapter(Workspace):
+    """NEW#g-report-4's neighbour: the same cell, an older reconciliation.
+
+    ``task_universe`` without ``task_universe_items`` is a shape the tree
+    already knows about -- `cf plan-run` warns about it and falls back to a
+    count-only check -- and the per-chapter rows counted against the empty set
+    it leaves behind, printing 0 in every row under a total row printing the
+    real figure.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Exercise 1.1.1", "page": 10, "chapter": 1, "kind": "Exercise"},
+            {"item": "Exercise 1.1.2", "page": 11, "chapter": 1, "kind": "Exercise"},
+        ])
+        # written by hand, not through write_reconciliation: the defect IS the
+        # absent key, and an older `cf pair` wrote the file without it
+        compat.write_json(
+            os.path.join(self.root, "pairs", SOURCE_ID, "reconciliation.json"),
+            {"source_id": SOURCE_ID, "source_sha": SOURCE_SHA, "repos": [COMPANION],
+             "chapters": None, "items_in_book": 2, "items_in_scope": 2,
+             "items_in_scope_and_any_repo": 2, "items_in_scope_uncovered": [],
+             "task_universe": 2})
+        self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                          gate={"ok": True, "checked": 1})
+
+    def test_the_per_chapter_figure_is_unknown_rather_than_zero(self):
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_task_universe"], 2)
+        self.assertIs(cov["task_universe_itemised"], False)
+        self.assertEqual([b["in_task_universe"] for b in cov["by_chapter"].values()], [None])
+
+    def test_the_document_says_which_of_the_two_was_never_computed(self):
+        text = self.handoff()["text"]
+        self.assertIn("names a task universe of 2 and does not list the items behind it", text)
+        self.assertIn("`task_universe_items`", text)
+        section = text.split("## 0.")[1].split("## 1.")[0]
+        rows = [l for l in section.splitlines() if l.startswith("| `%s` |" % SOURCE_ID)]
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual([c.strip() for c in rows[0].split("|")][5], "—")
+        self.assertEqual([c.strip() for c in rows[1].split("|")][5], "2")
+
+    def test_an_itemised_reconciliation_is_still_counted_per_chapter(self):
+        """The guard narrows to the shape it is for, and no further."""
+        self.write_reconciliation(items_in_scope=2, task_universe=1,
+                                  task_universe_items=["Exercise 1.1.1"])
+        cov = self.coverage()
+        self.assertIs(cov["task_universe_itemised"], True)
+        self.assertEqual([b["in_task_universe"] for b in cov["by_chapter"].values()], [1])
+        self.assertNotIn("does not list the items behind it", self.handoff()["text"])
 
 
 class TestAnUncomputedTaskUniverseIsNotZeroPerChapter(Workspace):

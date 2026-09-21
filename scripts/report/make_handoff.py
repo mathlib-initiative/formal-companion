@@ -1114,8 +1114,14 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
     # follows: with no reconciliation.json nothing has computed a task universe
     # at all, and the per-chapter rows counted against the empty set and printed
     # a hard 0 under a total row printing "—" and prose printing "?" -- one
-    # figure, three renderings, in one document.
-    universe_known = recon_universe is not None or (manuscript and scope_known)
+    # figure, three renderings, in one document.  A reconciliation that names a
+    # TOTAL it cannot itemise is the same hole one step in: ``task_universe``
+    # without ``task_universe_items`` is a shape the tree already knows about
+    # (`cf plan-run` warns and falls back to a count-only check), and the rows
+    # counted against the empty set it leaves behind.
+    universe_itemised = recon.get("task_universe_items") is not None
+    universe_known = ((recon_universe is not None and universe_itemised)
+                      or (manuscript and scope_known))
 
     def _chapter(key: str):
         return (items["by_item"].get(key) or {}).get("chapter")
@@ -1181,6 +1187,11 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
         "items_in_task_universe": (recon_universe if recon_universe is not None
                                    else (len(in_scope_set & universe)
                                          if manuscript and scope_known else None)),
+        # Whether the figure above can be broken down at all: False means the
+        # reconciliation names a total and not the items behind it, so the
+        # per-chapter cells are unknown for that reason and not zero; None that
+        # no task universe was computed here in the first place.
+        "task_universe_itemised": None if recon_universe is None else universe_itemised,
         "items_paired": ((len(in_scope_set & paired) if scope_known else len(paired))
                          if pair_index else None),
         "pair_index": _pair_index_path(paths, source_id) if pair_index else "",
@@ -1227,10 +1238,25 @@ def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
 
 #: the cell of a source no companion is bound to: it owes no denominator
 NO_DENOMINATOR_OWED = "—"
-#: how many out-of-scope item names the note spells out before it says "and N
-#: more"; an imported corpus can be wider than the scope by hundreds of items,
-#: and the full list is in reports/coverage.json either way
+#: how many names a note spells out before it says "and N more" -- out-of-scope
+#: items, unreadable documents; an imported corpus can be wider than the scope,
+#: or the wrong shape, by hundreds of files, and the full list is in
+#: reports/coverage.json either way
 OUTSIDE_SCOPE_NAMES = 8
+
+
+def _capped_names(names: Any) -> str:
+    """Backticked names, cut off at :data:`OUTSIDE_SCOPE_NAMES` with "and N more".
+
+    Every one of these lists can be long by the same accident -- a legacy import
+    whose whole directory is the wrong shape names every file in it -- and a
+    Markdown line carrying hundreds of them is not a note anyone can read.
+    """
+    names = list(names)
+    shown = ", ".join("`%s`" % n for n in names[:OUTSIDE_SCOPE_NAMES])
+    if len(names) > OUTSIDE_SCOPE_NAMES:
+        shown += " and %d more" % (len(names) - OUTSIDE_SCOPE_NAMES)
+    return shown
 
 
 def _fraction(part: Any, whole: Any, manuscript: bool = False,
@@ -1352,6 +1378,26 @@ def render_coverage_table(coverage: dict) -> str:
                    "paired", "examined", "gated", "with findings", "never examined"], rows)
 
 
+def _unreadable_lines(src: dict) -> list:
+    """The lower-bound sentence for one source, said in every shape it can be in.
+
+    Every branch of :func:`coverage_note` calls it, including the three that end
+    a source's note early (not under audit, an unpaired manuscript, no
+    items.json), because those are exactly the shapes where nothing else in the
+    document would say it: `cf report` printed the warning on the terminal while
+    the rendered handoff — the artifact that travels — said nothing.
+    """
+    names = src.get("unreadable_documents") or []
+    if not names:
+        return []
+    return ["  - %d corpus document(s) could not be read (%s), so every figure above is a "
+            "LOWER BOUND and an item behind one of them may be counted as never examined; "
+            "`cf tally --run <run-id>` refuses them by name and says why. Fix or re-run those "
+            "tasks, then `cf harvest <run-id>` again. All of them are named in "
+            "`reports/coverage.json` (`unreadable_documents`)."
+            % (len(names), _capped_names(names))]
+
+
 def coverage_note(coverage: dict) -> str:
     """The sentence a reader would otherwise have to guess, plus the caveats."""
     lines = []
@@ -1360,16 +1406,19 @@ def coverage_note(coverage: dict) -> str:
         if not src.get("under_audit", True):
             lines.append("- `%s`: not under audit — no companion is bound to it (`role: %s`), so "
                          "it needs no denominator." % (src["source_id"], src.get("role") or "?"))
+            lines.extend(_unreadable_lines(src))
             continue
         if total is None and src.get("manuscript"):
             lines.append("- `%s`: a manuscript — its items are the tagged environments the "
                          "adapter reads, not numbered prose, so `items.json` is empty on purpose "
                          "and the only artifact that can count them is `pairs/%s/index.json`; "
                          "run `cf pair`." % (src["source_id"], src["source_id"]))
+            lines.extend(_unreadable_lines(src))
             continue
         if total is None:
             lines.append("- `%s`: no `items.json` yet, so this report has no denominator for it "
                          "— %s." % (src["source_id"], todo("items", "cf onboard <repo>")))
+            lines.extend(_unreadable_lines(src))
             continue
         chapters = (", ".join(str(c) for c in src["chapters_audited"])
                     if src["chapters_audited"] else "all")
@@ -1394,16 +1443,17 @@ def coverage_note(coverage: dict) -> str:
         if src.get("items_paired") is None:
             lines.append("  - no `pairs/%s/index.json`, so the paired figure could not be "
                          "computed at all; run `cf pair`." % src["source_id"])
+        # A dash beside a total that prints a figure is read as a disagreement
+        # unless the document says which of the two was never computed.
+        if src.get("task_universe_itemised") is False:
+            lines.append("  - `reconciliation.json` names a task universe of %s and does not list "
+                         "the items behind it (`task_universe_items`), so the per-chapter cells "
+                         "in that column are unknown rather than 0; re-run `cf pair` to itemise "
+                         "it." % src.get("items_in_task_universe"))
         # Before the gate sentences, because it is about the figures themselves:
         # a document nothing here could read is one `cf tally` refuses, and a
         # count over a corpus with one in it is a lower bound, not a count.
-        if src.get("unreadable_documents"):
-            lines.append("  - %d corpus document(s) could not be read (%s), so every figure above "
-                         "is a LOWER BOUND and an item behind one of them may be counted as never "
-                         "examined; `cf tally --run <run-id>` refuses them by name and says why. "
-                         "Fix or re-run those tasks, then `cf harvest <run-id>` again."
-                         % (len(src["unreadable_documents"]),
-                            ", ".join("`%s`" % f for f in src["unreadable_documents"])))
+        lines.extend(_unreadable_lines(src))
         # A manuscript is planned off its pairing index, so the chapter pin the
         # workspace carries narrowed nothing: saying "chapters audited 1" over a
         # source every chapter of which was planned and examined is the same
@@ -1416,17 +1466,14 @@ def coverage_note(coverage: dict) -> str:
                             src["source_id"]))
         if src.get("examined_outside_scope"):
             names = src["examined_outside_scope"]
-            shown = ", ".join("`%s`" % n for n in names[:OUTSIDE_SCOPE_NAMES])
-            more = ("" if len(names) <= OUTSIDE_SCOPE_NAMES
-                    else " and %d more" % (len(names) - OUTSIDE_SCOPE_NAMES))
             found = len(src.get("with_findings_outside_scope") or ())
             lines.append("  - %d examined item(s) lie OUTSIDE the audited chapter(s), in chapter(s) "
                          "%s (%d of them with findings): `cf tally` and §3 count them and no "
-                         "figure above does — %s%s. All of them are named in "
+                         "figure above does — %s. All of them are named in "
                          "`reports/coverage.json` (`examined_outside_scope`)."
                          % (len(names),
                             ", ".join(src.get("chapters_outside_scope") or []) or "?",
-                            found, shown, more))
+                            found, _capped_names(names)))
         if src["ungated_runs"]:
             lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
                          "text. %s"
@@ -1461,9 +1508,10 @@ def coverage_note(coverage: dict) -> str:
     if coverage.get("unreadable_documents"):
         lines.append("- %d corpus document(s) could not be read and their run names no single "
                      "source (%s), so they are counted against no denominator either; "
-                     "`cf tally --run <run-id>` names them and says why."
+                     "`cf tally --run <run-id>` names them and says why. All of them are named "
+                     "in `reports/coverage.json` (`unreadable_documents`)."
                      % (len(coverage["unreadable_documents"]),
-                        ", ".join("`%s`" % f for f in coverage["unreadable_documents"])))
+                        _capped_names(coverage["unreadable_documents"])))
     return "\n".join(lines) or todo("coverage", "cf pair && cf harvest")
 
 
