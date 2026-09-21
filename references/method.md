@@ -40,7 +40,7 @@ Primary sources, all read for this document:
 Five runs over one book chapter, same corpus, same repository under test. Counting **distinct book
 items whose findings name a declaration of the audited repo**, and how many of those are
 substantive (`CONTENT` / `VACUITY` / `SUSPECTED_ERRATA` rather than a page anchor or a coverage
-note) — `tao-measure-lean/docs/HANDOFF.md` §2, recomputed there from `~/Desktop/tao-diff-run`:
+note) — `tao-measure-lean/docs/HANDOFF.md` §2, recomputed there from the harvested corpus:
 
 | run | design | model | book access | items | substantive |
 |---|---|---|---|---:|---:|

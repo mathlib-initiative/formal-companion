@@ -119,7 +119,7 @@ only with `--download` **and** a licence note saying the author publishes the fi
 nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails
 closed** when it is absent — which presents as a run failure, not as a missing file, so check that
 first.
-*Evidence:* `~/Desktop/tao-diff-run/README.md`; `tao-measure-lean/docs/HANDOFF.md` §7 ("DO NOT DELETE");
+*Evidence:* the harvested corpus's own README; `tao-measure-lean/docs/HANDOFF.md` §7 ("DO NOT DELETE");
 `registry/README.md`.
 
 **A6 — `sources/` in `.gitignore` hides `scripts/sources/`.**
