@@ -31,12 +31,14 @@ the whole and at most a quarter of its words at each end -- nothing at all below
 fourteen words, where the ends would be the sentence.  It is never inferred from
 a git remote.
 
-A destination other than ``owner`` also scrubs the ROW'S OWN prose: the quote
-policy governs ``book_quote``, and a worker quoting the book inside a
-``reasoning`` or a witness is the same sentence by another route, so every field
-is checked against this workspace's pinned ``sources/<id>/text.txt`` with the
-scrubber ``cf share export`` uses.  A workspace with no prepared text cannot make
-that check, and the draft is REFUSED rather than written (`cf sources refresh`).
+Any quote policy but ``full`` also scrubs the ROW'S OWN prose: the quote policy
+governs ``book_quote``, and a worker quoting the book inside a ``reasoning`` or a
+witness is the same sentence by another route, so every field is checked against
+this workspace's pinned ``sources/<id>/text.txt`` with the scrubber
+``cf share export`` uses.  The switch is the RESOLVED policy, not the destination
+name: ``--destination public --quotes full`` carries the sentence.  A workspace
+with no prepared text cannot make that check, and the draft is REFUSED rather
+than written (`cf sources refresh`).
 """
 
 from __future__ import annotations
@@ -211,7 +213,7 @@ def run(args) -> int:
     except route_mod.PolicyRefused as exc:
         raise CfError(str(exc), hint="policy.destinations lives in workspace.yaml and "
                                      "`cf route --help` lists the destinations; the pinned "
-                                     "text a non-owner destination is checked against comes "
+                                     "text any policy but `full` is checked against comes "
                                      "from `cf sources refresh`")
     if not reports:
         print("nothing routed: no companions found", file=sys.stderr)
