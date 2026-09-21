@@ -202,7 +202,7 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
         """Each rule against the string it was added for, and a near miss."""
         home, desktop = RULES["absolute_home"][0], RULES["desktop_home"][0]
         self.assertTrue(home("repo: /Users/someone-real/tao-measure-lean"))
-        self.assertTrue(home("ffmain:/home/realname/tao-attack-hunt/findings"))
+        self.assertTrue(home("examplebox:/home/realname/tao-attack-hunt/findings"))
         self.assertFalse(home("remote_root: /home/tester"))
         self.assertFalse(home('or "/home/<user>"'))
         self.assertTrue(desktop("cf onboard ~/Desktop/tao-measure-lean"))
@@ -211,8 +211,10 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
         self.assertEqual(address("ssh operator@192.168.1.50"), ["192.168.1.50"])
         self.assertEqual(address("Exercise 2.3.4.1 and 2.3.4.10"), [])
         self.assertEqual(address("bind 127.0.0.1 or 192.0.2.7"), [])
-        self.assertEqual(run_id("recovered/challenge-wf_c3f0e5d0-d65.js"),
-                         ["wf_c3f0e5d0-d65"])
+        # a made-up id in the shape of a real one: the rule keys on eight hex
+        # digits, so nothing here needs to be an id this account really ran.
+        self.assertEqual(run_id("recovered/challenge-wf_0a1b2c3d-e4f.js"),
+                         ["wf_0a1b2c3d-e4f"])
         self.assertEqual(run_id('"workflow_run_id": "wf_ab12cd"'), [])
         self.assertEqual(RULES["transcript_path"][0]("e.g. recovered/b174aa13.txt"),
                          ["recovered/b174aa13.txt"])
@@ -346,7 +348,6 @@ class TestAWarningIsOneBlockOnOneStream(unittest.TestCase):
     def test_a_real_command_keeps_its_warning_off_stdout(self):
         """`cf status` over an unreadable registry, with the streams separated."""
         import tempfile
-        from cflib import workspace as ws_mod
 
         root = Path(tempfile.mkdtemp(prefix="cf-scrub-",
                                      dir=os.environ.get("CF_TEST_TMP") or None))
@@ -355,8 +356,9 @@ class TestAWarningIsOneBlockOnOneStream(unittest.TestCase):
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             self.assertEqual(cf_main.main(["init", str(root), "--no-git", "-q"]), 0)
+        # the second `main` call loads the workspace again from disk, so the
+        # broken registry is what `cf status` reads.
         (root / "registry.yaml").write_text("version: 1\nsources: [\n", encoding="utf-8")
-        ws_mod.Workspace._cache = {} if hasattr(ws_mod.Workspace, "_cache") else None
         out, err = io.StringIO(), io.StringIO()
         with redirect_stdout(out), redirect_stderr(err):
             cf_main.main(["--workspace", str(root), "status"])
