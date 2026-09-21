@@ -242,11 +242,15 @@ def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
                  corpus_dir: str = "corpus/<run-id>") -> str:
     """What the operator must do next -- cf.py cannot launch a Workflow itself.
 
-    The script path is ABSOLUTE, via ``cflib.paths.skill_root()``: ``cf`` defaults
-    its workspace to the current directory and a workspace has no ``workflows/``
-    directory, so a relative path here resolves against the wrong root (the two
-    sibling commands, ``cf adjudicate`` and ``cf report``, already print an
-    absolute one).
+    Both script paths are ABSOLUTE, via ``cflib.paths.skill_root()``: ``cf``
+    defaults its workspace to the current directory and a workspace has no
+    ``workflows/`` or ``scripts/`` directory, so a relative path here resolves
+    against the wrong root (the two sibling commands, ``cf adjudicate`` and
+    ``cf report``, already print an absolute one).  The rule applied only to the
+    Workflow line for a while, and the two gate lines below it went on printing
+    ``python3 scripts/cf.py ...`` / ``python3 scripts/gate/...`` to an operator
+    standing in the workspace, where neither path exists.  The `cf` one is now
+    the shim spelling every other hint uses.
     """
     return "\n".join([
         f"{count} items staged for the local fleet.",
@@ -258,8 +262,8 @@ def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
         "  - subagents must be model 'opus' (Fable-default runs lost agents to the session limit)",
         "  - expect to resume: pass resumeFromRunId and edit only the failed agent() opts",
         "  - the script CANNOT run the quote gate; after the run:",
-        f"      python3 scripts/cf.py harvest {run_id} --journal <workflow-dir> --gate",
-        f"      python3 scripts/gate/verify_findings.py --gate-config {gate_config} "
-        f"--root {corpus_dir} --findings-dir .",
+        f"      cf harvest {run_id} --journal <workflow-dir> --gate",
+        f"      python3 {skill_root() / 'scripts/gate/verify_findings.py'} "
+        f"--gate-config {gate_config} --root {corpus_dir} --findings-dir .",
         "      re-queue whatever failed in a second Workflow run",
     ])

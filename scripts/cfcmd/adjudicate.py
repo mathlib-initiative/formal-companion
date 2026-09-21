@@ -205,8 +205,7 @@ def run(args) -> int:
                   % (name, counts.get("rows", len(rows)), counts.get("items", 0),
                      counts.get("challenged", 0), len(unchallenged), routed["meta"].get("status", "")))
             if unchallenged:
-                print("  next: python3 scripts/cf.py adjudicate --workspace %s --companion %s "
-                      "--emit-args" % (paths.root, name))
+                print("  next: %s" % _next_step(paths.root, name, "--emit-args"))
             continue
 
         selected = unchallenged if args.challenge_only else rows
@@ -234,9 +233,23 @@ def run(args) -> int:
         print("    Workflow({ scriptPath: \"%s\", args: <the JSON in %s> })"
               % (os.path.join(_skill_root(), script), out))
         print("  ~%d subagents; resume with resumeFromRunId if the session limit stops it." % agents)
-        print("  then: python3 scripts/cf.py adjudicate --workspace %s --companion %s "
-              "--transcribe <result.json> --from %s" % (paths.root, name, kind))
+        print("  then: %s" % _next_step(
+            paths.root, name, "--transcribe <result.json> --from %s" % kind))
     return rc
+
+
+def _next_step(root, companion: str, tail: str) -> str:
+    """One `cf adjudicate ...` hint, with the workspace RESOLVED.
+
+    The same spelling ``route.challenge_command`` writes one step earlier, and
+    for the same reason: these two lines said ``python3 scripts/cf.py adjudicate
+    --workspace <ws> ...``, a path relative to the SKILL checkout printed to an
+    operator standing in the WORKSPACE, where there is no ``scripts/``.  Pasting
+    it answered "can't open file .../scripts/cf.py" -- one step after `cf route`
+    had printed the spelling that works.
+    """
+    return ("cf adjudicate --workspace %s --companion %s %s"
+            % (os.path.abspath(root), companion, tail))
 
 
 def _skill_root() -> str:
