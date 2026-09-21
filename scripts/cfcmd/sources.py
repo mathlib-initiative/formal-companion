@@ -450,6 +450,10 @@ def _remove(workspace, args) -> int:
     users = [name for name, comp in (workspace.data.get("companions") or {}).items()
              if isinstance(comp, dict)
              and source_id in ((comp.get("sources") or []) + (comp.get("bundled_sources") or []))]
+    # Read before the id is gone: a corpus keeps the source it was judged
+    # against, so these runs survive the removal pointing at nothing this
+    # workspace holds.
+    harvested = _corpus_runs_naming(workspace, source_id)
     orphaned = workspace.remove_source(source_id)
     repos = {name: str((workspace.data.get("companions") or {}).get(name, {}).get("repo") or "")
              for name in orphaned}
@@ -468,6 +472,18 @@ def _remove(workspace, args) -> int:
     for name in orphaned:
         log.warn_block(f"{name} had no other source, so it was removed too",
                        [f"  bring it back with:  cf onboard {repos.get(name) or '<repo>'}"])
+    if harvested:
+        # Nothing else says it: `cf tally` goes on counting their rows and
+        # `cf report` can only file them under `unknown_source_documents`, so a
+        # removal that says nothing here leaves a corpus counted by the
+        # authority and by no figure of the handoff's section 0.
+        log.warn_block(
+            f"{len(harvested)} corpus run(s) were judged against {source_id} and still name it",
+            [f"  {', '.join(harvested)}",
+             "  `cf tally` still counts their rows; `cf report` can only file them under",
+             "  `unknown_source_documents`, and no section-0 figure counts them",
+             "  re-import that corpus under an id this workspace holds:",
+             "    cf import-corpus --run-id <run-id> --from <dir> --source <id>"])
     _drop_overlay_row(workspace, source_id)
     prepared = workspace.paths.source_dir(source_id)
     if prepared.exists() and not args.keep_files:
@@ -477,6 +493,36 @@ def _remove(workspace, args) -> int:
     elif prepared.exists():
         log.info(f"{prepared} left on disk (--keep-files)")
     return 0
+
+
+def _corpus_runs_naming(workspace, source_id: str) -> list:
+    """Corpus runs whose ``RECEIPT.json`` names this source, in id order.
+
+    The receipt is where a harvested or imported corpus records the edition its
+    documents were judged against, and it is the same block ``cf report`` reads
+    to attribute a document that carries no ``source_id`` of its own.
+    """
+    root = workspace.paths.corpus_dir
+    if not root.exists():
+        return []
+    found = set()
+    for entry in sorted(root.iterdir()):
+        receipt = entry / "RECEIPT.json"
+        if not receipt.is_file():
+            continue
+        try:
+            doc = read_json(receipt)
+        except Exception:      # an unreadable receipt is `cf tally`'s to refuse
+            continue
+        if not isinstance(doc, dict):
+            continue
+        block = doc.get("sources")
+        ids = set(block) if isinstance(block, dict) else {
+            str(e.get("id") or e.get("source_id") or "") if isinstance(e, dict) else str(e)
+            for e in (block or [])}
+        if source_id in ids:
+            found.add(str(doc.get("run_id") or entry.name))
+    return sorted(found)
 
 
 def _drop_overlay_row(workspace, source_id: str) -> None:

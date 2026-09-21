@@ -1524,6 +1524,53 @@ class TestEveryKeyOfTheExaminedMapHasAReader(GhostCorpus):
         self.assertIn("1 examined (1 of them gated)", text)
 
 
+class TestRemovingASourceNamesTheCorpusThatStillPointsAtIt(GhostCorpus):
+    """`cf sources remove` is how an ordinary workspace reaches the shape above.
+
+    It dropped the id and said nothing about the runs judged against it, so the
+    next `cf report` counted their documents under no figure at all while
+    `cf tally` went on counting their rows.
+    """
+
+    EXTRA_SOURCES = ("  %s:\n"
+                     '    sha256: "%s"\n'
+                     "    title: A Book\n"
+                     '    edition: "second edition"\n'
+                     "    offset: 16\n"
+                     "    role: reference\n" % (OTHER_SOURCE_ID, OTHER_SOURCE_SHA))
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([{"item": "Definition 1.1.1", "page": 10, "chapter": 1,
+                           "kind": "Definition"}])
+        self.write_ghost_corpus("second-run", {
+            "definition-1-1-1.json": dict(document("Definition 1.1.1"),
+                                          source_id=OTHER_SOURCE_ID,
+                                          source_sha=OTHER_SOURCE_SHA)},
+            gate={"ok": True, "checked": 1},
+            source_id=OTHER_SOURCE_ID, sha=OTHER_SOURCE_SHA)
+
+    def test_the_removal_names_the_run_and_a_command_that_exists(self):
+        rc, out, err = cf_cli("sources", "remove", "--workspace", self.root, OTHER_SOURCE_ID)
+        self.assertEqual(rc, 0, err)
+        said = out + err
+        self.assertIn("second-run", said)
+        self.assertIn("corpus run(s) were judged against %s" % OTHER_SOURCE_ID, said)
+        self.assertIn("cf import-corpus --run-id <run-id> --from <dir> --source <id>", said)
+
+    def test_a_source_no_corpus_names_is_removed_without_the_warning(self):
+        """It is a warning about a real corpus, not a line every removal prints."""
+        rc, out, err = cf_cli("sources", "remove", "--workspace", self.root, SOURCE_ID)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("were judged against", out + err)
+
+    def test_the_report_after_the_removal_still_accounts_for_the_run(self):
+        self.assertEqual(cf_cli("sources", "remove", "--workspace", self.root,
+                                OTHER_SOURCE_ID)[0], 0)
+        self.assertEqual([b["source_id"] for b in self.unknown()], [OTHER_SOURCE_ID])
+        self.assertIn("that this workspace does not hold", flat(self.handoff()["text"]))
+
+
 # ---------------------------------------------------------------------------
 # NEW#h-report-2 -- the other four caveats, on the branches that end early
 # ---------------------------------------------------------------------------
