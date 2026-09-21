@@ -61,9 +61,10 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
     Deterministic for one defect WITHIN one run: ``run_id`` is the first part, so
     the same defect found by two runs gets two ids, and this is NOT the key that
     joins them.  That key is :func:`defect_key` -- the same five parts with the
-    run id empty -- and it is what union, agreed, adjudication and ``cf recheck``
-    match across runs; an id links a ledger or routed row back to the finding of
-    ONE run, which is the job it is content-addressed for.
+    run id empty -- and ``harvest/union.py --group-by defect-key`` is what
+    matches on it across runs.  An id links a ledger or routed row back to the
+    finding of ONE run, which is the job it is content-addressed for, and is what
+    adjudication, transcription and ``cf recheck`` join on.
 
     Three details are load-bearing and must not drift:
 
@@ -95,12 +96,16 @@ def defect_key(source_id: str, item: str, kind: str,
 
     :func:`finding_id` with the run id empty, so two runs that found the same
     defect produce the same key.  ``finding_id`` cannot do that job (``run_id``
-    is its first hashed part), which is why ``cf union --group-by finding-id
-    --new-only`` once answered "everything is new" -- re-found defects scored as
-    misses, the regression ``harvest/union.py`` was written to fix.  Callers that
-    LINK a defect across runs use this; callers that address one observation of
-    it use ``finding_id``.  Both are carried side by side and neither is stored
-    on a finding: they are recomputed from the content every time it is read.
+    is its first hashed part), which is why ``harvest/union.py --group-by
+    finding-id --new-only`` once answered "everything is new" -- re-found defects
+    scored as misses, the regression that module was written to fix.  Callers
+    that LINK a defect across runs use this -- today ``--group-by defect-key``
+    there, and nothing else; callers that address one observation of it use
+    ``finding_id``, which is what adjudication, transcription and ``cf recheck``
+    join on, while ``agreed`` groups on the collapsed item and the kind plus a
+    shared declaration and reads neither key.  Both are carried side by side and
+    neither is stored on a finding: they are recomputed from the content every
+    time it is read.
 
     *item* must be the key two corpus generations JOIN on, not the label a
     worker wrote.  ``harvest.tally`` passes ``collapse_to_book_item()`` (which is
