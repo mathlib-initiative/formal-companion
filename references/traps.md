@@ -29,8 +29,8 @@ against each candidate's `items.json` (`agreement = ok / (ok + mismatched)`), ac
 with a ≥0.05 margin, and let prose corroborate rather than decide. Record the bundled-but-not-
 anchored edition in `bundled_sources` with `role: reference` so it is prepared for page-map
 checking and audited by nobody. Stamp `source_id` + `source_sha` into every artifact; the gate
-refuses a mismatch. Measured 2026-09-16: published 0.89 (271 ok / 35 mismatched) vs draft 0.66
-(202 / 103).
+refuses a mismatch. Measured 2026-09-21: published 0.91 (271 ok / 27 mismatched) vs draft 0.68
+(202 / 95).
 *Evidence:* the docstring-tag companion's own `CLAUDE.md`, "anchor edition" section;
 the v1 differential's `refuted.adam.jsonl` `_meta.official_pdf` and row 1; the
 `anchor edition` block `cf onboard` prints.
