@@ -426,10 +426,26 @@ class TestAFailedGateIsDistinguishable(Workspace):
     def test_the_handoff_does_not_call_it_unchecked(self):
         cov = self.coverage()
         self.assertEqual(cov["gate_failed_runs"], ["rejected"])
+        # not only in the prose: `reports/coverage.json` publishes both lists,
+        # and a rejected run in BOTH is the same corpus described two ways by
+        # two artifacts -- `cf tally`'s own `ungated` is [] for this receipt.
+        self.assertEqual(cov["ungated_runs"], [])
+        self.assertEqual(tally_mod.tally({"rejected": self.dest})["ungated"],
+                         cov["ungated_runs"])
         text = self.handoff()["text"]
         self.assertIn("gate FAILED for run(s) `rejected`", text)
         self.assertNotIn("ungated run(s) `rejected`", text)
         self.assertEqual(cov["items_gated"], 0, "a rejected run is not a gated one")
+
+    def test_a_run_with_no_gate_block_still_lands_in_ungated(self):
+        """The two lists are disjoint, and the first one still has its own case."""
+        self.write_corpus("imp", {"exercise-1-1-1.json": document("Exercise 1.1.1")}, gate=None)
+        cov = self.coverage()
+        self.assertEqual(cov["ungated_runs"], ["imp"])
+        self.assertEqual(cov["gate_failed_runs"], ["rejected"])
+        text = self.handoff()["text"]
+        self.assertIn("ungated run(s) `imp`", text)
+        self.assertIn("gate FAILED for run(s) `rejected`", text)
 
     def test_a_run_whose_gate_passed_is_named_by_neither(self):
         result = tally_mod.tally({"gated": self.write_corpus(
