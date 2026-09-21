@@ -18,6 +18,14 @@ Every case here failed before the change it guards:
 """
 from __future__ import annotations
 
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import io
 import json
 import os
@@ -356,13 +364,16 @@ class TestRepositoryFurniture(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 class TestSuiteIsHermetic(unittest.TestCase):
-    def test_conftest_points_home_at_a_temporary_directory(self):
+    def test_home_points_at_a_temporary_directory_under_either_loader(self):
+        # No `"pytest" not in sys.modules` escape any more: the pin moved out of
+        # the pytest hook into tests/_hermetic.py, so this case is meant to run
+        # under `unittest discover` -- the loader it used to skip on is the one
+        # that read the developer's ~/Downloads.
         if os.environ.get("CF_TEST_KEEP_HOME") == "1":
             self.skipTest("CF_TEST_KEEP_HOME=1 asks for the real home")
-        if "pytest" not in sys.modules:
-            self.skipTest("tests/conftest.py is a pytest hook")
         self.assertIn("cf-test-home-", os.environ.get("HOME", ""),
-                      "tests/conftest.py should have redirected HOME")
+                      "tests/_hermetic.py should have redirected HOME")
+        self.assertEqual(os.path.expanduser("~"), os.environ["HOME"])
 
     def test_no_test_module_imports_pyyaml_unguarded(self):
         """PyYAML is optional; one bare import failed five tests without it."""
