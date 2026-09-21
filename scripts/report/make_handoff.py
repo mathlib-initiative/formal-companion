@@ -967,6 +967,24 @@ def render_sources_table(cfg: Any, tallies: list[dict], coverage: dict | None = 
 # --------------------------------------------------------------------------
 
 
+def _universe_numbering(numbering: Any) -> tuple[int, int]:
+    """How deep a tagged label may be numbered: the source's range and the default.
+
+    The union, not the source's own range, and it is read ONLY to put a chapter
+    on a label for the per-chapter rows -- the key stays the label as written,
+    so nothing is hashed or joined on this.  A manuscript's ``numbering`` is
+    inferred from its PROSE headings while its items are the adapter's tagged
+    environments, which the blueprint numbers separately: on one real companion
+    the prose numbers ``1.2.3`` and all 293 environments are ``Definition 1.1``,
+    so the source's range alone rejects every one of them, and the default alone
+    rejects every label of a source numbered deeper.  Widening can only turn a
+    chapter that would have been None into the one the label states.
+    """
+    low, high = cf_items.numbering_range(numbering)
+    return (min(low, cf_items.DEFAULT_NUMBERING[0]),
+            max(high, cf_items.DEFAULT_NUMBERING[1]))
+
+
 def _manuscript_universe(items: dict, pair_index: dict[str, set],
                          kinds: Iterable[str] = (), numbering: Any = None) -> dict:
     """A manuscript's item universe, read off ``pairs/<id>/index.json``.
@@ -995,16 +1013,18 @@ def _manuscript_universe(items: dict, pair_index: dict[str, set],
     # serve (``tests/test_rf_compat.py::TestTheShimsHaveADeadline``).  The
     # source's own kinds decide what parses at all, so a manuscript with an
     # unusual kind list keeps its unnumbered items unnumbered rather than having
-    # a chapter guessed onto them (CLAUDE.md S4).  Its own NUMBERING decides the
-    # same for the depth: a label deeper than the numbering allows is a hard
-    # reject, so `Lemma 2.3.4.1` parsed against the default ``1.2.3`` left every
-    # item of a source numbered that way chapterless -- and, under a workspace
-    # that pins chapters, out of scope, which is how a fully examined manuscript
-    # reported "0 of 0 item(s) in scope examined".
+    # a chapter guessed onto them (CLAUDE.md S4).  The DEPTH is the source's own
+    # numbering widened by the default (:func:`_universe_numbering`): a label
+    # deeper than the numbering allows is a hard reject, so `Lemma 2.3.4.1`
+    # parsed against the default ``1.2.3`` left every item of a source numbered
+    # that way chapterless -- and, under a workspace that pins chapters, out of
+    # scope, which is how a fully examined manuscript reported "0 of 0 item(s)
+    # in scope examined".
     parse_kinds = tuple(kinds or ()) or cf_items.DEFAULT_KINDS
+    depth = _universe_numbering(numbering)
     by_item: dict[str, dict] = {}
     for key in pair_index:
-        parsed, _reject = cf_items.try_parse(key, parse_kinds, numbering=numbering)
+        parsed, _reject = cf_items.try_parse(key, parse_kinds, numbering=depth)
         by_item[key] = {"item": key, "chapter": parsed.chapter if parsed else None}
     out.update({
         "present": True,

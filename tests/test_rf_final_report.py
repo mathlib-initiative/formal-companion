@@ -344,6 +344,40 @@ class TestAManuscriptIsParsedWithItsOwnNumbering(ManuscriptFixture):
                       text)
 
 
+class TestAManuscriptNumberedDeeperThanItsLabels(ManuscriptFixture):
+    """The shape a real leanblueprint companion has, and the reason for the union.
+
+    A manuscript's ``numbering`` is inferred from its PROSE headings, while its
+    items are the adapter's tagged environments, which the blueprint numbers
+    separately: one real companion's prose numbers `1.2.3` and all 293 of its
+    environments are `Definition 1.1`.  Taking the source's own range alone
+    there rejects every label, empties the chapter table and puts all 293 items
+    under one "unnumbered" row -- the opposite failure to the one the numbering
+    was carried in to fix, on the very companion FR#1 was reproduced against.
+    """
+
+    NUMBERING = {"min_segments": 3, "max_segments": 3, "method": "headings",
+                 "confidence": 1.0}
+    ITEMS = ["Definition 1.1", "Lemma 1.2", "Theorem 2.1"]
+    DEFECT_ON = "Theorem 2.1"
+
+    def test_the_labels_keep_their_chapters(self):
+        cov = self.coverage()
+        self.assertEqual(cov["chapters_in_source"], [1, 2])
+        self.assertEqual(sorted(cov["by_chapter"]), ["1", "2"])
+        self.assertEqual(cov["items_in_scope"], 3)
+        self.assertEqual(cov["items_examined"], 3)
+
+    def test_the_sources_own_range_alone_would_reject_every_one_of_them(self):
+        self.assertEqual(cf_items.try_parse("Definition 1.1", cf_items.DEFAULT_KINDS,
+                                            numbering=self.NUMBERING)[1].reason, "no_number")
+        self.assertEqual(handoff_mod._universe_numbering(self.NUMBERING), (2, 3),
+                         "the parse admits what either range admits")
+        self.assertEqual(handoff_mod._universe_numbering({"min_segments": 4,
+                                                          "max_segments": 4}), (2, 4))
+        self.assertEqual(handoff_mod._universe_numbering(None), cf_items.DEFAULT_NUMBERING)
+
+
 class TestAPinnedChapterDoesNotNarrowAManuscript(ManuscriptFixture):
     """FR#1, variant 2: the pairing index IS the planned universe.
 
