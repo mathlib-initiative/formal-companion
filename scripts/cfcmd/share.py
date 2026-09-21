@@ -155,7 +155,21 @@ def _export(workspace, args) -> int:
                  "a private repo's Lean statements")
     log.info("")
     log.info("next:")
-    log.info(f"  cf share import {manifest['out']}        (in the other workspace)")
+    # `cf share import` refuses a bundle with no accepted/refuted rows
+    # (share/merge.py), and a findings-only campaign -- everything before an
+    # adjudication has run -- exports exactly that bundle.  Printing the import
+    # unconditionally named a next step that exits 2 on the file just written.
+    if counts["ledger_rows"]:
+        log.info(f"  cf share import {manifest['out']}        (in the other workspace)")
+    else:
+        if counts["routed_rows"]:
+            log.info(f"  cf quotes hydrate --bundle {manifest['out']}        "
+                     "(in the other workspace, to read the findings)")
+        for name in manifest["companions"]:
+            log.info(f"  cf adjudicate --companion {name}        "
+                     "(here, to produce mergeable ledger rows)")
+        log.info("  `cf share import` needs at least one adjudicated ledger row and will "
+                 "refuse this bundle")
     return 0
 
 
