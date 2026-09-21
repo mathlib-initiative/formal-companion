@@ -47,9 +47,13 @@ for arg in "$@"; do
 done
 WS="${WS:-$HERE/ws-test}"
 
-TML="${CF_TML:-/Users/jack/Desktop/tao-measure-lean}"
-MT="${CF_MT:-/Users/jack/Desktop/measure_theory}"
-CORPUS="${CF_BASELINE_CORPUS:-/Users/jack/Desktop/tao-diff-run}"
+# The two companion checkouts and the baseline corpus are NAMED BY THE
+# ENVIRONMENT, never defaulted to one machine's layout: they are private
+# repositories, so there is no path this script may guess.  CF_BASELINE_CORPUS is
+# optional -- without it steps 7 and 8 are skipped and the script says so.
+TML="${CF_TML:-}"
+MT="${CF_MT:-}"
+CORPUS="${CF_BASELINE_CORPUS:-}"
 
 PUB=tao-measure-gsm126-published
 DRAFT=tao-measure-2011-draft
@@ -94,6 +98,12 @@ for k in sys.argv[3].split("."):
 print(len(g) if isinstance(g, (list, dict)) else g)' "$PUB" "$1" "$2"; }
 
 step "0. preconditions"
+for var in CF_TML CF_MT; do
+  [ -n "${!var:-}" ] || { echo "set $var to a companion checkout:"; \
+    echo "  CF_TML=<docstring-tag companion> CF_MT=<attribution-table companion> \\"; \
+    echo "  [CF_BASELINE_CORPUS=<v1 findings corpus>] bash tests/e2e/multisource.sh"; \
+    echo "(tests/e2e/synthetic.sh is the half that needs no private checkout)"; exit 2; }
+done
 for p in "$TML" "$MT"; do
   [ -d "$p" ] || { echo "missing companion repo: $p"; exit 2; }
 done
@@ -218,7 +228,7 @@ done
 
 # ---------------------------------------------------------------------------
 step "7. import the five baseline runs (2,672 findings)"
-if [ -d "$CORPUS" ]; then
+if [ -n "$CORPUS" ] && [ -d "$CORPUS" ]; then
   # A v1 finding records no source.  This workspace holds more than one, so the
   # import REFUSES to guess which edition they read -- that is the gate, not a
   # nuisance, and batch 1 is exactly the corpus that read a different edition.
@@ -269,7 +279,7 @@ print(sum(json.load(open(p))["actual"]["count"]
   check "adam items"                 "$(tally adam   raw.items)"          "5"
   check "adam high"                  "$(tally adam   raw.high)"           "1"
 else
-  echo "  (no baseline corpus at $CORPUS -- skipping steps 7 and 8)"
+  echo "  (no baseline corpus: set CF_BASELINE_CORPUS -- skipping steps 7 and 8)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -297,7 +307,7 @@ print(",".join(sorted(rows)))')" \
 step "10. the gates still refuse"
 $CF run p-differential-text --host evil.example.com --i-have-consent -q >/dev/null 2>&1
 check "run refuses a non-allowlisted host" "$?" "2"
-$CF run p-differential-text --host ffmain -q >/dev/null 2>&1
+$CF run p-differential-text --host examplebox -q >/dev/null 2>&1
 check "run refuses a server run without consent" "$?" "2"
 rm -f emitted.json
 $CF route --companion tao-measure-lean --emit-upstream emitted.json -q >/dev/null 2>&1

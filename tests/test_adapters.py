@@ -6,9 +6,9 @@ Two layers:
 * **regression tests** against the real baseline -- skipped unless the
   environment names it:
 
-      CF_TML           /Users/jack/Desktop/tao-measure-lean
-      CF_MT            /Users/jack/Desktop/measure_theory
-      CF_BASELINE_DIFF /Users/jack/Desktop/tao-differential   (ours.jsonl, adam.jsonl)
+      CF_TML           a docstring-tag companion checkout
+      CF_MT            an attribution-table companion checkout
+      CF_BASELINE_DIFF the v1 differential directory (ours.jsonl, adam.jsonl)
       CF_TEST_TMP      where the end-to-end test may create a scratch workspace
                        (default: the system temp directory)
 
@@ -37,7 +37,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from adapters import api, base, itemtag, leanparse  # noqa: E402
-from adapters.api import from_config, load  # noqa: E402
+from adapters.api import from_config  # noqa: E402
 
 #: The published GSM 126 edition: the bytes both target companions were read
 #: against.  Rows carry the PAIR (source_id, source_sha) -- the id so an item is
@@ -307,10 +307,29 @@ class AdapterLoadingTest(unittest.TestCase):
     """adapter.yaml -> Adapter, and the errors a bad config gives."""
 
     def test_shipped_templates_load(self):
+        """Both examples parse and name their kind -- on any machine.
+
+        `repo:` in a shipped template is a placeholder, so the config is loaded
+        and then pointed at a scratch repo carrying the exports the
+        attribution-table adapter validates.  With the template naming one
+        developer's absolute path, this test passed only on that machine.
+        """
+        from adapters import yamlio
+        repo = Path(tempfile.mkdtemp(prefix="cf-tmpl-",
+                                     dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        exports = repo / "pdf-overlay" / "data"
+        exports.mkdir(parents=True)
+        for name in ("target-refinement.json", "declaration-snippets.json"):
+            (exports / name).write_text("{}", encoding="utf-8")
         for path, kind in ((TEMPLATES / "docstring_tags.tao-measure-lean.yaml", "docstring_tags"),
                            (TEMPLATES / "attribution_table.measure_theory.yaml", "attribution_table")):
             with self.subTest(path.name):
-                adapter = load(path)
+                config = yamlio.load_yaml(path)
+                self.assertEqual(config["repo"], "<path to the companion repo>",
+                                 "a shipped template names no real repo")
+                config["repo"] = str(repo)
+                adapter = from_config(config, name=config.get("name"), source=str(path))
                 self.assertEqual(adapter.kind, kind)
 
     def test_unknown_kind_is_a_readable_error(self):
