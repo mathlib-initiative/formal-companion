@@ -101,7 +101,7 @@ cf plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
 - `runs/<run-id>/run.yaml` — mode, companion set, model ids, book access, gate mode, host alias,
   concurrency, consent record, billing path, task count, prompt shas.
 - `runs/<run-id>/tasks/*.yaml` — one per item, title prefixed `DIFFERENTIAL:` / `SINGLE-SOURCE:` /
-  `ATTACK:`; reconciled against `items.json ∩ any-repo` (`references/findings-schema-v2.md` §2).
+  `hunt:` / `vac:`; reconciled against `items.json ∩ any-repo` (`references/findings-schema-v2.md` §2).
 - `runs/<run-id>/prompts/*.md` — worker-system, worker, worker-revision, reviewer-system, reviewer,
   rendered from `templates/prompts/` with the companion's `conventions.md` injected.
 - `runs/<run-id>/gate.json` — `KINDS`, `VERDICTS`, witness requirement, a `sources` block
