@@ -82,11 +82,12 @@ bash tests/e2e/synthetic.sh                      # the end-to-end demonstration
   when those are unset: the suite must be green on a machine that has none of
   them.
 - Never write outside a temporary directory, and never into a companion repo.
-- The pinned regression figures (411 items, 2,672 imported files, the
-  72/40/17/3 tally, teorth 49/40/18, adam 7/5/1, def-coverage 32/4/0) do not
-  move unless the finding is that they were wrong. If a tightened check rejects
-  baseline files, **measure** how many and why, then tune or record a
-  documented escape; never silently loosen and never silently drop.
+- The pinned regression figures live in `tests/baseline/regression-figures.json`,
+  which carries each value, the assertion that pins it and why it is what it is
+  (the teorth collapsed counts are 41/19 after the 2026-09-18 de-conflation).
+  They do not move unless the finding is that they were wrong. If a tightened
+  check rejects baseline files, **measure** how many and why, then tune or
+  record a documented escape; never silently loosen and never silently drop.
 
 ## Documentation
 
