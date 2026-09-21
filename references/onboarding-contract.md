@@ -404,7 +404,7 @@ follow** (§0.3) and whether an anchor is a printed page or a PDF page (§4).
 
 Two editions of one book differ by a page: ~65 numbered items sit one printed
 page earlier in the published edition than in the 2011 draft, nearly all in one
-section (`/Users/jack/Desktop/tao-measure-lean/CLAUDE.md` lines 48-55). Both
+section (the docstring-tag companion's own `CLAUDE.md` says so). Both
 satisfy `pdf_page = printed_page + 16`, so mixing them produces a page-anchor
 finding for every one of those items — off by exactly one, never by sixteen —
 and an adjudicator checking the other file refutes them all. `source_sha` is

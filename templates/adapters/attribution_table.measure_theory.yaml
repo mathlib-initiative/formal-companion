@@ -10,15 +10,15 @@
 #   declaration-snippets.json   id -> {file, line, text}
 #   source-formalization-ledger.json  id -> {kind, module, file}
 #
-# Measured against measure_theory at 9afe70f: 390 geometry items, 211 curated
-# entries, 562 rows over 178 items, 414 key rows, 0 missing snippets.
+# Measured against a real attribution-table repo (measure_theory at 9afe70f):
+# 390 geometry items, 211 curated entries, 562 rows over 178 items, 414 key rows, 0 missing snippets.
 #
 # COVERAGE IS BOUNDED BY CURATION. Items with no curated entry are absent (212
 # of 390 here), and declarations that exist only as anonymous `example`s are
 # absent by construction. `cf extract` reports both numbers; do not read this
 # table as "everything this repo formalises".
 name: adam
-repo: /Users/jack/Desktop/measure_theory
+repo: <path to the companion repo>
 adapter: attribution_table
 granularity: item
 

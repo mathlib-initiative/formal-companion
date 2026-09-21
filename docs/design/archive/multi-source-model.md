@@ -250,14 +250,14 @@ workspace:
 
 companions:
   ours:
-    repo: /Users/jack/Desktop/tao-measure-lean
+    repo: <path to tao-measure-lean>
     adapter: docstring_tags
     sources: [tao-measure-gsm126-published]
     anchor_source: tao-measure-gsm126-published
     # the repo SHIPS the 2011 draft at sources/tao-measure-theory.pdf, but its
     # docstring anchors follow the PUBLISHED pagination (corrected 2026-09-04).
     bundled_sources: [tao-measure-2011-draft]
-    owner: jack
+    owner: external
     write_policy: read_only
     discovered:
       at: 2026-09-16T00:00:00Z
@@ -269,7 +269,7 @@ companions:
         - CLAUDE.md#L48-L55
         - sources/tao-measure-theory.pdf
   adam:
-    repo: /Users/jack/Desktop/measure_theory
+    repo: <path to measure_theory>
     adapter: attribution_table
     sources: [tao-measure-gsm126-published]
     anchor_source: tao-measure-gsm126-published
@@ -307,7 +307,7 @@ sources:
       note: "AMS copyright (GSM 126); the author publishes a free preliminary version on his own site."
       fetch: author_site
       redistribute: false
-    pdf: /Users/jack/Desktop/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
+    pdf: <path to measure_theory>/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
     chapters: [1]
     role: audited
     same_work: [tao-measure-2011-draft]
@@ -348,7 +348,7 @@ sources:
     download_url: null
     book_page_url: https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
     licence: {note: "author's pre-publication draft; not redistributable", fetch: none, redistribute: false}
-    pdf: /Users/jack/Desktop/tao-measure-lean/sources/tao-measure-theory.pdf
+    pdf: <path to tao-measure-lean>/sources/tao-measure-theory.pdf
     chapters: [1]
     role: reference
     same_work: [tao-measure-gsm126-published]
@@ -1270,17 +1270,17 @@ Deleted: `cf book`. Out of scope in v1, unchanged: `fix`, `review-pr`,
 ### 7.1 `cf init <dir>` — no flags
 
 ```
-$ cf init ~/Desktop/tao-workspace
-wrote ~/Desktop/tao-workspace/workspace.yaml
-wrote ~/Desktop/tao-workspace/registry.yaml        (overlay; empty)
-wrote ~/Desktop/tao-workspace/.gitignore
-git init ~/Desktop/tao-workspace (no remote)
-installed ~/Desktop/tao-workspace/.git/hooks/pre-push
+$ cf init <workspace>
+wrote <workspace>/workspace.yaml
+wrote <workspace>/registry.yaml        (overlay; empty)
+wrote <workspace>/.gitignore
+git init <workspace> (no remote)
+installed <workspace>/.git/hooks/pre-push
 
-workspace : ~/Desktop/tao-workspace
+workspace : <workspace>
 sources   : none yet
 next:
-  cf onboard ~/Desktop/tao-measure-lean
+  cf onboard <path to tao-measure-lean>
 ```
 
 The refusals `cf init` already performs are kept verbatim: not inside the skill
@@ -1302,8 +1302,8 @@ One command, no flags in the common case, and every inference is shown with its
 confidence and the file it came from.
 
 ```
-$ cf onboard ~/Desktop/tao-measure-lean
-repo      : /Users/jack/Desktop/tao-measure-lean @ 9afe70f
+$ cf onboard <path to tao-measure-lean>
+repo      : <path to tao-measure-lean> @ 9afe70f
 adapter   : docstring_tags                       confidence 0.95   (1,413 of 1,487 declarations tagged)
 name      : ours                                 (from the directory name; --name overrides)
 
@@ -1312,7 +1312,7 @@ sources discovered
       title    An Introduction to Measure Theory — Terence Tao
       edition  AMS GSM 126, author's preliminary AMS version (published pagination)
       from     CLAUDE.md#L48-L55 (sha prefix), formalization.yaml#sources (title/licence)
-      pdf      ~/Desktop/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
+      pdf      <path to measure_theory>/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
                found in: library_path (<the derived root measure_theory sits in>)
       offset   16                                confidence 0.996  (244/245 running heads)
       kinds    Definition Lemma Theorem Proposition Corollary Exercise Example Remark
@@ -1338,7 +1338,7 @@ scope     chapters [1]                           from the items ours actually ta
 
 next:
   edit companions/ours/conventions.md and have the repo owner confirm it
-  cf onboard ~/Desktop/measure_theory
+  cf onboard <path to measure_theory>
 ```
 
 (The extraction and item counts above are illustrative; the confidences,
@@ -1348,7 +1348,7 @@ offsets, shas and file provenance are the real values measured on this machine.)
 
 ```
 unconfirmed sources (discovered, nobody has checked them)
-  smith-analysis-2e   sha 1a2b3c4d…   from ~/Desktop/foo/CLAUDE.md
+  smith-analysis-2e   sha 1a2b3c4d…   from <another repo>/CLAUDE.md
       confirm with:  cf sources show smith-analysis-2e
                      cf sources set smith-analysis-2e confirmed=true
       or promote it into the skill's registry/sources.yaml
@@ -2184,8 +2184,9 @@ Three seams need an explicit handshake:
 - `grep -rn 'campaign\|book_sha\|CF_CAMPAIGN' $(git ls-files)` returns only
   deliberate historical prose (this document, `references/traps.md`,
   `references/method.md` where it explains what the old model was) — no code.
-- On this machine: `cf init <tmp>` then `cf onboard ~/Desktop/tao-measure-lean`
-  then `cf onboard ~/Desktop/measure_theory`, with **no other flags**, produces
+- On a machine holding both companions: `cf init <tmp>` then `cf onboard <path to
+  tao-measure-lean>` then `cf onboard <path to measure_theory>`, with **no other
+  flags**, produces
   the `workspace.yaml` of §1.3 (modulo timestamps and the row counts), and
   `cf pair` produces exactly one `pairs/tao-measure-gsm126-published/` tree.
 - Every gate in §0.2 still refuses what it refused before, now per source.
