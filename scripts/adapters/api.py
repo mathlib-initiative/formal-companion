@@ -559,7 +559,7 @@ def load(adapter_yaml: str | Path, workspace: Any | None = None) -> Adapter:
     path = Path(adapter_yaml).expanduser()
     if not path.is_file():
         raise AdapterError(f"adapter config not found: {path}",
-                           hint="run `cf onboard <name> --repo <path> --adapter <kind>` first")
+                           hint="run `cf onboard <path to the companion repo> --adapter <kind>` first")
     config = yamlio.load_yaml(path)
     if not isinstance(config, dict):
         raise AdapterError(f"{path}: adapter.yaml must be a mapping")

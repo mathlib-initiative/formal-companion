@@ -335,17 +335,13 @@ class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
         :func:`invocations` resolves it, or `cf sources add <pdf> --for` -- a
         real flag of a real subparser -- fails here instead.
 
-        Scope: the launch instructions and the rendered templates.  ``scripts/``
-        is not in it yet, and not because it is clean -- the same rule run over
-        it finds six stale spellings in hints and TODOs a user is told to type
-        (`cf onboard --repo`, `cf plan-run --mode`, `cf detect-proxies
-        --emit-corpus`, and `cf harvest --tally` three times, where the real
-        spellings are `--name`/`--preset`/`--no-emit-corpus`/`cf tally`).  Those
-        hints are corrected separately; widening the glob to ``scripts/`` is the
-        whole of this check's remaining fix.
+        Scope: the launch instructions, the rendered templates and every hint
+        and TODO under ``scripts/`` -- a string a user is told to type is
+        documentation wherever it lives.
         """
         files = (sorted(SKILL.glob("workflows/*.js"))
-                 + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()])
+                 + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()]
+                 + sorted(SKILL.glob("scripts/**/*.py")))
         for path in files:
             text = path.read_text(encoding="utf-8", errors="replace")
             for word, tail in _CF_LITERAL.findall(text):

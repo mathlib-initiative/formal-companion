@@ -84,7 +84,7 @@ def run(args) -> int:
     run_yaml_path = paths.run_yaml(args.run_id)
     if not run_yaml_path.exists():
         raise CfError(f"no run.yaml for run {args.run_id!r} ({run_yaml_path})",
-                      hint=f"plan it first: cf plan-run --mode <mode> --run-id {args.run_id}")
+                      hint=f"plan it first: cf plan-run --preset <preset> --run-id {args.run_id}")
     data = read_yaml(run_yaml_path)
     if not isinstance(data, dict):
         raise CfError(f"{run_yaml_path} is not a YAML mapping")
