@@ -90,8 +90,9 @@ def run(args) -> int:
         #: failing.  Say which it is.
         unreadable = _registry_error(workspace)
         if unreadable:
-            log.warn(f"sources   : UNKNOWN -- {workspace.paths.registry_yaml} could not be read")
-            log.info(f"            {unreadable}")
+            log.warn_block(
+                f"sources   : UNKNOWN -- {workspace.paths.registry_yaml} could not be read",
+                [f"            {unreadable}"])
             log.info("")
             log.info("next:  fix that file (it is written by cf, so this is a bug worth "
                      "reporting), then re-run `cf status`")
@@ -195,14 +196,15 @@ def _print_unconfirmed(workspace) -> None:
     if not unconfirmed:
         return
     log.info("")
-    log.warn("unconfirmed sources (discovered, nobody has checked them)")
+    lines: list[str] = []
     for ref in unconfirmed:
         origin = ", ".join((ref.discovered or {}).get("from") or []) or ref.registry
-        log.info(f"  {ref.id}   sha {short(ref.sha256, 8) + '…' if ref.sha256 else '(none)'}"
-                 f"   from {origin}")
-        log.info(f"      confirm with:  cf sources show {ref.id}")
-        log.info(f"                     cf sources set {ref.id} confirmed=true")
-        log.info("      or promote it into the skill's registry/sources.yaml")
+        lines.append(f"  {ref.id}   sha {short(ref.sha256, 8) + '…' if ref.sha256 else '(none)'}"
+                     f"   from {origin}")
+        lines.append(f"      confirm with:  cf sources show {ref.id}")
+        lines.append(f"                     cf sources set {ref.id} confirmed=true")
+        lines.append("      or promote it into the skill's registry/sources.yaml")
+    log.warn_block("unconfirmed sources (discovered, nobody has checked them)", lines)
 
 
 def _registry_error(workspace) -> str:
@@ -233,9 +235,8 @@ def _print_registry_problems(workspace) -> None:
     if not problems:
         return
     log.info("")
-    log.warn(f"registry ({len(problems)} problem(s))")
-    for problem in problems[:8]:
-        log.info(f"  {problem}")
+    log.warn_block(f"registry ({len(problems)} problem(s))",
+                   [f"  {problem}" for problem in problems[:8]])
 
 
 # ---------------------------------------------------------------------------
