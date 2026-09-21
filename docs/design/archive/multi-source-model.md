@@ -2164,7 +2164,10 @@ Three seams need an explicit handshake:
    (CORE) calls `pair.anchor_check.check_edition` (STAGES-A). Same rule: the
    signature is fixed here, and CORE degrades to rule 1/rule 3 of §4.6 (and a
    refusal) while the mechanical half is unimplemented.
-3. **`finding_id` is defined five times on purpose.** `cflib/hashing.py`,
+3. **SUPERSEDED: `finding_id` is now defined twice** (`cflib/hashing.py` and
+   `gate/verify_findings.py`, the one module transferred to a host without
+   `cflib`); the compat shims delegate. The original text follows.
+   **`finding_id` is defined five times on purpose.** `cflib/hashing.py`,
    `gate/verify_findings.py`, `sources/compat.py`, `ledger/compat.py` and
    `detect/_compat.py` each carry the definition because the gate and the
    compat layers run where `cflib` is not importable. All five change in

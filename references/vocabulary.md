@@ -253,10 +253,10 @@ finding_id(run_id, source_id, item, kind, unfaithful_decls) = sha256(
 ```
 
 Five parts, joined with a newline, and the declarations go in as **separate parts** rather than
-pre-joined. `cflib.hashing.finding_id` is the definition; four other files inline it byte-for-byte
-because they run where `cflib` is not importable (`gate/verify_findings.py`, `sources/compat.py`,
-`ledger/compat.py`, `detect/_compat.py`), and
-`tests/test_plan_gate.py::TestFindingIdIsOneDefinition` asserts all five agree on every digest.
+pre-joined. `cflib.hashing.finding_id` is the definition; `gate/verify_findings.py` inlines it
+byte-for-byte because the gate is transferred to a run host where `cflib` is not importable. The
+compat shims (`sources/compat.py`, `ledger/compat.py`, `detect/_compat.py`) delegate to `cflib`, and
+`tests/test_plan_gate.py::TestFindingIdIsOneDefinition` asserts every spelling agrees on every digest.
 
 Rules and reasons:
 
