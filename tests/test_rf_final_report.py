@@ -735,6 +735,58 @@ class TestAnExaminedItemOutsideTheScopeIsNotDropped(Workspace):
                          cov["runs"]["hunt"]["examined"])
 
 
+def flat(text: str) -> str:
+    """The rendered document with its line wrapping taken out.
+
+    The template's prose is hard-wrapped, so a sentence assertion that does not
+    do this passes or fails on where a word happened to land.
+    """
+    return " ".join(text.split())
+
+
+class TestTheLineUnderTheTableSaysWhichIsCountedWhere(Workspace):
+    """Two different exclusions, one sentence, and it was false about one of them.
+
+    The line closing section 0 lumped an examined item outside the audited
+    chapters together with a corpus document nothing could read and said both
+    are "counted in §3" -- but `cf tally` REFUSES a corpus holding the second
+    (exit 2, so no ``tally.*.json`` exists and §3 renders a TODO).  It claimed
+    coverage the report does not have, two lines under per-source notes that
+    correctly say the opposite things about the two.
+    """
+
+    CHAPTERS = "    chapters: [1]\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Definition 1.1.1", "page": 10, "chapter": 1, "kind": "Definition"},
+            {"item": "Lemma 2.1.1", "page": 58, "chapter": 2, "kind": "Lemma"},
+        ])
+        self.dest = self.write_corpus("hunt", {
+            "definition-1-1-1.json": dict(document("Definition 1.1.1"), disagreements=[]),
+            "lemma-2-1-1.json": document("Lemma 2.1.1"),
+            "definition-1-1-2.json": document("Definition 1.1.2"),
+        }, gate={"ok": True, "checked": 3})
+        compat.write_text(os.path.join(self.dest, "definition-1-1-2.json"), "[]\n")
+
+    def test_the_two_exclusions_are_not_described_as_one(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("an item examined outside the audited chapters is counted in §3 and in "
+                      "no column of this table", text)
+        self.assertIn("a corpus document that could not be read is counted nowhere", text)
+        self.assertNotIn("those documents are counted in §3 and in no column of this table", text)
+
+    def test_the_notes_it_summarises_still_say_the_two_things_it_now_says(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("`cf tally` and §3 count them and no figure above does", text)
+        self.assertIn("LOWER BOUND", text)
+
+    def test_the_tally_the_sentence_appeals_to_really_refuses_this_corpus(self):
+        """"counted nowhere" is true only because `cf tally` will not read it."""
+        self.assertEqual(cf_cli("tally", "--workspace", self.root, "--no-write")[0], 2)
+
+
 class TestAnUncomputedTaskUniverseIsNotZeroPerChapter(Workspace):
     """NEW#g-report-4: one figure, three renderings, in one document.
 
