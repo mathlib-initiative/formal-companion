@@ -47,6 +47,16 @@ from harvest._compat import (SEVERITIES, SUBSTANTIVE_KINDS, CfError, cf_items,
 FINDING_LISTS = ("disagreements", "findings")
 #: bucket for rows whose finding named no declaration
 UNATTRIBUTED = "_unattributed"
+#: What settles a corpus no passing gate stands behind -- said once, because
+#: `cf tally` and `cf report` both have to say it.  Both branches are runnable:
+#: a bare `cf harvest <run-id>` refuses an imported or local-fleet run ("run.yaml
+#: for '<id>' records no host"), and "re-harvest without --no-gate" is a no-op
+#: for the import that landed `gate: null` because no config could be built --
+#: --no-gate was never passed there.
+REGATE_HINT = ("Re-run the gate over them: `cf harvest <run-id> --gate-config <file>` for a run "
+               "this workspace planned (add the --from/--journal/--execute that run needs), or "
+               "`cf import-corpus --run-id <run-id> --from <dir> --preset <preset>` for an "
+               "imported corpus.")
 
 
 def run_mode(run_id: str, corpus_dir: Path | None = None) -> str:
@@ -156,8 +166,15 @@ def unjoinable(rows: Iterable[dict], kinds=None) -> list[dict]:
     return [seen[k] for k in sorted(seen)]
 
 
-def _defects(payload: dict) -> list[dict]:
-    """Every defect row in a findings file, whatever key it used."""
+def defect_rows(payload: dict) -> list[dict]:
+    """Every defect row in a findings file, whatever key it used.
+
+    Public because this module is the counting authority and a second reader of
+    the same corpus must not re-decide which keys hold the rows: the handoff's
+    ``items_with_findings`` read ``disagreements`` alone, so one published
+    document could list a defect in S3 and say in S0 that the item has none.
+    Anything that counts, matches or reports a corpus document calls this.
+    """
     out: list[dict] = []
     for key in FINDING_LISTS:
         value = payload.get(key)
@@ -289,7 +306,7 @@ def rows_for_run(run_id: str, directory: str | Path,
         source_sha = str(payload.get("source_sha") or payload.get("book_sha") or "")
         item_raw = str(payload.get("item") or path.stem)
         item = collapse_to_book_item(item_raw, _kinds_for(kinds, source_id))
-        for defect in _defects(payload):
+        for defect in defect_rows(payload):
             by_repo = _decl_repos(defect) or {UNATTRIBUTED: []}
             row_source = str(defect.get("source_id") or source_id)
             all_decls = [str(d).strip() for d in (defect.get("unfaithful_decls") or [])
@@ -496,6 +513,10 @@ def tally(runs: dict[str, str | Path], kinds=None,
         # runs whose RECEIPT.json carries no gate block: their quotes were never
         # checked against the source text, and every number below includes them.
         "ungated": harvest_mod.ungated_runs(runs),
+        # runs whose gate RAN and rejected them -- a different state, kept in its
+        # own key so that "no gate block in RECEIPT.json" stays true of `ungated`.
+        # Their rows are in the corpus and are counted above like any other.
+        "gate_failed": harvest_mod.gate_failed_runs(runs),
     }
 
 
@@ -548,7 +569,12 @@ def render(result: dict, repos: Sequence[str] | None = None) -> str:
     if result.get("ungated"):
         lines.append(f"UNGATED run(s): {', '.join(result['ungated'])} -- no gate block in "
                      "RECEIPT.json, so no quote in them was checked against the source text. "
-                     "Re-harvest without --no-gate.")
+                     + REGATE_HINT)
+    if result.get("gate_failed"):
+        lines.append(f"GATE FAILED run(s): {', '.join(result['gate_failed'])} -- their quotes "
+                     "were checked against the source text and REJECTED; see "
+                     "corpus/<run-id>/RECEIPT.json gate.problems. Their rows are counted below. "
+                     + REGATE_HINT)
     for key, data in result.get("groups", {}).items():
         repo = data.get("repo", key)
         if repos and repo not in repos:
