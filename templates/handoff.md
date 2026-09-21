@@ -4,12 +4,30 @@
 > camera-ready audit was run by this pipeline; those stages exist as extension points, not as work
 > that happened. Nothing below is an upstream report for a repository whose routed file still says
 > UNCHALLENGED.
+>
+> {{scope_note}}
 
-Sources under audit — one row per source, with the companions bound to it:
+Sources under audit — one row per source, with the companions bound to it and the scope audited:
 
 {{sources_table}}
 
 **TL;DR.** {{tldr}}
+
+## 0. How much of each source was audited
+
+Every finding count below is over the scope in this table, not over the whole of a source. The
+columns are: items the source contains, items in the audited scope, items in the differential's
+task universe (items in scope at least one companion claims), items paired (items two or more
+companions formalise, so a cross-check was possible at all), items a run actually examined, of
+those the ones whose run passed the quote gate, items that carried a finding, and items in scope
+that no run ever looked at.
+
+{{coverage_table}}
+
+{{coverage_note}}
+
+The items never examined are listed by name in `reports/unexamined.<source_id>.json`, and every
+figure in this section is in `reports/coverage.json`.
 
 ## 1. State in one screen
 
