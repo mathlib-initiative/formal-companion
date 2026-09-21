@@ -67,9 +67,10 @@ def register(subparsers) -> None:
                      help="companion to export (repeatable; default: every one)")
     exp.add_argument("--redact-quotes", dest="redact", action="store_true", default=None,
                      help="replace every book quote -- and every verbatim run of the source "
-                          "inside a reason or a reasoning -- with (page, length, hash, "
-                          "first/last six words) (default: workspace.yaml "
-                          "policy.redact_quotes_on_export, which is true)")
+                          "in any free-text field of a row, at any depth -- with (page, "
+                          "normalised length, sha256, and at most a quarter of the quote's "
+                          "words from each end, none at all below fourteen words) (default: "
+                          "workspace.yaml policy.redact_quotes_on_export, which is true)")
     exp.add_argument("--full-quotes", dest="redact", action="store_false",
                      help="carry the verbatim book sentences instead (overrides the workspace "
                           "policy); only for a recipient who may hold them, and recorded as "

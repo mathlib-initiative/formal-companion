@@ -549,6 +549,13 @@ class PublicDraftsCarryNoBookProseTest(unittest.TestCase):
                          "A5 still describes the record the flat six-word rule wrote")
         self.assertTrue(lines_saying(traps, "up to a quarter of the quote's words from each"),
                         "A5 must describe the record `share.redact.edge_words` writes")
+        # The copy that outlived the documents was shipped CODE: `cf share export
+        # --help` still handed an operator the flat six words a round after every
+        # document had been corrected, so the whole of scripts/ answers here too.
+        for path in sorted(SCRIPTS.rglob("*.py")):
+            said = lines_saying(path.read_text(encoding="utf-8"), "first/last six")
+            self.assertEqual(said, [], f"{path.relative_to(REPO)} states the flat six "
+                                       f"words the behaviour fix deleted: {said}")
 
     def test_the_owner_draft_still_works_without_the_pinned_text(self):
         """The refusal is about a policy that must be checked, not about text."""
