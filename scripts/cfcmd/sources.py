@@ -40,7 +40,7 @@ from cflib.registry import Registry, entry_from_claim, source_id_for
 from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
 from sources.locator import text_suffixes_help
 
-LIST_COLUMNS =["source", "sha", "edition", "offset", "conf", "kinds", "items",
+LIST_COLUMNS = ["source", "sha", "edition", "offset", "conf", "kinds", "items",
                 "errata", "companions", "role", "confirmed"]
 
 #: ``cf sources set`` keys, and how to read the value off the command line.
