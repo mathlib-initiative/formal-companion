@@ -18,8 +18,10 @@ Four outputs, all mechanical:
    the documents those figures do NOT cover, because a figure that silently
    excludes a counted document is the failure this section exists to prevent:
    items examined outside the audited chapters (``cf tally`` counts them and
-   section 0 does not) and corpus documents that could not be read at all, which
-   make every figure above a lower bound.
+   section 0 does not), corpus documents that could not be read at all, which
+   make every figure above a lower bound, and corpus documents naming a source
+   this workspace does not hold (``unknown_source_documents``), which no source
+   block can count.  Every one of them is echoed on the terminal too.
 3. ``reports/unexamined.<source_id>.json``, one per source -- the items in scope
    that no run examined, BY NAME.  A count can say "381 of 411"; only the names
    say which item was missed, and the handoff points its reader at this file.
@@ -148,10 +150,16 @@ def run(args) -> int:
 
 
 def _unreadable(coverage: dict) -> list:
-    """Every corpus document `cf report` could not parse, per source and without one."""
+    """Every corpus document `cf report` could not parse, wherever it was filed.
+
+    All three places it can be filed: under a source this workspace holds, under
+    none at all, and -- where a run whose receipt names a source the workspace
+    no longer holds lands -- under an id no source block covers.
+    """
     names = set(coverage.get("unreadable_documents") or ())
-    for src in coverage.get("sources") or []:
-        names.update(src.get("unreadable_documents") or ())
+    for block in ((coverage.get("sources") or [])
+                  + (coverage.get("unknown_source_documents") or [])):
+        names.update(block.get("unreadable_documents") or ())
     return sorted(names)
 
 
@@ -160,9 +168,9 @@ def _caveats(coverage: dict) -> list:
 
     The unreadable documents have had their own block above since they were
     first published; these four had none at all -- an ungated or gate-FAILED
-    run, an examined item outside the audited chapters and a document carrying
-    no `source_id` -- so `cf tally` named them and `cf report` said nothing
-    about the same corpus.
+    run, an examined item outside the audited chapters, a document carrying no
+    `source_id`, and a corpus naming a source this workspace does not hold -- so
+    `cf tally` named them and `cf report` said nothing about the same corpus.
     """
     ungated, failed, outside, outside_found, unstamped = [], [], 0, 0, 0
     for src in coverage.get("sources") or []:
@@ -171,6 +179,10 @@ def _caveats(coverage: dict) -> list:
         outside += len(src.get("examined_outside_scope") or ())
         outside_found += len(src.get("with_findings_outside_scope") or ())
         unstamped += int(src.get("unstamped_documents") or 0)
+    unknown = coverage.get("unknown_source_documents") or []
+    for block in unknown:
+        ungated.extend(block.get("ungated_runs") or ())
+        failed.extend(block.get("gate_failed_runs") or ())
     lines = []
     if ungated:
         lines.append("ungated run(s) %s: no quote in them was checked against the source text"
@@ -185,6 +197,12 @@ def _caveats(coverage: dict) -> list:
     if unstamped:
         lines.append("%d corpus document(s) carry no `source_id` and were attributed from their "
                      "run's receipt" % unstamped)
+    if unknown:
+        lines.append("%d corpus document(s) in run(s) %s name source(s) %s this workspace does "
+                     "not hold, so no coverage figure counts them; `cf tally` does"
+                     % (sum(int(b.get("documents") or 0) for b in unknown),
+                        ", ".join(sorted({r for b in unknown for r in (b.get("runs") or ())})),
+                        ", ".join(str(b.get("source_id")) for b in unknown)))
     if lines:
         lines.append("every one of these is in §0 of the handoff and in reports/coverage.json")
     return lines
