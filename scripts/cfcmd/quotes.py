@@ -5,7 +5,8 @@
     cf quotes hydrate --bundle ../tao-share --out sources/hydrated.adam.jsonl
 
 A shared finding carries no book text: ``cf share export`` replaces every quote
-with ``{page, length, sha256 of the normalised quote, first/last six words}``.
+with ``{page, length, sha256 of the normalised quote, and a few words from each
+end -- at most a quarter of them, and none at all for a short sentence}``.
 This command reverses that for somebody who holds the same edition, out of THEIR
 OWN ``sources/<id>/text.txt``: it slides a window of the recorded length over the
 recorded page (plus or minus the quote gate's ``PAGE_BIND_WINDOW``) and keeps the
@@ -17,22 +18,25 @@ the finding was written against, or the quote was not copied out of the pinned
 text) and **ambiguous** (two differently-spelled passages hash to the same quote).
 
 A redacted ``book_quote`` is not the only thing to put back: ``cf share export``
-also redacts a verbatim run of the source inside a ``reason`` or a ``reasoning``
-into the row's ``redacted_spans``, and each of those is hydrated the same way,
-with the report's ``field`` saying where it came from.
+also redacts a verbatim run of the source out of EVERY free-text field of a row,
+at any depth, into the row's ``redacted_spans``, and each of those is hydrated
+the same way, with the report's ``field`` naming the path it came from
+(``reason``, ``witness.why``, ``dissent[0].argument``).
 
-``--out`` refuses any path ``cf share export`` would put in a bundle, and any path
-the surrounding git repo does not IGNORE, so book text recovered here cannot end
-up in the one artifact whose purpose is to travel nor in the history of the repo
-the no-remote rule is about.
+``--out`` refuses any path ``cf share export`` would put in a bundle, any path
+inside a companion repo, and any path the surrounding git repo does not IGNORE,
+so book text recovered here cannot end up in the one artifact whose purpose is to
+travel, nor in an audited tree this skill only ever reads, nor in the history of
+the repo the no-remote rule is about.
 """
 from __future__ import annotations
 
 import argparse
+import subprocess
 import tempfile
 from pathlib import Path
 
-from cflib import log
+from cflib import gitsafe, log
 from cflib.errors import CfError
 from cflib.jsonio import read_jsonl, write_jsonl
 from cflib.log import format_table
@@ -64,8 +68,9 @@ def register(subparsers) -> None:
                     help="only this companion's rows (repeatable)")
     hy.add_argument("--out", default="",
                     help="write the hydrated rows as JSONL here (default: print them). "
-                         "Refused for any path `cf share export` would include in a bundle, "
-                         "and for any path the surrounding git repo does not ignore")
+                         "Refused inside a companion repo, for any path `cf share export` "
+                         "would include in a bundle, and for a path the surrounding git "
+                         "repo does not ignore")
     hy.add_argument("--no-text", action="store_true",
                     help="print the table and the counts only, not the recovered passages")
 
@@ -83,35 +88,55 @@ def run(args) -> int:
 def _tracked_by_git(out: Path) -> Path | None:
     """The git repo that would TRACK *out*, or ``None``.
 
-    ``cfcmd.init.check_ignore`` is the only authority on this: the ignore rule may
-    come from the workspace's own .gitignore, from an outer repo's, or from the
-    user's global excludes, and a workspace created before `cf init` learned to
-    ignore ``quotes/`` has no such rule at all.  A directory with no repo around it
-    cannot track anything, so it is not refused.
-    """
-    from cfcmd.init import check_ignore, git_toplevel
+    ``git check-ignore`` is the only authority on this: the ignore rule may come
+    from the workspace's own .gitignore, from an outer repo's, or from the user's
+    global excludes, and a workspace created before `cf init` learned to ignore
+    ``quotes/`` has no such rule at all.  A directory with no repo around it cannot
+    track anything, so it is not refused.
 
+    Both calls go through :mod:`cflib.gitsafe`, not plain ``git``: the repo being
+    asked is whatever encloses the operator's ``--out``, which may be a tree this
+    skill does not own, and ``check-ignore`` refreshes the index, which runs the
+    ``core.fsmonitor`` command that repository's own config names (RULES: every
+    git invocation on a repo you do not own goes through ``cflib.gitsafe``).  The
+    safety check must not be the execution vector.
+    """
     # `git -C` needs a directory that exists, and --out normally names a file in one
     # that does not yet: the check has to happen BEFORE the write.
     here = out
     while not here.is_dir() and here != here.parent:
         here = here.parent
-    repo = git_toplevel(here)
-    if not repo:
-        return None
-    return None if check_ignore(repo, out) else repo
+    try:
+        found = gitsafe.run(here, ["rev-parse", "--show-toplevel"])
+        repo = Path(found.stdout.strip()) if found.returncode == 0 and found.stdout.strip() else None
+        if not repo:
+            return None
+        ignored = gitsafe.run(repo, ["check-ignore", "-q", str(out)]).returncode == 0
+    except subprocess.TimeoutExpired:
+        # A git that hangs tells us nothing, and "nothing" here must mean "do not
+        # write", so name the directory we were standing in.
+        return here
+    return None if ignored else repo
 
 
 def _refuse_unsafe_out(out: Path, workspace) -> None:
-    """``--out`` may not be a file a bundle carries, a file git tracks, or in the skill repo.
+    """``--out`` may not be a bundled file, a companion repo, the skill repo or tracked.
 
-    The second of those is the one measured: `cf init` writes ``quotes/`` into a
+    The last of those is the one measured: `cf init` writes ``quotes/`` into a
     NEW workspace's .gitignore, and ``_write_if_absent`` leaves an existing
     .gitignore alone, so in every workspace created before that line existed
     ``quotes/hydrated.<companion>.jsonl`` -- the path this command's own help
     suggests -- is a tracked file holding recovered book text, in the repo the
     no-remote rule is about.  An ignore rule that is only present in new
     workspaces cannot be the guarantee, so the guarantee is this check.
+
+    The companion check comes BEFORE it, and not only because a companion tree is
+    never written to (CLAUDE.md S4): asking a companion repo whether it ignores a
+    path runs git inside it, and a tree with no ``.git`` at all answers nothing,
+    so a companion that happens to ignore the path -- or that is not a repo --
+    would have been written to while the git check said the write was safe.
+    ``share.bundle._refuse_unsafe_out`` already refuses this destination for
+    ``cf share export --out``; this is the same loop for the same reason.
     """
     root = Path(workspace.root).resolve()
     relative = ""
@@ -128,6 +153,18 @@ def _refuse_unsafe_out(out: Path, workspace) -> None:
         raise CfError(
             f"refusing to write hydrated book text inside the skill repo ({skill_root()})",
             hint="the skill repo holds code, templates and docs only (CLAUDE.md S1)")
+    for name, companion in sorted(workspace.companions.items()):
+        if str(companion.repo) in ("", "."):   # an unset repo resolves to the cwd
+            continue
+        repo = Path(str(companion.repo)).expanduser().resolve()
+        if out == repo or repo in out.parents:
+            raise CfError(
+                f"refusing to write hydrated book text inside the companion repo {name} "
+                f"({repo})",
+                hint="a companion tree is read as data and nothing this skill runs writes "
+                     f"there (CLAUDE.md S4); write it under --out "
+                     f"{root / 'sources' / out.name} instead (sources/ is ignored in every "
+                     "workspace ever created)")
     repo = _tracked_by_git(out)
     if repo:
         raise CfError(
