@@ -44,7 +44,7 @@ scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
                   detect, report, recheck, score, share
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
-workflows/        Workflow-tool scripts (adjudication, challenge, fleet, verification)
+workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline
 ```
 
@@ -97,7 +97,7 @@ promise: one real run, captured 2026-09-21 against `tao-measure-lean` at
 quietly cut. Every count in it belongs to that commit — another checkout prints
 other numbers, and that is drift, not breakage. The transcript you can
 reproduce is `bash tests/e2e/synthetic.sh`, which builds its own booklet and two
-companions of it and checks about seventy artifacts against pinned figures.
+companions of it and checks about thirty artifacts against pinned figures.
 
 ```
 repo      : <tao-measure-lean>
@@ -163,6 +163,14 @@ cf plan-run --preset attack-vac --companion tao-measure-lean \
 cf run attack-vac-2026-09-20 --host <alias> --i-have-consent   # dry run without --execute
 cf harvest attack-vac-2026-09-20      # the findings gate runs by default
 cf tally --union --agreed
+
+# 5-local. no allowlisted host? omit --host — it defaults to `local`, and
+#   plan-run then prints a note when the plan is above `local_fleet_max_items`
+#   (the two worked companions are 506 and 178 items), so either raise that
+#   key in workspace.yaml or accept `cf run <id> --local --force` and a resume.
+#   Then `cf run <id> --local`, and `cf harvest <id> --journal <workflow dir>`
+#   once the Workflow has finished. SKILL.md's fleet table and
+#   references/workflow-patterns.md section 6 have the detail.
 
 # 5b. findings produced before this skill existed
 #     --repo-map says which companion their repo names are: the union key holds
