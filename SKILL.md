@@ -148,6 +148,7 @@ checkout actually has.
 | `import-corpus --run-id <id> --from <dir> [--repo-map ours=<companion>]` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt, source never touched. `--repo-map` states which of this workspace's companions a foreign repo name is — the union key is `(source_id, repo, item, kind)`, so without it the imported rows join nothing here, and the import warns |
 | `tally [--union] [--agreed] [--source ID]` | recompute every finding count from `corpus/`, grouped by `(source_id, repo)`; nothing downstream may count by hand |
 | `adjudicate [--companion X]` | lenses → reconciler → skeptics; challenge unchallenged rows; write ledger rows |
+| `recheck [--companion X]` | re-extract the companion's statements at its **current** commit and label every open finding `unchanged` / `changed` / `gone` / `unpinned` against the `repo_commit` + `decl_fingerprints` it was pinned to. Writes `reports/recheck.<companion>.json` and a `recheck` block on the ledger rows; **changes no verdict** and calls no model. `--from-stored`, `--no-write`, `--json` |
 | `detect-proxies <name> [--source ID]` | definition coverage and (with a built Lean env) dependency-stage analysis; publishes PROXY/COVERAGE rows into `corpus/detect-<name>-<tier>/` through the `mechanical` gate |
 | `route` | per-companion routed files with `_meta`, plus owner messages |
 | `report` | tally + handoff + claims verification |

@@ -206,15 +206,14 @@ def computed_finding_id(run_id: str, source_id: str, item: str, kind: str,
 
 
 def defect_key(source_id: str, item: str, kind: str, decls: Sequence[str]) -> str:
-    """:func:`computed_finding_id` with NO run id -- one key for one defect.
+    """``cflib.hashing.defect_key`` -- kept here for callers that import it here.
 
-    ``run_id`` is the first part of ``finding_id``, so the same defect found by
-    two runs gets two ids and nothing can link them: ``union --group-by
-    finding-id --new-only`` answered "everything is new".  This key drops it and
-    keeps every other part, so it is the id two runs of the same defect share.
-    It is a KEY, never written into a finding: the stored id is unchanged.
+    The definition lives in ``cflib.hashing`` beside ``finding_id``, so the two
+    cannot drift: this key IS that id with the run part empty, and a second
+    spelling of it is how the pair stops agreeing.  ``item`` is the JOIN key, not
+    the label a worker wrote -- see :func:`rows_for_run`.
     """
-    return hashing.finding_id("", source_id, item, kind, decls)
+    return hashing.defect_key(source_id, item, kind, decls)
 
 
 def id_mismatches(rows: Iterable[dict]) -> list[dict]:
@@ -260,6 +259,10 @@ def rows_for_run(run_id: str, directory: str | Path,
     win over the harvest run's, the declarations go in as written -- because the
     two readers key the two halves of the pipeline (tally/union/gate against
     route/adjudicate/transcribe) and an id computed two ways links neither.
+
+    Beside it every row carries a ``defect_key``: the same hash with no run id,
+    over the COLLAPSED item, which is the key that links one defect across runs
+    however each of them spelled its label.
     """
     directory = Path(directory)
     mode = mode or run_mode(run_id, directory)
@@ -315,7 +318,15 @@ def rows_for_run(run_id: str, directory: str | Path,
                     "concept": defect.get("concept"),
                     "decls": sorted(decls),
                     "finding_id": computed,
-                    "defect_key": defect_key(row_source, item_raw,
+                    # The id hashes the label AS WRITTEN (a routed row read back
+                    # has to reproduce it); the run-independent KEY hashes the
+                    # COLLAPSED item, because that is what two corpus
+                    # generations join on.  Keyed on the raw label, two runs
+                    # that wrote `Exercise 1.6.27` and `Exercise 1.6.27(iii)`
+                    # for one defect got two keys and `--group-by finding-id
+                    # --new-only` called the second one new -- exactly the
+                    # duplicate this module's header describes in union.adam.json.
+                    "defect_key": defect_key(row_source, item,
                                              str(kind or "").strip(), all_decls),
                     "faithful": defect.get("faithful"),
                 }

@@ -60,10 +60,11 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
     ``sha256("\\n".join([run_id, source_id, clean(item), kind, *sorted(decls)]))``.
     Deterministic for one defect WITHIN one run: ``run_id`` is the first part, so
     the same defect found by two runs gets two ids, and this is NOT the key that
-    joins them.  That key is ``harvest.tally.defect_key`` -- the same five parts
-    with the run id empty -- and it is what union, agreed and adjudication match
-    across runs; an id links a ledger or routed row back to the finding of ONE
-    run, which is the job it is content-addressed for.
+    joins them.  That key is :func:`defect_key` -- the same five parts with the
+    run id empty -- and ``harvest/union.py --group-by defect-key`` is what
+    matches on it across runs.  An id links a ledger or routed row back to the
+    finding of ONE run, which is the job it is content-addressed for, and is what
+    adjudication, transcription and ``cf recheck`` join on.
 
     Three details are load-bearing and must not drift:
 
@@ -87,6 +88,39 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
     payload = "\n".join([str(run_id or ""), str(source_id or ""), clean(str(item or "")),
                          str(kind or ""), *decls])
     return sha256_text(payload)
+
+
+def defect_key(source_id: str, item: str, kind: str,
+               unfaithful_decls: Sequence[str]) -> str:
+    """The run-INDEPENDENT identity of one defect -- the ONE definition.
+
+    :func:`finding_id` with the run id empty, so two runs that found the same
+    defect produce the same key.  ``finding_id`` cannot do that job (``run_id``
+    is its first hashed part), which is why ``harvest/union.py --group-by
+    finding-id --new-only`` once answered "everything is new" -- re-found defects
+    scored as misses, the regression that module was written to fix.  Callers
+    that LINK a defect across runs use this -- today ``--group-by defect-key``
+    there, and nothing else; callers that address one observation of it use
+    ``finding_id``, which is what adjudication, transcription and ``cf recheck``
+    join on, while ``agreed`` groups on the collapsed item and the kind plus a
+    shared declaration and reads neither key.  Both are carried side by side and
+    neither is stored on a finding: they are recomputed from the content every
+    time it is read.
+
+    *item* must be the key two corpus generations JOIN on, not the label a
+    worker wrote.  ``harvest.tally`` passes ``collapse_to_book_item()`` (which is
+    ``items.join_key`` for an in-text label and the book item for a numbered
+    one), because ``Exercise 1.6.27`` and ``Exercise 1.6.27(iii)`` are one defect
+    at one book item: keyed on the raw spelling they landed in two groups, so the
+    "exact" grouping was not even a refinement of the default one.  CLAUDE.md S4:
+    anything that MATCHES on an item matches on ``join_key``.
+
+    The companion is deliberately NOT hashed in.  It is a field on every row and
+    part of every grouping tuple that uses this key (``(source_id, repo,
+    defect_key)`` in ``union``), so folding it into the digest would change no
+    grouping and re-key what is already written.
+    """
+    return finding_id("", source_id, item, kind, unfaithful_decls)
 
 
 def manifest(paths: Iterable[str | Path], root: str | Path | None = None) -> dict[str, str]:

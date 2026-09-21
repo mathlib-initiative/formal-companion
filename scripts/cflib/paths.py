@@ -309,6 +309,19 @@ class WorkspacePaths:
     def union_json(self, name: str) -> Path:
         return self.reports_dir / f"union.{_safe_id(name, 'companion name')}.json"
 
+    def pin_json(self, run_id: str) -> Path:
+        """The companion revision a run's findings were judged against.
+
+        A report and not a corpus file: writing it into ``corpus/<run-id>/`` would
+        make the findings gate read it as a finding, and the corpus is the set of
+        files whose shas the receipt manifests.
+        """
+        return self.reports_dir / f"pin.{_safe_id(run_id, 'run_id')}.json"
+
+    def recheck_json(self, name: str) -> Path:
+        """One companion's latest ``cf recheck`` result."""
+        return self.reports_dir / f"recheck.{_safe_id(name, 'companion name')}.json"
+
     def score_json(self, run_id: str) -> Path:
         return self.reports_dir / f"score.{_safe_id(run_id, 'run_id')}.json"
 

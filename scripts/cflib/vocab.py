@@ -110,6 +110,19 @@ UNCHALLENGED = "UNCHALLENGED"
 CHALLENGED = "CHALLENGED"
 ROUTE_STATUSES = frozenset({UNCHALLENGED, CHALLENGED})
 
+# --- re-check status (`cf recheck`: a pinned finding against the current repo).
+#: These are facts about the CODE, never verdicts: `changed` and `gone` say a
+#: human must look again, not that a finding is closed.  `unpinned` is the honest
+#: answer for an imported corpus and for every row written before the pin
+#: existed -- it is reported rather than guessed at, so re-checking a legacy
+#: ledger cannot move an adjudicated number.  Ordered worst-last for display.
+RECHECK_UNCHANGED = "unchanged"
+RECHECK_UNPINNED = "unpinned"
+RECHECK_CHANGED = "changed"
+RECHECK_GONE = "gone"
+RECHECK_STATUSES = (RECHECK_UNCHANGED, RECHECK_UNPINNED, RECHECK_CHANGED, RECHECK_GONE)
+RECHECK_STATUS_SET = frozenset(RECHECK_STATUSES)
+
 # --- viewer layer (publish-verdicts; measure_theory only in v1)
 VIEWER_VERDICTS = frozenset({"faithful", "convention", "attribution_gap", "proxy", "deviation"})
 VIEWER_STATUS = frozenset({"unconfirmed", "contested", "human_confirmed", "fixed"})

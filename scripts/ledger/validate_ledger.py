@@ -42,6 +42,8 @@ MIN_RECOVERY_CHARS = 40
 #: severity token allowed in a ledger row on top of the finding severities
 NO_SEVERITY = "none"
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
+#: a git object name: 40 hex, or the 64 of sha256 object format
+_COMMIT_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 
 
 class LedgerError(dict):
@@ -71,6 +73,58 @@ def _err(code: str, message: str, row: dict | None = None, file: str = "") -> Le
 
 def _is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _pin_errors(row: dict, file: str = "") -> list[LedgerError]:
+    """Check the shape of the revision pin, when the row carries one.
+
+    The pin is OPTIONAL -- every imported and every pre-pin row has none, and a
+    row is not wrong for being unpinned -- but a pin that is present has to be a
+    pin: a truncated commit or a fingerprint that is not a digest would make
+    ``cf recheck`` report a live finding as changed, which is the one failure mode
+    that would make nobody run it again.  ``recheck`` is written by ``cf recheck``
+    and must never carry a verdict: a re-check states what the code did.
+    """
+    errs: list[LedgerError] = []
+    commit = str(row.get("repo_commit") or "").strip()
+    if commit and not _COMMIT_RE.match(commit):
+        errs.append(_err("repo_commit",
+                         "repo_commit %r is not a full git object name" % commit[:16],
+                         row, file))
+    prints = row.get("decl_fingerprints")
+    if prints is not None and not isinstance(prints, dict):
+        errs.append(_err("decl_fingerprints", "decl_fingerprints is not an object", row, file))
+    elif isinstance(prints, dict):
+        named = {str(d) for d in (row.get("unfaithful_decls") or []) if d}
+        for decl, value in sorted(prints.items()):
+            if not _SHA_RE.match(str(value or "")):
+                errs.append(_err("decl_fingerprints",
+                                 "fingerprint for %s is not a sha256 hex digest" % decl,
+                                 row, file))
+            if named and str(decl) not in named:
+                errs.append(_err("decl_fingerprints",
+                                 "fingerprint for %s, which this row does not name" % decl,
+                                 row, file))
+        if prints and not commit:
+            errs.append(_err("repo_commit",
+                             "decl_fingerprints without a repo_commit: a fingerprint means "
+                             "nothing without the revision it was taken at", row, file))
+    block = row.get("recheck")
+    if block is not None:
+        if not isinstance(block, dict):
+            errs.append(_err("recheck", "recheck is not an object", row, file))
+        else:
+            status = str(block.get("status") or "").strip()
+            if status and status not in compat.RECHECK_STATUSES:
+                errs.append(_err("recheck",
+                                 "recheck status %r is not a vocabulary token (%s)"
+                                 % (status, ", ".join(compat.RECHECK_STATUSES)), row, file))
+            for field in ("verdict", "resolution"):
+                if block.get(field):
+                    errs.append(_err("recheck",
+                                     "recheck carries a %s: a re-check reports what the code "
+                                     "did, it does not adjudicate" % field, row, file))
+    return errs
 
 
 def validate_row(
@@ -202,6 +256,8 @@ def validate_row(
                     file,
                 )
             )
+
+    errs.extend(_pin_errors(row, file))
 
     repo = str(row.get("repo") or "").strip()
     decls = [compat.normalise_decl(d) for d in (row.get("unfaithful_decls") or []) if d]
