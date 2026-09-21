@@ -1,9 +1,9 @@
 """``cf adjudicate`` -- prepare, transcribe and validate the adjudication stage.
 
-    python3 scripts/cf.py adjudicate --companion adam --emit-args
-    python3 scripts/cf.py adjudicate --companion adam --challenge-only --emit-args
-    python3 scripts/cf.py adjudicate --companion adam --transcribe result.json
-    python3 scripts/cf.py adjudicate --validate
+    cf adjudicate --companion adam --emit-args
+    cf adjudicate --companion adam --challenge-only --emit-args
+    cf adjudicate --companion adam --transcribe result.json
+    cf adjudicate --validate
 
 Stage 7 runs in a Claude Code session, not in this process: the lenses,
 reconciler and skeptics are a Workflow script (``workflows/adjudicate.workflow.js``),
@@ -32,6 +32,7 @@ if __package__ in (None, ""):  # direct execution
 
 import argparse
 
+from cflib import invocation
 from ledger import compat, transcribe as transcribe_mod, workflow_args
 from ledger import findings as findings_mod
 from ledger import validate_ledger as vl
@@ -205,7 +206,8 @@ def run(args) -> int:
                   % (name, counts.get("rows", len(rows)), counts.get("items", 0),
                      counts.get("challenged", 0), len(unchallenged), routed["meta"].get("status", "")))
             if unchallenged:
-                print("  next: %s" % _next_step(paths.root, name, "--emit-args"))
+                print("  next: %s"
+                      % invocation.adjudicate_command(paths.root, name, "--emit-args"))
             continue
 
         selected = unchallenged if args.challenge_only else rows
@@ -233,23 +235,9 @@ def run(args) -> int:
         print("    Workflow({ scriptPath: \"%s\", args: <the JSON in %s> })"
               % (os.path.join(_skill_root(), script), out))
         print("  ~%d subagents; resume with resumeFromRunId if the session limit stops it." % agents)
-        print("  then: %s" % _next_step(
+        print("  then: %s" % invocation.adjudicate_command(
             paths.root, name, "--transcribe <result.json> --from %s" % kind))
     return rc
-
-
-def _next_step(root, companion: str, tail: str) -> str:
-    """One `cf adjudicate ...` hint, with the workspace RESOLVED.
-
-    The same spelling ``route.challenge_command`` writes one step earlier, and
-    for the same reason: these two lines said ``python3 scripts/cf.py adjudicate
-    --workspace <ws> ...``, a path relative to the SKILL checkout printed to an
-    operator standing in the WORKSPACE, where there is no ``scripts/``.  Pasting
-    it answered "can't open file .../scripts/cf.py" -- one step after `cf route`
-    had printed the spelling that works.
-    """
-    return ("cf adjudicate --workspace %s --companion %s %s"
-            % (os.path.abspath(root), companion, tail))
 
 
 def _skill_root() -> str:
