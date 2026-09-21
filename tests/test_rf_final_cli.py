@@ -22,9 +22,11 @@ One class per finding, and every case failed before the change it guards:
 * ``cf adjudicate`` printed ``python3 scripts/cf.py adjudicate ...`` as its next
   step -- a path relative to the SKILL checkout, printed to an operator standing
   in the WORKSPACE -- one step after ``cf route`` had printed the spelling that
-  works; and ``cf init`` was the one hint printer in the skill that passed
-  ``--workspace``, which left the operator outside the workspace so that
-  ``cf onboard``'s own bare next-steps exited 2 when pasted.
+  works; three commands printed the same relative path out of ``--help``, because
+  they hand their module docstring to argparse as ``description=``; and ``cf init``
+  was the one hint printer in the skill that passed ``--workspace``, which left the
+  operator outside the workspace so that ``cf onboard``'s own bare next-steps
+  exited 2 when pasted.
 * ``cfcmd.detect_proxies`` accepted a ``pdf_page`` of ``0``, a bool or a negative
   where ``plan.presets.item_pages`` drops them, which binds every quote of that
   item to page 0 instead of falling back to the gate's heading search.
@@ -142,6 +144,23 @@ def shell(command: str, cwd) -> subprocess.CompletedProcess:
                           text=True, env=env)
 
 
+def hints_in(res) -> list[str]:
+    """Every printed `cf ...` / `cd ...` next step, in order, from BOTH streams.
+
+    stdout alone is not the hint surface: a refusal's remediation goes out through
+    ``log.warn``/``log.warn_block``, which write to stderr (`cf sources add` prints
+    its `cf sources remove <id>` that way), so scraping one stream silently
+    exempted every hint a command prints while it says no.
+    """
+    out = []
+    for line in (res.stdout + res.stderr).splitlines():
+        body = re.sub(r"^\s*(warn\s+)?(next|then|drop it with|bring it back with|"
+                      r"once you have it):\s*", "", line).strip()
+        if body.startswith("cf ") or body.startswith("cd "):
+            out.append(body)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # FR#8 -- a refused source must not stay bound
 # ---------------------------------------------------------------------------
@@ -204,17 +223,56 @@ class TestARefusedSourceIsNotLeftBound(unittest.TestCase):
                                       "--workspace", str(self.ws)])
         self.assertEqual(rc, 2)
         self.assertIn("ours is unchanged", said)
+        # `_prepare_source` says `ok prepared sources/<id>/ ...` before it runs the
+        # refusals, and the rollback then deletes that directory: the warning has
+        # to retract the earlier line, not merely contradict it.
+        self.assertIn("ok   prepared  sources/appendix-manuscript/", said)
+        self.assertIn("sources/appendix-manuscript/ was removed again", said)
 
-    def test_a_source_the_workspace_already_held_is_not_removed_by_a_refusal(self):
-        """The rollback undoes what THIS call created -- never a pre-existing row."""
+    def _already_hold_the_bad_source(self) -> None:
+        """Put the refused document in the workspace before the call under test.
+
+        ``role: reference`` because the row has to leave a workspace that LOADS: an
+        audited source no companion lists is refused by the validator, and a
+        fixture that wrote one got its exit 2 from there rather than from the
+        refusal under test.
+        """
         ws = Workspace.load(self.ws, validate=False)
         from cflib.hashing import sha256_file
 
         ws.upsert_source("appendix-manuscript", sha256=sha256_file(self.bad),
                          title="Appendix Manuscript", edition="a1", pdf=str(self.bad),
-                         role="audited", confirmed=False, registry="overlay")
+                         role="reference", confirmed=False, registry="overlay")
         ws.save()
-        self.assertEqual(self._add_the_bad_source(), 2)
+        self.assertEqual(Workspace.load(self.ws).validate(), [])
+
+    def test_the_recovery_hint_the_refusal_prints_actually_removes_it(self):
+        """A hint printed while saying NO is still a hint, and this one is on stderr.
+
+        The rollback deliberately keeps a row the call did not create, so the only
+        thing that takes it out is the command the refusal names -- which went out
+        through ``warn_block``, a stream a stdout-only replay never reads.
+        """
+        self._already_hold_the_bad_source()
+        res = cf("sources", "add", str(self.bad), "--for", "ours", "--title",
+                 "Appendix Manuscript", "--edition", "a1", cwd=self.ws)
+        self.assertEqual(res.returncode, 2, res.stdout + res.stderr)
+        offered = [h for h in hints_in(res) if h.startswith("cf sources remove")]
+        self.assertEqual(offered, ["cf sources remove appendix-manuscript"],
+                         res.stdout + res.stderr)
+        replayed = shell(offered[0], cwd=self.ws)
+        self.assertEqual(replayed.returncode, 0, replayed.stderr)
+        after = Workspace.load(self.ws, validate=False)
+        self.assertNotIn("appendix-manuscript", after.data.get("sources") or {})
+
+    def test_a_source_the_workspace_already_held_is_not_removed_by_a_refusal(self):
+        """The rollback undoes what THIS call created -- never a pre-existing row."""
+        self._already_hold_the_bad_source()
+        rc, said = _say(cf_main.cli, ["sources", "add", str(self.bad), "--for", "ours",
+                                      "--title", "Appendix Manuscript", "--edition", "a1",
+                                      "--workspace", str(self.ws)])
+        self.assertEqual(rc, 2)
+        self.assertIn("was already in this workspace and stays", said)
         after = Workspace.load(self.ws, validate=False)
         self.assertIn("appendix-manuscript", after.data.get("sources") or {},
                       "a row this call did not create must survive its refusal")
@@ -416,13 +474,27 @@ class TestEveryDocumentedInvocationPlansTheRightDifferential(MultiSourceWorkspac
         self.assertEqual(self.run_doc()["sources"][0]["id"], BOOK_ID)
 
     def test_a_source_no_companion_audits_is_refused_by_name(self):
-        self.ws.upsert_source("a-third-booklet", sha256="c" * 64, title="Third",
-                              edition="x", role="audited", confirmed=True,
+        """`--source <a reference edition>` refuses instead of planning an empty run.
+
+        The role matters, and it is the whole fixture: an AUDITED source no
+        companion lists is refused one layer earlier, by the workspace validator
+        ("role is audited but no companion lists it"), so a fixture that wrote
+        ``role="audited"`` never reached this branch and passed byte-identically
+        before the fix.  A REFERENCE edition nobody lists is a legal workspace --
+        the bundled draft in ``tests/e2e/multisource.sh`` is one -- so it loads,
+        and `plan-run` is the command that has to say no.
+        """
+        self.ws.upsert_source("a-ref-booklet", sha256="c" * 64, title="Third",
+                              edition="x", role="reference", confirmed=True,
                               kinds=["Exercise"], chapters=[1])
         self.ws.save()
+        self.assertEqual(Workspace.load(self.root).validate(), [],
+                         "a reference edition nobody lists must still load")
         with self.assertRaises(CfError) as caught:
-            _quiet(self.plan, source_id="a-third-booklet")
-        self.assertIn("no companion", str(caught.exception))
+            _quiet(self.plan, source_id="a-ref-booklet")
+        self.assertIn("no companion of this workspace is audited", str(caught.exception))
+        self.assertIn("a-ref-booklet", str(caught.exception))
+        self.assertIn("cf sources list", caught.exception.hint or "")
 
     def test_an_attack_run_still_audits_exactly_one_companion(self):
         self.assertEqual(
@@ -475,8 +547,8 @@ class TestPrintedHintsRunFromTheWorkspace(unittest.TestCase):
     RELATIVE = "scripts/cf.py"
     #: the one non-hint the sweep below must not flag, with the reason it is not one.
     #: ``scripts/adapters/yamlio.py`` raises it when the adapters are imported WITHOUT
-    #: ``cf.py``, which only happens from the repo checkout (CONTRIBUTING.md's reader),
-    #: never from a workspace -- the same exemption module docstrings get.
+    #: ``cf.py``, which only happens from the repo checkout (CONTRIBUTING.md's
+    #: reader), never from a workspace -- so it is read where the path resolves.
     NOT_A_HINT = ("adapters/yamlio.py",)
 
     def _routed_workspace(self) -> pathlib.Path:
@@ -531,22 +603,12 @@ class TestPrintedHintsRunFromTheWorkspace(unittest.TestCase):
             "gate": {"ok": True, "checked": 1}}), encoding="utf-8")
         return root
 
-    @staticmethod
-    def _hints(text: str) -> list[str]:
-        """Every printed `cf ...` / `cd ...` next step, in order."""
-        out = []
-        for line in text.splitlines():
-            body = re.sub(r"^\s*(next|then):\s*", "", line).strip()
-            if body.startswith("cf ") or body.startswith("cd "):
-                out.append(body)
-        return out
-
     def test_cf_adjudicate_prints_a_hint_that_runs_from_the_workspace(self):
         root = self._routed_workspace()
         res = cf("adjudicate", cwd=root)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertNotIn(self.RELATIVE, res.stdout + res.stderr)
-        hints = self._hints(res.stdout)
+        hints = hints_in(res)
         self.assertTrue(hints, res.stdout)
         for hint in hints:
             with self.subTest(hint=hint):
@@ -559,17 +621,20 @@ class TestPrintedHintsRunFromTheWorkspace(unittest.TestCase):
         res = cf("adjudicate", "--companion", "ours", "--emit-args", cwd=root)
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertNotIn(self.RELATIVE, res.stdout + res.stderr)
-        hints = self._hints(res.stdout)
+        hints = hints_in(res)
         self.assertTrue(hints, res.stdout)
         for hint in hints:
             with self.subTest(hint=hint):
                 # this one carries a `<result.json>` the operator fills in, so what
-                # is replayed is the command with the placeholder dropped: `cf` must
-                # parse it and find the workspace, and only then complain about the
-                # missing argument.
+                # is replayed is the command with the placeholder dropped, which
+                # leaves a plain `cf adjudicate --workspace <ws> --companion ours`.
+                # rc 0 is the assertion: "it did not say No such file" passes for a
+                # hint that resolves the workspace and then fails for some other
+                # reason, which is most of what could go wrong here.
                 replayed = shell(hint.split("--transcribe")[0].strip(), cwd=root)
-                self.assertNotIn("No such file or directory", replayed.stderr)
-                self.assertNotIn("no workspace.yaml found", replayed.stderr)
+                self.assertEqual(replayed.returncode, 0,
+                                 f"{hint!r} -> rc {replayed.returncode}\n{replayed.stderr}")
+                self.assertNotIn(self.RELATIVE, replayed.stdout + replayed.stderr)
 
     def test_cf_init_hands_over_a_shell_every_later_bare_hint_resolves_in(self):
         """FR#40: `cf init` was the one printer that passed --workspace.
@@ -581,7 +646,7 @@ class TestPrintedHintsRunFromTheWorkspace(unittest.TestCase):
         target = outside / "ws"
         res = cf("init", str(target), "--no-git", cwd=outside)
         self.assertEqual(res.returncode, 0, res.stderr)
-        hints = self._hints(res.stdout)
+        hints = hints_in(res)
         self.assertEqual(hints[0], f"cd {target}")
         self.assertNotIn("--workspace", " ".join(hints))
         # replay the chain: cd, then the bare hint, in the directory cd names
@@ -589,28 +654,95 @@ class TestPrintedHintsRunFromTheWorkspace(unittest.TestCase):
         self.assertEqual(replayed.returncode, 0, replayed.stderr)
         self.assertNotIn("no workspace.yaml found", replayed.stderr)
 
+    #: what makes a MODULE docstring printed output rather than a usage header
+    PRINTS_ITS_DOCSTRING = ("description=__doc__", "epilog=__doc__")
+
     def test_no_printed_string_under_scripts_ships_a_relative_cf_py(self):
-        """A static sweep. Module and function docstrings are usage headers, read by
-        someone standing in the repo checkout (CONTRIBUTING.md's reader); every
-        other string literal is something a command prints to an operator standing
-        in a WORKSPACE, where there is no ``scripts/`` at all.
+        """A static sweep over every string a command can print.
+
+        Docstrings are exempt because they are read from the repo checkout
+        (CONTRIBUTING.md's reader), with ONE exception that is not a detail: a
+        module that hands its ``__doc__`` to argparse as ``description=`` or
+        ``epilog=`` has turned that docstring into ``cf <command> --help`` output,
+        read by an operator standing in the WORKSPACE.  `cf adjudicate --help`
+        printed four ``python3 scripts/cf.py adjudicate ...`` lines that way, which
+        is this finding's own defect on the one surface a docstring exemption
+        hides.  So for those modules the module docstring is swept like any other
+        string; their class and function docstrings stay exempt.
         """
         offenders = []
         for path in sorted(SCRIPTS.rglob("*.py")):
             if path.relative_to(SCRIPTS).as_posix() in self.NOT_A_HINT:
                 continue
-            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            docstrings = {id(ast.get_docstring(n, clean=False)) for n in ast.walk(tree)
-                          if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef,
-                                            ast.AsyncFunctionDef))}
+            source = path.read_text(encoding="utf-8")
+            tree = ast.parse(source, filename=str(path))
+            printed = any(marker in source for marker in self.PRINTS_ITS_DOCSTRING)
+            exempt = {id(ast.get_docstring(n, clean=False)) for n in ast.walk(tree)
+                      if isinstance(n, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
+            if not printed:
+                exempt.add(id(ast.get_docstring(tree, clean=False)))
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Constant) or not isinstance(node.value, str):
                     continue
-                if id(node.value) in docstrings:
+                if id(node.value) in exempt:
                     continue
                 if self.RELATIVE in node.value:
                     offenders.append(f"{path.relative_to(SKILL)}:{node.lineno}")
         self.assertEqual(offenders, [], "a printed string ships a skill-relative cf.py")
+
+    def test_no_workflow_script_saves_a_relative_cf_py_into_the_workspace(self):
+        """The .js twins, which the Python sweep above cannot see.
+
+        ``workflows/fleet-local.workflow.js`` builds the run's ``next`` block, which
+        is saved into the workspace and read from there, and it had drifted from
+        ``scripts/run/fleet_local.py`` -- the two printed different spellings of the
+        same two steps.  A ``//`` comment line is the JS analogue of a docstring
+        (read in the checkout, never printed), so only the rest is swept.
+        """
+        offenders = []
+        for path in sorted((SKILL / "workflows").glob("*.js")):
+            for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+                if line.lstrip().startswith("//"):
+                    continue
+                if self.RELATIVE in line:
+                    offenders.append(f"{path.relative_to(SKILL)}:{number}")
+        self.assertEqual(offenders, [], "a workflow saves a skill-relative cf.py")
+
+    def test_the_two_fleet_local_twins_print_the_same_two_steps(self):
+        """The drift the sweep above would not have caught on its own."""
+        from run import fleet_local
+
+        text = fleet_local.instructions(pathlib.Path("/tmp/args.json"), 3, run_id="demo")
+        self.assertIn("cf harvest demo --journal <workflow-dir> --gate", text)
+        saved = [line.strip() for line
+                 in (SKILL / "workflows" / "fleet-local.workflow.js").read_text(
+                     encoding="utf-8").splitlines()
+                 if line.strip().startswith(("harvest:", "requeue:"))]
+        self.assertEqual(len(saved), 2, saved)
+        self.assertTrue(saved[0].startswith("harvest: 'cf harvest '"), saved[0])
+        self.assertTrue(saved[1].startswith("requeue: 'cf plan-run --preset "), saved[1])
+
+    def test_one_helper_spells_every_cf_adjudicate_hint(self):
+        """`cf route` and `cf adjudicate` print the same next step, one step apart.
+
+        They used to disagree, and the fix put a second builder in ``cfcmd``
+        alongside ``route.challenge_command``.  ``cflib.invocation`` is now the one
+        builder; until ``scripts/route/`` can be touched, this pins the two against
+        each other so they cannot drift again in silence.
+        """
+        from cflib import invocation
+        from route import route as route_mod
+
+        root = self._routed_workspace()
+        self.assertEqual(
+            route_mod.challenge_command(str(root), "ours"),
+            invocation.adjudicate_command(root, "ours", "--challenge-only", "--emit-args"))
+        # and with nothing to resolve the flag is left off rather than faked
+        self.assertEqual(invocation.adjudicate_command("", "ours", "--emit-args"),
+                         "cf adjudicate --companion ours --emit-args")
+        self.assertEqual(route_mod.challenge_command("", "ours"),
+                         invocation.adjudicate_command(
+                             "", "ours", "--challenge-only", "--emit-args"))
 
     def test_the_local_fleet_prints_an_absolute_gate_script(self):
         """The second half of the same rule, in the function whose docstring states it."""
