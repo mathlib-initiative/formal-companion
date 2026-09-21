@@ -326,7 +326,8 @@ def _park_unlisted_sources(workspace, result) -> None:
     so.  A source parked here comes back as audited on the next successful
     onboard, and `cf sources remove <id>` drops it for good.
 
-    This is the REPAIR for a workspace that already holds such a source.
+    Nothing calls this today.  It is the REPAIR for a workspace an older version
+    parked such a source into, kept (with its test) for that reason.
     Onboarding no longer makes one: it saves workspace.yaml only after every
     source has been prepared, and a refusal before that goes through
     :func:`_retract_registration` instead, which leaves the file untouched.
@@ -568,7 +569,10 @@ class SourceRegistration:
 
         Returns ``{source_id: a prepared directory was removed}`` for the ids
         this call created.  A source the workspace already held is not this
-        call's to remove, so it is left alone and reported by the caller.
+        call's to remove, so it is left alone and reported by the caller.  The
+        same goes for a DIRECTORY that existed before this call: it is left in
+        place even though prepare may have rewritten it, because deleting a
+        directory this call did not create is the worse mistake.
         """
         dropped: dict[str, bool] = {}
         for source_id in source_ids:

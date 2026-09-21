@@ -117,6 +117,12 @@ class TestEveryDocumentDescribesTheSameRedactedQuote(unittest.TestCase):
             found += [(name, hit) for hit in _QUOTE_RECORD.findall(flat)]
         return found
 
+    def test_the_policy_states_the_same_budget_in_prose(self):
+        """POLICY.md spells no ``(page, ...)`` record, so the scan above finds none in it."""
+        policy = " ".join(read("POLICY.md").split())
+        self.assertIn("at most a quarter of the quote's words at each end", policy)
+        self.assertIn("nothing at all below fourteen words", policy)
+
     def test_every_document_states_all_four_parts_of_the_record(self):
         records = self.records()
         self.assertTrue(records, "no document spells the redacted-quote record: regex is wrong")
@@ -300,8 +306,9 @@ class TestTheZeroLedgerExportDescribesTheImportThatFollows(unittest.TestCase):
         self.assertNotIn("will refuse this bundle", nxt)
         self.assertNotIn("needs at least one adjudicated ledger row", nxt)
         self.assertIn("merges adjudicated ledger rows", nxt)
-        self.assertEqual([c for c in nxt.splitlines() if c.strip().startswith("cf share import")],
-                         [], "the export named a command on a bundle with no rows to merge")
+        self.assertEqual([c for c in nxt.splitlines()
+                          if c.strip().startswith("`cf share import`") and "refuse" in c],
+                         [], "the export promised a refusal `cf share import` does not make")
 
     def test_the_summary_names_the_scope_the_scan_really_has(self):
         """FR#3 widened the scan to every free-text field; two printed strings
