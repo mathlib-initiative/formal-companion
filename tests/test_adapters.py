@@ -37,7 +37,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from adapters import api, base, itemtag, leanparse  # noqa: E402
-from adapters.api import from_config  # noqa: E402
+from adapters.api import from_config, load  # noqa: E402
 
 #: The published GSM 126 edition: the bytes both target companions were read
 #: against.  Rows carry the PAIR (source_id, source_sha) -- the id so an item is
@@ -315,22 +315,39 @@ class AdapterLoadingTest(unittest.TestCase):
         developer's absolute path, this test passed only on that machine.
         """
         from adapters import yamlio
-        repo = Path(tempfile.mkdtemp(prefix="cf-tmpl-",
-                                     dir=os.environ.get("CF_TEST_TMP") or None))
-        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+        parent = Path(tempfile.mkdtemp(prefix="cf-tmpl-",
+                                       dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        repo = parent / "companion"
         exports = repo / "pdf-overlay" / "data"
         exports.mkdir(parents=True)
         for name in ("target-refinement.json", "declaration-snippets.json"):
             (exports / name).write_text("{}", encoding="utf-8")
+        cfg_path = parent / "adapter.yaml"
         for path, kind in ((TEMPLATES / "docstring_tags.tao-measure-lean.yaml", "docstring_tags"),
                            (TEMPLATES / "attribution_table.measure_theory.yaml", "attribution_table")):
             with self.subTest(path.name):
                 config = yamlio.load_yaml(path)
                 self.assertEqual(config["repo"], "<path to the companion repo>",
                                  "a shipped template names no real repo")
-                config["repo"] = str(repo)
-                adapter = from_config(config, name=config.get("name"), source=str(path))
+                # `repo:` is written RELATIVE here, because that is the second
+                # thing `load` does and the only place it is exercised: a
+                # relative repo resolves against the adapter.yaml's own parent.
+                cfg_path.write_text(
+                    path.read_text(encoding="utf-8").replace(
+                        f"repo: {config['repo']}", f"repo: {repo.name}"),
+                    encoding="utf-8")
+                adapter = load(cfg_path)
                 self.assertEqual(adapter.kind, kind)
+                self.assertEqual(Path(adapter.config["repo"]), repo.resolve())
+
+    def test_a_missing_adapter_yaml_names_the_command_that_writes_one(self):
+        """The refusal every command reaches through `cflib.adapters_api.load`."""
+        missing = Path(tempfile.gettempdir()) / "cf-no-such-companion" / "adapter.yaml"
+        with self.assertRaises(api.AdapterError) as caught:
+            load(missing)
+        self.assertIn("adapter config not found", str(caught.exception))
+        self.assertIn("cf onboard", caught.exception.hint or "")
 
     def test_unknown_kind_is_a_readable_error(self):
         with self.assertRaises(api.AdapterError):
