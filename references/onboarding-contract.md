@@ -69,6 +69,31 @@ So, concretely: **a repo helps discovery most by naming its source in a
 edition its page anchors follow, and citing the author's book page.** Those
 three cost nothing and remove every flag from onboarding.
 
+The **adapter is asked as well**, not only the seven signals: `cf onboard` merges
+`Adapter.discover_sources(repo)` into them. A kind may only *add* a claim there —
+a claim repeating a signal cflib already read is dropped in favour of cflib's,
+because every later stage's item table comes from the source's own text and not
+from the companion's reading of it — and the addition that matters is a
+convention that **is its own manuscript**. Such a claim names the FILES instead
+of describing a book: absolute paths in reading order, which onboarding
+concatenates in exactly that order, with no separator, and fingerprints. That
+digest is the `source_sha` every row carries, so an edit to any one file moves it.
+The claim also says whether those bytes have printed pages (`sources/locator.py`
+decides; a `.tex` manuscript has none), and `blueprint_tex` is the kind that uses
+it — see §1.
+
+**A source nothing can discover is named on the way in, not typed in.** Some
+companions formalise a book that is not on this machine and that the repo never
+names: no `sources:` list, no sha, no PDF, no book-page link. `cf onboard <repo>
+--source <file>` (a PDF or a manuscript that is already text; repeatable) gives
+the LOCATION and nothing else — the sha, the page offset, the item kinds, the
+numbering depth and the completeness are still read off the file by `prepare`,
+exactly as `cf sources add` reads them, and the source is registered
+`confirmed: false` with `pdf_found_in: manual`. That is the same override
+`cf sources add <source> --for <companion>` is, moved to the one command that
+needs it *before* a companion exists — which is why it, and not `cf sources add`,
+is what the "no source could be discovered" refusal names.
+
 Two rules keep the signals honest:
 
 - **A truncated sha is a candidate, never an identity.** `64498329…` in a
@@ -142,6 +167,7 @@ Below the thresholds `cf onboard` refuses and prints the table, with the fix:
 | scope | the chapters the companions actually tag: ≥5 items, or ≥20% of the book's items in that chapter | `sources.<id>.chapters`, `scope_method` | `cf sources set <id> chapters=1,2` (`scope_method: manual`) |
 | adapter kind | per-adapter `detect(repo)`; highest wins, below 0.5 refuses | `companions.<name>.discovered.adapter_confidence` | `cf onboard --adapter <kind>` |
 | anchor edition | §0.3 | `companions.<name>.discovered.anchor_confidence` | `cf onboard --anchor-source <id>` |
+| which source | §0.1 — the seven signals plus whatever the adapter adds; nothing at all is a refusal | `sources.<id>.discovered.pdf_found_in`, `discovered.from` | `cf onboard --source <file>` (`pdf_found_in: manual`), or `cf sources add <source> --for <companion>` once the companion exists |
 
 Two measured examples of the offset inference, both 265-page PDFs of the same
 book: the published edition votes on 245 pages and 244 of them agree on 16
@@ -285,13 +311,28 @@ Four things to know before onboarding one:
 - **`\uses{}` is counted, not carried.** Row schema v2 has nowhere to hold a
   dependency edge, so `dry_run` reports `uses_edges` rather than dropping them in
   silence; a schema that can hold them is a separate change.
-- **The manuscript still has to be registered as a source.** `cf onboard` needs
-  a source before it will write anything, and a blueprint repo names no book and
-  ships no PDF — so a blueprint project whose manuscript is its own `.tex`
-  currently has no way through the front door. Until source discovery accepts a
-  `.tex` manuscript as a claim, this kind is usable as a library adapter
-  (`adapters.api.from_config(...).extract(...)`) rather than through
-  `cf onboard`.
+- **The manuscript registers itself as the source.** A blueprint names no book
+  and ships no PDF, so `discover_sources` claims the `.tex` tree: the files in
+  `order_files` order (the master's `\input` order, then anything the master does
+  not name, in path order), `sha256` over their **concatenated bytes** in that
+  order with no separator, `pagination: none`, `kinds` = the `\newtheorem`
+  display words the manuscript uses, and `discovered.locator` = the `number`/
+  `label` choice above. `cf onboard` writes that concatenation once into
+  `<workspace>/sources/<id>/manuscript.tex` — never into the companion repo — and
+  the workspace row points at it, so `cf sources refresh <id>` re-prepares the
+  same bytes and a later `cf onboard` re-derives them. The source is
+  `confirmed: false` like any other discovery.
+  Two consequences worth stating. The sha covers every chapter, so editing one
+  moves the `source_sha` on every row — which is the point: a digest that moved
+  only when the master moved would stamp rows quoting an edited chapter with
+  bytes they were not read from. And the prepared `items.json` is **empty on
+  purpose**: the item grammar numbers printed-book headings and a `.tex`
+  manuscript has none, so the items are the tagged environments the adapter
+  reads. The "0 numbered items in its text" and "no declared kind heads a
+  numbered item" refusals therefore do not apply to a manuscript the companion
+  wrote — there is no other document these bytes could be mistaken for, they are
+  the ones this adapter's own glob just matched — and they still apply,
+  unchanged, to a PDF or text an operator named with `--source`.
 
 ### `ledger_nodes` (deferred in v1)
 
