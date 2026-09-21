@@ -247,7 +247,9 @@ class TestAPinnedFigureInProseIsAPinnedFigure(unittest.TestCase):
 # ---------------------------------------------------------------------------
 
 MEASURED_DOCS = ("README.md", "references/onboarding-contract.md", "references/traps.md")
-#: "0.91 (271 ok / 27 mismatched)" and its short form "0.68 (202 / 95)"
+#: "0.91 (271 ok / 27 mismatched)" and its short form "0.68 (202 / 95)".  Matched
+#: against a whitespace-flattened document: prose wraps, and a figure the line
+#: break falls inside is exactly the one a re-measurement forgets.
 _AGREEMENT = re.compile(r"(0\.\d\d) \((\d+)(?: ok)? / (\d+)(?: mismatched)?\)")
 
 
@@ -263,7 +265,8 @@ class TestOneMeasurementIsOneSetOfNumbers(unittest.TestCase):
     def agreements(self) -> list[tuple[str, str, int, int]]:
         found = []
         for name in MEASURED_DOCS:
-            for agreement, ok, mismatched in _AGREEMENT.findall(read(name)):
+            flat = " ".join(read(name).split())
+            for agreement, ok, mismatched in _AGREEMENT.findall(flat):
                 found.append((name, agreement, int(ok), int(mismatched)))
         self.assertTrue(found, "no anchor-agreement figure was found to check")
         return found

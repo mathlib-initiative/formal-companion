@@ -23,11 +23,12 @@ So this module parses the documents and asks the real argparse tree:
   number, and no ``design/…`` citation in a code docstring points at a document
   that is not in the tree -- nor quotes a sentence the cited document does not
   carry, which is the stale citation made checkable rather than fixed;
-* the same command **and flag** rules over the ``cf …`` literals in docstrings,
-  hints and workflow headers under ``scripts/``, ``workflows/`` and
-  ``templates/``: a killed ``cf challenge`` was recoverable only under its real
-  spelling, and two workflows told a session to build its args with a flag that
-  exits 2.
+* the same command rule over the ``cf <word>`` literals in docstrings, hints and
+  workflow headers under ``scripts/``, ``workflows/`` and ``templates/``, and the
+  flag rule over ``workflows/`` and ``templates/``: a killed ``cf challenge`` was
+  recoverable only under its real spelling, and two workflows told a session to
+  build its args with a flag that exits 2.  Six stale flag spellings under
+  ``scripts/`` are named in that test's own docstring and are not fixed yet.
 
 The point is drift.  This repo is meant to run over many books, so the index,
 the flags and the layout will all move again -- and a document is what a fresh
@@ -331,9 +332,9 @@ class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
         it finds six stale spellings in hints and TODOs a user is told to type
         (`cf onboard --repo`, `cf plan-run --mode`, `cf detect-proxies
         --emit-corpus`, and `cf harvest --tally` three times, where the real
-        spellings are `--name`/`--preset`/`--no-emit-corpus`/`cf tally`).  They
-        are in files this package does not own; widening the glob is the whole
-        fix once they are corrected.
+        spellings are `--name`/`--preset`/`--no-emit-corpus`/`cf tally`).  Those
+        hints are corrected separately; widening the glob to ``scripts/`` is the
+        whole of this check's remaining fix.
         """
         files = (sorted(SKILL.glob("workflows/*.js"))
                  + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()])
