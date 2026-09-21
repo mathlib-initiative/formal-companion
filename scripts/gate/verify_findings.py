@@ -210,26 +210,60 @@ _LOOSE_DASH_TAIL = re.compile(r"(?<=\s)[\s\u2010-\u2015\u2212-]*$")
 #: pdftotext hyphen at a line end both sit against.  Everything else a
 #: mathematical quote can begin or end with -- a digit, a bracket, a LaTeX
 #: backslash, a bar, a lone variable letter -- is a term the dash would be the
-#: sign of, so the run stays and the operator pass judges it.  Measured over the
-#: baseline corpus's 3,019 quotes: 4 strip differently for this and all 4 differ
-#: only in leading whitespace, so not one of them reaches the operator pass as a
-#: different token stream.
-_WORD_AFTER_DASH = re.compile(r"^\s*[\"'\u201c\u2018]*[A-Za-z]{2,}")
-_WORD_BEFORE_DASH = re.compile(r"[A-Za-z]{2,}[.,;:!?]*[\"'\u201d\u2019]*\s*$")
+#: sign of, so the run stays and the operator pass judges it.  A LaTeX macro is
+#: not a word at EITHER edge: the head pattern refuses to strip before a
+#: backslash, and the trailing lookbehind is what stops ``\u2026 the bound \alpha``
+#: plus a loose ``-`` from dropping its sign by matching the letter run inside
+#: the macro.
+#:
+#: Two shapes the whitespace rule used to accept are refused now, and both are
+#: deliberate: an em dash in front of prose beginning with a one-letter article
+#: (``\u2014 A set E is said to be \u2026``) and a trailing pdftotext hyphen after a
+#: closing bracket (``\u2026 agree (see Section 1.2) -``).  A lone letter and a
+#: bracket are exactly what a sign is written in front of, so the rule cannot
+#: tell those two apart from a flip; a false refusal costs the finding a
+#: re-quote, and a false acceptance costs the pass its whole value.  Measured
+#: over the baseline corpus's 3,019 quotes: 4 strip differently from the digit
+#: guard this replaced and all 4 differ only in leading whitespace, so not one
+#: of them reaches the operator pass as a different token stream -- which is
+#: also the measurement that says neither refused shape occurs there.
+_WORD_AFTER_DASH = re.compile(r"^\s*[\"'\u201c\u2018]*([A-Za-z]{2,})")
+_WORD_BEFORE_DASH = re.compile(
+    r"(?<![\\A-Za-z])([A-Za-z]{2,})[.,;:!?]*[\"'\u201d\u2019]*\s*$")
+#: subtracted from the word rule above, at both edges.  The attacker picks the
+#: operand as well as the spacing, and a book of analysis opens a display with a
+#: word: 56 lines of the pinned source text begin with one of these, so
+#: ``- lim supn\u2192\u221e 1En (x) \u2026`` was stripped back to the book's own words and
+#: certified *verbatim* while the glued ``-lim \u2026`` was refused -- the same
+#: laundering one WORD over, exactly as the digit guard left it one CHARACTER
+#: over.  ``sup`` and ``inf`` at a quote's edge are the operand of the dash, not
+#: prose it introduces, whatever else they are; the cost is that a sentence
+#: genuinely beginning "Max and Min are the two names \u2026" keeps a loose dash,
+#: which the operator pass then reports.
+_MATH_WORDS = frozenset((
+    "sup", "inf", "lim", "limsup", "liminf", "log", "exp", "max", "min",
+    "sin", "cos", "tan", "det", "dim", "diam", "dist", "vol", "deg", "ker",
+    "arg", "mod", "gcd", "lcm",
+))
+
+
+def _is_prose_word(found: "re.Match | None") -> bool:
+    """Did the word rule match a word that is PROSE, not a mathematical term?"""
+    return found is not None and found.group(1).casefold() not in _MATH_WORDS
 
 
 def _strip_loose_dashes(s: str) -> str:
     """The quote without the punctuation dashes at its own edges.
 
-    Never across a sign: a run whose operand is anything but a word stays,
-    operators and all, and the operator pass then judges it.
+    Never across a sign: a run whose operand is anything but a word of prose
+    stays, operators and all, and the operator pass then judges it.
     """
     s = s or ""
     head = _LOOSE_DASH_HEAD.match(s)
-    if head and _WORD_AFTER_DASH.match(s[head.end():]):
+    if head and _is_prose_word(_WORD_AFTER_DASH.match(s[head.end():])):
         s = s[head.end():]
     tail = _LOOSE_DASH_TAIL.search(s)
-    if tail and _WORD_BEFORE_DASH.search(s[: tail.start()]):
+    if tail and _is_prose_word(_WORD_BEFORE_DASH.search(s[: tail.start()])):
         s = s[: tail.start()]
     return s
 
