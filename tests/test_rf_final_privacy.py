@@ -877,7 +877,7 @@ class TheNextStepAnExportPrintsSucceedsTest(unittest.TestCase):
         The export says so in the same words the import refuses in; the sibling
         below runs the import and gets the refusal.
         """
-        manifest, out, printed = self.export(challenged=True)
+        manifest, _out, printed = self.export(challenged=True)
         self.assertEqual(bundle_mod.manifest_ledger_files(manifest), [])
         nxt = printed.split("next:")[-1]
         self.assertIn("`cf share import` refuses this bundle", nxt)

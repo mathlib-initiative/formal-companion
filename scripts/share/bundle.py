@@ -659,9 +659,13 @@ def is_ledger_file(relative: str) -> bool:
     ``ledger/{accepted,refuted}.<companion>.jsonl``: the files whose ABSENCE is
     what ``share.merge.merge_bundle`` refuses a bundle for.  One predicate, so the
     sentence `cf share export` prints about the import cannot end up describing a
-    different bundle from the one the import accepts.
+    different bundle from the one the import accepts.  An absolute member name is
+    never one, for the reason ``safe_member`` refuses it.
     """
-    parts = Path(str(relative)).as_posix().strip("/").split("/")
+    posix = Path(str(relative)).as_posix()
+    if posix.startswith("/"):
+        return False
+    parts = posix.strip("/").split("/")
     if len(parts) != 2 or parts[0] != "ledger":
         return False
     return parts[1].endswith(".jsonl") and parts[1].startswith(("accepted.", "refuted."))

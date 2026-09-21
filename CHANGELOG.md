@@ -185,6 +185,27 @@ release has something to say.
   2.31, the floor the gate's content-filter blanking rests on;
   `references/runbook-server.md` §2 records it as a precondition. The
   requirement used to be met for the first time as a blocked run.
+- `cf report` dropped a whole corpus run from section 0 when its documents named
+  a source the workspace no longer holds — a `cf sources remove` after a
+  harvest, or a corpus imported under another workspace's id. The run's items,
+  findings, unreadable documents and ungated state left every section-0 figure
+  and `reports/coverage.json` without a word, while `cf tally` went on counting
+  the same rows. They are published as `unknown_source_documents` and named in
+  the note, and `cf sources remove` says which corpus runs were judged against
+  the id it is dropping, whether the receipt or the run's plan names it.
+- the handoff said only one of its five caveats on the three shapes whose
+  per-source note ends early (a source no companion is bound to, an unpaired
+  manuscript, a source with no `items.json`): an ungated or gate-FAILED run, an
+  examined item outside the audited chapters and an unstamped document went
+  unmentioned. All five are said on every shape now, for a run that names no
+  single source as well, and `cf report` echoes the same set on the terminal.
+- `cf share export` tells you which of the two zero-ledger bundles you have
+  written: one `cf share import` merges zero rows from, or a findings-only
+  bundle the import refuses, which is read with `cf quotes hydrate --bundle
+  <bundle>`. `cf share export --help` describes the redaction the command
+  performs: every free-text field of a row at any depth, and a record of (page,
+  normalised length, sha256, and at most a quarter of the quote's words from each
+  end, none at all below fourteen words).
 
 ## 0.2.0 — the multi-source model
 
