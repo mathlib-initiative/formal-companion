@@ -11,20 +11,31 @@ is audited against a *list* of sources, and a differential is possible exactly w
 companions' source lists overlap. Everything below about evidence classes, yields and
 calibration is unchanged by that — it is measured per (source, companion) pair either way.
 
+**Contents** — §1 attack runs vs differentials · §2 the three changes that flip it ·
+§3 program order for a new companion · §4 the ~40% first-pass false-positive rate ·
+§5 the five recurring defect shapes · §6 safe bridge vs definitional fiat ·
+§7 why the techniques find disjoint classes · §8 every bug came from a second reading ·
+§9 count from the merged corpus · §10 what the numbers do not license ·
+§11 where each rule lives in the code.
+
 Primary sources, all read for this document:
+
+None of them are in this repo — they are the campaign's own notes and the two
+private companions' files — so each row says what it is, not where one machine
+kept it.
 
 | source | what it establishes |
 |---|---|
-| `/Users/jack/.claude/projects/-Users-jack-Desktop/memory/faithfulness-audit-method.md` | the five-run yield, the five defect shapes, the self-inflicted traps |
-| `/Users/jack/.claude/projects/-Users-jack-Desktop/memory/tao-differential-audit-verified-figures.md` | the corrected figures (411 vs 410, raw vs collapsed items, what the 6-reader pass covered) |
-| `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §2, §4, §5, §8 | the run table, the four errors, the extension preconditions |
-| `/Users/jack/Desktop/tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md` | the self-recomputing tally and the 72/40 partition |
-| `/Users/jack/.claude/projects/-Users-jack-Desktop/memory/measure-theory-faithfulness-audit.md` | the safe-bridge rule, the disjoint-classes corollary, "every bug came from a second reading" |
-| `/Users/jack/Desktop/notes/measure-theory-HANDOFF.md` | the same rule as written for the other companion's owner |
-| `/Users/jack/Desktop/tao-differential/{accepted,refuted}.adam.jsonl` | the ≈40% first-pass false-positive rate |
-| `/Users/jack/Desktop/tao-diff-run/scripts/verify_findings.py` and its attack variant | the gate kinds that make the attack ratio partly definitional |
-| `/Users/jack/Desktop/tao-measure-lean/REVIEW_PATTERNS.md` P9–P13 | the defect shapes with detectors |
-| `/Users/jack/Desktop/tao-differential/adam-detector/README.md` | the two proxy-detector rules and their portability |
+| the campaign's audit-method notes | the five-run yield, the five defect shapes, the self-inflicted traps |
+| the campaign's verified-figures notes | the corrected figures (411 vs 410, raw vs collapsed items, what the 6-reader pass covered) |
+| the docstring-tag companion's `HANDOFF.md` §2, §4, §5, §8 | the run table, the four errors, the extension preconditions |
+| the docstring-tag companion's `OPEN_FAITHFULNESS_FINDINGS.md` | the self-recomputing tally and the 72/40 partition |
+| the attribution-table companion's faithfulness-audit notes | the safe-bridge rule, the disjoint-classes corollary, "every bug came from a second reading" |
+| the handoff note written for that companion's owner | the same rule as written for the other companion's owner |
+| the v1 differential's `{accepted,refuted}.adam.jsonl` | the ≈40% first-pass false-positive rate |
+| the v1 corpus's `verify_findings.py` and its attack variant | the gate kinds that make the attack ratio partly definitional |
+| the docstring-tag companion's `REVIEW_PATTERNS.md` P9–P13 | the defect shapes with detectors |
+| the v1 proxy detector's README | the two proxy-detector rules and their portability |
 
 ---
 
@@ -33,7 +44,7 @@ Primary sources, all read for this document:
 Five runs over one book chapter, same corpus, same repository under test. Counting **distinct book
 items whose findings name a declaration of the audited repo**, and how many of those are
 substantive (`CONTENT` / `VACUITY` / `SUSPECTED_ERRATA` rather than a page anchor or a coverage
-note) — `docs/HANDOFF.md` §2, recomputed there from `~/Desktop/tao-diff-run`:
+note) — `tao-measure-lean/docs/HANDOFF.md` §2, recomputed there from the harvested corpus:
 
 | run | design | model | book access | items | substantive |
 |---|---|---|---|---:|---:|
@@ -55,7 +66,7 @@ blind to: a statement that is vacuous, weaker than the book, or true only by a j
 exactly the case where two independent repos are wrong the *same* way and therefore agree.
 
 Cost of the cheap finding: **22 of the 40 differential-flagged items were pure pagination**
-(`docs/OPEN_FAITHFULNESS_FINDINGS.md`, tally at the foot of the file), and each consumed an
+(`tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md`, tally at the foot of the file), and each consumed an
 adjudication slot. Comparing two repos rewards *any* difference, and a page number is the cheapest
 difference available.
 
@@ -96,8 +107,9 @@ Consequences the skill enforces:
 - **Nothing goes upstream unchallenged.** `route` refuses to emit an upstream report while
   `_meta.status` is `UNCHALLENGED`; `publish-verdicts` refuses to write `human_confirmed`.
   The batch-1 findings routed against the third companion — **32 rows, 7 high, over 26 items**
-  (recomputed from `/Users/jack/Desktop/tao-differential/findings.teorth.jsonl`) — carry
-  `_meta.status: UNCHALLENGED` and were never reported upstream; `docs/HANDOFF.md` §6 records
+  (recomputed from the v1 differential's `findings.teorth.jsonl`) — carry
+  `_meta.status: UNCHALLENGED` and were never reported upstream; the docstring-tag
+  companion's `HANDOFF.md` §6 records
   holding them back as a deliberate decision.
 - **The reviewer's job is refutation, not approval.** The shipped reviewer prompt carries the 40%
   figure as its own justification, and says approving a wrong finding is a worse failure than
@@ -133,9 +145,9 @@ Each recurred at least twice in one chapter of one companion. Full detectors and
 > A Mathlib-first bridge is **SAFE** when it is a *proved equivalence* that recovers the book's
 > text, and **UNSAFE** when the library object is adopted by *definitional fiat*.
 
-Established jointly by the two companion sessions on 2026-09-05
-(`/Users/jack/Desktop/notes/measure-theory-HANDOFF.md`, "The reusable finding";
-`memory/measure-theory-faithfulness-audit.md`). Evidence on both sides:
+Established jointly by the two companion sessions on 2026-09-05 (the handoff note
+written for the attribution-table companion's owner, "The reusable finding", and
+that campaign's faithfulness-audit notes). Evidence on both sides:
 
 - **Unsafe:** the attribution-table companion defined its elementary measure as the library volume
   (issue #5 → PRs #6/#8) and stated its measurability definition via the library outer measure
@@ -144,8 +156,8 @@ Established jointly by the two companion sessions on 2026-09-05
   rather than formalised.
 - **Safe:** of 36 numbered chapter-1 Definitions in the docstring-tag companion, **32 have a
   native `def`/`structure`, 0 have no declaration at all, and the 4 tagged only to theorems are
-  each a proved equivalence recovering the book's text** (artifact:
-  `/Users/jack/Desktop/tao-differential/def-coverage.ours.json`).
+  each a proved equivalence recovering the book's text** (artifact: the v1
+  differential's `def-coverage.ours.json`).
 
 Corollary the skill implements as a first-class stage: **the cheap upper bound needs no Lean.**
 From an item→declaration table alone, ask *"is there a book Definition item that no declaration
@@ -187,22 +199,22 @@ Two corollaries with evidence:
 
 - **A documented restriction is not a justified one.** One exercise carried a docstring reading
   "NARROWER THAN THE BOOK" and blamed an open stub; the needed fact was already proved and the
-  proof was discarding it with `obtain ⟨-, hPsum⟩` (`docs/HANDOFF.md` §4). A plausible excuse
+  proof was discarding it with `obtain ⟨-, hPsum⟩` (`tao-measure-lean/docs/HANDOFF.md` §4). A plausible excuse
   survives every reading until someone checks the excuse itself.
 - **A summarised source is not the source.** The local errata file was a summarising fetch and had
-  silently dropped the entry that decided a high-severity finding (`docs/HANDOFF.md` §4; P13).
+  silently dropped the entry that decided a high-severity finding (`tao-measure-lean/docs/HANDOFF.md` §4; P13).
   The skill therefore fetches errata with a raw HTTP client (`curl`) and keeps the raw HTML beside
   the rendered form, dated. A fetch tool that summarises is never used for a source of record.
 
 A finding wrong in its *citation* can still point at something real — a reason to look harder, not
 to close. Conversely, an erratum that *observes* a divergence and points to a blog post does not
 license changing a book companion: the companion formalises the book
-(`docs/HANDOFF.md` §5, the one finding deliberately not acted on).
+(`tao-measure-lean/docs/HANDOFF.md` §5, the one finding deliberately not acted on).
 
 ## 9. Count from the merged corpus, never from prose
 
 The ledger's own closing command tallies every `unfaithful_decls` entry with the repo's prefix
-over **every merged finding file** (`docs/OPEN_FAITHFULNESS_FINDINGS.md`, "The tally that closes
+over **every merged finding file** (`tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md`, "The tally that closes
 this file"). As of 2026-09-07 it prints **72 rows over 40 distinct items**, partitioning as
 
 | class | items |
@@ -219,7 +231,7 @@ anything inherited.
 Four mechanical rules follow, all enforced by the skill:
 
 1. **Re-tally from the corpus, not from the findings you read.** Triaging from read findings missed
-   three items, one of them high severity (`docs/HANDOFF.md` §4).
+   three items, one of them high severity (`tao-measure-lean/docs/HANDOFF.md` §4).
 2. **Diff the harvest against its source.** The local harvest held 762 files where the server had
    763, and the missing file was a real `CONTENT` finding; every derived count was off by one.
    `harvest` writes a `RECEIPT.json` with the source count and a sha manifest, and refuses to
@@ -264,4 +276,4 @@ and an earlier pass found 36 wrong claims in a first draft.
 | count from corpus | `harvest/tally.py`, `report` + `verify-claims.workflow.js` |
 | harvest completeness | `harvest/harvest.py` `RECEIPT.json` |
 | task/item reconciliation | `plan/make_tasks.py` |
-| errata fetched raw | `book/fetch_errata.py` (curl; raw HTML kept, dated) |
+| errata fetched raw | `scripts/sources/fetch_errata.py` (curl; raw HTML kept, dated) |

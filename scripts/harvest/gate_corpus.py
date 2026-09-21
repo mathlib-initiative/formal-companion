@@ -38,6 +38,13 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     Returns ``{ok, config, preset, files, problems, partial}``; ``problems`` is
     the same list ``verify_findings.main`` would print, so the receipt records
     exactly what the gate said.
+
+    An EMPTY directory is a gate failure, not a pass: a gate asked to validate a
+    corpus and given nothing to validate has not approved anything, and
+    ``files: 0, problems: [], ok: True`` is how an empty corpus receipted as
+    complete.  The rule lives here rather than in ``cf harvest``'s wrapper so
+    that every caller inherits it -- the tests call this function directly, and
+    so would any future one.
     """
     dest = Path(dest)
     cfg_path = Path(gate_config).expanduser()
@@ -53,6 +60,7 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     files = [f for f in sorted((dest / cfg.findings_dir).glob("*.json"))
              if f.name not in NON_FINDING_FILES and not f.name.startswith(".")]
     partial: list[str] = []
+    notes: list[str] = []
     for f in files:
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
@@ -60,8 +68,13 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
             problems.append(f"{f.name}: not valid JSON ({exc})")
             continue
         problems.extend(vf.validate_doc(doc, f.name, cfg, books, decl_index))
-        partial.extend(vf.partial_quotes(
-            doc, f.name, vf._book_for(books, vf.doc_source_id(doc, cfg))))
+        book = vf._book_for(books, vf.doc_source_id(doc, cfg))
+        partial.extend(vf.partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars,
+                                         max_pages=cfg.max_match_pages))
+        notes.extend(vf.binding_notes(doc, f.name, cfg, book))
+    if not files:
+        problems.append(f"{dest}: the gate found no findings to validate (an empty corpus is "
+                        f"not a clean one)")
     return {
         "ok": not problems,
         "config": str(cfg_path),
@@ -70,6 +83,12 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
         "files": len(files),
         "problems": problems,
         "partial_quotes": partial,
+        # A quote the gate could not bind to its item's page, and a quote longer
+        # than the copyright rule allows, are neither passes nor failures: the
+        # receipt records them so "the corpus is gated" never means "nobody
+        # looked at the ones it could not check".
+        "binding_notes": notes,
+        "unbound_quotes": sum(1 for n in notes if n.startswith("page unbound:")),
     }
 
 
@@ -85,4 +104,9 @@ def render(result: dict, max_named: int = 12) -> str:
         lines.append(f"  ... +{len(result['problems']) - max_named} more")
     for note in result.get("partial_quotes", [])[:max_named]:
         lines.append("  ~ " + note)
+    binding = result.get("binding_notes") or []
+    for note in binding[:max_named]:
+        lines.append("  ? " + note)
+    if len(binding) > max_named:
+        lines.append(f"  ? ... +{len(binding) - max_named} more")
     return "\n".join(lines)

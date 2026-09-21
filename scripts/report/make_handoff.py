@@ -1,9 +1,9 @@
 """Fill templates/handoff.md from computed artifacts only.
 
-Ported from: the structure of /Users/jack/Desktop/notes/camera-ready-HANDOFF-2026-09-08.md
-(sections 1-7) and tao-measure-lean/docs/HANDOFF.md ("four things I got wrong",
-"verification that means something"), plus the tally recipe at
-tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md:296-311.
+Ported from: the structure of the camera-ready handoff note the v1 campaign wrote
+(sections 1-7, not in this repo) and tao-measure-lean's own HANDOFF.md ("four
+things I got wrong", "verification that means something"), plus the tally recipe
+in that repo's OPEN_FAITHFULNESS_FINDINGS.md.
 
 The rule this module exists to enforce: **every number comes from a computed
 artifact**, never from prose.  Its inputs are
@@ -17,6 +17,33 @@ artifact**, never from prose.  Its inputs are
 A figure with no artifact behind it is rendered as ``TODO(<name>)`` next to the
 command that would produce it.  The real project got this count wrong three
 times and every error ran toward "cleaner", so a visible hole is the point.
+
+Every finding figure also has a DENOMINATOR.  A handoff used to say "N defects"
+with nothing saying what fraction of a book had been looked at -- and the scope is
+real and restrictive (``cf sources set <id> chapters=1`` narrows a 442-item book
+to 411 items -- for a paginated source; a manuscript's task universe is its
+pairing index, which no chapter list narrows -- and a fleet examines only the
+items it was given tasks for).  The sentence a reader will quote back is "the
+faithfulness audit of X found N defects", so §0 now carries, per source and
+chapter: items in the source, items in scope, items in the differential's TASK
+UNIVERSE (in scope and claimed by at least one companion), items PAIRED (claimed
+by two or more, so a cross-check was possible at all), items a run actually
+examined, items with findings and items
+never examined -- with the unexamined ones written to
+``reports/unexamined.<source_id>.json`` and every number recomputed here from
+``items.json``, ``reconciliation.json``, ``pairs/<id>/index.json``, the corpus
+documents and their receipts.  The task universe and the pairs are 383 and 225 on
+the pinned baseline; calling the wider one "paired" is the overclaim this section
+exists to prevent.
+
+Every one of those figures is over the audited scope AND over the sources this
+workspace holds, so the three kinds of counted document they do NOT cover are
+published beside them and rendered in the note -- an item examined outside the
+audited chapters, a document this reader could not parse at all (which `cf tally`
+refuses outright, and which makes every figure a lower bound), and a document
+naming a source the workspace does not hold, which has no source block to be
+counted in.  A figure that silently excludes a counted document is the same
+error as a figure with no artifact behind it, and it ran toward "cleaner" too.
 """
 
 from __future__ import annotations
@@ -28,11 +55,16 @@ import re
 import sys
 from typing import Any, Iterable
 
+from cflib import items as cf_items
+from harvest import harvest as harvest_mod
+from harvest import tally as tally_mod
 from ledger import compat
 from ledger import validate_ledger as vl
 from route import route as route_mod
 
 TEMPLATE_NAME = "handoff.md"
+#: the "items in scope" cell for a source whose items are not numbered prose
+MANUSCRIPT_CELL = "manuscript: the items are the tagged environments"
 
 
 def template_path(explicit: str = "") -> str:
@@ -139,6 +171,295 @@ def load_receipts(paths: Any) -> dict[str, dict]:
         if isinstance(doc, dict):
             out[str(doc.get("run_id") or name)] = doc
     return out
+
+
+def load_source_items(paths: Any, source_id: str) -> dict:
+    """``sources/<id>/items.json``: the item universe of ONE source.
+
+    This is the outer denominator -- how many items the source contains at all --
+    and the only artifact that knows which chapter an item is in, which is what
+    turns "411 items" into "411 of 442, chapter 1 only".
+    """
+    path = str(paths.source_items(source_id))
+    meta = _source_meta(paths, source_id)
+    # The source's OWN numbering, carried so that a label is parsed the way this
+    # book numbers (``cflib.items.numbering_range``).  A parse that takes
+    # DEFAULT_NUMBERING instead rejects every label of a source numbered deeper
+    # than ``1.2.3`` as ``too_many_segments`` -- and for a manuscript, whose
+    # labels are the only item universe there is, that emptied every figure in
+    # section 0 on a fully examined source.
+    numbering = meta.get("numbering")
+    out = {"path": path, "present": False, "count": 0, "by_item": {}, "chapters": [],
+           "manuscript": False, "numbering": numbering}
+    if not os.path.exists(path):
+        return out
+    try:
+        doc = compat.read_json(path)
+    except Exception:  # an unreadable items.json is a hole, not a crash
+        return out
+    rows = doc.get("items") if isinstance(doc, dict) else doc
+    if isinstance(doc, dict) and not numbering:
+        # `cf sources refresh` writes the numbering into both files; read the
+        # table's copy when the meta has none rather than falling back to a
+        # default that would reject this source's own labels.
+        numbering = doc.get("numbering")
+    by_item: dict[str, dict] = {}
+    for row in rows or []:
+        if isinstance(row, dict) and row.get("item"):
+            by_item.setdefault(compat.item_join_key(row["item"]), row)
+    out.update({
+        "present": True,
+        "count": len(by_item),
+        "by_item": by_item,
+        "numbering": numbering,
+        "chapters": sorted({row.get("chapter") for row in by_item.values()
+                            if row.get("chapter") is not None}),
+        # an empty table is either a hole or a MANUSCRIPT, and the two get
+        # opposite treatment downstream
+        "manuscript": (not by_item) and _is_manuscript(meta),
+    })
+    return out
+
+
+def _source_meta(paths: Any, source_id: str) -> dict:
+    """``sources/<id>/meta.json``, or ``{}`` when it is absent or unreadable.
+
+    One reader, because two things are read off it -- what the document IS and
+    how it NUMBERS -- and a second opinion about either is how the manuscript
+    branch came to parse a source's labels against another book's numbering.
+    """
+    path = str(paths.source_meta(source_id))
+    if not os.path.exists(path):
+        return {}
+    try:
+        meta = compat.read_json(path)
+    except Exception:
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def _is_manuscript(meta: dict) -> bool:
+    """Is this source the companion's OWN manuscript, whose item table is empty on purpose?
+
+    ``sources/<id>/meta.json`` records what the document is, and an unpaginated
+    text (``source_format: text``, ``pagination: none``) is the shape a
+    self-authored manuscript has -- the one case `cf onboard` lets through with
+    no numbered items, saying so out loud: "0 numbered items in the manuscript's
+    own prose, as expected -- its items are the tagged environments the adapter
+    reads" (``cfcmd/onboard.py::_self_authored``).  A text an OPERATOR named can
+    never reach this report with an empty table, because
+    ``_refuse_an_empty_source`` stops it there, so nothing else can be mistaken
+    for a manuscript here.
+    """
+    # sources/locator.py's FORMAT_TEXT and PAGINATION_NONE
+    return (str(meta.get("source_format") or "") == "text"
+            and str(meta.get("pagination") or "") == "none")
+
+
+def _reconciliation_path(paths: Any, source_id: str) -> str:
+    """``pairs/<id>/reconciliation.json``, through the accessor when there is one.
+
+    ``LedgerPaths`` forwards to ``cflib.paths.WorkspacePaths``, which has
+    ``reconciliation_json``; the no-cflib fallback in ``ledger/compat.py`` does
+    not, and this stage has to keep working there.
+    """
+    accessor = getattr(paths, "reconciliation_json", None)
+    if accessor is not None:
+        return str(accessor(source_id))
+    return os.path.join(paths.pairs(source_id), "reconciliation.json")
+
+
+def load_reconciliation(paths: Any, source_id: str) -> dict:
+    """``pairs/<id>/reconciliation.json``: scope and the task universe, as computed."""
+    path = _reconciliation_path(paths, source_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        doc = compat.read_json(path)
+    except Exception:
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _pair_index_path(paths: Any, source_id: str) -> str:
+    """``pairs/<id>/index.json``, through the accessor when there is one."""
+    accessor = getattr(paths, "index_json", None)
+    if accessor is not None:
+        return str(accessor(source_id))
+    return os.path.join(paths.pairs(source_id), "index.json")
+
+
+def load_pair_index(paths: Any, source_id: str) -> dict[str, set]:
+    """``pairs/<id>/index.json``: which companions formalise each item.
+
+    The only artifact that says how MANY companions claim one item, and therefore
+    the only one that can answer "paired".  In this repo's vocabulary a pair is an
+    item two or more companions formalise (``pair/compare.build_pairs``); the
+    task universe is wider -- items in scope that AT LEAST ONE companion claims --
+    and on the pinned baseline the two are 225 and 383.  Returns
+    ``{item_join_key: {companion, ...}}``; an absent file returns ``{}``, and the
+    paired figure is then reported as uncomputed rather than as zero.
+    """
+    path = _pair_index_path(paths, source_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        doc = compat.read_json(path)
+    except Exception:  # an unreadable index is a hole, not a crash
+        return {}
+    items = doc.get("items") if isinstance(doc, dict) else None
+    out: dict[str, set] = {}
+    for key, block in (items or {}).items():
+        if not isinstance(block, dict):
+            continue
+        out.setdefault(compat.item_join_key(key),
+                       {str(repo) for repo, decls in block.items() if decls})
+    return out
+
+
+def _run_source(receipt: dict, cfg_run: dict) -> str:
+    """The one source a run is about, or '' when it does not say unambiguously.
+
+    A corpus document that carries its own ``source_id`` wins; this is the fallback
+    for the v1 documents that carry none.  Two sources in one run leaves the
+    attribution blank rather than guessing -- CLAUDE.md S4, "stamp the source".
+    """
+    for block in ((receipt or {}).get("sources"), (cfg_run or {}).get("sources")):
+        ids = list(block or {}) if isinstance(block, dict) else [
+            str(e.get("id") or e.get("source_id") or "") if isinstance(e, dict) else str(e)
+            for e in (block or [])
+        ]
+        ids = [i for i in ids if i]
+        if len(ids) == 1:
+            return str(ids[0])
+    return ""
+
+
+def load_examined(paths: Any, runs: dict[str, dict],
+                  receipts: dict[str, dict]) -> dict[str, dict]:
+    """Which items each run actually examined, from the corpus documents themselves.
+
+    Nothing else records this: a tally counts the items that HAVE findings, and a
+    receipt counts FILES.  "Examined" is "a task for this item completed and its
+    document landed in the corpus"; ``gated`` narrows that to runs whose
+    ``RECEIPT.json`` carries a quote gate that passed, because a document no gate
+    checked is not evidence that the item was really read.
+
+    Returns ``{source_id: {"examined": set, "gated": set, "with_findings": set,
+    "runs": {...}, "unstamped": int, "unreadable": [...], "ungated_runs": [...],
+    "gate_failed_runs": [...]}}``; the ``""`` key holds documents no artifact
+    attributes to a source.
+
+    Which files hold rows, and which key those rows are under, are BOTH the
+    tally's decisions (``harvest/tally.py``), not this module's: it is the
+    counting authority, and a second opinion here is how one handoff came to
+    report a CONTENT finding in S3 on an item S0 called never examined.
+    """
+    out: dict[str, dict] = {}
+    root = str(paths.corpus())
+    if not os.path.isdir(root):
+        return out
+    for run_id in sorted(os.listdir(root)):
+        directory = os.path.join(root, run_id)
+        if not os.path.isdir(directory):
+            continue
+        receipt = receipts.get(run_id) or {}
+        gated = bool((receipt.get("gate") or {}).get("ok"))
+        rejected = harvest_mod.gate_rejected(receipt)
+        fallback = _run_source(receipt, runs.get(run_id) or {})
+        # Recorded from the RECEIPT, before a single document is read: a run
+        # whose documents are all unreadable -- or that landed none at all --
+        # is still a run no gate passed, and the backstop this warning exists
+        # to be is that `cf report` names it at all.
+        if not gated:
+            _record_gate_state(out.setdefault(fallback, _examined_block()), run_id, rejected)
+        counted = {os.path.basename(str(p))
+                   for p in tally_mod.iter_finding_files(directory)}
+        for path in compat.iter_json_files(directory):
+            # `cf harvest` leaves gate.local.json, queue_remaining.json and
+            # journal-harvest.json in the corpus directory; the tally skips them
+            # and so must this, or "gate.local" becomes an examined item.
+            if os.path.basename(path) not in counted:
+                continue
+            # A document the tally REFUSES to read (`harvest/tally.py`:
+            # rows_for_run raises CfError on a findings file that is not an
+            # object) was skipped here without a word, so `cf tally` exited 2 on
+            # the same corpus that `cf report` published as complete -- and the
+            # item behind the dropped file was printed as never examined while
+            # its rows were counted in section 3.  Every figure over a corpus
+            # with one of these is a LOWER BOUND, which is the one thing this
+            # section may never leave unsaid.  It is filed under the run's own
+            # source, because a file that will not parse carries no ``source_id``
+            # to file it under.
+            try:
+                doc = compat.read_json(path)
+            except Exception:
+                _record_unreadable(out.setdefault(fallback, _examined_block()), run_id, path)
+                continue
+            if not isinstance(doc, dict):
+                _record_unreadable(out.setdefault(fallback, _examined_block()), run_id, path)
+                continue
+            # The tally keys a document with no top-level ``item`` by its file
+            # name (harvest/tally.py: ``payload.get("item") or path.stem``).
+            # Keying on ``item`` alone dropped that document from the
+            # denominator entirely while the tally counted its rows.
+            label = str(doc.get("item") or os.path.splitext(os.path.basename(path))[0])
+            defects = bool(tally_mod.defect_rows(doc))
+            sid = str(doc.get("source_id") or fallback or "")
+            block = out.setdefault(sid, _examined_block())
+            key = compat.item_join_key(label)
+            block["examined"].add(key)
+            if gated:
+                block["gated"].add(key)
+            if defects:
+                block["with_findings"].add(key)
+            if not doc.get("source_id"):
+                block["unstamped"] += 1
+            run_block = block["runs"].setdefault(run_id, {"examined": 0, "with_findings": 0,
+                                                          "gated": gated})
+            run_block["examined"] += 1
+            if defects:
+                run_block["with_findings"] += 1
+            # Also here, not only above: a document stamped with a source the
+            # receipt does not name lands in another block, and that block is
+            # where this source's reader looks for the warning.
+            if not gated:
+                _record_gate_state(block, run_id, rejected)
+    return out
+
+
+def _record_gate_state(block: dict, run_id: str, rejected: bool) -> None:
+    """File a run that is not gated under the ONE state it is in.
+
+    "No gate ever ran" and "a gate ran and rejected" are two states, and a run
+    is in one of them, not both: ``cf tally`` publishes ``ungated`` and
+    ``gate_failed`` as disjoint lists (``harvest.ungated_runs`` tests for the
+    gate BLOCK, ``harvest.gate_rejected`` for its ``ok``), and this block feeds
+    the same two lists in ``reports/coverage.json``.  Putting a rejected run in
+    both published one corpus described two ways by two artifacts -- the shape
+    the distinction was added to end -- while the prose filtered it out of the
+    sentence and only looked consistent.
+    """
+    key = "gate_failed_runs" if rejected else "ungated_runs"
+    if run_id not in block[key]:
+        block[key].append(run_id)
+
+
+def _record_unreadable(block: dict, run_id: str, path: str) -> None:
+    """File a corpus document nothing here could read, as ``<run-id>/<file>``.
+
+    The run is part of the name because the remedy is per run: `cf tally --run
+    <run-id>` is what names the reason, file by file.
+    """
+    name = "%s/%s" % (run_id, os.path.basename(str(path)))
+    if name not in block["unreadable"]:
+        block["unreadable"].append(name)
+
+
+def _examined_block() -> dict:
+    """One source's tally of the corpus documents attributed to it."""
+    return {"examined": set(), "gated": set(), "with_findings": set(), "runs": {},
+            "unstamped": 0, "unreadable": [], "ungated_runs": [], "gate_failed_runs": []}
 
 
 def load_gh(files: Iterable[str]) -> list[dict]:
@@ -436,7 +757,7 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
                 "",
             ]
         if not per_run_rows and not totals:
-            blocks += [todo("tally for %s" % name, "cf harvest --tally"), ""]
+            blocks += [todo("tally for %s" % name, "cf tally"), ""]
 
         meta = f["routed_meta"] or {}
         if meta:
@@ -484,7 +805,7 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
                 ),
                 "",
             ]
-    return "\n".join(blocks) if blocks else todo("findings", "cf harvest --tally && cf route")
+    return "\n".join(blocks) if blocks else todo("findings", "cf tally && cf route")
 
 
 def render_owner_actions(facts: list[dict], gh: list[dict]) -> str:
@@ -572,14 +893,29 @@ def render_traps(extra: Iterable[str] = ()) -> str:
     return "\n".join("- %s" % t for t in list(DEFAULT_TRAPS) + list(extra))
 
 
-def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: list[dict]) -> str:
-    """Section 8: the commands that recompute every number above."""
+def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: list[dict],
+                        coverage: dict | None = None) -> str:
+    """Section 8: the commands that recompute every number above.
+
+    ONE spelling, ``cf`` (the ``bin/cf`` shim -- symlink it onto PATH with
+    ``ln -s <skill>/bin/cf ~/.local/bin/cf``), with the
+    workspace resolved: ``python3 scripts/cf.py ...`` is relative to the skill
+    checkout while the reader of this report is standing in the workspace, so it
+    could not be pasted into the shell that produced the report.
+    """
     lines = ["```bash", "# routing counts (sections 1 and 3)",
-             "python3 scripts/cf.py route --workspace %s" % paths.root,
+             "cf route --workspace %s" % paths.root,
              "# ledger counts, and that every row answers a real finding",
-             "python3 scripts/cf.py adjudicate --workspace %s --validate" % paths.root,
+             "cf adjudicate --workspace %s --validate" % paths.root,
              "# the tally every finding number comes from, grouped by (source_id, repo)",
-             "python3 scripts/cf.py tally --workspace %s" % paths.root]
+             "cf tally --workspace %s" % paths.root]
+    if coverage is not None:
+        lines += ["# the scope and coverage denominators of section 0",
+                  "cf pair --workspace %s" % paths.root]
+        for src in coverage.get("sources") or []:
+            if src.get("reconciliation"):
+                lines.append("#   -> %s" % src["reconciliation"])
+        lines.append("#   -> %s" % os.path.join(paths.reports, "coverage.json"))
     for tally in tallies:
         lines.append("#   -> %s" % tally["file"])
     if not tallies:
@@ -596,26 +932,777 @@ def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: 
 # --------------------------------------------------------------------------
 
 
-def render_sources_table(cfg: Any, tallies: list[dict]) -> str:
-    """The handoff's sources table: one row per source, with its companions."""
+def render_sources_table(cfg: Any, tallies: list[dict], coverage: dict | None = None) -> str:
+    """The handoff's sources table: one row per source, with its companions and its scope.
+
+    The two scope columns are the denominator critic#5 asked for in the place a
+    reader looks first: without them a row said which edition was audited but not
+    whether one chapter of it or all of it.
+    """
+    by_id = {s["source_id"]: s for s in ((coverage or {}).get("sources") or [])}
     rows = []
     for source_id in cfg.source_ids():
         src = cfg.source(source_id)
         bound = [n for n in cfg.companion_names() if source_id in (cfg.sources_of(n) or [])]
         anchors = [n for n in bound if cfg.anchor_source(n) == source_id]
+        cov = by_id.get(source_id) or {}
         rows.append([
             "`%s`" % source_id,
             (src.sha256 or todo("source_sha", "cf onboard"))[:12],
             src.edition or src.title or "",
             src.offset,
+            _chapter_fraction(cov),
+            _fraction(cov.get("items_in_scope"), cov.get("items_in_source"),
+                      bool(cov.get("manuscript")), cov.get("under_audit", True)),
             ", ".join("`%s`" % n for n in bound) or "(none)",
             ", ".join("`%s`" % n for n in anchors) or "—",
             "yes" if src.confirmed else "**no**",
         ])
     if not rows:
         return todo("sources", "cf onboard <repo>")
-    return _table(["source", "sha256", "edition", "offset", "companions", "anchored by",
-                   "confirmed"], rows)
+    return _table(["source", "sha256", "edition", "offset", "chapters audited",
+                   "items in scope", "companions", "anchored by", "confirmed"], rows)
+
+
+# --------------------------------------------------------------------------
+# the denominator (critic#5): what fraction of each source was audited
+# --------------------------------------------------------------------------
+
+
+def _universe_numbering(numbering: Any) -> tuple[int, int]:
+    """How deep a tagged label may be numbered: the source's range and the default.
+
+    The union, not the source's own range, and it is read ONLY to put a chapter
+    on a label for the per-chapter rows -- the key stays the label as written,
+    so nothing is hashed or joined on this.  A manuscript's ``numbering`` is
+    inferred from its PROSE headings while its items are the adapter's tagged
+    environments, which the blueprint numbers separately: on one real companion
+    the prose numbers ``1.2.3`` and all 293 environments are ``Definition 1.1``,
+    so the source's range alone rejects every one of them, and the default alone
+    rejects every label of a source numbered deeper.  Widening can only turn a
+    chapter that would have been None into the one the label states.
+    """
+    low, high = cf_items.numbering_range(numbering)
+    return (min(low, cf_items.DEFAULT_NUMBERING[0]),
+            max(high, cf_items.DEFAULT_NUMBERING[1]))
+
+
+def _manuscript_universe(items: dict, pair_index: dict[str, set],
+                         kinds: Iterable[str] = (), numbering: Any = None) -> dict:
+    """A manuscript's item universe, read off ``pairs/<id>/index.json``.
+
+    A source the companion wrote itself has no printed-book headings for the
+    item grammar to number, so its ``items.json`` is empty ON PURPOSE -- and
+    every figure in section 0 is an intersection with that empty set.  A fully
+    audited manuscript therefore reported 0 items in the source, 0 examined and
+    0 with findings, under an opening paragraph that read "Every item of every
+    source under audit ... was examined": wrong numbers and a false all-clear,
+    on the one adapter kind that has no other denominator.
+
+    The tagged environments the adapter reads ARE the items, and the pairing
+    index is the artifact that lists them.  Without it there is no honest
+    denominator at all, so the table reports the source as having none rather
+    than as having zero.
+    """
+    out = dict(items)
+    if not pair_index:
+        out.update({"present": False, "count": 0, "by_item": {}, "chapters": []})
+        return out
+    # The chapter of a label is a parse, and ``ledger.compat`` publishes only the
+    # canonicaliser (``item_join_key``), so this one call goes to `cflib.items`
+    # itself rather than through the shim's private ``_cf_items`` alias -- which
+    # is what that shim's own deadline says to do with a call site it cannot
+    # serve (``tests/test_rf_compat.py::TestTheShimsHaveADeadline``).  The
+    # source's own kinds decide what parses at all, so a manuscript with an
+    # unusual kind list keeps its unnumbered items unnumbered rather than having
+    # a chapter guessed onto them (CLAUDE.md S4).  The DEPTH is the source's own
+    # numbering widened by the default (:func:`_universe_numbering`): a label
+    # deeper than the numbering allows is a hard reject, so `Lemma 2.3.4.1`
+    # parsed against the default ``1.2.3`` left every item of a source numbered
+    # that way chapterless -- and, under a workspace that pins chapters, out of
+    # scope, which is how a fully examined manuscript reported "0 of 0 item(s)
+    # in scope examined".
+    parse_kinds = tuple(kinds or ()) or cf_items.DEFAULT_KINDS
+    depth = _universe_numbering(numbering)
+    by_item: dict[str, dict] = {}
+    for key in pair_index:
+        parsed, _reject = cf_items.try_parse(key, parse_kinds, numbering=depth)
+        by_item[key] = {"item": key, "chapter": parsed.chapter if parsed else None}
+    out.update({
+        "present": True,
+        "count": len(by_item),
+        "by_item": by_item,
+        "chapters": sorted({row["chapter"] for row in by_item.values()
+                            if row["chapter"] is not None}),
+    })
+    return out
+
+
+def source_coverage(cfg: Any, paths: Any, source_id: str,
+                    examined: dict[str, dict]) -> dict:
+    """The denominator for ONE source, every number read off an artifact.
+
+    ``items_in_source`` is ``items.json``; ``items_in_scope`` and
+    ``items_in_task_universe`` are ``reconciliation.json``'s own figures (never
+    recomputed here, so the two files cannot disagree silently);
+    ``items_examined``/``items_gated``/``items_with_findings`` come from the corpus
+    documents; ``items_paired`` is recomputed from ``pairs/<id>/index.json``.
+    ``never_examined`` is the difference, by NAME -- a count can say "381 of 411"
+    but only the names say which item was missed, which is the whole reason the
+    reconciliation gate names them too.
+
+    The task universe and the pairs are DIFFERENT figures and the table must not
+    conflate them: the task universe is every item in scope that at least one
+    companion claims (383 on the pinned baseline), a pair is an item two or more
+    companions formalise (225).  Labelling the wider one "paired" claimed a
+    cross-check that 158 of those items never had, inside the very section that
+    exists to stop overclaiming.
+
+    Every figure here is over the audited scope, so anything counted and NOT in
+    it is published beside them rather than dropped: ``examined_outside_scope``
+    and ``with_findings_outside_scope`` (documents `cf tally` counts and these
+    figures do not) and ``unreadable_documents`` (documents nothing could count,
+    which makes every figure a lower bound).  Both lists have a reader in
+    :func:`coverage_note`; the one that did not had already lost a CONTENT
+    finding out of section 0 while section 3 printed it.
+    """
+    items = load_source_items(paths, source_id)
+    recon = load_reconciliation(paths, source_id)
+    pair_index = load_pair_index(paths, source_id)
+    manuscript = bool(items["manuscript"])
+    if manuscript:
+        items = _manuscript_universe(items, pair_index, cfg.source(source_id).kinds,
+                                     items.get("numbering"))
+    block = examined.get(source_id) or {}
+    seen = set(block.get("examined") or ())
+    gated = set(block.get("gated") or ())
+    found = set(block.get("with_findings") or ())
+
+    declared = [int(c) for c in (cfg.source(source_id).chapters or ())]
+    chapters_pinned = [int(c) for c in (recon.get("chapters") or declared or [])]
+    # A chapter list narrows a manuscript's REPORT and nothing else.  `cf
+    # plan-run` takes a manuscript's task universe from ``pairs/<id>/index.json``
+    # and never narrows it by chapter (pair/compare.py needs a non-empty
+    # ``book_items``, and a manuscript's item table is empty by design), so the
+    # planned universe IS the pairing index -- and narrowing it here dropped 7
+    # of 293 examined items of one real companion out of every figure in section
+    # 0, one of them carrying the run's only CONTENT finding, while section 3
+    # counted it.  The pin is not thrown away in silence: it is published as
+    # ``chapters_pinned`` and the note says it did not apply.
+    chapters_audited = [] if manuscript else chapters_pinned
+    in_scope_names = sorted(
+        k for k, row in items["by_item"].items()
+        if not chapters_audited or row.get("chapter") in set(chapters_audited)
+    )
+    scope_known = bool(items["present"])
+    # A manuscript's reconciliation figures are NOT a second opinion about its
+    # scope: `cf pair` computes them from the same ``items.json`` that is empty
+    # BY DESIGN for this kind of source (pair/compare.py takes ``in_scope`` from
+    # ``book_items``), so every one of them is 0 for every manuscript, always.
+    # Publishing them beside the recomputed ones gave "3 of 0 item(s) in scope",
+    # a chapter table summing to 3 under a total row reading 0, and a staleness
+    # line telling the reader to re-run `cf pair` -- which leaves the file byte
+    # for byte the same.  The pairing INDEX is the artifact that knows this
+    # source's universe; the reconciliation is asked nothing about it.
+    recon_scope = None if manuscript else recon.get("items_in_scope")
+    recon_universe = None if manuscript else (
+        recon.get("task_universe") if recon.get("task_universe") is not None
+        else recon.get("items_in_scope_and_any_repo"))
+    universe = ({k for k, repos in pair_index.items() if repos} if manuscript
+                else set(compat.item_join_key(i)
+                         for i in (recon.get("task_universe_items") or [])))
+    paired = {k for k, repos in pair_index.items() if len(repos) >= 2}
+    # Uncomputed is not zero, the rule the neighbouring ``paired`` cell already
+    # follows: with no reconciliation.json nothing has computed a task universe
+    # at all, and the per-chapter rows counted against the empty set and printed
+    # a hard 0 under a total row printing "—" and prose printing "?" -- one
+    # figure, three renderings, in one document.  A reconciliation that names a
+    # TOTAL it cannot itemise is the same hole one step in: ``task_universe``
+    # without ``task_universe_items`` is a shape the tree already knows about
+    # (`cf plan-run` warns and falls back to a count-only check), and the rows
+    # counted against the empty set it leaves behind.
+    universe_itemised = recon.get("task_universe_items") is not None
+    universe_known = ((recon_universe is not None and universe_itemised)
+                      or (manuscript and scope_known))
+
+    def _chapter(key: str):
+        return (items["by_item"].get(key) or {}).get("chapter")
+
+    by_chapter: dict[Any, dict] = {}
+    for key in in_scope_names:
+        ch = _chapter(key)
+        row = by_chapter.setdefault(ch, {"in_scope": 0,
+                                        "in_task_universe": 0 if universe_known else None,
+                                        "paired": None,
+                                        "examined": 0, "gated": 0, "with_findings": 0,
+                                        "never_examined": []})
+        row["in_scope"] += 1
+        if universe_known:
+            row["in_task_universe"] += 1 if key in universe else 0
+        if pair_index:
+            row["paired"] = (row["paired"] or 0) + (1 if key in paired else 0)
+        row["examined"] += 1 if key in seen else 0
+        row["gated"] += 1 if key in gated else 0
+        row["with_findings"] += 1 if key in found else 0
+        if key not in seen:
+            row["never_examined"].append((items["by_item"].get(key) or {}).get("item") or key)
+    for row in by_chapter.values():
+        row["never_examined"].sort()
+
+    in_scope_set = set(in_scope_names)
+    never = sorted((items["by_item"].get(k) or {}).get("item") or k
+                   for k in in_scope_set - seen)
+    # Examined, counted by `cf tally`, and outside the audited chapters -- so
+    # every figure above excludes it.  Both halves are published (and rendered),
+    # because the one that vanished silently was a CONTENT finding: section 0
+    # read "0 with findings" while section 3 listed one, on the same item, in
+    # the same document.
+    outside = sorted(seen - in_scope_set) if scope_known else []
+    outside_with_findings = sorted(found - in_scope_set) if scope_known else []
+    outside_chapters = sorted(
+        {str(_chapter(k)) if _chapter(k) is not None else "unnumbered" for k in outside})
+    src = cfg.source(source_id)
+    bound = [n for n in cfg.companion_names() if source_id in (cfg.sources_of(n) or [])]
+    return {
+        "source_id": source_id,
+        "edition": src.edition or src.title or "",
+        "role": src.role,
+        "companions": bound,
+        # A source no companion is bound to is not under audit, so it is not a
+        # hole in the audit either: both real workspaces carry an earlier draft
+        # as a reference edition, and counting it as "part of the scope missing"
+        # made the first paragraph's warning fire on every report ever written.
+        "under_audit": bool(bound),
+        # its items are the tagged environments the adapter reads, not numbered
+        # prose: the cells say so instead of naming a command that cannot fill them
+        "manuscript": manuscript,
+        "items_json": items["path"],
+        "items_in_source": items["count"] if items["present"] else None,
+        "chapters_in_source": items["chapters"],
+        "chapters_audited": chapters_audited,
+        # what the workspace asked for, which for a manuscript is not what the
+        # run did: `cf plan-run` plans the whole pairing index either way
+        "chapters_pinned": chapters_pinned,
+        "items_in_scope": (recon_scope if recon_scope is not None
+                           else (len(in_scope_names) if scope_known else None)),
+        "items_in_scope_recomputed": len(in_scope_names) if scope_known else None,
+        "items_in_task_universe": (recon_universe if recon_universe is not None
+                                   else (len(in_scope_set & universe)
+                                         if manuscript and scope_known else None)),
+        # Whether the figure above can be broken down at all: False means the
+        # reconciliation names a total and not the items behind it, so the
+        # per-chapter cells are unknown for that reason and not zero; None that
+        # no task universe was computed here in the first place.
+        "task_universe_itemised": None if recon_universe is None else universe_itemised,
+        "items_paired": ((len(in_scope_set & paired) if scope_known else len(paired))
+                         if pair_index else None),
+        "pair_index": _pair_index_path(paths, source_id) if pair_index else "",
+        "items_examined": len(in_scope_set & seen) if scope_known else len(seen),
+        "items_gated": len(in_scope_set & gated) if scope_known else len(gated),
+        "items_with_findings": len(in_scope_set & found) if scope_known else len(found),
+        "items_never_examined": len(never) if scope_known else None,
+        "never_examined": never,
+        "examined_outside_scope": outside,
+        "with_findings_outside_scope": outside_with_findings,
+        "chapters_outside_scope": outside_chapters,
+        "unstamped_documents": int(block.get("unstamped") or 0),
+        # corpus documents this reader could not parse: every figure above is a
+        # lower bound while one of these exists, and `cf tally` refuses them
+        "unreadable_documents": sorted(block.get("unreadable") or []),
+        # disjoint, and the same two lists `cf tally` publishes: no gate ever
+        # ran, versus a gate that ran and REJECTED, which is a different thing
+        # to say than "no quote was ever checked"
+        "ungated_runs": sorted(block.get("ungated_runs") or []),
+        "gate_failed_runs": sorted(block.get("gate_failed_runs") or []),
+        "runs": dict(sorted((block.get("runs") or {}).items())),
+        "by_chapter": {str(k): v for k, v in sorted(
+            by_chapter.items(), key=lambda kv: (kv[0] is None, kv[0]))},
+        "reconciliation": _reconciliation_path(paths, source_id) if recon else "",
+    }
+
+
+def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
+                   receipts: dict[str, dict]) -> dict:
+    """Every source's denominator, plus the corpus no source block owns.
+
+    Three readers, and between them they consume EVERY key
+    :func:`load_examined` can produce: the ids this workspace holds, the ``""``
+    of a document nothing attributes, and -- :func:`_unknown_source_blocks` --
+    every other id.  That last one had no reader at all, and a block is keyed by
+    the document's own ``source_id`` or its run's receipt, so any id may land
+    there: `cf sources remove <id>` after a corpus was harvested under it, or an
+    import stamped with an id this workspace never had.  The whole block went
+    with it -- items examined, items with findings, the unreadable documents,
+    the ungated and gate-failed runs -- while `cf tally` went on counting the
+    same rows and §2 printed the run by name.  The gate fails CLOSED on an
+    unknown source; this failed open, which is the direction this module's own
+    docstring says the project got wrong three times.
+    """
+    examined = load_examined(paths, runs, receipts)
+    held = list(cfg.source_ids())
+    sources = [source_coverage(cfg, paths, sid, examined) for sid in held]
+    unattributed = examined.get("") or {}
+    return {
+        "created": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sources": sources,
+        "unattributed_documents": len(unattributed.get("examined") or ()),
+        "unattributed_runs": sorted((unattributed.get("runs") or {})),
+        # the same block's gate state: a run that names no single source is still a
+        # run no gate checked, and nothing else in this document would say so
+        "unattributed_ungated_runs": sorted(unattributed.get("ungated_runs") or []),
+        "unattributed_gate_failed_runs": sorted(unattributed.get("gate_failed_runs") or []),
+        # an unreadable document in a run whose receipt names two sources has no
+        # source block to be reported under, and is the same lower bound there
+        "unreadable_documents": sorted(unattributed.get("unreadable") or []),
+        "unknown_source_documents": _unknown_source_blocks(examined, held),
+    }
+
+
+def _unknown_source_blocks(examined: dict[str, dict], held: Iterable[str]) -> list[dict]:
+    """The examined blocks keyed by a source id this workspace does not hold.
+
+    Everything the block carries is published, under the same names the source
+    blocks use, because every one of these figures is one §0 does not count and
+    `cf tally` does.  ``documents`` is the per-run document count and the
+    unreadable ones are NOT in it: a file nothing could parse was never
+    attributed to an item, so counting it here would say this report read
+    something it did not.  ``runs`` is every run that reached the block, not
+    only the ones with a per-run count: a run whose documents were all
+    unreadable -- or that landed none at all -- has no count, and is exactly the
+    run the remedy below is about.
+    """
+    known = set(held)
+    out = []
+    for sid in sorted(examined):
+        if not sid or sid in known:
+            continue
+        block = examined[sid]
+        run_blocks = block.get("runs") or {}
+        unreadable = sorted(block.get("unreadable") or [])
+        ungated = sorted(block.get("ungated_runs") or [])
+        failed = sorted(block.get("gate_failed_runs") or [])
+        out.append({
+            "source_id": sid,
+            "documents": sum(int((r or {}).get("examined") or 0) for r in run_blocks.values()),
+            "items_examined": len(block.get("examined") or ()),
+            "items_with_findings": len(block.get("with_findings") or ()),
+            "runs": sorted(set(run_blocks) | set(ungated) | set(failed)
+                           | {n.split("/", 1)[0] for n in unreadable}),
+            "unreadable_documents": unreadable,
+            "ungated_runs": ungated,
+            "gate_failed_runs": failed,
+        })
+    return out
+
+
+#: the cell of a source no companion is bound to: it owes no denominator
+NO_DENOMINATOR_OWED = "—"
+#: how many names a note spells out before it says "and N more" -- out-of-scope
+#: items, unreadable documents; an imported corpus can be wider than the scope,
+#: or the wrong shape, by hundreds of files, and the full list is in
+#: reports/coverage.json either way
+OUTSIDE_SCOPE_NAMES = 8
+
+
+def _capped_names(names: Any) -> str:
+    """Backticked names, cut off at :data:`OUTSIDE_SCOPE_NAMES` with "and N more".
+
+    Every one of these lists can be long by the same accident -- a legacy import
+    whose whole directory is the wrong shape names every file in it -- and a
+    Markdown line carrying hundreds of them is not a note anyone can read.
+    """
+    names = list(names)
+    shown = ", ".join("`%s`" % n for n in names[:OUTSIDE_SCOPE_NAMES])
+    if len(names) > OUTSIDE_SCOPE_NAMES:
+        shown += " and %d more" % (len(names) - OUTSIDE_SCOPE_NAMES)
+    return shown
+
+
+def _fraction(part: Any, whole: Any, manuscript: bool = False,
+              under_audit: bool = True) -> str:
+    # Nothing is in the audit's scope for a source the audit does not cover, so
+    # the figure is not a figure here: with a reference edition's items.json
+    # prepared this cell read "2 / 2" two columns from "(none)" companions and
+    # two lines above prose saying the source needs no denominator.
+    if not under_audit:
+        return NO_DENOMINATOR_OWED
+    if part is None or whole in (None, 0):
+        # A manuscript has no numbered-prose denominator to compute, so naming a
+        # command here names one that provably cannot change the cell: its
+        # items.json is empty by design and `cf pair && cf harvest` leave it so.
+        return MANUSCRIPT_CELL if manuscript else todo("coverage", "cf pair && cf harvest")
+    return "%s / %s" % (part, whole)
+
+
+def _chapter_fraction(cov: dict) -> str:
+    """"chapters audited", under the same "empty means all" rule as coverage_note.
+
+    An empty ``chapters_audited`` is not a missing figure, it is the ABSENCE of
+    chapter narrowing: ``source_coverage``'s ``in_scope_names`` puts every item
+    in scope on it and ``coverage_note`` prints it as "all", so the table saying
+    TODO next to prose saying "chapters audited all of chapters 1, 2" was one
+    document stating one fact two contradictory ways.  Only an unknown
+    ``chapters_in_source`` is a real hole -- and the command that fills it is
+    `cf onboard`, which infers the scope; nothing in `cf pair` or `cf harvest`
+    ever writes a chapter list.
+
+    A source no companion is bound to audited no chapter of anything, so "all"
+    would be the same over-claim in the other direction: a reference edition
+    with a prepared ``items.json`` has chapters in the source and none audited,
+    and the cell said every one of them was audited two lines above prose saying
+    the source is not under audit at all.
+    """
+    if not cov.get("under_audit", True):
+        return NO_DENOMINATOR_OWED
+    whole = len(cov.get("chapters_in_source") or []) or None
+    if whole is None:
+        return MANUSCRIPT_CELL if cov.get("manuscript") else todo("coverage", "cf onboard <repo>")
+    part = len(cov.get("chapters_audited") or []) or None
+    return "%s / %s" % (part if part is not None else "all", whole)
+
+
+def _paired_cell(value: Any, under_audit: bool = True) -> Any:
+    """The paired figure, or the command that would compute it.
+
+    ``None`` means ``pairs/<id>/index.json`` is absent, not that nothing was
+    paired; printing 0 there would be the same overclaim in the other direction.
+    A source no companion is bound to is not missing a pairing, so it gets the
+    empty cell the rest of its row gets rather than a command to run.
+    """
+    if value is not None:
+        return value
+    return todo("paired", "cf pair") if under_audit else None
+
+
+def render_coverage_table(coverage: dict) -> str:
+    """Section 0: the denominator, per source and per chapter.
+
+    "in task universe" and "paired" are two different columns on purpose; see
+    :func:`source_coverage` for why one of them may not be called the other.
+    """
+    rows: list[list[Any]] = []
+    for src in coverage.get("sources") or []:
+        audited = bool(src.get("under_audit", True))
+        chapters = src.get("by_chapter") or {}
+        if not audited:
+            # A source the audit does not cover has no audited scope, so it also
+            # missed nothing: its per-chapter rows under a `**all audited**`
+            # total claimed every chapter of a reference edition HAD been
+            # audited, in the section whose whole purpose is honest
+            # denominators, while the first paragraph and the prose below it
+            # both say the source owes no denominator.  Not an edge case:
+            # `cf onboard` prepares an items.json for every edition a repo
+            # ships and demotes the unbound ones to `role: reference`
+            # afterwards, so a reference edition WITH an item table is the
+            # ordinary shape.
+            rows.append(["`%s`" % src["source_id"], NO_DENOMINATOR_OWED,
+                         src.get("items_in_source"), None, None,
+                         _paired_cell(src.get("items_paired"), audited),
+                         src.get("items_examined"), src.get("items_gated"),
+                         src.get("items_with_findings"), None])
+            continue
+        entries = list(chapters.items()) or [("all", None)]
+        for chapter, block in entries:
+            if block is None:
+                rows.append(["`%s`" % src["source_id"], "—",
+                             src.get("items_in_source"), src.get("items_in_scope"),
+                             src.get("items_in_task_universe"),
+                             _paired_cell(src.get("items_paired"), audited),
+                             src.get("items_examined"),
+                             src.get("items_gated"), src.get("items_with_findings"),
+                             src.get("items_never_examined")])
+                continue
+            rows.append([
+                "`%s`" % src["source_id"],
+                chapter if chapter != "None" else "unnumbered",
+                "",                      # the per-source total is on the total row below
+                block["in_scope"], block["in_task_universe"],
+                _paired_cell(block["paired"], audited),
+                block["examined"], block["gated"],
+                block["with_findings"], len(block["never_examined"]),
+            ])
+        if chapters:
+            rows.append([
+                "`%s`" % src["source_id"], "**all audited**",
+                src.get("items_in_source"), src.get("items_in_scope"),
+                src.get("items_in_task_universe"),
+                _paired_cell(src.get("items_paired"), audited),
+                src.get("items_examined"),
+                src.get("items_gated"), src.get("items_with_findings"),
+                src.get("items_never_examined"),
+            ])
+    if not rows:
+        return todo("coverage", "cf onboard <repo> && cf pair")
+    return _table(["source", "chapter", "items in source", "in scope", "in task universe",
+                   "paired", "examined", "gated", "with findings", "never examined"], rows)
+
+
+def _unreadable_lines(src: dict) -> list:
+    """The lower-bound sentence for one source, said in every shape it can be in."""
+    names = src.get("unreadable_documents") or []
+    if not names:
+        return []
+    return ["  - %d corpus document(s) could not be read (%s), so every figure above is a "
+            "LOWER BOUND and an item behind one of them may be counted as never examined; "
+            "`cf tally --run <run-id>` refuses them by name and says why. Fix or re-run those "
+            "tasks, then `cf harvest <run-id>` again. All of them are named in "
+            "`reports/coverage.json` (`unreadable_documents`)."
+            % (len(names), _capped_names(names))]
+
+
+def _outside_scope_lines(src: dict) -> list:
+    """What `cf tally` and §3 count and no figure in §0 does."""
+    names = src.get("examined_outside_scope") or []
+    if not names:
+        return []
+    found = len(src.get("with_findings_outside_scope") or ())
+    return ["  - %d examined item(s) lie OUTSIDE the audited chapter(s), in chapter(s) "
+            "%s (%d of them with findings): `cf tally` and §3 count them and no "
+            "figure above does — %s. All of them are named in "
+            "`reports/coverage.json` (`examined_outside_scope`)."
+            % (len(names), ", ".join(src.get("chapters_outside_scope") or []) or "?",
+               found, _capped_names(names))]
+
+
+def _gate_lines(src: dict) -> list:
+    """The two gate states, said apart.
+
+    "No gate ever ran" and "a gate ran and REJECTED" are disjoint (see
+    :func:`_record_gate_state`), so calling the second one unchecked would be a
+    second wrong statement about it.
+    """
+    lines = []
+    if src.get("ungated_runs"):
+        lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
+                     "text. %s" % (_capped_names(src["ungated_runs"]), tally_mod.REGATE_HINT))
+    if src.get("gate_failed_runs"):
+        lines.append("  - gate FAILED for run(s) %s: their quotes were checked against the "
+                     "source text and rejected (see `corpus/<run-id>/RECEIPT.json` "
+                     "gate.problems); their rows are counted above. Re-run those tasks or "
+                     "drop that corpus. %s"
+                     % (_capped_names(src["gate_failed_runs"]), tally_mod.REGATE_HINT))
+    return lines
+
+
+def _unstamped_lines(src: dict) -> list:
+    """Documents attributed from their run's receipt rather than their own stamp."""
+    if not src.get("unstamped_documents"):
+        return []
+    return ["  - %d corpus document(s) carry no `source_id` and were attributed from "
+            "their run's receipt." % src["unstamped_documents"]]
+
+
+def _caveat_lines(src: dict) -> list:
+    """Every caveat one source owes a reader, said in every shape it can be in.
+
+    Every branch of :func:`coverage_note` calls it, including the three that end
+    a source's note early (not under audit, an unpaired manuscript, no
+    items.json), because those are exactly the shapes where nothing else in the
+    document would say it: `cf tally` printed "UNGATED run(s)" and "GATE FAILED
+    run(s)" on the terminal while the rendered handoff — the artifact that
+    travels — said nothing, and "no quote in this corpus was checked against the
+    source text" is the safety claim the whole gate exists for.  One helper and
+    one call site per branch, because the hole was fixed for the unreadable
+    sentence alone and the other four stayed below the `continue`s.
+
+    The out-of-scope sentence is a no-op on two of the three early branches
+    (``scope_known`` is False for a manuscript with no pairing and for a source
+    with no ``items.json``, so the list is always empty there); the not-under-
+    audit branch is the one that gains it.
+    """
+    return (_unreadable_lines(src) + _outside_scope_lines(src) + _gate_lines(src)
+            + _unstamped_lines(src))
+
+
+def _unknown_source_lines(blocks: list) -> list:
+    """The corpus attributed to a source this workspace does not hold.
+
+    Beside the unattributed sentence, and for the same reason: these documents
+    are counted by `cf tally`, printed in §2 and in no figure of §0, so without
+    this line the reader meets them only as items §0 calls never examined.
+    """
+    if not blocks:
+        return []
+    docs = sum(int(b.get("documents") or 0) for b in blocks)
+    found = sum(int(b.get("items_with_findings") or 0) for b in blocks)
+    runs = sorted({r for b in blocks for r in (b.get("runs") or ())})
+    lines = ["- %d corpus document(s) in run(s) %s name source(s) %s that this workspace does "
+             "not hold, so no figure above counts them — `cf tally` does, %d of them with "
+             "findings, and an item behind one of them may be counted as never examined above. "
+             "Re-add the source (`cf sources add <source> --for <companion>`) or re-import that "
+             "corpus under an id this workspace holds (`cf import-corpus --run-id <run-id> "
+             "--from <dir> --source <id>`). All of them are named in "
+             "`reports/coverage.json` (`unknown_source_documents`)."
+             % (docs, _capped_names(runs),
+                _capped_names(b.get("source_id") for b in blocks), found)]
+    unreadable = sorted({n for b in blocks for n in (b.get("unreadable_documents") or ())})
+    if unreadable:
+        lines.append("  - a further %d document(s) in those run(s) could not be read at all "
+                     "(%s), so that count is itself a LOWER BOUND; `cf tally --run <run-id>` "
+                     "refuses them by name and says why."
+                     % (len(unreadable), _capped_names(unreadable)))
+    ungated = sorted({r for b in blocks for r in (b.get("ungated_runs") or ())})
+    failed = sorted({r for b in blocks for r in (b.get("gate_failed_runs") or ())})
+    lines.extend(_gate_lines({"ungated_runs": ungated, "gate_failed_runs": failed}))
+    return lines
+
+
+def coverage_note(coverage: dict) -> str:
+    """The sentence a reader would otherwise have to guess, plus the caveats."""
+    lines = []
+    for src in coverage.get("sources") or []:
+        total, scope = src.get("items_in_source"), src.get("items_in_scope")
+        if not src.get("under_audit", True):
+            lines.append("- `%s`: not under audit — no companion is bound to it (`role: %s`), so "
+                         "it needs no denominator." % (src["source_id"], src.get("role") or "?"))
+            lines.extend(_caveat_lines(src))
+            continue
+        if total is None and src.get("manuscript"):
+            lines.append("- `%s`: a manuscript — its items are the tagged environments the "
+                         "adapter reads, not numbered prose, so `items.json` is empty on purpose "
+                         "and the only artifact that can count them is `pairs/%s/index.json`; "
+                         "run `cf pair`." % (src["source_id"], src["source_id"]))
+            lines.extend(_caveat_lines(src))
+            continue
+        if total is None:
+            lines.append("- `%s`: no `items.json` yet, so this report has no denominator for it "
+                         "— %s." % (src["source_id"], todo("items", "cf onboard <repo>")))
+            lines.extend(_caveat_lines(src))
+            continue
+        chapters = (", ".join(str(c) for c in src["chapters_audited"])
+                    if src["chapters_audited"] else "all")
+        lines.append(
+            # "1 of 1, 2" read as one figure over another; the second number is a
+            # LIST of the chapters the source has, so it says so.
+            "- `%s`: chapters audited %s of chapters %s; %s items in scope of %s in the source; "
+            "%s in the differential's task universe, %s paired by two or more companions, "
+            "%s examined (%s of them gated), %s with findings, %s never examined."
+            % (src["source_id"], chapters,
+               ", ".join(str(c) for c in src["chapters_in_source"]) or "?",
+               scope if scope is not None else "?", total,
+               src.get("items_in_task_universe")
+               if src.get("items_in_task_universe") is not None else "?",
+               src.get("items_paired") if src.get("items_paired") is not None
+               else "an unknown number of",
+               src.get("items_examined"), src.get("items_gated"),
+               src.get("items_with_findings"),
+               src.get("items_never_examined") if src.get("items_never_examined") is not None
+               else "?")
+        )
+        if src.get("items_paired") is None:
+            lines.append("  - no `pairs/%s/index.json`, so the paired figure could not be "
+                         "computed at all; run `cf pair`." % src["source_id"])
+        # A dash beside a total that prints a figure is read as a disagreement
+        # unless the document says which of the two was never computed.
+        if src.get("task_universe_itemised") is False:
+            lines.append("  - `reconciliation.json` names a task universe of %s and does not list "
+                         "the items behind it (`task_universe_items`), so the per-chapter cells "
+                         "in that column are unknown rather than 0; re-run `cf pair` to itemise "
+                         "it." % src.get("items_in_task_universe"))
+        # A manuscript is planned off its pairing index, so the chapter pin the
+        # workspace carries narrowed nothing: saying "chapters audited 1" over a
+        # source every chapter of which was planned and examined is the same
+        # false denominator in the other direction.
+        if src.get("manuscript") and src.get("chapters_pinned"):
+            lines.append("  - `chapters: %s` does not narrow this source: `cf plan-run` takes a "
+                         "manuscript's task universe from `pairs/%s/index.json`, which no chapter "
+                         "list narrows, so the figures above are over the whole pairing index."
+                         % (", ".join(str(c) for c in src["chapters_pinned"]),
+                            src["source_id"]))
+        # The lines above explain a FIGURE; these say what the figures do not
+        # cover, and the same five are said on every branch above.
+        lines.extend(_caveat_lines(src))
+        # Only where the reconciliation was asked: for a manuscript it is not a
+        # second opinion (see :func:`source_coverage`), so the two can never
+        # differ -- and the remedy this line names could not have closed it.
+        if (not src.get("manuscript")
+                and src.get("items_in_scope_recomputed") is not None
+                and src.get("items_in_scope") != src.get("items_in_scope_recomputed")):
+            lines.append("  - `reconciliation.json` says %s items in scope, `items.json` and the "
+                         "audited chapters give %s — one of them is stale; re-run `cf pair`."
+                         % (src.get("items_in_scope"), src["items_in_scope_recomputed"]))
+    if coverage.get("unattributed_documents"):
+        lines.append("- %d corpus document(s) in run(s) %s name no source and their run does not "
+                     "name one either; they are counted against no denominator."
+                     % (coverage["unattributed_documents"],
+                        ", ".join("`%s`" % r for r in coverage["unattributed_runs"])))
+    lines.extend(_gate_lines({
+        "ungated_runs": coverage.get("unattributed_ungated_runs") or [],
+        "gate_failed_runs": coverage.get("unattributed_gate_failed_runs") or []}))
+    if coverage.get("unreadable_documents"):
+        lines.append("- %d corpus document(s) could not be read and their run names no single "
+                     "source (%s), so they are counted against no denominator either; "
+                     "`cf tally --run <run-id>` names them and says why. All of them are named "
+                     "in `reports/coverage.json` (`unreadable_documents`)."
+                     % (len(coverage["unreadable_documents"]),
+                        _capped_names(coverage["unreadable_documents"])))
+    lines.extend(_unknown_source_lines(coverage.get("unknown_source_documents") or []))
+    return "\n".join(lines) or todo("coverage", "cf pair && cf harvest")
+
+
+def scope_sentence(coverage: dict) -> str:
+    """The first paragraph's claim about scope. An unaudited scope says so here.
+
+    Only sources UNDER AUDIT can make the report partial.  Both real workspaces
+    carry an earlier draft as a reference edition that no companion is bound to
+    and that therefore has no ``items.json``; counting those made every handoff
+    ever written open with "covers PART of its sources", which is how a warning
+    stops meaning anything.  They are named in their own clause instead, so the
+    reader still sees that the workspace holds them.
+    """
+    sources = coverage.get("sources") or []
+    if not sources:
+        return ("**Scope unknown.** No source has an `items.json` yet, so nothing below has a "
+                "denominator and this report is not an audit of any book.")
+    audited = [s for s in sources if s.get("under_audit", True)]
+    aside = ["`%s`" % s["source_id"] for s in sources if not s.get("under_audit", True)]
+    tail = (" Not under audit (no companion is bound to them): %s." % ", ".join(aside)
+            if aside else "")
+    if not audited:
+        return ("**Scope unknown.** No companion is bound to any source in this workspace, so "
+                "nothing below is an audit of a book.%s" % tail)
+    partial = []
+    for src in audited:
+        total, scope = src.get("items_in_source"), src.get("items_in_scope")
+        never = src.get("items_never_examined")
+        # A zero whole is not a full audit of nothing, it is no denominator: the
+        # clean-bill branch below was reached with total == scope == never == 0
+        # and printed "Every item ... was examined" over a source whose item
+        # table this report could not read.
+        if total in (None, 0) or scope is None or never is None:
+            partial.append("`%s` (no denominator computed)" % src["source_id"])
+        elif never or scope < total:
+            partial.append("`%s` (%d of %d items in scope, %d never examined)"
+                           % (src["source_id"], scope, total, never))
+    if not partial:
+        return ("**Scope.** Every item of every source under audit in this workspace is in scope "
+                "and was examined; the per-chapter figures are in §0.%s" % tail)
+    return ("**This report covers PART of its sources, not all of them:** %s. It is not an audit "
+            "of the whole of any of them, and a count taken from it is a count over the audited "
+            "scope only — §0 has the figures per source and chapter.%s"
+            % ("; ".join(partial), tail))
+
+
+def write_coverage(paths: Any, coverage: dict) -> list[str]:
+    """``reports/coverage.json`` plus one ``unexamined.<source_id>.json`` per source."""
+    written = [os.path.join(paths.reports, "coverage.json")]
+    compat.write_json(written[0], coverage)
+    for src in coverage.get("sources") or []:
+        path = os.path.join(paths.reports, "unexamined.%s.json" % src["source_id"])
+        compat.write_json(path, {
+            "source_id": src["source_id"],
+            "items_json": src["items_json"],
+            "chapters_audited": src["chapters_audited"],
+            "items_in_scope": src["items_in_scope"],
+            "items_in_task_universe": src["items_in_task_universe"],
+            "items_examined": src["items_examined"],
+            "count": len(src["never_examined"]),
+            "items": src["never_examined"],
+            "by_chapter": {ch: block["never_examined"]
+                           for ch, block in (src.get("by_chapter") or {}).items()},
+        })
+        written.append(path)
+    return written
 
 
 def build_context(
@@ -638,6 +1725,11 @@ def build_context(
     receipts = load_receipts(paths)
     gh = load_gh(gh_files)
     source_ids = cfg.source_ids()
+    coverage = build_coverage(cfg, paths, runs, receipts)
+    # The paths, not just the files: `cf report` wrote reports/coverage.json and
+    # one reports/unexamined.<source_id>.json per source and named neither, while
+    # the handoff tells its reader to open the second one.
+    coverage_files = write_coverage(paths, coverage)
 
     unchallenged = [
         f for f in facts
@@ -650,9 +1742,20 @@ def build_context(
         else "Every routed file is CHALLENGED: each row carries a ledger verdict."
     )
     open_total = sum(len(f["open_rows"]) for f in facts)
+    # The TL;DR carries the denominator in the same sentence as the finding count:
+    # "N open rows" quoted without "over M items examined of K in scope" is the
+    # overclaim that damages the project the first time someone checks.
+    scope_tldr = "; ".join(
+        "`%s`: %s of %s item(s) in scope examined (%s in the source)"
+        % (src["source_id"],
+           src.get("items_examined"),
+           src.get("items_in_scope") if src.get("items_in_scope") is not None else "?",
+           src.get("items_in_source") if src.get("items_in_source") is not None else "?")
+        for src in coverage["sources"]
+    )
     default_tldr = (
         "%d companion(s) audited against %d source(s) (%s); %d open ledger row(s) across "
-        "%d routed file(s); %s"
+        "%d routed file(s); %s%s"
         % (
             len(facts),
             len(source_ids),
@@ -661,12 +1764,16 @@ def build_context(
             sum(1 for f in facts if f["routed_meta"]),
             "no upstream report may be produced yet." if unchallenged
             else "every routed file is challenged.",
+            (" Coverage: %s." % scope_tldr) if scope_tldr else "",
         )
     )
     return {
         "workspace": cfg.title or os.path.basename(paths.root),
         "date": date or _dt.date.today().isoformat(),
-        "sources_table": render_sources_table(cfg, tallies),
+        "sources_table": render_sources_table(cfg, tallies, coverage),
+        "scope_note": scope_sentence(coverage),
+        "coverage_table": render_coverage_table(coverage),
+        "coverage_note": coverage_note(coverage),
         "tldr": tldr or default_tldr,
         "state_table": render_state_table(facts),
         "status_note": status_note,
@@ -674,7 +1781,7 @@ def build_context(
         "yield_note": (
             "Every cell above is `run.yaml`, a corpus `RECEIPT.json` or a tally file; no number "
             "here was typed by hand. `--` means an imported run records no such figure."
-            if tallies else todo("yield table", "cf harvest --tally")
+            if tallies else todo("yield table", "cf tally")
         ),
         "findings_tables": render_findings_tables(facts, tallies),
         "owner_actions": render_owner_actions(facts, gh),
@@ -684,13 +1791,16 @@ def build_context(
         ),
         "paths_list": render_paths_list(paths, facts, source_ids),
         "traps_list": render_traps(traps),
-        "verification_commands": render_verification(paths, facts, tallies, gh),
+        "verification_commands": render_verification(paths, facts, tallies, gh, coverage),
         "provenance": "_Generated by `cf report` from %d tally file(s), %d run.yaml file(s), %d "
-        "corpus receipt(s) and %d saved gh output file(s). Figures with no artifact behind them "
-        "are marked TODO._"
-        % (len(tallies), len(runs), len(receipts), len(gh)),
+        "corpus receipt(s), %d saved gh output file(s) and %d source item table(s). Figures with "
+        "no artifact behind them are marked TODO._"
+        % (len(tallies), len(runs), len(receipts), len(gh),
+           sum(1 for s in coverage["sources"] if s.get("items_in_source") is not None)),
         "_facts": facts,
         "_tallies": tallies,
+        "_coverage": coverage,
+        "_coverage_files": coverage_files,
         "_paths": paths,
         "_workspace": cfg,
     }
@@ -730,7 +1840,13 @@ def make_handoff(
     wrong_section: str = "",
     template: str = "",
 ) -> dict:
-    """Render ``reports/handoff.<date>.md``. Returns {path, todos, context, text}."""
+    """Render ``reports/handoff.<date>.md``.
+
+    Returns ``{path, todos, coverage_files, context, text}``; ``coverage_files``
+    is every other file this call wrote (``reports/coverage.json`` and one
+    ``reports/unexamined.<source_id>.json`` per source), so the command that
+    calls it can name them instead of writing them silently.
+    """
     ctx = build_context(
         workspace,
         tally_files=tally_files,
@@ -744,7 +1860,8 @@ def make_handoff(
     path = out_path or os.path.join(paths.reports, "handoff.%s.md" % ctx["date"])
     compat.write_text(path, text)
     todos = sorted(set(re.findall(r"TODO\([^)]*\)", text)))
-    return {"path": path, "todos": todos, "context": ctx, "text": text}
+    return {"path": path, "todos": todos, "coverage_files": list(ctx["_coverage_files"]),
+            "context": ctx, "text": text}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -766,6 +1883,8 @@ def main(argv: list[str] | None = None) -> int:
         tldr=args.tldr,
     )
     print("wrote %s (%d TODO placeholder(s))" % (report["path"], len(report["todos"])))
+    for path in report["coverage_files"]:
+        print("wrote %s" % path)
     return 0
 
 

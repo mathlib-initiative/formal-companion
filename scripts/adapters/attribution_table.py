@@ -1,8 +1,7 @@
 """Adapter: a machine-readable item -> declaration attribution table.
 
-Ported from the ``adam.jsonl`` generator,
-  scratchpad/recovered/11323fe3_L3102_Bash.txt
-which joined measure_theory's overlay artifacts:
+Ported from the ``adam.jsonl`` generator of the v1 campaign (a one-off cell, not
+in this repo), which joined measure_theory's overlay artifacts:
 
     pdf-overlay/data/geometry-batch-{a,b,c,d}.json   region -> item label + PDF page
     pdf-overlay/data/target-refinement.json          region -> formalization ids
@@ -10,7 +9,7 @@ which joined measure_theory's overlay artifacts:
     pdf-overlay/data/declaration-snippets.json       id -> file, line, statement
     source-formalization-ledger.json                 id -> kind, module, file
 
-Generalisations over the original cell (design/stage_map.md Stage 2):
+Generalisations over the original cell (docs/design/stage_map.md Stage 2):
 
 * the printed/PDF page offset is configuration, not the literal ``16``;
 * item labels go through the strict grammar (``cflib.items``) instead of a
@@ -19,7 +18,7 @@ Generalisations over the original cell (design/stage_map.md Stage 2):
 * ``statement`` is the signature and ``body`` the definition body, instead of
   one blob;
 * ``key()`` includes the ledger and target-refinement shas
-  (design/critique.json: "the extract key must include ledger sha and
+  (the design critique: "the extract key must include ledger sha and
   target-refinement sha for ledger repos"), and the dry run reports when the
   refinement was curated against a *different* ledger than the one on disk —
   the "ledger-node repos go stale after fixes" failure mode.
@@ -92,6 +91,37 @@ class AttributionTableAdapter(Adapter):
     #: is where measure_theory records the page the errata live on.  Ranked
     #: first by :meth:`discover_sources`; the rest still run.
     PRIMARY_SIGNALS = ("ledger_source", "official_source_json", "citation")
+
+    # -- detection (design S4.2) -------------------------------------------
+    #: The overlay layout is unambiguous -- a directory of region files NEXT TO
+    #: a file naming the source they were measured against is not something a
+    #: repo grows by accident -- so the score is a near-certainty and the
+    #: constant lives with the adapter that reads those files.
+    DETECT_SCORE = 0.98
+
+    @classmethod
+    def _overlay(cls, repo: str | Path) -> tuple[list, bool]:
+        """``(pdf-overlay/data/*.json, official-source.json exists)``."""
+        root = Path(repo)
+        data = root / "pdf-overlay" / "data"
+        files = sorted(data.glob("*.json")) if data.is_dir() else []
+        return files, (root / "pdf-overlay" / "official-source.json").exists()
+
+    @classmethod
+    def detect(cls, repo: str | Path) -> tuple[float, dict]:
+        files, official = cls._overlay(repo)
+        if not (files and official):
+            return 0.0, {}
+        return cls.DETECT_SCORE, {
+            "reason": f"{len(files)} pdf-overlay/data/*.json + official-source.json",
+            "files": ["pdf-overlay/data", "pdf-overlay/official-source.json"],
+        }
+
+    @classmethod
+    def explain(cls, repo: str | Path) -> list[str]:
+        files, official = cls._overlay(repo)
+        return [f"attribution table: pdf-overlay/data/*.json: {len(files)}; "
+                f"pdf-overlay/official-source.json: {'present' if official else 'absent'}"]
 
     # -- config ------------------------------------------------------------
     def validate_config(self) -> None:

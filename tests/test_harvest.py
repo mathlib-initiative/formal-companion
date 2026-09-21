@@ -3,7 +3,7 @@
 The numbers asserted here are not invented: they are what the baseline corpus
 at ``$CF_BASELINE_CORPUS`` (the five runs of the 2026-09 audit, 2,672 findings
 files) actually contains, and they are the numbers
-tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md publishes -- 72 rows over 40
+tao-measure-lean's own OPEN_FAITHFULNESS_FINDINGS.md publishes -- 72 rows over 40
 items for ``ours``, of which 16 are CONTENT/VACUITY, 1 a suspected erratum, 1
 coverage-only and 22 pagination.  If a change to tally.py moves any of them, it
 has changed what the audit says, which is exactly the event these tests exist to
@@ -11,7 +11,7 @@ catch.
 
 Every test that needs the baseline skips cleanly when its env var is unset:
 
-    CF_BASELINE_CORPUS=~/Desktop/tao-diff-run python3 -m unittest discover tests
+    CF_BASELINE_CORPUS=<the v1 findings corpus> python3 -m unittest discover tests
 
 ``CF_TEST_TMP`` (optional) puts the scratch directories somewhere other than the
 system temp dir.
@@ -508,7 +508,7 @@ class TestReceipt(unittest.TestCase):
         self.assertTrue(any("NOT FOUND" in p for p in bad["problems"]))
 
     def test_remote_source_refuses_without_execute(self):
-        source = harvest_mod.parse_source("ffmain:/home/jack/tao-attack-hunt/findings")
+        source = harvest_mod.parse_source("examplebox:/srv/runs/tao-attack-hunt/findings")
         self.assertEqual(source["kind"], "remote")
         with self.assertRaises(Exception):
             harvest_mod.harvest(run_id="run-1", source=source, dest=self.dest, execute=False)
@@ -843,8 +843,14 @@ class TestImportedCorpusJoinsThisWorkspacesRuns(unittest.TestCase):
             (out / path.name).write_text(json.dumps(doc), encoding="utf-8")
         rows = tally_mod.collect({"v1-hunt": out, "today": self.root / "today"})
         self.assertEqual(union_mod.union(rows, baseline_runs=["v1-hunt"], new_only=True), [])
-        self.assertEqual([e["item"] for e in agreed_mod.agreed(rows, min_runs=2,
-                                                              min_severity="low")],
+        # The union joins them -- its key is (source_id, repo, item, kind), which
+        # is the question --new-only asks.  AGREEMENT now needs the same
+        # declaration as well, and the two generations spell this one differently
+        # (`Riemann...` against the namespaced `TaoMeasure.Riemann...`), so the
+        # two runs are evidence about the same locus, not the same complaint.
+        self.assertEqual(agreed_mod.agreed(rows, min_runs=2, min_severity="low"), [])
+        self.assertEqual([e["item"] for e in agreed_mod.same_locus(rows, min_runs=2,
+                                                                  min_severity="low")],
                          ["In-text p.71"])
 
     def test_the_importer_refuses_a_map_onto_a_companion_nobody_has(self):
@@ -1157,7 +1163,7 @@ class TestRunPlanner(unittest.TestCase):
 
         self.assertEqual(manifest.resolve_host(self.workspace, "testbox")["ssh"], "tester@testbox")
         with self.assertRaises(Exception):
-            manifest.resolve_host(self.workspace, "ffmain")
+            manifest.resolve_host(self.workspace, "otherbox")
 
     def test_sources_and_book_are_excluded_by_default(self):
         from run import manifest
@@ -1255,7 +1261,7 @@ class TestRunPlanner(unittest.TestCase):
         with self.assertRaises(Exception):
             manifest.check_planned_host({"host": {"name": "local"}}, "testbox")
         with self.assertRaises(Exception):
-            manifest.check_planned_host({"host": {"name": "ffmain"}}, "testbox")
+            manifest.check_planned_host({"host": {"name": "otherbox"}}, "testbox")
 
     def test_staged_gate_beats_the_skill_copy(self):
         """`cf plan-run` stages the gate in tend-root/gate/ with the run's gate.json."""
@@ -1388,7 +1394,8 @@ class TestRunPlanner(unittest.TestCase):
                 "statements": "/c/ours.jsonl", "conventions": "total functions"}],
         mode="differential",
         gate={"command": "python3 gate.py", "config": "/c/gate.local.json",
-              "kinds": ["CONTENT"], "witness_required": False,
+              "kinds": ["CONTENT"], "verdicts": ["AGREE", "CONTENT_DELTA"],
+              "schema_version": 2, "witness_required": False,
               "quote_min_chars": 25, "scratch_dir": "/tmp/sg"},
     )
 

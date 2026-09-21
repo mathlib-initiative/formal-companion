@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Convert the v1 findings corpus to schema v2 — in memory or to a new tree.
 
-Ported from: nothing. v1 is the shape produced by
-``ffmain:~/tao-diff-{run,run-pdf,run-gpt}`` and ``~/tao-attack-{vac,hunt}``; the
-local baseline of 2,672 files is at ``$CF_BASELINE_CORPUS`` (=
-``/Users/jack/Desktop/tao-diff-run``) in ``findings/``, ``findings-pdf/``,
-``findings-gpt/``, ``findings-vac/`` and ``findings-hunt/``.
+Ported from: nothing. v1 is the shape the five v1 campaign runs produced; the
+local baseline of 2,672 files is the directory ``$CF_BASELINE_CORPUS`` names, in
+``findings/``, ``findings-pdf/``, ``findings-gpt/``, ``findings-vac/`` and
+``findings-hunt/``.
 
 The four v1 defects this fixes (design decision "adopt findings schema v2"):
 
@@ -20,7 +19,7 @@ v1 also predates the multi-source model: it had ONE implicit book, so there is
 no ``source_id`` in the corpus to recover.  ``--source`` supplies the run's
 single source and the converter stamps it on the document and on every
 disagreement; ``--source-sha`` fills the slot v1 called ``book_sha``.  The ids
-are recomputed under the five-part rule of docs/design/multi-source-model.md
+are recomputed under the five-part rule of docs/design/archive/multi-source-model.md
 S6.1, which is exactly why they must be recomputed: a four-part id computed
 without a source collides across sources.
 

@@ -1,8 +1,7 @@
 """Build the args for the local Workflow fleet (the <100-item fallback).
 
-Ported from the queue builder in scratchpad/recovered/b174aa13_L5589_Bash.txt
-(``queue_args.json``: item, repos, pdf_pages) and the fleet script it fed,
-recovered/b174aa13_L5600_Workflow.txt.
+Ported from the v1 campaign's queue builder (``queue_args.json``: item, repos,
+pdf_pages) and the fleet script it fed.  Neither is in this repo.
 
 The local path exists because the server path needs ssh, an agentbox profile and
 the box owner's consent.  It is a FALLBACK, and the record says why: the local
@@ -12,7 +11,7 @@ elsewhere).  So this refuses to build a fleet larger than --max-items (100 by
 default) unless forced.
 
 Two things a Workflow script cannot do, which the caller must therefore do
-(design/critique.json, corrections): it has no filesystem or Node API, so the
+(the design critique, corrections): it has no filesystem or Node API, so the
 quote gate CANNOT run inside the script after each agent -- the worker must
 self-gate in its prompt, and the run is reconciled afterwards with
 ``harvest_journal.py`` -> ``verify_findings.py`` -> a second Workflow run for
@@ -27,9 +26,15 @@ from pathlib import Path
 if __package__ in (None, ""):  # `python3 scripts/run/fleet_local.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from run._compat import CfError, read_yaml, write_json
+from run._compat import CfError, read_yaml, skill_root, write_json
 
 DEFAULT_MAX_ITEMS = 100
+
+#: the local runner, as `Workflow({ scriptPath: ... })` must name it
+WORKFLOW_SCRIPT = "workflows/fleet-local.workflow.js"
+
+#: the corpus schema version the out-of-tree gate demands of every findings file
+DEFAULT_SCHEMA_VERSION = 2
 
 
 def task_args(run_dir: Path) -> list[dict]:
@@ -146,12 +151,16 @@ def build(
     ``tests/test_harvest.py`` asserts the two stay in step.
 
     ``source`` is the ONE source block (``source_id``, ``title``,
-    ``source_sha``, ``text``, ``pages_dir``, ``page_offset``, ``errata``) the
-    workflow prints into its context: a local fleet is planned for one source,
-    and naming it is what lets the gate check the quotes against the right text.
+    ``source_sha``, ``text``, ``pages_dir``, ``page_offset``, ``errata``,
+    ``errata_withheld``) the workflow prints into its context: a local fleet is
+    planned for one source, and naming it is what lets the gate check the quotes
+    against the right text.
     """
     attack = str(mode or "").startswith("attack")
     source = dict(source)
+    # An absent errata and a WITHHELD one are different facts, and the prompt
+    # renders the second; a caller that knows of neither still supplies the key.
+    source.setdefault("errata_withheld", "")
     source_id = str(source.get("source_id") or "")
     items = item_args(run_dir, item_meta, note_single_source=not attack,
                       source_id=source_id)
@@ -161,10 +170,15 @@ def build(
         items = item_args(run_dir, item_meta, note_single_source=not attack,
                           source_id=source_id, name_source=True)
     if len(items) > max_items and not force:
+        # Name the three real options. The old hint said "run it on the server
+        # with `cf run`" -- the command that had just failed -- and told an
+        # operator a war story about somebody else's run instead of a flag.
         raise CfError(
             f"{len(items)} items is too many for the local Workflow fleet (limit {max_items})",
-            hint="run it on the server with `cf run`, or pass --force and expect to resume "
-                 "after the session limit (batch 1 died at 129 of 225 agents)",
+            hint=f"send it to a server with `cf run {run_id} --host <alias> --i-have-consent` "
+                 "(hosts come from workspace.yaml hosts.allowlist); or pass --force to stage all "
+                 f"{len(items)} locally and expect to resume after the session limit; or raise "
+                 f"`defaults.local_fleet_max_items` in workspace.yaml above {len(items)}",
         )
     args = {
         "run_id": run_id,
@@ -188,11 +202,17 @@ def build(
 WORKFLOW_KEYS: dict[str, tuple[str, ...]] = {
     "args": ("run_id", "source", "repos", "mode", "gate", "model",
              "challenge", "challenge_model", "pairs", "items"),
+    # `errata_withheld` travels even when empty: the two adjudication workflows
+    # already print WHY an errata is absent, and a local worker told nothing at
+    # all cannot tell "no errata exists" from "one exists and was withheld".
     "source": ("source_id", "title", "source_sha", "text", "pages_dir",
-               "page_offset", "errata"),
+               "page_offset", "errata", "errata_withheld"),
     "repos": ("name", "repo", "statements", "conventions"),
-    "gate": ("command", "config", "kinds", "witness_required", "quote_min_chars",
-             "scratch_dir"),
+    # `kinds`, `verdicts` and `schema_version` are the RUN'S GATE: the workflow
+    # builds the worker's structured-output enums from them instead of carrying a
+    # second hand-written copy that drifts from the preset's.
+    "gate": ("command", "config", "kinds", "verdicts", "schema_version",
+             "witness_required", "quote_min_chars", "scratch_dir"),
     "items": ("item", "source_id", "repos", "pdf_pages", "note"),
 }
 
@@ -220,19 +240,30 @@ def write(run_dir: Path, args: dict) -> Path:
 def instructions(args_path: Path, count: int, run_id: str = "<run-id>",
                  gate_config: str = "<run>/gate.local.json",
                  corpus_dir: str = "corpus/<run-id>") -> str:
-    """What the operator must do next -- cf.py cannot launch a Workflow itself."""
+    """What the operator must do next -- cf.py cannot launch a Workflow itself.
+
+    Both script paths are ABSOLUTE, via ``cflib.paths.skill_root()``: ``cf``
+    defaults its workspace to the current directory and a workspace has no
+    ``workflows/`` or ``scripts/`` directory, so a relative path here resolves
+    against the wrong root (the two sibling commands, ``cf adjudicate`` and
+    ``cf report``, already print an absolute one).  The rule applied only to the
+    Workflow line for a while, and the two gate lines below it went on printing
+    ``python3 scripts/cf.py ...`` / ``python3 scripts/gate/...`` to an operator
+    standing in the workspace, where neither path exists.  The `cf` one is now
+    the shim spelling every other hint uses.
+    """
     return "\n".join([
         f"{count} items staged for the local fleet.",
         "",
         "The Workflow tool cannot be launched from cf.py; run it from a Claude Code session:",
-        "  script: workflows/fleet-local.workflow.js",
+        f"  script: {skill_root() / WORKFLOW_SCRIPT}",
         f"  args:   {args_path}",
         "",
         "  - subagents must be model 'opus' (Fable-default runs lost agents to the session limit)",
         "  - expect to resume: pass resumeFromRunId and edit only the failed agent() opts",
         "  - the script CANNOT run the quote gate; after the run:",
-        f"      python3 scripts/cf.py harvest {run_id} --journal <workflow-dir> --gate",
-        f"      python3 scripts/gate/verify_findings.py --gate-config {gate_config} "
-        f"--root {corpus_dir} --findings-dir .",
+        f"      cf harvest {run_id} --journal <workflow-dir> --gate",
+        f"      python3 {skill_root() / 'scripts/gate/verify_findings.py'} "
+        f"--gate-config {gate_config} --root {corpus_dir} --findings-dir .",
         "      re-queue whatever failed in a second Workflow run",
     ])

@@ -11,7 +11,7 @@ them is visible:
   0 missing, and 29 uncovered numbered items.
 
 They also pin the multi-source model's own promises
-(docs/design/multi-source-model.md):
+(docs/design/archive/multi-source-model.md):
 
 * ``prepare()`` INFERS the offset and the item kinds from the text -- nobody
   types ``16`` (R2);
@@ -23,16 +23,24 @@ They also pin the multi-source model's own promises
 Everything reads the local baseline through environment variables and SKIPS
 cleanly when they are unset:
 
-    CF_BOOK_TXT       = ~/Desktop/tao-differential/book.official.txt
-    CF_BASELINE_DIFF  = ~/Desktop/tao-differential        (ours/teorth/adam.jsonl)
-    CF_BASELINE_CORPUS= ~/Desktop/tao-diff-run            (data/*.jsonl)
-    CF_MT             = ~/Desktop/measure_theory          (the pinned PDF)
+    CF_BOOK_TXT       = <the book's extracted text>
+    CF_BASELINE_DIFF  = <the v1 differential directory>   (ours/teorth/adam.jsonl)
+    CF_BASELINE_CORPUS= <the v1 findings corpus>           (data/*.jsonl)
+    CF_MT             = <an attribution-table companion>   (the pinned PDF)
     CF_TEST_TMP       = directory for scratch output (default: a temp dir)
 
 Run:  python3 -m unittest tests.test_sources_pair -v
 """
 
 from __future__ import annotations
+
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
 
 import json
 import atexit
@@ -206,7 +214,7 @@ class SourceItemsTests(unittest.TestCase):
         self.assertIn("Exercise 1.3.19", self.by_item)
 
     def test_single_space_regex_finds_only_410(self):
-        """Documents the defect this stage fixes (design/stage_map.md Stage 1)."""
+        """Documents the defect this stage fixes (docs/design/stage_map.md Stage 1)."""
         with open(book_text_path(), encoding="utf-8", errors="ignore") as fh:
             text = fh.read()
         found = set()
@@ -771,11 +779,10 @@ class CheckEditionTests(unittest.TestCase):
     def test_discovery_scores_editions_through_this_module(self):
         """S4.6 is decided HERE; ``cflib.discovery`` only ranks the table.
 
-        Verified against the real data on 2026-09-16: over tao-measure-lean's
-        1,464 extracted rows the published edition scores 271 ok / 35 mismatched
-        (0.886) and the 2011 draft 202 / 103 (0.662), and the inline copy
-        ``cflib.discovery`` still keeps agrees digit for digit -- so that copy
-        can go.
+        Verified against the real data on 2026-09-21: over tao-measure-lean's
+        1,131 extracted rows the published edition scores 271 ok / 27 mismatched
+        (0.909) and the 2011 draft 202 / 95 (0.680), and the inline copy in
+        ``cflib.discovery`` still agrees digit for digit -- so that copy can go.
         """
         from cflib import discovery
 

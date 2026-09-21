@@ -13,6 +13,10 @@ the spelling is `source_id::item` (`cflib.items.qualified_item`); where a filena
 The machine-readable copy of §3 is `scripts/gate/schema.json`; the enums are
 `scripts/cflib/vocab.py` and are documented in `references/vocabulary.md`.
 
+**Contents** — §1 statements.jsonl · §2 tasks · §3 findings v2 · §4 the receipt ·
+§5 ledger rows · §6 routed files · **§7 the gate matrix** (read this when the gate
+refuses a document) · §8 importing the v1 baseline.
+
 ---
 
 ## 1. `companions/<name>/statements.jsonl` — one declaration per line
@@ -69,34 +73,34 @@ tagged. The schema gate validates `repo:decl` against that index (see §7).
 ## 2. `runs/<run-id>/tasks/<task-id>.yaml` — one item per task
 
 tend's task schema; `tend-task verify tasks` must pass before a run starts. A run is scoped to one
-source, so `run.yaml` records `sources: [<id>]` and every task names its own.
+source, so `run.yaml` records `sources: [<id>]` and every task carries that source in its own id.
 
 ```yaml
 schema_version: 1
-id: lemma-2-3-4                      # slug of the item; dashes, lowercase
-source_id: widget-theory-2e          # which source this item belongs to
-title: "ATTACK: Lemma 2.3.4"         # DIFFERENTIAL: | SINGLE-SOURCE: | ATTACK: — the evidence class survives into the corpus
-status: pending
-priority: max                        # attack runs: max; differential: default
+id: widget-theory-2e--lemma-2-3-4    # <source-slug>--<item-slug>; dashes, lowercase
+title: "vac: Lemma 2.3.4"            # DIFFERENTIAL: | SINGLE-SOURCE: | hunt: | vac: — the evidence class survives into the corpus
+status: open
+priority: max                        # `plan.presets.priority_for()`: max = a key kind (Definition, Lemma, Theorem, Corollary, Proposition, In-text) audited by one companion; high = a key kind with peers, or a single-source item in 1.5-1.7; default for everything else, exercises included. Differential presets do not prioritise at all, so their tasks keep whatever the queue row carried — `default` unless something set it
 depends_on: []
-summary: "vac probe of Lemma 2.3.4"
+summary: "vac probe of Lemma 2.3.4 (widget-theory-2e)"
 description: |
   <rendered from templates/tasks/<mode>.yaml.tmpl with the item's rows, the peer repos,
   the source (title, edition, sha8, printed page, errata path), and the companion's
   conventions summary>
 
-  Write exactly one file `findings/lemma-2-3-4.json` and change nothing else except this
-  task file. Set status to complete when the findings file passes the gate.
+  Write exactly one file `findings/widget-theory-2e--lemma-2-3-4.json` and change nothing else
+  except this task file. Set status to complete when the findings file passes the gate.
 ```
 
 Rules:
 
 - `id` is the **slug of the item id**, so a findings file and its task are joined by name. Both
-  dash and underscore slugs exist in the baseline; the harvester accepts either. Where one run
-  spans more than one source the slug is `qualified_slug` (`<source-slug>--<item-slug>`), so two
+  dash and underscore slugs exist in the baseline; the harvester accepts either. The slug is
+  `qualified_slug` (`<source-slug>--<item-slug>`) whenever the entry carries a `source_id`
+  (`assign_slugs`, `scripts/plan/make_tasks.py`), which is every planned run today, so two
   sources with a colliding item id cannot collide as filenames.
-- The three title prefixes are load-bearing: the baseline's 382 tasks split 224 `DIFFERENTIAL:`
-  and 158 `SINGLE-SOURCE:` (recomputed from `~/Desktop/tao-diff-run/tasks`), and that split is how
+- The four title prefixes are load-bearing: the baseline's 382 tasks split 224 `DIFFERENTIAL:`
+  and 158 `SINGLE-SOURCE:` (recomputed from the v1 corpus's `tasks/`), and that split is how
   the report distinguishes strong from weak evidence.
 - `make_tasks` **reconciles** its output against `items.json ∩ any-repo` and fails on a gap.
 
@@ -182,7 +186,7 @@ ONE documented override is `--allow-edition-mismatch`, and the receipt records t
 `harvest` fails when `expected_count != actual_count` or a sha differs. This gate exists because a
 harvest once held 762 files where the server had 763, and the missing file was a real `CONTENT`
 finding — every derived count was off by one, toward "cleaner"
-(`/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §4).
+(the docstring-tag companion's `HANDOFF.md` §4).
 
 ---
 
@@ -203,13 +207,32 @@ Line 1 is a `_meta` row; every later line is one adjudicated finding.
  "method":"lens×3 + reconciler + 2 skeptics","contested":false,
  "dissent":[{"role":"skeptic-convention","confidence":0.6,"argument":"…"}],
  "resolution":"in_progress:fix/lemma-2-3-4",
- "reason":"self-contained justification citing the book page and file:line"}
+ "reason":"self-contained justification citing the book page and file:line",
+ "repo_commit":"<40 hex>",
+ "decl_fingerprints":{"alpha:Widget.Basic.gadget_le_of_bounded":"<64 hex>"},
+ "recheck":{"at":"2026-09-20T00:00:00Z","status":"unchanged","needs_rereview":false,
+            "pinned_commit":"<40 hex>","checked_commit":"<40 hex>",
+            "decls":[{"decl":"alpha:Widget.Basic.gadget_le_of_bounded","status":"unchanged",
+                      "pinned_fingerprint":"<64 hex>","current_fingerprint":"<64 hex>"}]}}
 ```
+
+`repo_commit` + `decl_fingerprints` are the **revision pin** (`references/vocabulary.md` §3.2): which
+companion revision this claim was judged against, and what its declarations said there. They come
+from `reports/pin.<run-id>.json`, which `cf harvest` computes from `run.yaml`'s plan-time
+`companion_pins` and the statement table extracted at that commit — never from the worker. Both are
+optional: every imported corpus and every row written before the pin existed carries none, and such a
+row is not wrong, it is `unpinned`. `recheck` is written by `cf recheck` and by nothing else.
 
 Rules enforced by `ledger/validate_ledger.py`:
 
 - every row answers a finding that exists in the corpus, joined on
   **`(source_id, finding_id)`**;
+- a pin that is present must *be* a pin: `repo_commit` a full git object name, every
+  `decl_fingerprints` value a sha256 over a declaration the row actually names, and no fingerprints
+  without a commit — a truncated pin would make `cf recheck` report a live finding as `changed`,
+  which is the one failure that stops anyone running it twice;
+- a `recheck` block carries a vocabulary `status` and **never** a `verdict` or a `resolution`: a
+  re-check states what the code did, it does not adjudicate;
 - `verdict`, `severity`, `resolution` are in the vocabulary — the legacy free-text resolution
   (`"refuted; binder dropped in PR#10"`) is split into `resolution` + `reason`;
 - a `CONVENTION` verdict **must** carry a written recovery argument;
@@ -250,7 +273,8 @@ Rules enforced by `ledger/validate_ledger.py`:
 Mechanical unless marked. The gate runs **out of tree** — from the workspace/skill copy, never from
 the worktree the worker can edit — and the pre-merge pass additionally checks
 `changed files ⊆ {findings/<id>.json, tasks/<id>.yaml}`. The legacy setup ran
-`python3 scripts/verify_findings.py` from inside the entrypoint the worker had write access to, so
+`python3 <entrypoint>/scripts/verify_findings.py` from inside the entrypoint the worker had write
+access to, so
 "passed the gate twice" proved nothing about a worker that edited the gate.
 
 | check | applies to | rule |
@@ -274,10 +298,14 @@ the worktree the worker can edit — and the pre-merge pass additionally checks
 {"sources": {"widget-theory-2e": {"text": "sources/widget-theory-2e/text.txt",
                                   "sha256": "<64 hex>", "text_sha256": "<64 hex>",
                                   "page_offset": 16,
-                                  "images_dir": "sources/widget-theory-2e/images"}},
+                                  "images_dir": "sources/widget-theory-2e/images",
+                                  "item_pages": {"Exercise 1.2.4": 24}}},
  "KINDS": ["CONTENT", "VACUITY", "SUSPECTED_ERRATA"], "VERDICTS": ["…"],
  "require_witness": true, "check_operators": true}
 ```
+
+`item_pages` maps an item label to its page **of the pinned text** (`items.json`'s `pdf_page`, the
+printed page plus the offset: 8 + 16 = 24 here), never the printed page; the page bind reads it.
 
 `verify_findings.py` is rsynced to a host that has no `cflib` on its path, so it re-implements the
 lookup and the `finding_id` byte-joining itself. Both must stay byte-identical to `cflib`; the
@@ -315,10 +343,10 @@ this exit code.
 
 ## 8. `convert_v1.py` — importing the 2,672-file baseline
 
-Reads `~/Desktop/tao-diff-run/{findings,findings-pdf,findings-gpt,findings-vac,findings-hunt}/`
-(382 + 382 + 382 + 763 + 763 files, counted 2026-09-16) and the batch-1 artifacts under
-`~/Desktop/tao-differential/`, and writes v2 into `corpus/<run-id>/`. **It never modifies the
-baseline.**
+Reads the v1 corpus's `{findings,findings-pdf,findings-gpt,findings-vac,findings-hunt}/`
+(382 + 382 + 382 + 763 + 763 files, counted 2026-09-16) and the batch-1 artifacts of the v1
+differential — both directories named by `$CF_BASELINE_CORPUS` and `$CF_BASELINE_DIFF` — and
+writes v2 into `corpus/<run-id>/`. **It never modifies the baseline.**
 
 1. one run-id per input directory; `run.yaml` records model, source access, gate mode and that the
    run is imported;
@@ -348,4 +376,4 @@ A conversion run prints a reconciliation table (files in, findings out, rows by 
 a witness) and the regression test asserts the totals against the baseline tally: **72 rows over
 40 distinct items** naming the audited companion, partitioned 16 `CONTENT`/`VACUITY`,
 1 `SUSPECTED_ERRATA`, 1 `COVERAGE`, 22 `PAGE_ANCHOR`
-(`/Users/jack/Desktop/tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md`).
+(the docstring-tag companion's `OPEN_FAITHFULNESS_FINDINGS.md`).

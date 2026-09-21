@@ -6,16 +6,16 @@ Two kinds of test:
 * **regression** tests against the on-disk baseline, which read their inputs
   through environment variables and skip cleanly when those are unset::
 
-      CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential \\
-      CF_BOOK_TXT=/Users/jack/Desktop/tao-differential/book.official.txt \\
+      CF_BASELINE_DIFF=<the v1 differential directory> \\
+      CF_BOOK_TXT=<the book's extracted text> \\
           python3 -m unittest discover -s tests
 
-  The two anchors are the ones design/stage_map.md Stage 8 names: the cheap
+  The two anchors are the ones docs/design/stage_map.md Stage 8 names: the cheap
   tier must reproduce ``def-coverage.ours.json`` (32 stated / 4 bridge-only /
-  0 missing), and ``analyze_stages`` over ``adam-detector/deps.json`` must
+  0 missing), and ``analyze_stages`` over the v1 detector's ``deps.json`` must
   reproduce the Definition 1.2.2 hit (``OpenExcessLebesgueMeasurable`` via
-  ``volume``) and the ``elementaryMeasure`` history that
-  adam-detector/README.md records.
+  ``volume``) and the ``elementaryMeasure`` history that detector's README
+  records.
 
 Nothing here runs lake, ssh or tend, and nothing writes outside a temp dir.
 """
@@ -603,7 +603,11 @@ class BaselineAnalyzeStagesTest(unittest.TestCase):
         diff = Path(BASELINE_DIFF)
         cls.raw = json.loads((diff / "adam-detector" / "deps.json").read_text())
         cls.rows = _read_jsonl(diff / "adam.jsonl")
-        cls.stages = StageTable.for_source(PUBLISHED_ID)
+        # the broad scan needs the COMPANION half of the table (that repo's own
+        # module layout), which is no longer shipped inside the source's table:
+        # in a workspace it is companions/<name>/stage-overlay.json
+        cls.stages = StageTable.for_source(PUBLISHED_ID).with_companion_overlay(
+            Path(__file__).resolve().parent / "data" / "stage-overlay.adam.json")
         cls.deps = DepsIndex(cls.raw)
         cls.report = analyze_stages.analyze(cls.deps, cls.stages, cls.rows)
 

@@ -14,7 +14,8 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/adam-faithfulness-adjudication-wf_60a87e92-dd5.js.
+// Ported from: the v1 campaign's adam-faithfulness-adjudication workflow, which
+// does not travel with this repo.
 // Generalised as the design requires:
 //   * every path, convention list and hard-wired Group-C prompt is now an `args`
 //     field (the original embedded the measure_theory repo, its encoding
@@ -39,7 +40,9 @@ const sourceLines = SOURCES.map(s =>
   '  ' + s.source_id + ' -- ' + (s.title || s.source_id) + (s.edition ? ' (' + s.edition + ')' : '') +
   '\n    text: ' + s.text + '  (sha256 ' + s.source_sha + ')' +
   '\n    pages: ' + s.pages_dir + '/pNNN.txt   (PDF page = printed page + ' + s.page_offset + ')' +
-  '\n    errata: ' + s.errata).join('\n')
+  // an errata page whose URL came from the audited repo and that nobody
+  // confirmed is NOT authoritative: the prompt says so instead of naming it
+  '\n    errata: ' + (s.errata || s.errata_withheld || '(none)')).join('\n')
 const COMP = A.companion || {}
 const PEERS = A.peers || []
 const FINDINGS = A.findings || []

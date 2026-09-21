@@ -12,6 +12,12 @@ There are no source flags. If you find yourself typing an offset or an errata
 URL, discovery failed and said so; fix the signal or use the named override,
 but do not fill it in by hand and call it onboarded.
 
+**Contents** — §0 what discovery reads (the seven repo signals, where a PDF may be
+opened from) · §1 a statement-table adapter, per convention · §2 an edition discovery
+can resolve · §3 errata policy · §4 anchor convention · §5 house conventions ·
+§6 sorry policy · §7 write policy and owner · §8 the dry run and what `state.json`
+records · §9 two worked examples.
+
 **A companion tree is read as DATA.** It is not built, not written to, and it
 never gets to name a program: every `git` call against it goes through
 `cflib.gitsafe`, which pins `core.fsmonitor`, `core.hooksPath`, `diff.external`
@@ -69,6 +75,47 @@ So, concretely: **a repo helps discovery most by naming its source in a
 edition its page anchors follow, and citing the author's book page.** Those
 three cost nothing and remove every flag from onboarding.
 
+The **adapter is asked as well**, not only the seven signals: `cf onboard` merges
+`Adapter.discover_sources(repo)` into them. A kind may only *add* a claim there —
+a claim repeating a signal cflib already read is dropped in favour of cflib's,
+because every later stage's item table comes from the source's own text and not
+from the companion's reading of it — and the addition that matters is a
+convention that **is its own manuscript**. Such a claim names the FILES instead
+of describing a book: absolute paths in reading order, which onboarding
+concatenates in exactly that order, with no separator, and fingerprints. That
+digest is the `source_sha` every row carries, so an edit to any one file moves it.
+The claim also says whether those bytes have printed pages (`sources/locator.py`
+decides; a `.tex` manuscript has none), and `blueprint_tex` is the kind that uses
+it — see §1.
+
+**A source nothing can discover is named on the way in, not typed in.** Some
+companions formalise a book that is not on this machine and that the repo never
+names: no `sources:` list, no sha, no PDF, no book-page link. `cf onboard <repo>
+--source <file>` (a PDF or a manuscript that is already text; repeatable) gives
+the LOCATION and nothing else — the sha, the page offset, the item kinds, the
+numbering depth and the completeness are still read off the file by `prepare`,
+exactly as `cf sources add` reads them, and the source is registered
+`confirmed: false` with `pdf_found_in: manual`. That is the same override
+`cf sources add <source> --for <companion>` is, moved to the one command that
+needs it *before* a companion exists — which is why it, and not `cf sources add`,
+is what the "no source could be discovered" refusal names.
+
+Two things follow from naming a location rather than a source:
+
+- **One sha is one source, whichever door it came in by.** Naming a file whose
+  bytes a repo signal also found does not add a second source: the fingerprint
+  dedupe folds the two claims together, the repo's own name for the work survives
+  (a declared title outranks a filename stem) and the path given is kept as
+  evidence under `discovered.from`. Nothing about that is settled by a flag,
+  because two ids on one sha is a state `workspace.yaml`'s own loader refuses.
+- **A re-onboard does not have to repeat the flag.** A source with
+  `pdf_found_in: manual` is invisible to all seven signals by construction, so
+  `cf onboard` re-claims the ones this companion already lists, from the path the
+  workspace recorded, and re-reads the facts off the file as on the first run.
+  Only `manual` rows are re-claimed — everything else a signal finds again, and a
+  stale workspace row must never outrank what the repo says today. If the file has
+  moved, the run says so and names the flag again.
+
 Two rules keep the signals honest:
 
 - **A truncated sha is a candidate, never an identity.** `64498329…` in a
@@ -91,7 +138,7 @@ records which step won in `sources.<id>.discovered.pdf_found_in`:
 | 0 | every path the repo names, resolved against the repo root and `~`-expanded | `repo_declared` |
 | 1 | the repo's own caches: the same basename elsewhere in the repo, `.lake/official-pdf/`, `sources/`, `pdf-overlay/vendor/` | `repo_cache` |
 | 2 | the workspace's own store, `<workspace>/sources/` | `workspace_store` |
-| 3 | `workspace.yaml library_paths` — glob patterns, `~`-expanded, depth-capped, `*.pdf` only. Defaults: `~/Downloads`, `~/Desktop/**/sources`, `~/Desktop/**/.lake/official-pdf` | `library_path` |
+| 3 | `workspace.yaml library_paths` — glob patterns, `~`-expanded, depth-capped, `*.pdf` only, joined by the derived roots: this workspace's `sources/` store, and `<p>/**/sources` + `<p>/**/.lake/official-pdf` for the parent `<p>` of every onboarded repo (including the one being onboarded, so run 1 and run 2 search the same set), never the bare `<p>`. Only `~/Downloads` is shipped: the list is also the allowlist for rank 0, so a home subtree in it hands that subtree to every audited repo. `cf init` and `cf doctor` print the effective set | `library_path` |
 | 4 | the registry's `download_url`, **only** with `--download`, a workspace policy that allows it, and a licence note saying the author publishes it | `download` |
 
 Within a rank: sha match first, then a registry `aliases.filenames` hit, then
@@ -121,10 +168,10 @@ the mechanical one decides:
    the table. Prose alone, with no anchors to score, sets the anchor at
    confidence 0.6 and leaves the companion `confirmed: false`.
 
-Measured on `tao-measure-lean` at commit `250b856` (2026-09-16): published
-edition 0.89 (271 ok / 35 mismatched) against the draft's 0.66 (202 / 103) —
+Measured on `tao-measure-lean` at commit `250b856` (2026-09-21): published
+edition 0.91 (271 ok / 27 mismatched) against the draft's 0.68 (202 / 95) —
 a margin far above 0.05, because both editions share `offset: 16` and differ
-only by the one-page shift of ~65 items. Final `anchor_confidence` 0.9356 after
+only by the one-page shift of ~65 items. Final `anchor_confidence` 0.96 after
 the prose corroboration. The repo bundles the draft, so the draft is recorded
 in `bundled_sources` with `role: reference`: prepared so the page map can be
 checked, audited by nobody.
@@ -142,6 +189,7 @@ Below the thresholds `cf onboard` refuses and prints the table, with the fix:
 | scope | the chapters the companions actually tag: ≥5 items, or ≥20% of the book's items in that chapter | `sources.<id>.chapters`, `scope_method` | `cf sources set <id> chapters=1,2` (`scope_method: manual`) |
 | adapter kind | per-adapter `detect(repo)`; highest wins, below 0.5 refuses | `companions.<name>.discovered.adapter_confidence` | `cf onboard --adapter <kind>` |
 | anchor edition | §0.3 | `companions.<name>.discovered.anchor_confidence` | `cf onboard --anchor-source <id>` |
+| which source | §0.1 — the seven signals plus whatever the adapter adds; nothing at all is a refusal | `sources.<id>.discovered.pdf_found_in`, `discovered.from` | `cf onboard --source <file>` (`pdf_found_in: manual`), or `cf sources add <source> --for <companion>` once the companion exists |
 
 Two measured examples of the offset inference, both 265-page PDFs of the same
 book: the published edition votes on 245 pages and 244 of them agree on 16
@@ -248,6 +296,66 @@ Two limits to state in `state.json` rather than discover later:
   scan the files the table maps to each item and emit `example@<file>:<line>`
   rows; otherwise the anonymous-realisation blind spot returns.
 
+### `blueprint_tex`
+
+A leanblueprint manuscript that writes the item→declaration map down instead of
+leaving it to be inferred: `\begin{theorem}\label{thm:x}` + `\lean{Foo.bar,
+Foo.baz}` + `\uses{def:y}` + `\leanok`. Config:
+
+```yaml
+adapter: blueprint_tex
+glob: "blueprint/**/*.tex"               # recursive: a chapter is blueprint/src/chapters/*.tex
+blueprint: {locator: auto, environments: [theorem, lemma, definition, proposition, corollary]}
+anchor: none
+```
+
+Detection: `blueprint/**/*.tex` — **recursively**, because the macros usually
+live in `blueprint/src/chapters/`, not beside the master file — scored
+`0.6 + 0.35 × (statement environments carrying \lean{} / all of them)`, capped
+at 0.95, and 0 when nothing carries one. `\newtheorem` scaffolding that defines
+`\lean` as a no-op therefore scores nothing, which is the right answer.
+
+Four things to know before onboarding one:
+
+- **The item is a LaTeX counter, not a dotted book number.** `blueprint.locator`
+  is `auto` by default: `number` when the preamble's `\newtheorem` declarations
+  and the master file's `\input` order together make the printed number
+  recoverable (`Lemma 2.3`, which then goes through the strict item grammar like
+  any other item), otherwise the `\label` is the item. `dry_run` reports which
+  (`locator`), and the two are never mixed — half a table keyed on `Lemma 2.3`
+  and half on `lem:foo` is two namespaces pretending to be one.
+- **`anchor: none`.** A blueprint has no separate published edition, so there is
+  no pagination to anchor to and no edition drift to check. Rows carry
+  `anchor_source: none`, and the finding kinds that make sense are
+  statement-versus-manuscript disagreement and a stale `\leanok` — not page
+  anchors. The environment body IS the manuscript, so the quote gate has
+  something to quote with no PDF.
+- **`\uses{}` is counted, not carried.** Row schema v2 has nowhere to hold a
+  dependency edge, so `dry_run` reports `uses_edges` rather than dropping them in
+  silence; a schema that can hold them is a separate change.
+- **The manuscript registers itself as the source.** A blueprint names no book
+  and ships no PDF, so `discover_sources` claims the `.tex` tree: the files in
+  `order_files` order (the master's `\input` order, then anything the master does
+  not name, in path order), `sha256` over their **concatenated bytes** in that
+  order with no separator, `pagination: none`, `kinds` = the `\newtheorem`
+  display words the manuscript uses, and `discovered.locator` = the `number`/
+  `label` choice above. `cf onboard` writes that concatenation once into
+  `<workspace>/sources/<id>/manuscript.tex` — never into the companion repo — and
+  the workspace row points at it, so `cf sources refresh <id>` re-prepares the
+  same bytes and a later `cf onboard` re-derives them. The source is
+  `confirmed: false` like any other discovery.
+  Two consequences worth stating. The sha covers every chapter, so editing one
+  moves the `source_sha` on every row — which is the point: a digest that moved
+  only when the master moved would stamp rows quoting an edited chapter with
+  bytes they were not read from. And the prepared `items.json` is **empty on
+  purpose**: the item grammar numbers printed-book headings and a `.tex`
+  manuscript has none, so the items are the tagged environments the adapter
+  reads. The "0 numbered items in its text" and "no declared kind heads a
+  numbered item" refusals therefore do not apply to a manuscript the companion
+  wrote — there is no other document these bytes could be mistaken for, they are
+  the ones this adapter's own glob just matched — and they still apply,
+  unchanged, to a PDF or text an operator named with `--source`.
+
 ### `ledger_nodes` (deferred in v1)
 
 A source-node → formalization ledger with prose locators. Its granularity is a
@@ -296,7 +404,7 @@ follow** (§0.3) and whether an anchor is a printed page or a PDF page (§4).
 
 Two editions of one book differ by a page: ~65 numbered items sit one printed
 page earlier in the published edition than in the 2011 draft, nearly all in one
-section (`/Users/jack/Desktop/tao-measure-lean/CLAUDE.md` lines 48-55). Both
+section (the docstring-tag companion's own `CLAUDE.md` says so). Both
 satisfy `pdf_page = printed_page + 16`, so mixing them produces a page-anchor
 finding for every one of those items — off by exactly one, never by sixteen —
 and an adjudicator checking the other file refutes them all. `source_sha` is
@@ -309,7 +417,7 @@ Discovery finds the URL (§0.4); the repo's job is to cite its book page, and
 the audit's job is the disposition rule. The skill fetches the live page with
 `curl` and keeps the **raw HTML** beside the rendered markdown, dated — never a
 summarising fetch tool, which is what silently dropped the entry that decided a
-high-severity finding (`docs/HANDOFF.md` §4, `REVIEW_PATTERNS.md` P13). The
+high-severity finding (`tao-measure-lean/docs/HANDOFF.md` §4, `REVIEW_PATTERNS.md` P13). The
 fetch metadata lands in `sources/<id>/errata.json`: URL, HTTP status, both
 shas, byte count, entry count, `changed` against the previous fetch, and
 `url_provenance` — **who chose the URL**.
@@ -331,7 +439,7 @@ would be writing into the audit's prompts.
 | the erratum … | disposition | evidence |
 |---|---|---|
 | **corrects** the printed statement | formalise the corrected statement; kind `SUSPECTED_ERRATA` until confirmed, then fix | the exercise whose labels the errata swapped, and the one whose sharp constant it corrects (both fixed in PR #8) |
-| **observes** a divergence and points elsewhere (e.g. a blog post) | formalise the book as printed; record the argument in the docstring; resolution `argued_correct` | the definition/remark pair deliberately not acted on (`docs/HANDOFF.md` §5): rewriting the clause would formalise the blog post and make the companion *less* faithful |
+| **observes** a divergence and points elsewhere (e.g. a blog post) | formalise the book as printed; record the argument in the docstring; resolution `argued_correct` | the definition/remark pair deliberately not acted on (`tao-measure-lean/docs/HANDOFF.md` §5): rewriting the clause would formalise the blog post and make the companion *less* faithful |
 | **asks for a generalisation** nobody formalised | kind `COVERAGE`, out of scope for a fix | the exercise the errata generalises from elementary to Jordan-measurable sets; all three companions omit it — a *missing* theorem, not a wrong one |
 | **deletes** an item or a part | do not formalise it; a declaration that states it is a finding | the errata list records one exercise part as wrong and deleted (`memory/measure-theory-faithfulness-audit.md`) |
 
@@ -441,16 +549,16 @@ writes into `companions/<name>/state.json` (version 2):
 - `sources: {<source_id>: {sha, rows, items, at}}` and `anchor_source` — a map,
   not one top-level sha, because a companion may be bound to several sources.
 
-Measured on the two targets, 2026-09-16:
+Measured on the two targets, 2026-09-21, with this revision of the skill:
 
 | | `tao-measure-lean` @ `250b856` | `measure_theory` @ `9afe70f` |
 |---|---|---|
 | adapter | `docstring_tags` (0.93) | `attribution_table` (0.98) |
-| files scanned | 154 | — (table-driven) |
-| declarations | 2,207 (1,464 tagged, 743 untagged, 135 private) | 531 |
-| rows / items | 1,463 / 506 | 562 / 178 |
-| anchors | 573 own, 1 crossref, 889 none | from the overlay |
-| `sorry` | 730 (688 exercise, 42 gap) | 0 |
+| files scanned (detection's `lean_files`: every `.lean` file outside `.lake/`. The dry run's `files` key is 112, the files the adapter itself parses — the glob minus `exclude:` minus what the repo git-ignores — and 33 of those carry a tag and yield rows) | 154 | — (table-driven) |
+| declarations | 1,556 (1,132 tagged, 424 untagged, 130 private) | 531 |
+| rows / items | 1,131 / 506 | 562 / 178 |
+| anchors | 524 own, 1 crossref, 606 none | from the overlay |
+| `sorry` | 516 (508 exercise, 8 gap) | 0 |
 | rejected tags | 1 (`Corollary (Lemma 1.2.5 + Exercise 1.2.4)`, `no_number`) | 32 unnumbered labels |
 
 The contract also calls for a **full declaration index** beside the table
@@ -494,8 +602,9 @@ owner: "external"
 ```
 
 Narrow the `glob` and name the repo's own `sorry` classifier by hand afterwards
-(`classifier: scripts/update_status_table.py`), then re-run `onboard --force`
-to re-check the parse: onboarding writes a working default, not the last word.
+(`sorry.classifier`, a path inside that companion repo — §6), then re-run
+`onboard --force` to re-check the parse: onboarding writes a working default,
+not the last word.
 
 Its `conventions.md` carries the junk-value list (its measures are total
 functions on sets, never on proof terms), indexed families rather than finite

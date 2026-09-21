@@ -1,11 +1,11 @@
 """Plan what `cf run` sends to the server, and refuse what it must not send.
 
-New code.  The original was a hand-run sequence of rsyncs recorded in
-scratchpad/ffmain/tao-diff-run/RUNBOOK.md ("Start it" / "Steer it") and the five
-server roots ~/tao-{diff,attack}-* whose only differences were the entrypoint
-path, the bridge path and the concurrency limits.
+New code.  The original was a hand-run sequence of rsyncs recorded in the v1
+campaign's runbook ("Start it" / "Steer it", written down here as
+references/runbook-server.md) and its five server roots, whose only differences
+were the entrypoint path, the bridge path and the concurrency limits.
 
-Three controls the original had no place for (design/critique.json, risks):
+Three controls the original had no place for (the design critique, risks):
 
 * **host allowlist** -- `cf run` automates rsync of private Lean repos and
   copyrighted source text to a machine the operator does not own, so the host
@@ -30,6 +30,7 @@ named after a source overwrite it.
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -40,8 +41,11 @@ from ._compat import CfError, human_bytes
 #: rsync flags used for every component (archive, no device/special files).
 BASE_RSYNC = ["-a", "--no-D", "--omit-dir-times"]
 #: read-only transfer for companion sources: the run must not be able to edit them.
-#: (design/critique.json: "'sources read-only' is prompt-enforced only".)
+#: (the design critique: "'sources read-only' is prompt-enforced only".)
 READONLY_CHMOD = ["--chmod=D0555,F0444"]
+#: the opt-in that lets a run's agents run with approvals and the sandbox off
+#: (scripts/run/bridge-agentbox.sh); absent, both hosts deny by default.
+BYPASS_ENV = "CF_ALLOW_SANDBOX_BYPASS"
 #: the only files of scripts/run/ that belong on the server
 BRIDGE_FILES = ("bridge-agentbox.sh", "bridge-claude-p.sh", "bridge-tend-agent.sh",
                 "normalize_result.py", "extract_final_json.py")
@@ -55,19 +59,39 @@ def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def default_remote_root() -> str:
+    """The run root when the workspace's host entry does not name one.
+
+    The operator's own home on the host, read from the environment.  It used to
+    fall back to one developer's username, which is a wrong path on every other
+    machine and a name this repo may not carry; with no user in the environment
+    the placeholder is printed instead, so the dry run shows what to set.
+    """
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    return f"/home/{user}" if user else "/home/<user>"
+
+
 def resolve_host(workspace, host: str) -> dict:
     """Resolve *host* against ``workspace.yaml: hosts`` or raise.
 
     ``Workspace.check_host`` is the enforcement point (it refuses anything not in
     ``hosts.allowlist``); this adds the connection facts the commands need:
-    ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes}``.
+    ``{name, ssh, remote_root, tend_cmd, agentbox_profile, disk_budget_bytes,
+    tend_version_required}``.
+
+    ``tend_version_required`` is a comma-separated version spec (``">=0.4,<0.6"``)
+    from ``hosts.<host>.tend_version``, ``hosts.tend_version`` or
+    ``defaults.tend_version``.  The whole of ``scripts/plan`` + ``scripts/run``
+    exists to drive one external tool whose config schema nothing pins, so
+    preflight compares the host's ``tend --version`` against this and refuses;
+    with nothing recorded it can only print the version, and says so.
     """
     workspace.check_host(host)
     hosts = _as_dict(workspace.hosts)
     entry = _as_dict(hosts.get(host)) or _as_dict(_as_dict(hosts.get("entries")).get(host))
     ssh = entry.get("ssh") or entry.get("target") or host
     remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
-                      or f"/home/{os.environ.get('USER', 'jack')}").rstrip("/")
+                      or default_remote_root()).rstrip("/")
     budget_gb = workspace.default("worktree_budget_gb", None)
     return {
         "name": host,
@@ -80,6 +104,9 @@ def resolve_host(workspace, host: str) -> dict:
         "disk_budget_bytes": int(entry.get("disk_budget_bytes")
                                  or (float(budget_gb) * 1024 ** 3 if budget_gb else 0)
                                  or DEFAULT_DISK_BUDGET_BYTES),
+        "tend_version_required": str(entry.get("tend_version")
+                                     or hosts.get("tend_version")
+                                     or workspace.default("tend_version", "") or ""),
     }
 
 
@@ -125,6 +152,110 @@ def _excluded(rel: Path, patterns: list[str]) -> bool:
         if fnmatch.fnmatch(rel.as_posix(), pat):
             return True
     return False
+
+
+def tree_digest(root: Path, excludes: list[str] | None = None) -> dict:
+    """``{sha256, files, bytes}`` over exactly the files rsync would send.
+
+    ``READONLY_CHMOD`` transfers a companion at mode 0444 inside 0555
+    directories, which is a speed bump and not a barrier: the copy is owned by
+    the run's user, so an agent running with approvals bypassed can ``chmod u+w``
+    and edit it, and nothing else would ever notice.  This digest is walked once,
+    pinned in run.yaml (``run.transfer[].tree_sha256``, see
+    :func:`transfer_record`) and recomputed on the host
+    (``REMOTE_TREE_DIGEST_PY``) after the transfer and after the run, so an edit
+    is visible in the run's own record instead of being discovered in the
+    findings.  It is PINNED rather than re-walked because the monitor stage runs
+    in a later `cf run` invocation: comparing the host against whatever the local
+    checkout hashes to by then would accuse an agent of editing a tree the
+    operator had merely pulled.
+
+    One sha256 over ``<relative posix path>\\0<file sha256>\\n`` lines sorted by
+    path.  Symlinks are skipped: ``rsync -a`` ships the link, not its target.
+    """
+    root = Path(root)
+    patterns = list(excludes or [])
+    rows: list[tuple[str, str]] = []
+    total = 0
+    for dirpath, dirs, names in os.walk(root):
+        rel_root = Path(dirpath).relative_to(root)
+        dirs[:] = [d for d in dirs if not _excluded(rel_root / d, patterns)]
+        for name in names:
+            rel = rel_root / name
+            if _excluded(rel, patterns):
+                continue
+            path = Path(dirpath) / name
+            if path.is_symlink():
+                continue
+            inner = hashlib.sha256()
+            try:
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(65536), b""):
+                        inner.update(chunk)
+                        total += len(chunk)
+            except OSError:
+                rows.append((rel.as_posix(), "unreadable"))
+                continue
+            rows.append((rel.as_posix(), inner.hexdigest()))
+    outer = hashlib.sha256()
+    for rel_posix, digest in sorted(rows):
+        outer.update(("%s\0%s\n" % (rel_posix, digest)).encode("utf-8"))
+    return {"sha256": outer.hexdigest(), "files": len(rows), "bytes": total}
+
+
+#: :func:`tree_digest`, for python3 on the run host (no cflib there).  The two
+#: must agree byte for byte -- tests/test_rf_security.py runs this snippet against
+#: the function on the same tree, which is the enforcement.
+REMOTE_TREE_DIGEST_PY = r'''
+import fnmatch, hashlib, os, sys
+
+root, want = sys.argv[1], sys.argv[2]
+patterns = sys.argv[3:]
+
+
+def excluded(rel):
+    for pat in patterns:
+        if any(fnmatch.fnmatch(part, pat) for part in rel.split("/")):
+            return True
+        if fnmatch.fnmatch(rel, pat):
+            return True
+    return False
+
+
+rows = []
+for dirpath, dirs, names in os.walk(root):
+    rel_root = os.path.relpath(dirpath, root)
+    prefix = "" if rel_root == "." else rel_root + "/"
+    dirs[:] = [d for d in dirs if not excluded(prefix + d)]
+    for name in names:
+        rel = prefix + name
+        if excluded(rel):
+            continue
+        path = os.path.join(dirpath, name)
+        if os.path.islink(path):
+            continue
+        inner = hashlib.sha256()
+        try:
+            with open(path, "rb") as fh:
+                for chunk in iter(lambda: fh.read(65536), b""):
+                    inner.update(chunk)
+        except OSError:
+            rows.append((rel, "unreadable"))
+            continue
+        rows.append((rel, inner.hexdigest()))
+outer = hashlib.sha256()
+for rel, digest in sorted(rows):
+    outer.update(("%s\0%s\n" % (rel, digest)).encode("utf-8"))
+got = outer.hexdigest()
+print("tree %s files=%d sha256=%s" % (root, len(rows), got))
+if want and want != got:
+    sys.stderr.write("REFUSED: %s is not the tree that was transferred\n" % root)
+    sys.stderr.write("  expected %s\n  got      %s\n" % (want, got))
+    sys.stderr.write("  the companion copies go over read-only, but 0444 is reversible by their\n")
+    sys.stderr.write("  owner: an agent may have edited the repo the findings cite. Re-transfer\n")
+    sys.stderr.write("  and do not harvest this run.\n")
+    raise SystemExit(1)
+'''
 
 
 def _measure(src: Path, patterns: list[str]) -> tuple[int, int]:
@@ -257,11 +388,23 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                               note="agent bridges + the StrictModel coercion"))
 
     if include_sources:
+        pinned = recorded_tree_digests(run)
         for name, repo in sorted((companions or {}).items()):
-            entries.append(_entry(f"repo:{name}", Path(repo).expanduser(),
-                                  f"{root}/{names['repos']}/{name}/",
-                                  flags=READONLY_CHMOD + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
-                                  note="companion Lean sources, transferred read-only"))
+            entry = _entry(f"repo:{name}", Path(repo).expanduser(),
+                           f"{root}/{names['repos']}/{name}/",
+                           flags=READONLY_CHMOD + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
+                           note="companion Lean sources, transferred read-only")
+            if entry["exists"]:
+                # The BEFORE hash of what leaves this machine, so the same digest
+                # can be demanded of the host after the transfer and after the run.
+                # run.yaml's record wins: the first `cf run` walks the tree, every
+                # later invocation (the monitor stage is one) compares the host
+                # against the digest that was actually SENT, not against a local
+                # checkout that may have been pulled or switched since.
+                entry["tree_sha256"] = (pinned.get(entry["name"])
+                                        or tree_digest(Path(repo).expanduser(),
+                                                       SOURCE_EXCLUDES)["sha256"])
+            entries.append(entry)
         if not companions:
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
     wants_images = "image" in source_access(run).lower()
@@ -305,6 +448,49 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
     return entries, warnings
 
 
+#: the keys of a manifest entry that belong in run.yaml's ``run.transfer`` record.
+#: ``tree_sha256`` is one of them: the monitor-stage integrity check compares the
+#: host against it, so it has to survive the invocation that sent the tree.
+TRANSFER_RECORD_KEYS = ("name", "src", "dest", "files", "bytes", "exists", "tree_sha256")
+
+
+def transfer_record(entries: list[dict]) -> list[dict]:
+    """The ``run.transfer`` rows for run.yaml -- what was sent, and its digest."""
+    return [{key: entry[key] for key in TRANSFER_RECORD_KEYS if key in entry}
+            for entry in entries]
+
+
+def recorded_tree_digests(run: dict) -> dict[str, str]:
+    """``{entry name: tree_sha256}`` a previous `cf run` recorded in run.yaml."""
+    out: dict[str, str] = {}
+    for row in _as_dict(run.get("run")).get("transfer") or []:
+        if isinstance(row, dict) and row.get("name") and row.get("tree_sha256"):
+            out[str(row["name"])] = str(row["tree_sha256"])
+    return out
+
+
+def include_sources_for(run: dict, *, requested: bool, stage: str) -> tuple[bool, list[str]]:
+    """Whether this invocation covers the companion repos, and what to say about it.
+
+    ``stages_upto("monitor")`` is ``["monitor"]`` alone, so the monitor stage is a
+    SEPARATE `cf run` invocation, and the companion-tree integrity check hangs off
+    the ``repo:<name>`` entries.  Reading ``--include-sources`` from the flag alone
+    meant that forgetting to repeat it silently removed the one check that catches
+    a chmod-and-edit on the host, and then rewrote ``include_sources: false`` over
+    the earlier true, dropping the pinned digests with it.
+
+    So the RUN's own record decides: once run.yaml says this run transferred the
+    companion repos, every later invocation covers them too and says why.
+    """
+    recorded = bool(_as_dict(run.get("run")).get("include_sources"))
+    if requested or not recorded:
+        return requested, []
+    return True, ["run.yaml records include_sources: true for this run, so the companion repos "
+                  "are in this %s plan although --include-sources was not repeated -- the "
+                  "before/after tree digests are the check that a read-only copy was not made "
+                  "writable and edited on the host" % stage]
+
+
 def _errata_is_repo_supplied(source_dir: Path) -> bool:
     """Did the errata URL come from the audited repository itself?
 
@@ -321,6 +507,69 @@ def _errata_is_repo_supplied(source_dir: Path) -> bool:
     except (OSError, ValueError):                       # pragma: no cover - unreadable meta
         return False
     return bool(meta.get("repo_supplied"))
+
+
+def agent_permissions(run_dir: Path) -> dict:
+    """What the staged wrappers will hand the agent hosts, for run.yaml's record.
+
+    ``bridge-agentbox.sh`` denies by default (a role allowlist, and ``codex``
+    sandboxed) and takes the approvals-and-sandbox bypass as an explicit opt-in,
+    read from the environment.  This reads the wrappers `cf plan-run` staged,
+    because that is the only channel `cf run` can see.
+
+    It is therefore a sentence and not a bare ``false``.  ``cf plan-run
+    --allow-sandbox-bypass`` is what stages the variable, so a wrapper that
+    exports it says the opt-in was asked for deliberately and recorded in
+    run.yaml.  Its absence is still not ``false``: the wrappers are generated
+    (`cf plan-run` writes "Regenerate rather than edit" into them), and an
+    operator who exports ``CF_ALLOW_SANDBOX_BYPASS=1`` in the shell that launches
+    tend on the host gets a bypassed run the wrappers say nothing about.  So the
+    two states this can distinguish are "requested here" and "not requested here,
+    and the host can still set it".  What the host does record either way is the
+    bridge's own ``bypass=`` line in ``<tend-root>/agentbox-<role>.err``.
+    """
+    bindir = Path(run_dir) / "tend-root" / "bin"
+    wrappers = sorted(p for p in bindir.glob("*.sh")) if bindir.is_dir() else []
+    wanted = (BYPASS_ENV, "CF_ALLOWED_TOOLS", "CF_WORKER_TOOLS", "CF_REVIEWER_TOOLS",
+              "CF_PERMISSION_FLAGS", "CF_CODEX_SANDBOX")
+    found: dict[str, str] = {}
+    bypass_from: list[str] = []
+    for path in wrappers:
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:                                 # pragma: no cover - unreadable wrapper
+            continue
+        for line in text.splitlines():
+            line = line.strip()
+            if not line.startswith("export "):
+                continue
+            assignment = line[len("export "):]
+            key, _, value = assignment.partition("=")
+            key = key.strip()
+            if key not in wanted:
+                continue
+            value = value.strip().strip('"').strip("'")
+            found[key] = value
+            if key == BYPASS_ENV and value == "1":
+                bypass_from.append(path.name)
+    return {
+        "permission_bypass": (f"requested: `cf plan-run --allow-sandbox-bypass` staged a "
+                              f"wrapper that exports {BYPASS_ENV}=1"
+                              if bypass_from else
+                              "not requested in the staged wrapper (the environment that "
+                              "launches tend on the host can still set it; the bridge logs "
+                              "bypass= to agentbox-<role>.err)"),
+        "permission_bypass_in_wrapper": bool(bypass_from),
+        "bypass_env": BYPASS_ENV,
+        "bypass_exported_by": bypass_from,
+        "wrappers": [p.name for p in wrappers],
+        "env": found,
+        "default": "deny by default: role allowlist for claude, --sandbox for codex "
+                   "(to opt out, re-plan with `cf plan-run --allow-sandbox-bypass`, which "
+                   f"stages {BYPASS_ENV}=1 into the wrappers and records it here; the "
+                   "bin/*.sh wrappers are generated per run, so a hand edit to them is "
+                   "overwritten by the next plan)",
+    }
 
 
 def _bridges_staged(tend_root: Path) -> bool:
@@ -381,7 +630,7 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
 
     tend creates the worktree for every ready task immediately: 382 tasks became
     382 worktrees and 1.1 GB in 11 minutes with a single worker allowed
-    (design/critique.json).  N companions x 763 tasks needs `depends_on` gating or
+    (the design critique).  N companions x 763 tasks needs `depends_on` gating or
     ``--copy-dir --cow``; this is the number that tells the operator which.
     """
     entrypoint_bytes = sum(e["bytes"] for e in entries
@@ -409,7 +658,7 @@ def check_budget_cap(workspace, run: dict, max_cost: float | None,
                      no_budget_cap: bool) -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
-    design/critique.json: "No budget gate ... run.yaml carries a billing-path
+    the design critique: "No budget gate ... run.yaml carries a billing-path
     field but no max_cost".  With agentbox the only enforceable cap is
     gateway-side, so the cap recorded here is what the operator must also set at
     the gateway; tend's own --max-cost counts tend-agent sessions only.
@@ -515,7 +764,7 @@ def source_shas(workspace, run: dict) -> dict[str, str]:
 def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict) -> list[str]:
     """Check the staged tend config actually calls the OUT-OF-TREE gate.
 
-    The defect this catches (design/critique.json, gaps): both
+    The defect this catches (the design critique, gaps): both
     ``validation_commands`` and ``pre_merge_validation_commands`` ran
     ``python3 scripts/verify_findings.py`` from the worktree the worker may edit
     and commit, so a worker that rewrote the gate passed both runs.  The staged

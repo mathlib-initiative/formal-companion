@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # STUB: the stock tend-agent bridge (API key through the gateway).
 #
-# This is the third backend named in design/decisions.json ("Fleet substrate"):
+# This is the third backend named in the design decisions record ("Fleet substrate"):
 # tend's own agent, billed to an Anthropic API key rather than a subscription.  It
 # is the only backend whose spend tend can actually see (`tend-control budget
 # --max-cost` counts tend-agent sessions only; agentbox hides the token and reports
@@ -29,8 +29,8 @@ fi
 
 # TODO(v1): tend-agent's own CLI contract (flags, prompt-registry variant, how the
 # role is selected) has not been exercised from this machine, so the invocation below
-# is a placeholder.  Confirm it against /Users/jack/Desktop/tend `tend-agent --help`
-# and a 1/1 smoke test before using this backend for a real run.
+# is a placeholder.  Confirm it against your own `tend-agent --help` and a 1/1
+# smoke test before using this backend for a real run.
 exec tend-agent \
   --role "$ROLE" \
   --prompt-file "$PROMPTS/$ROLE.md" \

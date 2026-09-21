@@ -3,14 +3,14 @@
 Used by ``cf detect-proxies`` (PROXY, COVERAGE) and by ``cf pair``
 (PAGE_ANCHOR, from ``pair/anchor_check.py``).
 
-New code.  design/stage_map.md Stage 8's gate is that each hit is "emitted as a
-finding row of kind ``PROXY`` ... so it joins the corpus and the ledger like any
-other finding".  It did not: ``cf detect-proxies`` wrote ``detect/<name>/
-findings.*.jsonl`` and every downstream reader (``cf tally``, ``route``,
-``adjudicate``) reads ``corpus/`` only, so the model-free stage the SKILL calls
-step 5 of the default program contributed zero rows to the report -- and the
-``mechanical`` gate preset, which exists for exactly these rows, was applied to
-nothing.
+New code.  docs/design/stage_map.md §4 Stage 8's gate is that a hit counts only
+once it is "emitted as a finding row of kind ``PROXY`` ... so it joins the
+corpus and the ledger like any other finding".  It did not: ``cf detect-proxies``
+wrote ``detect/<name>/findings.*.jsonl`` and every downstream reader
+(``cf tally``, ``route``, ``adjudicate``) reads ``corpus/`` only, so the
+model-free stage the SKILL calls step 5 of the default program contributed zero
+rows to the report -- and the ``mechanical`` gate preset, which exists for
+exactly these rows, was applied to nothing.
 
 This module is the join.  A detector row is FLAT (one defect, one declaration);
 a corpus document is per source ITEM and carries ``disagreements``.  So the rows
@@ -156,7 +156,7 @@ def write_corpus(docs: Sequence[dict], dest: str | Path, *, run_id: str,
     """Write one JSON per item into *dest* and return the names written.
 
     Idempotent: the same detector input rewrites the same bytes, so re-running
-    ``cf detect-proxies --emit-corpus`` does not churn the corpus.
+    ``cf detect-proxies`` (which emits the corpus by default) does not churn it.
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)

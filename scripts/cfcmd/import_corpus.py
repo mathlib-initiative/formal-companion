@@ -1,7 +1,7 @@
 """cf import-corpus -- adopt an existing findings directory as a run of this workspace.
 
 New code (the design's "import the baseline corpus as runs").  The 2,672-file
-corpus at ``~/Desktop/tao-diff-run`` was produced before this skill existed: its
+baseline corpus was produced before this skill existed: its
 findings are schema v1, they carry no ``run_id``, no ``finding_id``, no
 ``source_id`` and no ``source_sha``, and nothing records which edition they were
 judged against.  This
@@ -9,7 +9,7 @@ command lifts such a directory into ``corpus/<run-id>/`` as schema v2 and writes
 the same RECEIPT.json ``cf harvest`` writes, so an imported run is
 indistinguishable downstream from one this skill ran itself::
 
-    cf import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt \
+    cf import-corpus --run-id findings-hunt --from <corpus>/findings-hunt \
         --mode attack --preset attack-hunt
 
 The INPUT DIRECTORY IS NEVER MODIFIED -- not renamed, not stamped, not deleted.
@@ -32,8 +32,8 @@ same repository ``tml-prefix`` produce two entries for one defect and
 Nothing is guessed: without the flag the v1 names are kept and the import WARNS,
 naming the repos this workspace does not have.
 
-Ported from: recovered/b174aa13_L5690_Bash.txt (harvest-from-journal) for the
-receipt discipline, and scripts/gate/convert_v1.py for the v1 -> v2 mapping.
+Ported from: the v1 campaign's harvest-from-journal cell (not in this repo) for
+the receipt discipline, and scripts/gate/convert_v1.py for the v1 -> v2 mapping.
 """
 from __future__ import annotations
 
@@ -47,8 +47,9 @@ from cflib.jsonio import write_json
 
 from gate import convert_v1
 from harvest import harvest as harvest_mod
+from harvest import record as record_mod
 
-from cfcmd.harvest import _record_state, _tally, gate_runner
+from cfcmd.harvest import gate_runner
 
 #: Directory names the baseline used, mapped to (mode, preset).  Only a default:
 #: --mode and --preset always win.
@@ -87,10 +88,15 @@ def register(subparsers) -> None:
                         "this workspace, because the union key holds the repo")
     p.add_argument("--no-convert", action="store_true",
                    help="copy verbatim; only for a directory that is already schema v2")
-    p.add_argument("--gate", action="store_true",
-                   help="run the findings gate over the imported corpus; a failure fails the receipt")
+    gate = p.add_mutually_exclusive_group()
+    gate.add_argument("--gate", dest="gate", action="store_true", default=True,
+                      help="(the default) run the findings gate over the imported corpus; a "
+                           "failure fails the receipt. With no --preset and no --gate-config "
+                           "no config can be built: the import warns and records gate: null")
+    gate.add_argument("--no-gate", dest="gate", action="store_false",
+                      help="adopt the directory without validating it against the source text")
     p.add_argument("--gate-config", default=None,
-                   help="with --gate: the gate.json to use (default: runs/<run-id>/gate.local.json)")
+                   help="the gate.json to use (default: runs/<run-id>/gate.local.json)")
     p.add_argument("--allow-edition-mismatch", action="store_true",
                    help="accept findings judged against another edition (refused by default). "
                         "The batch-1 import needs it, or --source-sha for the draft edition")
@@ -202,12 +208,19 @@ def run(args) -> int:
     log.info(harvest_mod.describe(receipt))
     if not receipt["complete"]:
         log.warn("import INCOMPLETE: every number derived from this corpus is a lower bound.")
+    if not receipt.get("gate"):
+        log.warn(f"UNGATED run {args.run_id}: RECEIPT.json carries no gate block, so no quote "
+                 "in this corpus was checked against the source text. This is the weakest "
+                 "path in the pipeline -- an imported corpus was never gated on the way out "
+                 "either. Re-import with --preset <preset> or --gate-config <file>.")
     if not (receipt.get("edition") or {}).get("ok", True):
         log.warn("import REFUSED the source: pass --source-sha <the edition these were judged "
                  "against>, or --allow-edition-mismatch to adopt them as they are.")
 
-    counts = {} if args.no_tally else _tally(workspace, args.run_id, dest)
-    _record_state(workspace, args.run_id, {"mode": mode, "preset": preset}, receipt, counts)
+    counts = ({} if args.no_tally
+              else record_mod.write_run_tally(workspace, args.run_id, dest))
+    record_mod.record_run_state(workspace, args.run_id, {"mode": mode, "preset": preset},
+                                receipt, counts)
     return 0 if receipt["complete"] else 1
 
 
@@ -251,6 +264,15 @@ def _import_files(src: Path, dest: Path, expected, no_convert: bool, *, run_id: 
     repos_seen: set[str] = set()
     for name in expected:
         doc = json.loads((src / name).read_text(encoding="utf-8"))
+        if not isinstance(doc, dict):
+            # valid JSON, not a findings document: converting it would throw, and
+            # skipping it would adopt a corpus one file short of what the receipt
+            # says landed
+            raise CfError(
+                f"{name} is not a findings object (it is "
+                f"{'null' if doc is None else type(doc).__name__})",
+                hint="every file --from a corpus directory must be an object carrying "
+                     "`disagreements`; move or fix that file and re-run the import")
         if no_convert or doc.get("schema_version") == 2:
             already_v2 += 1
             out = doc

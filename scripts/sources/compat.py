@@ -1,14 +1,25 @@
 """Thin adapter over ``scripts/cflib`` for the sources/ and pair/ stages.
 
-Ported from: nothing directly -- this is the glue the recovered cells never had
-(they inlined ``/Users/jack/Desktop/tao-differential`` and the ``+16`` offset,
-e.g. recovered/b174aa13_L5589_Bash.txt, b174aa13_L6099_Bash.txt).
+Ported from: nothing directly -- this is the glue the v1 campaign's cells never
+had (they inlined one machine's corpus path and the ``+16`` offset, and none of
+them are in this repo).
 
-Everything here PREFERS ``cflib`` (the shared library: workspace.yaml loading,
-state.json, paths, jsonl io, sha256, the strict item grammar) and keeps a small
-fallback so the sources and pair stages stay runnable and testable on their own --
-``python3 -m unittest tests.test_sources_pair`` must not need a workspace.
-The fallbacks mirror cflib's API names, so callers do not care which is in use.
+Everything here RESOLVES to ``cflib`` (the shared library: workspace.yaml
+loading, state.json, paths, jsonl io, sha256, the strict item grammar).  There
+is no fallback half, on purpose: this module is only importable with
+``scripts/`` on ``sys.path`` -- which is what ``scripts/cf.py`` and every test
+do -- and ``cflib`` lives in that same package root, so cflib is importable
+whenever this module is.  A ``try``/``except`` around those imports could
+therefore only fire when cflib itself raises AT IMPORT TIME, and it used to
+answer an honest bug inside cflib by silently swapping in a second, divergent
+item grammar (it kept only the first sub-part of ``Theorem 1.1.1 (i)(a)`` and
+truncated ``Theorem 2.3.4.1``, so findings stopped joining to their corpus rows
+instead of failing loudly).  An ImportError here is an ImportError.
+
+Nothing in this package ships to a run host: ``scripts/run/manifest.py``
+transfers the bridges plus ``scripts/gate/verify_findings.py`` and
+``check_changed_files.py``, and those two are the only modules that inline what
+they need.
 
 The item grammar is cflib's ``items.try_parse``; :class:`ItemId` is a tiny
 view over it (``key`` = the canonical id, ``sub`` = ``(iv)``) that keeps the
@@ -18,88 +29,32 @@ sources/pair code readable.  The grammar is per SOURCE: the kind list comes from
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
-import unicodedata
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-try:  # the shared library, when the CLI implementer's modules are present
-    from cflib import items as _cf_items  # type: ignore
-except Exception:  # pragma: no cover - exercised only before cflib lands
-    _cf_items = None
-try:
-    from cflib import hashing as _cf_hashing  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_hashing = None
-try:
-    from cflib import jsonio as _cf_jsonio  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_jsonio = None
-try:
-    from cflib import yamlio as _cf_yamlio  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_yamlio = None
-try:
-    from cflib import paths as _cf_paths  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_paths = None
-try:
-    from cflib import workspace as _cf_workspace  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_workspace = None
-try:
-    from cflib import state as _cf_state  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_state = None
-try:
-    from cflib import vocab as _cf_vocab  # type: ignore
-except Exception:  # pragma: no cover
-    _cf_vocab = None
-
-
-def _clean_item_fallback(raw: str) -> str:
-    """Stand-alone copy of ``cflib.items.clean`` (see :func:`finding_id`)."""
-    s = unicodedata.normalize("NFKC", raw or "")
-    for bad in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212":
-        s = s.replace(bad, "-")
-    s = s.replace("\u00a0", " ")
-    s = re.sub(r"\s+", " ", s).strip().strip("`").strip()
-    return s.rstrip(" .,;:").strip()
-
-#: finding kind emitted by pair/anchor_check.py -- mechanical only, never an LLM
-PAGE_ANCHOR = getattr(_cf_vocab, "PAGE_ANCHOR", "PAGE_ANCHOR")
-
-#: Lean keywords that STATE a notion.  ONE definition (cflib.vocab): pair and
-#: detect both write pairs/def-coverage.<name>.json and used to disagree.
-DEFINITIONAL_KEYWORDS: tuple[str, ...] = tuple(getattr(
-    _cf_vocab, "DEFINITIONAL_KEYWORDS",
-    ("def", "abbrev", "structure", "class", "inductive", "instance"),
-))
-DEFINITIONAL_KINDS = frozenset(getattr(
-    _cf_vocab, "DEFINITIONAL_KINDS", set(DEFINITIONAL_KEYWORDS) | {"opaque"}))
+from cflib import hashing as _cf_hashing
+from cflib import items as _cf_items
+from cflib import jsonio as _cf_jsonio
+from cflib import paths as _cf_paths
+from cflib import state as _cf_state
+from cflib import workspace as _cf_workspace
+from cflib import yamlio as _cf_yamlio
+from cflib.vocab import (  # noqa: F401  (re-exported: the one vocabulary)
+    DEFINITIONAL_KEYWORDS,
+    DEFINITIONAL_KINDS,
+    PAGE_ANCHOR,
+)
 
 #: default item kinds; workspace.yaml (``sources.<id>.kinds``) overrides per source
-DEFAULT_KINDS: tuple[str, ...] = tuple(
-    getattr(
-        _cf_items,
-        "DEFAULT_KINDS",
-        (
-            "Definition", "Lemma", "Theorem", "Proposition", "Corollary",
-            "Exercise", "Example", "Remark", "Strategy", "Claim",
-        ),
-    )
-)
+DEFAULT_KINDS: tuple[str, ...] = tuple(_cf_items.DEFAULT_KINDS)
 
 
 def utcnow() -> str:
     """ISO-8601 UTC timestamp stamped into every artifact."""
-    if _cf_state is not None and hasattr(_cf_state, "now"):
-        return _cf_state.now()
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return _cf_state.now()
 
 
 # --------------------------------------------------------------------------
@@ -109,24 +64,21 @@ def utcnow() -> str:
 
 def write_text(path, text: str) -> None:
     """Write a text file atomically."""
-    if _cf_jsonio is not None:
-        _cf_jsonio.atomic_write(str(path), text)
-        return
-    path = str(path)
-    os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
-    tmp = "%s.tmp" % path
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.replace(tmp, path)
+    _cf_jsonio.atomic_write(str(path), text)
 
 
 def write_json(path, payload: Any, indent: int = 1) -> None:
     """Write one JSON document atomically (indent=1 matches the originals)."""
-    write_text(path, json.dumps(payload, ensure_ascii=False, indent=indent) + "\n")
+    _cf_jsonio.write_json(str(path), payload, indent=indent)
 
 
 def read_json(path, default: Any = None) -> Any:
-    """Read one JSON document; ``default`` when the file is absent."""
+    """Read one JSON document; ``default`` when the file is absent.
+
+    Not ``cflib.jsonio.read_json``: that one REFUSES a missing file unless a
+    default is passed, and these callers read optional artifacts (a meta.json
+    that stage A has not written yet) where absent and empty mean the same.
+    """
     if not os.path.exists(str(path)):
         return default
     with open(str(path), "r", encoding="utf-8") as fh:
@@ -134,38 +86,20 @@ def read_json(path, default: Any = None) -> Any:
 
 
 def read_jsonl(path, skip_meta: bool = True) -> list[dict]:
-    """Read a .jsonl file, skipping blanks and (by default) a ``_meta`` row."""
-    if _cf_jsonio is not None and os.path.exists(str(path)):
-        return _cf_jsonio.read_jsonl(str(path), skip_meta=skip_meta)
-    rows: list[dict] = []
+    """Read a .jsonl file, skipping blanks and (by default) a ``_meta`` row.
+
+    ``skip_meta`` defaults the other way from ``cflib.jsonio.read_jsonl``: the
+    sources and pair stages read row tables, never the routed-findings header.
+    """
     if not os.path.exists(str(path)):
-        return rows
-    with open(str(path), "r", encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise ValueError("%s:%d: %s" % (path, n, exc)) from exc
-            if skip_meta and isinstance(row, dict) and "_meta" in row and len(row) == 1:
-                continue
-            rows.append(row)
-    return rows
+        return []
+    return _cf_jsonio.read_jsonl(str(path), skip_meta=skip_meta)
 
 
 def write_jsonl(path, rows: Iterable[dict], meta: dict | None = None) -> int:
     """Write rows (optionally behind a ``_meta`` header) atomically."""
     rows = list(rows)
-    if _cf_jsonio is not None:
-        _cf_jsonio.write_jsonl(str(path), rows, meta=meta)
-        return len(rows)
-    parts = []
-    if meta is not None:
-        parts.append(json.dumps({"_meta": meta}, ensure_ascii=False))
-    parts += [json.dumps(r, ensure_ascii=False) for r in rows]
-    write_text(path, "\n".join(parts) + ("\n" if parts else ""))
+    _cf_jsonio.write_jsonl(str(path), rows, meta=meta)
     return len(rows)
 
 
@@ -176,20 +110,12 @@ def write_jsonl(path, rows: Iterable[dict], meta: dict | None = None) -> int:
 
 def sha256_file(path) -> str:
     """sha256 of a file's bytes."""
-    if _cf_hashing is not None:
-        return _cf_hashing.sha256_file(str(path))
-    h = hashlib.sha256()
-    with open(str(path), "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return _cf_hashing.sha256_file(str(path))
 
 
 def sha256_text(text: str) -> str:
     """sha256 of a unicode string (utf-8)."""
-    if _cf_hashing is not None:
-        return _cf_hashing.sha256_text(text)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return _cf_hashing.sha256_text(text)
 
 
 def finding_id(run_id: str, source_id: str, item: str, kind: str,
@@ -202,13 +128,7 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
     gate, the ledger and ``route`` compute.
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
-    if _cf_hashing is not None and hasattr(_cf_hashing, "finding_id"):
-        return _cf_hashing.finding_id(run_id, source_id, item, kind, decls)
-    payload = "\n".join(
-        [str(run_id or ""), str(source_id or ""), _clean_item_fallback(str(item or "")),
-         str(kind or ""), *decls]
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return _cf_hashing.finding_id(run_id, source_id, item, kind, decls)
 
 
 # --------------------------------------------------------------------------
@@ -217,176 +137,30 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
 
 
 def load_yaml(path) -> Any:
-    """Load a YAML file (cflib's reader, else PyYAML)."""
-    if _cf_yamlio is not None:
-        return _cf_yamlio.read_yaml(str(path))
-    import yaml  # type: ignore
-
-    with open(str(path), "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh.read())
-
-
-class _FallbackPaths:
-    """Mirror of ``cflib.paths.WorkspacePaths`` (only what sources/pair need)."""
-
-    def __init__(self, root):
-        self.root = Path(str(root)).resolve()
-
-    @property
-    def workspace_yaml(self):
-        return self.root / "workspace.yaml"
-
-    @property
-    def sources_dir(self):
-        return self.root / "sources"
-
-    def source_dir(self, source_id: str):
-        return self.sources_dir / source_id
-
-    def source_items(self, source_id: str):
-        return self.source_dir(source_id) / "items.json"
-
-    def source_meta(self, source_id: str):
-        return self.source_dir(source_id) / "meta.json"
-
-    def source_text(self, source_id: str):
-        return self.source_dir(source_id) / "text.txt"
-
-    @property
-    def companions_dir(self):
-        return self.root / "companions"
-
-    def companion_dir(self, name: str):
-        return self.companions_dir / name
-
-    def statements_jsonl(self, name: str):
-        return self.companion_dir(name) / "statements.jsonl"
-
-    def state_json(self, name: str):
-        return self.companion_dir(name) / "state.json"
-
-    @property
-    def pairs_root(self):
-        return self.root / "pairs"
-
-    def pairs_dir(self, source_id: str):
-        return self.pairs_root / source_id
-
-    @property
-    def corpus_dir(self):
-        return self.root / "corpus"
-
-    def corpus_run_dir(self, run_id: str):
-        return self.corpus_dir / run_id
-
-    def list_companions(self) -> list[str]:
-        if not self.companions_dir.is_dir():
-            return []
-        return sorted(p.name for p in self.companions_dir.iterdir() if p.is_dir())
+    """Load a YAML file (cflib's reader: PyYAML when present, its subset otherwise)."""
+    return _cf_yamlio.read_yaml(str(path))
 
 
 def workspace_paths(root):
-    """``WorkspacePaths`` for a workspace root (cflib's when available)."""
-    if _cf_paths is not None and hasattr(_cf_paths, "WorkspacePaths"):
-        return _cf_paths.WorkspacePaths(Path(str(root)))
-    return _FallbackPaths(root)
-
-
-class _FallbackWorkspace:
-    """Mirror of ``cflib.workspace.Workspace`` for standalone use."""
-
-    def __init__(self, root, data: dict):
-        self.root = Path(str(root)).resolve()
-        self.data = data or {}
-
-    @property
-    def paths(self):
-        return workspace_paths(self.root)
-
-    @property
-    def sources(self) -> dict:
-        sources = self.data.get("sources")
-        return dict(sources) if isinstance(sources, dict) else {}
-
-    def source(self, source_id: str) -> dict:
-        return dict(self.sources.get(source_id) or {})
-
-    def source_ids(self) -> list[str]:
-        return list(self.sources)
-
-    def source_sha(self, source_id: str):
-        return self.source(source_id).get("sha256") or None
-
-    def offset(self, source_id: str) -> int:
-        return int(self.source(source_id).get("offset") or 0)
-
-    def errata_url(self, source_id: str):
-        return self.source(source_id).get("errata_url") or None
-
-    def kinds(self, source_id: str) -> tuple:
-        return tuple(str(k) for k in (self.source(source_id).get("kinds") or DEFAULT_KINDS))
-
-    def companion_names(self) -> list[str]:
-        comps = self.data.get("companions")
-        names: list[str] = []
-        if isinstance(comps, dict):
-            names = [str(k) for k in comps]
-        elif isinstance(comps, list):
-            names = [str(c.get("name")) for c in comps if isinstance(c, dict) and c.get("name")]
-        for name in self.paths.list_companions():
-            if name not in names:
-                names.append(name)
-        return names
-
-    def require_source_sha(self, source_id: str, sha, where: str) -> None:
-        want = self.source_sha(source_id)
-        if want and sha != want:
-            raise ValueError("%s: source_sha %r != workspace sources.%s.sha256 %r"
-                             % (where, sha, source_id, want))
+    """``cflib.paths.WorkspacePaths`` for a workspace root."""
+    return _cf_paths.WorkspacePaths(Path(str(root)))
 
 
 def load_workspace(start=None):
     """Load the workspace at/above ``start`` (or $CF_WORKSPACE, or cwd)."""
-    if _cf_workspace is not None:
-        return _cf_workspace.Workspace.load(start)
-    root = _find_workspace_root(start)
-    return _FallbackWorkspace(root, load_yaml(os.path.join(str(root), "workspace.yaml")) or {})
-
-
-def _find_workspace_root(start=None) -> Path:
-    cur = Path(str(start or os.environ.get("CF_WORKSPACE") or os.getcwd())).expanduser().resolve()
-    for cand in [cur] + list(cur.parents):
-        if (cand / "workspace.yaml").exists():
-            return cand
-    raise FileNotFoundError(
-        "no workspace.yaml at or above %s (pass --workspace or set CF_WORKSPACE)" % cur
-    )
+    return _cf_workspace.Workspace.load(start)
 
 
 def state_merge(workspace, name: str, section: str, values: dict, top: dict | None = None) -> None:
     """Merge ``values`` into ``state.json[section]`` (and ``top`` at the root)."""
-    if _cf_state is not None:
-        with _cf_state.update(workspace, name) as st:
-            _cf_state.merge_section(st, section, values)
-            st.update(top or {})
-        return
-    path = str(workspace.paths.state_json(name))
-    st = read_json(path, default=None) or {"name": name}
-    body = dict(st.get(section) or {})
-    body.update(values)
-    body["at"] = utcnow()
-    st[section] = body
-    st.update(top or {})
-    st["updated_at"] = utcnow()
-    write_json(path, st, indent=2)
+    with _cf_state.update(workspace, name) as st:
+        _cf_state.merge_section(st, section, values)
+        st.update(top or {})
 
 
 # --------------------------------------------------------------------------
-# item grammar (cflib.items, with a small local fallback)
+# item grammar (cflib.items)
 # --------------------------------------------------------------------------
-
-_WS = re.compile(r"\s+")
-_SUBPART = re.compile(r"^\(\s*(?:(?P<roman>[ivxlcdm]+)|(?P<num>\d{1,3})|(?P<alpha>[a-z]))\s*\)$", re.I)
 
 
 def normalise_item(item: Any) -> str:
@@ -396,11 +170,7 @@ def normalise_item(item: Any) -> str:
     """
     if item is None:
         return ""
-    if _cf_items is not None:
-        return _cf_items.clean(str(item))
-    s = unicodedata.normalize("NFKC", str(item)).replace(" ", " ")
-    s = s.replace("–", "-").replace("—", "-")
-    return _WS.sub(" ", s).strip().rstrip(" .,;:").strip("`").strip()
+    return _cf_items.clean(str(item))
 
 
 class ItemId:
@@ -452,7 +222,10 @@ class ItemId:
 
 
 def _from_cf_item(raw, obj) -> ItemId:
-    parts = tuple(
+    # `number_levels` carries EVERY numeric segment: rebuilding the number from
+    # chapter/section/number alone would drop the fourth level of a book that
+    # numbers `Lemma 2.3.4.1`, which is the truncation the grammar now refuses.
+    parts = getattr(obj, "number_levels", None) or tuple(
         x for x in (obj.chapter, obj.section, obj.number) if x is not None
     )
     number = ".".join(str(x) for x in parts)
@@ -460,14 +233,6 @@ def _from_cf_item(raw, obj) -> ItemId:
         str(raw), obj.id, obj.kind, number, parts, obj.sub, obj.title,
         getattr(obj, "page", None), getattr(obj, "trailing", ""),
     )
-
-
-def _canonical_kind(word: str, kinds: Sequence[str]) -> str | None:
-    low = word.lower()
-    for k in kinds:
-        if k.lower() == low:
-            return k
-    return None
 
 
 def parse_item(raw: Any, kinds: Sequence[str] = DEFAULT_KINDS) -> ItemId | None:
@@ -486,51 +251,10 @@ def parse_item_reject(raw: Any, kinds: Sequence[str] = DEFAULT_KINDS):
     the SOURCE does not list (``Strategy 2.1.1``), which is a
     ``cf sources set <id> kinds=...`` fix, not junk.
     """
-    if _cf_items is not None:
-        obj, reject = _cf_items.try_parse(str(raw or ""), tuple(kinds))
-        if obj is not None:
-            return _from_cf_item(raw, obj), ""
-        return None, getattr(reject, "reason", "unparseable")
-    obj = _fallback_parse_item(raw, kinds)
-    return (obj, "") if obj is not None else (None, "unparseable")
-
-
-def _fallback_parse_item(raw: Any, kinds: Sequence[str]) -> ItemId | None:
-    s = normalise_item(raw)
-    if not s:
-        return None
-    m = re.match(r"^(?P<kind>[A-Za-z-]+)[ ]+(?P<num>\d+(?:\.\d+){1,2})(?P<rest>.*)$", s)
-    if m:
-        kind = _canonical_kind(m.group("kind"), kinds)
-        if kind is None:
-            return None
-        number = m.group("num")
-        parts = tuple(int(x) for x in number.split("."))
-        rest = m.group("rest").strip()
-        sub, title = "", ""
-        while rest.startswith("(") and ")" in rest:
-            paren = rest[: rest.index(")") + 1]
-            sm = _SUBPART.match(paren)
-            if sm and not sub:
-                sub = "(%s)" % (sm.group("roman") or sm.group("num") or sm.group("alpha")).lower()
-            elif not title:
-                title = paren.strip("()")
-            rest = rest[len(paren):].strip()
-        return ItemId(str(raw), "%s %s" % (kind, number), kind, number, parts, sub, title)
-    if re.match(r"^in[- ]?text\b", s, re.I):
-        m = re.search(r"(?:pp?\.|pages?)[ ]*(?P<p>\d+)", s, re.I)
-        if m:
-            page = int(m.group("p"))
-            return ItemId(str(raw), "In-text p.%d" % page, "In-text", "", (), page=page)
-        alt = "|".join(re.escape(k) for k in kinds)
-        m = re.search(r"\b(?P<kind>" + alt + r")[ ]+(?P<num>\d+(?:\.\d+){1,2})", s)
-        if m:
-            kind = _canonical_kind(m.group("kind"), kinds) or m.group("kind")
-            return ItemId(
-                str(raw), "In-text %s %s" % (kind, m.group("num")), "In-text", m.group("num"),
-                tuple(int(x) for x in m.group("num").split(".")),
-            )
-    return None
+    obj, reject = _cf_items.try_parse(str(raw or ""), tuple(kinds))
+    if obj is not None:
+        return _from_cf_item(raw, obj), ""
+    return None, getattr(reject, "reason", "unparseable")
 
 
 def item_sort_key(key: str) -> tuple:
@@ -538,11 +262,24 @@ def item_sort_key(key: str) -> tuple:
 
     String-in / tuple-out, and total: it must never raise on a key that came
     from a repo tag, because sorting happens before the reject list is applied.
+
+    The dotted run is taken WHOLE, so ``Theorem 2.3.4.10`` sorts after
+    ``Theorem 2.3.4.9`` instead of falling back to the label and ordering them
+    as strings.  A book that numbers ``Theorem 7`` has no dotted run at all, so a
+    single number IMMEDIATELY after the kind counts too -- otherwise every item
+    of such a source tied in the 99s and items.json came out in string order
+    (``Theorem 10`` before ``Theorem 9``).  Both patterns leave ``In-text p.71``
+    where it was, in the 99s with the other unnumbered labels: ``p.71`` has no
+    leading digit and nothing but whitespace may sit between kind and number.
     """
-    m = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", key or "")
-    nums = tuple(int(x) for x in m.groups() if x) if m else (99, 99, 99)
-    nums = nums + (0,) * (3 - len(nums))
+    m = re.search(r"(\d+(?:\.\d+)+)", key or "") or _FLAT_NUM.match(key or "")
+    nums = tuple(int(x) for x in m.group(1).split(".")) if m else (99, 99, 99)
+    nums = nums + (0,) * max(0, 3 - len(nums))
     return (nums, key or "")
+
+
+#: ``Theorem 7`` / ``Exercise 3(a)`` -- a source numbered per chapter, not per section
+_FLAT_NUM = re.compile(r"^[A-Za-z][A-Za-z.\-]*[ \t]+(\d+)(?![\d.])")
 
 
 _PAGE_NUM = re.compile(r"(\d+)\s*(?:[-–—]\s*(\d+))?")

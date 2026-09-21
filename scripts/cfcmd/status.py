@@ -1,6 +1,6 @@
 """cf status -- what this workspace knows, read from state.json only.
 
-New code (design/architecture.md S4).  `cf status` prints counts that were
+New code.  `cf status` prints counts that were
 written by the command that produced them; it never re-derives a number by
 reading findings, because every counting error in the audit so far ran toward
 "cleaner".  A number that is missing here means the stage has not run, not
@@ -10,6 +10,14 @@ It also prints the SOURCES table and the "unconfirmed sources" block: discovery
 writes what it learned about a source nobody had catalogued with
 ``confirmed: false``, and the only place that would otherwise be visible is a
 YAML file nobody reads.
+
+The first line reports the two facts the workspace's copyright story rests on --
+whether the repo holding it has a remote, and whether the cf pre-push reminder is
+in place.  `cf init` refuses a remote at creation time and that refusal is the
+control, but a remote added afterwards passes through nothing: printing it on
+every run is what catches it.  For a workspace created with `--allow-nested` the
+repo in question is the ENCLOSING one, which is where `cf init` put the reminder
+and the ignore rules.
 
     cf status
     cf status --companion ours
@@ -43,6 +51,20 @@ def register(subparsers) -> None:
     p.add_argument("--runs", action="store_true", help="also list runs and corpus sizes")
 
 
+def _bound_sources(workspace, name: str) -> list[str]:
+    """The sources `workspace.yaml` binds *name* to; empty when it has no row for it.
+
+    `Workspace.companion_names()` is "the names in workspace.yaml, PLUS any
+    directory on disk that has an adapter" -- the state a half-finished onboard
+    or a copied companion directory leaves, and one `cf plan-run` supports.  Both
+    loops below walked that list through `sources_of()`, which raises "unknown
+    companion", so `cf status` printed the directory as `not onboarded` and then
+    exited 2 on it -- in the one command an operator runs to find out what is
+    wrong with the workspace.
+    """
+    return list(workspace.companions[name].sources) if name in workspace.companions else []
+
+
 def run(args) -> int:
     workspace = from_args(args)
     names = [args.companion] if args.companion else workspace.companion_names()
@@ -67,6 +89,7 @@ def run(args) -> int:
 
     facts = _workspace_facts(workspace)
     log.info(f"workspace : {workspace.root}   ({facts['name']})")
+    _print_git_guard(facts["git"])
     sources = _source_facts(workspace)
     if args.source:
         sources = [s for s in sources if s["id"] == args.source]
@@ -74,9 +97,23 @@ def run(args) -> int:
             raise CfError(f"unknown source {args.source!r}",
                           hint=f"known: {', '.join(workspace.source_ids()) or '(none)'}")
     if not sources:
-        log.info("sources   : none yet")
-        log.info("")
-        log.info("next:  cf onboard <path to a companion repo>")
+        #: An unreadable registry is not an empty workspace.  `cf status` catches the
+        #: CfError further down so that a broken file cannot kill the one command you
+        #: run to find out what is broken -- but falling through to "none yet" reported
+        #: a workspace whose overlay names sources as having none, which is worse than
+        #: failing.  Say which it is.
+        unreadable = _registry_error(workspace)
+        if unreadable:
+            log.warn_block(
+                f"sources   : UNKNOWN -- {workspace.paths.registry_yaml} could not be read",
+                [f"            {unreadable}"])
+            log.info("")
+            log.info("next:  fix that file (it is written by cf, so this is a bug worth "
+                     "reporting), then re-run `cf status`")
+        else:
+            log.info("sources   : none yet")
+            log.info("")
+            log.info("next:  cf onboard <path to a companion repo>")
     else:
         log.info("")
         log.info(format_table(SOURCE_COLUMNS, [
@@ -126,7 +163,7 @@ def run(args) -> int:
         # source is added and nothing has re-extracted yet -- printing only the
         # first contradicts the source table directly above, which already lists
         # this companion against the new source.
-        bound = len(workspace.sources_of(name))
+        bound = len(_bound_sources(workspace, name))
         done = row.get("sources") or 0
         row["sources"] = str(bound) if bound == done else f"{bound} ({done} extracted)"
         rows.append([row.get(c) for c in COLUMNS])
@@ -134,7 +171,7 @@ def run(args) -> int:
     log.info(format_table(COLUMNS, rows))
 
     for name in names:
-        bound = set(workspace.sources_of(name))
+        bound = set(_bound_sources(workspace, name))
         done = set((states.get(name) or {}).get("sources") or {})
         missing = sorted(bound - done)
         if missing:
@@ -173,14 +210,25 @@ def _print_unconfirmed(workspace) -> None:
     if not unconfirmed:
         return
     log.info("")
-    log.warn("unconfirmed sources (discovered, nobody has checked them)")
+    lines: list[str] = []
     for ref in unconfirmed:
         origin = ", ".join((ref.discovered or {}).get("from") or []) or ref.registry
-        log.info(f"  {ref.id}   sha {short(ref.sha256, 8) + '…' if ref.sha256 else '(none)'}"
-                 f"   from {origin}")
-        log.info(f"      confirm with:  cf sources show {ref.id}")
-        log.info(f"                     cf sources set {ref.id} confirmed=true")
-        log.info("      or promote it into the skill's registry/sources.yaml")
+        lines.append(f"  {ref.id}   sha {short(ref.sha256, 8) + '…' if ref.sha256 else '(none)'}"
+                     f"   from {origin}")
+        lines.append(f"      confirm with:  cf sources show {ref.id}")
+        lines.append(f"                     cf sources set {ref.id} confirmed=true")
+        lines.append("      or promote it into the skill's registry/sources.yaml")
+    log.warn_block("unconfirmed sources (discovered, nobody has checked them)", lines)
+
+
+def _registry_error(workspace) -> str:
+    """The first line of the error `Registry.load` raises, or "" when it loads."""
+    from cflib.registry import Registry
+    try:
+        Registry.load(workspace)
+    except Exception as exc:  # noqa: BLE001 - any breakage here is a report, not a crash
+        return str(exc).strip().splitlines()[0]
+    return ""
 
 
 def _print_registry_problems(workspace) -> None:
@@ -201,9 +249,8 @@ def _print_registry_problems(workspace) -> None:
     if not problems:
         return
     log.info("")
-    log.warn(f"registry ({len(problems)} problem(s))")
-    for problem in problems[:8]:
-        log.info(f"  {problem}")
+    log.warn_block(f"registry ({len(problems)} problem(s))",
+                   [f"  {problem}" for problem in problems[:8]])
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +268,84 @@ def _workspace_facts(workspace) -> dict:
         "sources": workspace.source_ids(),
         "shared_sources": workspace.shared_sources(),
         "hosts_allowlist": workspace.host_allowlist,
+        "git": _git_guard_facts(workspace),
     }
+
+
+def _git_guard_facts(workspace) -> dict:
+    """Which repo guards this workspace, does it have a remote, is the hook there?
+
+    Read fresh from the repo every time, because both facts can change after
+    `cf init` -- `git remote add` and a hook somebody moved aside go through no
+    cf command at all.
+
+    The guarded repo is not always the workspace itself: `cf init --allow-nested`
+    deliberately leaves the workspace without a ``.git`` of its own and installs
+    the reminder and the ignore rules in the ENCLOSING repo.  Keying on
+    ``root/.git`` alone called that supported layout "not a git repo" and, worse,
+    never looked at the remotes of the repo that actually holds the corpus -- the
+    one case (a remote added after init) this line exists to catch.
+    """
+    from cfcmd.init import git_toplevel, hook_state, no_remote_guard_set, remotes
+
+    root = workspace.root
+    guard = root if (root / ".git").exists() else git_toplevel(root)
+    policy = workspace.policy or {}
+    return {
+        "root": str(root),
+        "repo": guard is not None,
+        "guarding": str(guard) if guard else "",
+        "nested": bool(guard and guard != root),
+        "remotes": remotes(guard) if guard else [],
+        "pre_push_hook": hook_state(guard) if guard else "no-repo",
+        # `cf init --no-remote-guard`: the one guard a `git push --no-verify` does
+        # not walk past.  Recorded on every run, because it is local config and
+        # `git config --unset` takes it away without passing through any cf command.
+        "no_remote_guard": bool(guard and no_remote_guard_set(guard)),
+        "allow_remote": bool(policy.get("allow_remote", False)),
+        # `cf init --no-git` records policy.git: false. A workspace that was MEANT
+        # to have a repo either has one or is nested inside one, so the warning
+        # below is only ever about a workspace that lost the repo it should have.
+        "policy_git": bool(policy.get("git", True)),
+    }
+
+
+def _print_git_guard(git: dict) -> None:
+    """One line, every run: the workspace itself stays local, or it does not."""
+    if not git["repo"]:
+        if not git["policy_git"]:
+            log.info("git       : no git repo (created with --no-git): no history for the "
+                     "corpus and no pre-push reminder")
+            return
+        log.warn("this workspace is not a git repo: no history for the corpus and no pre-push "
+                 "reminder -- `cf init <workspace>` sets both up")
+        return
+    hook = {"cf": "cf pre-push reminder installed",
+            "foreign": "pre-push hook is NOT the cf one",
+            "absent": "NO cf pre-push reminder",
+            "no-hooks-dir": "no .git/hooks directory, so no reminder"}[git["pre_push_hook"]]
+    # Stated only when it is set: a standing suggestion to pass a flag is the nag
+    # `--no-git` was fixed for, and `cf init` already names the flag once.
+    if git.get("no_remote_guard"):
+        hook += "; bare-push guard set"
+    where = (f"guarding {git['guarding']} (this workspace is nested inside it) -- "
+             if git["nested"] else "")
+    whose = "the repo holding this workspace" if git["nested"] else "this workspace repo"
+    if git["remotes"]:
+        log.info(f"git       : {where}remote {', '.join(git['remotes'])}   ({hook})")
+        log.warn(f"{whose} HAS a remote: corpus/ quotes the source and the ledgers "
+                 "hold unchallenged findings, so the workspace itself stays local -- run "
+                 f"`git -C {git.get('guarding') or '<workspace>'} remote remove "
+                 f"{git['remotes'][0]}`, "
+                 "and share an export instead (`cf share export --out <bundle>` for the "
+                 "campaign, `cf route --redact-quotes` for one companion's findings upstream)")
+    else:
+        log.info(f"git       : {where}no remote (the workspace stays local)   ({hook})")
+    if git["pre_push_hook"] != "cf":
+        restore = "cf init <workspace>" + (" --allow-nested" if git["nested"] else "")
+        log.warn(f"{hook}: the reminder that a push carries book quotes is missing. It is only a "
+                 "reminder -- `git push --no-verify` and a fresh clone both defeat it, and having "
+                 f"no remote is the real control -- but re-run `{restore}` to restore it")
 
 
 def _source_facts(workspace) -> list[dict]:

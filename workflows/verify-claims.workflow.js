@@ -1,7 +1,7 @@
 export const meta = {
   name: 'cf-verify-claims',
   description: 'Adversarially verify every claim in a report draft against the primary sources, with an independent second vote on the numbers and a completeness critic',
-  whenToUse: 'Before any handoff, weekly report or PR body derived from this workspace goes out. Build args with `cf report --emit-verify-args`.',
+  whenToUse: 'Before any handoff, weekly report or PR body derived from this workspace goes out. Build args with `cf report` (it writes `reports/verify-claims.args.json` unless `--no-verify-args`).',
   phases: [
     { title: 'Verify', detail: 'one verifier per claim lens re-derives the draft claims from the sources', model: 'opus' },
     { title: 'Numbers', detail: 'an independent second vote recomputes every number from the corpus', model: 'opus' },
@@ -9,8 +9,9 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/verify-audit-summary-wf_9da8dddd-e4b.js (six hard-wired
-// lenses over the Tao workspace; it found 19 wrong claims out of 173).
+// Ported from: the v1 campaign's verify-audit-summary workflow (six hard-wired
+// lenses over the Tao workspace; it found 19 wrong claims out of 173), which
+// does not travel with this repo.
 // Generalised: the draft, the source list and the lens list all arrive in
 // `args`, the numbers lens is generated from the workspace's own tally commands
 // rather than being written by hand, and every counting bias observed so far --

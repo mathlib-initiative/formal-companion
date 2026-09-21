@@ -1,12 +1,12 @@
 """def-coverage.<name>.json and uncovered.<name>.json (the cheap proxy check).
 
-Ported from: recovered/b174aa13_L6099_Bash.txt (Definition coverage: which book
+Ported from: the v1 campaign's def-coverage cell (Definition coverage: which book
 Definitions a companion states with a real ``def``/``structure`` versus only
 theorems about someone else's notion -- the "bridge-only" case that hides a
-proxy, adam.NOTES.md 16-19) and recovered/b174aa13_L6145_Bash.txt (numbered
-items with no declaration at all).
+proxy) and its uncovered-items cell (numbered items with no declaration at all).
+Neither cell is in this repo.
 
-Generalised per design/stage_map.md Stage 3/8:
+Generalised per docs/design/stage_map.md Stage 3/8:
 
 * the item universe comes from ``sources/<source_id>/items.json``
   (whitespace-tolerant headings) instead of re-grepping the book text with a
@@ -19,6 +19,12 @@ Generalised per design/stage_map.md Stage 3/8:
 * they are shaped so ``missing`` / ``bridge_only`` can be emitted as COVERAGE
   and PROXY findings by the detect stage.
 
+The declaration classifier is NOT here: ``cf detect-proxies`` writes the same
+``pairs/<source_id>/def-coverage.<name>.json`` and owns the same three keys, so
+both commands call ``detect.def_coverage.is_definitional``.  This module keeps
+the item universe, the merge and the file layout; it does not decide what a
+definitional declaration is.
+
 Baseline (tao-measure-lean @ 2026-09-04, Tao Ch.1): 36 Definitions = 32 stated,
 4 bridge-only, 0 missing; 29 numbered items uncovered (28 Remarks + Ex 1.6.18).
 """
@@ -29,9 +35,10 @@ import os
 import re
 from typing import Mapping, Sequence
 
+from detect.def_coverage import def_signature, is_definitional
+
 from .compat import (
     DEFINITIONAL_KEYWORDS,
-    DEFINITIONAL_KINDS,
     item_sort_key,
     parse_item,
     read_json,
@@ -46,12 +53,14 @@ from .compare import row_item
 #: so the 32/4/0 agreement between the two commands was luck, not structure.
 DEF_KEYWORDS = DEFINITIONAL_KEYWORDS
 
-_MODIFIERS = r"(?:private |protected |noncomputable |nonrec |partial |unsafe |scoped )*"
-
 
 def def_regex(keywords: Sequence[str] = DEF_KEYWORDS) -> re.Pattern:
-    """Regex matching a definitional declaration's signature (L6099 DEFKIND)."""
-    return re.compile(r"^\s*(?:@\[[^\]]*\]\s*)?" + _MODIFIERS + r"(" + "|".join(keywords) + r")\b")
+    """Regex matching a definitional declaration's signature (L6099 DEFKIND).
+
+    ``detect.def_coverage.def_signature`` IS the regex; this name is kept
+    because ``def_coverage()`` below takes a ``keywords`` parameter.
+    """
+    return def_signature(keywords)
 
 
 def _book_items(items_json: Mapping, *, kind: str | None, kinds, chapter: int | None) -> list[str]:
@@ -78,14 +87,13 @@ def _rows_by_item(rows: Sequence[Mapping], kinds) -> dict[str, list[Mapping]]:
 def _is_definitional(row: Mapping, pattern: re.Pattern) -> bool:
     """A row states its notion: by its adapter ``kind``, else by its signature.
 
-    Same test as ``detect/def_coverage.is_definitional`` -- an adapter that
-    records ``kind: "instance"`` must not be read as bridge-only just because
-    the rendered signature was truncated.
+    This IS ``detect/def_coverage.is_definitional`` -- not "the same test as".
+    It used to be a second implementation whose regex allowed at most one
+    attribute group and did not list ``local ``, and the two writers of
+    ``def-coverage.<name>.json`` then disagreed about rows whose adapter left
+    ``kind`` empty.
     """
-    kind = str(row.get("kind") or "").strip().lower()
-    if kind:
-        return kind in DEFINITIONAL_KINDS
-    return bool(pattern.match(str(row.get("statement") or "")))
+    return is_definitional(row, pattern)
 
 
 def def_coverage(

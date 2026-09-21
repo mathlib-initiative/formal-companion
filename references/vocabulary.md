@@ -9,6 +9,10 @@ touching it.
 The enums here are the single source of truth in code: `scripts/cflib/vocab.py`. Anything not
 listed is invalid and the schema gate rejects it.
 
+**Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
+verdicts, resolutions, source roles, re-check statuses) · §2 mapping tables from the five
+legacy vocabularies · §3 `finding_id`, the frozen rule · §4 item ids.
+
 ---
 
 ## 1. The canonical vocabulary
@@ -87,7 +91,7 @@ converter maps such a row to `refuted` and moves the prose into `reason`.
 
 ### 1.6 The source model
 
-These came with the multi-source model (`docs/design/multi-source-model.md`); they describe
+These came with the multi-source model (`docs/design/archive/multi-source-model.md`); they describe
 *sources*, not findings, but they are enums and they live in the same file.
 
 | enum | values | what it decides |
@@ -97,8 +101,8 @@ These came with the multi-source model (`docs/design/multi-source-model.md`); th
 | `DISCOVERY_SIGNALS` | `formalization_yaml` `ledger_source` `official_source_json` `graph_json` `prose` `filesystem` `citation` | S1–S7: which repo signal produced a claim. All seven run for every adapter kind |
 | `PDF_FOUND_IN` | `repo_declared` `repo_cache` `workspace_store` `library_path` `download` `none` | which step of the search order located the bytes — in search order, so it doubles as a provenance ranking |
 | `OFFSET_METHODS` | `running_head_mode` `declared` `manual` `registry` `unknown` | how a page offset was arrived at. `manual` means a human typed it through `cf sources set`, and the confidence beside it is not an inference |
-| `ADAPTER_KINDS` | `docstring_tags` `attribution_table` `ledger_nodes` `custom` | what an `adapter.yaml` may legally say |
-| `IMPLEMENTED_ADAPTER_KINDS` | `docstring_tags` `attribution_table` | what v1 can actually parse. `cf onboard` refuses the difference **before** writing anything |
+| `ADAPTER_KINDS` | `docstring_tags` `attribution_table` `blueprint_tex` `ledger_nodes` `custom` | what an `adapter.yaml` may legally say |
+| `IMPLEMENTED_ADAPTER_KINDS` | `docstring_tags` `attribution_table` `blueprint_tex` | what v1 can actually parse. `cf onboard` refuses the difference **before** writing anything |
 | `WRITE_POLICIES` | `read_only` `branch_only` `branch_and_pr` | v1 is findings-only; peers stay `read_only` either way |
 | `ANCHOR_CONVENTIONS` | `docstring` `ledger` `none` | where a page anchor comes from, and whether anchor-agreement can decide an edition at all |
 
@@ -115,13 +119,38 @@ that set and nothing else, and it is written down once because two stages both w
 
 `human_confirmed` is never written by a machine pass.
 
+### 1.8 Re-check statuses (`cf recheck`, `recheck.status` on a ledger row)
+
+`unchanged` | `changed` | `gone` | `unpinned`. `cflib.vocab.RECHECK_STATUSES`.
+
+These are facts about the **code**, not verdicts. A finding is a claim about a specific Lean
+statement at a specific revision, so `cf recheck` re-extracts the companion at its current commit
+and compares each pinned `decl_fingerprint` (§3.2) with what is there now:
+
+| value | what it means | what happens to the row |
+|---|---|---|
+| `unchanged` | every pinned declaration still normalises to the same fingerprint | nothing; the claim is still about this code |
+| `changed` | a fingerprint differs — the statement moved | `needs_rereview`: it may have been fixed or made worse, and only a reader can say which |
+| `gone` | a pinned declaration is not in the table any more | `needs_rereview` |
+| `unpinned` | the row carries no fingerprint and its run recorded none | reported, never guessed at |
+
+`unpinned` is the honest answer for every imported legacy corpus and every row written before the
+pin existed, and it is why re-checking a legacy ledger cannot move an adjudicated number: a
+fingerprint taken at today's HEAD would claim the finding was judged against code it never saw.
+A `COVERAGE` finding names no declaration, so it is `unpinned` too — there is nothing to fingerprint,
+and reporting it as `unchanged` would read as "still verified".
+
+**`cf recheck` writes no verdict and no resolution.** `validate_ledger` rejects a `recheck` block
+that carries either: stating what the code did and deciding what that means are two different jobs,
+and only the second one is an adjudication.
+
 ---
 
 ## 2. Mapping tables from the five legacy vocabularies
 
-### 2.1 Batch-1 Workflow findings (`~/Desktop/tao-differential/harvest.partial.json`, `findings.*.jsonl`)
+### 2.1 Batch-1 Workflow findings (the v1 differential's `harvest.partial.json`, `findings.*.jsonl`)
 
-Source: the batch-1 fleet schema (recovered transcript `b174aa13` L5600) and the routed files.
+Source: the batch-1 fleet schema and the routed files of the v1 campaign.
 
 | legacy field | legacy values | canonical |
 |---|---|---|
@@ -138,7 +167,7 @@ recorded in `findings.adam.jsonl`'s `_meta.withdrawn`). That is the whole point 
 source rather than assuming one: the rows stay importable and stay honest about what they were
 judged against.
 
-### 2.2 Corpus v1 (the five tend runs; `verify_findings.py` L18-20 and its attack variant)
+### 2.2 Corpus v1 (the five tend runs; the v1 gate's verdict set and its attack variant, now `plan/presets.py`'s `LEGACY_*_VERDICTS`)
 
 | legacy | canonical |
 |---|---|
@@ -149,10 +178,10 @@ judged against.
 | `book_passage_quote`, `book_quote` | unchanged — still a quote from a book; `source_id` + `source_sha` added, and they decide *which* text the quote gate checks it against |
 | `faithful` (enum) | list, as in §2.1 |
 | witness in prose inside `reasoning` | `witness: {d?, object, why}` — extracted where the text names one, else `witness: null` and `witness_extracted: false` |
-| `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/multi-source-model.md` §6.1 |
+| `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/archive/multi-source-model.md` §6.1 |
 | task-id file name (`exercise-1_1_1.json` / `exercise-1-1-17.json`) | `run_id` + `item`; the converter accepts dash **and** underscore slugs |
 
-### 2.3 Challenge workflow (`challenge-batch1-findings-wf_c3f0e5d0-d65.js`)
+### 2.3 Challenge workflow (the v1 campaign's challenge-batch1-findings run)
 
 | legacy | canonical |
 |---|---|
@@ -165,7 +194,7 @@ judged against.
 | `survives_all` (all refuters agree) | `contested: false`; any dissent → `contested: true` with the votes in `dissent[]` |
 | linkage by `item + concept.slice(0,40)` | `finding_id` (§3) |
 
-### 2.4 Adjudication ledger (`adam-faithfulness-adjudication-wf_60a87e92-dd5.js`, `accepted/refuted.adam.jsonl`)
+### 2.4 Adjudication ledger (the v1 adam-faithfulness-adjudication run, `accepted/refuted.adam.jsonl`)
 
 Finding verdicts already match §1.4. The workflow's two other schemas map into finding kinds:
 
@@ -189,9 +218,8 @@ field; it is advisory and no gate reads it.
 
 ### 2.5 Viewer file (`measure-theory/faithfulness-verdicts` v1)
 
-Ledger → viewer, as implemented by both generators
-(`~/Desktop/notes/camera-ready-2026-09-08-tools/make_verdicts.py`,
-`~/Desktop/tao-differential/adam-detector/make_verdicts.py`):
+Ledger → viewer, as implemented by both of the v1 campaign's generators (the
+camera-ready tools' `make_verdicts.py` and the proxy detector's copy of it):
 
 | ledger verdict | viewer verdict |
 |---|---|
@@ -224,10 +252,10 @@ finding_id(run_id, source_id, item, kind, unfaithful_decls) = sha256(
 ```
 
 Five parts, joined with a newline, and the declarations go in as **separate parts** rather than
-pre-joined. `cflib.hashing.finding_id` is the definition; four other files inline it byte-for-byte
-because they run where `cflib` is not importable (`gate/verify_findings.py`, `sources/compat.py`,
-`ledger/compat.py`, `detect/_compat.py`), and
-`tests/test_plan_gate.py::TestFindingIdIsOneDefinition` asserts all five agree on every digest.
+pre-joined. `cflib.hashing.finding_id` is the definition; `gate/verify_findings.py` inlines it
+byte-for-byte because the gate is transferred to a run host where `cflib` is not importable. The
+compat shims (`sources/compat.py`, `ledger/compat.py`, `detect/_compat.py`) delegate to `cflib`, and
+`tests/test_plan_gate.py::TestFindingIdIsOneDefinition` asserts every spelling agrees on every digest.
 
 Rules and reasons:
 
@@ -247,6 +275,50 @@ Rules and reasons:
   never routed — routing is on the `unfaithful_decls` prefix only.
 - Challenge and adjudication results link by `finding_id`, never by a label prefix. The legacy
   22-/30-character prefix join is what made batch-1 challenge results ambiguous.
+
+### 3.1 `defect_key` — the run-independent key
+
+```python
+defect_key(source_id, item, kind, unfaithful_decls) = finding_id(
+    "", source_id, items.join_key(item), kind, unfaithful_decls)
+```
+
+`cflib.hashing.defect_key`, beside the id so the two cannot drift. `run_id` is `finding_id`'s
+**first** part, so the same defect found by two runs gets two ids: an id addresses one
+*observation*, and this key is the *identity* two observations share. `union --group-by defect-key`
+groups on it; `agreed` groups on `(source_id, repo, collapsed item, kind)` plus a shared
+declaration, and adjudication, transcription and `cf recheck` address one observation, so they join
+on `finding_id`. `--new-only` reported every re-found defect as new while this key did not exist.
+
+Two details are load-bearing:
+
+- **the item goes in as the JOIN key**, not as the label a worker wrote. `harvest.tally` passes
+  `collapse_to_book_item()` (`items.join_key` for an in-text label, the book item for a numbered
+  one), because `Exercise 1.6.27` and `Exercise 1.6.27(iii)` are one defect at one book item. Keyed
+  on the raw spelling they landed in two groups, so the "exact" grouping was not even a refinement
+  of the default one — which is the shape of the duplicate `union.adam.json` recorded for
+  `Exercise 1.6.39`. §4's rule: anything that MATCHES on an item matches on `join_key`.
+- **the companion is not hashed in.** It is a field on every row and part of every grouping tuple
+  that uses this key (`(source_id, repo, defect_key)` in `union`), so folding it in would change no
+  grouping and re-key what is already written.
+
+Neither key is ever stored on a finding: both are recomputed from the content every time it is read.
+
+### 3.2 The revision pin — `repo_commit` and `decl_fingerprints`
+
+A finding is a claim about a Lean statement **at a revision**. Two fields carry that:
+
+| field | written by | how |
+|---|---|---|
+| `repo_commit` | `cf plan-run` → `run.yaml` `companion_pins`, stamped by `cf harvest` | the companion's HEAD at plan time, read through `cflib.gitsafe`, with a `dirty` flag beside it: a working tree that does not match its commit is not pinned by it |
+| `decl_fingerprints` | `cf harvest` → `reports/pin.<run-id>.json`, copied onto the ledger row | `{repo:decl → sha256}` over the declaration's statement text in `companions/<name>/statements.jsonl` **at that commit**, with Lean block comments (so docstrings) dropped and whitespace collapsed |
+
+Neither is ever taken from a worker, for exactly the reason `finding_id` is recomputed at harvest: a
+worker cannot be trusted to state what it was judged against. A declaration is fingerprinted **only**
+when the statement table was extracted at the planned commit and the checkout was clean; otherwise
+it is listed as `unpinned` rather than fingerprinted against a revision it never saw. Whitespace and
+docstring changes are deliberately invisible to the fingerprint: a re-check that shouts at
+reformatting gets run once.
 
 **Workflow replay is not keyed on ids.** The Workflow tool replays a cached `agent()` result when
 the prompt bytes and the preceding call order are unchanged, so "re-running adjudication on a
@@ -271,12 +343,29 @@ launching.
 `::` is the one separator (`cflib.items.QUALIFIED_SEP`); `split_qualified()` is its inverse and
 raises on a string without it. A function that takes a bare item string takes a `source_id` too.
 
-Grammar for the item half: `"<Kind> <c>.<s>.<n>"` with an optional sub-part suffix `(iv)` / `(3)`,
-where `<Kind>` comes from **that source's** kind list — inferred from the source's own headings and
-stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definition`, `Lemma`, `Theorem`,
-`Proposition`, `Corollary`, `Exercise`, `Example`, `Remark`, plus per-source extras such as
-`Claim`, `Strategy`). Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and
-reported but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
+Grammar for the item half: `"<Kind> <n>[.<n>…]"` with an optional sub-part suffix `(iv)` / `(3)` /
+`(a)`, where `<Kind>` comes from **that source's** kind list — inferred from the source's own
+headings and stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definition`, `Lemma`,
+`Theorem`, `Proposition`, `Corollary`, `Exercise`, `Example`, `Remark`, plus per-source extras such
+as `Claim`, `Strategy`). Kind inference folds case, so an AMS-style `THEOREM 1.2` head counts as
+`Theorem`. Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and reported
+but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
+
+- **How many numbers is the source's numbering, not a constant.** `Theorem 7`, `Theorem 3.4`,
+  `Definition 1.2.3` and `Lemma 2.3.4.1` are four real book conventions; `cflib.inference.
+  infer_numbering` reads the depth off the source's own headings and it is stored as
+  `numbering: {min_segments, max_segments, …}` in `sources/<id>/items.json` and `meta.json`, so
+  every stage reads one definition. A caller that does not know the source gets
+  `items.DEFAULT_NUMBERING` — two or three segments, the grammar the existing corpus was keyed
+  with, so a re-parse of the baseline is byte-identical, and an empty stored mapping (a host
+  without `cflib` inferred nothing) reads back as that default rather than as `(2, 2)`.
+  `cf sources set <id> numbering=<min>,<max>` is the override, stamping `numbering_method:
+  manual`: it is the one inference a re-run cannot settle, because re-running reads the same
+  headings and reaches the same depth.
+- **A label deeper than the numbering is a reject, never a truncation.** `Theorem 2.3.4.5` under a
+  three-segment numbering is `too_many_segments`, not `Theorem 2.3.4` with a stray `.5`: the old
+  behaviour merged every item of a section onto one audit key with nothing on any reject list,
+  which is the one failure shape that produces wrong results rather than missing ones.
 
 - Parsing is **whitespace-tolerant**: `Exercise    1.3.19` is the same item as `Exercise 1.3.19`.
   A single-space regex in the legacy task generator dropped exactly that item and published a
