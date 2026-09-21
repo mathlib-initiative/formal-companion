@@ -18,8 +18,9 @@ That recipe is kept exactly (same row rule, same dedup) and generalised:
   uses, so an in-text label goes through the grammar and NOT through the
   positional search (see :func:`collapse_to_book_item`);
 * findings that name no declaration at all are counted separately instead of
-  being attributed to a repo -- routing on anything but the ``unfaithful_decls``
-  prefix is what produced the "31 findings" scare (design/stage_map.md Stage 9).
+  being attributed to a repo -- docs/design/stage_map.md §4 Stage 9: "routing is
+  on the ``unfaithful_decls`` prefix and nothing else".  The fallback that rule
+  replaced is what produced the "31 findings" scare.
 
 The prose lesson that motivates the whole module is in the same file: the number
 was wrong three times (once because the corpus itself was a file short), always
@@ -408,7 +409,7 @@ def _classify_items(rows: Iterable[dict], key: str) -> dict:
 
 #: how a group key is spelled in ``tally()["groups"]``
 GROUP_SEP = "::"
-#: the default grouping (docs/design/multi-source-model.md S0.2 rule 4)
+#: the default grouping (docs/design/archive/multi-source-model.md S0.2 rule 4)
 DEFAULT_GROUP_BY: tuple[str, ...] = ("source_id", "repo")
 
 
@@ -499,7 +500,8 @@ def tally(runs: dict[str, str | Path], kinds=None,
 
 
 def state_counts(repo_tally: dict) -> dict:
-    """The ``tally`` block of companions/<name>/state.json (architecture.md section 2).
+    """The ``tally`` block of companions/<name>/state.json
+    (docs/design/stage_map.md S2.2).
 
     Accepts either a repo rollup or one ``(source_id, repo)`` group; a rollup
     additionally carries ``by_source`` so `cf status` can say which source a

@@ -1,6 +1,6 @@
 """cf sources -- list, show, add, set and refresh the workspace's sources.
 
-docs/design/multi-source-model.md S7.  `cf onboard` is the path; these are the
+docs/design/archive/multi-source-model.md S7.  `cf onboard` is the path; these are the
 exceptions:
 
     cf sources list                       one row per source
@@ -127,6 +127,20 @@ def register(subparsers) -> None:
     rm.add_argument("--keep-files", action="store_true",
                     help="leave sources/<id>/ on disk (the default deletes the prepared text)")
 
+    val = sub.add_parser("validate-registry",
+                         help="check the shipped registry (structure + metadata only)")
+    val.add_argument("--overlay", action="store_true",
+                     help="also check this workspace's registry.yaml overlay")
+
+    promote = sub.add_parser("promote",
+                             help="write a registry patch file for a confirmed source")
+    promote.add_argument("source_id")
+    promote.add_argument("--out", default="",
+                         help="where to write the patch (default: "
+                              "<workspace>/registry-patch.<id>.yaml)")
+    promote.add_argument("--force", action="store_true",
+                         help="overwrite an existing patch file")
+
     refresh = sub.add_parser("refresh", help="re-prepare text, page map, items and errata")
     refresh.add_argument("source_id", nargs="?", help="default: every source")
     refresh.add_argument("--force", action="store_true")
@@ -140,12 +154,17 @@ def register(subparsers) -> None:
 
 def run(args) -> int:
     command = getattr(args, "sources_command", None) or "list"
+    if command == "validate-registry" and not getattr(args, "overlay", False):
+        # the shipped registry is a file in this checkout, so CI can check it
+        # in a clone with no workspace anywhere near it.
+        return _validate_registry(None, args)
     # `remove` is the repair path: it must load a workspace whose own validator
     # rejects it, because that is precisely when a source has to come out.
     workspace = from_args(args, validate=(command != "remove"))
     return {
         "list": _list, "show": _show, "add": _add, "set": _set, "remove": _remove,
-        "refresh": _refresh,
+        "refresh": _refresh, "validate-registry": _validate_registry,
+        "promote": _promote,
     }[command](workspace, args)
 
 
@@ -443,6 +462,125 @@ def _drop_overlay_row(workspace, source_id: str) -> None:
     )
     atomic_write(path, header + dump_yaml(data))
     log.ok(f"removed {source_id} from {path.name}")
+
+
+def _validate_registry(workspace, args) -> int:
+    """`Registry.validate()` plus the metadata-only check, over real files.
+
+    Both existed only as functions nothing ran against the shipped file: the
+    tests that called ``validate()`` built their own fixtures, and the rule
+    ``registry/README.md`` states as hard -- "metadata only, never a line of the
+    book" -- had nothing mechanical behind it at all.  The registry is the one
+    file a contributor writes by hand, so it is the one that most needs a check
+    they can run before opening the PR.  CI runs this command.
+    """
+    from cflib.registry import metadata_problems, skill_registry_path
+
+    checked: list[Path] = [skill_registry_path()]
+    problems = list(metadata_problems(skill_registry_path()))
+    if getattr(args, "overlay", False):
+        overlay = workspace.root / "registry.yaml"
+        checked.append(overlay)
+        if overlay.exists():
+            problems += metadata_problems(overlay)
+        else:
+            log.info(f"no overlay at {overlay} (nothing discovered here yet)")
+    # the cross-entry half (page-map symmetry, same_work, licence enum) reads
+    # the merged view, which is what any command that looks a source up sees.
+    overlay_too = bool(getattr(args, "overlay", False))
+    merged = Registry.load(workspace if overlay_too else None)
+    problems += merged.validate()
+    for path in checked:
+        log.info(f"checked {path}")
+    if problems:
+        for problem in problems:
+            log.warn(problem)
+        raise CfError(f"{len(problems)} registry problem(s)",
+                      hint="registry/README.md says what an entry may hold; POLICY.md "
+                           "says why metadata is the boundary")
+    # Count what was CHECKED, not what ships: with --overlay the run had just
+    # passed a third, overlay-only edition and still reported "2 shipped".
+    # `origin` is "overlay" for a row the overlay contributed OR overrode, which
+    # is what "touched" says and "from" would not.
+    total = len(merged.entries)
+    if overlay_too:
+        touched = sum(1 for e in merged.entries.values() if e.origin != "skill")
+        log.ok(f"registry ok ({total} edition(s); {touched} touched by the overlay)")
+    else:
+        log.ok(f"registry ok ({total} shipped edition(s))")
+    return 0
+
+
+def _promote(workspace, args) -> int:
+    """Write this workspace's confirmed source out as a registry PATCH file.
+
+    Promotion was four prose steps a human performed by hand, and the one thing
+    the steps must not do -- write the shipped registry from a workspace -- is
+    exactly what a script would have been tempted to automate.  So this writes a
+    file the contributor sends as a PR and touches nothing else: the shipped
+    registry stays curated, and the reviewer sees one readable diff.
+    """
+    from cflib.registry import (REGISTRY_VERSION, Registry as _Registry, metadata_problems)
+    from cflib.jsonio import atomic_write
+    from cflib.yamlio import dump_yaml
+
+    registry = _Registry.load(workspace)
+    entry = registry.get(args.source_id)
+    if entry is None:
+        raise SourceError(f"unknown source {args.source_id!r}",
+                          hint="known: " + (", ".join(sorted(registry.entries)) or "(none)"))
+    if entry.origin == "skill" and args.source_id not in registry.shadowed:
+        raise CfError(f"{args.source_id} already ships in the skill's registry",
+                      hint=f"cf sources show {args.source_id} to see the curated entry")
+    ref = workspace.source(args.source_id)
+    if not ref.confirmed:
+        raise CfError(f"{args.source_id} is not confirmed in this workspace",
+                      hint=f"check it with `cf sources show {args.source_id}`, then "
+                           f"`cf sources set {args.source_id} confirmed=true`")
+    if not entry.sha256:
+        raise CfError(f"{args.source_id} carries no sha256",
+                      hint="a registry entry is identified by the bytes; re-run "
+                           f"`cf sources refresh {args.source_id}` with the file on this machine")
+    body = entry.to_dict()
+    body["confirmed"] = True
+    body.pop("added", None)
+    out = Path(args.out) if args.out else workspace.root / f"registry-patch.{args.source_id}.yaml"
+    if out.exists() and not args.force:
+        raise CfError(f"{out} already exists", hint="pass --force to overwrite it")
+    header = (
+        f"# A registry patch for {args.source_id}, written by `cf sources promote`.\n"
+        "# Send it as a pull request against the skill's registry/sources.yaml: paste\n"
+        "# the `sources:` entry below into that file's map, keeping it sorted. Nothing\n"
+        "# writes the shipped registry from a workspace, deliberately -- see\n"
+        "# registry/README.md, \"Adding an edition\".\n"
+        "# Metadata only: no book text, ever (POLICY.md).\n"
+    )
+    text = header + dump_yaml({"version": REGISTRY_VERSION, "sources": {args.source_id: body}})
+    problems = _write_checked_patch(out, text)
+    if problems:
+        for problem in problems:
+            log.warn(problem)
+        raise CfError(f"{len(problems)} problem(s) in the entry; nothing was written",
+                      hint="registry/README.md says what an entry may hold")
+    atomic_write(out, text)
+    log.ok(f"wrote {out}")
+    log.info("next:")
+    log.info(f"  1. open a PR adding that entry to registry/sources.yaml")
+    log.info(f"  2. `cf sources validate-registry` in the checkout you edited")
+    log.info(f"  3. once it ships, delete the overlay row: cf sources remove "
+             f"{args.source_id} --keep-files, then re-run `cf onboard <repo>`")
+    return 0
+
+
+def _write_checked_patch(out: Path, text: str) -> list[str]:
+    """The metadata-only check, run on the patch BEFORE it is written."""
+    from cflib.registry import metadata_problems
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "patch.yaml"
+        probe.write_text(text, encoding="utf-8")
+        return [p.replace(str(probe), str(out)) for p in metadata_problems(probe)]
 
 
 def _refresh(workspace, args) -> int:

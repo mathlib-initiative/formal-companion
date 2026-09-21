@@ -3,12 +3,12 @@
 Ported from: recovered/b174aa13_L5589_Bash.txt (``pdftotext -layout`` + the
 ``\\f`` page count), recovered/b174aa13_L6099_Bash.txt (the Definition heading
 regex) and recovered/b174aa13_L6145_Bash.txt (the numbered-item regex over the
-eight Chapter-1 kinds).  Generalised per design/stage_map.md Stage 1:
+eight Chapter-1 kinds).  Generalised per docs/design/stage_map.md Stage 1:
 
 * the heading regex is whitespace-tolerant -- the originals used a literal
   single space and lost ``Exercise    1.3.19`` (410 items instead of 411);
 * the printed<->PDF page offset and the kind list are INFERRED from the text
-  when the caller does not know them (docs/design/multi-source-model.md S5), not
+  when the caller does not know them (docs/design/archive/multi-source-model.md S5), not
   the hard-coded +16 / Tao list, and never typed by a user;
 * every item records where it was found (pdf page, printed page, line), so the
   mechanical anchor check in pair/anchor_check.py has something to check
@@ -400,7 +400,7 @@ def prepare(
 ) -> dict:
     """Prepare one source directory; returns the ``meta.json`` payload.
 
-    ``offset=None`` and ``kinds=None`` mean INFER (docs/design/multi-source-model.md
+    ``offset=None`` and ``kinds=None`` mean INFER (docs/design/archive/multi-source-model.md
     S5): the offset is the mode of ``pdf_page - running_head`` and the kinds are
     the capitalised words the source's own numbered headings use.
 

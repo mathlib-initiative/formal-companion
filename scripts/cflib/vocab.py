@@ -2,7 +2,7 @@
 
 New code, consolidating the five drifting vocabularies the design records
 (match verdict -> finding kind -> challenge classification -> ledger verdict
--> viewer verdict; design/architecture.md S3).  Every stage imports its enums
+-> viewer verdict).  Every stage imports its enums
 from here: a value that is not in these sets is a gate failure, never a new
 convention.
 """
@@ -46,7 +46,7 @@ FINDING_KINDS = frozenset({CONTENT, VACUITY, PROXY, SUSPECTED_ERRATA, COVERAGE, 
 
 #: PAGE_ANCHOR is produced by pair/anchor_check.py only. An LLM that emits it
 #: is failing the kinds gate: 22 of 40 batch-1 differential findings were
-#: pagination noise (design/architecture.md S5 "Kinds gate").
+#: pagination noise (the kinds gate; references/findings-schema-v2.md S7).
 MECHANICAL_ONLY_KINDS = frozenset({PAGE_ANCHOR})
 
 # --- run modes and the kinds each mode may emit
@@ -64,7 +64,7 @@ KINDS_BY_MODE: dict[str, frozenset] = {
     ATTACK_HUNT: frozenset({CONTENT, VACUITY, SUSPECTED_ERRATA}),
 }
 
-#: Per-kind evidence matrix (design/critique.json: "A per-kind gate matrix is
+#: Per-kind evidence matrix (the design critique: "A per-kind gate matrix is
 #: needed (PROXY: bridge field + closure path as evidence; COVERAGE: item +
 #: items.json page; CONTENT/VACUITY: quote + witness)").  Values are the
 #: finding fields the mechanical gate requires for that kind.
@@ -136,7 +136,7 @@ LEDGER_TO_VIEWER = {
 }
 KIND_TO_VIEWER = {PROXY: "proxy"}
 
-# --- sources (docs/design/multi-source-model.md S1, S2)
+# --- sources (docs/design/archive/multi-source-model.md S1, S2)
 #: audited = a companion is checked against it; reference = prepared only so the
 #: page map to a sibling edition can be checked, and audited by nobody.
 SOURCE_AUDITED = "audited"

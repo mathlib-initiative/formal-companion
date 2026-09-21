@@ -152,7 +152,7 @@ def _withdrawal(row: dict, anchors: dict[str, dict], checked: set[str],
                 source_id: str = "") -> str:
     """Return a withdrawal reason for *row*, or '' when it should be routed.
 
-    critique.json correction 2: "Route them as mechanical low-severity rows from
+    the design critique, correction 2: "Route them as mechanical low-severity rows from
     ``anchor_check.py`` against the pinned edition; **withdraw only rows
     contradicted by that edition**."  Three cases, all reachable:
 

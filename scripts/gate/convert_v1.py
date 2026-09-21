@@ -20,7 +20,7 @@ v1 also predates the multi-source model: it had ONE implicit book, so there is
 no ``source_id`` in the corpus to recover.  ``--source`` supplies the run's
 single source and the converter stamps it on the document and on every
 disagreement; ``--source-sha`` fills the slot v1 called ``book_sha``.  The ids
-are recomputed under the five-part rule of docs/design/multi-source-model.md
+are recomputed under the five-part rule of docs/design/archive/multi-source-model.md
 S6.1, which is exactly why they must be recomputed: a four-part id computed
 without a source collides across sources.
 

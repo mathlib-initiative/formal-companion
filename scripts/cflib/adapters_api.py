@@ -1,6 +1,6 @@
 """The adapter interface: how a companion repo becomes a statement table.
 
-New code. It formalises the Stage 0/2 contract of design/stage_map.md so the
+New code. It formalises the Stage 0/2 contract of docs/design/stage_map.md so the
 three shipped adapters (``docstring_tags`` for tao-measure-lean and
 teorth/analysis, ``attribution_table`` for measure_theory's overlay data,
 ``ledger_nodes`` for its source-formalization ledger) and any future ``custom``
@@ -22,7 +22,7 @@ from . import gitsafe
 from .errors import AdapterError
 from .hashing import sha256_json
 
-#: Row schema v2 (docs/design/multi-source-model.md S6.2). Required on every row.
+#: Row schema v2 (docs/design/archive/multi-source-model.md S6.2). Required on every row.
 #: An item is the pair ``(source_id, item)``: the same label means different
 #: things in different sources, so a row that does not say which source it is
 #: about cannot be paired, gated or tallied.
@@ -72,7 +72,7 @@ class Adapter(ABC):
         self.name = name or self.config.get("name") or self.config.get("repo_name") or ""
         self.workspace = workspace
 
-    # -- discovery (docs/design/multi-source-model.md S4.2, S4.3) ------
+    # -- discovery (docs/design/archive/multi-source-model.md S4.2, S4.3) ------
     @classmethod
     def detect(cls, repo: str | Path) -> tuple[float, dict]:
         """How sure are we that ``repo`` follows THIS convention, and why?
@@ -252,7 +252,7 @@ class Adapter(ABC):
         """Everything that changes the extraction result.
 
         Subclasses extend this: ledger-backed adapters MUST add their export
-        shas (design/critique.json: "the extract key must include ledger sha
+        shas (the design critique: "the extract key must include ledger sha
         and target-refinement sha for ledger repos"), otherwise `cf extract`
         replays a stale table after the repo moves on.  The bound source shas
         belong in the key too: the same repo extracted against another edition

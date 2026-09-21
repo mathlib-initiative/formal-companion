@@ -1,7 +1,8 @@
 """Statement-table row schema v2 and its mechanical validation.
 
-New code; the field list is design/stage_map.md Stage 2 ("Extract statement
-tables"), which generalises the three row shapes that were produced by hand:
+New code; the field list is references/findings-schema-v2.md §1
+(``companions/<name>/statements.jsonl`` -- one declaration per line), which
+generalises the three row shapes that were produced by hand:
 
   ours.jsonl / teorth.jsonl  (extract_ours.py, extract_teorth.py)
       item, decl, file, line, statement, sorry, page_anchor, repo
@@ -15,7 +16,7 @@ int with the provenance of the anchor, and the pair ``source_id`` /
 ``source_sha`` so a row says WHICH source it is about and which bytes of it.
 
 ``source_id`` is not decoration.  An item is the pair ``(source_id, item)``
-(docs/design/multi-source-model.md S6.1): ``Exercise 1.3.19`` of one source is
+(docs/design/archive/multi-source-model.md S6.1): ``Exercise 1.3.19`` of one source is
 not the same item as ``Exercise 1.3.19`` of another, and a row that does not
 name its source cannot be paired, gated or tallied.  ``source_sha`` is the
 sha256 of that source's PDF bytes, so a row can never be compared against a

@@ -14,7 +14,7 @@ Two defects the design records are fixed here:
 * **cross-reference anchors.** ``extract_ours.py`` searched the whole
   docstring for ``book p. N``, so ``Exercise 1.2.17`` took its anchor from
   "(4) is the full Caratheodory condition of S1.7 (previewed on book p. 20)"
-  (design/stage_map.md Stage 2).  A page counts as the item's *own* anchor
+  (docs/design/stage_map.md Stage 2).  A page counts as the item's *own* anchor
   only when it sits inside the tag span or in the clause that immediately
   follows it; anything further away is reported as ``anchor_source:
   "crossref"`` with ``page_anchor: null``.

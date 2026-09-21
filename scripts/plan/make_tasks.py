@@ -18,7 +18,7 @@ So this module's contract is reconciliation, not templating:
   duplicate — is an error that names the item, never a silently shorter run.
 
 Every entry, task and reconciliation key carries its ``source_id``, because an
-item is the pair ``(source_id, item)`` (docs/design/multi-source-model.md S6.1).
+item is the pair ``(source_id, item)`` (docs/design/archive/multi-source-model.md S6.1).
 Reconciling on the bare label would make two sources' ``Exercise 1.3.19`` one
 item, and the whole contract of this module is that nothing merges silently.
 

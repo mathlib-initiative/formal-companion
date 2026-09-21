@@ -593,7 +593,7 @@ def run(args) -> int:
         },
         kinds=kinds,
         max_open_tasks=args.max_open_tasks,
-        # critique.json moves `tasks == items ∩ any-repo` into make_tasks, and
+        # the design critique moves `tasks == items ∩ any-repo` into make_tasks, and
         # reconcile(expected_items=...) NAMES what is missing or unexpected.
         expected_items=expected_items,
     )

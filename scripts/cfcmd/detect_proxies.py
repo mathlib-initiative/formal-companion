@@ -49,15 +49,17 @@ Outputs, all inside the workspace directory::
     corpus/detect-<name>-<tier>/RECEIPT.json
     companions/<name>/state.json              (counts merged in)
 
-The corpus emission is the join stage_map.md Stage 8 asks for -- "each hit [is]
-emitted as a finding row of kind PROXY ... so it joins the corpus and the ledger
-like any other finding". Without it the rows sat in ``detect/`` and ``cf tally``,
-``cf route`` and ``cf adjudicate``, which all read ``corpus/``, never saw them.
-Every emitted document is validated against the ``mechanical`` gate preset
-before it is written.
+The corpus emission is the join docs/design/stage_map.md §4 Stage 8 asks for --
+"a detector hit counts only once it is emitted as a finding row of kind PROXY
+... so it joins the corpus and the ledger like any other finding". Without it
+the rows sat in ``detect/`` and ``cf tally``, ``cf route`` and
+``cf adjudicate``, which all read ``corpus/``, never saw them. Every emitted
+document is validated against the ``mechanical`` gate preset before it is
+written.
 
-Exit codes: 0 fine, 1 the unclassified-modules gate refused the run (Stage 8:
-"``unclassified_modules`` must be empty"), 2 a user error.
+Exit codes: 0 fine, 1 the unclassified-modules gate refused the run
+(docs/design/stage_map.md §4 Stage 8: "the run refuses while
+``unclassified_modules`` is non-empty"), 2 a user error.
 """
 from __future__ import annotations
 
@@ -435,7 +437,7 @@ def _run_cheap(args, paths, detect_dir, name, rows, items_path, stages, kinds,
     bodies = sum(1 for r in rows if r.get("body") and def_coverage.is_definitional(r))
 
     # pairs/def-coverage.<name>.json is written by `cf pair` as well (the same
-    # artifact is listed under Stage 3 and Stage 8 of design/stage_map.md), so
+    # artifact is listed under Stage 3 and Stage 8 of docs/design/stage_map.md), so
     # this is a superset of pair/def_coverage.py's schema -- `bridge_only_decls`
     # and the descriptive keys are kept so either writer leaves a file both
     # readers accept. Both writers MERGE (keys they do not own survive) and both
@@ -549,9 +551,9 @@ def _emit_corpus(args, paths, name: str, rows: list[dict], *, run_id: str, tier:
                  item_pdf_pages: dict, page_offset: int) -> dict | None:
     """Publish the detector's rows into ``corpus/<run-id>/``, gated.
 
-    Stage 8's own gate (stage_map.md): a hit only counts once it "joins the
-    corpus and the ledger like any other finding".  Every document is validated
-    against the ``mechanical`` preset -- the one that exists for exactly these
+    Stage 8's own gate (docs/design/stage_map.md §4): a hit counts only once it
+    "joins the corpus and the ledger like any other finding".  Every document is
+    validated against the ``mechanical`` preset -- the one that exists for exactly these
     rows and was applied to nothing before -- and nothing is written when it
     fails, so a detector bug cannot seed the corpus every report is built from.
     """

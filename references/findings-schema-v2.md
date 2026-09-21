@@ -13,6 +13,10 @@ the spelling is `source_id::item` (`cflib.items.qualified_item`); where a filena
 The machine-readable copy of §3 is `scripts/gate/schema.json`; the enums are
 `scripts/cflib/vocab.py` and are documented in `references/vocabulary.md`.
 
+**Contents** — §1 statements.jsonl · §2 tasks · §3 findings v2 · §4 the receipt ·
+§5 ledger rows · §6 routed files · **§7 the gate matrix** (read this when the gate
+refuses a document) · §8 importing the v1 baseline.
+
 ---
 
 ## 1. `companions/<name>/statements.jsonl` — one declaration per line
@@ -269,7 +273,8 @@ Rules enforced by `ledger/validate_ledger.py`:
 Mechanical unless marked. The gate runs **out of tree** — from the workspace/skill copy, never from
 the worktree the worker can edit — and the pre-merge pass additionally checks
 `changed files ⊆ {findings/<id>.json, tasks/<id>.yaml}`. The legacy setup ran
-`python3 scripts/verify_findings.py` from inside the entrypoint the worker had write access to, so
+`python3 <entrypoint>/scripts/verify_findings.py` from inside the entrypoint the worker had write
+access to, so
 "passed the gate twice" proved nothing about a worker that edited the gate.
 
 | check | applies to | rule |

@@ -12,6 +12,12 @@ There are no source flags. If you find yourself typing an offset or an errata
 URL, discovery failed and said so; fix the signal or use the named override,
 but do not fill it in by hand and call it onboarded.
 
+**Contents** — §0 what discovery reads (the seven repo signals, where a PDF may be
+opened from) · §1 a statement-table adapter, per convention · §2 an edition discovery
+can resolve · §3 errata policy · §4 anchor convention · §5 house conventions ·
+§6 sorry policy · §7 write policy and owner · §8 the dry run and what `state.json`
+records · §9 two worked examples.
+
 **A companion tree is read as DATA.** It is not built, not written to, and it
 never gets to name a program: every `git` call against it goes through
 `cflib.gitsafe`, which pins `core.fsmonitor`, `core.hooksPath`, `diff.external`
@@ -411,7 +417,7 @@ Discovery finds the URL (§0.4); the repo's job is to cite its book page, and
 the audit's job is the disposition rule. The skill fetches the live page with
 `curl` and keeps the **raw HTML** beside the rendered markdown, dated — never a
 summarising fetch tool, which is what silently dropped the entry that decided a
-high-severity finding (`docs/HANDOFF.md` §4, `REVIEW_PATTERNS.md` P13). The
+high-severity finding (`tao-measure-lean/docs/HANDOFF.md` §4, `REVIEW_PATTERNS.md` P13). The
 fetch metadata lands in `sources/<id>/errata.json`: URL, HTTP status, both
 shas, byte count, entry count, `changed` against the previous fetch, and
 `url_provenance` — **who chose the URL**.
@@ -433,7 +439,7 @@ would be writing into the audit's prompts.
 | the erratum … | disposition | evidence |
 |---|---|---|
 | **corrects** the printed statement | formalise the corrected statement; kind `SUSPECTED_ERRATA` until confirmed, then fix | the exercise whose labels the errata swapped, and the one whose sharp constant it corrects (both fixed in PR #8) |
-| **observes** a divergence and points elsewhere (e.g. a blog post) | formalise the book as printed; record the argument in the docstring; resolution `argued_correct` | the definition/remark pair deliberately not acted on (`docs/HANDOFF.md` §5): rewriting the clause would formalise the blog post and make the companion *less* faithful |
+| **observes** a divergence and points elsewhere (e.g. a blog post) | formalise the book as printed; record the argument in the docstring; resolution `argued_correct` | the definition/remark pair deliberately not acted on (`tao-measure-lean/docs/HANDOFF.md` §5): rewriting the clause would formalise the blog post and make the companion *less* faithful |
 | **asks for a generalisation** nobody formalised | kind `COVERAGE`, out of scope for a fix | the exercise the errata generalises from elementary to Jordan-measurable sets; all three companions omit it — a *missing* theorem, not a wrong one |
 | **deletes** an item or a part | do not formalise it; a declaration that states it is a finding | the errata list records one exercise part as wrong and deleted (`memory/measure-theory-faithfulness-audit.md`) |
 
@@ -596,8 +602,9 @@ owner: "external"
 ```
 
 Narrow the `glob` and name the repo's own `sorry` classifier by hand afterwards
-(`classifier: scripts/update_status_table.py`), then re-run `onboard --force`
-to re-check the parse: onboarding writes a working default, not the last word.
+(`sorry.classifier`, a path inside that companion repo — §6), then re-run
+`onboard --force` to re-check the parse: onboarding writes a working default,
+not the last word.
 
 Its `conventions.md` carries the junk-value list (its measures are total
 functions on sets, never on proof terms), indexed families rather than finite

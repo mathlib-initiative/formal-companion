@@ -1,6 +1,6 @@
 """Classify every open finding against the companion's CURRENT statements.
 
-New code (design/multi-source-model.md S6.2 / the pin this package records in
+New code (docs/design/archive/multi-source-model.md S6.2 / the pin this package records in
 ``pin.py``).  This is the half that makes the pin worth recording: a finding
 whose declaration still hashes to the fingerprint it was judged against is still
 a live claim, one whose declaration has changed needs a human to look again, and

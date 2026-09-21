@@ -376,7 +376,7 @@ def gate_config(
     """Build the ``gate.json`` the out-of-tree gate reads.
 
     ``sources`` maps ``source_id`` -> ``{text, sha256, text_sha256, images_dir,
-    page_offset, item_pages}`` (docs/design/multi-source-model.md S6.2).  It is a
+    page_offset, item_pages}`` (docs/design/archive/multi-source-model.md S6.2).  It is a
     MAP, not a single
     book, because a run may span more than one source and the gate picks the text
     to check a quote against by the document's own ``source_id`` -- checking every
