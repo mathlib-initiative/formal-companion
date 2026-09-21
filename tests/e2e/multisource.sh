@@ -406,6 +406,38 @@ rows = [json.loads(l) for l in open("pairs/'"$PUB"'/pairs.jsonl") if l.strip()]
 ids = {r["source_id"] for r in rows if "_meta" not in r}
 print(",".join(sorted(ids)))')" "$PUB"
 
+# A DIFFERENTIAL OF THE BOOKLET, planned in the finished shape -- 4 companions
+# over 3 sources -- and not at step 6, where there is only one paired source and
+# every companion happens to be one of the run's.  This is the case the scoping
+# defect needed: a run used to stage every companion in the workspace, so the
+# worker prompt called measure_theory one of "N INDEPENDENT formalizations" of a
+# booklet it has never seen, and gate.json accepted findings against its
+# declarations.  The booklet's own companions are notes-a, notes-b and
+# tao-measure-lean; measure_theory audits the Tao source only.
+$CF plan-run --preset differential-text --source "$BOOK" --run-id p-multi \
+  --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
+check "a differential stages only its own source's companions" \
+      "$(yget "runs/p-multi/run.yaml" repos)" "3"
+check "  named, not just counted" \
+      "$(py 'import sys
+sys.path.insert(0, sys.argv[1])
+from cflib.yamlio import read_yaml
+print(",".join(sorted(read_yaml("runs/p-multi/run.yaml")["repos"])))' "$SKILL/scripts")" \
+      "notes-a,notes-b,tao-measure-lean"
+check "  and only their statement tables are staged" \
+      "$(cd "runs/p-multi/data" && ls *.jsonl | sort | tr '\n' ',')" \
+      "notes-a.jsonl,notes-b.jsonl,pairs.jsonl,tao-measure-lean.jsonl,"
+# The companion names are DERIVED from the checkouts, so this reads the state
+# files rather than naming the foreign companion: every companion whose
+# state.json recorded the run, which used to be all four of them.
+check "  and no other companion recorded the run" \
+      "$(py 'import json, pathlib
+print(",".join(sorted(
+    d.name for d in pathlib.Path("companions").iterdir()
+    if (d / "state.json").exists()
+    and "p-multi" in (json.load(open(d / "state.json")).get("runs") or {}))))')" \
+      "notes-a,notes-b,tao-measure-lean"
+
 step "15. R1 -- the finished shape"
 run $CF status
 run $CF sources list
