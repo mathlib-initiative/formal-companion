@@ -966,7 +966,8 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
     items = load_source_items(paths, source_id)
     recon = load_reconciliation(paths, source_id)
     pair_index = load_pair_index(paths, source_id)
-    if items["manuscript"]:
+    manuscript = bool(items["manuscript"])
+    if manuscript:
         items = _manuscript_universe(items, pair_index, cfg.source(source_id).kinds)
     block = examined.get(source_id) or {}
     seen = set(block.get("examined") or ())
@@ -980,7 +981,22 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
         if not chapters_audited or row.get("chapter") in set(chapters_audited)
     )
     scope_known = bool(items["present"])
-    universe = set(compat.item_join_key(i) for i in (recon.get("task_universe_items") or []))
+    # A manuscript's reconciliation figures are NOT a second opinion about its
+    # scope: `cf pair` computes them from the same ``items.json`` that is empty
+    # BY DESIGN for this kind of source (pair/compare.py takes ``in_scope`` from
+    # ``book_items``), so every one of them is 0 for every manuscript, always.
+    # Publishing them beside the recomputed ones gave "3 of 0 item(s) in scope",
+    # a chapter table summing to 3 under a total row reading 0, and a staleness
+    # line telling the reader to re-run `cf pair` -- which leaves the file byte
+    # for byte the same.  The pairing INDEX is the artifact that knows this
+    # source's universe; the reconciliation is asked nothing about it.
+    recon_scope = None if manuscript else recon.get("items_in_scope")
+    recon_universe = None if manuscript else (
+        recon.get("task_universe") if recon.get("task_universe") is not None
+        else recon.get("items_in_scope_and_any_repo"))
+    universe = ({k for k, repos in pair_index.items() if repos} if manuscript
+                else set(compat.item_join_key(i)
+                         for i in (recon.get("task_universe_items") or [])))
     paired = {k for k, repos in pair_index.items() if len(repos) >= 2}
 
     def _chapter(key: str):
@@ -1021,17 +1037,17 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
         "under_audit": bool(bound),
         # its items are the tagged environments the adapter reads, not numbered
         # prose: the cells say so instead of naming a command that cannot fill them
-        "manuscript": bool(items["manuscript"]),
+        "manuscript": manuscript,
         "items_json": items["path"],
         "items_in_source": items["count"] if items["present"] else None,
         "chapters_in_source": items["chapters"],
         "chapters_audited": chapters_audited,
-        "items_in_scope": (recon.get("items_in_scope") if recon.get("items_in_scope") is not None
+        "items_in_scope": (recon_scope if recon_scope is not None
                            else (len(in_scope_names) if scope_known else None)),
         "items_in_scope_recomputed": len(in_scope_names) if scope_known else None,
-        "items_in_task_universe": (recon.get("task_universe")
-                                   if recon.get("task_universe") is not None
-                                   else recon.get("items_in_scope_and_any_repo")),
+        "items_in_task_universe": (recon_universe if recon_universe is not None
+                                   else (len(in_scope_set & universe)
+                                         if manuscript and scope_known else None)),
         "items_paired": ((len(in_scope_set & paired) if scope_known else len(paired))
                          if pair_index else None),
         "pair_index": _pair_index_path(paths, source_id) if pair_index else "",
@@ -1214,7 +1230,11 @@ def coverage_note(coverage: dict) -> str:
         if src["unstamped_documents"]:
             lines.append("  - %d corpus document(s) carry no `source_id` and were attributed from "
                          "their run's receipt." % src["unstamped_documents"])
-        if (src.get("items_in_scope_recomputed") is not None
+        # Only where the reconciliation was asked: for a manuscript it is not a
+        # second opinion (see :func:`source_coverage`), so the two can never
+        # differ -- and the remedy this line names could not have closed it.
+        if (not src.get("manuscript")
+                and src.get("items_in_scope_recomputed") is not None
                 and src.get("items_in_scope") != src.get("items_in_scope_recomputed")):
             lines.append("  - `reconciliation.json` says %s items in scope, `items.json` and the "
                          "audited chapters give %s — one of them is stale; re-run `cf pair`."
