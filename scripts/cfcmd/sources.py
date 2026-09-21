@@ -36,7 +36,7 @@ from cflib.errors import CfError, SourceError
 from cflib.hashing import short
 from cflib.jsonio import read_json, write_json
 from cflib.log import format_table
-from cflib.registry import Registry, entry_from_claim, source_id_for
+from cflib.registry import OVERLAY_FILE, Registry, entry_from_claim, source_id_for
 from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
 from sources.locator import text_suffixes_help
 
@@ -288,6 +288,15 @@ def _add(workspace, args) -> int:
     registry = Registry.load(workspace)
     entry = registry.by_sha(fp["sha256"])
     existing = workspace.source_by_sha(fp["sha256"])
+    # WHAT THIS WORKSPACE LOOKED LIKE BEFORE THE CALL, so a refusal below can undo
+    # exactly what this call created and nothing else: the ids it already held (a
+    # source it already holds is not this call's to remove), and the bytes of the
+    # registry overlay, restored verbatim rather than re-dumped -- a re-dump
+    # normalises the comment header `cf init` wrote and leaves a refused command
+    # with a diff to its name.
+    known_source_ids = set(workspace.data.get("sources") or {})
+    overlay_path = workspace.root / OVERLAY_FILE
+    overlay_before = overlay_path.read_bytes() if overlay_path.exists() else None
     if existing is not None:
         source_id = existing.id
         log.info(f"{pdf.name} is already source {source_id} ({short(fp['sha256'], 8)})")
@@ -323,6 +332,44 @@ def _add(workspace, args) -> int:
             licence={"note": "", "fetch": "none", "redistribute": False},
             discovered={"at": _now(), "from": ["cf sources add"], "pdf_found_in": "manual"})
 
+    # PREPARE BEFORE BINDING. `_prepare_source` is where the wrong-document
+    # refusals live (0 numbered items, a kind list belonging to another book, an
+    # item table far below the slots the numbering counts), and binding first
+    # left every one of them with the refused source still in the companion's
+    # audited scope -- with `--anchor`, as the companion's anchor edition -- and
+    # the workspace quietly moved off the auto-pick path, so the NEXT command
+    # failed blaming a source count. The reorder is safe because `_prepare_source`
+    # reads the source row alone and never the companion binding, which its own
+    # docstring already states.
+    if not args.no_prepare:
+        from cfcmd.onboard import _prepare_source
+        # a PDF a human named by hand is as confirmed as a source gets, so its
+        # errata URL may be fetched -- but only when the URL itself is confirmed
+        # too, which `_errata_provenance` decides.
+        try:
+            _prepare_source(workspace, source_id, force=False, no_errata=False)
+        except CfError:
+            if source_id not in known_source_ids:
+                import shutil
+                workspace.remove_source(source_id)
+                shutil.rmtree(workspace.paths.source_dir(source_id), ignore_errors=True)
+                if overlay_before is None:
+                    overlay_path.unlink(missing_ok=True)
+                else:
+                    overlay_path.write_bytes(overlay_before)
+                # No `workspace.save()`: nothing has written workspace.yaml yet on
+                # this path, and re-dumping it from memory is the one way to
+                # change a file the refusal is supposed to leave alone.
+                log.warn(f"{source_id} was not added; {args.companion} is unchanged")
+            else:
+                # The source was already here, so it is not this call's to remove:
+                # say so, and name the command that does remove it.
+                log.warn_block(
+                    f"{source_id} was already in this workspace and stays; only the "
+                    f"binding to {args.companion} was not made",
+                    [f"  drop it with:  cf sources remove {source_id}"])
+            raise
+
     sources = list(companion.sources)
     if source_id not in sources and args.role == ROLE_AUDITED:
         sources.append(source_id)
@@ -334,13 +381,6 @@ def _add(workspace, args) -> int:
                                anchor_source=anchor)
     workspace.save()
     log.ok(f"{args.companion}: sources = {', '.join(sources)}   anchor = {anchor}")
-    if not args.no_prepare:
-        from cfcmd.onboard import _prepare_source
-        # a PDF a human named by hand is as confirmed as a source gets, so its
-        # errata URL may be fetched -- but only when the URL itself is confirmed
-        # too, which `_errata_provenance` decides.
-        _prepare_source(workspace, source_id, force=False, no_errata=False)
-        workspace.save()
     return 0
 
 
