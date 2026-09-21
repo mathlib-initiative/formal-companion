@@ -496,12 +496,15 @@ def _remove(workspace, args) -> int:
 
 
 def _corpus_runs_naming(workspace, source_id: str) -> list:
-    """Corpus runs whose ``RECEIPT.json`` names this source, in id order.
+    """Corpus runs whose receipt or ``run.yaml`` names this source, in id order.
 
     The receipt is where a harvested or imported corpus records the edition its
-    documents were judged against, and it is the same block ``cf report`` reads
-    to attribute a document that carries no ``source_id`` of its own.
+    documents were judged against; a planned run records it in
+    ``runs/<run>/run.yaml``.  ``cf report`` attributes a document that carries no
+    ``source_id`` of its own from either, so both are read here, or the warning
+    misses exactly the run the next report files under an unknown source.
     """
+    from cflib.yamlio import read_yaml
     root = workspace.paths.corpus_dir
     if not root.exists():
         return []
@@ -516,13 +519,26 @@ def _corpus_runs_naming(workspace, source_id: str) -> list:
             continue
         if not isinstance(doc, dict):
             continue
-        block = doc.get("sources")
-        ids = set(block) if isinstance(block, dict) else {
-            str(e.get("id") or e.get("source_id") or "") if isinstance(e, dict) else str(e)
-            for e in (block or [])}
+        ids = _source_ids_of(doc.get("sources"))
+        run_yaml = workspace.paths.run_yaml(entry.name)
+        if run_yaml.is_file():
+            try:
+                planned = read_yaml(run_yaml)
+            except Exception:  # an unreadable run.yaml is `cf run`'s to refuse
+                planned = None
+            if isinstance(planned, dict):
+                ids |= _source_ids_of(planned.get("sources"))
         if source_id in ids:
             found.add(str(doc.get("run_id") or entry.name))
     return sorted(found)
+
+
+def _source_ids_of(block) -> set:
+    """The ids a ``sources`` block names, whether it is a map or a list of rows."""
+    if isinstance(block, dict):
+        return {str(k) for k in block}
+    return {str(e.get("id") or e.get("source_id") or "") if isinstance(e, dict) else str(e)
+            for e in (block or [])} - {""}
 
 
 def _drop_overlay_row(workspace, source_id: str) -> None:

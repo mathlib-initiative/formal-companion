@@ -179,6 +179,8 @@ def _caveats(coverage: dict) -> list:
         outside += len(src.get("examined_outside_scope") or ())
         outside_found += len(src.get("with_findings_outside_scope") or ())
         unstamped += int(src.get("unstamped_documents") or 0)
+    ungated.extend(coverage.get("unattributed_ungated_runs") or ())
+    failed.extend(coverage.get("unattributed_gate_failed_runs") or ())
     unknown = coverage.get("unknown_source_documents") or []
     for block in unknown:
         ungated.extend(block.get("ungated_runs") or ())

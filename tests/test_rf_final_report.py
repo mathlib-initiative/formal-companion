@@ -47,6 +47,13 @@ every shape whose note ends early; two of the three name lists were uncapped
 where the third caps at eight; and a reconciliation that names a task universe
 it cannot itemise still printed 0 in every per-chapter row.
 
+And two the second confirmation pass reproduced: a corpus run attributed to a
+source the workspace no longer holds was dropped from every section-0 figure
+and from coverage.json while `cf tally` counted it; and four of the five
+caveats went unsaid on the three branches whose per-source note ends early --
+which includes a run that names no single source, whose gate state had no
+reader at all.
+
 The book, the companion and the findings below are invented: no source text and
 no companion's Lean lives in this repo (CLAUDE.md S1).  Every test here runs
 without the private baselines.
@@ -1516,6 +1523,22 @@ class TestEveryKeyOfTheExaminedMapHasAReader(GhostCorpus):
         unread = sorted(set(self.examined_map()) - read)
         self.assertEqual(unread, [], "these blocks have no reader anywhere in the tree")
 
+    def test_an_ungated_run_under_the_empty_key_is_said_too(self):
+        """Every FIELD of the unattributed block has a reader, not only its items.
+
+        A run whose receipt names two sources lands under ``""``; when no gate
+        checked it, `cf tally` said so and the handoff -- the artifact that
+        travels -- did not.
+        """
+        receipt = os.path.join(self.root, "corpus", "wide", "RECEIPT.json")
+        doc = compat.read_json(receipt)
+        doc["gate"] = None
+        compat.write_json(receipt, doc)
+        made = self.handoff()
+        self.assertEqual(made["context"]["_coverage"]["unattributed_ungated_runs"], ["wide"])
+        text = flat(made["text"])
+        self.assertRegex(text, r"ungated run\(s\) [^.]*wide[^.]*: no quote in them was checked")
+
     def test_each_of_the_three_readers_says_its_own_share(self):
         text = flat(self.handoff()["text"])
         self.assertIn("1 corpus document(s) in run(s) `wide` name no source", text)
@@ -1557,6 +1580,19 @@ class TestRemovingASourceNamesTheCorpusThatStillPointsAtIt(GhostCorpus):
         self.assertIn("second-run", said)
         self.assertIn("corpus run(s) were judged against %s" % OTHER_SOURCE_ID, said)
         self.assertIn("cf import-corpus --run-id <run-id> --from <dir> --source <id>", said)
+
+    def test_a_run_only_its_plan_attributes_is_named_too(self):
+        """`cf report` attributes from the receipt OR run.yaml, so the warning reads both."""
+        receipt = os.path.join(self.root, "corpus", "second-run", "RECEIPT.json")
+        doc = compat.read_json(receipt)
+        doc.pop("sources")
+        compat.write_json(receipt, doc)
+        compat.write_text(os.path.join(self.root, "runs", "second-run", "run.yaml"),
+                          "run_id: second-run\nsources:\n  %s:\n    sha256: %s\n"
+                          % (OTHER_SOURCE_ID, OTHER_SOURCE_SHA))
+        rc, out, err = cf_cli("sources", "remove", "--workspace", self.root, OTHER_SOURCE_ID)
+        self.assertEqual(rc, 0, err)
+        self.assertIn("second-run", out + err)
 
     def test_a_source_no_corpus_names_is_removed_without_the_warning(self):
         """It is a warning about a real corpus, not a line every removal prints."""

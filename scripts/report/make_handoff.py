@@ -1247,6 +1247,10 @@ def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
         "sources": sources,
         "unattributed_documents": len(unattributed.get("examined") or ()),
         "unattributed_runs": sorted((unattributed.get("runs") or {})),
+        # the same block's gate state: a run that names no single source is still a
+        # run no gate checked, and nothing else in this document would say so
+        "unattributed_ungated_runs": sorted(unattributed.get("ungated_runs") or []),
+        "unattributed_gate_failed_runs": sorted(unattributed.get("gate_failed_runs") or []),
         # an unreadable document in a run whose receipt names two sources has no
         # source block to be reported under, and is the same lower bound there
         "unreadable_documents": sorted(unattributed.get("unreadable") or []),
@@ -1622,6 +1626,9 @@ def coverage_note(coverage: dict) -> str:
                      "name one either; they are counted against no denominator."
                      % (coverage["unattributed_documents"],
                         ", ".join("`%s`" % r for r in coverage["unattributed_runs"])))
+    lines.extend(_gate_lines({
+        "ungated_runs": coverage.get("unattributed_ungated_runs") or [],
+        "gate_failed_runs": coverage.get("unattributed_gate_failed_runs") or []}))
     if coverage.get("unreadable_documents"):
         lines.append("- %d corpus document(s) could not be read and their run names no single "
                      "source (%s), so they are counted against no denominator either; "
