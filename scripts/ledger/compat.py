@@ -73,6 +73,7 @@ _FALLBACK = {
     "LEDGER_VERDICTS": ("CONFIRMED_CONTENT", "ATTRIBUTION_GAP", "CONVENTION", "ERRATA",
                         "REFUTED", "UNSURE"),
     "VERDICTS_REQUIRING_ARGUMENT": ("CONVENTION", "ERRATA"),
+    "RECHECK_STATUS_SET": ("unchanged", "unpinned", "changed", "gone"),
 }
 
 
@@ -87,6 +88,8 @@ MECHANICAL_KINDS = _vocab_set("MECHANICAL_ONLY_KINDS")
 SEVERITIES = _vocab_set("SEVERITY_SET")
 LEDGER_VERDICTS = _vocab_set("LEDGER_VERDICTS")
 VERDICTS_REQUIRING_ARGUMENT = _vocab_set("VERDICTS_REQUIRING_ARGUMENT")
+#: `cf recheck` statuses, sorted so an error message lists them the same way twice
+RECHECK_STATUSES = tuple(sorted(_vocab_set("RECHECK_STATUS_SET")))
 
 #: verdicts that keep a finding open against the companion / that close it
 OPEN_VERDICTS = frozenset({"CONFIRMED_CONTENT", "ATTRIBUTION_GAP", "UNSURE"})
@@ -425,6 +428,8 @@ class _PlainPaths:
     def refuted_jsonl(self, name): return os.path.join(self.root, "ledger", "refuted.%s.jsonl" % name)
     def adjudicated_md(self, name): return os.path.join(self.root, "ledger", "adjudicated.%s.md" % name)
     def routed_jsonl(self, name): return os.path.join(self.root, "ledger", "routed", "findings.%s.jsonl" % name)
+    def pin_json(self, run_id): return os.path.join(self.reports_dir, "pin.%s.json" % run_id)
+    def recheck_json(self, name): return os.path.join(self.reports_dir, "recheck.%s.json" % name)
     def source_dir(self, source_id): return os.path.join(self.root, "sources", source_id)
     def source_text(self, source_id): return os.path.join(self.source_dir(source_id), "text.txt")
     def source_pages_dir(self, source_id): return os.path.join(self.source_dir(source_id), "pages")
