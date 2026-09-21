@@ -774,9 +774,10 @@ class SyntheticPipelineTests(unittest.TestCase):
 
         cls.root = pathlib.Path(tmp_dir("cf-synthetic-"))
         # `cf onboard` expands the workspace's home-relative library path and
-        # fingerprints every PDF it finds there.  tests/conftest.py already
-        # points HOME at a temp directory, but `python3 -m unittest discover`
-        # does not load that hook, and this class is the one that onboards.
+        # fingerprints every PDF it finds there.  tests/_hermetic.py, imported at
+        # the top of this module, already pins HOME at a temp directory under
+        # both loaders; this repoints it at THIS class's fixture root, because
+        # the PDFs it onboards are the ones built under it.
         cls._home = mock.patch.dict(os.environ, {"HOME": str(cls.root)})
         cls._home.start()
         pdf = cls.root / "elementary-notes.pdf"

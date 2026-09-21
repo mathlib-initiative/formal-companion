@@ -80,7 +80,7 @@ schema_version: 1
 id: widget-theory-2e--lemma-2-3-4    # <source-slug>--<item-slug>; dashes, lowercase
 title: "vac: Lemma 2.3.4"            # DIFFERENTIAL: | SINGLE-SOURCE: | hunt: | vac: — the evidence class survives into the corpus
 status: open
-priority: max                        # attack runs: max; differential: default
+priority: max                        # `plan.presets.priority_for()`: max = a key kind (Definition, Lemma, Theorem, Corollary, Proposition, In-text) audited by one companion; high = a key kind with peers, or a single-source item in 1.5-1.7; default for everything else, exercises included. Differential presets do not prioritise at all, so their tasks keep whatever the queue row carried — `default` unless something set it
 depends_on: []
 summary: "vac probe of Lemma 2.3.4 (widget-theory-2e)"
 description: |

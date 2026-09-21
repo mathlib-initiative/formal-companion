@@ -448,8 +448,8 @@ def _stage(workspace: Any, stage: Path, *, companions: Sequence[str], redact: bo
         warnings.append(
             "the rows' prose was NOT checked for verbatim source passages: this workspace "
             "has no prepared text for any source (run `cf sources refresh`). book_quote is "
-            "still redacted, but a sentence of the book inside a reason or a reasoning "
-            "cannot be found without the text to compare against")
+            "still redacted, but a sentence of the book inside any of a row's free-text "
+            "fields cannot be found without the text to compare against")
     return {"counts": counts, "quotes": quotes, "quotes_with_page": placed,
             "warnings": warnings, "routed_status": status_by_companion,
             "skipped_unchallenged": skipped,

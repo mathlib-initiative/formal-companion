@@ -16,6 +16,7 @@ the two cannot drift.
 from __future__ import annotations
 
 import os
+import shlex
 
 
 def adjudicate_command(workspace, companion: str, *tail: str) -> str:
@@ -28,8 +29,15 @@ def adjudicate_command(workspace, companion: str, *tail: str) -> str:
     literal placeholder: ``cf`` then falls back to ``$CF_WORKSPACE`` or the
     current directory, which is what ``cf --help`` promises, so the command
     still runs.
+
+    The path and the name are SHELL-QUOTED here, once, rather than at each call
+    site.  A workspace directory called ``my audit`` made every one of these
+    strings unpasteable -- ``cf: error: unrecognized arguments: audit/ws`` --
+    and this one is not only printed, so that broken command was written into
+    ``ledger/routed/findings.<name>.jsonl`` and into the draft addressed to the
+    repository's owner.
     """
-    where = " --workspace %s" % os.path.abspath(workspace) if workspace else ""
-    parts = ["cf adjudicate%s --companion %s" % (where, companion)]
+    where = " --workspace %s" % shlex.quote(os.path.abspath(workspace)) if workspace else ""
+    parts = ["cf adjudicate%s --companion %s" % (where, shlex.quote(str(companion)))]
     parts.extend(str(part) for part in tail if part)
     return " ".join(parts)

@@ -23,12 +23,13 @@ So this module parses the documents and asks the real argparse tree:
   number, and no ``design/…`` citation in a code docstring points at a document
   that is not in the tree -- nor quotes a sentence the cited document does not
   carry, which is the stale citation made checkable rather than fixed;
-* the same command rule over the ``cf <word>`` literals in docstrings, hints and
-  workflow headers under ``scripts/``, ``workflows/`` and ``templates/``, and the
-  flag rule over ``workflows/`` and ``templates/``: a killed ``cf challenge`` was
-  recoverable only under its real spelling, and two workflows told a session to
-  build its args with a flag that exits 2.  Six stale flag spellings under
-  ``scripts/`` are named in that test's own docstring and are not fixed yet.
+* the same command rule, and the same flag rule, over the ``cf <word>`` literals
+  in docstrings, hints, TODOs and workflow headers under ``scripts/``,
+  ``workflows/`` and ``templates/``: a killed ``cf challenge`` was recoverable
+  only under its real spelling, two workflows told a session to build its args
+  with a flag that exits 2, and four more such spellings sat in hints under
+  ``scripts/`` -- a string a user is told to type is documentation wherever it
+  lives.
 
 The point is drift.  This repo is meant to run over many books, so the index,
 the flags and the layout will all move again -- and a document is what a fresh

@@ -36,7 +36,7 @@ from cflib.errors import CfError, SourceError
 from cflib.hashing import short
 from cflib.jsonio import read_json, write_json
 from cflib.log import format_table
-from cflib.registry import OVERLAY_FILE, Registry, entry_from_claim, source_id_for
+from cflib.registry import Registry, entry_from_claim, source_id_for
 from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
 from sources.locator import text_suffixes_help
 
@@ -289,14 +289,11 @@ def _add(workspace, args) -> int:
     entry = registry.by_sha(fp["sha256"])
     existing = workspace.source_by_sha(fp["sha256"])
     # WHAT THIS WORKSPACE LOOKED LIKE BEFORE THE CALL, so a refusal below can undo
-    # exactly what this call created and nothing else: the ids it already held (a
-    # source it already holds is not this call's to remove), and the bytes of the
-    # registry overlay, restored verbatim rather than re-dumped -- a re-dump
-    # normalises the comment header `cf init` wrote and leaves a refused command
-    # with a diff to its name.
-    known_source_ids = set(workspace.data.get("sources") or {})
-    overlay_path = workspace.root / OVERLAY_FILE
-    overlay_before = overlay_path.read_bytes() if overlay_path.exists() else None
+    # exactly what this call created and nothing else. `cf onboard` reaches the
+    # same refusals and undoes them the same way, so the snapshot and the undo
+    # live in one place.
+    from cfcmd.onboard import SourceRegistration
+    registration = SourceRegistration(workspace)
     if existing is not None:
         source_id = existing.id
         log.info(f"{pdf.name} is already source {source_id} ({short(fp['sha256'], 8)})")
@@ -349,25 +346,18 @@ def _add(workspace, args) -> int:
         try:
             _prepare_source(workspace, source_id, force=False, no_errata=False)
         except CfError:
-            if source_id not in known_source_ids:
-                import shutil
-                prepared_dir = workspace.paths.source_dir(source_id)
-                # `_prepare_source` says `ok   prepared  sources/<id>/ ...` before
-                # it runs the wrong-document refusals, and that line is true right
-                # up until this rollback deletes the directory it names. Retract
-                # it by name rather than leaving the operator with an `ok` and a
-                # `warn` that contradict each other.
+            # `_prepare_source` says `ok   prepared  sources/<id>/ ...` before it
+            # runs the wrong-document refusals, and that line is true right up
+            # until this rollback deletes the directory it names. Retract it by
+            # name rather than leaving the operator with an `ok` and a `warn`
+            # that contradict each other. No `workspace.save()`: nothing has
+            # written workspace.yaml yet on this path, and re-dumping it from
+            # memory is the one way to change a file the refusal is supposed to
+            # leave alone.
+            dropped = registration.retract([source_id])
+            if dropped:
                 undone = " (sources/%s/ was removed again)" % source_id \
-                    if prepared_dir.exists() else ""
-                workspace.remove_source(source_id)
-                shutil.rmtree(prepared_dir, ignore_errors=True)
-                if overlay_before is None:
-                    overlay_path.unlink(missing_ok=True)
-                else:
-                    overlay_path.write_bytes(overlay_before)
-                # No `workspace.save()`: nothing has written workspace.yaml yet on
-                # this path, and re-dumping it from memory is the one way to
-                # change a file the refusal is supposed to leave alone.
+                    if dropped[source_id] else ""
                 log.warn(f"{source_id} was not added; {args.companion} is unchanged{undone}")
             else:
                 # The source was already here, so it is not this call's to remove:

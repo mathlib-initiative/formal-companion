@@ -141,9 +141,13 @@ def _export(workspace, args) -> int:
     if redact:
         log.info(f"quotes    : {counts['quotes_redacted']} redacted, "
                  f"{manifest['counts']['quotes_with_page']} of them with a page")
+        # NOT a list of field names: the walk is over every free-text field of a
+        # row, at any depth, and naming the three v1 spellings here told an
+        # operator the scan was narrower than it is. It redacted eleven fields of
+        # two rows in the run that found this, of which one was a `reason`.
         log.info(f"prose     : {counts['prose_spans']} verbatim run(s) of "
-                 f"{manifest['prose_span_min']}+ characters redacted out of the rows' reason/"
-                 "reasoning/concept fields")
+                 f"{manifest['prose_span_min']}+ characters redacted out of the rows' "
+                 "free-text fields, at any depth (`redacted_spans` names each one)")
         log.info("            a holder of the same edition reads them with "
                  "`cf quotes hydrate --bundle <bundle>`")
     else:
@@ -168,8 +172,11 @@ def _export(workspace, args) -> int:
         for name in manifest["companions"]:
             log.info(f"  cf adjudicate --companion {name}        "
                      "(here, to produce mergeable ledger rows)")
-        log.info("  `cf share import` needs at least one adjudicated ledger row and will "
-                 "refuse this bundle")
+        # What it merges, not what it refuses: `merge_bundle` refuses on the
+        # accepted/refuted FILES being absent, and `cf adjudicate` writes both of
+        # them even when it adjudicates nothing -- so the bundle this branch
+        # describes is one the import accepts and merges zero rows from.
+        log.info("  `cf share import` merges adjudicated ledger rows; this bundle carries none")
     return 0
 
 
