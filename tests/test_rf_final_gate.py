@@ -26,13 +26,17 @@ this repo (CLAUDE.md S1).  Every test here runs without the private baselines.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -76,6 +80,37 @@ QUOTE_1 = ("Show that if E is contained in F then m(E) <= m(F), and that the "
 #: that is in the book but on no single page
 STRADDLE_QUOTE = ("for later use in section 6. " + RUNNING_HEAD + " " +
                   PAGE_7.split("\n")[0])
+#: a folio-only page, which is what pdftotext writes for a page carrying nothing
+#: but its number -- the short page an attacker puts at the seam
+FOLIO_PAGE = "42\n"
+#: the same splice with that page in the middle of it: three pages, not two
+SPLICED_QUOTE = ("for later use in section 6. " + FOLIO_PAGE.strip() + " " +
+                 RUNNING_HEAD + " " + PAGE_7.split("\n")[0])
+
+
+def book_with_folio_pages(count: int = 1) -> "vf.BookText":
+    """:data:`BOOK` with ``count`` folio-only pages inserted before the last one.
+
+    More than one is the same attack a page wider: the run of short pages between
+    the two halves of a splice is the attacker's to choose, so no number of them
+    may turn the bind off.
+    """
+    folios = "".join("%d\n\f" % (41 + n) for n in range(1, count + 1))
+    return vf.BookText.from_text(BOOK.replace(
+        "\f" + RUNNING_HEAD + "\n\n" + PAGE_7,
+        "\f" + folios + RUNNING_HEAD + "\n\n" + PAGE_7))
+
+
+def book_with_a_folio_page() -> "vf.BookText":
+    """:data:`BOOK` with a folio-only page inserted before the last one."""
+    return book_with_folio_pages(1)
+
+
+def quote_spliced_over(count: int) -> str:
+    """The wrong-page splice with ``count`` folio pages inside it."""
+    folios = " ".join("%d" % (41 + n) for n in range(1, count + 1))
+    return ("for later use in section 6. " + folios + " " + RUNNING_HEAD + " "
+            + PAGE_7.split("\n")[0])
 
 BOGUS_ROW = {
     "concept": "invented",
@@ -166,17 +201,51 @@ class FilterDriverTestCase(unittest.TestCase):
         subprocess.run(["git", *args], cwd=str(cwd or self.repo), check=True,
                        env=self.env, capture_output=True, text=True)
 
-    def arm_filter(self, repo: pathlib.Path, pattern: str) -> pathlib.Path:
-        """Point ``filter.x.clean`` at a script and apply it through .git/."""
+    def arm_filter(self, repo: pathlib.Path, pattern: str, *,
+                   driver: str = "x") -> pathlib.Path:
+        """Point ``filter.<driver>.clean`` at a script and apply it through .git/.
+
+        ``driver`` is the name the repository chooses, and a name carrying an
+        ``=`` is the one a ``-c`` blank cannot express: see
+        :func:`cflib.gitsafe.filter_env`.
+        """
         proof = repo / ".git" / "proof-filter.txt"
         script = repo / ".git" / "f.sh"
         script.write_text("#!/bin/sh\necho ran > %s\ncat\n" % proof, encoding="utf-8")
         script.chmod(0o755)
-        self.git("config", "filter.x.clean", str(script), cwd=repo)
+        self.git("config", f"filter.{driver}.clean", str(script), cwd=repo)
         (repo / ".git" / "info").mkdir(exist_ok=True)
         (repo / ".git" / "info" / "attributes").write_text(pattern, encoding="utf-8")
         proof.unlink(missing_ok=True)
         return proof
+
+    def a_git_that_ignores_the_config_environment(self) -> pathlib.Path:
+        """A ``git`` shim that drops ``GIT_CONFIG_*``: a git older than 2.31.
+
+        Those variables are how a whole key is blanked, and the git that predates
+        them ignores them in SILENCE -- no error, no exit code, the driver simply
+        runs.  Debian 11 ships 2.30.2 and Ubuntu 20.04 2.25.1; nothing in this
+        repo checks the run host's git version (``cf doctor`` tests that git is on
+        PATH), so the ``-c`` blanks are the floor under the pairs, and this shim
+        is what stands on it.  Returns the directory to put in front of ``PATH``.
+        """
+        real = shutil.which("git")
+        if real is None:                                     # pragma: no cover
+            self.skipTest("git is not installed")
+        bin_dir = self.root / "git-before-2.31"
+        bin_dir.mkdir(exist_ok=True)
+        shim = bin_dir / "git"
+        shim.write_text(
+            "#!/bin/sh\n"
+            "unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS\n"
+            "i=0\n"
+            "while [ $i -lt 64 ]; do\n"
+            "  unset GIT_CONFIG_KEY_$i GIT_CONFIG_VALUE_$i\n"
+            "  i=$((i + 1))\n"
+            "done\n"
+            'exec "%s" "$@"\n' % real, encoding="utf-8")
+        shim.chmod(0o755)
+        return bin_dir
 
 
 class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
@@ -209,6 +278,17 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
         (self.repo / "findings" / "carol.json").write_text("{}\n")
         (self.repo / "tasks" / "carol.yaml").write_text("id: carol\n")
 
+    def make_stat_stale(self) -> None:
+        """Same bytes, newer mtime on the LANDED file: git must re-read it.
+
+        Which is when the clean filter runs.  Without this the arming is inert on
+        a fresh checkout and the test skips itself, proving nothing.
+        """
+        path = self.repo / "findings" / "alice.json"
+        path.write_bytes(path.read_bytes())
+        stamp = os.stat(path).st_mtime + 5
+        os.utime(path, (stamp, stamp))
+
     def bare_diff_fires(self, proof: pathlib.Path) -> bool:
         """Whether the unsafe spelling runs it -- the exposure, for comparison."""
         subprocess.run(["git", "diff", "--name-status", "main"], cwd=str(self.repo),
@@ -220,7 +300,11 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
     def test_no_content_filter_of_the_worktree_is_executed(self):
         proof = self.arm_filter(self.repo, "*.json filter=x\n")
         self.write_own_pair()
+        # without the stale stat the arming fires only when git happens to think
+        # the landed file is racily clean, and the test skips itself at random
+        self.make_stat_stale()
         unsafe_ran = self.bare_diff_fires(proof)
+        self.make_stat_stale()
         paths, errs = vf.changed_entries(self.repo, "main")
         self.assertEqual(errs, [])
         self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
@@ -228,15 +312,100 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `diff --name-status`")
 
-    def test_the_pins_name_every_driver_the_repo_defines(self):
+    def test_a_driver_whose_name_carries_an_equals_sign_is_blanked_too(self):
+        """``-c`` splits at the first ``=``, so the driver name defeated the blank.
+
+        ``-c 'filter.a=b.clean='`` sets ``filter.a`` to ``b.clean=`` and leaves
+        the driver the worktree called ``a=b`` armed; the gate ran it and printed
+        its OK line.  A name like this one is reached by ``GIT_CONFIG_KEY_i``,
+        which carries the whole key; the ``-c`` blanks stay beside the pairs for
+        the names they can express and for the git that predates the pairs.
+        """
+        proof = self.arm_filter(self.repo, "*.json filter=a=b\n", driver="a=b")
+        self.write_own_pair()
+        self.make_stat_stale()
+        unsafe_ran = self.bare_diff_fires(proof)
+        self.make_stat_stale()
+        paths, errs = vf.changed_entries(self.repo, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
+        self.assertFalse(proof.exists(), "the gate executed a program the worker chose")
+        # and through the shipped argv, which is what the rendered tend config
+        # runs: the same contribution, reported clean while the payload ran
+        self.make_stat_stale()
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        proc = subprocess.run(
+            [sys.executable, script, "--base", "main", "--root", str(self.repo)],
+            capture_output=True, text=True, env={**self.env, "TEND_TASK_ID": "carol"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(proof.exists(), "the shipped argv executed the worker's program")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_the_blanks_name_every_driver_the_repo_defines(self):
         self.arm_filter(self.repo, "*.json filter=x\n")
         self.git("config", "filter.y.process", "/bin/false")
-        pins = vf._filter_pins(self.repo)
-        self.assertIn("filter.x.clean=", pins)
-        self.assertIn("filter.y.process=", pins)
-        self.assertEqual(pins.count("-c"), len(pins) // 2)
+        self.git("config", "filter.a=b.clean", "/bin/false")
+        pinned = vf._filter_env(self.repo)
+        keys = {v for k, v in pinned.items() if k.startswith("GIT_CONFIG_KEY_")}
+        self.assertLessEqual({"filter.x.clean", "filter.y.process", "filter.a=b.clean"}, keys)
+        self.assertEqual(int(pinned["GIT_CONFIG_COUNT"]), len(keys))
+        # every one of them is blanked, and the count covers exactly the pairs
+        for i in range(int(pinned["GIT_CONFIG_COUNT"])):
+            self.assertIn(f"GIT_CONFIG_KEY_{i}", pinned)
+            self.assertEqual(pinned[f"GIT_CONFIG_VALUE_{i}"], "")
         # the gate ships without cflib, so its copy and gitsafe's must agree
-        self.assertEqual(pins, gitsafe.filter_pins(self.repo))
+        self.assertEqual(pinned, gitsafe.filter_env(self.repo))
+        # and the OTHER channel is still there: `-c` is what a git older than
+        # 2.31 reads, and the run host's version is nobody's to assume
+        args = gitsafe.argv(self.repo, "status")
+        self.assertEqual(args[args.index("filter.x.clean=") - 1], "-c")
+        self.assertIn("filter.y.process=", args)
+        self.assertNotIn("filter.a=b.clean=", args)   # `-c` cannot express it
+        self.assertEqual(vf._filter_pin_args(vf._filter_names(self.repo)),
+                         gitsafe.filter_pin_args(gitsafe.filter_names(self.repo)))
+
+    def test_the_blanks_reach_a_git_that_ignores_the_environment_pairs(self):
+        """The env pairs are 2.31 and later; the run host's git is not pinned.
+
+        Moving the blanks OUT of ``-c`` to reach an ``=``-named driver dropped the
+        floor below where it was before that attack was known: on a run host with
+        Debian 11's git the worktree's ``filter.x.clean`` ran again, silently.
+        Both channels go on every call now, and this is the one an old git reads.
+        """
+        from unittest import mock
+
+        proof = self.arm_filter(self.repo, "*.json filter=x\n")
+        self.write_own_pair()
+        self.make_stat_stale()
+        unsafe_ran = self.bare_diff_fires(proof)
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        self.make_stat_stale()
+        with mock.patch.dict(os.environ,
+                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+            paths, errs = vf.changed_entries(self.repo, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
+        self.assertFalse(proof.exists(),
+                         "with GIT_CONFIG_* ignored, nothing blanked the driver")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_the_blanks_extend_a_count_the_callers_environment_already_carries(self):
+        """A ``GIT_CONFIG_*`` the operator set is extended, never overwritten."""
+        from unittest import mock
+
+        self.arm_filter(self.repo, "*.json filter=x\n")
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_COUNT": "1",
+                                          "GIT_CONFIG_KEY_0": "user.name",
+                                          "GIT_CONFIG_VALUE_0": "operator"}):
+            pinned = vf._filter_env(self.repo)
+            self.assertEqual(pinned, gitsafe.filter_env(self.repo))
+        count = int(pinned["GIT_CONFIG_COUNT"])
+        named = [pinned[f"GIT_CONFIG_KEY_{i}"] for i in range(1, count)]
+        self.assertNotIn("GIT_CONFIG_KEY_0", pinned)        # the operator's own pair
+        self.assertIn("filter.x.clean", named)
+        self.assertEqual(count, 1 + len(named))
 
     def test_an_uncommitted_rewrite_of_a_neighbours_pair_is_still_refused(self):
         """What a tree-to-tree diff would have cost: the case the rule exists for.
@@ -297,20 +466,64 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `status --porcelain`")
 
+    def test_a_companions_equals_named_filter_does_not_run_on_a_read_either(self):
+        """The name the companion chose is the one ``-c`` could not blank."""
+        proof = self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
+        self.make_stat_stale()
+        subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
+                       capture_output=True, text=True, check=False, env=self.env)
+        unsafe_ran = proof.exists()
+        proof.unlink(missing_ok=True)
+        self.make_stat_stale()
+        gitsafe.run(self.repo, ["status", "--porcelain"])
+        self.assertFalse(proof.exists(), "the companion's own program ran on a read")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
+    def test_an_old_gits_read_is_blanked_by_the_c_half(self):
+        """The same floor on the companion side, and one ``git config`` for both.
+
+        ``gitsafe`` ships to the same run host as the gate, so the env pairs alone
+        would leave a companion's driver armed there.  ``run()`` discovers the
+        names once and spells them into both channels from that one list.
+        """
+        from unittest import mock
+
+        proof = self.arm_filter(self.repo, "*.lean filter=x\n")
+        self.make_stat_stale()
+        subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
+                       capture_output=True, text=True, check=False, env=self.env)
+        unsafe_ran = proof.exists()
+        proof.unlink(missing_ok=True)
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        self.make_stat_stale()
+        with mock.patch.dict(os.environ,
+                             {"PATH": "%s:%s" % (bin_dir, os.environ.get("PATH", ""))}):
+            gitsafe.run(self.repo, ["status", "--porcelain"])
+        self.assertFalse(proof.exists(),
+                         "with GIT_CONFIG_* ignored, nothing blanked the driver")
+        self.assertEqual(gitsafe.filter_pin_args(["filter.x.clean"]),
+                         ["-c", "filter.x.clean="])
+        self.assertEqual(gitsafe.filter_pin_args(["filter.a=b.clean"]), [])
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
     def test_a_driver_is_pinned_only_once_it_is_named_and_never_raises(self):
-        self.assertNotIn("filter.x.clean=", gitsafe.filter_pins(self.repo))
+        self.assertNotIn("filter.x.clean", gitsafe.filter_names(self.repo))
         self.arm_filter(self.repo, "*.lean filter=x\n")
-        pins = gitsafe.filter_pins(self.repo)
-        self.assertEqual(pins[pins.index("filter.x.clean=") - 1], "-c")
+        pinned = gitsafe.filter_env(self.repo)
+        i = gitsafe.filter_names(self.repo).index("filter.x.clean")
+        self.assertEqual(pinned[f"GIT_CONFIG_KEY_{i}"], "filter.x.clean")
+        self.assertEqual(pinned[f"GIT_CONFIG_VALUE_{i}"], "")
         # a path that is no repo at all is no pins, not an exception: the
         # caller's own command is what reports that there is nothing to read
-        self.assertEqual(gitsafe.filter_pins(self.root / "nowhere"), [])
+        self.assertEqual(gitsafe.filter_env(self.root / "nowhere"), {})
         self.assertEqual(gitsafe.argv(self.root / "nowhere", "rev-parse", "HEAD")[-2:],
                          ["rev-parse", "HEAD"])
 
     def test_the_boundary_comments_do_not_claim_the_wider_closure(self):
         """Both files said the fsmonitor pin closes the class; it closes that hook."""
-        for text in (gitsafe.__doc__ or "", gitsafe.filter_pins.__doc__ or ""):
+        for text in (gitsafe.__doc__ or "", gitsafe.filter_env.__doc__ or ""):
             self.assertNotIn("verified: this alone stops it", text)
         pins_comment = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
             encoding="utf-8")
@@ -335,7 +548,8 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         (home / ".gitconfig").write_text('[filter "lfs"]\n\tclean = /bin/false\n',
                                          encoding="utf-8")
         with mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home)}):
-            self.assertIn("filter.lfs.clean=", gitsafe.filter_pins(self.repo))
+            self.assertIn("filter.lfs.clean", gitsafe.filter_names(self.repo))
+            self.assertIn("filter.lfs.clean", gitsafe.filter_env(self.repo).values())
 
 
 # --------------------------------------------------------------------------- #
@@ -473,10 +687,59 @@ class TestTheGateCouldNotRunIsNotARejection(BookTestCase):
                 argv[1] = str(cfgp)
                 self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
 
-    def test_the_three_infrastructure_messages_read_alike(self):
+    def test_a_source_text_that_exists_but_cannot_be_read_is_not_a_rejection(self):
+        """``exists()`` is true for a directory and for a file this user may not
+        read -- a partial rsync makes the first, a wrong run-host user the second.
+
+        The prompts name "an unreadable source text" as an infrastructure fault
+        in the same breath as the missing config and the missing index, and the
+        module docstring reserves exit 3 for it; only the MISSING file arrived
+        that way, the unreadable one came out as exit 1 and a traceback.
+        """
+        argv = self.gate_dir(doc_for())
+        unreadable = self.root / "asdir"
+        unreadable.mkdir()
+        cases = [("a directory", unreadable)]
+        blocked = self.root / "blocked.txt"
+        if os.name == "posix" and os.geteuid() != 0:
+            blocked.write_text(BOOK, encoding="utf-8")
+            blocked.chmod(0o000)
+            cases.append(("mode 000", blocked))
+        for what, path in cases:
+            with self.subTest(source=what):
+                data = dict(self.cfg.data)
+                data["sources"] = {SOURCE_ID: dict(data["sources"][SOURCE_ID],
+                                                   text=str(path))}
+                cfgp = self.root / "gate-unreadable.json"
+                cfgp.write_text(json.dumps(data), encoding="utf-8")
+                argv[1] = str(cfgp)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
+                self.assertIn("could not be read", err.getvalue())
+                self.assertIn("this is not a finding of yours", err.getvalue())
+        if blocked.exists():
+            blocked.chmod(0o600)        # before the temporary directory goes
+
+    def test_a_findings_dir_of_the_wrong_type_is_not_a_rejected_finding(self):
+        """The same class one function further on: the key is joined onto
+        ``--root``, so a number raised a TypeError after the load guard had
+        already returned."""
+        argv = self.gate_dir(doc_for())
+        cfgp = self.root / "gate-dir.json"
+        cfgp.write_text(json.dumps(dict(self.cfg.data, findings_dir=3)), encoding="utf-8")
+        argv[1] = str(cfgp)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
+        self.assertIn("findings_dir must be a string", err.getvalue())
+
+    def test_the_infrastructure_messages_read_alike(self):
+        """The three the fix wave added, plus every way the source text fails to
+        arrive: missing, unreadable, unconfigured, or not the pinned extraction."""
         source = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
             encoding="utf-8")
-        self.assertEqual(source.count("this is not a finding of yours"), 3)
+        self.assertEqual(source.count("this is not a finding of yours"), 4)
 
 
 # --------------------------------------------------------------------------- #
@@ -511,6 +774,74 @@ class TestAQuoteSplicedAcrossAPageBreakIsStillBound(BookTestCase):
         book = vf.BookText.from_text(raw)
         self.assertEqual(vf.quote_match(book, STRADDLE_QUOTE).pages, [6, 8])
 
+    def test_a_short_page_at_the_seam_does_not_buy_the_splice_a_pass_either(self):
+        """Pairs left the same attack open one page wider, and cheaply.
+
+        A folio-only page between the two halves makes the splice span THREE
+        pages, which the pair search reported as ``[]`` -- and an empty page list
+        is exactly what turns the bind off.  Two hundred characters against a
+        3,000-character ceiling then bought a quote from six pages away a
+        "straddles a page break" note and exit 0.
+        """
+        book = book_with_a_folio_page()
+        m = vf.quote_match(book, SPLICED_QUOTE)
+        self.assertLess(len(SPLICED_QUOTE), vf.MAX_QUOTE_CHARS)
+        self.assertEqual(m.pages, [6, 7, 8])
+        errs = vf.validate_doc(doc_for(SPLICED_QUOTE, item=ITEM), "x.json", self.cfg,
+                               {SOURCE_ID: book})
+        self.assertTrue(any("not the item's passage" in e for e in errs), errs)
+        self.assertEqual(vf.binding_notes(doc_for(SPLICED_QUOTE), "x.json", self.cfg, book), [])
+
+    def test_a_longer_run_of_short_pages_at_the_seam_buys_nothing_either(self):
+        """Three folio pages instead of one: the same splice, two pages wider.
+
+        The search that replaced pairs widened run by run, so the answer to "one
+        page wider" was always "one more width" -- and the width the attacker
+        needs is the number of short pages he puts at the seam.  The pages an
+        occurrence touches are read off the join instead, so every width is the
+        same amount of work and none of them comes back ``[]``.
+        """
+        book = book_with_folio_pages(3)
+        quote = quote_spliced_over(3)
+        m = vf.quote_match(book, quote)
+        self.assertLess(len(quote), vf.MAX_QUOTE_CHARS)
+        self.assertEqual(m.pages, [6, 7, 8, 9, 10])
+        errs = vf.validate_doc(doc_for(quote, item=ITEM), "x.json", self.cfg,
+                               {SOURCE_ID: book})
+        self.assertTrue(any("not the item's passage" in e for e in errs), errs)
+        self.assertEqual(vf.binding_notes(doc_for(quote), "x.json", self.cfg, book), [])
+        # a splice wider than the recurrence ceiling is refused BY the ceiling --
+        # which is what bounding the search at a constant width would have cost,
+        # because past such a bound the answer is [] and [] is the silent pass
+        wide = vf.quote_match(book_with_folio_pages(5), quote_spliced_over(5))
+        self.assertFalse(wide.ok)
+        self.assertIn("occurs on 7 pages", wide.why)
+
+    def test_a_source_of_short_pages_does_not_make_the_search_quadratic(self):
+        """The widening was O(pages^2) when the pages are mostly folio-only.
+
+        Measured against the run search this replaced: 500 such pages and one
+        3,000-character needle took 1.1 s, and 2,000 pages 58 s -- per quote, with
+        the needle length the worker's to choose and the quote count per findings
+        file unbounded.  The bound below is thousands of times the work this does
+        (one pass over the source), so it fails only on a return to the sweep.
+        """
+        book = vf.BookText.from_text("\f".join("%d\n" % n for n in range(2000)))
+        started = time.monotonic()
+        self.assertEqual(book.pages_matching("x" * 3000), [])
+        self.assertLess(time.monotonic() - started, 5.0)
+
+    def test_the_run_search_reports_the_narrowest_run_that_holds_the_quote(self):
+        """A whole-page hit wins, and between spliced occurrences the narrowest
+        does, so a quote inside one page is still one page and the recurrence
+        ceiling counts it once."""
+        book = book_with_a_folio_page()
+        self.assertEqual(vf.quote_match(book, QUOTE_1).pages, [1])
+        self.assertEqual(vf.quote_match(book, STRADDLE_QUOTE.split(RUNNING_HEAD)[0]
+                                        + FOLIO_PAGE.strip()).pages, [6, 7])
+        # the running head is still on every page, and still refused for it
+        self.assertFalse(vf.quote_ok(book, RUNNING_HEAD)[0])
+
 
 # --------------------------------------------------------------------------- #
 # FR#46 — a dash at the quote's edge is punctuation, not a minus sign
@@ -540,6 +871,38 @@ class TestATypographicDashAtTheEdgeIsNotAnOperator(BookTestCase):
         self.assertTrue(vf.quote_ok(book, kept)[0])
         self.assertFalse(vf.quote_ok(book, "-1 <= m(F) for every set F that covers "
                                            "it, and the infimum is attained")[0])
+
+    def test_a_space_between_the_sign_and_its_operand_does_not_launder_it(self):
+        """The whitespace condition reads the spacing the QUOTE chose.
+
+        The quote is written by the agent, so the attacker picks it: the glued
+        ``-1 ≤ …`` was refused as a sign the book lacks and the same flip with one
+        space in it was stripped back to the book's own words and certified
+        verbatim.  Both spellings, side by side, and both edges.
+        """
+        book = vf.BookText.from_text(
+            "Lemma 4.2.1. In that case we have 1 <= m(F) for every set F that "
+            "covers it, and the infimum is attained.\n\f")
+        flipped = "%s1 <= m(F) for every set F that covers it, and the infimum is attained"
+        for sign in ("-", "- ", "-  ", "− ", "— ", "— — "):
+            with self.subTest(sign=sign):
+                ok, why = vf.quote_ok(book, flipped % sign)
+                self.assertFalse(ok, "a sign flip was laundered by its spacing: " + why)
+                self.assertIn("OPERATOR", why)
+        # and the trailing edge, where the operand is the last thing in the quote
+        tail = "we have 1 <= m(F) for every set F that covers it, and the infimum is attained"
+        self.assertTrue(vf.quote_ok(book, tail)[0])
+        for sign in (" -", " —"):
+            with self.subTest(sign=sign):
+                self.assertFalse(vf.quote_ok(
+                    book, "In that case we have 1" + sign)[0])
+
+    def test_a_dash_beside_a_word_is_still_punctuation_at_either_edge(self):
+        """The tightening is about numbers only: the case FR#46 fixed stands."""
+        for d in ("— " + QUOTE_1, QUOTE_1 + " –", QUOTE_1 + " -",
+                  "− " + QUOTE_1, QUOTE_1 + " — "):
+            with self.subTest(quote=d[:6] + "..." + d[-6:]):
+                self.assertEqual(vf.quote_ok(self.book, d), (True, "verbatim"))
 
     def test_an_interior_operator_is_untouched_by_the_strip(self):
         flip = "— " + QUOTE_1.replace("<=", ">=")
@@ -639,11 +1002,168 @@ class TestTheReadmeDoesNotOverstateTheOwnershipRule(unittest.TestCase):
         self.assertIn("`references/runbook-server.md` §%s" % cited[0], skill,
                       "README and SKILL.md cite different sections for the same fact")
 
+    def test_the_relaxation_is_per_stem_not_per_path(self):
+        """The unit check under the git one below: one added findings file per
+        task, beside the task file the runbook committed before the run."""
+        batch = {"findings/bob.json": "A", "tasks/bob.yaml": "M",
+                 "findings/carol.json": "A", "tasks/carol.yaml": "M"}
+        self.assertEqual(vf.check_changed(batch), [])
+        landed = dict(batch, **{"findings/carol.json": "M"})
+        problems = vf.check_changed(landed)
+        self.assertTrue(any("findings/carol.json" in p for p in problems), problems)
+        self.assertFalse(any("findings/bob.json" in p for p in problems), problems)
+
     def test_the_docstring_says_which_change_sets_the_stem_count_refuses(self):
         doc = " ".join((vf.check_changed.__doc__ or "").split())
         self.assertIn("A lone stem is never refused here", doc)
         self.assertNotIn("one that rewrites, empties, deletes or renames a path "
                          "that was already on the base branch is still refused", doc)
+        # the summary sentence carried the superseded rule flat -- "two stems are
+        # refused by name", which is what the two --help strings had to be
+        # corrected out of.  A reader who stops at the first paragraph is told
+        # the batch is refused; the condition belongs in the sentence.
+        self.assertNotIn("so two stems are refused by name", doc)
+        self.assertIn("a second stem is refused by name once some stem's findings "
+                      "file was already on the base", doc)
+
+
+# --------------------------------------------------------------------------- #
+# NEW — the batched pre-merge set is findings ADDED beside a task file MODIFIED
+# --------------------------------------------------------------------------- #
+class TestABatchOfSeveralTasksMerges(unittest.TestCase):
+    """The relaxation counted PATHS, and a real batch is not all additions.
+
+    ``references/runbook-server.md`` §4 commits the tasks to the entrypoint's
+    merge target before the run, the templates write them with ``status: open``,
+    and the worker prompt tells the worker to set that file's status -- so each
+    batched task contributes ``findings/<id>.json`` as ``A`` and
+    ``tasks/<id>.yaml`` as ``M``.  Requiring every path to be an addition
+    therefore refused every merge of two or more tasks on the shipped argv, which
+    passes no task id, while both shipped documents said such a batch merges.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=TMPDIR)
+        self.root = pathlib.Path(self.tmp.name) / "entrypoint"
+        self.root.mkdir()
+        self.env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+                    "TEND_TASK_ID": ""}
+        (self.root / "findings").mkdir()
+        (self.root / "tasks").mkdir()
+        self.git("init", "-q", "-b", "main", ".")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=str(self.root), check=True,
+                       env=self.env, capture_output=True, text=True)
+
+    def a_run_of(self, ids: list[str], *, landed: tuple[str, ...] = ()) -> None:
+        """The runbook's sequence: tasks (and any landed findings) on main first."""
+        for task in ids:
+            (self.root / "tasks" / f"{task}.yaml").write_text(
+                f"id: {task}\nstatus: open\n", encoding="utf-8")
+        for task in landed:
+            (self.root / "findings" / f"{task}.json").write_text(
+                json.dumps({"schema_version": 2, "disagreements": [{"kind": "CONTENT"}]}),
+                encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "the run's tasks land on the merge target")
+        self.git("checkout", "-q", "-b", "batch")
+
+    def workers_write(self, ids: list[str]) -> None:
+        """What each worker does in its own worktree, merged into one branch."""
+        for task in ids:
+            (self.root / "findings" / f"{task}.json").write_text(
+                json.dumps({"schema_version": 2, "item": f"Exercise 4.1.{len(task)}",
+                            "disagreements": []}), encoding="utf-8")
+            (self.root / "tasks" / f"{task}.yaml").write_text(
+                f"id: {task}\nstatus: complete\n", encoding="utf-8")
+
+    def gate(self, *extra: str) -> subprocess.CompletedProcess:
+        """The shipped pre-merge argv: no ``--task-id``, nothing to substitute."""
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        return subprocess.run(
+            [sys.executable, script, "--base", "main", "--root", str(self.root), *extra],
+            capture_output=True, text=True, env=self.env)
+
+    def test_a_batch_of_one_two_or_three_tasks_merges(self):
+        for n in (1, 2, 3):
+            with self.subTest(tasks=n):
+                self.setUp()
+                ids = ["bob", "carol", "dave"][:n]
+                self.a_run_of(ids)
+                self.workers_write(ids)
+                proc = self.gate()
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn(f"{2 * n} allowed path(s)", proc.stdout)
+                self.tearDown()
+
+    def test_a_batch_that_rewrites_a_landed_findings_file_is_still_refused(self):
+        """The data-loss case the rule exists for, inside a passing batch."""
+        self.a_run_of(["bob", "carol", "dave"], landed=("dave",))
+        self.workers_write(["bob", "carol", "dave"])
+        proc = self.gate()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        refusal = [line for line in proc.stderr.splitlines() if line.startswith("  - ")]
+        self.assertEqual(len(refusal), 1, proc.stderr)
+        self.assertIn("findings/dave.json", refusal[0])
+        self.assertNotIn("findings/bob.json", refusal[0])   # named, not counted
+        self.assertIn("--task-id", refusal[0])
+
+    def test_a_batch_that_drops_a_landed_findings_file_is_still_refused(self):
+        self.a_run_of(["bob", "carol", "dave"], landed=("dave",))
+        self.workers_write(["bob", "carol"])
+        (self.root / "findings" / "dave.json").unlink()
+        proc = self.gate("--allow-empty")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("yours to drop", proc.stderr)
+
+    def test_a_batch_whose_task_file_moves_without_its_findings_is_refused(self):
+        """A stem that touches only its task file is not a batched contribution."""
+        self.a_run_of(["bob", "carol"])
+        self.workers_write(["bob"])
+        (self.root / "tasks" / "carol.yaml").write_text("id: carol\nstatus: blocked\n",
+                                                        encoding="utf-8")
+        proc = self.gate()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("findings/carol.json", proc.stderr)
+
+    def test_both_gate_entry_points_print_the_same_rule(self):
+        """``--help`` is the fourth place this rule is written, and it drifted.
+
+        ``templates/tend/config.yaml.tmpl`` runs ``verify_findings.py
+        --changed-files``, so the help an operator of a real run reads is that
+        one -- and it still said a two-stem contribution is refused after the
+        sibling entry point had been corrected, i.e. it promised a refusal of the
+        batch the same binary merges.  Both are asserted, against each other's
+        sentence, so neither can be fixed alone again.
+        """
+        clause = ("two stems are refused once some stem's findings file was already "
+                  "on --base (a batched pre-merge set, which adds one findings file "
+                  "per task, passes), but nothing can tell whose the one stem is")
+        for name in ("verify_findings.py", "check_changed_files.py"):
+            with self.subTest(entry_point=name):
+                proc = subprocess.run(
+                    [sys.executable, str(SKILL / "scripts" / "gate" / name), "--help"],
+                    capture_output=True, text=True, env=self.env)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                # whitespace-blind: argparse wraps the help, and it breaks a line
+                # at a hyphen ("single- stem"), so the words alone are not a join
+                self.assertIn("".join(clause.split()), "".join(proc.stdout.split()))
+
+    def test_the_two_documents_say_what_the_rule_does(self):
+        """Both were rewritten one clause too early: they described the per-path
+        rule, which refused the batch they promise merges."""
+        readme = (SKILL / "templates" / "tend" / "README.md.tmpl").read_text(encoding="utf-8")
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        for name, text in (("README.md.tmpl", readme), ("runbook-server.md", runbook)):
+            with self.subTest(document=name):
+                flat = " ".join(text.split())
+                self.assertNotIn("only when one of the paths was already on", flat)
+                self.assertIn("findings file was already on", flat)
 
 
 if __name__ == "__main__":
