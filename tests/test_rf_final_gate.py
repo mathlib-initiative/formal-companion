@@ -29,6 +29,7 @@ from __future__ import annotations
 import json
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -315,6 +316,27 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
             encoding="utf-8")
         self.assertIn("NOT git's content filters", pins_comment)
 
+    def test_the_header_admits_the_pins_reach_the_users_own_config(self):
+        """The header's "only what the audited repository controls" is not all of it.
+
+        A driver is blanked by the NAME an attribute gives it, wherever it was
+        defined, so the header has to say so too: a reader who stops there would
+        not expect a globally configured git-lfs to be neutralised.
+        """
+        from unittest import mock
+
+        header = " ".join((gitsafe.__doc__ or "").split())
+        self.assertIn("in every scope, the user's own included", header)
+        self.assertIn("git-lfs", header)
+        # the behaviour the clause describes, with a HOME of our own so nothing
+        # outside the temporary directory is read or written
+        home = self.root / "home"
+        home.mkdir()
+        (home / ".gitconfig").write_text('[filter "lfs"]\n\tclean = /bin/false\n',
+                                         encoding="utf-8")
+        with mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home)}):
+            self.assertIn("filter.lfs.clean=", gitsafe.filter_pins(self.repo))
+
 
 # --------------------------------------------------------------------------- #
 # FR#13 — the operator pass must not be switchable off by a word
@@ -571,7 +593,7 @@ class TestTheReadmeDoesNotOverstateTheOwnershipRule(unittest.TestCase):
     """``templates/tend/config.yaml.tmpl`` passes no ``--task-id``, so the weak
     single-stem rule is the default path -- and there a change set that touches
     only a neighbour's pair passes.  The README said such a contribution "is
-    still refused by name", contradicting ``references/runbook-server.md`` §5 on
+    still refused by name", contradicting ``references/runbook-server.md`` §4 on
     a data-loss path.  The rule itself is a recorded decision and does not move.
     """
 
@@ -586,6 +608,36 @@ class TestTheReadmeDoesNotOverstateTheOwnershipRule(unittest.TestCase):
         self.assertIn("is not caught", runbook)
         self.assertNotIn("rewrites or empties a neighbour's landed pair is still refused",
                          readme.replace("\n", " "))
+
+    def test_the_readme_sends_the_operator_to_the_section_that_says_it(self):
+        """A pointer to the wrong section is a pointer to nothing.
+
+        The README defers the scoping to the runbook instead of repeating it, so
+        the section it names has to be the one carrying "is not caught" -- and
+        the same one ``SKILL.md`` already names, or the two shipped documents
+        disagree about where the operator should look.
+        """
+        readme = (SKILL / "templates" / "tend" / "README.md.tmpl").read_text(encoding="utf-8")
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        skill = (SKILL / "SKILL.md").read_text(encoding="utf-8")
+        cited = re.findall(r"`references/runbook-server\.md` §(\d+)", readme)
+        self.assertEqual(len(cited), 1, "expected exactly one runbook citation: %r" % (cited,))
+        # the sections, split on the runbook's own "## <n>. " headings
+        bodies = {}
+        current = None
+        for line in runbook.splitlines():
+            head = re.match(r"## (\d+)\. ", line)
+            if head:
+                current = head.group(1)
+                bodies[current] = []
+            elif current:
+                bodies[current].append(line)
+        body = " ".join(bodies.get(cited[0], []))
+        self.assertIn("is not caught", body,
+                      "README sends the operator to §%s, which does not carry the sentence"
+                      % cited[0])
+        self.assertIn("`references/runbook-server.md` §%s" % cited[0], skill,
+                      "README and SKILL.md cite different sections for the same fact")
 
     def test_the_docstring_says_which_change_sets_the_stem_count_refuses(self):
         doc = " ".join((vf.check_changed.__doc__ or "").split())
