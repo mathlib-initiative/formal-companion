@@ -1236,8 +1236,9 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
 #: hook, both ``git diff`` and ``git ls-files`` fired it bare and neither does
 #: with these pins.  They cover that hook, the hooks path, the external diff
 #: driver, the pager and ssh/askpass -- NOT git's content filters, which are a
-#: program too and are blanked per call by :func:`_filter_env`.  Keep in step
-#: with gitsafe; ``tests/test_rf_gate.py`` asserts they are identical.
+#: program too and are blanked per call, in the environment (:func:`_filter_env`)
+#: and in ``-c`` (:func:`_filter_pin_args`).  Keep in step with gitsafe;
+#: ``tests/test_rf_gate.py`` asserts they are identical.
 _GIT_SAFE_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=/dev/null",
@@ -1251,6 +1252,63 @@ _GIT_SAFE_ENV: dict[str, str] = {
     "GIT_OPTIONAL_LOCKS": "0",
     "GIT_TERMINAL_PROMPT": "0",
 }
+
+
+def _filter_pin_args(names: list[str]) -> list[str]:
+    """``-c <key>=`` for every driver name ``-c`` can express.
+
+    The half of the blanking an OLD git still reads.  ``GIT_CONFIG_COUNT`` and its
+    pairs arrived in git 2.31; before that git ignores them in silence -- no
+    error, no exit code, the driver simply runs -- and this file is rsynced to a
+    run host whose git version nothing here checks
+    (``references/runbook-server.md`` §2), where Debian 11's 2.30.2 is an ordinary
+    answer.  ``-c`` covers every name without an ``=``; the environment pairs
+    cover the ``=`` ones.  Neither channel is the other's superset, so both go on
+    every call.
+    """
+    return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
+
+
+def _filter_names(cwd: pathlib.Path) -> list[str]:
+    """Every ``filter.<n>.clean``/``.process``/``.smudge`` key this worktree resolves.
+
+    ``git config --list`` executes nothing itself and resolves ``include.path``,
+    so a driver reached through an include is named too, and it reads every
+    scope: ``.git/config.worktree`` is the worktree's own and is not ``--local``,
+    and an attribute may name a driver defined in the user's ``~/.gitconfig``
+    (git resolves a filter by NAME, not by who configured it).  An attribute
+    naming a driver nothing defines was already a no-op.
+    """
+    import subprocess
+
+    try:
+        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "config", "--list", "--name-only"],
+                             cwd=str(cwd), capture_output=True, text=True, check=False,
+                             env={**os.environ, **_GIT_SAFE_ENV})
+    except OSError:
+        return []          # no git, no repo: the caller's own command reports it
+    names: list[str] = []
+    for key in (got.stdout or "").splitlines():
+        k = key.strip()
+        if k.startswith("filter.") and k.rsplit(".", 1)[-1] in ("clean", "process", "smudge"):
+            if k not in names:
+                names.append(k)
+    return names
+
+
+def _filter_pairs(names: list[str], have: dict[str, str]) -> dict[str, str]:
+    """:func:`_filter_env`'s pairs, from names already discovered."""
+    if not names:
+        return {}
+    try:
+        start = max(0, int(have.get("GIT_CONFIG_COUNT") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    out = {"GIT_CONFIG_COUNT": str(start + len(names))}
+    for i, key in enumerate(names, start):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = ""
+    return out
 
 
 def _filter_env(cwd: pathlib.Path) -> dict[str, str]:
@@ -1267,55 +1325,33 @@ def _filter_env(cwd: pathlib.Path) -> dict[str, str]:
     neighbour's landed findings file, which is the case the ownership rule exists
     for; so the diff stays as it is and the drivers are blanked here.
 
-    The blanks travel in the ENVIRONMENT because ``-c`` splits at the FIRST ``=``
-    and the worker chooses the driver's name: with ``filter.a=b.clean`` armed and
-    ``*.json filter=a=b`` in the attributes, ``-c 'filter.a=b.clean='`` sets
-    ``filter.a`` to ``b.clean=``, the real driver keeps its payload and the diff
-    executes it.  ``GIT_CONFIG_KEY_i`` carries the whole key, so there is nothing
-    to split; the pairs are added on top of any count the caller's environment
-    already carries.
-
-    ``git config --list`` executes nothing itself and resolves ``include.path``,
-    so a driver reached through an include is blanked too, and it reads every
-    scope: ``.git/config.worktree`` is the worktree's own and is not ``--local``,
-    and an attribute may name a driver defined in the user's ``~/.gitconfig``
-    (git resolves a filter by NAME, not by who configured it).  An attribute
-    naming a driver nothing defines was already a no-op.
+    These pairs are why the blanking is not ``-c`` alone: ``-c`` splits at the
+    FIRST ``=`` and the worker chooses the driver's name, so with
+    ``filter.a=b.clean`` armed and ``*.json filter=a=b`` in the attributes,
+    ``-c 'filter.a=b.clean='`` sets ``filter.a`` to ``b.clean=``, the real driver
+    keeps its payload and the diff executes it.  ``GIT_CONFIG_KEY_i`` carries the
+    whole key, so there is nothing to split; the pairs are added on top of any
+    count the caller's environment already carries.  They are not the blanking
+    either: :func:`_filter_pin_args` is the half a git older than 2.31 reads, and
+    this file runs on whatever git the run host has.
     """
-    import subprocess
-
-    try:
-        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "config", "--list", "--name-only"],
-                             cwd=str(cwd), capture_output=True, text=True, check=False,
-                             env={**os.environ, **_GIT_SAFE_ENV})
-    except OSError:
-        return {}          # no git, no repo: the caller's own command reports it
-    names: list[str] = []
-    for key in (got.stdout or "").splitlines():
-        k = key.strip()
-        if k.startswith("filter.") and k.rsplit(".", 1)[-1] in ("clean", "process", "smudge"):
-            if k not in names:
-                names.append(k)
-    if not names:
-        return {}
-    try:
-        start = max(0, int(os.environ.get("GIT_CONFIG_COUNT") or 0))
-    except (TypeError, ValueError):
-        start = 0
-    out = {"GIT_CONFIG_COUNT": str(start + len(names))}
-    for i, key in enumerate(names, start):
-        out[f"GIT_CONFIG_KEY_{i}"] = key
-        out[f"GIT_CONFIG_VALUE_{i}"] = ""
-    return out
+    return _filter_pairs(_filter_names(cwd), dict(os.environ))
 
 
 def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
-    """One read-only git command in ``cwd``, with the boundary pinned."""
+    """One read-only git command in ``cwd``, with the boundary pinned.
+
+    The worktree's filter drivers are discovered ONCE and spliced into both
+    channels from that one list, so a call costs one ``git config --list``.
+    """
     import subprocess
 
-    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *args], cwd=str(cwd),
-                          capture_output=True, text=True, check=False,
-                          env={**os.environ, **_GIT_SAFE_ENV, **_filter_env(cwd)})
+    names = _filter_names(cwd)
+    environ = {**os.environ, **_GIT_SAFE_ENV}
+    environ.update(_filter_pairs(names, environ))
+    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pin_args(names), *args],
+                          cwd=str(cwd), capture_output=True, text=True, check=False,
+                          env=environ)
     return proc.returncode, (proc.stdout or "")
 
 
