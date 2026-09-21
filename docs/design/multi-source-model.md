@@ -1140,6 +1140,7 @@ inlines the function for a host without `cflib`), `sources/compat.py`,
                                  adjudicated.<name>.md routed/findings.<name>.jsonl
   detect/<name>/                 proxy-detection artifacts
   reports/                       tally.<run>.json union.<name>.json handoff.<date>.md
+                                 pin.<run>.json recheck.<name>.json
 ```
 
 Rows and files carry the source everywhere it can be ambiguous:
@@ -1158,6 +1159,23 @@ Rows and files carry the source everywhere it can be ambiguous:
 - ledger rows, routed rows, tally rows, union entries: `source_id`,
   `source_sha`.
 - `corpus/<run>/RECEIPT.json`: `sources: {<id>: <sha>}` and a per-source count.
+
+A finding is a claim about a source item **and** about a companion revision, so
+the companion is pinned the same way the source is:
+
+- `runs/<id>/run.yaml`: `companion_pins: {<name>: {repo_commit, dirty, method}}`
+  — the companion's HEAD when the run was planned, read through `cflib.gitsafe`.
+- `reports/pin.<run>.json`: written by `cf harvest`, never by a worker. The
+  commit from `run.yaml` plus `{repo:decl → decl_fingerprint}` taken over the
+  statement table extracted **at that commit**; a declaration the pin cannot
+  vouch for is listed under `unpinned` rather than fingerprinted against HEAD.
+  It is a report and not a corpus file, because a new file in `corpus/<run>/`
+  would be read as a finding by the gate and would change the receipt manifest.
+- ledger rows: `repo_commit` and `decl_fingerprints`, both optional (every
+  imported corpus is unpinned), plus the `recheck` block `cf recheck` writes.
+- `reports/recheck.<name>.json`: the latest re-check, one row per open finding,
+  status ∈ `unchanged | changed | gone | unpinned`
+  (`references/vocabulary.md` §1.8).
 
 ### 6.3 `.gitignore` (both repos)
 
