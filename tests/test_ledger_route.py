@@ -918,7 +918,10 @@ class TestHandoff(unittest.TestCase):
         # and the paths section names each source's own directories
         self.assertIn("sources/%s" % PUBLISHED_ID, text)
         self.assertIn("pairs/%s" % DRAFT_ID, text)
-        self.assertIn("python3 scripts/cf.py route", text)
+        # §8 prints ONE spelling, the `cf` shim, with the workspace resolved
+        # (first-run#6): `python3 scripts/cf.py …` is relative to the skill
+        # checkout, and the reader of this report is standing in the workspace.
+        self.assertIn("cf route --workspace", text)
         self.assertTrue(os.path.exists(report["path"]))
 
     def test_one_run_gets_one_row_even_when_two_tallies_cover_it(self):
