@@ -1,11 +1,12 @@
 """cf run -- send a planned run to the server (or stage the local fallback).
 
-New code.  The procedure is the one in scratchpad/ffmain/tao-diff-run/RUNBOOK.md,
-turned into a command that cannot skip its own safety steps:
+New code.  The procedure is the one in the v1 campaign's runbook, written down
+here as references/runbook-server.md and turned into a command that cannot skip
+its own safety steps:
 
-    cf run <run-id> --host ffmain --i-have-consent            # prints the plan
-    cf run <run-id> --host ffmain --i-have-consent --execute  # up to the smoke test
-    cf run <run-id> --host ffmain --i-have-consent --stage raise --smoke-verified --execute
+    cf run <run-id> --host examplebox --i-have-consent           # prints the plan
+    cf run <run-id> --host examplebox --i-have-consent --execute # up to the smoke test
+    cf run <run-id> --host examplebox --i-have-consent --stage raise --smoke-verified --execute
     cf run <run-id> --status                                  # this run's progress
     cf run <run-id> --local                                   # <100 items, Workflow fleet
 

@@ -1,7 +1,7 @@
 """What a run is doing: tend-control status remotely, the journal locally.
 
-New code; the remote half is the monitor block of
-scratchpad/ffmain/tao-diff-run/RUNBOOK.md ("Steer it"), the local half counts a
+New code; the remote half is the monitor block of the v1 campaign's runbook
+("Steer it", now references/runbook-server.md), the local half counts a
 Workflow run's ``journal.jsonl`` because a local fleet has no control plane at
 all.
 

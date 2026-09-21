@@ -1,7 +1,7 @@
 """The MECHANICAL page-anchor differential: companion anchors vs items.json.
 
-Ported from: recovered/b174aa13_L5762_Bash.txt part (C), which located every
-numbered item in two editions and flagged the items whose anchor in
+Ported from: the v1 campaign's anchor cell (not in this repo), which located
+every numbered item in two editions and flagged the items whose anchor in
 tao-measure-lean matched the 2011 draft page rather than the published page.
 
 Generalised per the design critique:

@@ -6,7 +6,7 @@
  ],
  "_source_ids_note": "A stage is which SECTION of the work first develops a concept, which is the same in both editions of Tao's measure theory book (they differ only in pagination). StageTable.for_source accepts either id and loads this one file.",
  "title": "Terence Tao, An Introduction to Measure Theory (GSM 126)",
- "_source": "ported verbatim from /Users/jack/Desktop/tao-differential/adam-detector/analyze2.py (MATHLIB_STAGE L51-120, MOD_SEC L40-43, MATHLIB_MT L279-282, NATIVE L283-284); object stages computed from that repo's deps.json module table",
+ "_source": "ported verbatim from the v1 campaign's analyze2.py (its MATHLIB_STAGE, MOD_SEC, MATHLIB_MT and NATIVE tables), which is not in this repo; object stages computed from that campaign's deps.json module table",
  "chapter": 1,
  "stage_beyond_book": 8,
  "default_stage": 0,

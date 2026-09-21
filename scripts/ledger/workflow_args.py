@@ -1,6 +1,6 @@
 """Build the `args` objects the adjudication workflows take.
 
-Ported from: recovered/c4082627_L225_Bash.txt, the hand-written
+Ported from: the v1 campaign's hand-written
 ``workflow_inputs.json`` builder for the adam adjudication run (it joined
 findings.adam.jsonl with declaration-snippets.json, target-refinement.json and
 the three statement tables, and wrote a scratchpad path into the workflow).

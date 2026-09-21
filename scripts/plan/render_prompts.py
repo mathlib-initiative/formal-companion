@@ -1,7 +1,7 @@
 """Render the five run prompts from one template set plus the companions' conventions.
 
-Ported from the prompt files of the five orchestration roots retrieved from
-ffmain (``tao-diff-tend/prompts/*.md`` and the four siblings). Those were five
+Ported from the prompt files of the v1 campaign's five orchestration roots
+(``tao-diff-tend/prompts/*.md`` and the four siblings). Those were five
 hand-maintained copies of one text: ``worker.md`` and ``worker-revision.md``
 were byte-identical everywhere, and ``worker-system.md`` / ``reviewer-system.md``
 / ``reviewer.md`` differed only by appended blocks (see templates/PRESETS.md).

@@ -1,10 +1,10 @@
 """def-coverage.<name>.json and uncovered.<name>.json (the cheap proxy check).
 
-Ported from: recovered/b174aa13_L6099_Bash.txt (Definition coverage: which book
+Ported from: the v1 campaign's def-coverage cell (Definition coverage: which book
 Definitions a companion states with a real ``def``/``structure`` versus only
 theorems about someone else's notion -- the "bridge-only" case that hides a
-proxy, adam.NOTES.md 16-19) and recovered/b174aa13_L6145_Bash.txt (numbered
-items with no declaration at all).
+proxy) and its uncovered-items cell (numbered items with no declaration at all).
+Neither cell is in this repo.
 
 Generalised per docs/design/stage_map.md Stage 3/8:
 

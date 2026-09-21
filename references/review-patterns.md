@@ -22,7 +22,7 @@ carry; "Using the catalog" at the foot says how to run them.
 Provenance: P1–P6 are distilled from a 32-finding audit of a second companion of the same book;
 P7–P8 come from another project's published catalog; **P9–P13 are the five shapes the 2026-09
 five-run audit found, each recurring at least twice in one chapter**
-(`/Users/jack/Desktop/tao-measure-lean/REVIEW_PATTERNS.md`, the source this file generalises).
+(the docstring-tag companion's own `REVIEW_PATTERNS.md`, the source this file generalises).
 
 P9–P13 are *statement-level*: invisible to the compiler **and** to a differential, because two
 independent repos can be wrong the same way and agree. They are found by adversarial probing with a

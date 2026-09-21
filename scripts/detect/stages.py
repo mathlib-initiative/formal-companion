@@ -1,9 +1,9 @@
 """Source "stage" tables: which section of a source first develops a concept.
 
-Ported from /Users/jack/Desktop/tao-differential/adam-detector/analyze2.py
-(``MATHLIB_STAGE`` L51-120 and ``stage_of_mathlib_module`` L121-124, ``MOD_SEC``
-L40-47, ``MATHLIB_MT`` L279-282, ``NATIVE`` L283-284). The tables themselves are
-*source-specific, not repo-specific* (adam-detector/README.md:64-68), so they
+Ported from the v1 campaign's ``analyze2.py`` (not in this repo): its
+``MATHLIB_STAGE`` / ``stage_of_mathlib_module``, ``MOD_SEC``, ``MATHLIB_MT`` and
+``NATIVE`` tables. The tables themselves are
+*source-specific, not repo-specific* (the v1 detector's README), so they
 ship as data in ``detect/mathlib_stages/<source_id>.json`` and the code here is
 generic.  One file may serve several ``source_ids``: a stage is which SECTION
 first develops a concept, and two editions of one work share that even when

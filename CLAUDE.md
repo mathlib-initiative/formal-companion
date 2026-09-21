@@ -67,13 +67,16 @@ Those two lines move together or not at all.
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, and the
   run/harvest commands (ssh/rsync to an allowlisted host).
-- Every module starts with a docstring naming the original it was ported from
-  (path plus transcript line) or saying it is new code, and pointing at the
-  section it implements — `docs/design/stage_map.md` for current behaviour, or
-  a section of `docs/design/archive/` for provenance. Cite a document that is
-  in the tree: 44 docstrings once cited four design documents nobody had
-  written, and `tests/test_rf_docs.py` now fails on a citation that resolves
-  nowhere.
+- Every module starts with a docstring saying **what** it was ported from — the
+  v1 campaign script, cell or workflow, named for what it did — or saying it is
+  new code, and pointing at the section it implements:
+  `docs/design/stage_map.md` for current behaviour, or a section of
+  `docs/design/archive/` for provenance. Never a path into a transcript or a
+  machine: that is unresolvable for every reader but one, and 30 docstrings once
+  cited a `recovered/` directory this repo has never held. Cite a document that
+  is in the tree — 44 docstrings once cited four design documents nobody had
+  written — and `tests/test_rf_docs.py` and `tests/test_rf_scrub.py` fail on a
+  citation that resolves nowhere.
 - Small functions, real docstrings, type hints where they help. Prefer
   correctness over breadth; mark anything unfinished with `TODO` and say so in
   the handoff.
@@ -230,6 +233,7 @@ Tao companions with no flags, generates a public-domain booklet and two
 synthetic companions of it, and checks about seventy artifacts (never log
 lines) against pinned figures. Run it with `bash tests/e2e/multisource.sh
 [--offline]`; it needs poppler's `pdftotext`, the two companion checkouts named
-at the top of the script (override with `CF_TML`, `CF_MT`, `CF_BASELINE_CORPUS`)
-and, unless `--offline`, network access for the errata fetch. Its generated
+by `CF_TML` and `CF_MT` (plus the optional `CF_BASELINE_CORPUS`) — it defaults to
+no path of its own and says what to set — and, unless `--offline`, network access
+for the errata fetch. Its generated
 fixtures are gitignored.

@@ -9,8 +9,9 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/verify-audit-summary-wf_9da8dddd-e4b.js (six hard-wired
-// lenses over the Tao workspace; it found 19 wrong claims out of 173).
+// Ported from: the v1 campaign's verify-audit-summary workflow (six hard-wired
+// lenses over the Tao workspace; it found 19 wrong claims out of 173), which
+// does not travel with this repo.
 // Generalised: the draft, the source list and the lens list all arrive in
 // `args`, the numbers lens is generated from the workspace's own tally commands
 // rather than being written by hand, and every counting bias observed so far --

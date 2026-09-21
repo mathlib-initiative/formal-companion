@@ -1019,8 +1019,8 @@ def _within(path: Path, root: Path | None) -> bool:
     return path == root or root in path.parents
 
 
-#: expansions are cached per process: onboarding two sources must not walk
-#: ~/Desktop twice, and `cf onboard` already walks it once too often.
+#: expansions are cached per process: onboarding two sources must not walk a
+#: library root twice, and `cf onboard` already walks it once too often.
 _LIBRARY_CACHE: dict[str, list[Path]] = {}
 
 #: how far below a library pattern's FIXED prefix the search may descend, and how
@@ -1056,8 +1056,9 @@ def _expand_library(pattern: str, max_files: int = LIBRARY_MAX_FILES,
                     max_depth: int = LIBRARY_MAX_DEPTH) -> list[Path]:
     """Expand one ``library_paths`` entry to PDFs, depth-capped and count-capped.
 
-    ``~/Desktop/**/sources`` walks Desktop to at most four levels, pruning build
-    and vendor trees, and collects the PDFs in every directory that matches.
+    ``~/books/**/sources`` walks ``~/books`` to at most four levels, pruning
+    build and vendor trees, and collects the PDFs in every directory that
+    matches.
     """
     raw = os.path.expanduser(str(pattern))
     cached = _LIBRARY_CACHE.get(raw)

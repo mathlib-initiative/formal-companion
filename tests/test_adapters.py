@@ -6,9 +6,9 @@ Two layers:
 * **regression tests** against the real baseline -- skipped unless the
   environment names it:
 
-      CF_TML           /Users/jack/Desktop/tao-measure-lean
-      CF_MT            /Users/jack/Desktop/measure_theory
-      CF_BASELINE_DIFF /Users/jack/Desktop/tao-differential   (ours.jsonl, adam.jsonl)
+      CF_TML           a docstring-tag companion checkout
+      CF_MT            an attribution-table companion checkout
+      CF_BASELINE_DIFF the v1 differential directory (ours.jsonl, adam.jsonl)
       CF_TEST_TMP      where the end-to-end test may create a scratch workspace
                        (default: the system temp directory)
 
@@ -307,11 +307,47 @@ class AdapterLoadingTest(unittest.TestCase):
     """adapter.yaml -> Adapter, and the errors a bad config gives."""
 
     def test_shipped_templates_load(self):
+        """Both examples parse and name their kind -- on any machine.
+
+        `repo:` in a shipped template is a placeholder, so the config is loaded
+        and then pointed at a scratch repo carrying the exports the
+        attribution-table adapter validates.  With the template naming one
+        developer's absolute path, this test passed only on that machine.
+        """
+        from adapters import yamlio
+        parent = Path(tempfile.mkdtemp(prefix="cf-tmpl-",
+                                       dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        repo = parent / "companion"
+        exports = repo / "pdf-overlay" / "data"
+        exports.mkdir(parents=True)
+        for name in ("target-refinement.json", "declaration-snippets.json"):
+            (exports / name).write_text("{}", encoding="utf-8")
+        cfg_path = parent / "adapter.yaml"
         for path, kind in ((TEMPLATES / "docstring_tags.tao-measure-lean.yaml", "docstring_tags"),
                            (TEMPLATES / "attribution_table.measure_theory.yaml", "attribution_table")):
             with self.subTest(path.name):
-                adapter = load(path)
+                config = yamlio.load_yaml(path)
+                self.assertEqual(config["repo"], "<path to the companion repo>",
+                                 "a shipped template names no real repo")
+                # `repo:` is written RELATIVE here, because that is the second
+                # thing `load` does and the only place it is exercised: a
+                # relative repo resolves against the adapter.yaml's own parent.
+                cfg_path.write_text(
+                    path.read_text(encoding="utf-8").replace(
+                        f"repo: {config['repo']}", f"repo: {repo.name}"),
+                    encoding="utf-8")
+                adapter = load(cfg_path)
                 self.assertEqual(adapter.kind, kind)
+                self.assertEqual(Path(adapter.config["repo"]), repo.resolve())
+
+    def test_a_missing_adapter_yaml_names_the_command_that_writes_one(self):
+        """The refusal every command reaches through `cflib.adapters_api.load`."""
+        missing = Path(tempfile.gettempdir()) / "cf-no-such-companion" / "adapter.yaml"
+        with self.assertRaises(api.AdapterError) as caught:
+            load(missing)
+        self.assertIn("adapter config not found", str(caught.exception))
+        self.assertIn("cf onboard", caught.exception.hint or "")
 
     def test_unknown_kind_is_a_readable_error(self):
         with self.assertRaises(api.AdapterError):

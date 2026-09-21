@@ -31,8 +31,8 @@ anchored edition in `bundled_sources` with `role: reference` so it is prepared f
 checking and audited by nobody. Stamp `source_id` + `source_sha` into every artifact; the gate
 refuses a mismatch. Measured 2026-09-16: published 0.89 (271 ok / 35 mismatched) vs draft 0.66
 (202 / 103).
-*Evidence:* `/Users/jack/Desktop/tao-measure-lean/CLAUDE.md` lines 48-55;
-`/Users/jack/Desktop/tao-differential/refuted.adam.jsonl` `_meta.official_pdf` and row 1; the
+*Evidence:* the docstring-tag companion's own `CLAUDE.md`, "anchor edition" section;
+the v1 differential's `refuted.adam.jsonl` `_meta.official_pdf` and row 1; the
 `anchor edition` block `cf onboard` prints.
 
 **A1b — Both editions share the offset, so the error is exactly one page.**
@@ -93,7 +93,7 @@ entry count, `changed`). Never use a summarising fetch for a source of record. A
 raw HTML is checked for the word "errata"; absent, the confidence is halved and
 `meta.json.warnings` records `errata_url_unconfirmed` — a page that does not mention errata is a
 guess, however plausible its URL.
-*Evidence:* `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §4;
+*Evidence:* the docstring-tag companion's `HANDOFF.md` §4 and its
 `REVIEW_PATTERNS.md` P13.
 
 **A4 — `pdftotext` destroys notation.**
@@ -234,7 +234,7 @@ limit, **not** on instruction); the recovered harvest-from-journal script.
 *Cause:* it was launched with `[]`.
 *Fix:* build `args` with a script that prints the JSON, and assert a non-zero length in the script's
 first `log()`.
-*Evidence:* `/Users/jack/Desktop/notes/camera-ready-HANDOFF-2026-09-08.md` §6.
+*Evidence:* the camera-ready handoff note of the v1 campaign, §6.
 
 **D3 — A Workflow script has no filesystem.**
 *Presents as:* a design that says "run the gate inside the script after each agent" and cannot.

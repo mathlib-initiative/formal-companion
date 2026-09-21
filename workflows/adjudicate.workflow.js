@@ -14,7 +14,8 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/adam-faithfulness-adjudication-wf_60a87e92-dd5.js.
+// Ported from: the v1 campaign's adam-faithfulness-adjudication workflow, which
+// does not travel with this repo.
 // Generalised as the design requires:
 //   * every path, convention list and hard-wired Group-C prompt is now an `args`
 //     field (the original embedded the measure_theory repo, its encoding

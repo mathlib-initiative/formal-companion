@@ -1,7 +1,7 @@
 """Render (and, only on demand, execute) the remote commands of a server run.
 
-New code, but every command here is one the operator ran by hand in
-scratchpad/ffmain/tao-diff-run/RUNBOOK.md:
+New code, but every command here is one the operator ran by hand in the v1
+campaign's runbook (references/runbook-server.md is the version that ships):
 
     uv run tend-control limits --root ... --workers 1 --reviewers 1   # smoke test
     uv run tend run --root ... --log-level INFO
