@@ -801,7 +801,11 @@ class TestDoctor(unittest.TestCase):
         real_which = shutil.which
 
         def fake_which(name, *a, **kw):
-            return None if name in missing else real_which(name, *a, **kw)
+            # Total, not partial: these cases assert about `cf doctor`, not about
+            # what happens to be installed.  Falling through to the real
+            # shutil.which made the three exit-0 assertions fail on any machine
+            # without poppler -- which is every CI runner the suite runs on.
+            return None if name in missing else "/usr/bin/" + name
 
         argv = ["doctor", *extra]
         if workspace:
