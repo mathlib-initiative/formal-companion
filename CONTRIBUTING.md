@@ -27,9 +27,10 @@ these are the four that bite hardest.
    in the standard library is a change to the whole design, not a detail. CI
    runs the suite once with PyYAML absent for that reason.
 2. **`finding_id` and `items.clean()` are frozen.** They are hashed into a
-   committed corpus, and `finding_id` is inlined in four modules that run where
-   `cflib` cannot be imported. All five change in lockstep or not at all; see
-   `CHANGELOG.md` for what that costs.
+   committed corpus, and `finding_id` is inlined once more, in
+   `scripts/gate/verify_findings.py`, because the gate is transferred to a run
+   host where `cflib` cannot be imported. The two change in lockstep or not at
+   all; see `CHANGELOG.md` for what that costs.
 3. **A companion repository is read-only data.** Never write to one, never
    build one, and run every `git` against one through `cflib.gitsafe` — a repo
    that can set `core.fsmonitor` can name a program for you to execute.
