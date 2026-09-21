@@ -131,6 +131,19 @@ class Adapter(ABC):
         only its convention can say: chiefly the item kinds its own tags use,
         which no signal over the SOURCE can supply when the PDF is not on this
         machine (:attr:`cflib.discovery.SourceClaim.kinds`).
+
+        `cf onboard` calls this and merges what it ADDS into the seven repo
+        signals (:func:`cflib.discovery.discover_sources_with_adapter`), so a
+        convention whose source no signal can see has a way in.  A convention
+        that IS its own manuscript says so by naming the files: a claim carrying
+        :attr:`cflib.discovery.SourceClaim.files` -- absolute paths, in reading
+        order -- is a source whose bytes are already in hand, and onboarding
+        concatenates exactly that sequence, fingerprints it and registers it
+        unconfirmed like any other discovered source, rather than searching for a
+        PDF that does not exist.  A claim that repeats a signal cflib already
+        read is dropped in favour of cflib's: an adapter may add a source, never
+        restate one, because every later stage's item table is built from the
+        source's own text and not from the companion's reading of it.
         """
         from .discovery import discover_sources
         claims = list(discover_sources(Path(repo), adapter=self.kind))

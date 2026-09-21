@@ -160,7 +160,11 @@ repo/glob/config helpers every concrete adapter needs) in a new file under
   when nothing matched.
 - `discover_sources(repo) -> [SourceClaim]` — the signals this convention
   exposes, each carrying the file it came from. Never invent a `sha256`; a
-  truncated sha in prose is a `sha256_prefix`, which is a candidate.
+  truncated sha in prose is a `sha256_prefix`, which is a candidate. `cf onboard`
+  merges what this ADDS to the seven repo signals, and a convention that IS its
+  own manuscript says so with a claim whose `files` name it — absolute paths in
+  reading order, which onboarding concatenates in that order and fingerprints
+  (`blueprint_tex`, `references/onboarding-contract.md` §0.1).
 - `dry_run(repo)` and `extract(repo, *, sources={id: sha})` — rows follow
   `ROW_REQUIRED_FIELDS`, which includes `source_id` and `source_sha`;
   declarations are fully qualified (track namespaces); anonymous examples get a

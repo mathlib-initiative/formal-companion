@@ -60,7 +60,7 @@ page is exactly the defect class this audit exists to find.
 
 | what used to be typed | where it comes from now |
 |---|---|
-| which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven signals, `references/onboarding-contract.md` §0) |
+| which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven repo signals, `references/onboarding-contract.md` §0) plus whatever the adapter itself claims — a leanblueprint's manuscript IS its `.tex` tree, so its adapter claims it |
 | which edition | sha256 of the actual PDF bytes, looked up in `registry/sources.yaml` |
 | the page offset | the mode of the running-head votes, with a confidence; below 0.9 it refuses (`cflib.inference.MIN_OFFSET_CONFIDENCE`) |
 | the item kinds | the capitalised words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
@@ -72,8 +72,8 @@ page is exactly the defect class this audit exists to find.
 
 Overrides exist and are the exception: `cf sources set <id> offset=16`,
 `cf sources set <id> numbering=3,4`, `cf sources set <id> completeness_ok=true`,
-`cf sources add <source> --for <companion>`, `cf onboard --adapter`,
-`--anchor-source`.
+`cf sources add <source> --for <companion>`, `cf onboard --source`,
+`cf onboard --adapter`, `--anchor-source`.
 
 ## Two directories, never mixed
 
@@ -132,7 +132,7 @@ checkout actually has.
 |---|---|
 | `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No source flags**; only `--name`, `--no-git`, `--allow-nested`, `--force` |
 | `doctor [--json]` | check this machine's prerequisites (python floor, git, poppler's `pdftotext`/`pdftoppm`, `curl`, optional node and PyYAML) and print the PDF search roots. Exit 2 when a required one is missing, 0 when only optional ones are. Needs no workspace |
-| `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
+| `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--source` (names a PDF or text manuscript the repo does not name; repeatable), `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
 | `sources list` | one row per source: id, sha8, edition, offset ± confidence, kinds, items, errata, companions, role, confirmed |
 | `sources show <id>` | the full record: provenance, licence, `same_work` siblings, the page map, the prepared artifacts |
 | `sources add <source> --for <companion>` | add a source by hand; fingerprints, registers, prepares, appends to that companion's list. A source is a PDF or a manuscript that is already text (`.txt .md .tex .html`), which is located by heading path instead of printed page |

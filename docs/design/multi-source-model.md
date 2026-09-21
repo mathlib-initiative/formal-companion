@@ -583,9 +583,13 @@ it.
 
 ```
 detect_adapter(repo)                       -> (kind, confidence, evidence)
-discover_sources(repo, adapter=kind)       -> [SourceClaim, …]
+discover_sources_with_adapter(repo, adapter=kind)
+                                           -> [SourceClaim, …]
+  the seven signals, plus whatever Adapter.discover_sources ADDS (§4.3)
+  plus one claim per `cf onboard --source <file>`
 resolve_claims(claims, …)                  -> DiscoveryResult
   for each claim:  registry lookup -> locate_pdf -> fingerprint -> infer -> source record
+  a claim that NAMES its files skips locate_pdf: the bytes are already in hand
 choose_anchor_source(repo, rows, …)        -> (source_id, confidence, evidence)
 register:   workspace.yaml + registry.yaml overlay
 prepare:    sources/<id>/{text.txt, pages/, items.json, meta.json, errata.*}
@@ -633,6 +637,20 @@ that "belongs" to another kind (`tao-measure-lean` has both
 | **S5** | prose | `CLAUDE.md`, `AGENTS.md`, `README.md`, `docs/**/*.md` | `sha256_prefix` (8–63 hex followed by `…`/`...`/word boundary), full `sha256`, `urls`, `pdf_hints` (quoted paths ending `.pdf`), `offset_hint` (`PDF page = book page + N`, `printed page = PDF page - N`), `anchor_hint` (a sentence containing "anchor" and an edition word) | 0.5 |
 | **S6** | filesystem | `sources/*.pdf`, `.lake/official-pdf/*.pdf`, `pdf-overlay/vendor/**/*.pdf`, any `*.pdf` in the repo excluding `.lake/packages/**` | `pdf_hints`, and after fingerprinting a real `sha256` | 0.6 |
 | **S7** | citation links | `README.md` first 40 lines, `lakefile.toml`, `formalization.yaml` | `book_page_url` candidates (a link whose text contains the title) | 0.4 |
+
+**The adapter adds an eighth voice, and may only add.** `cf onboard` merges
+`Adapter.discover_sources(repo)` into the seven
+(`discovery.discover_sources_with_adapter`); a claim repeating a signal cflib
+already read is dropped in favour of cflib's, so no companion's prepared item
+table depends on the companion's own reading of its source. The addition that
+matters is a convention that IS its own manuscript (`blueprint_tex`): such a
+claim carries `files` — absolute paths in **reading order** — instead of
+`pdf_hints`, and `resolve_claims` builds the source record from those bytes
+(`sha256` over the concatenation in that order, `source_format`, `pagination`
+from §5.7) rather than locating a PDF. `cf onboard` writes a multi-file
+concatenation once into `<workspace>/sources/<id>/manuscript.<suffix>` and the
+row points there. `cf onboard --source <file>` makes the same shape of claim with
+`discovered.pdf_found_in: manual`.
 
 **Truncated shas are never written as `sha256`.** S5 stores them in
 `sha256_prefix`; they resolve only by matching a registry alias prefix or a
@@ -1198,7 +1216,7 @@ holding `workspace.yaml`), `-v`, `-q`. No `--campaign`, no `$CF_CAMPAIGN`.
 | command | one line |
 |---|---|
 | `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No other flags** except `--name`, `--no-git`, `--allow-nested`, `--force` |
-| `onboard <repo> [--name N] [--adapter K] [--download] [--anchor-source ID] [--dry-run] [--force]` | discover → register → prepare → extract, printing every inference and its confidence |
+| `onboard <repo> [--name N] [--adapter K] [--download] [--anchor-source ID] [--source FILE] [--dry-run] [--force]` | discover → register → prepare → extract, printing every inference and its confidence. `--source` (repeatable) names a PDF or text manuscript the repo does not name (§4.3); it gives the LOCATION only, like `sources add`, and is what the "no source could be discovered" refusal points at — a companion that does not exist yet cannot be `--for`ed |
 | `sources list` | one row per source: id, sha8, edition, offset±conf, kinds, items, errata, companions, confirmed |
 | `sources show <id>` | the full record, its `same_work` siblings, its `page_map_to`, its provenance and its prepared artifacts |
 | `sources add <source> --for <companion> [--anchor] [--download]` | add a source by hand (the exception); fingerprints, registers, prepares, and appends to that companion's `sources`. `<source>` is a PDF or a manuscript that is already text (§5.7) |
@@ -1591,6 +1609,12 @@ class SourceClaim:
     licence: str = ""
     offset_hint: int | None = None
     anchor_hint: str = ""
+    files: tuple[str, ...] = ()      # §4.3: absolute paths, in READING order, whose
+                                     # concatenated bytes ARE this source (no PDF to locate)
+    source_format: str = ""          # pdf | text  (§5.7), read off those bytes
+    pagination: str = ""             # formfeed | none  (§5.7)
+    locator: str = ""                # how the ADAPTER keys its rows: number | label
+    discovered_by: str = ""          # adapter | manual — recorded as `pdf_found_in`
     confidence: float = 0.0
 
     def merge(self, other: "SourceClaim") -> "SourceClaim": ...
@@ -1630,6 +1654,8 @@ class DiscoveryResult:
 
 def detect_adapter(repo: Path) -> tuple[str, float, dict]: ...
 def discover_sources(repo: Path, *, adapter: str | None = None) -> list[SourceClaim]: ...
+def discover_sources_with_adapter(repo: Path, *,
+                                  adapter: str | None = None) -> list[SourceClaim]: ...
 def merge_claims(claims: Sequence[SourceClaim], registry: Registry) -> list[SourceClaim]: ...
 def search_order(claim: SourceClaim, *, repo: Path, workspace: "Workspace | None",
                  library_paths: Sequence[str]) -> list[tuple[Path, str, int]]: ...
@@ -1926,7 +1952,7 @@ matching lines, as a rough size signal.
 | ✦ `scripts/cflib/workspace.py` | new | `Workspace`, `SourceRef`, `CompanionRef`, `find_workspace_root`, `from_args`, `require_source_sha`, `shared_sources`, `check_host`, `validate` (§8) |
 | `scripts/cflib/campaign.py` | 41 | **delete** once `workspace.py` lands; no shim, no alias |
 | ✦ `scripts/cflib/registry.py` | new | `Registry`, `RegistryEntry`, `source_id_for`, `slugify`, overlay append, page-map symmetry validation |
-| ✦ `scripts/cflib/discovery.py` | new | `detect_adapter`, `discover_sources`, `merge_claims`, `search_order`, `locate_pdf`, `fingerprint`, `resolve_claims`, `choose_anchor_source` |
+| ✦ `scripts/cflib/discovery.py` | new | `detect_adapter`, `discover_sources`, `discover_sources_with_adapter`, `merge_claims`, `search_order`, `locate_pdf`, `fingerprint`, `resolve_claims`, `choose_anchor_source` |
 | ✦ `scripts/cflib/inference.py` | new | `infer_offset`/`OffsetGuess`, `infer_kinds`, `infer_scope`, `infer_errata_url`, `confirm_errata` |
 | ✦ `registry/sources.yaml` | new | the shipped registry, seeded with the two Tao editions (§2.2) |
 | ✦ `templates/workspace.yaml.example` | new | replaces `campaign.yaml.example`; keeps every load-bearing comment, adds `sources:`, `library_paths:`, the map-shaped `companions:` |
