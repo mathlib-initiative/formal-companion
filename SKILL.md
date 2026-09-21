@@ -111,7 +111,9 @@ Source text, page images and crops never enter the skill repo. Workspace data
 is never committed to a companion repo. Companion repos are never written to at
 all. Staying local is not the same as being unshareable: `cf share export`
 hands over the campaign's conclusions — ledger rows, routed findings, tallies,
-receipts, source metadata — with every quote redacted to (page, length, hash).
+receipts, source metadata — with every quote redacted to (page, normalised
+length, sha256, and at most a quarter of the quote's words from each end, none
+at all below fourteen words).
 
 ## The default program
 
@@ -302,9 +304,11 @@ needs neither.
    skill repo or a companion repo. The registry holds metadata and URLs only.
    A download happens only with `--download` **and** a registry licence note
    that permits fetching from the author's own site; nothing is ever
-   redistributed. Exports redact quotes to (page, hash) by default. Quote at
-   most a sentence or two of a source in any artifact. `POLICY.md` is the whole
-   rule and `registry/README.md` is how the registry implements it.
+   redistributed. Exports redact quotes to (page, normalised length, sha256,
+   and at most a quarter of the quote's words from each end, none at all below
+   fourteen words) by default. Quote at most a sentence or two of a source in
+   any artifact. `POLICY.md` is the whole rule and `registry/README.md` is how
+   the registry implements it.
 7. **Consent and allowlist for runs.** `cf run` refuses any host not in
    `workspace.yaml` `hosts.allowlist` and requires `--i-have-consent`, recorded
    in `run.yaml`. A run copies private Lean sources and copyrighted source text

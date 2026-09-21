@@ -560,8 +560,16 @@ class TestPrintedHintsRunFromTheWorkspace(unittest.TestCase):
     NOT_A_HINT = ("adapters/yamlio.py",)
 
     def _routed_workspace(self) -> pathlib.Path:
-        """A workspace with one unchallenged routed row, so `cf adjudicate` hints."""
-        root = _tmp(self, "cf-rf-hint-")
+        """A workspace with one unchallenged routed row, so `cf adjudicate` hints.
+
+        The directory name carries a SPACE.  A hint is only pasteable if the path
+        in it is quoted, and `cf route` writes one of these strings into
+        ``ledger/routed/findings.<name>.jsonl`` and into the draft addressed to
+        the repository's owner -- so on a workspace called `my audit` the command
+        that shipped upstream answered `unrecognized arguments: audit/ws`.  A
+        space-free fixture cannot see that.
+        """
+        root = _tmp(self, "cf-rf-hint ")
         repo = root / "repo"
         repo.mkdir()
         (root / "workspace.yaml").write_text(

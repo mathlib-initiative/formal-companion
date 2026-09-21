@@ -554,7 +554,7 @@ Measured on the two targets, 2026-09-21, with this revision of the skill:
 | | `tao-measure-lean` @ `250b856` | `measure_theory` @ `9afe70f` |
 |---|---|---|
 | adapter | `docstring_tags` (0.93) | `attribution_table` (0.98) |
-| files scanned (`lean_files`; the dry run's `files` key is 112, the files that yielded rows) | 154 | — (table-driven) |
+| files scanned (detection's `lean_files`: every `.lean` file outside `.lake/`. The dry run's `files` key is 112, the files the adapter itself parses — the glob minus `exclude:` minus what the repo git-ignores — and 33 of those carry a tag and yield rows) | 154 | — (table-driven) |
 | declarations | 1,556 (1,132 tagged, 424 untagged, 130 private) | 531 |
 | rows / items | 1,131 / 506 | 562 / 178 |
 | anchors | 524 own, 1 crossref, 606 none | from the overlay |
