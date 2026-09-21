@@ -9,8 +9,14 @@ Each case here fails against the tree as it was:
 * ``references/onboarding-contract.md`` relabelled the dry run's ``files`` count
   as "the files that yielded rows" -- it is the files the adapter PARSES, and on
   the measured target 112 of them yield 33 files' worth of rows;
-* `cf share export` printed a refusal `cf share import` does not make, and named
-  three field names for a prose scan that walks every free-text field of a row;
+* `cf share export` printed a refusal `cf share import` does not make, named
+  three field names for a prose scan that walks every free-text field of a row,
+  and then -- keyed on the ledger ROW count rather than on the ledger FILES the
+  import refuses over -- told a findings-only campaign that the import merges a
+  bundle it exits 2 on;
+* `cf share export --help` was a fourth copy of the redaction record, promising
+  the flat six edge words and scoping the prose scan to "a reason or a
+  reasoning" after all three documents had been corrected;
 * `cf onboard <repo> --source <the wrong file>` bound before preparing, so a
   refusal exited 2 with a source row, a registry overlay row and a prepared
   directory to its name;
@@ -117,6 +123,16 @@ class TestEveryDocumentDescribesTheSameRedactedQuote(unittest.TestCase):
             found += [(name, hit) for hit in _QUOTE_RECORD.findall(flat)]
         return found
 
+    def assert_whole_record(self, where: str, record: str) -> None:
+        """Every spelling of the record states all four parts of it."""
+        self.assertIn("sha256", record.lower(),
+                      f"{where} names a hash the export does not write")
+        self.assertIn("length", record.lower())
+        self.assertIn("quarter", record.lower(),
+                      f"{where} omits the words that travel with the record")
+        self.assertIn("fourteen", record.lower(),
+                      f"{where} omits the floor below which nothing travels")
+
     def test_the_policy_states_the_same_budget_in_prose(self):
         """POLICY.md spells no ``(page, ...)`` record, so the scan above finds none in it."""
         policy = " ".join(read("POLICY.md").split())
@@ -128,13 +144,26 @@ class TestEveryDocumentDescribesTheSameRedactedQuote(unittest.TestCase):
         self.assertTrue(records, "no document spells the redacted-quote record: regex is wrong")
         for name, record in records:
             with self.subTest(doc=name, record=record):
-                self.assertIn("sha256", record.lower(),
-                              f"{name} names a hash the export does not write")
-                self.assertIn("length", record.lower())
-                self.assertIn("quarter", record.lower(),
-                              f"{name} omits the words that travel with the record")
-                self.assertIn("fourteen", record.lower(),
-                              f"{name} omits the floor below which nothing travels")
+                self.assert_whole_record(name, record)
+
+    def test_the_export_help_is_the_fourth_copy_and_states_it_too(self):
+        """The three documents were corrected together; `--help` was not.
+
+        It is the copy an operator deciding whether a bundle may go to a third
+        party actually reads, and it promised the flat six edge words the
+        behaviour fix deleted while scoping the prose scan to two v1 field names.
+        """
+        rendered = cf("share", "export", "--help")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        flat = " ".join(rendered.stdout.split())
+        records = _QUOTE_RECORD.findall(flat)
+        self.assertTrue(records, "`cf share export --help` spells no redacted-quote record")
+        for record in records:
+            with self.subTest(record=record):
+                self.assert_whole_record("`cf share export --help`", record)
+        self.assertNotIn("inside a reason or a reasoning", flat,
+                         "the help scopes the prose scan to two field names; the walk "
+                         "covers every free-text field of a row, at any depth")
 
     def test_the_bounds_the_documents_state_are_the_bounds_the_code_applies(self):
         """The documents are checked against `share.redact`, not against each other."""
@@ -263,7 +292,20 @@ def export(case: unittest.TestCase, workspace, out: Path) -> tuple[dict, str]:
             share_command="export", workspace=str(workspace.root), out=str(out),
             companion=[], redact=None, include_statements=False,
             skip_unchallenged=True, force=False))
-    return bundle_mod.read_manifest(out), buf.getvalue()
+    # `open_bundle` is the directory itself, or the unpacked tarball: both shapes
+    # of --out are read here the way `cf share import` reads them.
+    bundle = bundle_mod.open_bundle(out, scratch(case) / "opened")
+    return bundle_mod.read_manifest(bundle), buf.getvalue()
+
+
+def findings_only_workspace(case: unittest.TestCase, name: str):
+    """A campaign before any `cf adjudicate`: routed rows, no ledger file at all."""
+    from cflib.jsonio import write_jsonl
+
+    workspace = share_workspace(case, scratch(case) / name / "ws")
+    write_jsonl(workspace.paths.routed_jsonl(COMPANION), [routed_row()],
+                meta={"repo": COMPANION, "status": "CHALLENGED", "schema": "routed-v2"})
+    return workspace
 
 
 class TestTheZeroLedgerExportDescribesTheImportThatFollows(unittest.TestCase):
@@ -272,7 +314,10 @@ class TestTheZeroLedgerExportDescribesTheImportThatFollows(unittest.TestCase):
     `share.merge` refuses on those FILES being absent, not on their row count, so
     the export's "`cf share import` needs at least one adjudicated ledger row and
     will refuse this bundle" was false for exactly the bundle that branch
-    describes: the import accepts it and merges nothing.
+    describes: the import accepts it and merges nothing.  Keying the replacement
+    on the ROW count moved the false sentence to the neighbouring bundle instead
+    -- a findings-only campaign has no ledger file at all, and the import exits 2
+    on it -- so both cases are here, each checked against `merge_bundle` itself.
     """
 
     def setUp(self):
@@ -309,6 +354,58 @@ class TestTheZeroLedgerExportDescribesTheImportThatFollows(unittest.TestCase):
         self.assertEqual([c for c in nxt.splitlines()
                           if c.strip().startswith("`cf share import`") and "refuse" in c],
                          [], "the export promised a refusal `cf share import` does not make")
+
+    def test_a_findings_only_bundle_is_described_as_one_the_import_refuses(self):
+        """The other bundle with `ledger rows 0`: no `cf adjudicate` has ever run.
+
+        `merge_bundle` refuses this one, and the sentence keyed on the row count
+        told its operator the import would merge it.
+        """
+        from cflib.errors import CfError
+        from share import bundle as bundle_mod
+        from share import merge as merge_mod
+
+        workspace = findings_only_workspace(self, "findings-only")
+        out = scratch(self) / "bundle"
+        manifest, printed = export(self, workspace, out)
+        self.assertEqual(manifest["counts"]["ledger_rows"], 0)
+        self.assertEqual(manifest["counts"]["routed_rows"], 1)
+        self.assertEqual(bundle_mod.bundle_ledger_files(out), [],
+                         "a campaign before an adjudication carries no ledger file")
+        nxt = printed.split("next:")[-1]
+        self.assertIn("`cf share import` refuses this bundle", nxt)
+        self.assertNotIn("merges adjudicated ledger rows", nxt)
+        self.assertIn("cf quotes hydrate", nxt)
+        other = share_workspace(self, scratch(self) / "bob" / "ws")
+        with self.assertRaises(CfError) as ctx:
+            merge_mod.merge_bundle(other, out, manifest)
+        self.assertIn("no ledger rows", str(ctx.exception),
+                      "the printed line and the import must describe one bundle")
+
+    def test_a_tarball_is_answered_for_by_its_manifest_not_by_its_shape(self):
+        """`--out <name>.tar.gz` leaves no bundle directory to look in.
+
+        The staging directory is gone by the time the command prints, so a
+        condition asked of the OUT PATH would answer "no ledger file" for every
+        tarball ever exported.  The manifest lists what was written.
+        """
+        from share import bundle as bundle_mod
+        from share import merge as merge_mod
+
+        out = scratch(self) / "bundle.tar.gz"
+        manifest, printed = export(self, self.workspace, out)
+        self.assertEqual(manifest["counts"]["ledger_rows"], 0)
+        self.assertEqual(bundle_mod.bundle_ledger_files(out), [],
+                         "there is no directory at a tarball's path to glob")
+        self.assertTrue(bundle_mod.manifest_ledger_files(manifest),
+                        "the tarball carries the ledger files all the same")
+        nxt = printed.split("next:")[-1]
+        self.assertIn("merges adjudicated ledger rows", nxt)
+        self.assertNotIn("refuses this bundle", nxt)
+        other = share_workspace(self, scratch(self) / "bob-tar" / "ws")
+        opened = bundle_mod.open_bundle(out, scratch(self) / "unpacked")
+        report = merge_mod.merge_bundle(other, opened, manifest)
+        self.assertEqual(report["added"], 0)
 
     def test_the_summary_names_the_scope_the_scan_really_has(self):
         """FR#3 widened the scan to every free-text field; two printed strings
