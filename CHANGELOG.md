@@ -43,6 +43,11 @@ release has something to say.
 - `tests/test_rf_docs.py`: the docs-to-CLI contract — every `cf` command and
   flag a document names must parse, every command must be in SKILL.md's index,
   and every cited repo path must exist.
+- `tests/test_rf_scrub.py`: the whole-tracked-tree check for machine-local
+  content — absolute home paths, one person's home layout, host names,
+  addresses, session and Workflow ids, and citations into a transcript
+  directory this repo has never held — and for citations of files that are
+  not here. The rules and their allowlist are spelled out in that file.
 
 ### Changed
 - `cf harvest` and `cf import-corpus` run the findings gate **by default**;
@@ -51,6 +56,14 @@ release has something to say.
 - the 1,941-line design record moved to
   `docs/design/archive/multi-source-model.md` with a banner; four statements in
   it are marked superseded in place.
+- a multi-line warning goes to stderr as one block (`cflib.log.warn_block`).
+  The continuation lines of fourteen warnings — including `cf status`'s
+  unconfirmed-sources list, whose per-source rows carry the sha and the origin
+  — used to print on stdout, so `cf … 1>out 2>err` split each warning from its
+  own evidence.
+- `tests/e2e/multisource.sh` takes `CF_TML` and `CF_MT` from the environment
+  and names them when they are unset, instead of defaulting to two checkouts
+  that exist on one machine.
 
 ### Fixed
 - 44 docstring citations pointed at four design documents that were never
