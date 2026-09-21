@@ -121,6 +121,30 @@ def quote_spliced_over(count: int) -> str:
     return ("for later use in section 6. " + folios + " " + RUNNING_HEAD + " "
             + PAGE_7.split("\n")[0])
 
+#: Four operands a sign can be written in front of, one sentence each, and for
+#: every one the quote that STARTS at the operand and the quote that ENDS on it.
+#: The digit column is the one FR#46's guard read; the other three are the
+#: spellings the same laundering survived in.
+SIGN_BOOK = (
+    "Lemma 4.2.1. For an elementary set we have 1 <= m(F) for every set F that covers it.\n"
+    "Lemma 4.2.2. By monotonicity we know m*(F) <= m*(E) whenever F is contained in E.\n"
+    "Lemma 4.2.3. From the previous display we obtain (1 <= m(F)) for every such cover.\n"
+    "Lemma 4.2.4. Under the stated hypotheses x <= y holds for every pair considered.\n\f"
+)
+SIGN_OPERANDS = (
+    ("a digit", "1 <= m(F) for every set F that covers it",
+     "For an elementary set we have 1"),
+    ("a starred term", "m*(F) <= m*(E) whenever F is contained in E",
+     "By monotonicity we know m*(F)"),
+    ("a parenthesised term", "(1 <= m(F)) for every such cover",
+     "From the previous display we obtain (1 <= m(F))"),
+    ("a single letter", "x <= y holds for every pair considered",
+     "Under the stated hypotheses x"),
+)
+#: the six spellings of the sign, glued and spaced, at each edge
+SIGNS_BEFORE = ("-", "- ", "-  ", "− ", "— ", "— — ")
+SIGNS_AFTER = ("-", " -", "  -", " −", " —", " — —")
+
 BOGUS_ROW = {
     "concept": "invented",
     "kind": "NOT_A_KIND",
@@ -1067,11 +1091,57 @@ class TestATypographicDashAtTheEdgeIsNotAnOperator(BookTestCase):
                     book, "In that case we have 1" + sign)[0])
 
     def test_a_dash_beside_a_word_is_still_punctuation_at_either_edge(self):
-        """The tightening is about numbers only: the case FR#46 fixed stands."""
+        """The tightening is about the operand: the case FR#46 fixed stands."""
         for d in ("— " + QUOTE_1, QUOTE_1 + " –", QUOTE_1 + " -",
-                  "− " + QUOTE_1, QUOTE_1 + " — "):
+                  "− " + QUOTE_1, QUOTE_1 + " — ", "— — " + QUOTE_1,
+                  '— "' + QUOTE_1):
             with self.subTest(quote=d[:6] + "..." + d[-6:]):
                 self.assertEqual(vf.quote_ok(self.book, d), (True, "verbatim"))
+
+    def test_a_sign_is_a_sign_in_front_of_any_operand_not_only_a_digit(self):
+        """The guard read a DIGIT, and a sign is a sign whatever it precedes.
+
+        ``-m*(F) <= m*(E) …`` was refused as an operator the book lacks while
+        ``- m*(F) <= m*(E) …`` -- the same flip, one space -- was stripped back to
+        the book's own words, certified *verbatim*, and carried through
+        ``validate_doc`` to exit 0 with "operators checked" on the receipt.  The
+        attacker writes the quote, so the attacker picks both the spacing and the
+        operand: six spellings of the sign over four operands, at both edges.
+        """
+        book = vf.BookText.from_text(SIGN_BOOK)
+        for what, head, tail in SIGN_OPERANDS:
+            with self.subTest(operand=what):
+                self.assertEqual(vf.quote_ok(book, head), (True, "verbatim"))
+                self.assertEqual(vf.quote_ok(book, tail), (True, "verbatim"))
+                for sign in SIGNS_BEFORE:
+                    ok, why = vf.quote_ok(book, sign + head)
+                    self.assertFalse(ok, f"a leading sign was laundered: {why}")
+                    self.assertIn("OPERATOR", why)
+                for sign in SIGNS_AFTER:
+                    ok, why = vf.quote_ok(book, tail + sign)
+                    self.assertFalse(ok, f"a trailing sign was laundered: {why}")
+                    self.assertIn("OPERATOR", why)
+
+    def test_the_laundered_quote_does_not_reach_the_receipt(self):
+        """Not only ``quote_ok``: the document was ACCEPTED and the gate exited 0.
+
+        The receipt's "operators checked" was printed over a quote whose leading
+        operator the book does not carry, which is the whole value of the pass.
+        """
+        book_path = self.root / "signs.txt"
+        book_path.write_text(SIGN_BOOK, encoding="utf-8")
+        cfg = gate_cfg(book_path)
+        books, errs = vf.load_sources(cfg)
+        self.assertEqual(errs, [])
+        quote = SIGN_OPERANDS[1][1]          # the starred term, at the head
+        self.assertEqual(vf.validate_doc(doc_for(quote, item="Lemma 4.2.2"), "x.json",
+                                         cfg, books), [])
+        for sign in ("-", "- ", "− ", "— "):
+            with self.subTest(sign=sign):
+                errs = vf.validate_doc(doc_for(sign + quote, item="Lemma 4.2.2"),
+                                       "x.json", cfg, books)
+                self.assertEqual(len(errs), 2, errs)          # the quote in both places
+                self.assertTrue(all("OPERATOR" in e for e in errs), errs)
 
     def test_an_interior_operator_is_untouched_by_the_strip(self):
         flip = "— " + QUOTE_1.replace("<=", ">=")

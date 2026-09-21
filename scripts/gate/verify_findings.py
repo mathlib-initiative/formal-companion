@@ -195,31 +195,41 @@ def _fold(s: str) -> str:
 #: -- an em dash introducing the quotation, pdftotext debris at a line end.
 _LOOSE_DASH_HEAD = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)")
 _LOOSE_DASH_TAIL = re.compile(r"(?<=\s)[\s\u2010-\u2015\u2212-]*$")
-#: the operand a boundary dash must never be separated from.  The whitespace
+#: what a boundary dash may be stripped BEFORE (resp. AFTER).  The whitespace
 #: condition alone reads the spacing the QUOTE chose, and the quote is written
 #: by the agent: against a book saying ``1 <= m*(F)``, ``-1 <= m*(F)`` was
 #: refused as a sign the book lacks while ``- 1 <= m*(F)`` -- the same flip with
 #: one space in it -- was stripped back to the book's own words and certified
-#: verbatim.  So a dash is punctuation only when what follows (or precedes) it
-#: is not a number.  Measured in the pinned text of the audited source: a dash,
-#: a space and a digit occur 4 times against 128 glued spellings, and the
-#: innocent 4 are inside a passage, not at a quote's edge.
-_SIGNED_HEAD = re.compile(r"^\s*[0-9]")
-_SIGNED_TAIL = re.compile(r"[0-9]\s*$")
+#: verbatim.  Asking whether the operand is a NUMBER only moved that one
+#: character: a sign is a sign whatever it is written in front of, so
+#: ``- m*(F) <= m*(E)`` and ``- (1 <= m(F))`` were laundered exactly as ``- 1``
+#: had been.  The rule is therefore about PROSE, not about digits -- a dash at
+#: the edge is punctuation only when the text beside it is an alphabetic word of
+#: two or more letters (at the trailing edge, with the sentence punctuation that
+#: may follow one), which is what an em dash introducing a quotation and a
+#: pdftotext hyphen at a line end both sit against.  Everything else a
+#: mathematical quote can begin or end with -- a digit, a bracket, a LaTeX
+#: backslash, a bar, a lone variable letter -- is a term the dash would be the
+#: sign of, so the run stays and the operator pass judges it.  Measured over the
+#: baseline corpus's 3,019 quotes: 4 strip differently for this and all 4 differ
+#: only in leading whitespace, so not one of them reaches the operator pass as a
+#: different token stream.
+_WORD_AFTER_DASH = re.compile(r"^\s*[\"'\u201c\u2018]*[A-Za-z]{2,}")
+_WORD_BEFORE_DASH = re.compile(r"[A-Za-z]{2,}[.,;:!?]*[\"'\u201d\u2019]*\s*$")
 
 
 def _strip_loose_dashes(s: str) -> str:
     """The quote without the punctuation dashes at its own edges.
 
-    Never across a sign: a run that would leave a number bare at the edge stays,
+    Never across a sign: a run whose operand is anything but a word stays,
     operators and all, and the operator pass then judges it.
     """
     s = s or ""
     head = _LOOSE_DASH_HEAD.match(s)
-    if head and not _SIGNED_HEAD.match(s[head.end():]):
+    if head and _WORD_AFTER_DASH.match(s[head.end():]):
         s = s[head.end():]
     tail = _LOOSE_DASH_TAIL.search(s)
-    if tail and not _SIGNED_TAIL.search(s[: tail.start()]):
+    if tail and _WORD_BEFORE_DASH.search(s[: tail.start()]):
         s = s[: tail.start()]
     return s
 
@@ -348,9 +358,10 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
     with the edges in scope a leading em dash or a trailing pdftotext hyphen was
     an ``opminus`` the book lacks, so a verbatim, correctly-operatored quote was
     refused and the refusal called the punctuation mathematics.  That strip never
-    crosses a sign -- a dash beside a NUMBER stays, whatever the spacing -- and
-    it moves none of the figures below: not one of the 3,019 baseline quotes
-    strips differently for it.
+    crosses a sign -- a dash whose operand is anything but a WORD stays, whatever
+    the spacing -- and it moves none of the figures below: 4 of the 3,019
+    baseline quotes strip differently for that rule and all 4 differ only in
+    leading whitespace, which both normalisations drop.
     Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
     (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
     sign the extraction dropped), against 2 under the old one, and the edges add

@@ -165,6 +165,11 @@ release has something to say.
   still ran on a read. The gate now refuses to read that worktree at all (exit
   3, naming the driver and the git version) and `cflib.gitsafe` returns a
   refusal instead of a read; on git 2.31 and later nothing changes.
+- a boundary dash was stripped as punctuation unless a DIGIT stood beside it, so
+  `- m*(F) ≤ m*(E)`, `- (1 ≤ m(F))` and `- x ≤ y` were still stripped back to the
+  book's own words and certified verbatim while the same flips written without
+  the space were refused. A dash at a quote's edge is now punctuation only when
+  the text beside it is an alphabetic word.
 
 ## 0.2.0 — the multi-source model
 
