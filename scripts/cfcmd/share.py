@@ -15,10 +15,18 @@ the pipeline, and a lost laptop was a lost calibration baseline.
 tallies, the run receipts and source METADATA into a bundle with a
 ``MANIFEST.json`` naming every file and its sha256 -- and by default every book
 quote in it is REDACTED to ``{page, length, sha256 of the normalised quote,
-first/last six words}``.  Nothing in a bundle reconstructs the source: there is no
-text, no page image, no PDF, no findings document, and no statements table unless
-``--include-statements`` asks for one.  A reader who holds the same edition gets
-the sentences back with ``cf quotes hydrate --bundle <bundle>``.
+first/last six words}``.  ``book_quote`` is not the only field that quotes the
+book, so a verbatim run of 40 normalised characters or more inside a ``reason``,
+``evidence``, ``finding_summary``, ``original_concept``, ``reasoning``,
+``concept`` or ``suggested_fix`` is redacted in place the same way and recorded in
+the row's ``redacted_spans``.  Nothing in a bundle reconstructs the source: there
+is no text, no page image, no PDF, no findings document, and no statements table
+unless ``--include-statements`` asks for one; a ``_meta`` row travels through an
+allowlist, so the absolute paths and workflow ids ``cf adjudicate`` and ``cf
+route`` write into one stay behind; and a companion whose routed ``_meta.status``
+is not ``CHALLENGED`` is refused outright (SKILL.md hard rule 5) unless
+``--skip-unchallenged`` leaves those rows behind.  A reader who holds the same
+edition gets the sentences back with ``cf quotes hydrate --bundle <bundle>``.
 
 ``import`` merges a bundle's ledger rows into this workspace: the same finding
 with the same verdict is a no-op, two different verdicts are BOTH kept and marked
@@ -57,15 +65,23 @@ def register(subparsers) -> None:
                           "repo -- a bundle is meant to travel")
     exp.add_argument("--companion", action="append", default=[],
                      help="companion to export (repeatable; default: every one)")
-    exp.add_argument("--redact-quotes", dest="redact", action="store_true", default=True,
-                     help="replace every book quote with (page, length, hash, first/last six "
-                          "words) -- the default")
+    exp.add_argument("--redact-quotes", dest="redact", action="store_true", default=None,
+                     help="replace every book quote -- and every verbatim run of the source "
+                          "inside a reason or a reasoning -- with (page, length, hash, "
+                          "first/last six words) (default: workspace.yaml "
+                          "policy.redact_quotes_on_export, which is true)")
     exp.add_argument("--full-quotes", dest="redact", action="store_false",
-                     help="carry the verbatim book sentences instead; only for a recipient who "
-                          "may hold them, and recorded as quotes: VERBATIM in the manifest")
+                     help="carry the verbatim book sentences instead (overrides the workspace "
+                          "policy); only for a recipient who may hold them, and recorded as "
+                          "quotes: VERBATIM in the manifest")
     exp.add_argument("--include-statements", action="store_true",
                      help="also copy companions/<name>/statements.jsonl (a private repo's Lean "
                           "statements; off by default)")
+    exp.add_argument("--skip-unchallenged", action="store_true",
+                     help="leave a companion's routed findings OUT of the bundle when their "
+                          "_meta.status is not CHALLENGED, instead of refusing the export. A "
+                          "first-pass finding is wrong about 40%% of the time, so they are "
+                          "never carried either way; the adjudicated ledger rows still travel")
     exp.add_argument("--force", action="store_true", help="overwrite an existing --out")
 
     imp = sub.add_parser("import", help="merge a bundle's ledger rows into this workspace",
@@ -86,10 +102,30 @@ def run(args) -> int:
     return {"export": _export, "import": _import}[command](workspace, args)
 
 
+def _redact(workspace, args) -> bool:
+    """``--redact-quotes`` / ``--full-quotes``, else the workspace's own policy.
+
+    Read exactly as ``cfcmd.route._redact`` reads it, and for the same reason that
+    helper exists: ``policy.redact_quotes_on_export`` was written into every
+    workspace by `cf init` and read by nothing, so an operator who read their
+    workspace.yaml and believed quotes were redacted got verbatim book sentences
+    in the file they handed to somebody else.  A flag overrides the policy; with
+    no flag the policy is what applies.
+    """
+    if getattr(args, "redact", None) is not None:
+        return bool(args.redact)
+    try:
+        return bool(dict(workspace.policy or {}).get("redact_quotes_on_export", True))
+    except Exception:  # noqa: BLE001 - a workspace we cannot read gets the safe default
+        return True
+
+
 def _export(workspace, args) -> int:
+    redact = _redact(workspace, args)
     manifest = bundle_mod.export_bundle(
-        workspace, args.out, companions=args.companion, redact=args.redact,
-        include_statements=args.include_statements, force=args.force)
+        workspace, args.out, companions=args.companion, redact=redact,
+        include_statements=args.include_statements, force=args.force,
+        skip_unchallenged=args.skip_unchallenged)
     counts = manifest["counts"]
     log.ok(f"wrote {manifest['out']}")
     log.info(f"bundle    : {manifest['bundle_id'][:12]}  ({len(manifest['files'])} files)")
@@ -98,14 +134,22 @@ def _export(workspace, args) -> int:
         ["ledger rows", "routed rows", "tallies", "receipts", "statements"],
         [[counts["ledger_rows"], counts["routed_rows"], counts["tallies"],
           counts["receipts"], counts["statements"]]]))
-    if args.redact:
+    for name, status in sorted(manifest.get("routed_status", {}).items()):
+        left_out = name in (manifest.get("skipped_unchallenged") or [])
+        log.info(f"routed    : {name} {status}"
+                 + ("   -- LEFT OUT of the bundle" if left_out else ""))
+    if redact:
         log.info(f"quotes    : {counts['quotes_redacted']} redacted, "
                  f"{manifest['counts']['quotes_with_page']} of them with a page")
+        log.info(f"prose     : {counts['prose_spans']} verbatim run(s) of "
+                 f"{manifest['prose_span_min']}+ characters redacted out of the rows' reason/"
+                 "reasoning/concept fields")
         log.info("            a holder of the same edition reads them with "
                  "`cf quotes hydrate --bundle <bundle>`")
     else:
         log.warn(f"quotes    : VERBATIM -- {counts['quotes_verbatim']} book sentence(s) are in "
-                 "this bundle. Only hand it to somebody who may hold them")
+                 "this bundle, and the rows' prose is as written. Only hand it to somebody "
+                 "who may hold them")
     if args.include_statements and counts["statements"]:
         log.warn(f"{counts['statements']} statements.jsonl file(s) are in this bundle: they are "
                  "a private repo's Lean statements")

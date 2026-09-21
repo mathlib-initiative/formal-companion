@@ -9,11 +9,28 @@ point of the command, and :data:`WITHHELD` is the list, checked by a test:
 * no book text: ``sources/<id>/text.txt``, ``pages/``, ``images/``, ``crops/``,
   no PDF, and no corpus findings document (a findings file quotes the book; the
   routed file carries the same rows with the quote REDACTED by default);
+* no verbatim run of the source inside a row's PROSE either.  ``book_quote`` is
+  not the only field that quotes the book: measured against the baseline
+  campaign's own ledger, 10 of its 59 non-empty ``reason`` / ``evidence`` /
+  ``finding_summary`` / ``original_concept`` / ``reasoning`` / ``concept`` /
+  ``suggested_fix`` fields carry a run of at least
+  :data:`share.redact.PROSE_SPAN_MIN` characters that occurs verbatim in the book,
+  the longest 113 characters and one of them a whole ``pdftotext`` page dump.  Each
+  such run is replaced by a marker and recorded in the row's ``redacted_spans``,
+  recoverable by ``cf quotes hydrate`` like any other redacted quote;
 * no private Lean statements (``companions/*/statements.jsonl``) unless
   ``--include-statements`` says so in as many words;
 * no machine-local facts: a receipt's ``destination`` and its ``source.path`` /
-  ``source.host`` are dropped, and a source's ``pdf`` path and a companion's
-  ``repo`` path never travel.
+  ``source.host`` are dropped, a source's ``pdf`` path and a companion's ``repo``
+  path never travel, and every ``_meta`` row goes through an allowlist
+  (:data:`LEDGER_META_KEYS`, :data:`ROUTED_META_KEYS`) because ``cf adjudicate``
+  writes an absolute ``result_file`` and a ``workflow_run_id`` into one and
+  ``cf route`` writes the absolute workspace path into another;
+* no UNCHALLENGED routed rows at all.  SKILL.md hard rule 5 -- nothing leaves the
+  workspace directory while ``_meta.status`` is ``UNCHALLENGED`` -- binds the one
+  command that writes outside the workspace most of all, so an unchallenged
+  companion is refused by name and ``--skip-unchallenged`` leaves those rows
+  behind rather than carrying them.
 
 The bundle is meant to be handed to a second person -- committed to a repo that
 HAS a remote, mailed, carried on a stick.  That is why the command refuses to
@@ -35,6 +52,7 @@ from cflib.errors import CfError
 from cflib.hashing import sha256_file, sha256_json, short
 from cflib.jsonio import read_json, read_jsonl, write_json, write_jsonl
 from cflib.paths import WorkspacePaths, skill_root
+from ledger.compat import STATUS_CHALLENGED
 
 from . import redact as redact_mod
 from .hydrate import locate_pages
@@ -66,6 +84,19 @@ RECEIPT_KEYS = (
 #: keys of a receipt's ``source`` block that travel
 RECEIPT_SOURCE_KEYS = ("kind", "mode", "preset", "converted", "already_v2", "repos",
                        "repo_map", "repos_not_in_workspace")
+#: keys of a LEDGER file's ``_meta`` row that travel.  An allowlist for the same
+#: reason RECEIPT_KEYS is one: ``cf adjudicate`` writes ``result_file``
+#: (``os.path.abspath`` of the reviewer's result) and ``workflow_run_id`` into it
+#: (ledger/transcribe.py), and RULES/CLAUDE.md S1 forbid a path, a host name or a
+#: workflow id in anything shareable.  ``at`` is left out too: a bundle's contents
+#: are a function of the ledger, and a date in it would make two exports of the
+#: same rows differ.
+LEDGER_META_KEYS = ("companion", "file", "method", "sources", "source_shas", "counts")
+#: keys of a ROUTED file's ``_meta`` row that travel.  ``challenge_command`` is
+#: the one being kept out: ``route.challenge_command`` builds it around the
+#: absolute workspace path.
+ROUTED_META_KEYS = ("repo", "status", "rule", "schema", "sources", "counts",
+                    "source_sha_conflict", "upstream")
 
 #: what a bundle never carries, in the words the manifest records
 WITHHELD = (
@@ -74,8 +105,17 @@ WITHHELD = (
     "the source file itself (no PDF, no manuscript)",
     "the corpus findings documents (corpus/<run>/*.json quote the book; the routed "
     "rows carry the same findings with the quote redacted)",
-    "the workspace's own paths (a receipt's destination and source.path/source.host)",
+    "a verbatim run of the source inside a row's prose (reason, evidence, "
+    "finding_summary, original_concept, reasoning, concept, suggested_fix): every run "
+    "of 40 normalised characters or more is replaced by a marker and recorded in "
+    "redacted_spans, which `cf quotes hydrate` reads",
+    "the workspace's own paths (a receipt's destination and source.path/source.host, "
+    "a ledger _meta's result_file, a routed _meta's challenge_command) and the "
+    "workflow ids beside them",
+    "the directories of an absolute path a row's own prose cites: /a/b/c.lean:12 "
+    "travels as .../c.lean:12, so the file and the line survive and the laptop does not",
     "each source's local pdf path and each companion's repo path",
+    "routed rows whose _meta.status is UNCHALLENGED (SKILL.md hard rule 5)",
 )
 
 
@@ -143,21 +183,62 @@ def receipt_for_export(receipt: dict) -> dict:
     return out
 
 
-def _redact_rows(rows: Iterable[dict], texts: dict[str, str], *, redact: bool) -> list[dict]:
-    """Redact every row's quote (or none of them), recording the page it is on."""
+def _locator(texts: dict[str, str], source_id: str):
+    """How to find the page of a passage cited by a row stamped *source_id*.
+
+    ``None`` when this workspace has no text to look in, which is recorded as
+    ``page: None`` and costs a hydration the page window, never correctness.  A
+    row with NO ``source_id`` in a workspace pinning exactly one edition uses that
+    edition: the v1 ledger rows the baseline campaign carries are all of that
+    shape, and the digest remains the check either way.
+    """
+    raw = texts.get(source_id)
+    if raw is None and len(texts) == 1:
+        raw = next(iter(texts.values()))
+    if not raw:
+        return None
+    return lambda passage: locate_pages(raw, passage)
+
+
+def _redact_rows(rows: Iterable[dict], texts: dict[str, str],
+                 index: redact_mod.SourceIndex, *, redact: bool,
+                 where: str) -> tuple[list[dict], int]:
+    """Redact every row's quoted source text, recording the page it is on.
+
+    Two redactions, one record shape: ``book_quote`` wholesale, and each verbatim
+    run of the source inside a prose field in place.  The prose half is checked
+    against EVERY pinned text this workspace has rather than only the row's own
+    source, because a row that names no source (the v1 ledger's shape) is exactly
+    the row the measurement found leaking.
+
+    An absolute path inside a row is elided whatever the quote policy says:
+    ``--full-quotes`` is about book sentences a recipient may already hold, and a
+    directory on the exporter's laptop is not one of those.  Returns
+    ``(rows, paths elided)``.
+    """
     out: list[dict] = []
+    elided = 0
     for row in rows:
+        row, found = redact_mod.elide_row_paths(row)
+        elided += found
         if not redact:
-            out.append(dict(row))
+            out.append(row)
             continue
+        locate = _locator(texts, str(row.get("source_id") or ""))
         quote = redact_mod.quote_of(row)
-        pages: list[int] = []
-        if quote:
-            raw = texts.get(str(row.get("source_id") or ""))
-            if raw:
-                pages = locate_pages(raw, quote)
-        out.append(redact_mod.redact_row(row, pages=pages))
-    return out
+        pages = list(locate(quote)) if (quote and locate) else []
+        redacted = redact_mod.redact_row(row, pages=pages)
+        try:
+            redacted = redact_mod.redact_prose(redacted, index, locate=locate)
+        except ValueError as exc:
+            raise CfError(
+                f"refusing to export {where}: {row.get('item') or '(no item)'} carries "
+                f"{exc} -- that field is a page dump, not a remark",
+                hint="shorten it in the ledger and re-run `cf route`, or pass --full-quotes "
+                     "if the recipient may hold that edition (recorded as quotes: VERBATIM "
+                     "in the manifest)") from None
+        out.append(redacted)
+    return out, elided
 
 
 def _companions_to_export(workspace: Any, names: Sequence[str]) -> list[str]:
@@ -218,8 +299,53 @@ def _refuse_unsafe_out(out: Path, workspace: Any) -> None:
                      "outside every audited repository")
 
 
+def _split_meta(path: Path, keys: Sequence[str]) -> tuple[dict | None, list[dict]]:
+    """``(allowlisted _meta, data rows)`` for a ledger or routed .jsonl.
+
+    Every ``_meta`` goes through :func:`_pick` on the way into a bundle, so a key
+    that must not travel is dropped by the allowlist rather than by hand: the
+    absolute ``result_file`` and the ``workflow_run_id`` ``cf adjudicate`` writes,
+    the absolute ``challenge_command`` ``cf route`` writes, and whatever a later
+    version of either adds next to them.
+    """
+    raw = read_jsonl(path)
+    found = next((r["_meta"] for r in raw if isinstance(r, dict) and "_meta" in r), None)
+    rows = [r for r in raw if not (isinstance(r, dict) and "_meta" in r)]
+    if found is None:
+        return None, rows
+    kept = _pick(found if isinstance(found, dict) else {}, keys)
+    # Nothing survived the allowlist -- the baseline's own refuted.* ``_meta`` is a
+    # session id, a date and a PDF path, all of them withheld.  An empty ``_meta``
+    # row would say only that there had been one, so the file travels without it.
+    return (kept or None), rows
+
+
+def _routed_status(meta: dict | None) -> str:
+    """A routed file's ``_meta.status``, or ``""`` when it has none."""
+    return str((meta or {}).get("status") or "")
+
+
+def _check_publish_policy(workspace: Any) -> None:
+    """``policy.publish_unchallenged`` is read here too, and only ``false`` passes.
+
+    Read exactly as ``cfcmd.route._check_publish_policy`` reads it: a workspace
+    that turned the rule off must not get past the command that writes OUTSIDE the
+    workspace either, which is the one where it matters most.
+    """
+    try:
+        policy = dict(workspace.policy or {})
+    except Exception:  # noqa: BLE001 - a workspace we cannot read gets the safe default
+        return
+    if policy.get("publish_unchallenged"):
+        raise CfError(
+            "workspace.yaml sets policy.publish_unchallenged: true, which this skill does "
+            "not implement",
+            hint="a first-pass finding is wrong about 40% of the time; run `cf adjudicate` "
+                 "and set it back to false")
+
+
 def _stage(workspace: Any, stage: Path, *, companions: Sequence[str], redact: bool,
-           include_statements: bool) -> dict:
+           include_statements: bool, skip_unchallenged: bool = False) -> dict:
     """Write the bundle's files into *stage*; returns the counts and the warnings."""
     paths: WorkspacePaths = workspace.paths
     texts: dict[str, str] = {}
@@ -228,12 +354,16 @@ def _stage(workspace: Any, stage: Path, *, companions: Sequence[str], redact: bo
             path = paths.source_text(source_id)
             if path.exists():
                 texts[source_id] = path.read_text(encoding="utf-8", errors="replace")
+    index = redact_mod.SourceIndex(texts.values()) if redact else redact_mod.SourceIndex(())
 
     counts = {"companions": len(companions), "ledger_rows": 0, "routed_rows": 0,
-              "tallies": 0, "receipts": 0, "statements": 0}
+              "tallies": 0, "receipts": 0, "statements": 0, "prose_spans": 0,
+              "paths_elided": 0}
     quotes = {"verbatim": 0, "redacted": 0, "none": 0}
     placed = 0
     warnings: list[str] = []
+    status_by_companion: dict[str, str] = {}
+    skipped: list[str] = []
 
     for name in companions:
         if include_statements and paths.statements_jsonl(name).exists():
@@ -245,24 +375,47 @@ def _stage(workspace: Any, stage: Path, *, companions: Sequence[str], redact: bo
         for src in (paths.accepted_jsonl(name), paths.refuted_jsonl(name)):
             if not src.exists():
                 continue
-            rows = read_jsonl(src)
-            out_rows = _redact_rows(rows, texts, redact=redact)
-            counts["ledger_rows"] += len([r for r in out_rows if "_meta" not in r])
-            write_jsonl(stage / "ledger" / src.name, out_rows)
+            meta, rows = _split_meta(src, LEDGER_META_KEYS)
+            out_rows, elided = _redact_rows(rows, texts, index, redact=redact, where=src.name)
+            counts["ledger_rows"] += len(out_rows)
+            counts["prose_spans"] += sum(len(redact_mod.prose_spans(r)) for r in out_rows)
+            counts["paths_elided"] += elided
+            write_jsonl(stage / "ledger" / src.name, out_rows, meta=meta)
         routed = paths.routed_jsonl(name)
         if not routed.exists():
             warnings.append(f"{name}: no routed findings yet (run `cf route`)")
             continue
-        raw = read_jsonl(routed)
-        meta = next((r["_meta"] for r in raw if isinstance(r, dict) and "_meta" in r), None)
-        rows = [r for r in raw if not (isinstance(r, dict) and "_meta" in r)]
-        out_rows = _redact_rows(rows, texts, redact=redact)
+        meta, rows = _split_meta(routed, ROUTED_META_KEYS)
+        status = _routed_status(meta)
+        status_by_companion[name] = status or "(none)"
+        # SKILL.md hard rule 5, in the one command that writes outside the workspace
+        # directory: a first-pass finding is wrong about 40% of the time, which is
+        # why `route.emit_upstream` refuses the same file and why 32 unchallenged
+        # findings were held back from teorth.
+        if status != STATUS_CHALLENGED:
+            if not skip_unchallenged:
+                raise CfError(
+                    f"refusing to export {name}'s routed findings: _meta.status is "
+                    f"{status or '(unset)'}, not {STATUS_CHALLENGED}",
+                    hint=f"adjudicate them first (`cf adjudicate --companion {name}`, then "
+                         "`cf route`), or pass --skip-unchallenged to leave them out of the "
+                         "bundle and share the rest")
+            skipped.append(name)
+            warnings.append(
+                f"{name}: routed findings LEFT OUT of the bundle -- _meta.status is "
+                f"{status or '(unset)'} and a first-pass finding is wrong about 40% of the "
+                "time (--skip-unchallenged); the ledger rows in the bundle are the "
+                "adjudicated ones")
+            continue
+        out_rows, elided = _redact_rows(rows, texts, index, redact=redact, where=routed.name)
         for key, value in redact_mod.count_quotes(out_rows).items():
             quotes[key] += value
         placed += sum(1 for r in out_rows
                       if redact_mod.is_redacted(r.get("book_quote"))
                       and r["book_quote"].get("page"))
         counts["routed_rows"] += len(out_rows)
+        counts["prose_spans"] += sum(len(redact_mod.prose_spans(r)) for r in out_rows)
+        counts["paths_elided"] += elided
         write_jsonl(stage / "ledger" / "routed" / routed.name, out_rows, meta=meta)
 
     # runs/ holds the prompts, the tasks and the tend root, all of which quote the
@@ -286,8 +439,19 @@ def _stage(workspace: Any, stage: Path, *, companions: Sequence[str], redact: bo
             "no redacted quote could be given a page: this workspace has no prepared text "
             "for the sources the findings cite, so `cf quotes hydrate` will have to search "
             "every page (run `cf sources refresh` to prepare the text)")
+    if redact and not index:
+        # Without a pinned text there is nothing to compare a prose field against,
+        # so the one claim this command makes -- no verbatim run of the source
+        # leaves -- is unchecked, and the manifest says so rather than implying it.
+        warnings.append(
+            "the rows' prose was NOT checked for verbatim source passages: this workspace "
+            "has no prepared text for any source (run `cf sources refresh`). book_quote is "
+            "still redacted, but a sentence of the book inside a reason or a reasoning "
+            "cannot be found without the text to compare against")
     return {"counts": counts, "quotes": quotes, "quotes_with_page": placed,
-            "warnings": warnings}
+            "warnings": warnings, "routed_status": status_by_companion,
+            "skipped_unchallenged": skipped,
+            "prose_checked_against": sorted(texts) if redact else []}
 
 
 def build_manifest(stage: Path, *, workspace: Any, redact: bool, companions: Sequence[str],
@@ -306,6 +470,14 @@ def build_manifest(stage: Path, *, workspace: Any, redact: bool, companions: Seq
         "quotes": "redacted" if redact else "VERBATIM",
         "redaction": redact_mod.REDACTION if redact else "none",
         "statements": bool(include_statements),
+        # What the prose redaction was actually able to check, and what each
+        # companion's routed rows said about themselves: a reader must be able to
+        # tell "checked and clean" from "nothing to check against", and "these rows
+        # were adjudicated" from "these rows were left behind".
+        "prose_span_min": redact_mod.PROSE_SPAN_MIN if redact else None,
+        "prose_checked_against": list(staged.get("prose_checked_against") or []),
+        "routed_status": dict(staged.get("routed_status") or {}),
+        "skipped_unchallenged": list(staged.get("skipped_unchallenged") or []),
         "sources": {sid: (workspace.sources[sid].sha256 or "")
                     for sid in sorted(workspace.source_ids())},
         "counts": dict(staged["counts"], quotes_with_page=staged["quotes_with_page"],
@@ -317,7 +489,7 @@ def build_manifest(stage: Path, *, workspace: Any, redact: bool, companions: Seq
 
 def export_bundle(workspace: Any, out: str | Path, *, companions: Sequence[str] = (),
                   redact: bool = True, include_statements: bool = False,
-                  force: bool = False) -> dict:
+                  force: bool = False, skip_unchallenged: bool = False) -> dict:
     """Write a share bundle for *workspace*.  Returns the manifest.
 
     *out* ending in ``.tar.gz``/``.tgz`` is one file; anything else is a
@@ -326,6 +498,7 @@ def export_bundle(workspace: Any, out: str | Path, *, companions: Sequence[str] 
     land is absent from the manifest and the verification on import says so.
     """
     out = Path(str(out)).expanduser().resolve()
+    _check_publish_policy(workspace)
     _refuse_unsafe_out(out, workspace)
     names = _companions_to_export(workspace, companions)
     if out.exists() and not force:
@@ -340,7 +513,8 @@ def export_bundle(workspace: Any, out: str | Path, *, companions: Sequence[str] 
         stage = Path(tmp) / "bundle"
         stage.mkdir(parents=True)
         staged = _stage(workspace, stage, companions=names, redact=redact,
-                        include_statements=include_statements)
+                        include_statements=include_statements,
+                        skip_unchallenged=skip_unchallenged)
         manifest = build_manifest(stage, workspace=workspace, redact=redact,
                                   companions=names, staged=staged,
                                   include_statements=include_statements)
