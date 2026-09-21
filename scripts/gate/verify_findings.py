@@ -1188,7 +1188,7 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
 #: hook, both ``git diff`` and ``git ls-files`` fired it bare and neither does
 #: with these pins.  They cover that hook, the hooks path, the external diff
 #: driver, the pager and ssh/askpass -- NOT git's content filters, which are a
-#: program too and are blanked per call by :func:`_filter_pins`.  Keep in step
+#: program too and are blanked per call by :func:`_filter_env`.  Keep in step
 #: with gitsafe; ``tests/test_rf_gate.py`` asserts they are identical.
 _GIT_SAFE_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=",
@@ -1205,8 +1205,8 @@ _GIT_SAFE_ENV: dict[str, str] = {
 }
 
 
-def _filter_pins(cwd: pathlib.Path) -> list[str]:
-    """``-c filter.<n>.clean=`` (and ``.process``/``.smudge``) per named driver.
+def _filter_env(cwd: pathlib.Path) -> dict[str, str]:
+    """``GIT_CONFIG_*`` blanking every content filter this worktree names.
 
     The pins above stop the index-refresh hook; they do not stop git's CONTENT
     filters, and :func:`changed_entries` diffs the WORKING TREE against the base,
@@ -1218,6 +1218,14 @@ def _filter_pins(cwd: pathlib.Path) -> list[str]:
     instead would not run them either, but it cannot see an UNSTAGED rewrite of a
     neighbour's landed findings file, which is the case the ownership rule exists
     for; so the diff stays as it is and the drivers are blanked here.
+
+    The blanks travel in the ENVIRONMENT because ``-c`` splits at the FIRST ``=``
+    and the worker chooses the driver's name: with ``filter.a=b.clean`` armed and
+    ``*.json filter=a=b`` in the attributes, ``-c 'filter.a=b.clean='`` sets
+    ``filter.a`` to ``b.clean=``, the real driver keeps its payload and the diff
+    executes it.  ``GIT_CONFIG_KEY_i`` carries the whole key, so there is nothing
+    to split; the pairs are added on top of any count the caller's environment
+    already carries.
 
     ``git config --list`` executes nothing itself and resolves ``include.path``,
     so a driver reached through an include is blanked too, and it reads every
@@ -1233,23 +1241,33 @@ def _filter_pins(cwd: pathlib.Path) -> list[str]:
                              cwd=str(cwd), capture_output=True, text=True, check=False,
                              env={**os.environ, **_GIT_SAFE_ENV})
     except OSError:
-        return []          # no git, no repo: the caller's own command reports it
-    pins: list[str] = []
+        return {}          # no git, no repo: the caller's own command reports it
+    names: list[str] = []
     for key in (got.stdout or "").splitlines():
         k = key.strip()
         if k.startswith("filter.") and k.rsplit(".", 1)[-1] in ("clean", "process", "smudge"):
-            if k not in pins:
-                pins.append(k)
-    return [arg for k in pins for arg in ("-c", k + "=")]
+            if k not in names:
+                names.append(k)
+    if not names:
+        return {}
+    try:
+        start = max(0, int(os.environ.get("GIT_CONFIG_COUNT") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    out = {"GIT_CONFIG_COUNT": str(start + len(names))}
+    for i, key in enumerate(names, start):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = ""
+    return out
 
 
 def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
     """One read-only git command in ``cwd``, with the boundary pinned."""
     import subprocess
 
-    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pins(cwd), *args], cwd=str(cwd),
+    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *args], cwd=str(cwd),
                           capture_output=True, text=True, check=False,
-                          env={**os.environ, **_GIT_SAFE_ENV})
+                          env={**os.environ, **_GIT_SAFE_ENV, **_filter_env(cwd)})
     return proc.returncode, (proc.stdout or "")
 
 
