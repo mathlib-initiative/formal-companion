@@ -406,6 +406,9 @@ class BookText:
         #: label once per findings file per run directory, and the search is over
         #: every page of the source.
         self._label_pages: dict[str, list[int]] = {}
+        #: the non-empty pages joined once, with each one's span in the join;
+        #: built on the first :meth:`pages_matching` that needs it
+        self._span_index: tuple[str, list[tuple[int, int, int]]] | None = None
 
     @classmethod
     def from_text(cls, raw: str, *, operators: bool = True) -> "BookText":
@@ -426,48 +429,73 @@ class BookText:
     def coerce(cls, book: "BookText | str") -> "BookText":
         return book if isinstance(book, BookText) else cls(str(book))
 
+    def _spans(self) -> tuple[str, list[tuple[int, int, int]]]:
+        """The non-empty pages joined as ``words`` is, and where each one sits.
+
+        ``(start, end, page number)`` per page, into the joined string.  Built
+        once per source and kept, because the page list never changes after
+        ``from_text`` and every quote of a findings file searches the same text.
+        """
+        if self._span_index is None:
+            spans: list[tuple[int, int, int]] = []
+            at = 0
+            for n, page in enumerate(self.pages or [], 1):
+                if not page:
+                    continue
+                if spans:
+                    at += 1                       # the single space the join puts in
+                spans.append((at, at + len(page), n))
+                at += len(page)
+            self._span_index = (" ".join(p for p in (self.pages or []) if p), spans)
+        return self._span_index
+
     def pages_matching(self, needle: str) -> list[int]:
         """The 1-based PDF pages carrying ``needle``, or ``[]`` when unknown.
 
         A window that runs over a page break is on no single page, and an empty
         list turns the page bind OFF (:meth:`PageBind.problem` short-circuits on
         it), so a quote from the wrong section passed the gate simply by being
-        spliced onto the tail of the preceding page.  Adjacent pages are therefore
-        searched as RUNS -- but only when the whole-page search found nothing, and
-        narrowest first, or a needle wholly inside page *i* would also be reported
-        for (i-1, i) and (i, i+1) and the recurrence ceiling would count it three
-        times.  The runs are of the NON-EMPTY pages, because ``from_text`` joins
-        only those into ``words``, so a blank page at a seam must not hide the
-        match.
+        spliced onto the tail of the preceding page.  A needle that is on no whole
+        page is therefore looked for in the pages JOINED -- the same string
+        ``from_text`` builds ``words`` from, so a blank page at a seam cannot hide
+        the match -- and each occurrence is reported as the run of pages its own
+        characters touch.  The whole-page pass runs first, or a needle inside page
+        *i* would also be reported for (i-1, i) and (i, i+1) and the recurrence
+        ceiling would count it three times; and when occurrences straddle
+        differently, only the NARROWEST runs are reported, for the same reason.
 
         Pairs alone were not enough: one short page at the seam -- a folio-only
         page, ordinary pdftotext output -- put a three-page splice back in the
         blind spot, and 200 characters bought a wrong-section quote a silent
-        "straddles a page break" note and a pass.  A run can only hold the needle
-        if the pages BETWEEN its ends fit inside it, which is what bounds the
-        widening: once no run of this width can hold it, no wider one can either.
+        "straddles a page break" note and a pass.  Widening a search over runs of
+        adjacent pages closed that, but it is quadratic in the page count when a
+        source's pages are mostly short: measured against the runs it replaces,
+        500 folio-only pages and one 3,000-character needle cost 1.1 s and 2,000
+        pages 58 s, with the needle's length the worker's to choose and the number
+        of quotes per findings file unbounded.  This costs one pass over the
+        source per quote and no page-count term.  Bounding the widening by a
+        constant width instead would be the wrong repair: a run past the bound
+        comes back ``[]``, which is the silent pass this search exists to close.
         """
         if self.pages is None or not needle:
             return []
         hit = [n for n, page in enumerate(self.pages, 1) if needle in page]
         if hit:
             return hit
-        live = [(n, p) for n, p in enumerate(self.pages, 1) if p]
-        for width in range(2, len(live) + 1):
-            out: list[int] = []
-            feasible = False
-            for i in range(len(live) - width + 1):
-                run = live[i : i + width]
-                if sum(len(p) for _, p in run[1:-1]) > len(needle):
-                    continue          # its interior alone is longer than the needle
-                feasible = True
-                if needle in " ".join(p for _, p in run):
-                    out.extend(n for n, _ in run)
-            if out:
-                return sorted(set(out))
-            if not feasible:
-                break
-        return []
+        joined, spans = self._spans()
+        runs: list[list[int]] = []
+        at = joined.find(needle)
+        while at >= 0:
+            end = at + len(needle)
+            # the pages this occurrence really touches: a page the join's own
+            # separator space reaches but whose text it does not is not one
+            runs.append([n for start, stop, n in spans if start < end and stop > at])
+            at = joined.find(needle, at + 1)
+        runs = [run for run in runs if run]
+        if not runs:
+            return []
+        narrowest = min(len(run) for run in runs)
+        return sorted({n for run in runs if len(run) == narrowest for n in run})
 
     def pages_with_label(self, needle: str) -> list[int]:
         """The 1-based PDF pages where an item label occurs, cached.
