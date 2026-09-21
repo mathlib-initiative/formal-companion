@@ -15,6 +15,7 @@ the PDF and infers the offset, the kinds and the errata page (R2).
 """
 from __future__ import annotations
 
+import shlex
 import subprocess
 from datetime import date
 from pathlib import Path
@@ -187,8 +188,10 @@ def run(args) -> int:
     # operator OUTSIDE the workspace: `cf onboard`'s own next-steps are bare (as
     # are the other 546 hint sites), so the very next paste exited 2 with "no
     # workspace.yaml found". One outlier here was cheaper to fix than a flag
-    # threaded into every hint printer.
-    log.info(f"  cd {root}")
+    # threaded into every hint printer. Shell-quoted, because `cd <a path with a
+    # space>` is `cd: too many arguments` and the whole point of the line is
+    # that it can be pasted.
+    log.info(f"  cd {shlex.quote(str(root))}")
     log.info("  cf onboard <path to a companion repo>")
     log.info("      (no flags: the sources, the page offset, the item kinds and the")
     log.info("       errata page are discovered from the repo itself)")
