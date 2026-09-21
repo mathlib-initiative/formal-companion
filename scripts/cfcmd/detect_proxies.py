@@ -79,7 +79,7 @@ from cflib.yamlio import read_yaml  # noqa: E402
 from detect import analyze_stages, corpus as detect_corpus, def_coverage  # noqa: E402
 from detect import findings as find_rows  # noqa: E402
 from detect._compat import DEFAULT_KINDS, item_base, read_json  # noqa: E402
-from cfcmd.harvest import _tally  # noqa: E402
+from harvest import record as record_mod  # noqa: E402
 from detect.deps import DepsIndex  # noqa: E402
 from detect.stages import StageTable  # noqa: E402
 
@@ -213,7 +213,7 @@ def _retally(workspace, summary: dict, args) -> None:
         if not corpus.get("ok", True) or not corpus.get("destination"):
             continue
         run_id = corpus.get("run_id") or f"detect-{summary['companion']}-{tier}"
-        _tally(workspace, run_id, Path(corpus["destination"]))
+        record_mod.write_run_tally(workspace, run_id, Path(corpus["destination"]))
 
 
 def _select_source(workspace, companion: str, requested: str | None) -> str:

@@ -47,8 +47,9 @@ from cflib.jsonio import write_json
 
 from gate import convert_v1
 from harvest import harvest as harvest_mod
+from harvest import record as record_mod
 
-from cfcmd.harvest import _record_state, _tally, gate_runner
+from cfcmd.harvest import gate_runner
 
 #: Directory names the baseline used, mapped to (mode, preset).  Only a default:
 #: --mode and --preset always win.
@@ -216,8 +217,10 @@ def run(args) -> int:
         log.warn("import REFUSED the source: pass --source-sha <the edition these were judged "
                  "against>, or --allow-edition-mismatch to adopt them as they are.")
 
-    counts = {} if args.no_tally else _tally(workspace, args.run_id, dest)
-    _record_state(workspace, args.run_id, {"mode": mode, "preset": preset}, receipt, counts)
+    counts = ({} if args.no_tally
+              else record_mod.write_run_tally(workspace, args.run_id, dest))
+    record_mod.record_run_state(workspace, args.run_id, {"mode": mode, "preset": preset},
+                                receipt, counts)
     return 0 if receipt["complete"] else 1
 
 
