@@ -91,8 +91,13 @@ cf onboard <path to a companion repo>
 ```
 
 That is the whole of stage 0 for one companion. No `--book`, no `--pdf`, no
-`--offset`, no `--errata-url`. Abridged — a real run, with local paths elided —
-`onboard` prints what it decided and why:
+`--offset`, no `--errata-url`. Below is an **abridged illustration**, not a
+promise: one real run, captured 2026-09-21 against `tao-measure-lean` at
+`250b856`, with the paths replaced by placeholders and the checks that passed
+quietly cut. Every count in it belongs to that commit — another checkout prints
+other numbers, and that is drift, not breakage. The transcript you can
+reproduce is `bash tests/e2e/synthetic.sh`, which builds its own booklet and two
+companions of it and checks about seventy artifacts against pinned figures.
 
 ```
 repo      : <tao-measure-lean>
@@ -103,24 +108,25 @@ sources discovered
   tao-measure-2011-draft         sha 62d95658…  registry: skill (confirmed)
       from     graph.json#metadata.sources, CLAUDE.md#sha256_prefix,
                sources/tao-measure-theory.pdf, README.md#links
-      pdf      …/tao-measure-lean/sources/tao-measure-theory.pdf   found in: repo_declared
+      pdf      <companions>/tao-measure-lean/sources/tao-measure-theory.pdf   found in: repo_declared
       offset   16                                 confidence 0.996  (running_head_mode)
   tao-measure-gsm126-published   sha 64498329…  registry: skill (confirmed)
       from     formalization.yaml#sources, CLAUDE.md#sha256_prefix, …
-      pdf      …/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
+      pdf      <companions>/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
       offset   16                                 confidence 0.996  (running_head_mode)
       errata   https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
                confidence 1.00
 
+ok   prepared  sources/tao-measure-2011-draft/   text 265 pages, 441 items, offset 16
 ok   prepared  sources/tao-measure-gsm126-published/   text 265 pages, 442 items, offset 16
-ok   errata    …  HTTP 200  461 entries  (registry, confidence 1.00)
-ok   extracted companions/tao-measure-lean/statements.jsonl   1463 rows
+ok   errata    …  HTTP 200  <n> entries  (registry, confidence 1.00)
+ok   extracted companions/tao-measure-lean/statements.jsonl   1131 rows
 ok   scope     chapters [1, 2]   from the items the companions actually tag
 
 anchor edition
-  tao-measure-gsm126-published                 confidence 0.94
-      anchor agreement  tao-measure-2011-draft             0.66 (202 ok / 103 mismatched)
-      anchor agreement  tao-measure-gsm126-published       0.89 (271 ok / 35 mismatched)
+  tao-measure-gsm126-published                 confidence 0.96
+      anchor agreement  tao-measure-2011-draft             0.68 (202 ok / 95 mismatched)
+      anchor agreement  tao-measure-gsm126-published       0.91 (271 ok / 27 mismatched)
       reason: anchor_agreement
       corroborated by prose: "Book-page anchors in docstrings follow the PUBLISHED pagination…"
   the repo BUNDLES tao-measure-2011-draft but does not anchor to it -> bundled_sources
