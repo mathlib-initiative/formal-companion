@@ -1,7 +1,7 @@
 export const meta = {
   name: 'cf-fleet-local',
   description: 'Local fallback fleet for small runs (<100 items): one worker per book item with a self-run quote gate, then two refuters per content ruling',
-  whenToUse: 'Only when a run is too small to be worth the server (tend + agentbox). Build args with `cf plan-run --local` / `cf run --local`. Hundreds of items belong on the server: this substrate is capped at min(16, CPUs-2) concurrent agents and dies on the subscription session limit mid-run.',
+  whenToUse: 'Only when a run is too small to be worth the server (tend + agentbox). Build args with `cf plan-run --preset <preset>` then `cf run <run-id> --local`. Hundreds of items belong on the server: this substrate is capped at min(16, CPUs-2) concurrent agents and dies on the subscription session limit mid-run.',
   phases: [
     { title: 'Work', detail: 'one agent per item: read the book, compare the statements, self-run the quote gate' },
     { title: 'Challenge', detail: 'two independent refuters per content-level ruling', model: 'opus' },

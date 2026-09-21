@@ -15,8 +15,10 @@ Python API.
   `\n`-joined, the item through `items.clean()` first) and
   `cflib.items.clean()` itself. Changing either re-keys every finding ever
   recorded, so it is a major version and a documented migration, never a
-  bugfix. `tests/test_plan_gate.py::TestFindingIdIsOneDefinition` pins the
-  five copies of that rule against each other.
+  bugfix. `finding_id` is defined twice — `cflib.hashing.finding_id` and the
+  copy `gate/verify_findings.py` inlines because `cf run` transfers it to a
+  host with no cflib; the three compat shims delegate.
+  `tests/test_plan_gate.py::TestFindingIdIsOneDefinition` pins all of it.
 - **Minor** — a new command, a new stage artifact, a new optional row key, a
   new adapter kind, a new registry field. A reader of an older artifact keeps
   working; a reader of a *newer* artifact may need the newer version.
@@ -88,6 +90,28 @@ release has something to say.
 - two line-range citations into files this repo rewrites (`references/traps.md`
   G5 into `CLAUDE.md`, `references/vocabulary.md` §2.2 into the gate script);
   both now cite a section, and a test refuses a new one.
+- the findings gate ran `git` inside a worktree a worker can configure, so a
+  content filter driver named from that worktree's `.git/info/attributes` made
+  the gate run the worker's own program — and the gate still reported the
+  contribution clean. Every filter driver the repo names is now blanked before
+  the gate compares anything.
+- `cf share export` and `cf route --github` redact prose with one redactor over
+  every free-text field of a row, not the seven field names v1 happened to use.
+  Book text used to survive in `summary`, `recovery_argument`, a dissent's
+  argument and the witness — that is, in a bundle handed to somebody else and
+  in the issue body drafted for a public tracker.
+- a manuscript companion (`blueprint_tex`) has no item table by design, so the
+  handoff gave it a coverage denominator of zero and a `TODO(coverage)` naming
+  commands that could not fill it, while the same file said the run had
+  hundreds of tasks. Its universe now comes from the pairing index, so the two
+  halves of the report agree.
+- a differential `cf plan-run` staged every companion in the workspace,
+  including companions of other sources; it now stages only the companions
+  bound to the source the run audits.
+- `cf sources add` bound the source to the companion and saved the workspace
+  before preparing it, so a source it then refused with exit 2 stayed in the
+  audited scope. It prepares first, and a refusal leaves no binding, no overlay
+  row and no half-prepared directory behind.
 
 ## 0.2.0 — the multi-source model
 

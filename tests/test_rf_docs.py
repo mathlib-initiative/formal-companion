@@ -23,9 +23,12 @@ So this module parses the documents and asks the real argparse tree:
   number, and no ``design/…`` citation in a code docstring points at a document
   that is not in the tree -- nor quotes a sentence the cited document does not
   carry, which is the stale citation made checkable rather than fixed;
-* the same command rule over the ``cf <word>`` literals in docstrings and hints
-  under ``scripts/``, ``workflows/`` and ``templates/``: a killed
-  ``cf challenge`` was recoverable only under its real spelling.
+* the same command rule over the ``cf <word>`` literals in docstrings, hints and
+  workflow headers under ``scripts/``, ``workflows/`` and ``templates/``, and the
+  flag rule over ``workflows/`` and ``templates/``: a killed ``cf challenge`` was
+  recoverable only under its real spelling, and two workflows told a session to
+  build its args with a flag that exits 2.  Six stale flag spellings under
+  ``scripts/`` are named in that test's own docstring and are not fixed yet.
 
 The point is drift.  This repo is meant to run over many books, so the index,
 the flags and the layout will all move again -- and a document is what a fresh
@@ -266,13 +269,21 @@ class TestEveryDocumentedCommandExists(unittest.TestCase):
 
 
 #: `cf ` is also how the repo's prose starts a sentence about the CLI ("cf
-#: cannot", "cf needs"), and `curate` / `guard` / `pre-push` are nouns, not
+#: cannot", "cf needs"), and `guard` / `pre-push` are nouns, not
 #: commands.  Everything outside this list is read as naming a command.
+#:
+#: The allowlist applies to PROSE only.  `` `cf <word>` `` in backticks is the
+#: spelling a reader would type, never a noun -- an entry that covers one of
+#: those silences the check for the single occurrence it was written to catch,
+#: which is what `curate` did for `templates/adapter.yaml.example`.
 _CF_PROSE_WORDS = frozenset({
-    "as", "can", "cannot", "command", "curate", "guard", "had", "needs",
+    "as", "can", "cannot", "command", "guard", "had", "needs",
     "never", "on", "one", "pre-push", "subcommands", "with", "writes", "wrote",
 })
 _CF_WORD = re.compile(r"(?<![\w-])cf ([a-z][a-z0-9-]*)")
+_CF_BACKTICKED = re.compile(r"`cf ([a-z][a-z0-9-]*)")
+#: `cf <command> <the rest of the literal>`, so the flags can be resolved too.
+_CF_LITERAL = re.compile(r"(?<![\w-])cf ([a-z][a-z0-9-]*)((?:[^`'\"\n]*)?)")
 
 
 class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
@@ -286,13 +297,19 @@ class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
     are written for, so they are held to the same rule.
     """
 
+    @staticmethod
+    def literal_files() -> list[Path]:
+        return (sorted(SKILL.glob("scripts/**/*.py")) + sorted(SKILL.glob("workflows/*.js"))
+                + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()])
+
     def test_every_cf_command_in_a_code_literal_exists(self):
-        files = (sorted(SKILL.glob("scripts/**/*.py")) + sorted(SKILL.glob("workflows/*.js"))
-                 + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()])
-        for path in files:
+        for path in self.literal_files():
             text = path.read_text(encoding="utf-8", errors="replace")
+            backticked = set(_CF_BACKTICKED.findall(text))
             for word in sorted(set(_CF_WORD.findall(text))):
-                if word in COMMANDS or word in _CF_PROSE_WORDS:
+                if word in COMMANDS:
+                    continue
+                if word in _CF_PROSE_WORDS and word not in backticked:
                     continue
                 with self.subTest(file=str(path.relative_to(SKILL)), command=word):
                     context = _blocks_naming(text, f"cf {word}")
@@ -300,6 +317,45 @@ class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
                                     f"{path.relative_to(SKILL)} names `cf {word}`, "
                                     f"which is not a command, and nothing beside it "
                                     f"says so")
+
+    def test_every_flag_in_a_code_literal_belongs_to_the_command_it_follows(self):
+        """`cf plan-run --local` and `cf report --emit-verify-args` both exit 2.
+
+        Both sat in a workflow's ``whenToUse``, which is the sentence a session
+        reads to decide how to launch the script, and the command-word rule
+        above cannot see a flag.  The subcommand has to be resolved the way
+        :func:`invocations` resolves it, or `cf sources add <pdf> --for` -- a
+        real flag of a real subparser -- fails here instead.
+
+        Scope: the launch instructions and the rendered templates.  ``scripts/``
+        is not in it yet, and not because it is clean -- the same rule run over
+        it finds six stale spellings in hints and TODOs a user is told to type
+        (`cf onboard --repo`, `cf plan-run --mode`, `cf detect-proxies
+        --emit-corpus`, and `cf harvest --tally` three times, where the real
+        spellings are `--name`/`--preset`/`--no-emit-corpus`/`cf tally`).  Those
+        hints are corrected separately; widening the glob to ``scripts/`` is the
+        whole of this check's remaining fix.
+        """
+        files = (sorted(SKILL.glob("workflows/*.js"))
+                 + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()])
+        for path in files:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for word, tail in _CF_LITERAL.findall(text):
+                if word not in COMMANDS:
+                    continue                     # the check above owns that case
+                rest = tail.split()
+                cmd = f"{word} {rest[0]}" if rest and f"{word} {rest[0]}" in SUBCOMMANDS else word
+                known = (SUBCOMMANDS.get(cmd) or COMMANDS[word]) | GLOBAL_FLAGS | FOREIGN_FLAGS
+                for flag in _FLAG.findall(tail):
+                    if flag in known:
+                        continue
+                    with self.subTest(file=str(path.relative_to(SKILL)), flag=flag):
+                        # a flag named in order to say it is gone is allowed, on
+                        # the same terms as a command named that way.
+                        context = _blocks_naming(text, flag)
+                        self.assertTrue(any(w in context for w in ABSENT_LABELS),
+                                        f"{path.relative_to(SKILL)}: `cf {cmd}` has "
+                                        f"no {flag}, and nothing beside it says so")
 
 
 class TestTheCommandIndexIsComplete(unittest.TestCase):
