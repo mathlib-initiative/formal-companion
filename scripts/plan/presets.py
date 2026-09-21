@@ -409,7 +409,7 @@ def gate_config(
         "check_operators": preset.check_operators,
         # Bind every quote to the page its own item is stated on.  Off for the
         # *-legacy presets for the same reason as the operator pass: measured with
-        # the source's own page_offset (16), 16 of the 2,985 bindable quotes of the
+        # the source's own page_offset (16), 16 of the 2,993 bindable quotes of the
         # imported corpus, in 16 files, sit further than PAGE_BIND_WINDOW pages
         # from their item, and those rows are already landed.
         "bind_item_page": not preset.legacy,

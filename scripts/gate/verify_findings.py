@@ -31,10 +31,14 @@ Exit status (errors on stderr):
 
 * 0  every file validated;
 * 1  the findings were REJECTED — fix them;
-* 3  the gate itself could not run (no gate.json, unreadable source text, a
-  ``--source-text`` that names no source of this gate, a missing base ref for the
-  changed-files check).  A worker must answer this by stopping and reporting
-  blocked, never by editing its findings: an infrastructure failure used to be
+* 3  the gate itself could not run (no gate.json, a gate.json that does not
+  parse or is not an object, unreadable source text, a ``--source-text`` that
+  names no source of this gate, a ``decl_index`` that is missing or does not
+  parse, a missing base ref for the changed-files check).  The prompts name that
+  list -- "a missing config, an unreadable source text, a missing index" -- so
+  every one of them has to arrive as 3 rather than as the interpreter's 1 out of
+  a traceback.  A worker must answer this by stopping and reporting blocked,
+  never by editing its findings: an infrastructure failure used to be
   indistinguishable from "your quotes are wrong", and the plausible response to a
   gate that cannot be satisfied is to delete findings until it passes.
 """
@@ -106,10 +110,10 @@ MAX_MATCH_PAGES = 5
 #: on.  An item's statement runs over a page break and pdftotext puts the odd
 #: heading on the neighbouring page, so the bind is a window, not an equality:
 #: measured over the 2,672-file baseline corpus WITH the source's own page_offset
-#: (16), +-2 pages holds for 2,969 of the 2,985 bindable quotes, and the 16
+#: (16), +-2 pages holds for 2,977 of the 2,993 bindable quotes, and the 16
 #: outside include the ones quoting a wholly different section (58, 73 and 107
 #: pages away), which is the defect the bind exists to catch.  State the offset
-#: whenever this figure is quoted: without it only 2,750 of the same quotes can
+#: whenever this figure is quoted: without it only 2,757 of the same quotes can
 #: be placed at all, though the same 16 are still outside the window.
 PAGE_BIND_WINDOW = 2
 #: how many unmatched words the gate prints back when a quote matched only in part
@@ -178,6 +182,22 @@ def _fold(s: str) -> str:
     s = s.replace("\ufb01", "fi").replace("\ufb02", "fl")
     s = s.replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     return re.sub(r"[\u2212\u2013\u2014]", "-", s)
+
+
+#: a run of dashes (and spaces) at a quote's edge that is separated from the
+#: text by whitespace: the same characters as ``_DASHES`` plus the ASCII
+#: hyphen.  The lookarounds are the whole point.  ``_fold`` folds an em dash,
+#: an en dash and a minus sign to ``-`` and the operator table reads ``-`` as
+#: ``opminus``, so a dash written AGAINST its operand (``-1``) is a sign and
+#: must stay, while one with whitespace between it and the text is punctuation
+#: -- an em dash introducing the quotation, pdftotext debris at a line end.
+_LOOSE_DASH = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)"
+                         r"|(?<=\s)[\s\u2010-\u2015\u2212-]*$")
+
+
+def _strip_loose_dashes(s: str) -> str:
+    """The quote without the punctuation dashes at its own edges."""
+    return _LOOSE_DASH.sub("", s or "")
 
 
 def norm(s: str) -> str:
@@ -299,19 +319,27 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
     satisfied it and a single flipped ``≤`` → ``≥`` passed as *verbatim*.
     A verbatim match is checked WITH its edges, so an operator prepended or
     appended to an otherwise verbatim quote is refused too; a partial window is
-    not, because its edge operators sit in the unmatched remainder.
+    not, because its edge operators sit in the unmatched remainder.  The quote's
+    own boundary punctuation is stripped first (:func:`_strip_loose_dashes`):
+    with the edges in scope a leading em dash or a trailing pdftotext hyphen was
+    an ``opminus`` the book lacks, so a verbatim, correctly-operatored quote was
+    refused and the refusal called the punctuation mathematics.
     Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
     (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
     sign the extraction dropped), against 2 under the old one, and the edges add
     none of those 5 even though 117 of the quotes carry a boundary operator.  The
     two ``*-legacy`` presets keep ``check_operators`` off for exactly that reason.
     """
-    qwords, gaps = _split_operators(norm_operators(q).split())
+    qwords, gaps = _split_operators(norm_operators(_strip_loose_dashes(q)).split())
     if qwords != words:
-        # The two normalisations disagreed about the word stream, so the window
-        # cannot be anchored.  Refusing here would reject a real quote over a
-        # normalisation bug; the word pass still applies.
-        return ""
+        # Unreachable for real text: both normalisations delete the same
+        # characters, so the only way here is a quote WORD that collides with an
+        # operator token name (`ople`, `opeq`, `opin`, ...).  Returning "" used to
+        # skip the operator pass for the WHOLE quote, which is all a doctored
+        # quote needed to have a flipped inequality certified as a match.
+        return ("the two normalisations disagree about this quote's words, so its "
+                "operators cannot be anchored: the quote contains a word that "
+                "collides with an operator token name -- rewrite the quote")
     whole = start == 0 and length == len(qwords)
     if _with_operators(qwords, gaps, start, length, edges=whole) in bk.ops:
         return ""
@@ -374,10 +402,31 @@ class BookText:
         return book if isinstance(book, BookText) else cls(str(book))
 
     def pages_matching(self, needle: str) -> list[int]:
-        """The 1-based PDF pages carrying ``needle``, or ``[]`` when unknown."""
+        """The 1-based PDF pages carrying ``needle``, or ``[]`` when unknown.
+
+        A window that runs over a page break is on no single page, and an empty
+        list turns the page bind OFF (:meth:`PageBind.problem` short-circuits on
+        it), so a quote from the wrong section passed the gate simply by being
+        spliced onto the tail of the preceding page.  Adjacent pages are therefore
+        searched as pairs -- but only when the whole-page search found nothing,
+        or a needle wholly inside page *i* would also be reported for (i-1, i) and
+        (i, i+1) and the recurrence ceiling would count it three times.  The pairs
+        are of the NON-EMPTY pages, because ``from_text`` joins only those into
+        ``words``, so a blank page at a seam must not hide the match.  A needle
+        spanning three or more pages is still ``[]`` and still recorded as a
+        straddle by :meth:`PageBind.note`.
+        """
         if self.pages is None or not needle:
             return []
-        return [n for n, page in enumerate(self.pages, 1) if needle in page]
+        hit = [n for n, page in enumerate(self.pages, 1) if needle in page]
+        if hit:
+            return hit
+        live = [(n, p) for n, p in enumerate(self.pages, 1) if p]
+        out: list[int] = []
+        for (a, pa), (b, pb) in zip(live, live[1:]):
+            if needle in pa + " " + pb:
+                out.extend([a, b])
+        return sorted(set(out))
 
     def pages_with_label(self, needle: str) -> list[int]:
         """The 1-based PDF pages where an item label occurs, cached.
@@ -605,7 +654,7 @@ class GateConfig:
         self.check_operators: bool = bool(data.get("check_operators", True))
         # Bind every quote to the page its own item is stated on.  Off for the
         # two *-legacy presets for the same reason as the operator pass: measured
-        # with the source's own page_offset (16), 16 of the 2,985 bindable quotes
+        # with the source's own page_offset (16), 16 of the 2,993 bindable quotes
         # of the imported corpus sit more than PAGE_BIND_WINDOW pages from their
         # item, and those rows are already landed.  A new run has no such history,
         # so it is on.
@@ -749,6 +798,17 @@ class PageBind:
             return [], "the source was handed in as flat text, which carries no pages"
         label = _ITEM_LABEL.search(norm(self.item))
         if not label:
+            if printed:
+                # The item DOES name a printed page; what is missing is the
+                # offset that turns it into a page of the pinned text.  Saying
+                # "neither a numbered label nor a printed page" sent the reader of
+                # the receipt to the item instead of to gate.json.  Kept after the
+                # label search on purpose: an item matching BOTH patterns ("In-text
+                # convention, book p. 29 (Exercise 1.2.5: ...)") still binds by its
+                # heading, so no count moves.
+                return [], (f"{self.item!r} names printed page {printed.group(1)}, but this "
+                            f"run does not know the source's page_offset (set "
+                            f"sources.<id>.page_offset in gate.json)")
             return [], f"{self.item!r} is neither a numbered label nor a printed page"
         pages = book.pages_with_label(f"{label.group(1)} {label.group(2)}")
         if not pages:
@@ -902,9 +962,25 @@ def validate_doc(
                                                source_id, bind=bind, key=label))
     # and the NEXT plausible key name fails loudly instead of silently: a
     # top-level array of objects carrying `kind` is a defect list, whatever it is
-    # called.  No baseline file carries one (measured over all 2,672).
+    # called.  No baseline file carries one (measured over all 2,672, and no
+    # baseline file carries a dict-valued top-level key either).  The walk looks
+    # one level INTO a dict-valued key as well, because `ledger/findings.py`
+    # unwraps `{"result": {...}}` and then counts the `disagreements` inside it:
+    # a gate that only inspected top-level arrays validated nothing about those
+    # rows and the ledger counted them, which is the same bypass by a nested key.
     for other, value in doc.items():
-        if other in DEFECT_LISTS or other == "matches" or not isinstance(value, list):
+        if other in DEFECT_LISTS or other == "matches":
+            continue
+        if isinstance(value, dict):
+            nested = [k for k in DEFECT_LISTS if k in value]
+            if nested:
+                errs.append(
+                    f"{name}: top-level {other!r} nests defect rows under "
+                    f"{', '.join(repr(k) for k in nested)} — the keys that are gated and "
+                    f"counted are {', '.join(repr(k) for k in DEFECT_LISTS)}, at the top level"
+                )
+            continue
+        if not isinstance(value, list):
             continue
         if any(isinstance(x, dict) and "kind" in x for x in value):
             errs.append(
@@ -1108,9 +1184,12 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
 #: which runs ``core.fsmonitor`` -- a program named in that worktree's own
 #: ``.git/config``.  A worker with ``Bash(git:*)`` (the tightest documented tool
 #: allowlist) could therefore make the gate execute its code, from under ``.git/``
-#: where the changed-files check cannot see it: verified, both ``git diff`` and
-#: ``git ls-files`` fired the hook bare and neither does with these pins.  Keep in
-#: step with gitsafe; ``tests/test_rf_gate.py`` asserts they are identical.
+#: where the changed-files check cannot see it: verified for the index-refresh
+#: hook, both ``git diff`` and ``git ls-files`` fired it bare and neither does
+#: with these pins.  They cover that hook, the hooks path, the external diff
+#: driver, the pager and ssh/askpass -- NOT git's content filters, which are a
+#: program too and are blanked per call by :func:`_filter_pins`.  Keep in step
+#: with gitsafe; ``tests/test_rf_gate.py`` asserts they are identical.
 _GIT_SAFE_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=/dev/null",
@@ -1126,11 +1205,49 @@ _GIT_SAFE_ENV: dict[str, str] = {
 }
 
 
+def _filter_pins(cwd: pathlib.Path) -> list[str]:
+    """``-c filter.<n>.clean=`` (and ``.process``/``.smudge``) per named driver.
+
+    The pins above stop the index-refresh hook; they do not stop git's CONTENT
+    filters, and :func:`changed_entries` diffs the WORKING TREE against the base,
+    which has to read that tree's content to decide which paths differ.  So a
+    worker with ``Bash(git:*)`` could write ``filter.x.clean=<its script>`` into
+    ``.git/config`` and ``*.json filter=x`` into ``.git/info/attributes`` -- both
+    under ``.git/``, where the changed-files check cannot see them -- and the gate
+    ran its program and then reported the contribution clean.  Diffing two trees
+    instead would not run them either, but it cannot see an UNSTAGED rewrite of a
+    neighbour's landed findings file, which is the case the ownership rule exists
+    for; so the diff stays as it is and the drivers are blanked here.
+
+    ``git config --list`` executes nothing itself and resolves ``include.path``,
+    so a driver reached through an include is blanked too, and it reads every
+    scope: ``.git/config.worktree`` is the worktree's own and is not ``--local``,
+    and an attribute may name a driver defined in the user's ``~/.gitconfig``
+    (git resolves a filter by NAME, not by who configured it).  An attribute
+    naming a driver nothing defines was already a no-op.
+    """
+    import subprocess
+
+    try:
+        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "config", "--list", "--name-only"],
+                             cwd=str(cwd), capture_output=True, text=True, check=False,
+                             env={**os.environ, **_GIT_SAFE_ENV})
+    except OSError:
+        return []          # no git, no repo: the caller's own command reports it
+    pins: list[str] = []
+    for key in (got.stdout or "").splitlines():
+        k = key.strip()
+        if k.startswith("filter.") and k.rsplit(".", 1)[-1] in ("clean", "process", "smudge"):
+            if k not in pins:
+                pins.append(k)
+    return [arg for k in pins for arg in ("-c", k + "=")]
+
+
 def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
     """One read-only git command in ``cwd``, with the boundary pinned."""
     import subprocess
 
-    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *args], cwd=str(cwd),
+    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pins(cwd), *args], cwd=str(cwd),
                           capture_output=True, text=True, check=False,
                           env={**os.environ, **_GIT_SAFE_ENV})
     return proc.returncode, (proc.stdout or "")
@@ -1207,10 +1324,11 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     pre-merge change set carries one findings/task pair per batched task, so a
     bare stem count would refuse the whole batch and no flag could relax it.  A
     change set in which every touched path is newly ADDED is therefore allowed to
-    carry several stems; one that rewrites, empties, deletes or renames a path
-    that was already on the base branch is still refused by name, which is the
-    case the rule exists for.  A caller that passes a bare set of paths knows no
-    statuses, so it keeps the strict count.
+    carry several stems; a SEVERAL-STEM change set in which any touched path was
+    already on the base branch is refused by name, which is the case the rule
+    exists for, and a deletion or a rename is refused whatever the stem count.  A
+    lone stem is never refused here -- see the paragraph above.  A caller that
+    passes a bare set of paths knows no statuses, so it keeps the strict count.
     """
     statuses = dict(paths) if isinstance(paths, dict) else {}
     problems: list[str] = []
@@ -1381,7 +1499,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"FAIL: gate config missing at {gate_path} (the gate could not run: "
               f"this is not a finding of yours)", file=sys.stderr)
         return EXIT_GATE_BROKEN
-    cfg = GateConfig.load(gate_path)
+    try:
+        cfg = GateConfig.load(gate_path)
+    except Exception as exc:  # noqa: BLE001 - any unreadable config is a gate failure
+        print(f"FAIL: gate config at {gate_path} is unreadable ({exc}) — the gate "
+              f"could not run: this is not a finding of yours", file=sys.stderr)
+        return EXIT_GATE_BROKEN
     for spec in args.source_text or []:
         sid, sep, path = str(spec).partition("=")
         if not sep:
@@ -1400,7 +1523,14 @@ def main(argv: list[str] | None = None) -> int:
             print(f"FAIL: {e}", file=sys.stderr)
         return EXIT_GATE_BROKEN
 
-    decl_index = _load_decl_index(cfg.decl_index) if cfg.decl_index else None
+    decl_index = None
+    if cfg.decl_index:
+        try:
+            decl_index = _load_decl_index(cfg.decl_index)
+        except Exception as exc:  # noqa: BLE001 - a missing/unreadable index is infrastructure
+            print(f"FAIL: gate.json decl_index {cfg.decl_index} is unreadable ({exc}) — the "
+                  f"gate could not run: this is not a finding of yours", file=sys.stderr)
+            return EXIT_GATE_BROKEN
 
     root = pathlib.Path(args.root).resolve()
     problems: list[str] = []
