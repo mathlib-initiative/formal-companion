@@ -824,6 +824,11 @@ class NoRemoteGuardTest(unittest.TestCase):
         traps = (REPO / "references" / "traps.md").read_text(encoding="utf-8")
         self.assertIn("--no-remote-guard", traps)
         self.assertIn("cf share export", traps)
+        # and so must the workspace.yaml `cf init` renders, where allow_remote
+        # used to read as though the hook were the mechanism
+        template = (REPO / "templates" / "workspace.yaml.example").read_text(encoding="utf-8")
+        self.assertIn("REFUSES a workspace repo that has a remote", template)
+        self.assertIn("--no-verify", template)
 
     def test_every_cf_command_the_new_messages_name_really_exists(self):
         """RULES: a `cf ...` command printed by the code must exist."""
