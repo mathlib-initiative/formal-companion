@@ -24,10 +24,15 @@ real and restrictive (``cf sources set <id> chapters=1`` narrows a 442-item book
 to 411 items, and a fleet examines only the items it was given tasks for).  The
 sentence a reader will quote back is "the faithfulness audit of X found N
 defects", so §0 now carries, per source and chapter: items in the source, items
-in scope, items paired, items a run actually examined, items with findings and
-items never examined -- with the unexamined ones written to
+in scope, items in the differential's TASK UNIVERSE (in scope and claimed by at
+least one companion), items PAIRED (claimed by two or more, so a cross-check was
+possible at all), items a run actually examined, items with findings and items
+never examined -- with the unexamined ones written to
 ``reports/unexamined.<source_id>.json`` and every number recomputed here from
-``items.json``, ``reconciliation.json``, the corpus documents and their receipts.
+``items.json``, ``reconciliation.json``, ``pairs/<id>/index.json``, the corpus
+documents and their receipts.  The task universe and the pairs are 383 and 225 on
+the pinned baseline; calling the wider one "paired" is the overclaim this section
+exists to prevent.
 """
 
 from __future__ import annotations
@@ -196,7 +201,7 @@ def _reconciliation_path(paths: Any, source_id: str) -> str:
 
 
 def load_reconciliation(paths: Any, source_id: str) -> dict:
-    """``pairs/<id>/reconciliation.json``: scope and the paired universe, as computed."""
+    """``pairs/<id>/reconciliation.json``: scope and the task universe, as computed."""
     path = _reconciliation_path(paths, source_id)
     if not os.path.exists(path):
         return {}
@@ -205,6 +210,42 @@ def load_reconciliation(paths: Any, source_id: str) -> dict:
     except Exception:
         return {}
     return doc if isinstance(doc, dict) else {}
+
+
+def _pair_index_path(paths: Any, source_id: str) -> str:
+    """``pairs/<id>/index.json``, through the accessor when there is one."""
+    accessor = getattr(paths, "index_json", None)
+    if accessor is not None:
+        return str(accessor(source_id))
+    return os.path.join(paths.pairs(source_id), "index.json")
+
+
+def load_pair_index(paths: Any, source_id: str) -> dict[str, set]:
+    """``pairs/<id>/index.json``: which companions formalise each item.
+
+    The only artifact that says how MANY companions claim one item, and therefore
+    the only one that can answer "paired".  In this repo's vocabulary a pair is an
+    item two or more companions formalise (``pair/compare.build_pairs``); the
+    task universe is wider -- items in scope that AT LEAST ONE companion claims --
+    and on the pinned baseline the two are 225 and 383.  Returns
+    ``{item_join_key: {companion, ...}}``; an absent file returns ``{}``, and the
+    paired figure is then reported as uncomputed rather than as zero.
+    """
+    path = _pair_index_path(paths, source_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        doc = compat.read_json(path)
+    except Exception:  # an unreadable index is a hole, not a crash
+        return {}
+    items = doc.get("items") if isinstance(doc, dict) else None
+    out: dict[str, set] = {}
+    for key, block in (items or {}).items():
+        if not isinstance(block, dict):
+            continue
+        out.setdefault(compat.item_join_key(key),
+                       {str(repo) for repo, decls in block.items() if decls})
+    return out
 
 
 def _run_source(receipt: dict, cfg_run: dict) -> str:
@@ -714,7 +755,8 @@ def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: 
                         coverage: dict | None = None) -> str:
     """Section 8: the commands that recompute every number above.
 
-    ONE spelling, ``cf`` (the ``bin/cf`` shim README.md puts on PATH), with the
+    ONE spelling, ``cf`` (the ``bin/cf`` shim -- symlink it onto PATH with
+    ``ln -s <skill>/bin/cf ~/.local/bin/cf``), with the
     workspace resolved: ``python3 scripts/cf.py ...`` is relative to the skill
     checkout while the reader of this report is standing in the workspace, so it
     could not be pasted into the shell that produced the report.
@@ -789,16 +831,25 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
                     examined: dict[str, dict]) -> dict:
     """The denominator for ONE source, every number read off an artifact.
 
-    ``items_in_source`` is ``items.json``; ``items_in_scope`` and ``items_paired``
-    are ``reconciliation.json``'s own figures (never recomputed here, so the two
-    files cannot disagree silently); ``items_examined``/``items_gated``/
-    ``items_with_findings`` come from the corpus documents.  ``never_examined`` is
-    the difference, by NAME -- a count can say "381 of 411" but only the names say
-    which item was missed, which is the whole reason the reconciliation gate names
-    them too.
+    ``items_in_source`` is ``items.json``; ``items_in_scope`` and
+    ``items_in_task_universe`` are ``reconciliation.json``'s own figures (never
+    recomputed here, so the two files cannot disagree silently);
+    ``items_examined``/``items_gated``/``items_with_findings`` come from the corpus
+    documents; ``items_paired`` is recomputed from ``pairs/<id>/index.json``.
+    ``never_examined`` is the difference, by NAME -- a count can say "381 of 411"
+    but only the names say which item was missed, which is the whole reason the
+    reconciliation gate names them too.
+
+    The task universe and the pairs are DIFFERENT figures and the table must not
+    conflate them: the task universe is every item in scope that at least one
+    companion claims (383 on the pinned baseline), a pair is an item two or more
+    companions formalise (225).  Labelling the wider one "paired" claimed a
+    cross-check that 158 of those items never had, inside the very section that
+    exists to stop overclaiming.
     """
     items = load_source_items(paths, source_id)
     recon = load_reconciliation(paths, source_id)
+    pair_index = load_pair_index(paths, source_id)
     block = examined.get(source_id) or {}
     seen = set(block.get("examined") or ())
     gated = set(block.get("gated") or ())
@@ -811,7 +862,8 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
         if not chapters_audited or row.get("chapter") in set(chapters_audited)
     )
     scope_known = bool(items["present"])
-    paired = set(compat.item_join_key(i) for i in (recon.get("task_universe_items") or []))
+    universe = set(compat.item_join_key(i) for i in (recon.get("task_universe_items") or []))
+    paired = {k for k, repos in pair_index.items() if len(repos) >= 2}
 
     def _chapter(key: str):
         return (items["by_item"].get(key) or {}).get("chapter")
@@ -819,10 +871,13 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
     by_chapter: dict[Any, dict] = {}
     for key in in_scope_names:
         ch = _chapter(key)
-        row = by_chapter.setdefault(ch, {"in_scope": 0, "paired": 0, "examined": 0,
-                                        "gated": 0, "with_findings": 0, "never_examined": []})
+        row = by_chapter.setdefault(ch, {"in_scope": 0, "in_task_universe": 0, "paired": None,
+                                        "examined": 0, "gated": 0, "with_findings": 0,
+                                        "never_examined": []})
         row["in_scope"] += 1
-        row["paired"] += 1 if key in paired else 0
+        row["in_task_universe"] += 1 if key in universe else 0
+        if pair_index:
+            row["paired"] = (row["paired"] or 0) + (1 if key in paired else 0)
         row["examined"] += 1 if key in seen else 0
         row["gated"] += 1 if key in gated else 0
         row["with_findings"] += 1 if key in found else 0
@@ -835,9 +890,17 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
     never = sorted((items["by_item"].get(k) or {}).get("item") or k
                    for k in in_scope_set - seen)
     src = cfg.source(source_id)
+    bound = [n for n in cfg.companion_names() if source_id in (cfg.sources_of(n) or [])]
     return {
         "source_id": source_id,
         "edition": src.edition or src.title or "",
+        "role": src.role,
+        "companions": bound,
+        # A source no companion is bound to is not under audit, so it is not a
+        # hole in the audit either: both real workspaces carry an earlier draft
+        # as a reference edition, and counting it as "part of the scope missing"
+        # made the first paragraph's warning fire on every report ever written.
+        "under_audit": bool(bound),
         "items_json": items["path"],
         "items_in_source": items["count"] if items["present"] else None,
         "chapters_in_source": items["chapters"],
@@ -845,9 +908,12 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
         "items_in_scope": (recon.get("items_in_scope") if recon.get("items_in_scope") is not None
                            else (len(in_scope_names) if scope_known else None)),
         "items_in_scope_recomputed": len(in_scope_names) if scope_known else None,
-        "items_paired": (recon.get("task_universe")
-                         if recon.get("task_universe") is not None
-                         else recon.get("items_in_scope_and_any_repo")),
+        "items_in_task_universe": (recon.get("task_universe")
+                                   if recon.get("task_universe") is not None
+                                   else recon.get("items_in_scope_and_any_repo")),
+        "items_paired": ((len(in_scope_set & paired) if scope_known else len(paired))
+                         if pair_index else None),
+        "pair_index": _pair_index_path(paths, source_id) if pair_index else "",
         "items_examined": len(in_scope_set & seen) if scope_known else len(seen),
         "items_gated": len(in_scope_set & gated) if scope_known else len(gated),
         "items_with_findings": len(in_scope_set & found) if scope_known else len(found),
@@ -883,17 +949,37 @@ def _fraction(part: Any, whole: Any) -> str:
     return "%s / %s" % (part, whole)
 
 
+def _paired_cell(value: Any, under_audit: bool = True) -> Any:
+    """The paired figure, or the command that would compute it.
+
+    ``None`` means ``pairs/<id>/index.json`` is absent, not that nothing was
+    paired; printing 0 there would be the same overclaim in the other direction.
+    A source no companion is bound to is not missing a pairing, so it gets the
+    empty cell the rest of its row gets rather than a command to run.
+    """
+    if value is not None:
+        return value
+    return todo("paired", "cf pair") if under_audit else None
+
+
 def render_coverage_table(coverage: dict) -> str:
-    """Section 0: the denominator, per source and per chapter."""
+    """Section 0: the denominator, per source and per chapter.
+
+    "in task universe" and "paired" are two different columns on purpose; see
+    :func:`source_coverage` for why one of them may not be called the other.
+    """
     rows: list[list[Any]] = []
     for src in coverage.get("sources") or []:
+        audited = bool(src.get("under_audit", True))
         chapters = src.get("by_chapter") or {}
         entries = list(chapters.items()) or [("all", None)]
         for chapter, block in entries:
             if block is None:
                 rows.append(["`%s`" % src["source_id"], "—",
                              src.get("items_in_source"), src.get("items_in_scope"),
-                             src.get("items_paired"), src.get("items_examined"),
+                             src.get("items_in_task_universe"),
+                             _paired_cell(src.get("items_paired"), audited),
+                             src.get("items_examined"),
                              src.get("items_gated"), src.get("items_with_findings"),
                              src.get("items_never_examined")])
                 continue
@@ -901,21 +987,25 @@ def render_coverage_table(coverage: dict) -> str:
                 "`%s`" % src["source_id"],
                 chapter if chapter != "None" else "unnumbered",
                 "",                      # the per-source total is on the total row below
-                block["in_scope"], block["paired"], block["examined"], block["gated"],
+                block["in_scope"], block["in_task_universe"],
+                _paired_cell(block["paired"], audited),
+                block["examined"], block["gated"],
                 block["with_findings"], len(block["never_examined"]),
             ])
         if chapters:
             rows.append([
                 "`%s`" % src["source_id"], "**all audited**",
                 src.get("items_in_source"), src.get("items_in_scope"),
-                src.get("items_paired"), src.get("items_examined"),
+                src.get("items_in_task_universe"),
+                _paired_cell(src.get("items_paired"), audited),
+                src.get("items_examined"),
                 src.get("items_gated"), src.get("items_with_findings"),
                 src.get("items_never_examined"),
             ])
     if not rows:
         return todo("coverage", "cf onboard <repo> && cf pair")
-    return _table(["source", "chapter", "items in source", "in scope", "paired", "examined",
-                   "gated", "with findings", "never examined"], rows)
+    return _table(["source", "chapter", "items in source", "in scope", "in task universe",
+                   "paired", "examined", "gated", "with findings", "never examined"], rows)
 
 
 def coverage_note(coverage: dict) -> str:
@@ -923,6 +1013,10 @@ def coverage_note(coverage: dict) -> str:
     lines = []
     for src in coverage.get("sources") or []:
         total, scope = src.get("items_in_source"), src.get("items_in_scope")
+        if not src.get("under_audit", True):
+            lines.append("- `%s`: not under audit — no companion is bound to it (`role: %s`), so "
+                         "it needs no denominator." % (src["source_id"], src.get("role") or "?"))
+            continue
         if total is None:
             lines.append("- `%s`: no `items.json` yet, so this report has no denominator for it "
                          "— %s." % (src["source_id"], todo("items", "cf onboard <repo>")))
@@ -930,17 +1024,26 @@ def coverage_note(coverage: dict) -> str:
         chapters = (", ".join(str(c) for c in src["chapters_audited"])
                     if src["chapters_audited"] else "all")
         lines.append(
-            "- `%s`: chapters audited %s of %s; %s items in scope of %s in the source; "
-            "%s paired, %s examined (%s of them gated), %s with findings, %s never examined."
+            # "1 of 1, 2" read as one figure over another; the second number is a
+            # LIST of the chapters the source has, so it says so.
+            "- `%s`: chapters audited %s of chapters %s; %s items in scope of %s in the source; "
+            "%s in the differential's task universe, %s paired by two or more companions, "
+            "%s examined (%s of them gated), %s with findings, %s never examined."
             % (src["source_id"], chapters,
                ", ".join(str(c) for c in src["chapters_in_source"]) or "?",
                scope if scope is not None else "?", total,
-               src.get("items_paired") if src.get("items_paired") is not None else "?",
+               src.get("items_in_task_universe")
+               if src.get("items_in_task_universe") is not None else "?",
+               src.get("items_paired") if src.get("items_paired") is not None
+               else "an unknown number of",
                src.get("items_examined"), src.get("items_gated"),
                src.get("items_with_findings"),
                src.get("items_never_examined") if src.get("items_never_examined") is not None
                else "?")
         )
+        if src.get("items_paired") is None:
+            lines.append("  - no `pairs/%s/index.json`, so the paired figure could not be "
+                         "computed at all; run `cf pair`." % src["source_id"])
         if src["ungated_runs"]:
             lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
                          "text; re-harvest with `cf harvest <run-id>`."
@@ -962,13 +1065,28 @@ def coverage_note(coverage: dict) -> str:
 
 
 def scope_sentence(coverage: dict) -> str:
-    """The first paragraph's claim about scope. An unaudited scope says so here."""
+    """The first paragraph's claim about scope. An unaudited scope says so here.
+
+    Only sources UNDER AUDIT can make the report partial.  Both real workspaces
+    carry an earlier draft as a reference edition that no companion is bound to
+    and that therefore has no ``items.json``; counting those made every handoff
+    ever written open with "covers PART of its sources", which is how a warning
+    stops meaning anything.  They are named in their own clause instead, so the
+    reader still sees that the workspace holds them.
+    """
     sources = coverage.get("sources") or []
     if not sources:
         return ("**Scope unknown.** No source has an `items.json` yet, so nothing below has a "
                 "denominator and this report is not an audit of any book.")
+    audited = [s for s in sources if s.get("under_audit", True)]
+    aside = ["`%s`" % s["source_id"] for s in sources if not s.get("under_audit", True)]
+    tail = (" Not under audit (no companion is bound to them): %s." % ", ".join(aside)
+            if aside else "")
+    if not audited:
+        return ("**Scope unknown.** No companion is bound to any source in this workspace, so "
+                "nothing below is an audit of a book.%s" % tail)
     partial = []
-    for src in sources:
+    for src in audited:
         total, scope = src.get("items_in_source"), src.get("items_in_scope")
         never = src.get("items_never_examined")
         if total is None or scope is None or never is None:
@@ -977,11 +1095,12 @@ def scope_sentence(coverage: dict) -> str:
             partial.append("`%s` (%d of %d items in scope, %d never examined)"
                            % (src["source_id"], scope, total, never))
     if not partial:
-        return ("**Scope.** Every item of every source in this workspace is in scope and was "
-                "examined; the per-chapter figures are in §0.")
+        return ("**Scope.** Every item of every source under audit in this workspace is in scope "
+                "and was examined; the per-chapter figures are in §0.%s" % tail)
     return ("**This report covers PART of its sources, not all of them:** %s. It is not an audit "
             "of the whole of any of them, and a count taken from it is a count over the audited "
-            "scope only — §0 has the figures per source and chapter." % "; ".join(partial))
+            "scope only — §0 has the figures per source and chapter.%s"
+            % ("; ".join(partial), tail))
 
 
 def write_coverage(paths: Any, coverage: dict) -> list[str]:
@@ -995,6 +1114,7 @@ def write_coverage(paths: Any, coverage: dict) -> list[str]:
             "items_json": src["items_json"],
             "chapters_audited": src["chapters_audited"],
             "items_in_scope": src["items_in_scope"],
+            "items_in_task_universe": src["items_in_task_universe"],
             "items_examined": src["items_examined"],
             "count": len(src["never_examined"]),
             "items": src["never_examined"],
@@ -1026,7 +1146,10 @@ def build_context(
     gh = load_gh(gh_files)
     source_ids = cfg.source_ids()
     coverage = build_coverage(cfg, paths, runs, receipts)
-    write_coverage(paths, coverage)
+    # The paths, not just the files: `cf report` wrote reports/coverage.json and
+    # one reports/unexamined.<source_id>.json per source and named neither, while
+    # the handoff tells its reader to open the second one.
+    coverage_files = write_coverage(paths, coverage)
 
     unchallenged = [
         f for f in facts
@@ -1097,6 +1220,7 @@ def build_context(
         "_facts": facts,
         "_tallies": tallies,
         "_coverage": coverage,
+        "_coverage_files": coverage_files,
         "_paths": paths,
         "_workspace": cfg,
     }
@@ -1136,7 +1260,13 @@ def make_handoff(
     wrong_section: str = "",
     template: str = "",
 ) -> dict:
-    """Render ``reports/handoff.<date>.md``. Returns {path, todos, context, text}."""
+    """Render ``reports/handoff.<date>.md``.
+
+    Returns ``{path, todos, coverage_files, context, text}``; ``coverage_files``
+    is every other file this call wrote (``reports/coverage.json`` and one
+    ``reports/unexamined.<source_id>.json`` per source), so the command that
+    calls it can name them instead of writing them silently.
+    """
     ctx = build_context(
         workspace,
         tally_files=tally_files,
@@ -1150,7 +1280,8 @@ def make_handoff(
     path = out_path or os.path.join(paths.reports, "handoff.%s.md" % ctx["date"])
     compat.write_text(path, text)
     todos = sorted(set(re.findall(r"TODO\([^)]*\)", text)))
-    return {"path": path, "todos": todos, "context": ctx, "text": text}
+    return {"path": path, "todos": todos, "coverage_files": list(ctx["_coverage_files"]),
+            "context": ctx, "text": text}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -1172,6 +1303,8 @@ def main(argv: list[str] | None = None) -> int:
         tldr=args.tldr,
     )
     print("wrote %s (%d TODO placeholder(s))" % (report["path"], len(report["todos"])))
+    for path in report["coverage_files"]:
+        print("wrote %s" % path)
     return 0
 
 
