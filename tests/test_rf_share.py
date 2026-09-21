@@ -24,6 +24,7 @@ nothing read from a companion repository.
 """
 from __future__ import annotations
 
+import contextlib
 import io
 import json
 import os
@@ -70,6 +71,11 @@ SOURCE_TEXT = "\f".join([PAGE_ONE, PAGE_TWO, PAGE_THREE])
 #: the same text as a pdftotext dump that wrapped the sentence mid-line
 WRAPPED_TEXT = SOURCE_TEXT.replace("non-negative, and that it", "non-negative,\nand that it")
 QUOTE_PAGE = 2
+#: a run of the source long enough to be redacted, written INSIDE a prose field --
+#: which is what a worker explaining a finding actually does
+LIFTED = "the elementary measure m(E) is finite and non-negative"
+#: and one that is not long enough, so the threshold is a threshold
+SHORT_LIFT = "elementary set"
 
 
 def scratch(case: unittest.TestCase) -> Path:
@@ -196,6 +202,27 @@ def export(case: unittest.TestCase, workspace: Workspace, **kw) -> tuple[dict, P
     out = Path(kw.pop("out", None) or (scratch(case) / "bundle"))
     manifest = bundle_mod.export_bundle(workspace, out, **kw)
     return manifest, out
+
+
+@contextlib.contextmanager
+def captured_warnings():
+    """The lines `cflib.log.warn` wrote, as a list, while the block ran.
+
+    The level is pinned and restored: it is module state another test may have
+    turned down, and a warning that is not printed is not what is under test here.
+    """
+    from cflib import log
+
+    was = log.level()
+    log.set_level(1)
+    buf = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(buf):
+            lines: list[str] = []
+            yield lines
+    finally:
+        log.set_level(was)
+    lines.extend(buf.getvalue().splitlines())
 
 
 # ==========================================================================
@@ -654,9 +681,12 @@ class HydrateTest(unittest.TestCase):
         self.assertLess(2 * redact_mod.EDGE_WORDS, len(words))
 
     def test_the_window_is_the_gates_own_page_bind_window(self):
+        """The behaviour, not the import: a window hard-coded in the search would
+        pass `hydrate.PAGE_BIND_WINDOW is PAGE_BIND_WINDOW` and fail this."""
         from gate.verify_findings import PAGE_BIND_WINDOW
 
-        self.assertEqual(hydrate_mod.PAGE_BIND_WINDOW, PAGE_BIND_WINDOW)
+        self.assertEqual(hydrate_mod.pages_to_search({"page": 10}, 100),
+                         list(range(10 - PAGE_BIND_WINDOW, 10 + PAGE_BIND_WINDOW + 1)))
 
 
 # ==========================================================================
@@ -709,6 +739,17 @@ class ShareCommandTest(unittest.TestCase):
         self.assertIn("puts that path in a bundle", res.stderr)
 
     def test_hydrate_writes_the_recovered_text_where_it_is_gitignored(self):
+        """And the rule really is there: the workspace is a repo carrying it.
+
+        Asserting `"quotes/" in GITIGNORE` on its own was not enough -- the rule is
+        only in workspaces created since it was written, which is why
+        `_refuse_unsafe_out` asks git rather than trusting the constant.
+        """
+        from cfcmd.init import GITIGNORE
+
+        subprocess.run(["git", "init", "-q", str(self.bob.root)], check=True,
+                       capture_output=True)
+        (self.bob.root / ".gitignore").write_text(GITIGNORE, encoding="utf-8")
         self._cf("--workspace", str(self.alice.root), "share", "export", "--out", str(self.out))
         target = self.bob.root / "quotes" / "hydrated.adam.jsonl"
         res = self._cf("--workspace", str(self.bob.root), "quotes", "hydrate",
@@ -718,9 +759,9 @@ class ShareCommandTest(unittest.TestCase):
         self.assertEqual(rows[0]["_meta"]["counts"]["hydrated"], 1)
         self.assertEqual(rows[1]["text"], QUOTE)
         self.assertNotIn(QUOTE, res.stdout)
-        # `cf init` writes the ignore rule that keeps this file out of git
-        from cfcmd.init import GITIGNORE
-        self.assertIn("quotes/", GITIGNORE)
+        self.assertEqual(subprocess.run(
+            ["git", "-C", str(self.bob.root), "check-ignore", "-q", str(target)],
+            capture_output=True).returncode, 0)
 
     def test_hydrate_on_a_workspace_of_verbatim_rows_says_so(self):
         res = self._cf("--workspace", str(self.alice.root), "quotes", "hydrate", "--ledger")
@@ -833,10 +874,17 @@ class NoRemoteGuardTest(unittest.TestCase):
     def test_every_cf_command_the_new_messages_name_really_exists(self):
         """RULES: a `cf ...` command printed by the code must exist."""
         for args in (("share", "export", "--help"), ("quotes", "hydrate", "--help"),
-                     ("init", "--help"), ("route", "--help")):
+                     ("init", "--help"), ("route", "--help"), ("adjudicate", "--help"),
+                     ("sources", "refresh", "--help")):
             self.assertEqual(self._cf(*args).returncode, 0, args)
         self.assertIn("--no-remote-guard", self._cf("init", "--help").stdout)
         self.assertIn("--redact-quotes", self._cf("route", "--help").stdout)
+        self.assertIn("--companion", self._cf("adjudicate", "--help").stdout)
+        export_help = self._cf("share", "export", "--help").stdout
+        self.assertIn("--skip-unchallenged", export_help)
+        self.assertIn("policy.redact_quotes_on_export", export_help)
+        self.assertIn("does not ignore",
+                      self._cf("quotes", "hydrate", "--help").stdout)
 
 
 # ==========================================================================
@@ -899,6 +947,542 @@ class RecordedHydrationFiguresTest(unittest.TestCase):
             record = redact_mod.redact_quote(quote)
             self.assertTrue(hydrate_mod.verify_text(record, result["text"]),
                             f"{quote[:60]!r} came back unverifiable")
+
+
+# ==========================================================================
+# critic#3, second pass -- the review's findings against the first one
+# ==========================================================================
+class ProseCarriesTheBookTooTest(unittest.TestCase):
+    """`book_quote` was the only field redacted, so the book travelled in prose.
+
+    MEASURED against the real ledger: 4 of refuted.adam.jsonl's 5 rows and 3 of
+    accepted.adam.jsonl's 10 carried a run of 40 normalised characters or more that
+    occurs verbatim in the book, the longest 113 in a `reason`, and one `reason`
+    held a whole pdftotext page dump -- while the manifest said `quotes: redacted`
+    and WITHHELD said the book text did not travel.
+    """
+
+    def setUp(self):
+        self.workspace = make_workspace(self)
+        self.reason = (f'the statement drops the finiteness half, though the book says '
+                       f'"{LIFTED}" plainly')
+        write_jsonl(self.workspace.paths.accepted_jsonl("adam"),
+                    [ledger_row(reason=self.reason)])
+        write_jsonl(self.workspace.paths.routed_jsonl("adam"),
+                    [routed_row(reasoning=self.reason, concept=SHORT_LIFT)],
+                    meta={"repo": "adam", "status": "CHALLENGED", "schema": "routed-v2"})
+
+    def _rows(self, bundle: Path, name: str) -> list[dict]:
+        path = (bundle / "ledger" / "routed" / name if name.startswith("findings.")
+                else bundle / "ledger" / name)
+        return [r for r in read_jsonl(path) if "_meta" not in r]
+
+    def test_the_lifted_passage_is_long_enough_to_be_caught(self):
+        """The fixture has to exercise the threshold, not sit either side of it."""
+        self.assertGreaterEqual(len(redact_mod.normalise_quote(LIFTED)),
+                                redact_mod.PROSE_SPAN_MIN)
+        self.assertLess(len(redact_mod.normalise_quote(SHORT_LIFT)),
+                        redact_mod.PROSE_SPAN_MIN)
+        self.assertIn(LIFTED, SOURCE_TEXT)
+
+    def test_no_prose_field_of_the_bundle_carries_a_run_of_the_source(self):
+        """The load-bearing assertion, and the one the first pass could not make."""
+        _, out = export(self, self.workspace)
+        index = redact_mod.SourceIndex([SOURCE_TEXT])
+        for name in ("accepted.adam.jsonl", "findings.adam.jsonl"):
+            for row in self._rows(out, name):
+                for field in redact_mod.PROSE_FIELDS:
+                    value = row.get(field)
+                    if not isinstance(value, str) or not value.strip():
+                        continue
+                    span = index.longest_span(redact_mod.normalise_quote(value))
+                    self.assertIsNone(span, f"{name} {field}: {value[:80]!r}")
+        self.assertNotIn(LIFTED, "\n".join(bundle_files(out).values()))
+
+    def test_the_span_is_replaced_in_place_and_recorded_for_hydration(self):
+        _, out = export(self, self.workspace)
+        row = self._rows(out, "accepted.adam.jsonl")[0]
+        self.assertIn("the statement drops the finiteness half", row["reason"])
+        self.assertIn("[redacted:", row["reason"])
+        spans = redact_mod.prose_spans(row)
+        self.assertEqual([s["field"] for s in spans], ["reason"])
+        self.assertEqual(spans[0]["quote"]["sha256"], redact_mod.quote_digest(LIFTED))
+        self.assertEqual(spans[0]["quote"]["page"], QUOTE_PAGE)
+        self.assertIn(spans[0]["quote"]["sha256"][:12], row["reason"])
+
+    def test_a_run_below_the_threshold_is_left_alone(self):
+        """A term of art is not a sentence of the book; the floor is measured."""
+        _, out = export(self, self.workspace)
+        row = self._rows(out, "findings.adam.jsonl")[0]
+        self.assertEqual(row["concept"], SHORT_LIFT)
+
+    def test_the_manifest_counts_the_substitutions_and_says_the_threshold(self):
+        manifest, _ = export(self, self.workspace)
+        self.assertEqual(manifest["counts"]["prose_spans"], 2)   # reason, twice over
+        self.assertEqual(manifest["prose_span_min"], redact_mod.PROSE_SPAN_MIN)
+        self.assertEqual(manifest["prose_checked_against"], [PUBLISHED])
+        self.assertIn("verbatim run of the source inside a row's prose",
+                      " ".join(manifest["withheld"]))
+
+    def test_a_workspace_with_no_pinned_text_says_the_prose_was_not_checked(self):
+        """The claim is unchecked without a text, and the export says so."""
+        workspace = make_workspace(self, name="textless", text=None)
+        with captured_warnings() as warned:
+            manifest, _ = export(self, workspace)
+        self.assertTrue(any("prose was NOT checked" in line for line in warned), warned)
+        self.assertEqual(manifest["prose_checked_against"], [])
+
+    def test_hydrate_recovers_a_prose_span_like_any_other_quote(self):
+        _, out = export(self, self.workspace)
+        rows = self._rows(out, "accepted.adam.jsonl")
+        reports, counts = hydrate_mod.hydrate_rows(rows, {PUBLISHED: SOURCE_TEXT})
+        spans = [r for r in reports if r["field"] == "reason"]
+        self.assertEqual(len(spans), 1)
+        self.assertEqual(spans[0]["status"], hydrate_mod.HYDRATED)
+        self.assertEqual(spans[0]["text"], LIFTED)
+        self.assertEqual(counts[hydrate_mod.HYDRATED], 1)
+
+    def test_a_page_dump_is_refused_by_name_rather_than_perforated(self):
+        """Past the per-field limit the field is a page dump, and the row is named."""
+        dump = " and ".join([PAGE_TWO, PAGE_THREE, PAGE_ONE] * 4)
+        write_jsonl(self.workspace.paths.accepted_jsonl("adam"),
+                    [ledger_row(reason=dump)])
+        with self.assertRaises(CfError) as caught:
+            export(self, self.workspace)
+        self.assertIn("Exercise 1.1.1", str(caught.exception))
+        self.assertIn("reason", str(caught.exception))
+        self.assertIn("page dump", str(caught.exception))
+        self.assertIn("--full-quotes", caught.exception.hint or "")
+
+    def test_full_quotes_carries_the_prose_as_written(self):
+        _, out = export(self, self.workspace, redact=False)
+        self.assertIn(LIFTED, "\n".join(bundle_files(out).values()))
+
+    def test_the_two_normalisations_are_one_function(self):
+        """A page indexed one way and a span located the other would not hash alike."""
+        raw = "  Let E\tbe   an\nELEMENTARY set. "
+        norm, offsets = redact_mod.normalise_with_offsets(raw)
+        self.assertEqual(norm, redact_mod.normalise_quote(raw))
+        self.assertEqual(len(norm), len(offsets))
+        self.assertEqual(raw[offsets[0]:offsets[len(norm) - 1] + 1].lower().split(),
+                         norm.split())
+        page = hydrate_mod._Page(1, raw)
+        self.assertEqual((page.norm, page.offsets), (norm, offsets))
+
+
+class NoLocalPathTravelsTest(unittest.TestCase):
+    """A `_meta` row and a row's own prose both carried the exporter's machine.
+
+    `cf adjudicate` writes `result_file: os.path.abspath(...)` and a
+    `workflow_run_id` into the accepted/refuted `_meta`; `cf route` writes a
+    `challenge_command` holding the absolute workspace path; and the baseline's own
+    findings.adam.jsonl cites an absolute .lean path inside a `reasoning`.  RULES
+    and CLAUDE.md S1 forbid all three in anything shareable.
+    """
+
+    def setUp(self):
+        self.workspace = make_workspace(self)
+        paths = self.workspace.paths
+        write_jsonl(paths.accepted_jsonl("adam"), [ledger_row()], meta={
+            "companion": "adam", "file": "accepted", "method": "workflow:adjudicate",
+            "at": "2026-09-19", "counts": {"rows": 1},
+            "result_file": str(self.workspace.root / "reviews" / "adjudicate.adam.json"),
+            "workflow_run_id": "wf_ab12cd",
+        })
+        write_jsonl(paths.routed_jsonl("adam"), [routed_row(
+            reasoning=f"see {self.workspace.root}/companions/adam/Basic.lean:324 for the proof",
+        )], meta={
+            "repo": "adam", "status": "CHALLENGED", "schema": "routed-v2",
+            "counts": {"rows": 1}, "at": "2026-09-19",
+            "challenge_command": f"cf adjudicate --workspace {self.workspace.root} --challenge",
+        })
+
+    def test_the_bundle_matches_none_of_the_greps_RULES_uses(self):
+        _, out = export(self, self.workspace)
+        blob = "\n".join(bundle_files(out).values())
+        for forbidden in ("/Users/", "wf_", str(self.workspace.root), "adjudicate.adam.json"):
+            self.assertNotIn(forbidden, blob, forbidden)
+
+    def test_the_ledger_meta_keeps_what_a_reader_needs_and_drops_the_rest(self):
+        _, out = export(self, self.workspace)
+        meta = next(r["_meta"] for r in read_jsonl(out / "ledger" / "accepted.adam.jsonl")
+                    if "_meta" in r)
+        self.assertEqual(meta["companion"], "adam")
+        self.assertEqual(meta["method"], "workflow:adjudicate")
+        self.assertEqual(meta["counts"], {"rows": 1})
+        for dropped in ("result_file", "workflow_run_id", "at"):
+            self.assertNotIn(dropped, meta)
+
+    def test_the_routed_meta_keeps_the_status_and_drops_the_command(self):
+        _, out = export(self, self.workspace)
+        meta = next(r["_meta"] for r in
+                    read_jsonl(out / "ledger" / "routed" / "findings.adam.jsonl")
+                    if "_meta" in r)
+        self.assertEqual(meta["status"], "CHALLENGED")
+        self.assertEqual(meta["schema"], "routed-v2")
+        for dropped in ("challenge_command", "at"):
+            self.assertNotIn(dropped, meta)
+
+    def test_a_meta_that_is_all_withheld_travels_as_no_meta_at_all(self):
+        """The baseline's refuted `_meta` is a session id, a date and a PDF path."""
+        write_jsonl(self.workspace.paths.refuted_jsonl("adam"), [ledger_row(verdict="REFUTED")],
+                    meta={"from": "session local_example", "written": "2026-09-04",
+                          "official_pdf": {"path": "/somewhere/book.pdf"}})
+        _, out = export(self, self.workspace)
+        self.assertFalse([r for r in read_jsonl(out / "ledger" / "refuted.adam.jsonl")
+                          if "_meta" in r])
+
+    def test_an_absolute_path_in_a_rows_prose_keeps_its_file_and_line_only(self):
+        _, out = export(self, self.workspace)
+        row = [r for r in read_jsonl(out / "ledger" / "routed" / "findings.adam.jsonl")
+               if "_meta" not in r][0]
+        self.assertIn(".../Basic.lean:324", row["reasoning"])
+        self.assertNotIn(str(self.workspace.root), row["reasoning"])
+
+    def test_an_errata_url_is_metadata_and_is_left_alone(self):
+        """The elision must not eat a URL: the registry's URLs are what a bundle IS."""
+        text, count = redact_mod.elide_local_paths(
+            "errata at https://example.invalid/books/analysis/errata.html")
+        self.assertEqual((text, count),
+                         ("errata at https://example.invalid/books/analysis/errata.html", 0))
+        self.assertEqual(redact_mod.elide_local_paths("see /a/b/c.lean:12"),
+                         ("see .../c.lean:12", 1))
+        self.assertEqual(redact_mod.elide_local_paths("corpus/run-1/x.json"),
+                         ("corpus/run-1/x.json", 0))
+
+
+class UnchallengedRowsDoNotTravelTest(unittest.TestCase):
+    """SKILL.md hard rule 5 binds the one command that writes outside the workspace.
+
+    `route.emit_upstream` raises UpstreamRefused and `cfcmd/route.py` reads
+    `policy.publish_unchallenged`; `export_bundle` read neither, and the real
+    campaign's own routed file says `_meta.status: UNCHALLENGED`.
+    """
+
+    def setUp(self):
+        self.workspace = make_workspace(self)
+
+    def _unchallenged(self, status: str = "UNCHALLENGED") -> None:
+        write_jsonl(self.workspace.paths.routed_jsonl("adam"), [routed_row(challenged=False)],
+                    meta={"repo": "adam", "status": status, "schema": "routed-v2"})
+
+    def test_an_unchallenged_routed_file_is_refused_by_name(self):
+        self._unchallenged()
+        with self.assertRaises(CfError) as caught:
+            export(self, self.workspace)
+        message = str(caught.exception)
+        self.assertIn("adam", message)
+        self.assertIn("UNCHALLENGED", message)
+        self.assertIn("cf adjudicate", caught.exception.hint or "")
+        self.assertIn("--skip-unchallenged", caught.exception.hint or "")
+
+    def test_a_routed_file_with_no_status_at_all_is_refused_too(self):
+        write_jsonl(self.workspace.paths.routed_jsonl("adam"), [routed_row()])
+        with self.assertRaises(CfError) as caught:
+            export(self, self.workspace)
+        self.assertIn("(unset)", str(caught.exception))
+
+    def test_skip_unchallenged_leaves_the_rows_out_and_names_them_in_the_manifest(self):
+        self._unchallenged()
+        manifest, out = export(self, self.workspace, skip_unchallenged=True)
+        self.assertNotIn("ledger/routed/findings.adam.jsonl", bundle_files(out))
+        self.assertEqual(manifest["skipped_unchallenged"], ["adam"])
+        self.assertEqual(manifest["routed_status"]["adam"], "UNCHALLENGED")
+        self.assertEqual(manifest["counts"]["routed_rows"], 0)
+        # ...and the adjudicated half still travels, which is why this is not a flag
+        # that carries unchallenged rows
+        self.assertIn("ledger/accepted.adam.jsonl", bundle_files(out))
+        self.assertIn("routed rows whose _meta.status is UNCHALLENGED",
+                      " ".join(manifest["withheld"]))
+
+    def test_a_challenged_routed_file_exports_unchanged_and_records_its_status(self):
+        manifest, out = export(self, self.workspace)
+        self.assertIn("ledger/routed/findings.adam.jsonl", bundle_files(out))
+        self.assertEqual(manifest["routed_status"], {"adam": "CHALLENGED"})
+        self.assertEqual(manifest["skipped_unchallenged"], [])
+        self.assertEqual(manifest["counts"]["routed_rows"], 1)
+
+    def test_a_workspace_that_turned_the_rule_off_is_refused_here_too(self):
+        """`policy.publish_unchallenged: true` is read the way cfcmd/route.py reads it."""
+        path = self.workspace.root / "workspace.yaml"
+        path.write_text(path.read_text(encoding="utf-8")
+                        + "policy:\n  publish_unchallenged: true\n", encoding="utf-8")
+        workspace = Workspace.load(self.workspace.root)
+        with self.assertRaises(CfError) as caught:
+            export(self, workspace)
+        self.assertIn("publish_unchallenged", str(caught.exception))
+        self.assertIn("40%", caught.exception.hint or "")
+
+
+class ImportConflictsAcrossBothLedgerFilesTest(unittest.TestCase):
+    """The commonest disagreement is confirm-versus-refute, and it spans two files.
+
+    accepted.* holds the OPEN verdicts and refuted.* the CLOSED ones, so merging
+    one file at a time reported `added=1, conflicts=[]` for exactly the case the
+    merge exists for, and both rows came out with `conflict: None`.
+    """
+
+    def setUp(self):
+        self.alice = make_workspace(self, name="alice")        # CONFIRMED_CONTENT
+        self.bob = make_workspace(self, name="bob", ledger=False)
+        _, self.bundle = export(self, self.alice)
+        self.manifest = bundle_mod.read_manifest(self.bundle)
+        write_jsonl(self.bob.paths.refuted_jsonl("adam"),
+                    [ledger_row(verdict="REFUTED", reason="the statement is faithful")])
+
+    def _rows(self, which: str) -> list[dict]:
+        path = getattr(self.bob.paths, f"{which}_jsonl")("adam")
+        return [r for r in read_jsonl(path) if "_meta" not in r] if path.exists() else []
+
+    def test_confirm_versus_refute_is_reported_and_both_rows_are_marked(self):
+        report = merge_mod.merge_bundle(self.bob, self.bundle, self.manifest)
+        self.assertEqual(len(report["conflicts"]), 1)
+        self.assertEqual(report["conflicts"][0]["verdicts"], ["CONFIRMED_CONTENT", "REFUTED"])
+        self.assertEqual(report["conflicts"][0]["file"], "accepted.adam.jsonl")
+        for which, verdict in (("accepted", "CONFIRMED_CONTENT"), ("refuted", "REFUTED")):
+            rows = self._rows(which)
+            self.assertEqual([r["verdict"] for r in rows], [verdict], which)
+            self.assertTrue(rows[0]["conflict"], which)
+            self.assertEqual(rows[0]["conflict_verdicts"],
+                             ["CONFIRMED_CONTENT", "REFUTED"], which)
+
+    def test_each_row_stays_in_the_file_its_verdict_belongs_to(self):
+        """validate_ledger's partition rule still holds after a merge."""
+        from ledger import compat as ledger_compat
+
+        merge_mod.merge_bundle(self.bob, self.bundle, self.manifest)
+        for row in self._rows("accepted"):
+            self.assertNotIn(row["verdict"], ledger_compat.CLOSED_VERDICTS)
+        for row in self._rows("refuted"):
+            self.assertIn(row["verdict"], ledger_compat.CLOSED_VERDICTS)
+
+    def test_the_cross_file_conflict_import_is_idempotent(self):
+        merge_mod.merge_bundle(self.bob, self.bundle, self.manifest)
+        before = {w: getattr(self.bob.paths, f"{w}_jsonl")("adam").read_bytes()
+                  for w in ("accepted", "refuted")}
+        report = merge_mod.merge_bundle(self.bob, self.bundle, self.manifest)
+        self.assertEqual((report["added"], report["unchanged"]), (0, 1))
+        self.assertEqual(report["conflicts"], [])
+        for which, blob in before.items():
+            self.assertEqual(getattr(self.bob.paths, f"{which}_jsonl")("adam").read_bytes(),
+                             blob, which)
+
+    def test_the_marks_are_written_even_when_nothing_was_added_to_that_file(self):
+        """The refuted row only gained marks, so counting additions would skip it."""
+        merge_mod.merge_bundle(self.bob, self.bundle, self.manifest)
+        self.assertTrue(self._rows("refuted")[0]["conflict"])
+
+    def test_a_row_with_no_source_sha_of_its_own_is_refused_even_when_the_manifest_has_one(self):
+        """CLAUDE.md S4 stamps the source per ROW; a manifest vouches for the bundle."""
+        write_jsonl(self.bundle / "ledger" / "accepted.adam.jsonl", [ledger_row(source_sha="")])
+        manifest = dict(self.manifest, sources={PUBLISHED: SHA_PUBLISHED})
+        with self.assertRaises(CfError) as caught:
+            merge_mod.merge_bundle(self.bob, self.bundle, manifest)
+        self.assertIn("which edition", str(caught.exception))
+        self.assertIn("a manifest vouches for the bundle", caught.exception.hint or "")
+
+
+class HydrateOutRefusesATrackedPathTest(unittest.TestCase):
+    """`quotes/` is ignored only in workspaces created after that line was written.
+
+    `cf init` writes .gitignore through `_write_if_absent`, which leaves an
+    existing file untouched, and `--force` would also rewrite workspace.yaml -- so
+    in every workspace that already existed, the path this command's help suggests
+    is a tracked file holding recovered book text.
+    """
+
+    def setUp(self):
+        from cfcmd.init import GITIGNORE
+
+        self.gitignore = GITIGNORE
+        self.workspace = make_workspace(self, name="bob", ledger=False)
+        subprocess.run(["git", "init", "-q", str(self.workspace.root)], check=True,
+                       capture_output=True)
+
+    def _refuse(self, target: Path) -> CfError:
+        from cfcmd import quotes as quotes_cmd
+
+        with self.assertRaises(CfError) as caught:
+            quotes_cmd._refuse_unsafe_out(target.resolve(), self.workspace)
+        return caught.exception
+
+    def test_a_pre_change_gitignore_makes_the_advertised_path_a_refusal(self):
+        before = self.gitignore.replace("quotes/\n", "")
+        self.assertNotIn("\nquotes/", before)
+        (self.workspace.root / ".gitignore").write_text(before, encoding="utf-8")
+        error = self._refuse(self.workspace.root / "quotes" / "hydrated.adam.jsonl")
+        self.assertIn("does not ignore that path", str(error))
+        self.assertIn("sources", error.hint or "")
+
+    def test_the_rule_cf_init_writes_today_makes_it_allowed(self):
+        (self.workspace.root / ".gitignore").write_text(self.gitignore, encoding="utf-8")
+        from cfcmd import quotes as quotes_cmd
+
+        quotes_cmd._refuse_unsafe_out(
+            (self.workspace.root / "quotes" / "hydrated.adam.jsonl").resolve(), self.workspace)
+        quotes_cmd._refuse_unsafe_out(
+            (self.workspace.root / "sources" / "hydrated.adam.jsonl").resolve(), self.workspace)
+
+    def test_sources_is_the_hint_because_it_is_ignored_in_every_workspace(self):
+        (self.workspace.root / ".gitignore").write_text(
+            self.gitignore.replace("quotes/\n", ""), encoding="utf-8")
+        from cfcmd.init import check_ignore
+
+        self.assertTrue(check_ignore(self.workspace.root,
+                                     self.workspace.root / "sources" / "x.jsonl"))
+        self.assertFalse(check_ignore(self.workspace.root,
+                                      self.workspace.root / "quotes" / "x.jsonl"))
+
+    def test_a_workspace_with_no_repo_cannot_track_anything(self):
+        """`cf init --no-git` is a documented choice, not a reason to refuse."""
+        from cfcmd import quotes as quotes_cmd
+
+        plain = make_workspace(self, name="nogit", ledger=False)
+        quotes_cmd._refuse_unsafe_out(
+            (plain.root / "quotes" / "hydrated.adam.jsonl").resolve(), plain)
+
+
+class ExportReadsTheWorkspacePolicyTest(unittest.TestCase):
+    """`policy.redact_quotes_on_export` was documented for both exports, read by one.
+
+    The template's comment says the key governs `cf share export` too, and
+    `cfcmd/route.py::_redact` exists precisely because a key an operator reads and
+    the code ignores is worse than no key.
+    """
+
+    def setUp(self):
+        self.workspace = make_workspace(self)
+
+    def _policy(self, **over):
+        path = self.workspace.root / "workspace.yaml"
+        lines = ["policy:"] + [f"  {k}: {str(v).lower()}" for k, v in over.items()]
+        path.write_text(path.read_text(encoding="utf-8") + "\n".join(lines) + "\n",
+                        encoding="utf-8")
+        return Workspace.load(self.workspace.root)
+
+    def test_no_flag_means_the_policy_and_the_policy_defaults_to_redacting(self):
+        from cfcmd import share as share_cmd
+
+        class A:
+            redact = None
+
+        self.assertTrue(share_cmd._redact(self.workspace, A))
+        workspace = self._policy(redact_quotes_on_export=False)
+        self.assertFalse(share_cmd._redact(workspace, A))
+
+    def test_a_flag_overrides_the_policy_in_both_directions(self):
+        from cfcmd import share as share_cmd
+
+        workspace = self._policy(redact_quotes_on_export=False)
+
+        class Redact:
+            redact = True
+
+        class Full:
+            redact = False
+
+        self.assertTrue(share_cmd._redact(workspace, Redact))
+        self.assertFalse(share_cmd._redact(workspace, Full))
+
+    def test_the_template_comment_describes_what_the_code_now_does(self):
+        template = (REPO / "templates" / "workspace.yaml.example").read_text(encoding="utf-8")
+        self.assertIn("Read by BOTH exports", template)
+        self.assertIn("share export --redact-quotes", template)
+        self.assertIn("--full-quotes", template)
+
+
+# ==========================================================================
+# the real ledger, exported: the measurement the reviewer made, as a test
+# ==========================================================================
+BASELINE_DIFF = os.environ.get("CF_BASELINE_DIFF", "")
+
+
+@unittest.skipUnless(BASELINE_DIFF and BOOK_TXT, "needs CF_BASELINE_DIFF and CF_BOOK_TXT")
+class RealLedgerExportsCleanTest(unittest.TestCase):
+    """Export the campaign's own accepted / refuted / routed rows and grep the result.
+
+    This is the test the first pass could not fail: its fixtures only ever put book
+    text in `book_quote`.  Here the rows are the real ones, and the assertions are
+    the two the bundle's manifest claims -- no run of the source in a prose field,
+    and no path or workflow id anywhere.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.book = Path(BOOK_TXT).read_text(encoding="utf-8", errors="replace")
+        cls.tmp = Path(tempfile.mkdtemp()).resolve()
+        root = cls.tmp / "ws"
+        repo = cls.tmp / "companion-repo"
+        repo.mkdir(parents=True)
+        root.mkdir(parents=True)
+        (root / "workspace.yaml").write_text(
+            workspace_yaml(name="baseline", repo=repo), encoding="utf-8")
+        workspace = Workspace.load(root)
+        paths = workspace.paths
+        paths.ensure_skeleton()
+        paths.companion_dir("adam").mkdir(parents=True, exist_ok=True)
+        paths.source_dir(PUBLISHED).mkdir(parents=True, exist_ok=True)
+        paths.source_text(PUBLISHED).write_text(cls.book, encoding="utf-8")
+        for name, dest in (("accepted.adam.jsonl", paths.accepted_jsonl("adam")),
+                           ("refuted.adam.jsonl", paths.refuted_jsonl("adam"))):
+            shutil.copyfile(Path(BASELINE_DIFF) / name, dest)
+        # the campaign's routed file is UNCHALLENGED, which is its own test above;
+        # here the rows are what is under test, so they are staged as challenged
+        rows = [r for r in read_jsonl(Path(BASELINE_DIFF) / "findings.adam.jsonl")
+                if "_meta" not in r]
+        write_jsonl(paths.routed_jsonl("adam"), rows,
+                    meta={"repo": "adam", "status": "CHALLENGED", "schema": "routed-v2"})
+        cls.workspace = workspace
+        cls.out = cls.tmp / "bundle"
+        cls.manifest = bundle_mod.export_bundle(workspace, cls.out)
+        cls.index = redact_mod.SourceIndex([cls.book])
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _exported_rows(self):
+        for path in sorted(self.out.rglob("*.jsonl")):
+            for row in read_jsonl(path):
+                if "_meta" not in row:
+                    yield path.name, row
+
+    def test_the_rows_really_did_carry_the_book_in_their_prose(self):
+        """The fixture is only worth anything if the unredacted rows fail this."""
+        leaking = 0
+        for name in ("accepted.adam.jsonl", "refuted.adam.jsonl", "findings.adam.jsonl"):
+            for row in read_jsonl(Path(BASELINE_DIFF) / name):
+                if "_meta" in row:
+                    continue
+                if any(self.index.longest_span(redact_mod.normalise_quote(row[f]))
+                       for f in redact_mod.PROSE_FIELDS
+                       if isinstance(row.get(f), str) and row[f].strip()):
+                    leaking += 1
+        self.assertEqual(leaking, 10)          # 3 accepted + 4 refuted + 3 routed
+
+    def test_no_exported_prose_field_carries_a_run_of_the_book(self):
+        for name, row in self._exported_rows():
+            for field in redact_mod.PROSE_FIELDS:
+                value = row.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    continue
+                span = self.index.longest_span(redact_mod.normalise_quote(value))
+                self.assertIsNone(span, f"{name} {row.get('item')} {field}")
+        self.assertEqual(self.manifest["counts"]["prose_spans"], 13)
+
+    def test_the_bundle_matches_none_of_the_greps_RULES_uses(self):
+        blob = "\n".join(bundle_files(self.out).values())
+        for forbidden in ("/Users/", "/private/var/", str(self.workspace.root)):
+            self.assertNotIn(forbidden, blob, forbidden)
+        self.assertEqual(self.manifest["counts"]["paths_elided"], 1)
+
+    def test_every_redaction_hydrates_back_out_of_the_holders_own_book(self):
+        rows = [row for _, row in self._exported_rows()]
+        reports, counts = hydrate_mod.hydrate_rows(hydrate_mod.redacted_rows(rows),
+                                                  {PUBLISHED: self.book})
+        self.assertEqual(counts["redacted"], 23)        # 10 book_quote + 13 prose spans
+        self.assertEqual(counts[hydrate_mod.HYDRATED], 23)
+        self.assertEqual([r for r in reports if r["status"] != hydrate_mod.HYDRATED], [])
 
 
 if __name__ == "__main__":  # pragma: no cover
