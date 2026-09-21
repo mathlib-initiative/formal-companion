@@ -701,7 +701,7 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
                 "",
             ]
         if not per_run_rows and not totals:
-            blocks += [todo("tally for %s" % name, "cf harvest --tally"), ""]
+            blocks += [todo("tally for %s" % name, "cf tally"), ""]
 
         meta = f["routed_meta"] or {}
         if meta:
@@ -749,7 +749,7 @@ def render_findings_tables(facts: list[dict], tallies: list[dict]) -> str:
                 ),
                 "",
             ]
-    return "\n".join(blocks) if blocks else todo("findings", "cf harvest --tally && cf route")
+    return "\n".join(blocks) if blocks else todo("findings", "cf tally && cf route")
 
 
 def render_owner_actions(facts: list[dict], gh: list[dict]) -> str:
@@ -1438,7 +1438,7 @@ def build_context(
         "yield_note": (
             "Every cell above is `run.yaml`, a corpus `RECEIPT.json` or a tally file; no number "
             "here was typed by hand. `--` means an imported run records no such figure."
-            if tallies else todo("yield table", "cf harvest --tally")
+            if tallies else todo("yield table", "cf tally")
         ),
         "findings_tables": render_findings_tables(facts, tallies),
         "owner_actions": render_owner_actions(facts, gh),

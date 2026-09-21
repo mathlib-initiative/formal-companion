@@ -156,7 +156,7 @@ def write_corpus(docs: Sequence[dict], dest: str | Path, *, run_id: str,
     """Write one JSON per item into *dest* and return the names written.
 
     Idempotent: the same detector input rewrites the same bytes, so re-running
-    ``cf detect-proxies --emit-corpus`` does not churn the corpus.
+    ``cf detect-proxies`` (which emits the corpus by default) does not churn it.
     """
     dest = Path(dest)
     dest.mkdir(parents=True, exist_ok=True)

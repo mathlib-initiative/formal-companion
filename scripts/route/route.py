@@ -48,6 +48,7 @@ import shlex
 import sys
 from typing import Any, Iterable, Mapping
 
+from cflib import invocation
 from ledger import compat
 from ledger import findings as findings_mod
 from ledger import validate_ledger as vl
@@ -95,10 +96,12 @@ def challenge_command(workspace: str, companion: str) -> str:
     With no workspace to resolve the flag is left OFF rather than filled with a
     placeholder: ``cf`` then falls back to ``$CF_WORKSPACE`` or the current
     directory, which is what ``cf --help`` promises, so the command still runs.
+
+    Built by ``cflib.invocation.adjudicate_command``, the one spelling
+    ``cf adjudicate`` prints too, so the two cannot drift.
     """
-    where = " --workspace %s" % os.path.abspath(workspace) if workspace else ""
-    return ("cf adjudicate%s --companion %s --challenge-only --emit-args"
-            % (where, companion))
+    return invocation.adjudicate_command(workspace, companion,
+                                         "--challenge-only", "--emit-args")
 
 
 def _is_payload(value: Any) -> bool:

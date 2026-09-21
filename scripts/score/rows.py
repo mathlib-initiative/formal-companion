@@ -27,7 +27,7 @@ if str(_SCRIPTS) not in sys.path:  # pragma: no cover - import side effect
 from cflib.errors import CfError  # noqa: E402
 from cflib.jsonio import read_json  # noqa: E402
 from harvest._compat import iter_finding_files  # noqa: E402
-from harvest.tally import FINDING_LISTS, collapse_to_book_item  # noqa: E402
+from harvest.tally import collapse_to_book_item, defect_rows  # noqa: E402
 
 
 def kinds_for(kinds, source_id: str) -> Sequence[str] | None:
@@ -35,16 +35,6 @@ def kinds_for(kinds, source_id: str) -> Sequence[str] | None:
     if isinstance(kinds, Mapping):
         return kinds.get(source_id) or kinds.get("") or None
     return kinds
-
-
-def _defects(payload: dict) -> list[dict]:
-    """Every defect row in a findings document, whatever key it used."""
-    out: list[dict] = []
-    for key in FINDING_LISTS:
-        value = payload.get(key)
-        if isinstance(value, list):
-            out.extend(d for d in value if isinstance(d, dict))
-    return out
 
 
 def _repos(defect: dict, document: dict) -> dict[str, list[str]]:
@@ -91,7 +81,7 @@ def rows_from_dir(directory: str | Path, *, run_id: str = "", kinds=None) -> lis
         source_id = str(payload.get("source_id") or "")
         item_raw = str(payload.get("item") or path.stem)
         item = collapse_to_book_item(item_raw, kinds_for(kinds, source_id))
-        for defect in _defects(payload):
+        for defect in defect_rows(payload):
             row_source = str(defect.get("source_id") or source_id)
             kind = str(defect.get("kind") or "").strip()
             by_repo = _repos(defect, payload)
