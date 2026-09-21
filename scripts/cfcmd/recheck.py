@@ -15,8 +15,9 @@ It changes no verdict.  A ``changed`` row is marked ``needs_rereview``, because 
 statement that moved may have been fixed or made worse and only a reader can say
 which.  It calls no model, it reads the companion repository only (through
 ``cflib.gitsafe``, never writing to it), and re-running it rewrites the same
-answer: the only thing it mutates is a ``recheck`` block on the ledger rows and
-``reports/recheck.<companion>.json``.
+answer: the only things it mutates are a ``recheck`` block on the ledger rows,
+``reports/recheck.<companion>.json``, and the ``recheck`` block in
+``companions/<name>/state.json``.
 
     python3 scripts/cf.py recheck                    # every companion
     python3 scripts/cf.py recheck --companion ours    # one

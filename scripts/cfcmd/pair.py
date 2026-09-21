@@ -1,6 +1,6 @@
 """``cf pair`` -- pair the companions' statement tables, one SOURCE at a time.
 
-    python3 scripts/cf.py pair [--source <id>] [--only ours,adam] [--chapter 1]
+    cf pair [--source <id>] [--only ours,adam] [--chapter 1]
 
 A workspace holds N companions and M sources, and a differential is possible
 exactly where two companions' source lists overlap (docs/design/archive/multi-source-model.md

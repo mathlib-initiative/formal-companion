@@ -1,6 +1,6 @@
 """``cf plan-run`` -- plan one fleet run: tasks, prompts, gate.json, tend root.
 
-    python3 scripts/cf.py plan-run --preset attack-hunt --companion ours \\
+    cf plan-run --preset attack-hunt --companion ours \\
         --host examplebox --model claude-sonnet-5 --i-have-consent
 
 Writes ``<workspace>/runs/<run-id>/``:
@@ -254,23 +254,45 @@ def _companion_rows(ws, host_paths: dict, names: list[str] | None = None) -> lis
     return rows
 
 
-def _select_source(ws, companions: list[str], requested: str | None) -> str:
+def _select_source(ws, companions: list[str], requested: str | None, *,
+                   named: bool = True) -> str:
     """Which source this run audits.
 
     A run is scoped to ONE source: the gate picks a text by source_id, and a
     task set spanning two editions cannot be reconciled against one universe.
     ``--source`` is required only when the selected companions share more than
     one -- otherwise there is nothing to choose and asking would be noise.
+
+    ``named`` says whether *companions* is the list the OPERATOR asked for
+    (``--companion``) or simply every companion in the workspace.  Treating the
+    second as the first left a workspace whose companions span several sources
+    with no invocation at all that plans a correctly scoped differential:
+    ``--source <id>`` refused because some companion of another book is not
+    audited against it, and the inference refused because those same companions
+    share nothing.  When the list is not the operator's, ``--source`` NARROWS --
+    the run covers that source's own companions -- and the inference asks which
+    sources two companions actually share, which is what a differential is.
     """
     if requested:
         ws.source(requested)  # raises when unknown
-        for name in companions:
+        for name in (companions if named else ()):
             listed = ws.sources_of(name)
             if listed and requested not in listed:
                 raise CfError(
                     f"companion {name!r} is not audited against source {requested!r}",
                     hint="its sources are: " + (", ".join(listed) or "(none)"))
         return requested
+    if not named:
+        differentiable = sorted(ws.shared_sources(min_companions=2))
+        if len(differentiable) == 1:
+            return differentiable[0]
+        if len(differentiable) > 1:
+            raise CfError(
+                f"this workspace has {len(differentiable)} differentiable sources "
+                f"({', '.join(differentiable)})",
+                hint="a run is scoped to one source; pass --source <id>")
+        # none: fall through, so a single-companion workspace keeps planning
+        # against its own source and keeps the refusal that names why.
     shared: list[str] | None = None
     for name in companions:
         listed = ws.sources_of(name)
@@ -474,7 +496,29 @@ def run(args) -> int:
         raise CfError("this workspace has no companions",
                       hint="run `cf onboard <repo>` first")
 
-    source_id = _select_source(camp, names, args.source_id)
+    source_id = _select_source(camp, names, args.source_id, named=bool(companion))
+    # WHICH COMPANIONS THIS RUN COVERS. A run is scoped to one source, so a
+    # differential covers the companions audited against THAT source -- never
+    # every companion in the workspace. Staging all of them told the worker
+    # prompt that a companion of another book was one of "N INDEPENDENT
+    # formalizations" of this one, handed it unrelated repos to read, put those
+    # names in gate.json's `repos` (so a finding could name their declarations)
+    # and in the set `cf run` transfers to a host consented to for THIS audit.
+    #
+    # Read through `companion_names()` and skipped when the name has no
+    # workspace entry: `sources_of` raises for a companion that exists only as
+    # a directory with an adapter, and one that never said which source it
+    # formalises cannot be claimed for this one.
+    if preset.is_attack:
+        run_names = [companion]
+    else:
+        run_names = [n for n in camp.companion_names()
+                     if source_id in (camp.sources_of(n) if n in camp.companions else [])]
+        if not run_names:
+            raise CfError(
+                f"no companion of this workspace is audited against source {source_id!r}",
+                hint="`cf sources list` shows which companion has which source; "
+                     "`cf sources add <source> --for <companion>` binds one")
     source = camp.source(source_id)
     _check_confirmed(camp, source)
     source_sha = source.sha256
@@ -523,7 +567,7 @@ def run(args) -> int:
         queue = _queue_rows(_read_json(p.queue_json(source_id),
                                        f"pairs/{source_id}/queue.json"))
         targets_by = {}
-        for name in camp.companion_names():
+        for name in run_names:
             tp = p.targets_json(source_id, name)
             if tp.exists():
                 targets_by[name] = _queue_rows(
@@ -557,7 +601,7 @@ def run(args) -> int:
     gate_command = (
         f"python3 {host['gate_dir']}/verify_findings.py --gate-config {host['gate_dir']}/gate.json"
     )
-    companion_rows = _companion_rows(camp, host)
+    companion_rows = _companion_rows(camp, host, run_names)
     unconfirmed = _check_conventions(companion_rows, bool(args.conventions_unconfirmed))
     ctx = rp.build_context(
         preset,
@@ -589,7 +633,7 @@ def run(args) -> int:
             "source_id": source_id,
             "source_sha": source_sha,
             "gate_command": gate_command,
-            "companion": companion or (camp.companion_names()[0] if camp.companion_names() else ""),
+            "companion": companion or (run_names[0] if run_names else ""),
             "total_functions_sentence": ctx["total_functions_sentence"],
         },
         kinds=kinds,
@@ -604,10 +648,10 @@ def run(args) -> int:
             hint="re-run `cf pair`; a silently shorter run is exactly what this gate exists to stop",
         )
     mt.write_tasks(tasks, p.tasks_dir(run_id))
-    staged = _stage_data(camp, rd, camp.companion_names(), source_id)
+    staged = _stage_data(camp, rd, run_names, source_id)
 
     # ---- gate.json (host paths) and gate.local.json ------------------------
-    repos = [companion] if preset.is_attack else camp.companion_names()
+    repos = list(run_names)
     # The phantom-declaration half of the schema gate: it was implemented in
     # verify_findings.py and exposed by presets.gate_config, but nothing ever
     # built an index, so every gate.json carried "decl_index": null and the
@@ -621,9 +665,19 @@ def run(args) -> int:
             f"{k}={v}" for k, v in sorted(index["_meta"]["counts"].items())))
     else:
         remote_index = None
-        print("warn the declaration index does not cover every repo of this run "
-              f"({', '.join(decl_index.usable_repos(index)) or 'none'}); the gate's "
-              "phantom-name check is OFF -- a partial index would reject real findings")
+        # NAME THE REPOS THE INDEX IS MISSING, which is the complement of what
+        # `usable_repos` returns: this line used to print that positive list, so
+        # it named the healthy repos and never the empty one, and an operator
+        # following it went looking at the repos that were fine. The predicate is
+        # `decl_index.usable`'s own, so the two cannot disagree. It goes through
+        # `warn_block` because the accurate per-repo line from decl_index.build()
+        # is a stderr warning: a bare print put the two on different streams, and
+        # under `-q` the bare one was the only line left standing.
+        missing = [r for r in repos if not index.get(r)]
+        log.warn_block(
+            "the declaration index does not cover "
+            f"{', '.join(missing) or 'any repo'} of this run; the gate's "
+            "phantom-name check is OFF -- a partial index would reject real findings")
     gate_remote = presets_mod.gate_config(
         preset,
         run_id=run_id,
@@ -813,7 +867,7 @@ def run(args) -> int:
     }
     write_yaml(p.run_yaml(run_id), run_doc, header=f"# run.yaml -- {run_id}\n")
 
-    for name in (repos if preset.is_attack else camp.companion_names()):
+    for name in repos:
         with state_mod.update(camp, name) as st:
             state_mod.record_run(st, run_id, {
                 "preset": preset.name,

@@ -181,7 +181,15 @@ def run(args) -> int:
         log.info(f"  {root_path}")
     log.info("")
     log.info("next:")
-    log.info(f"  cf --workspace {root} onboard <path to a companion repo>")
+    # `cd` first, then bare `cf <command>` -- the shell state README's quick start
+    # teaches, and the one every other hint printer in the skill assumes. This
+    # line used to carry `--workspace <root>` instead, which ran, but left the
+    # operator OUTSIDE the workspace: `cf onboard`'s own next-steps are bare (as
+    # are the other 546 hint sites), so the very next paste exited 2 with "no
+    # workspace.yaml found". One outlier here was cheaper to fix than a flag
+    # threaded into every hint printer.
+    log.info(f"  cd {root}")
+    log.info("  cf onboard <path to a companion repo>")
     log.info("      (no flags: the sources, the page offset, the item kinds and the")
     log.info("       errata page are discovered from the repo itself)")
     return 0

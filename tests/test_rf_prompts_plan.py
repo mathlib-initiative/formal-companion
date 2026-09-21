@@ -428,9 +428,12 @@ class TestPlanRunRefusesUnconfirmedConventions(PlanRunCase):
     def test_the_override_plans_and_is_recorded(self):
         self.assertEqual(self.plan(conventions_unconfirmed=True), 0)
         doc = self.run_yaml()
-        # every companion the prompt names, not only the audited one: the
-        # worker is given a CONVENTION_ONLY bullet for each of them
-        self.assertEqual(doc["conventions"]["unconfirmed"], ["ours", "peer"])
+        # every companion the prompt names, which for an ATTACK run is the audited
+        # one alone.  This used to read ["ours", "peer"]: the prompt listed every
+        # companion in the workspace, including ones the run's gate.json does not
+        # accept findings against and `cf run` never transfers, so the gate refused
+        # over a conventions list belonging to a companion not in the run.
+        self.assertEqual(doc["conventions"]["unconfirmed"], ["ours"])
         self.assertEqual(doc["conventions"]["override"], "--conventions-unconfirmed")
 
 
