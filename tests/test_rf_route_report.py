@@ -14,9 +14,11 @@ Three findings, all reproduced before they were fixed:
   hand-off wave 1 left open: two findings sharing one ``finding_id`` were both
   handed the single ledger row addressed to it and both marked CHALLENGED.
 * critic#5 -- the handoff had no denominator.  It now carries, per source and
-  chapter, items in the source / in scope / paired / examined / gated / with
-  findings / never examined, with the unexamined ones written out by name, and a
-  first paragraph that says outright when the scope is a part of a source.
+  chapter, items in the source / in scope / in the differential's task universe /
+  paired / examined / gated / with findings / never examined, with the unexamined
+  ones written out by name, and a first paragraph that says outright when the
+  scope is a part of a source -- and does NOT say so merely because the workspace
+  holds a reference edition nobody is bound to.
 * first-run#6 -- the route hint printed ``python3 scripts/cf.py adjudicate
   --workspace <workspace> ...``: a path relative to the skill checkout and a
   literal placeholder, and it was written into the routed file and into the
@@ -169,6 +171,23 @@ def item_row(item: str, *, page: int, chapter: int) -> dict:
 def write_reconciliation(root: str, source_id: str, **body) -> str:
     path = os.path.join(root, "pairs", source_id, "reconciliation.json")
     compat.write_json(path, dict({"source_id": source_id, "source_sha": SOURCE_SHA}, **body))
+    return path
+
+
+def write_pair_index(root: str, source_id: str, items) -> str:
+    """pairs/<id>/index.json: which companions formalise each item.
+
+    ``items`` is ``{item: [companion, ...]}``; two or more companions on one item
+    is what "paired" means, and this file is the only artifact that says it.
+    """
+    path = os.path.join(root, "pairs", source_id, "index.json")
+    compat.write_json(path, {
+        "source_id": source_id, "source_sha": SOURCE_SHA,
+        "repos": sorted({r for repos in items.values() for r in repos}),
+        "items": {item: {repo: ["%s:Book.decl" % repo] for repo in repos}
+                  for item, repos in items.items()},
+        "intext": {},
+    })
     return path
 
 
@@ -345,8 +364,16 @@ class TestQuotePolicyIsPerDestination(Fixture):
     def test_a_full_quote_stops_at_the_gates_own_bound(self):
         long_quote = "word " * 400
         rendered = route_mod.render_quote(long_quote, route_mod.QUOTE_FULL)
-        self.assertLessEqual(len(rendered), route_mod.MAX_QUOTE_CHARS + 80)
-        self.assertIn("truncated at %d characters" % route_mod.MAX_QUOTE_CHARS, rendered)
+        self.assertLessEqual(len(rendered), route_mod.LONG_QUOTE_CHARS + 80)
+        self.assertIn("truncated at %d characters" % route_mod.LONG_QUOTE_CHARS, rendered)
+
+    def test_the_bound_is_spelled_like_the_gates_own_bound(self):
+        """``MAX_QUOTE_CHARS`` is the gate's 3,000-character REFUSAL, not this one."""
+        from gate import verify_findings as vf
+
+        self.assertEqual(route_mod.LONG_QUOTE_CHARS, vf.LONG_QUOTE_CHARS)
+        self.assertFalse(hasattr(route_mod, "MAX_QUOTE_CHARS"),
+                         "two modules must not disagree about what one name bounds")
 
     def test_the_defaults_are_inverted_per_destination_not_per_workspace(self):
         self.assertEqual(route_mod.quote_policy({}, "owner"), route_mod.QUOTE_FULL)
@@ -477,22 +504,55 @@ class TestGithubIssueBodies(ChallengedFixture):
         self.assertIn("nothing was filed", res.stdout)
         self.assertTrue(os.path.exists(os.path.join(out, index["issues"][0]["file"])))
 
+    def out_dir(self, name: str = COMPANION) -> str:
+        """``--out DIR`` writes into ``DIR/<companion>/``, never into DIR itself."""
+        return os.path.join(self.root, "issues", name)
+
     def test_an_explicit_destination_governs_both_drafts(self):
         """`--destination owner` means owner everywhere, not "the default"."""
         res = cf("route", "--github", "--destination", "owner", "--out",
                  os.path.join(self.root, "issues"), cwd=self.root)
         self.assertEqual(res.returncode, 0, res.stderr)
-        with open(os.path.join(self.root, "issues", "index.json"), encoding="utf-8") as fh:
+        with open(os.path.join(self.out_dir(), "index.json"), encoding="utf-8") as fh:
             self.assertEqual(json.load(fh)["quotes"], route_mod.QUOTE_FULL)
 
     def test_the_cli_honours_an_explicit_quote_policy(self):
         res = cf("route", "--github", "--quotes", "hash", "--out",
                  os.path.join(self.root, "issues"), cwd=self.root)
         self.assertEqual(res.returncode, 0, res.stderr)
-        body = pathlib.Path(self.root, "issues").glob("*.md")
+        body = pathlib.Path(self.out_dir()).glob("*.md")
         text = next(iter(sorted(body))).read_text(encoding="utf-8")
         self.assertIn("quote withheld for this destination", text)
         self.assertNotIn(QUOTE, text)
+
+    def test_two_item_labels_that_slug_alike_do_not_overwrite_one_body(self):
+        """Measured 0 times over the 347 baseline findings; silent when it happens."""
+        rep = self.route()
+        rows = [r for r in rep["routed"]["rows"]
+                if str(r.get("ledger_verdict") or "") in route_mod.REPORTABLE_VERDICTS]
+        self.assertTrue(rows)
+        twin = dict(rows[0], item=rows[0]["item"] + ".", finding_id="f" * 64)
+        routed = {"meta": rep["routed"]["meta"], "rows": rep["routed"]["rows"] + [twin]}
+        self.assertEqual(route_mod.issue_slug(twin["source_id"], twin["item"]),
+                         route_mod.issue_slug(rows[0]["source_id"], rows[0]["item"]),
+                         "the fixture must really collide on the file name")
+        out = os.path.join(self.root, "twins")
+        index = route_mod.write_github_issues(routed, out, companion=COMPANION,
+                                             workspace=self.root)
+        names = [i["file"] for i in index["issues"]]
+        self.assertEqual(len(names), len(set(names)), "index.json listed one name twice")
+        for name in names:
+            self.assertTrue(os.path.exists(os.path.join(out, name)), name)
+        self.assertEqual(len([f for f in os.listdir(out) if f.endswith(".md")]), len(names))
+
+    def test_the_workspace_policy_reaches_the_issue_bodies(self):
+        """``policy.destinations.public.quotes`` governs the artifact it names."""
+        rep = self.route()
+        built = route_mod.github_issues(
+            rep["routed"], companion=COMPANION, workspace=self.root,
+            policy={"destinations": {"public": {"quotes": route_mod.QUOTE_HASH}}})
+        self.assertEqual(built["index"]["quotes"], route_mod.QUOTE_HASH)
+        self.assertIn("quote withheld for this destination", built["issues"][0]["body"])
 
     def test_only_reportable_verdicts_become_bodies(self):
         rep = self.route()
@@ -501,6 +561,142 @@ class TestGithubIssueBodies(ChallengedFixture):
         items = {i["item"] for i in built["issues"]}
         self.assertEqual(items, {"Exercise 1.2.3"})
         self.assertNotIn("Lemma 1.4.1", items)
+
+
+class TwoCompanionFixture(unittest.TestCase):
+    """The project's NORMAL shape: two companions, both formalising one item.
+
+    The single-companion fixture above cannot see the destination-sharing defect
+    at all, which is why it survived review: with one report there is nothing for
+    ``--out`` to collide with.
+    """
+
+    NAMES = ("ours", "adam")
+    ITEM = "Exercise 1.2.3"
+
+    def setUp(self):
+        self.root = scratch()
+        self.addCleanup(_rmtree, self.root)
+        lines = ["version: 2", "workspace:", "  name: rf", "companions:"]
+        for name in self.NAMES:
+            repo = os.path.join(self.root, "repo-%s" % name)
+            os.makedirs(repo, exist_ok=True)
+            lines += ["  %s:" % name, "    repo: %s" % repo,
+                      "    adapter: attribution_table", "    owner: examplebox/%s" % name,
+                      "    sources: [%s]" % SOURCE_ID, "    anchor_source: %s" % SOURCE_ID]
+        lines += ["sources:", "  %s:" % SOURCE_ID, '    sha256: "%s"' % SOURCE_SHA,
+                  "    title: A Book", '    edition: "first edition"', "    offset: 16",
+                  "    role: audited", "hosts:", "  allowlist: []"]
+        compat.write_text(os.path.join(self.root, "workspace.yaml"), "\n".join(lines) + "\n")
+        write_items_json(self.root, SOURCE_ID, [item_row(self.ITEM, page=24, chapter=1)])
+        docs = []
+        for name in self.NAMES:
+            decl = "Book.m_%s" % name
+            compat.write_jsonl(
+                os.path.join(self.root, "companions", name, "statements.jsonl"),
+                [{"item": self.ITEM, "item_raw": self.ITEM, "decl": decl,
+                  "file": "Book/%s.lean" % name, "line": 112, "repo": name,
+                  "statement": "theorem %s : True" % decl, "source_id": SOURCE_ID,
+                  "source_sha": SOURCE_SHA}])
+            doc = finding(self.ITEM, decls=["%s:%s" % (name, decl)], severity="high")
+            doc["disagreements"][0]["repos_involved"] = [name]
+            compat.write_json(
+                os.path.join(self.root, "corpus", "hunt", "exercise-1-2-3-%s.json" % name), doc)
+            docs.append(doc)
+        compat.write_json(os.path.join(self.root, "corpus", "hunt", "RECEIPT.json"),
+                          {"run_id": "hunt", "sources": {SOURCE_ID: SOURCE_SHA},
+                           "actual": {"count": len(docs)}, "complete": True,
+                           "gate": {"ok": True, "checked": len(docs)}})
+        rows = findings_mod.load_findings([os.path.join(self.root, "corpus", "hunt")])
+        for name in self.NAMES:
+            mine = findings_mod.rows_naming(rows, name)
+            compat.write_jsonl(
+                os.path.join(self.root, "ledger", "accepted.%s.jsonl" % name),
+                [dict(ledger_row(r["finding_id"], r["item"], verdict="CONFIRMED_CONTENT"),
+                      repo=name) for r in mine])
+
+
+class TestTwoCompanionsNeverShareAnIssueDirectory(TwoCompanionFixture):
+    """The printed `gh` command must name ITS OWN companion's evidence.
+
+    With one ``--out`` for every report, ``index.json`` held only the last
+    companion and the body for an item both companions formalise was overwritten,
+    so pasting the first printed command opened the SECOND companion's claim on
+    the first one's public tracker -- the exact harm this whole path exists to
+    avoid, and it warned about nothing.
+    """
+
+    def test_out_gives_each_companion_its_own_index_and_body(self):
+        out = os.path.join(self.root, "issues")
+        res = cf("route", "--github", "--out", out, cwd=self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        for name in self.NAMES:
+            with self.subTest(companion=name):
+                index_path = os.path.join(out, name, "index.json")
+                self.assertTrue(os.path.exists(index_path), index_path)
+                with open(index_path, encoding="utf-8") as fh:
+                    index = json.load(fh)
+                self.assertEqual(index["companion"], name)
+                self.assertEqual(index["count"], 1)
+                body = os.path.join(out, name, index["issues"][0]["file"])
+                text = pathlib.Path(body).read_text(encoding="utf-8")
+                self.assertIn("Book.m_%s" % name, text)
+                for other in self.NAMES:
+                    if other != name:
+                        self.assertNotIn("Book.m_%s" % other, text)
+
+    def test_each_printed_body_file_is_a_distinct_path(self):
+        out = os.path.join(self.root, "issues")
+        res = cf("route", "--github", "--out", out, cwd=self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        printed = re.findall(r"--body-file (\S+)", res.stdout)
+        self.assertEqual(len(printed), len(self.NAMES), res.stdout)
+        self.assertEqual(len(set(printed)), len(printed),
+                         "two companions were told to file the same file")
+        for path, name in zip(sorted(printed), sorted(self.NAMES)):
+            self.assertIn("Book.m_%s" % name,
+                          pathlib.Path(path).read_text(encoding="utf-8"))
+
+    def test_the_default_destination_was_already_per_companion(self):
+        """No --out: the behaviour that was right stays right."""
+        res = cf("route", "--github", cwd=self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        routed_dir = os.path.join(self.root, "ledger", "routed")
+        for name in self.NAMES:
+            self.assertTrue(os.path.exists(
+                os.path.join(route_mod.issues_dir(routed_dir, name), "index.json")))
+
+
+class TestTheWorkspacePolicyGovernsTheGithubBodies(ChallengedFixture):
+    """`templates/workspace.yaml.example` annotates `public:` as the issue bodies.
+
+    The key was read for the owner message and ignored by the artifact it names,
+    in the PERMISSIVE direction: a workspace asking for `hash` published the
+    excerpt on a tracker anyone can read.
+    """
+
+    POLICY = ("policy:\n"
+              "  destinations:\n"
+              "    owner:\n"
+              "      quotes: hash\n"
+              "    public:\n"
+              "      quotes: hash\n")
+
+    def test_the_cli_honours_destinations_public_quotes(self):
+        res = cf("route", "--github", cwd=self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        out = route_mod.issues_dir(os.path.join(self.root, "ledger", "routed"), COMPANION)
+        with open(os.path.join(out, "index.json"), encoding="utf-8") as fh:
+            index = json.load(fh)
+        self.assertEqual(index["quotes"], route_mod.QUOTE_HASH)
+        body = pathlib.Path(out, index["issues"][0]["file"]).read_text(encoding="utf-8")
+        self.assertIn("quote withheld for this destination", body)
+        self.assertNotIn(QUOTE, body)
+        self.assertNotIn(" ".join(QUOTE.split()[:6]), body)
+
+    def test_the_report_dict_carries_the_block_the_emitter_needs(self):
+        self.assertEqual((self.route().get("policy") or {}).get("destinations", {})
+                         .get("public", {}).get("quotes"), route_mod.QUOTE_HASH)
 
 
 class TestGithubIsRefusedWhileUnchallenged(Fixture):
@@ -623,6 +819,40 @@ class TestACollidingFindingIdIsHeldBack(Fixture):
         self.assertEqual({c["finding_id"] for c in coverage["collisions"]}, {fid})
         self.assertIn(fid, set(coverage["missing_ids"]))
 
+    def test_a_withdrawn_collision_is_counted_the_way_the_other_figure_is(self):
+        """`ledger_held_back` and `id_collision_rows` count ONE population.
+
+        A withdrawn row is held back from nobody, so counting it in the first
+        figure and not the second made two numbers printed side by side disagree.
+        """
+        for name in ("anchor-a", "anchor-b"):
+            compat.write_json(
+                os.path.join(self.root, "corpus", "hunt", "%s.json" % name),
+                finding("Lemma 1.4.1", kind="PAGE_ANCHOR", severity="low",
+                        decls=["%s:Book.outerMeasure_mono" % COMPANION],
+                        concept="the page differs (%s)" % name))
+        rows = findings_mod.load_findings([os.path.join(self.root, "corpus", "hunt")])
+        anchors = [r for r in rows if r["kind"] == "PAGE_ANCHOR"]
+        self.assertEqual(len({r["finding_id"] for r in anchors}), 1, "they must collide")
+        # A ledger row for BOTH colliding ids: the open CONTENT pair from setUp
+        # and this withdrawn PAGE_ANCHOR pair.
+        content = next(r for r in rows if r["item"] == "Exercise 2.1.1")
+        write_ledger(self.root, [
+            ledger_row(content["finding_id"], "Exercise 2.1.1", verdict="CONFIRMED_CONTENT"),
+            ledger_row(anchors[0]["finding_id"], "Lemma 1.4.1",
+                       verdict="CONFIRMED_CONTENT", kind="PAGE_ANCHOR"),
+        ])
+        routed = self.route()["routed"]
+        counts = routed["meta"]["counts"]
+        withdrawn = [r for r in routed["rows"]
+                     if r["finding_id"] == anchors[0]["finding_id"]]
+        self.assertEqual(len(withdrawn), 2)
+        self.assertTrue(all(r.get("withdrawn") for r in withdrawn),
+                        "an LLM-emitted PAGE_ANCHOR row with no anchor check is withdrawn")
+        self.assertEqual(counts["id_collision_rows"], 2, "the open pair, not the withdrawn one")
+        self.assertEqual(counts["ledger_held_back"], counts["id_collision_rows"],
+                         "the two withdrawn rows are held back from nobody")
+
     def test_the_owner_message_says_how_many_rows_are_held_back(self):
         fid = self.colliding_id()
         write_ledger(self.root, [ledger_row(fid, "Exercise 2.1.1",
@@ -698,6 +928,8 @@ class TestThePrintedInvocationIsCopyPasteable(Fixture):
 
 class CoverageFixture(Fixture):
     CHAPTERS = "    chapters: [1]\n"
+    #: {item: the companions that formalise it}; only the first item is a PAIR
+    PAIR_INDEX = {"Exercise 1.2.3": ["ours", "adam"], "Lemma 1.4.1": ["ours"]}
 
     def setUp(self):
         super().setUp()
@@ -706,7 +938,9 @@ class CoverageFixture(Fixture):
             chapters=[1], items_in_book=3, items_in_scope=2,
             items_in_scope_and_any_repo=2, task_universe=2,
             task_universe_items=["Exercise 1.2.3", "Lemma 1.4.1"],
-            items_in_scope_uncovered=[])
+            pairs=1, items_in_scope_uncovered=[])
+        if self.PAIR_INDEX is not None:
+            write_pair_index(self.root, SOURCE_ID, self.PAIR_INDEX)
         self.route()
 
     def handoff(self, **kwargs) -> dict:
@@ -723,10 +957,32 @@ class TestTheHandoffHasADenominator(CoverageFixture):
     def test_the_coverage_section_counts_per_source_and_chapter(self):
         text = self.handoff()["text"]
         self.assertIn("## 0. How much of each source was audited", text)
-        self.assertIn("| source | chapter | items in source | in scope | paired | examined | "
-                      "gated | with findings | never examined |", text)
-        # chapter 1: 2 in scope, 2 paired, 2 examined, 2 gated, 2 with findings, 0 missed
-        self.assertIn("| `%s` | 1 | — | 2 | 2 | 2 | 2 | 2 | 0 |" % SOURCE_ID, text)
+        self.assertIn("| source | chapter | items in source | in scope | in task universe | "
+                      "paired | examined | gated | with findings | never examined |", text)
+        # chapter 1: 2 in scope, 2 in the task universe, 1 of them PAIRED,
+        # 2 examined, 2 gated, 2 with findings, 0 missed
+        self.assertIn("| `%s` | 1 | — | 2 | 2 | 1 | 2 | 2 | 2 | 0 |" % SOURCE_ID, text)
+
+    def test_the_task_universe_is_not_called_paired(self):
+        """225 paired and 383 in the task universe are different figures.
+
+        The pinned baseline describes its 383 as "225 paired + 158
+        single-source", so a column headed "paired" showing the task universe
+        claims a cross-check 158 items never had.
+        """
+        block = self.handoff()["context"]["_coverage"]["sources"][0]
+        self.assertEqual(block["items_in_task_universe"], 2)
+        self.assertEqual(block["items_paired"], 1, "only one item has two companions")
+        self.assertNotEqual(block["items_paired"], block["items_in_task_universe"],
+                            "the fixture must distinguish the two figures")
+        text = self.handoff()["text"]
+        self.assertIn("2 in the differential's task universe, 1 paired by two or more "
+                      "companions", text)
+
+    def test_the_paired_figure_is_recomputed_from_the_pairing_index(self):
+        by_chapter = self.handoff()["context"]["_coverage"]["sources"][0]["by_chapter"]
+        self.assertEqual(by_chapter["1"]["in_task_universe"], 2)
+        self.assertEqual(by_chapter["1"]["paired"], 1)
 
     def test_chapter_two_is_out_of_scope_and_is_not_counted(self):
         coverage = self.handoff()["context"]["_coverage"]
@@ -757,6 +1013,52 @@ class TestTheHandoffHasADenominator(CoverageFixture):
         self.assertEqual(ids, [SOURCE_ID, OTHER_SOURCE_ID])
         other = doc["sources"][1]
         self.assertEqual(other["items_examined"], 0)
+        self.assertFalse(other["under_audit"], "no companion is bound to it")
+        self.assertEqual(other["role"], "reference")
+
+    def test_a_reference_edition_does_not_make_the_report_partial(self):
+        """Both real workspaces carry an earlier draft nobody is bound to.
+
+        Counting it as scope missing made the first paragraph's warning fire on
+        every report ever written, which is how a warning stops meaning anything.
+        """
+        first = self.handoff()["text"].split("## 0.")[0]
+        self.assertNotIn("`%s` (no denominator computed)" % OTHER_SOURCE_ID, first)
+        self.assertIn("Not under audit (no companion is bound to them): `%s`." % OTHER_SOURCE_ID,
+                      first)
+        self.assertIn("not under audit — no companion is bound to it (`role: reference`)",
+                      self.handoff()["text"])
+
+    def test_the_chapter_fraction_names_what_the_denominator_is(self):
+        """"chapters audited 1 of 1, 2" read as one figure over another."""
+        text = self.handoff()["text"]
+        self.assertIn("chapters audited 1 of chapters 1, 2;", text)
+        self.assertNotIn("chapters audited 1 of 1, 2", text)
+
+    def test_the_command_names_the_files_it_wrote(self):
+        """`cf report` wrote two more artifacts and named neither (RULES: --help)."""
+        res = cf("report", cwd=self.root)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        for rel in ("reports/coverage.json", "reports/unexamined.%s.json" % SOURCE_ID):
+            with self.subTest(file=rel):
+                path = os.path.join(self.root, rel)
+                self.assertTrue(os.path.exists(path), rel)
+                self.assertIn("wrote %s" % path, res.stdout)
+        helped = cf("report", "--help")
+        self.assertIn("reports/coverage.json", helped.stdout)
+        self.assertIn("reports/unexamined.<source_id>.json", helped.stdout)
+        self.assertNotIn("Two outputs", helped.stdout)
+
+
+class TestAMissingPairingIndexIsNotZeroPairs(CoverageFixture):
+    PAIR_INDEX = None       # `cf pair` never ran, so nothing knows what paired
+
+    def test_the_paired_figure_is_uncomputed_rather_than_zero(self):
+        block = self.handoff()["context"]["_coverage"]["sources"][0]
+        self.assertIsNone(block["items_paired"])
+        text = self.handoff()["text"]
+        self.assertIn("TODO(paired)", text)
+        self.assertIn("no `pairs/%s/index.json`" % SOURCE_ID, text)
 
 
 class TestUnexaminedItemsAreNamed(CoverageFixture):
