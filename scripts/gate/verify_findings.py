@@ -1398,9 +1398,10 @@ def _filter_refusal(cwd: pathlib.Path, key: str) -> str:
     since = ".".join(str(n) for n in _CONFIG_ENV_SINCE)
     return (f"the worktree {cwd} names the content filter {key!r}, whose '=' no "
             f"`git -c` blank can express, and this git ({shown}) is older than the "
-            f"{since} that reads the GIT_CONFIG_* blanking which can — so reading "
-            f"the change set would run that driver (the gate could not run: this is "
-            f"not a finding of yours; install git {since} or later on the run host)")
+            f"{since} that reads the GIT_CONFIG_* blanking which can — so reading the "
+            f"change set would run that driver (the gate could not run: "
+            f"this is not a finding of yours; install git {since} or later on the "
+            f"run host)")
 
 
 class _GateBroken(Exception):

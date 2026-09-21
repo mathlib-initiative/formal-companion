@@ -181,6 +181,10 @@ release has something to say.
   stop. A refused read means "do not write" now, as a hung git already did, and
   `cf recheck`'s pin records the refusal's own reason instead of calling a
   checkout "not a git checkout".
+- `cf doctor` reports `git --version` beside the presence check and warns below
+  2.31, the floor the gate's content-filter blanking rests on;
+  `references/runbook-server.md` §2 records it as a precondition. The
+  requirement used to be met for the first time as a blocked run.
 
 ## 0.2.0 — the multi-source model
 

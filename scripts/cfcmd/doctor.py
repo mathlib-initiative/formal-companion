@@ -12,8 +12,11 @@ has set up, and every one of them is one line to check up front.
 
 Required: python (the floor `scripts/cf.py` enforces), git, pdftotext and
 pdftoppm (poppler), curl.  Optional: node (only `cf plan-run`'s workflow scripts
-parse with it) and PyYAML (`cflib.yamlio` has a fallback reader).  Exit 0 when
-only optional things are missing, 2 when a required one is.
+parse with it), PyYAML (`cflib.yamlio` has a fallback reader) and git 2.31 or
+later -- the one prerequisite that is a VERSION, because below it the findings
+gate refuses to read a worktree naming a content filter it cannot blank
+(`_git_version_row`).  Exit 0 when only optional things are missing, 2 when a
+required one is.
 
 It also prints the PDF search roots, because `workspace.yaml library_paths` plus
 the roots derived from the workspace is both where `cf onboard` looks and the
@@ -25,7 +28,7 @@ import json
 import shutil
 import sys
 
-from cflib import log
+from cflib import gitsafe, log
 from cflib.errors import CfError
 from cflib.log import format_table
 
@@ -55,6 +58,36 @@ OPTIONAL_TOOLS: tuple[tuple[str, str, str], ...] = (
 )
 
 
+def _git_version_row() -> dict:
+    """``git --version`` beside the presence check, against the gate's floor.
+
+    A version, not only a name on PATH, because one thing here needs a specific
+    git: ``GIT_CONFIG_COUNT`` and its pairs arrived in 2.31, and they are the
+    only channel that can blank a content-filter driver whose name carries an
+    ``=`` (``git -c`` splits the argument at the first one).  Below that floor
+    the findings gate REFUSES to read a worktree that names such a driver rather
+    than run the program it points at, and ``cflib.gitsafe`` does the same on a
+    companion tree -- so on an old run host the requirement was met for the first
+    time as a blocked run with no warning anywhere before it
+    (``references/runbook-server.md`` §2).
+
+    A WARNING and not a failure: every other command works on an older git, and
+    the machine running `cf doctor` is often not the machine running the gate.
+    """
+    version = gitsafe.git_version()
+    floor = ".".join(str(n) for n in gitsafe.CONFIG_ENV_SINCE)
+    return {
+        "name": f"git {floor}+",
+        "required": False,
+        "ok": gitsafe.honours_config_env(),
+        "detail": ".".join(str(n) for n in version) if version
+                  else "`git --version` answered nothing this could read",
+        "fix": f"install git {floor} or later on the run host: below it the "
+               f"findings gate stops rather than read a worktree that names a "
+               f"content filter whose own name carries an '='",
+    }
+
+
 def check() -> list[dict]:
     """One row per prerequisite: name, required, ok, detail, fix."""
     # imported here, not at module scope: cf.py imports every cfcmd module while
@@ -73,6 +106,8 @@ def check() -> list[dict]:
         found = shutil.which(name)
         rows.append({"name": name, "required": True, "ok": bool(found),
                      "detail": found or why, "fix": fix})
+        if name == "git" and found:
+            rows.append(_git_version_row())
     for name, why, fix in OPTIONAL_TOOLS:
         found = shutil.which(name)
         rows.append({"name": name, "required": False, "ok": bool(found),
