@@ -52,11 +52,15 @@ UNATTRIBUTED = "_unattributed"
 #: a bare `cf harvest <run-id>` refuses an imported or local-fleet run ("run.yaml
 #: for '<id>' records no host"), and "re-harvest without --no-gate" is a no-op
 #: for the import that landed `gate: null` because no config could be built --
-#: --no-gate was never passed there.
+#: --no-gate was never passed there.  The import branch carries `--source`
+#: because `cf import-corpus` refuses a workspace with more than one source
+#: without it ("v1 findings record no source, so say which they read"), and a
+#: multi-source workspace is the ordinary one: printed without the flag, the one
+#: remedy for the one state it exists for exited 2 and changed nothing.
 REGATE_HINT = ("Re-run the gate over them: `cf harvest <run-id> --gate-config <file>` for a run "
                "this workspace planned (add the --from/--journal/--execute that run needs), or "
-               "`cf import-corpus --run-id <run-id> --from <dir> --preset <preset>` for an "
-               "imported corpus.")
+               "`cf import-corpus --run-id <run-id> --from <dir> --preset <preset> --source <id>` "
+               "for an imported corpus (drop `--source` in a one-source workspace).")
 
 
 def run_mode(run_id: str, corpus_dir: Path | None = None) -> str:
