@@ -291,7 +291,12 @@ class DiscoveryResult:
                 out.append(f"      from     {', '.join(frm)}")
             manuscript = body.get("manuscript_files") or []
             if body.get("pdf"):
-                out.append(f"      pdf      {body['pdf']}")
+                # `--source` makes a text manuscript land on this line routinely,
+                # and calling one "pdf" is the same wrong word this module already
+                # took out of its refusals ("no source file", `cf sources add
+                # <source>`): a source is not a PDF.
+                label = "source" if body.get("source_format") == "text" else "pdf"
+                out.append(f"      {label:<8s} {body['pdf']}")
                 out.append(f"               found in: {(body.get('discovered') or {}).get('pdf_found_in')}")
             elif manuscript:
                 # not "NOT FOUND": these bytes are in hand, they are simply not
@@ -1372,6 +1377,14 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
     if library_paths is None:
         library_paths = getattr(workspace, "library_paths", []) or []
     merged = merge_claims(claims, registry)
+    #: A location an OPERATOR named is the last word to be asked, not the first.
+    #: `cf onboard --source` exists for the case where nothing else answered, so
+    #: when its bytes turn out to be a source the repo itself catalogues, the fold
+    #: below has to run the repo's way round: the repo's name for the work
+    #: survives (S3's derivation step prefers a declared title to a filename stem)
+    #: and the flag only adds its path to the evidence.  `sort` is stable, so
+    #: nothing else moves.
+    merged.sort(key=lambda c: c.discovered_by == DISCOVERED_BY_MANUAL)
     result = DiscoveryResult(repo=repo, name=repo.name, adapter="")
     taken: set[str] = set(getattr(workspace, "sources", {}) or {})
     #: the fingerprint is the identity the whole model is built on, so two claims
@@ -1406,8 +1419,17 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         if entry is None and located is None and not claim.title and not claim.sha256:
             result.unresolved.append(f"{claim.path} named no source we could resolve")
             continue
-        if located is not None and located.sha256 in by_sha:
-            _fold_into(by_sha[located.sha256], claim, entry, located, result, taken)
+        # Keyed on whichever sha the claim RESOLVED to, not on `located` alone: a
+        # claim that named its own files has no located PDF and its sha was read
+        # off those bytes, so keying on `located` let a `--source` file whose
+        # bytes the repo's own signals also found become a SECOND id for one sha
+        # -- the state workspace.yaml's loader refuses, reached by a flag rather
+        # than by a bug. A sha somebody merely QUOTED is deliberately not a key
+        # here: those bytes are not in hand, so folding a located claim into such
+        # a body would keep the fingerprint and drop the file.
+        sha = located.sha256 if located is not None else (claim.sha256 if claim.files else "")
+        if sha and sha in by_sha:
+            _fold_into(by_sha[sha], claim, entry, located, result, taken)
             result.claims.append(claim)
             continue
 
@@ -1417,14 +1439,14 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         result.claims.append(claim)
         result.claims_by_source[source_id] = claim
         result.sources.append(body)
-        if located is not None:
-            by_sha[located.sha256] = body
+        if sha:
+            by_sha[sha] = body
     result.sources.sort(key=lambda b: (b.get("role") != "audited", b["id"]))
     return result
 
 
 def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
-               located: LocatedPdf, result: DiscoveryResult, taken: set[str]) -> None:
+               located: LocatedPdf | None, result: DiscoveryResult, taken: set[str]) -> None:
     """Merge a second claim on the SAME bytes into the source already accepted.
 
     The claims were worded differently enough that :func:`merge_claims` kept
@@ -1433,8 +1455,16 @@ def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
     pointed here; a registry entry found on the second pass upgrades a source
     that had been named from a filename, because a catalogued id is the stable
     one (S3: sha -> registry alias -> derivation).
+
+    ``located`` is None for a claim that NAMED its files -- an adapter's own
+    manuscript, or `cf onboard --source` -- whose sha was read off those bytes
+    rather than found by a search.  Such a claim reaches here whenever the
+    operator named a file the repo already declares, so nothing below may
+    dereference it.
     """
-    discovered = body.setdefault("discovered", {"from": [], "pdf_found_in": located.where,
+    where = located.where if located is not None else (claim.discovered_by or "none")
+    sha8 = (located.sha256 if located is not None else claim.sha256 or "")[:8]
+    discovered = body.setdefault("discovered", {"from": [], "pdf_found_in": where,
                                                 "signal": claim.signal})
     discovered["from"] = _uniq(tuple(discovered.get("from") or ()) + tuple(claim.sources))
     discovered["from"] = list(discovered["from"])
@@ -1458,11 +1488,11 @@ def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
         body["id"] = entry.id
         body["registry"] = entry.origin
         result.claims_by_source[entry.id] = result.claims_by_source.pop(old_id)
-        detail(f"{old_id} and {entry.id} are the same bytes ({located.sha256[:8]}); "
+        detail(f"{old_id} and {entry.id} are the same bytes ({sha8}); "
                f"keeping the catalogued id {entry.id}")
     else:
         detail(f"{body['id']}: a second claim ({claim.signal} {claim.path}) names the same "
-               f"bytes {located.sha256[:8]}; folded in")
+               f"bytes {sha8}; folded in")
 
 
 def _is_noise(claim: SourceClaim) -> bool:
