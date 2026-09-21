@@ -51,6 +51,20 @@ def register(subparsers) -> None:
     p.add_argument("--runs", action="store_true", help="also list runs and corpus sizes")
 
 
+def _bound_sources(workspace, name: str) -> list[str]:
+    """The sources `workspace.yaml` binds *name* to; empty when it has no row for it.
+
+    `Workspace.companion_names()` is "the names in workspace.yaml, PLUS any
+    directory on disk that has an adapter" -- the state a half-finished onboard
+    or a copied companion directory leaves, and one `cf plan-run` supports.  Both
+    loops below walked that list through `sources_of()`, which raises "unknown
+    companion", so `cf status` printed the directory as `not onboarded` and then
+    exited 2 on it -- in the one command an operator runs to find out what is
+    wrong with the workspace.
+    """
+    return list(workspace.companions[name].sources) if name in workspace.companions else []
+
+
 def run(args) -> int:
     workspace = from_args(args)
     names = [args.companion] if args.companion else workspace.companion_names()
@@ -149,7 +163,7 @@ def run(args) -> int:
         # source is added and nothing has re-extracted yet -- printing only the
         # first contradicts the source table directly above, which already lists
         # this companion against the new source.
-        bound = len(workspace.sources_of(name))
+        bound = len(_bound_sources(workspace, name))
         done = row.get("sources") or 0
         row["sources"] = str(bound) if bound == done else f"{bound} ({done} extracted)"
         rows.append([row.get(c) for c in COLUMNS])
@@ -157,7 +171,7 @@ def run(args) -> int:
     log.info(format_table(COLUMNS, rows))
 
     for name in names:
-        bound = set(workspace.sources_of(name))
+        bound = set(_bound_sources(workspace, name))
         done = set((states.get(name) or {}).get("sources") or {})
         missing = sorted(bound - done)
         if missing:
