@@ -115,6 +115,31 @@ that set and nothing else, and it is written down once because two stages both w
 
 `human_confirmed` is never written by a machine pass.
 
+### 1.8 Re-check statuses (`cf recheck`, `recheck.status` on a ledger row)
+
+`unchanged` | `changed` | `gone` | `unpinned`. `cflib.vocab.RECHECK_STATUSES`.
+
+These are facts about the **code**, not verdicts. A finding is a claim about a specific Lean
+statement at a specific revision, so `cf recheck` re-extracts the companion at its current commit
+and compares each pinned `decl_fingerprint` (§3.2) with what is there now:
+
+| value | what it means | what happens to the row |
+|---|---|---|
+| `unchanged` | every pinned declaration still normalises to the same fingerprint | nothing; the claim is still about this code |
+| `changed` | a fingerprint differs — the statement moved | `needs_rereview`: it may have been fixed or made worse, and only a reader can say which |
+| `gone` | a pinned declaration is not in the table any more | `needs_rereview` |
+| `unpinned` | the row carries no fingerprint and its run recorded none | reported, never guessed at |
+
+`unpinned` is the honest answer for every imported legacy corpus and every row written before the
+pin existed, and it is why re-checking a legacy ledger cannot move an adjudicated number: a
+fingerprint taken at today's HEAD would claim the finding was judged against code it never saw.
+A `COVERAGE` finding names no declaration, so it is `unpinned` too — there is nothing to fingerprint,
+and reporting it as `unchanged` would read as "still verified".
+
+**`cf recheck` writes no verdict and no resolution.** `validate_ledger` rejects a `recheck` block
+that carries either: stating what the code did and deciding what that means are two different jobs,
+and only the second one is an adjudication.
+
 ---
 
 ## 2. Mapping tables from the five legacy vocabularies
@@ -247,6 +272,50 @@ Rules and reasons:
   never routed — routing is on the `unfaithful_decls` prefix only.
 - Challenge and adjudication results link by `finding_id`, never by a label prefix. The legacy
   22-/30-character prefix join is what made batch-1 challenge results ambiguous.
+
+### 3.1 `defect_key` — the run-independent key
+
+```python
+defect_key(source_id, item, kind, unfaithful_decls) = finding_id(
+    "", source_id, items.join_key(item), kind, unfaithful_decls)
+```
+
+`cflib.hashing.defect_key`, beside the id so the two cannot drift. `run_id` is `finding_id`'s
+**first** part, so the same defect found by two runs gets two ids: an id addresses one
+*observation*, and this key is the *identity* two observations share. `union --group-by defect-key`
+groups on it; `agreed` groups on `(source_id, repo, collapsed item, kind)` plus a shared
+declaration, and adjudication, transcription and `cf recheck` address one observation, so they join
+on `finding_id`. `--new-only` reported every re-found defect as new while this key did not exist.
+
+Two details are load-bearing:
+
+- **the item goes in as the JOIN key**, not as the label a worker wrote. `harvest.tally` passes
+  `collapse_to_book_item()` (`items.join_key` for an in-text label, the book item for a numbered
+  one), because `Exercise 1.6.27` and `Exercise 1.6.27(iii)` are one defect at one book item. Keyed
+  on the raw spelling they landed in two groups, so the "exact" grouping was not even a refinement
+  of the default one — which is the shape of the duplicate `union.adam.json` recorded for
+  `Exercise 1.6.39`. §4's rule: anything that MATCHES on an item matches on `join_key`.
+- **the companion is not hashed in.** It is a field on every row and part of every grouping tuple
+  that uses this key (`(source_id, repo, defect_key)` in `union`), so folding it in would change no
+  grouping and re-key what is already written.
+
+Neither key is ever stored on a finding: both are recomputed from the content every time it is read.
+
+### 3.2 The revision pin — `repo_commit` and `decl_fingerprints`
+
+A finding is a claim about a Lean statement **at a revision**. Two fields carry that:
+
+| field | written by | how |
+|---|---|---|
+| `repo_commit` | `cf plan-run` → `run.yaml` `companion_pins`, stamped by `cf harvest` | the companion's HEAD at plan time, read through `cflib.gitsafe`, with a `dirty` flag beside it: a working tree that does not match its commit is not pinned by it |
+| `decl_fingerprints` | `cf harvest` → `reports/pin.<run-id>.json`, copied onto the ledger row | `{repo:decl → sha256}` over the declaration's statement text in `companions/<name>/statements.jsonl` **at that commit**, with Lean block comments (so docstrings) dropped and whitespace collapsed |
+
+Neither is ever taken from a worker, for exactly the reason `finding_id` is recomputed at harvest: a
+worker cannot be trusted to state what it was judged against. A declaration is fingerprinted **only**
+when the statement table was extracted at the planned commit and the checkout was clean; otherwise
+it is listed as `unpinned` rather than fingerprinted against a revision it never saw. Whitespace and
+docstring changes are deliberately invisible to the fingerprint: a re-check that shouts at
+reformatting gets run once.
 
 **Workflow replay is not keyed on ids.** The Workflow tool replays a cached `agent()` result when
 the prompt bytes and the preceding call order are unchanged, so "re-running adjudication on a

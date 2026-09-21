@@ -203,13 +203,32 @@ Line 1 is a `_meta` row; every later line is one adjudicated finding.
  "method":"lens×3 + reconciler + 2 skeptics","contested":false,
  "dissent":[{"role":"skeptic-convention","confidence":0.6,"argument":"…"}],
  "resolution":"in_progress:fix/lemma-2-3-4",
- "reason":"self-contained justification citing the book page and file:line"}
+ "reason":"self-contained justification citing the book page and file:line",
+ "repo_commit":"<40 hex>",
+ "decl_fingerprints":{"alpha:Widget.Basic.gadget_le_of_bounded":"<64 hex>"},
+ "recheck":{"at":"2026-09-20T00:00:00Z","status":"unchanged","needs_rereview":false,
+            "pinned_commit":"<40 hex>","checked_commit":"<40 hex>",
+            "decls":[{"decl":"alpha:Widget.Basic.gadget_le_of_bounded","status":"unchanged",
+                      "pinned_fingerprint":"<64 hex>","current_fingerprint":"<64 hex>"}]}}
 ```
+
+`repo_commit` + `decl_fingerprints` are the **revision pin** (`references/vocabulary.md` §3.2): which
+companion revision this claim was judged against, and what its declarations said there. They come
+from `reports/pin.<run-id>.json`, which `cf harvest` computes from `run.yaml`'s plan-time
+`companion_pins` and the statement table extracted at that commit — never from the worker. Both are
+optional: every imported corpus and every row written before the pin existed carries none, and such a
+row is not wrong, it is `unpinned`. `recheck` is written by `cf recheck` and by nothing else.
 
 Rules enforced by `ledger/validate_ledger.py`:
 
 - every row answers a finding that exists in the corpus, joined on
   **`(source_id, finding_id)`**;
+- a pin that is present must *be* a pin: `repo_commit` a full git object name, every
+  `decl_fingerprints` value a sha256 over a declaration the row actually names, and no fingerprints
+  without a commit — a truncated pin would make `cf recheck` report a live finding as `changed`,
+  which is the one failure that stops anyone running it twice;
+- a `recheck` block carries a vocabulary `status` and **never** a `verdict` or a `resolution`: a
+  re-check states what the code did, it does not adjudicate;
 - `verdict`, `severity`, `resolution` are in the vocabulary — the legacy free-text resolution
   (`"refuted; binder dropped in PR#10"`) is split into `resolution` + `reason`;
 - a `CONVENTION` verdict **must** carry a written recovery argument;
