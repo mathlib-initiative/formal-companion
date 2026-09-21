@@ -8,6 +8,11 @@ belong on the server orchestrator instead (`references/runbook-server.md`).
 Each skeleton is parameterised by `args` and ships in `workflows/`. The originals they were
 distilled from are named per section.
 
+**Contents** — **§0 the rules that apply to all of them** (read this one) · §1 lens → refute +
+consequence · §2 three-vote majority · §3 lenses → reconciler → opposing skeptics (the
+adjudication skeleton) · §4 claims-verify with a second vote on the numbers · §5 the
+completeness critic · §6 the per-item local fleet.
+
 ---
 
 ## 0. The rules that apply to all of them

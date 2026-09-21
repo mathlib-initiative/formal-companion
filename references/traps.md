@@ -7,6 +7,11 @@ symptom you will actually see), *the fix*, and *where the evidence is*. Most of 
 Host names, server addresses, agentbox profile names and session ids deliberately do not appear
 here; they belong in `workspace.yaml`.
 
+**Contents** — **A** sources, editions and discovery (read before your first run on a new
+book) · **B** counting, harvesting, reporting · **C** the orchestrator and the bridge ·
+**D** the local Workflow path · **E** shell, Python and small tools · **F** Lean, Lake and
+Verso · **G** repos, worktrees and permissions.
+
 ---
 
 ## A. Sources, editions and discovery
@@ -114,7 +119,7 @@ only with `--download` **and** a licence note saying the author publishes the fi
 nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails
 closed** when it is absent — which presents as a run failure, not as a missing file, so check that
 first.
-*Evidence:* `~/Desktop/tao-diff-run/README.md`; `docs/HANDOFF.md` §7 ("DO NOT DELETE");
+*Evidence:* `~/Desktop/tao-diff-run/README.md`; `tao-measure-lean/docs/HANDOFF.md` §7 ("DO NOT DELETE");
 `registry/README.md`.
 
 **A6 — `sources/` in `.gitignore` hides `scripts/sources/`.**
@@ -135,7 +140,7 @@ renames either side. Two lines, one meaning; they are commented in `.gitignore` 
 *Presents as:* every derived count off by one, in the "cleaner" direction.
 *Fix:* `RECEIPT.json` with the source count and a sha manifest; `harvest` fails on a mismatch.
 rsync completing is not proof of completeness.
-*Evidence:* `docs/HANDOFF.md` §4 (762 local vs 763 on the server; the missing file was a real
+*Evidence:* `tao-measure-lean/docs/HANDOFF.md` §4 (762 local vs 763 on the server; the missing file was a real
 `CONTENT` finding).
 
 **B2 — The task generator dropped an item.**
@@ -150,8 +155,8 @@ against `items.json ∩ any-repo`, failing loudly on a gap.
 *Presents as:* "everything is fixed" while three findings — one high — have never been adjudicated.
 *Fix:* the work list is always re-derived mechanically from the merged corpus; "nothing open" ships
 with the command that recomputes it.
-*Evidence:* `docs/OPEN_FAITHFULNESS_FINDINGS.md` (three successive wrong counts, all toward
-"cleaner"); `docs/HANDOFF.md` §4.
+*Evidence:* `tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md` (three successive wrong counts, all toward
+"cleaner"); `tao-measure-lean/docs/HANDOFF.md` §4.
 
 **B4 — A grep is not the authoritative count.**
 *Presents as:* 523 `sorry` where the repo's own classifier says 516 (510 exercises + 6 gaps),
@@ -185,7 +190,7 @@ normaliser.
 *Presents as:* `aggregate usage: input=0, output=0` and a budget command that caps nothing.
 *Fix:* treat the gateway/host as the only enforceable cap; record a `max_cost` and the billing path
 in `run.yaml`; never claim tend's budget protects a bridged run.
-*Evidence:* `RUNBOOK.md` addendum; `docs/HANDOFF.md` §8.
+*Evidence:* `RUNBOOK.md` addendum; `tao-measure-lean/docs/HANDOFF.md` §8.
 
 **C3 — The host caps concurrent sessions per account.**
 *Presents as:* HTTP 409s once you pass 16 sessions — and the cap is per account, across workspaces,
@@ -193,7 +198,7 @@ so two workspaces cannot both run at full width.
 *Fix:* `plan-run` writes worker+reviewer concurrency into `run.yaml`, and `cf run` refuses a total
 above `defaults.max_concurrent_sessions` (16) unless `--over-session-cap` is passed; the plan prints
 `<n> sessions, cap <m>` so the number is visible before anything starts. A second workspace waits.
-*Evidence:* `docs/HANDOFF.md` §8.
+*Evidence:* `tao-measure-lean/docs/HANDOFF.md` §8.
 
 **C4 — The worktree explosion.**
 *Presents as:* 382 git worktrees and 1.1 GB appearing within minutes of starting a run, even with
@@ -302,13 +307,13 @@ edits **within their line count** or re-run the whole pin cascade.
 *Fix:* build the library target only (`lake build <Lib>`); never build a narrative layer in CI on a
 hosted runner. Also: killing `lake` leaves orphaned `lean` children holding mmapped artifacts —
 check for them after any interrupted build.
-*Evidence:* `notes/camera-ready-HANDOFF-2026-09-08.md` §6; `docs/HANDOFF.md` §7;
+*Evidence:* `notes/camera-ready-HANDOFF-2026-09-08.md` §6; `tao-measure-lean/docs/HANDOFF.md` §7;
 `memory/camera-ready-pass-2026-09-07.md`.
 
 **F4 — Generated layers are not covered by CI.**
 *Presents as:* a generated table or blueprint drifting behind the Lean across many sections.
 *Fix:* regenerate after any declaration change, as part of the fix stage's invariants.
-*Evidence:* `docs/HANDOFF.md` §7.
+*Evidence:* `tao-measure-lean/docs/HANDOFF.md` §7.
 
 **F5 — This Lake has no jobs flag.**
 *Presents as:* `-j`/`--jobs` rejected.
@@ -343,7 +348,7 @@ from that copy.
 `changed files ⊆ {findings/<id>.json, tasks/<id>.yaml}` before merge. Mount or copy source repos
 read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Evidence:* the tend config's two `validation` commands, both
-`python3 scripts/verify_findings.py` relative to the worktree; design critique
+`python3 <entrypoint>/scripts/verify_findings.py` relative to the worktree;
 the design critique, gap 3.
 
 **G4 — `git add <deleted-path>` aborts the whole add.**
