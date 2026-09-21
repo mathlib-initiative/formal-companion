@@ -408,13 +408,19 @@ class BookText:
         list turns the page bind OFF (:meth:`PageBind.problem` short-circuits on
         it), so a quote from the wrong section passed the gate simply by being
         spliced onto the tail of the preceding page.  Adjacent pages are therefore
-        searched as pairs -- but only when the whole-page search found nothing,
-        or a needle wholly inside page *i* would also be reported for (i-1, i) and
-        (i, i+1) and the recurrence ceiling would count it three times.  The pairs
-        are of the NON-EMPTY pages, because ``from_text`` joins only those into
-        ``words``, so a blank page at a seam must not hide the match.  A needle
-        spanning three or more pages is still ``[]`` and still recorded as a
-        straddle by :meth:`PageBind.note`.
+        searched as RUNS -- but only when the whole-page search found nothing, and
+        narrowest first, or a needle wholly inside page *i* would also be reported
+        for (i-1, i) and (i, i+1) and the recurrence ceiling would count it three
+        times.  The runs are of the NON-EMPTY pages, because ``from_text`` joins
+        only those into ``words``, so a blank page at a seam must not hide the
+        match.
+
+        Pairs alone were not enough: one short page at the seam -- a folio-only
+        page, ordinary pdftotext output -- put a three-page splice back in the
+        blind spot, and 200 characters bought a wrong-section quote a silent
+        "straddles a page break" note and a pass.  A run can only hold the needle
+        if the pages BETWEEN its ends fit inside it, which is what bounds the
+        widening: once no run of this width can hold it, no wider one can either.
         """
         if self.pages is None or not needle:
             return []
@@ -422,11 +428,21 @@ class BookText:
         if hit:
             return hit
         live = [(n, p) for n, p in enumerate(self.pages, 1) if p]
-        out: list[int] = []
-        for (a, pa), (b, pb) in zip(live, live[1:]):
-            if needle in pa + " " + pb:
-                out.extend([a, b])
-        return sorted(set(out))
+        for width in range(2, len(live) + 1):
+            out: list[int] = []
+            feasible = False
+            for i in range(len(live) - width + 1):
+                run = live[i : i + width]
+                if sum(len(p) for _, p in run[1:-1]) > len(needle):
+                    continue          # its interior alone is longer than the needle
+                feasible = True
+                if needle in " ".join(p for _, p in run):
+                    out.extend(n for n, _ in run)
+            if out:
+                return sorted(set(out))
+            if not feasible:
+                break
+        return []
 
     def pages_with_label(self, needle: str) -> list[int]:
         """The 1-based PDF pages where an item label occurs, cached.
