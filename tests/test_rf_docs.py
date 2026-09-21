@@ -587,6 +587,33 @@ class TestTheEntryPointStatesItsPreconditions(unittest.TestCase):
         self.assertIn("--execute", text)
         self.assertIn("scriptPath", text)
 
+    def test_the_frontmatter_carries_the_vocabulary_and_the_negative_scope(self):
+        """The description is the only thing a router reads before loading this.
+
+        It listed neither the words the target users use nor what the skill is
+        not, so it competed with every Lean skill in the session and answered no
+        question about whether it fixes anything.
+        """
+        head = read("SKILL.md").split("---", 2)[1].lower()
+        for word in ("faithfulness", "autoformalization", "companion", "blueprint",
+                     "does the lean actually match the book"):
+            with self.subTest(vocabulary=word):
+                self.assertIn(word, head)
+        for negative in ("not a proof checker", "not a lean linter"):
+            with self.subTest(negative=negative):
+                self.assertIn(negative, head)
+
+    def test_the_substrate_and_the_generality_are_stated_where_they_are_read(self):
+        """Neither tool is pinned here, and one book is not a proven tool."""
+        skill = read("SKILL.md")
+        substrate = skill[skill.index("## Substrate"):]
+        for needle in ("tend", "agentbox", "not recorded"):
+            with self.subTest(substrate=needle):
+                self.assertIn(needle, substrate)
+        readme = read("README.md")
+        self.assertIn("## What has been exercised, and what has not", readme)
+        self.assertIn("never exercised end to end", readme.lower())
+
     def test_every_long_reference_carries_a_table_of_contents(self):
         for path in sorted((SKILL / "references").glob("*.md")):
             text = path.read_text(encoding="utf-8")
