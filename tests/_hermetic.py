@@ -13,9 +13,10 @@ refuses a mismatch -- but a test that reads the user's Downloads is not a test.)
 
 This module does the pinning **on import** rather than through a pytest hook,
 because `python3 -m unittest discover -s tests` -- the gate CLAUDE.md S7
-documents -- loads neither `tests/conftest.py` nor a `tests/__init__.py`. Under
-that loader the suite read whatever `~/Downloads` held; `tests/conftest.py` now
-imports this module, and so does every test module that builds a workspace.
+documents -- loads no `tests/conftest.py`, and no package `__init__` either:
+with no `-t` it never imports one, which is why `tests/` deliberately has none.
+Under that loader the suite read whatever `~/Downloads` held; `tests/conftest.py`
+now imports this module, and so does every test module that builds a workspace.
 `tests/test_rf_final_tests.py::TestBothLoadersAreHermetic` fails on one that
 forgets.
 
