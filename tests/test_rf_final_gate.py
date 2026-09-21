@@ -666,6 +666,38 @@ class TestATypographicDashAtTheEdgeIsNotAnOperator(BookTestCase):
         self.assertFalse(vf.quote_ok(book, "-1 <= m(F) for every set F that covers "
                                            "it, and the infimum is attained")[0])
 
+    def test_a_space_between_the_sign_and_its_operand_does_not_launder_it(self):
+        """The whitespace condition reads the spacing the QUOTE chose.
+
+        The quote is written by the agent, so the attacker picks it: the glued
+        ``-1 ≤ …`` was refused as a sign the book lacks and the same flip with one
+        space in it was stripped back to the book's own words and certified
+        verbatim.  Both spellings, side by side, and both edges.
+        """
+        book = vf.BookText.from_text(
+            "Lemma 4.2.1. In that case we have 1 <= m(F) for every set F that "
+            "covers it, and the infimum is attained.\n\f")
+        flipped = "%s1 <= m(F) for every set F that covers it, and the infimum is attained"
+        for sign in ("-", "- ", "-  ", "− ", "— ", "— — "):
+            with self.subTest(sign=sign):
+                ok, why = vf.quote_ok(book, flipped % sign)
+                self.assertFalse(ok, "a sign flip was laundered by its spacing: " + why)
+                self.assertIn("OPERATOR", why)
+        # and the trailing edge, where the operand is the last thing in the quote
+        tail = "we have 1 <= m(F) for every set F that covers it, and the infimum is attained"
+        self.assertTrue(vf.quote_ok(book, tail)[0])
+        for sign in (" -", " —"):
+            with self.subTest(sign=sign):
+                self.assertFalse(vf.quote_ok(
+                    book, "In that case we have 1" + sign)[0])
+
+    def test_a_dash_beside_a_word_is_still_punctuation_at_either_edge(self):
+        """The tightening is about numbers only: the case FR#46 fixed stands."""
+        for d in ("— " + QUOTE_1, QUOTE_1 + " –", QUOTE_1 + " -",
+                  "− " + QUOTE_1, QUOTE_1 + " — "):
+            with self.subTest(quote=d[:6] + "..." + d[-6:]):
+                self.assertEqual(vf.quote_ok(self.book, d), (True, "verbatim"))
+
     def test_an_interior_operator_is_untouched_by_the_strip(self):
         flip = "— " + QUOTE_1.replace("<=", ">=")
         ok, why = vf.quote_ok(self.book, flip)
