@@ -16,8 +16,15 @@ Three outcomes, all counted: **hydrated**, **not-found** (this is not the editio
 the finding was written against, or the quote was not copied out of the pinned
 text) and **ambiguous** (two differently-spelled passages hash to the same quote).
 
-``--out`` refuses any path ``cf share export`` would put in a bundle, so book
-text recovered here cannot end up in the one artifact whose purpose is to travel.
+A redacted ``book_quote`` is not the only thing to put back: ``cf share export``
+also redacts a verbatim run of the source inside a ``reason`` or a ``reasoning``
+into the row's ``redacted_spans``, and each of those is hydrated the same way,
+with the report's ``field`` saying where it came from.
+
+``--out`` refuses any path ``cf share export`` would put in a bundle, and any path
+the surrounding git repo does not IGNORE, so book text recovered here cannot end
+up in the one artifact whose purpose is to travel nor in the history of the repo
+the no-remote rule is about.
 """
 from __future__ import annotations
 
@@ -57,7 +64,8 @@ def register(subparsers) -> None:
                     help="only this companion's rows (repeatable)")
     hy.add_argument("--out", default="",
                     help="write the hydrated rows as JSONL here (default: print them). "
-                         "Refused for any path `cf share export` would include in a bundle")
+                         "Refused for any path `cf share export` would include in a bundle, "
+                         "and for any path the surrounding git repo does not ignore")
     hy.add_argument("--no-text", action="store_true",
                     help="print the table and the counts only, not the recovered passages")
 
@@ -72,8 +80,39 @@ def run(args) -> int:
     return _hydrate(workspace, args)
 
 
+def _tracked_by_git(out: Path) -> Path | None:
+    """The git repo that would TRACK *out*, or ``None``.
+
+    ``cfcmd.init.check_ignore`` is the only authority on this: the ignore rule may
+    come from the workspace's own .gitignore, from an outer repo's, or from the
+    user's global excludes, and a workspace created before `cf init` learned to
+    ignore ``quotes/`` has no such rule at all.  A directory with no repo around it
+    cannot track anything, so it is not refused.
+    """
+    from cfcmd.init import check_ignore, git_toplevel
+
+    # `git -C` needs a directory that exists, and --out normally names a file in one
+    # that does not yet: the check has to happen BEFORE the write.
+    here = out
+    while not here.is_dir() and here != here.parent:
+        here = here.parent
+    repo = git_toplevel(here)
+    if not repo:
+        return None
+    return None if check_ignore(repo, out) else repo
+
+
 def _refuse_unsafe_out(out: Path, workspace) -> None:
-    """``--out`` may not be a file a bundle carries, nor live in the skill repo."""
+    """``--out`` may not be a file a bundle carries, a file git tracks, or in the skill repo.
+
+    The second of those is the one measured: `cf init` writes ``quotes/`` into a
+    NEW workspace's .gitignore, and ``_write_if_absent`` leaves an existing
+    .gitignore alone, so in every workspace created before that line existed
+    ``quotes/hydrated.<companion>.jsonl`` -- the path this command's own help
+    suggests -- is a tracked file holding recovered book text, in the repo the
+    no-remote rule is about.  An ignore rule that is only present in new
+    workspaces cannot be the guarantee, so the guarantee is this check.
+    """
     root = Path(workspace.root).resolve()
     relative = ""
     if out == root or root in out.parents:
@@ -89,6 +128,15 @@ def _refuse_unsafe_out(out: Path, workspace) -> None:
         raise CfError(
             f"refusing to write hydrated book text inside the skill repo ({skill_root()})",
             hint="the skill repo holds code, templates and docs only (CLAUDE.md S1)")
+    repo = _tracked_by_git(out)
+    if repo:
+        raise CfError(
+            f"refusing to write hydrated book text to {out}: {repo} does not ignore that path",
+            hint=f"`cf init` ignores quotes/ in a workspace it creates, but it never rewrites "
+                 f"an existing .gitignore -- write it under --out "
+                 f"{root / 'sources' / out.name} instead (sources/ is ignored in every "
+                 f"workspace ever created), or add the missing rule to "
+                 f"{repo / '.gitignore'} yourself")
 
 
 def _rows_from_bundle(path: str, companions: list[str]) -> tuple[list[dict], str]:
@@ -144,8 +192,8 @@ def _hydrate(workspace, args) -> int:
     texts = hydrate_mod.source_texts(workspace.paths, source_ids)
     reports, counts = hydrate_mod.hydrate_rows(redacted, texts)
     log.info(format_table(
-        ["item", "kind", "page", "status"],
-        [[r["item"], r["kind"], r["page"], r["status"]] for r in reports]))
+        ["item", "kind", "field", "page", "status"],
+        [[r["item"], r["kind"], r["field"], r["page"], r["status"]] for r in reports]))
     log.info(f"hydrated {counts[hydrate_mod.HYDRATED]}, "
              f"not-found {counts[hydrate_mod.NOT_FOUND]}, "
              f"ambiguous {counts[hydrate_mod.AMBIGUOUS]}"
@@ -153,12 +201,14 @@ def _hydrate(workspace, args) -> int:
              + f"  (of {counts['redacted']} redacted quote(s))")
     for report in reports:
         if report["status"] != hydrate_mod.HYDRATED:
-            log.warn(f"{report['item']}: {report['status']} -- {report['why']}")
+            log.warn(f"{report['item']} ({report['field']}): {report['status']} -- "
+                     f"{report['why']}")
     if not args.no_text:
         for report in reports:
             if report["status"] == hydrate_mod.HYDRATED:
                 log.info("")
-                log.info(f"{report['item']} ({report['kind']}), page {report['page']}:")
+                log.info(f"{report['item']} ({report['kind']}), {report['field']}, "
+                         f"page {report['page']}:")
                 log.info(f"  {report['text']}")
     if args.out:
         out = Path(args.out).expanduser().resolve()
