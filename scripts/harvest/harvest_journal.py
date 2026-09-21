@@ -202,10 +202,10 @@ def _row_kind(value: dict) -> str:
 
     The two adjudication workflows return none of ``item`` + ``disagreements``,
     so a journal of either recovered nothing at all -- a killed ``cf adjudicate``
-    or ``cf challenge`` run is the most expensive thing the skill launches (6
-    agents per finding), and it had no recovery path.  Each shape below is a
-    schema in ``workflows/*.js``; anything unrecognised is kept as ``other``
-    rather than dropped, so an operator can see what a journal held.
+    or ``cf adjudicate --challenge-only`` run is the most expensive thing the
+    skill launches (6 agents per finding), and it had no recovery path.  Each
+    shape below is a schema in ``workflows/*.js``; anything unrecognised is kept
+    as ``other`` rather than dropped, so an operator can see what a journal held.
     """
     if "item" in value and ("disagreements" in value or "findings" in value
                             or "matches" in value):

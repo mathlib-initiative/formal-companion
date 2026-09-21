@@ -57,6 +57,24 @@ release has something to say.
   written, and the reference docs sent a stuck reader to `cf ingest`, a command
   that never existed; `book/fetch_errata.py` and several other stale paths went
   the same way.
+- seven of those citations were rewritten into quotations of
+  `docs/design/stage_map.md`, which did not carry the sentences: the three stage
+  gates they lean on (the Stage 7 ledger gate, Stage 8's corpus join, Stage 9's
+  routing rule) are written down there now, `scripts/adapters/base.py` points at
+  the document that really holds the statement-row field list, and the contract
+  test checks a quotation as well as a path.
+- `cf sources validate-registry` refused an ordinary edition contribution: the
+  second-sentence check read an author's middle initial (`John B. Conway`), a
+  volume numeral (`Analysis I. Fourth edition`) and an abbreviation
+  (`2nd ed. Revised`) as prose. It now requires a real word before the sentence
+  break, and with `--overlay` it reports the count it actually checked.
+- a docstring told an operator recovering a killed run to look at
+  `cf challenge`; the spelling is `cf adjudicate --challenge-only`, and the
+  contract test now reads the `cf <word>` literals under `scripts/`,
+  `workflows/` and `templates/` too.
+- two line-range citations into files this repo rewrites (`references/traps.md`
+  G5 into `CLAUDE.md`, `references/vocabulary.md` §2.2 into the gate script);
+  both now cite a section, and a test refuses a new one.
 
 ## 0.2.0 — the multi-source model
 
