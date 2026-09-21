@@ -1377,17 +1377,22 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     exports ``TEND_TASK_ID`` into a validation command's environment has never
     been verified against a running orchestrator.
 
-    The count is ADDITION-AWARE, because the tend config runs this same argv for
-    the per-contribution ``validation_commands`` and for the
+    The count is ADDITION-AWARE **per stem**, because the tend config runs this
+    same argv for the per-contribution ``validation_commands`` and for the
     ``pre_merge_validation_commands`` of a ``batched_merge: true`` root: a batched
     pre-merge change set carries one findings/task pair per batched task, so a
-    bare stem count would refuse the whole batch and no flag could relax it.  A
-    change set in which every touched path is newly ADDED is therefore allowed to
-    carry several stems; a SEVERAL-STEM change set in which any touched path was
-    already on the base branch is refused by name, which is the case the rule
-    exists for, and a deletion or a rename is refused whatever the stem count.  A
-    lone stem is never refused here -- see the paragraph above.  A caller that
-    passes a bare set of paths knows no statuses, so it keeps the strict count.
+    bare stem count would refuse the whole batch and no flag could relax it.  Per
+    PATH was not enough: ``references/runbook-server.md`` §4 commits the tasks to
+    the merge target BEFORE the run, so a real batch is findings/<id>.json added
+    and tasks/<id>.yaml modified, and requiring every path to be an addition
+    refused every merge of two or more tasks.  A several-stem change set is
+    therefore allowed when, for each stem, findings/<stem>.json is an ADDITION —
+    the only other path it may touch, tasks/<stem>.yaml, is already restricted to
+    that stem above, in any status.  A stem whose findings file was already on the
+    base branch is refused by name, which is the data-loss case the rule exists
+    for, and a deletion or a rename is refused whatever the stem count.  A lone
+    stem is never refused here -- see the paragraph above.  A caller that passes a
+    bare set of paths knows no statuses, so it keeps the strict count.
     """
     statuses = dict(paths) if isinstance(paths, dict) else {}
     problems: list[str] = []
@@ -1423,18 +1428,21 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     for stem in sorted(written - tasks):
         problems.append(f"findings/{stem}.json has no tasks/{stem}.yaml in the same change set")
     if not task_id and len(seen) > 1:
-        # Only a path that was already on the base branch makes a second stem a
-        # refusal: see the ADDITION-AWARE paragraph above — a batched pre-merge
-        # change set is many stems of pure additions, and refusing it would stop
-        # every batched merge.
-        touched = sorted(p for p in set(paths) if statuses.get(p, "") != "A")
-        if touched:
+        # Only a stem whose FINDINGS file was already on the base branch makes a
+        # second stem a refusal: see the ADDITION-AWARE paragraph above — a
+        # batched pre-merge change set is one added findings file per task beside
+        # the task file the runbook committed before the run, and refusing that
+        # would stop every batched merge.
+        landed = sorted(stem for stem in seen
+                        if statuses.get(f"findings/{stem}.json") != "A")
+        if landed:
+            names = ", ".join(f"findings/{stem}.json" for stem in landed)
             problems.append(
                 f"changed paths belong to {len(seen)} tasks ({', '.join(sorted(seen))}) and no "
                 f"task id says which stem is this worker's, and this contribution did not add "
-                f"{', '.join(touched)} — a contribution writes one findings/<id>.json and one "
-                f"tasks/<id>.yaml; pass --task-id <id> (or export TEND_TASK_ID) to check "
-                f"ownership instead of counting stems"
+                f"{names} — a batched pre-merge set adds one findings/<id>.json per task and "
+                f"touches no other worker's; pass --task-id <id> (or export TEND_TASK_ID) to "
+                f"check ownership instead of counting stems"
             )
     if not written and not allow_empty:
         problems.append("no findings file was written")
@@ -1447,7 +1455,8 @@ def ownership_line(task_id: str) -> str:
     Both gate entry points print it, and neither may imply the other's rule ran:
     with a task id every touched stem had to be that task's, and without one only
     the single-stem count did — and that count lets a batched pre-merge change set
-    of pure additions through, so it is the weaker half in two ways, not one.
+    through, one added findings file per task, so it is the weaker half in two
+    ways, not one.
     """
     if task_id:
         return f"ownership checked against task {task_id}"

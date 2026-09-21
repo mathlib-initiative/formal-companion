@@ -796,11 +796,138 @@ class TestTheReadmeDoesNotOverstateTheOwnershipRule(unittest.TestCase):
         self.assertIn("`references/runbook-server.md` §%s" % cited[0], skill,
                       "README and SKILL.md cite different sections for the same fact")
 
+    def test_the_relaxation_is_per_stem_not_per_path(self):
+        """The unit check under the git one below: one added findings file per
+        task, beside the task file the runbook committed before the run."""
+        batch = {"findings/bob.json": "A", "tasks/bob.yaml": "M",
+                 "findings/carol.json": "A", "tasks/carol.yaml": "M"}
+        self.assertEqual(vf.check_changed(batch), [])
+        landed = dict(batch, **{"findings/carol.json": "M"})
+        problems = vf.check_changed(landed)
+        self.assertTrue(any("findings/carol.json" in p for p in problems), problems)
+        self.assertFalse(any("findings/bob.json" in p for p in problems), problems)
+
     def test_the_docstring_says_which_change_sets_the_stem_count_refuses(self):
         doc = " ".join((vf.check_changed.__doc__ or "").split())
         self.assertIn("A lone stem is never refused here", doc)
         self.assertNotIn("one that rewrites, empties, deletes or renames a path "
                          "that was already on the base branch is still refused", doc)
+
+
+# --------------------------------------------------------------------------- #
+# NEW — the batched pre-merge set is findings ADDED beside a task file MODIFIED
+# --------------------------------------------------------------------------- #
+class TestABatchOfSeveralTasksMerges(unittest.TestCase):
+    """The relaxation counted PATHS, and a real batch is not all additions.
+
+    ``references/runbook-server.md`` §4 commits the tasks to the entrypoint's
+    merge target before the run, the templates write them with ``status: open``,
+    and the worker prompt tells the worker to set that file's status -- so each
+    batched task contributes ``findings/<id>.json`` as ``A`` and
+    ``tasks/<id>.yaml`` as ``M``.  Requiring every path to be an addition
+    therefore refused every merge of two or more tasks on the shipped argv, which
+    passes no task id, while both shipped documents said such a batch merges.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(dir=TMPDIR)
+        self.root = pathlib.Path(self.tmp.name) / "entrypoint"
+        self.root.mkdir()
+        self.env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+                    "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x",
+                    "TEND_TASK_ID": ""}
+        (self.root / "findings").mkdir()
+        (self.root / "tasks").mkdir()
+        self.git("init", "-q", "-b", "main", ".")
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def git(self, *args):
+        subprocess.run(["git", *args], cwd=str(self.root), check=True,
+                       env=self.env, capture_output=True, text=True)
+
+    def a_run_of(self, ids: list[str], *, landed: tuple[str, ...] = ()) -> None:
+        """The runbook's sequence: tasks (and any landed findings) on main first."""
+        for task in ids:
+            (self.root / "tasks" / f"{task}.yaml").write_text(
+                f"id: {task}\nstatus: open\n", encoding="utf-8")
+        for task in landed:
+            (self.root / "findings" / f"{task}.json").write_text(
+                json.dumps({"schema_version": 2, "disagreements": [{"kind": "CONTENT"}]}),
+                encoding="utf-8")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "the run's tasks land on the merge target")
+        self.git("checkout", "-q", "-b", "batch")
+
+    def workers_write(self, ids: list[str]) -> None:
+        """What each worker does in its own worktree, merged into one branch."""
+        for task in ids:
+            (self.root / "findings" / f"{task}.json").write_text(
+                json.dumps({"schema_version": 2, "item": f"Exercise 4.1.{len(task)}",
+                            "disagreements": []}), encoding="utf-8")
+            (self.root / "tasks" / f"{task}.yaml").write_text(
+                f"id: {task}\nstatus: complete\n", encoding="utf-8")
+
+    def gate(self, *extra: str) -> subprocess.CompletedProcess:
+        """The shipped pre-merge argv: no ``--task-id``, nothing to substitute."""
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        return subprocess.run(
+            [sys.executable, script, "--base", "main", "--root", str(self.root), *extra],
+            capture_output=True, text=True, env=self.env)
+
+    def test_a_batch_of_one_two_or_three_tasks_merges(self):
+        for n in (1, 2, 3):
+            with self.subTest(tasks=n):
+                self.setUp()
+                ids = ["bob", "carol", "dave"][:n]
+                self.a_run_of(ids)
+                self.workers_write(ids)
+                proc = self.gate()
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                self.assertIn(f"{2 * n} allowed path(s)", proc.stdout)
+                self.tearDown()
+
+    def test_a_batch_that_rewrites_a_landed_findings_file_is_still_refused(self):
+        """The data-loss case the rule exists for, inside a passing batch."""
+        self.a_run_of(["bob", "carol", "dave"], landed=("dave",))
+        self.workers_write(["bob", "carol", "dave"])
+        proc = self.gate()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        refusal = [line for line in proc.stderr.splitlines() if line.startswith("  - ")]
+        self.assertEqual(len(refusal), 1, proc.stderr)
+        self.assertIn("findings/dave.json", refusal[0])
+        self.assertNotIn("findings/bob.json", refusal[0])   # named, not counted
+        self.assertIn("--task-id", refusal[0])
+
+    def test_a_batch_that_drops_a_landed_findings_file_is_still_refused(self):
+        self.a_run_of(["bob", "carol", "dave"], landed=("dave",))
+        self.workers_write(["bob", "carol"])
+        (self.root / "findings" / "dave.json").unlink()
+        proc = self.gate("--allow-empty")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("yours to drop", proc.stderr)
+
+    def test_a_batch_whose_task_file_moves_without_its_findings_is_refused(self):
+        """A stem that touches only its task file is not a batched contribution."""
+        self.a_run_of(["bob", "carol"])
+        self.workers_write(["bob"])
+        (self.root / "tasks" / "carol.yaml").write_text("id: carol\nstatus: blocked\n",
+                                                        encoding="utf-8")
+        proc = self.gate()
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("findings/carol.json", proc.stderr)
+
+    def test_the_two_documents_say_what_the_rule_does(self):
+        """Both were rewritten one clause too early: they described the per-path
+        rule, which refused the batch they promise merges."""
+        readme = (SKILL / "templates" / "tend" / "README.md.tmpl").read_text(encoding="utf-8")
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        for name, text in (("README.md.tmpl", readme), ("runbook-server.md", runbook)):
+            with self.subTest(document=name):
+                flat = " ".join(text.split())
+                self.assertNotIn("only when one of the paths was already on", flat)
+                self.assertIn("findings file was already on", flat)
 
 
 if __name__ == "__main__":

@@ -40,9 +40,10 @@ def main(argv: list[str] | None = None) -> int:
         default=os.environ.get("TEND_TASK_ID", ""),
         help="the worker's own task id: a contribution that touches another task's "
              "findings/<id>.json or tasks/<id>.yaml is refused (default: $TEND_TASK_ID). "
-             "Without one only the single-stem rule runs: two stems are refused once one "
-             "of the paths was already on --base (a batched pre-merge set of new pairs "
-             "passes), but nothing can tell whose the one stem is",
+             "Without one only the single-stem rule runs: two stems are refused once some "
+             "stem's findings file was already on --base (a batched pre-merge set, which "
+             "adds one findings file per task, passes), but nothing can tell whose the one "
+             "stem is",
     )
     ap.add_argument(
         "--allow-empty",
