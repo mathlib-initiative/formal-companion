@@ -1,9 +1,16 @@
 # Contributor rules for companion-faithfulness
 
 Read `SKILL.md` first for what the skill does, then
-`docs/design/multi-source-model.md` for the data model it is built on
-(workspaces, companions, sources, discovery, inference). This file is how to
-change it.
+`docs/design/stage_map.md` for the data model it is built on (workspaces,
+companions, sources, the layout, the eleven stages). This file is how to change
+it, and `CONTRIBUTING.md` is the same ground for a human sending a patch.
+
+`docs/design/stage_map.md` is the **current** spec: a normative statement there
+was checked against the code, and a package that must deviate changes that file
+in the same commit. `docs/design/archive/` holds the design record the
+implementation was written from; module docstrings cite its sections for
+provenance, but nothing is bound by it and four of its statements are marked
+superseded in place.
 
 ## 1. What may live here
 
@@ -24,18 +31,21 @@ source or their owners' details into this repo.
 ## 2. Layout
 
 ```
-SKILL.md README.md CLAUDE.md
-docs/design/         binding specs; a package that must deviate changes the spec first
+SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
+docs/design/stage_map.md   the current spec; change it in the same commit as the code
+docs/design/archive/       the design record it came from (historical)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
+evals/               trigger evals: prompts as data, run by hand
+bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
 scripts/cflib/       shared library (no stage logic, no network):
                      workspace, paths, registry, discovery, inference, state,
                      items, vocab, hashing, yamlio/jsonio, adapters_api
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
-                     route, detect, report
-templates/  workflows/  tests/
+                     route, detect, report, recheck, score, share
+templates/  workflows/  tests/  .github/workflows/
 ```
 
 Run everything by path: `python3 scripts/cf.py <command> …`. `cf.py` puts
@@ -57,9 +67,16 @@ Those two lines move together or not at all.
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, and the
   run/harvest commands (ssh/rsync to an allowlisted host).
-- Every module starts with a docstring naming the original it was ported from
-  (path plus transcript line) or saying it is new code, and pointing at the
-  spec section it implements.
+- Every module starts with a docstring saying **what** it was ported from — the
+  v1 campaign script, cell or workflow, named for what it did — or saying it is
+  new code, and pointing at the section it implements:
+  `docs/design/stage_map.md` for current behaviour, or a section of
+  `docs/design/archive/` for provenance. Never a path into a transcript or a
+  machine: that is unresolvable for every reader but one, and 30 docstrings once
+  cited a `recovered/` directory this repo has never held. Cite a document that
+  is in the tree — 44 docstrings once cited four design documents nobody had
+  written — and `tests/test_rf_docs.py` and `tests/test_rf_scrub.py` fail on a
+  citation that resolves nowhere.
 - Small functions, real docstrings, type hints where they help. Prefer
   correctness over breadth; mark anything unfinished with `TODO` and say so in
   the handoff.
@@ -92,9 +109,10 @@ Those two lines move together or not at all.
   new flag. Overrides stay in `cf sources set` / `cf sources add`, and each one
   stamps its own `*_method: manual`.
 - **Low confidence is a refusal.** Below `MIN_OFFSET_CONFIDENCE` (0.9),
-  `MIN_ANCHOR_AGREEMENT` (0.80), `MIN_ANCHOR_MARGIN` (0.05) or
-  `MIN_ADAPTER_CONFIDENCE` (0.5), the command stops and names the flag that
-  settles it. A plausible default here is worse than no answer.
+  `MIN_ANCHOR_AGREEMENT` (0.80), `MIN_ANCHOR_MARGIN` (0.05),
+  `MIN_ADAPTER_CONFIDENCE` (0.5) or `MIN_ITEM_COMPLETENESS` (0.6), the command
+  stops and names the flag that settles it. A plausible default here is worse
+  than no answer.
 - **One state file per companion.** `companions/<name>/state.json`, written
   through `cflib.state` (atomic read-modify-write), version 2: a per-source
   `{sha, rows, items}` map and an `anchor_source`, never one top-level sha.
@@ -109,11 +127,12 @@ Those two lines move together or not at all.
 - **Findings are content-addressed.** `finding_id = sha256(run_id, source_id,
   item, kind, sorted unfaithful_decls)` — `cflib.hashing.finding_id`, five
   parts joined with `\n`, the item passed through `items.clean()` first. Never
-  re-key on prose. The definition is inlined in four other places
-  (`gate/verify_findings.py`, `sources/compat.py`, `ledger/compat.py`,
-  `detect/_compat.py`) because they run where `cflib` is not importable; all
-  five change in lockstep and
-  `tests/test_plan_gate.py::TestFindingIdIsOneDefinition` is the enforcement.
+  re-key on prose. The definition is inlined in exactly one other place,
+  `gate/verify_findings.py`, because the gate is transferred to a run host where
+  `cflib` is not importable; the two change in lockstep and
+  `tests/test_plan_gate.py::TestFindingIdIsOneDefinition` is the enforcement —
+  it also pins the compat shims' `finding_id`, which now delegate rather than
+  inline.
 - **The gate runs out of tree.** It is never executed from the worktree a
   worker can edit, and pre-merge checks the changed-file set.
 - **Consent and allowlist.** Anything that copies sources or source text to
@@ -138,16 +157,32 @@ Those two lines move together or not at all.
 
 ## 6. Adding an adapter
 
-Subclass `cflib.adapters_api.Adapter` in `scripts/adapters/`, set `kind`, and
-implement:
+Subclass `adapters.api.Adapter` (which is `cflib.adapters_api.Adapter` plus the
+repo/glob/config helpers every concrete adapter needs) in a new file under
+`scripts/adapters/`, set `kind`, and implement:
 
-- `detect(repo) -> float` — how confidently this repo uses the convention.
-  Return a real score; `cf onboard` picks the highest and refuses below 0.5.
-  Count a denominator that means something (files that *carry a docstring*, not
-  every `.lean` file in a tree that is mostly generated stubs).
+- `detect(cls, repo) -> (score, evidence)` — a **classmethod**: how confidently
+  this repo uses the convention, and the measurement behind the number.
+  `cflib.discovery.detect_scores` calls it on every class in
+  `adapters.api.registry()` and `cf onboard` picks the highest, refusing below
+  0.5, so detection is a loop over the adapters and a new convention adds no
+  line to the core. Count a denominator that means something (files that *carry
+  a docstring*, not every `.lean` file in a tree that is mostly generated
+  stubs), keep this convention's globs and score constants in this file, and put
+  any per-repo spelling the measurement found into `evidence` — `cf onboard`
+  writes those keys into the generated `adapter.yaml`, which is how
+  `tag.require_backticks` stopped being a hard-coded default.
+- `explain(cls, repo) -> [str]` — one "looked for / found" line per signal this
+  convention keys on, for a repo it did *not* claim, naming the override that
+  would settle it. These lines are the whole content of the refusal a user sees
+  when nothing matched.
 - `discover_sources(repo) -> [SourceClaim]` — the signals this convention
   exposes, each carrying the file it came from. Never invent a `sha256`; a
-  truncated sha in prose is a `sha256_prefix`, which is a candidate.
+  truncated sha in prose is a `sha256_prefix`, which is a candidate. `cf onboard`
+  merges what this ADDS to the seven repo signals, and a convention that IS its
+  own manuscript says so with a claim whose `files` name it — absolute paths in
+  reading order, which onboarding concatenates in that order and fingerprints
+  (`blueprint_tex`, `references/onboarding-contract.md` §0.1).
 - `dry_run(repo)` and `extract(repo, *, sources={id: sha})` — rows follow
   `ROW_REQUIRED_FIELDS`, which includes `source_id` and `source_sha`;
   declarations are fully qualified (track namespaces); anonymous examples get a
@@ -158,10 +193,20 @@ implement:
 - extend `key_inputs()` with every export sha that changes the result, and the
   shas of the sources it is bound to.
 
-Register it in `scripts/adapters/__init__.py`'s `load()`, and add the kind to
+Decorate the class with `@adapters.api.register` and add its module to the
+import inside `adapters.api.registry()` (that import is what makes the kind
+exist before anything asks for it), then add the kind to
 `vocab.IMPLEMENTED_ADAPTER_KINDS` only when it really works — `ADAPTER_KINDS`
 is the wider vocabulary an `adapter.yaml` may legally say, and a test pins the
-narrower set against what `adapters.api.registry()` provides.
+narrower set against what `adapters.api.registry()` provides. `cf onboard` also
+needs a row in `cfcmd.onboard.DEFAULTS` (glob, anchor, granularity) and a
+default block in `templates/adapter.yaml.example` for anything it configures.
+
+`docs/adding-an-adapter.md` is the same list as a walkthrough against the
+`notes-a` fixture, and it says what a new **book** needs instead — which is
+nothing from here, except the hand-written
+`scripts/detect/mathlib_stages/<source_id>.json` that `detect-proxies --lean`
+reads.
 
 ## 7. Tests
 
@@ -170,8 +215,13 @@ read local baselines read their paths from `CF_BASELINE_CORPUS`,
 `CF_BASELINE_DIFF`, `CF_TML`, `CF_MT`, `CF_BOOK_TXT` and **skip cleanly** when
 those are unset — the suite must pass on a machine that has none of them.
 Discovery and inference tests use fixture repos and synthetic text: no network,
-no PDF. Never write outside a temporary directory, and never into a companion
-repo.
+and the only PDFs read are the fixture PDFs the suite generates in a temporary
+directory. `tests/_hermetic.py` is what makes that true: importing it pins HOME
+at a temporary directory, so `library_paths`' `~/Downloads` entry cannot reach
+the developer's own files. Every test module that builds a workspace imports it
+as its first import — `tests/conftest.py` is a pytest hook, and the command
+above loads no such hook. Never write outside a temporary directory, and never
+into a companion repo.
 
 ## 8. Git
 
@@ -187,7 +237,10 @@ at once; add the paths you own. End a commit message with the
 Tao companions with no flags, generates a public-domain booklet and two
 synthetic companions of it, and checks about seventy artifacts (never log
 lines) against pinned figures. Run it with `bash tests/e2e/multisource.sh
-[--offline]`; it needs poppler's `pdftotext`, the two companion checkouts named
-at the top of the script (override with `CF_TML`, `CF_MT`, `CF_BASELINE_CORPUS`)
-and, unless `--offline`, network access for the errata fetch. Its generated
+[--offline] [<workspace dir>]`; with no workspace argument it makes one under
+`$TMPDIR`, never inside the checkout — `cf init` refuses a workspace under the
+skill repo. It needs poppler's `pdftotext`, the two companion checkouts named
+by `CF_TML` and `CF_MT` (plus the optional `CF_BASELINE_CORPUS`) — it defaults to
+no path of its own and says what to set — and, unless `--offline`, network access
+for the errata fetch. Its generated
 fixtures are gitignored.

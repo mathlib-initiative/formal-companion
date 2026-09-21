@@ -1,20 +1,18 @@
 """Book tags and page anchors inside a Lean docstring.
 
-Ported from
-  scratchpad/recovered/b174aa13_L5547_Bash.txt  ``extract_ours.py``   (ITEM/PAGE regexes)
-  scratchpad/recovered/b174aa13_L5564_Bash.txt  ``extract_teorth.py`` (leading-label form)
-and from the tag normalisation of
-  /Users/jack/Desktop/tao-measure-lean/scripts/make_verso_tables.py:145-163
-    (``extract_tag``: whitespace collapsed so a tag broken over a line wrap
-     groups with its single-line spelling; leading tag preferred; a
-     backtick-wrapped tag near the start as the fallback).
+Ported from the v1 campaign's two extraction scripts (not in this repo) --
+``extract_ours.py`` (the ITEM/PAGE regexes) and ``extract_teorth.py`` (the
+leading-label form) -- and from the tag normalisation in tao-measure-lean's own
+``make_verso_tables.py`` (``extract_tag``: whitespace collapsed so a tag broken
+over a line wrap groups with its single-line spelling; leading tag preferred; a
+backtick-wrapped tag near the start as the fallback).
 
 Two defects the design records are fixed here:
 
 * **cross-reference anchors.** ``extract_ours.py`` searched the whole
   docstring for ``book p. N``, so ``Exercise 1.2.17`` took its anchor from
   "(4) is the full Caratheodory condition of S1.7 (previewed on book p. 20)"
-  (design/stage_map.md Stage 2).  A page counts as the item's *own* anchor
+  (docs/design/stage_map.md Stage 2).  A page counts as the item's *own* anchor
   only when it sits inside the tag span or in the clause that immediately
   follows it; anything further away is reported as ``anchor_source:
   "crossref"`` with ``page_anchor: null``.

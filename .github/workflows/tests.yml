@@ -1,0 +1,145 @@
+# The test suite is the only gate this repo has: it is what a change to the
+# statement extractor, the quote gate or the ledger is checked against, and it
+# ran nowhere but the author's laptop.
+#
+# Two things it deliberately pins:
+#
+#   * the Python floor. README.md and CLAUDE.md S3 say 3.11+, `scripts/cf.py`
+#     refuses anything older, and this matrix is where that number is true
+#     rather than asserted.
+#   * "standard library only; PyYAML is used when importable" (CLAUDE.md S3).
+#     `cflib.yamlio`'s fallback reader is what parses run.yaml and the generated
+#     task files on a worker host with nothing installed, so one job runs the
+#     suite with PyYAML absent.
+#
+# The third job is the end-to-end demonstration a stranger can run:
+# tests/e2e/synthetic.sh builds a public-domain booklet and two Lean companions
+# of it that carry eight planted defects, onboards them with no flags, and scores
+# the model-free detector against tests/e2e/answer-key.json. It needs poppler and
+# nothing else, and it is what stops the quick start rotting.
+#
+# What it does NOT cover, so nobody reads green here as more than it is: the
+# baseline-backed tests (they need private corpora and skip), `cf run --execute`,
+# `render_pages.render()` and the pdftoppm path (only its two refusals are
+# asserted; `pdftotext` is stubbed out in the pytest jobs and exercised only
+# indirectly by the synthetic job), the Tao half of `tests/e2e/multisource.sh`
+# (two private checkouts), and anything touching a real companion repo.
+name: tests
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    name: pytest (python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install pytest pyyaml
+      # No env vars: the suite must be green with none set. tests/_hermetic.py
+      # points HOME at a temporary directory so nothing reads a real home.
+      - run: python -m pytest -q tests/
+
+  pytest-no-pyyaml:
+    name: pytest (no PyYAML)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install pytest
+      # Without this the job would silently become a duplicate of the matrix the
+      # day something pulls PyYAML in as a transitive dependency.
+      - name: confirm PyYAML really is absent
+        run: |
+          python - <<'PY'
+          import sys
+          sys.path.insert(0, "scripts")
+          from cflib import yamlio
+          if yamlio.HAVE_PYYAML:
+              sys.exit("PyYAML is installed: this job no longer tests the fallback reader")
+          print("PyYAML absent; cflib.yamlio is on its fallback reader")
+          PY
+      - run: python -m pytest -q tests/
+
+  unittest:
+    name: unittest discover (the command CLAUDE.md documents)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install --upgrade pip
+      - run: python -m pip install pyyaml
+      # CLAUDE.md S7's gate. It does not load tests/conftest.py, so it is also
+      # the check that no test needs that hook to pass -- which is why the HOME
+      # pin lives in tests/_hermetic.py, imported by each module, and not there.
+      - run: python -m unittest discover -s tests
+
+  registry:
+    name: registry (structure + metadata only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # No pip install: this is the stdlib-only path, and it runs in a clone
+      # with no workspace anywhere near it -- which is the case the command was
+      # written for. `Registry.validate()` existed for months and nothing ran it
+      # against the shipped file; the metadata-only rule registry/README.md
+      # states as hard had nothing mechanical behind it at all.
+      - name: cf sources validate-registry
+        run: python scripts/cf.py sources validate-registry
+
+  shell:
+    name: shellcheck (bridge + e2e scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The shipped shell -- the three run bridges, the dependency dump and the
+      # two e2e scripts -- was written against a linter that ran nowhere (one of
+      # them already carries a `# shellcheck disable=` directive). The suite's
+      # own `bash -n` case catches a script that stops parsing; this catches the
+      # ones that parse and are still wrong.
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      # --severity=error on this first landing: the default severity also
+      # reports style warnings, and nobody has run shellcheck over these files
+      # yet, so a bare invocation would fail the job on pre-existing lines. Drop
+      # the flag in a follow-up once the job is green and fix or `disable=` what
+      # it then reports.
+      - run: shellcheck --severity=error scripts/run/bridge-*.sh scripts/detect/dump_deps.sh tests/e2e/*.sh
+
+  synthetic-e2e:
+    name: synthetic end-to-end (booklet, planted defects, score)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # The one external requirement of the synthetic half.  The script skips
+      # with a message when pdftotext is absent; CF_REQUIRE_POPPLER makes that a
+      # failure here, so a missing package cannot read as a pass.
+      - run: sudo apt-get update && sudo apt-get install -y poppler-utils
+      - name: tests/e2e/synthetic.sh
+        env:
+          CF_REQUIRE_POPPLER: "1"
+        run: bash tests/e2e/synthetic.sh

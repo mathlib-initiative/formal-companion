@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Ported from /Users/jack/Desktop/ff-live/orch/bin/claude-worker.sh and
-# claude-reviewer.sh (one script, role-driven), with the ff-orchestrator env names
-# FF_ASYNC_* renamed to tend's TEND_*.
+# Ported from an earlier local orchestrator's claude-worker.sh and
+# claude-reviewer.sh (one script, role-driven; not in this repo), with its env
+# names FF_ASYNC_* renamed to tend's TEND_*.
 #
 # The LOCAL default bridge: `claude -p` bills the operator's Claude subscription, so
 # the local smoke test needs no API credit.  (The 2026-09-05 failure was the opposite

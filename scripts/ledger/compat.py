@@ -3,9 +3,18 @@
 The shared library is ``scripts/cflib`` (vocabulary, paths, workspace, state,
 json io, hashing).  This module is the thin translation layer those three stages
 import, so that a rename in cflib is a one-file change here rather than a
-rewrite of five modules.  Everything it exports resolves to cflib when cflib is
-importable; the small fallbacks exist only so the stage can be exercised
-stand-alone (the same pattern as ``sources/compat.py`` and ``pair/compat.py``).
+rewrite of five modules.  Everything it exports resolves to cflib, with no
+fallback: the module is only importable with ``scripts/`` on ``sys.path``, and
+cflib lives in that same package root, so cflib is importable whenever this
+module is.  The ``try``/``except Exception`` that used to wrap those imports
+could only fire when cflib itself raised AT IMPORT TIME, and it then answered an
+honest bug inside cflib with a second ``WorkspacePaths`` that was missing 35 of
+its 64 accessors -- an AttributeError at the write site instead of the real
+error.  An ImportError here is an ImportError.  (The same applies to
+``sources/compat.py`` and ``pair/compat.py``; the only modules that really do
+run without cflib are ``scripts/gate/verify_findings.py`` and
+``check_changed_files.py``, which ``cf run`` transfers to the host and which
+inline what they need.)
 
 Delete this file once every call site has been switched to cflib directly.
 
@@ -26,97 +35,56 @@ Two deliberate choices worth knowing about:
 
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import re
 import unicodedata
+from pathlib import Path
 from typing import Any, Callable, Iterable, Iterator
 
 # --------------------------------------------------------------------------
 # cflib
 # --------------------------------------------------------------------------
 
-try:
-    from cflib import hashing as _hashing, items as _cf_items, jsonio as _jsonio
-    from cflib import state as _state, vocab as _vocab
-    from cflib.workspace import Workspace as _Workspace
-    from cflib.paths import WorkspacePaths as _WorkspacePaths
-    from cflib.yamlio import read_yaml as _read_yaml
-
-    _HAVE_CFLIB = True
-except Exception:  # pragma: no cover - stand-alone use only
-    _hashing = _cf_items = _jsonio = _state = _vocab = None  # type: ignore[assignment]
-    _Workspace = _WorkspacePaths = None  # type: ignore[assignment]
-    _read_yaml = None  # type: ignore[assignment]
-    _HAVE_CFLIB = False
-
-
-def _clean_item_fallback(raw: str) -> str:
-    """Stand-alone copy of ``cflib.items.clean`` (see finding_id below)."""
-    s = unicodedata.normalize("NFKC", raw or "")
-    for bad in "\u2010\u2011\u2012\u2013\u2014\u2015\u2212":
-        s = s.replace(bad, "-")
-    s = s.replace("\u00a0", " ")
-    s = re.sub(r"\s+", " ", s).strip().strip("`").strip()
-    return s.rstrip(" .,;:").strip()
-
+from cflib import hashing as _hashing, items as _cf_items, jsonio as _jsonio
+from cflib import state as _state, vocab as _vocab
+from cflib.workspace import Workspace as _Workspace
+from cflib.paths import WorkspacePaths as _WorkspacePaths
+from cflib.yamlio import read_yaml as _read_yaml
 
 # --------------------------------------------------------------------------
 # vocabulary (cflib.vocab is the single source; these are its names)
 # --------------------------------------------------------------------------
 
-_FALLBACK = {
-    "FINDING_KINDS": ("CONTENT", "VACUITY", "PROXY", "SUSPECTED_ERRATA", "COVERAGE", "PAGE_ANCHOR"),
-    "MECHANICAL_ONLY_KINDS": ("PAGE_ANCHOR",),
-    "SEVERITY_SET": ("low", "medium", "high"),
-    "LEDGER_VERDICTS": ("CONFIRMED_CONTENT", "ATTRIBUTION_GAP", "CONVENTION", "ERRATA",
-                        "REFUTED", "UNSURE"),
-    "VERDICTS_REQUIRING_ARGUMENT": ("CONVENTION", "ERRATA"),
-}
-
-
-def _vocab_set(name: str) -> frozenset:
-    if _vocab is not None and hasattr(_vocab, name):
-        return frozenset(getattr(_vocab, name))
-    return frozenset(_FALLBACK[name])
-
-
-FINDING_KINDS = _vocab_set("FINDING_KINDS")
-MECHANICAL_KINDS = _vocab_set("MECHANICAL_ONLY_KINDS")
-SEVERITIES = _vocab_set("SEVERITY_SET")
-LEDGER_VERDICTS = _vocab_set("LEDGER_VERDICTS")
-VERDICTS_REQUIRING_ARGUMENT = _vocab_set("VERDICTS_REQUIRING_ARGUMENT")
+FINDING_KINDS = frozenset(_vocab.FINDING_KINDS)
+MECHANICAL_KINDS = frozenset(_vocab.MECHANICAL_ONLY_KINDS)
+SEVERITIES = frozenset(_vocab.SEVERITY_SET)
+LEDGER_VERDICTS = frozenset(_vocab.LEDGER_VERDICTS)
+VERDICTS_REQUIRING_ARGUMENT = frozenset(_vocab.VERDICTS_REQUIRING_ARGUMENT)
+#: `cf recheck` statuses, sorted so an error message lists them the same way twice
+RECHECK_STATUSES = tuple(sorted(_vocab.RECHECK_STATUS_SET))
 
 #: verdicts that keep a finding open against the companion / that close it
 OPEN_VERDICTS = frozenset({"CONFIRMED_CONTENT", "ATTRIBUTION_GAP", "UNSURE"})
 CLOSED_VERDICTS = frozenset(LEDGER_VERDICTS - OPEN_VERDICTS)
 
 #: routed `_meta.status` values
-STATUS_UNCHALLENGED = getattr(_vocab, "UNCHALLENGED", "UNCHALLENGED") if _vocab else "UNCHALLENGED"
-STATUS_CHALLENGED = getattr(_vocab, "CHALLENGED", "CHALLENGED") if _vocab else "CHALLENGED"
+STATUS_UNCHALLENGED = _vocab.UNCHALLENGED
+STATUS_CHALLENGED = _vocab.CHALLENGED
 
 #: ledger verdict -> viewer verdict. Stage 13 (publish-verdicts) is out of v1
 #: scope; the map is re-exported here so that stage does not invent a second one.
-VIEWER_VERDICT = dict(getattr(_vocab, "LEDGER_TO_VIEWER", {})) if _vocab else {}
-
-_RESOLUTION_RE = re.compile(
-    r"^(fixed:PR#\d+|in_progress:[A-Za-z0-9._/#+-]+|refuted|argued_correct|out_of_scope)$"
-)
+VIEWER_VERDICT = dict(_vocab.LEDGER_TO_VIEWER)
 
 
 def resolution_ok(value: Any) -> bool:
     """True when *value* is a legal ``resolution`` token (None counts as open)."""
     if value in (None, ""):
         return True
-    text = str(value)
-    if _vocab is not None and hasattr(_vocab, "check_resolution"):
-        try:
-            _vocab.check_resolution(text)
-            return True
-        except Exception:
-            return False
-    return bool(_RESOLUTION_RE.match(text))
+    try:
+        _vocab.check_resolution(str(value))
+    except Exception:  # noqa: BLE001 - check_resolution names the legal tokens
+        return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -165,8 +133,8 @@ def item_join_key(item: Any) -> str:
     what the grammar reads without kinds, canonicalise for every source.
     """
     text = normalise_item(item)
-    if not text or _cf_items is None:
-        return text  # stand-alone: degrade to the whitespace form, never guess
+    if not text:
+        return text
     key, _reject = _cf_items.try_join_key(text)
     return key
 
@@ -188,36 +156,21 @@ def finding_id(run_id: str, source_id: str, item: str, kind: str,
                unfaithful_decls: Iterable[str]) -> str:
     """``sha256(run_id, source_id, clean(item), kind, sorted(unfaithful_decls))``.
 
-    Delegates to :func:`cflib.hashing.finding_id`, the single definition; the
-    fallback below inlines the identical algorithm for stand-alone use.
+    Delegates to :func:`cflib.hashing.finding_id`, the single definition.
     """
     decls = sorted({str(d).strip() for d in (unfaithful_decls or []) if str(d).strip()})
-    if _hashing is not None:
-        return _hashing.finding_id(str(run_id or ""), str(source_id or ""), str(item or ""),
-                                   str(kind or ""), decls)
-    payload = "\n".join(
-        [str(run_id or ""), str(source_id or ""), _clean_item_fallback(str(item or "")),
-         str(kind or ""), *decls]
-    )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+    return _hashing.finding_id(str(run_id or ""), str(source_id or ""), str(item or ""),
+                               str(kind or ""), decls)
 
 
 def sha256_file(path: str) -> str:
     """sha256 of a file's bytes."""
-    if _hashing is not None:
-        return _hashing.sha256_file(path)
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+    return _hashing.sha256_file(path)
 
 
 def sha256_text(text: str) -> str:
     """sha256 of a unicode string (utf-8)."""
-    if _hashing is not None:
-        return _hashing.sha256_text(text)
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+    return _hashing.sha256_text(text)
 
 
 # --------------------------------------------------------------------------
@@ -227,27 +180,12 @@ def sha256_text(text: str) -> str:
 
 def read_json(path: str) -> Any:
     """Read one JSON document."""
-    if _jsonio is not None:
-        return _jsonio.read_json(path)
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    return _jsonio.read_json(path)
 
 
 def read_jsonl(path: str) -> list[dict]:
     """Read a .jsonl file (``_meta`` rows included; blank lines skipped)."""
-    if _jsonio is not None:
-        return _jsonio.read_jsonl(path)
-    rows: list[dict] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for n, line in enumerate(fh, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError as exc:
-                raise ValueError("%s:%d: %s" % (path, n, exc)) from exc
-    return rows
+    return _jsonio.read_jsonl(path)
 
 
 def is_meta_row(row: Any) -> bool:
@@ -275,55 +213,23 @@ def write_jsonl(path: str, rows: Iterable[dict], meta: dict | None = None) -> in
     Returns the number of DATA rows written.
     """
     rows = list(rows)
-    if _jsonio is not None:
-        _jsonio.write_jsonl(path, rows, meta=meta)
-        return len(rows)
-    os.makedirs(os.path.dirname(os.path.abspath(str(path))) or ".", exist_ok=True)
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        if meta is not None:
-            fh.write(json.dumps({"_meta": meta}, ensure_ascii=False) + "\n")
-        for row in rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    os.replace(tmp, str(path))
+    _jsonio.write_jsonl(path, rows, meta=meta)
     return len(rows)
 
 
 def write_json(path: str, payload: Any) -> None:
     """Write one JSON document atomically."""
-    if _jsonio is not None:
-        _jsonio.write_json(path, payload, indent=1, sort_keys=True)
-        return
-    os.makedirs(os.path.dirname(os.path.abspath(str(path))) or ".", exist_ok=True)
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(payload, fh, ensure_ascii=False, indent=1, sort_keys=True)
-        fh.write("\n")
-    os.replace(tmp, str(path))
+    _jsonio.write_json(path, payload, indent=1, sort_keys=True)
 
 
 def write_text(path: str, text: str) -> None:
     """Write a text file atomically."""
-    if _jsonio is not None:
-        _jsonio.atomic_write(path, text)
-        return
-    os.makedirs(os.path.dirname(os.path.abspath(str(path))) or ".", exist_ok=True)
-    tmp = str(path) + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(text)
-    os.replace(tmp, str(path))
+    _jsonio.atomic_write(path, text)
 
 
 def load_yaml(path: str) -> Any:
-    """Load a YAML file (PyYAML when present, cflib's subset reader otherwise)."""
-    if _read_yaml is not None:
-        return _read_yaml(path)
-    try:
-        import yaml  # type: ignore
-    except Exception as exc:  # pragma: no cover
-        raise RuntimeError("no YAML reader available for %s" % path) from exc
-    with open(path, "r", encoding="utf-8") as fh:
-        return yaml.safe_load(fh)
+    """Load a YAML file (cflib's reader: PyYAML when present, its subset otherwise)."""
+    return _read_yaml(path)
 
 
 # --------------------------------------------------------------------------
@@ -409,74 +315,17 @@ class LedgerPaths:
         return os.path.join(self.ledger, "args", "%s.%s.json" % (kind, name))
 
 
-class _PlainPaths:
-    """Fallback WorkspacePaths for stand-alone use (cflib absent)."""
-
-    def __init__(self, root: str):
-        self.root = os.path.abspath(root)
-
-    def companion_dir(self, name): return os.path.join(self.root, "companions", name)
-    def statements_jsonl(self, name): return os.path.join(self.companion_dir(name), "statements.jsonl")
-    def conventions_md(self, name): return os.path.join(self.companion_dir(name), "conventions.md")
-    def state_json(self, name): return os.path.join(self.companion_dir(name), "state.json")
-    def corpus_run_dir(self, run_id): return os.path.join(self.root, "corpus", run_id)
-    def run_dir(self, run_id): return os.path.join(self.root, "runs", run_id)
-    def accepted_jsonl(self, name): return os.path.join(self.root, "ledger", "accepted.%s.jsonl" % name)
-    def refuted_jsonl(self, name): return os.path.join(self.root, "ledger", "refuted.%s.jsonl" % name)
-    def adjudicated_md(self, name): return os.path.join(self.root, "ledger", "adjudicated.%s.md" % name)
-    def routed_jsonl(self, name): return os.path.join(self.root, "ledger", "routed", "findings.%s.jsonl" % name)
-    def source_dir(self, source_id): return os.path.join(self.root, "sources", source_id)
-    def source_text(self, source_id): return os.path.join(self.source_dir(source_id), "text.txt")
-    def source_pages_dir(self, source_id): return os.path.join(self.source_dir(source_id), "pages")
-    def source_items(self, source_id): return os.path.join(self.source_dir(source_id), "items.json")
-    def source_errata_md(self, source_id): return os.path.join(self.source_dir(source_id), "errata.md")
-    def pairs_dir(self, source_id): return os.path.join(self.pairs_root, source_id)
-    def anchor_check_json(self, source_id): return os.path.join(self.pairs_dir(source_id), "anchor-check.json")
-
-    @property
-    def corpus_dir(self): return os.path.join(self.root, "corpus")
-    @property
-    def runs_dir(self): return os.path.join(self.root, "runs")
-    @property
-    def ledger_dir(self): return os.path.join(self.root, "ledger")
-    @property
-    def routed_dir(self): return os.path.join(self.ledger_dir, "routed")
-    @property
-    def reports_dir(self): return os.path.join(self.root, "reports")
-    @property
-    def pairs_root(self): return os.path.join(self.root, "pairs")
-    @property
-    def sources_dir(self): return os.path.join(self.root, "sources")
-    @property
-    def companions_dir(self): return os.path.join(self.root, "companions")
-
-    def list_companions(self) -> list[str]:
-        d = self.companions_dir
-        if not os.path.isdir(d):
-            return []
-        return sorted(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
-
-    def list_paired_sources(self) -> list[str]:
-        d = self.pairs_root
-        if not os.path.isdir(d):
-            return []
-        return sorted(n for n in os.listdir(d) if os.path.isdir(os.path.join(d, n)))
-
-
 def workspace_paths(root: str) -> LedgerPaths:
     """Paths inside a workspace directory."""
-    if _WorkspacePaths is not None:
-        from pathlib import Path
-
-        return LedgerPaths(_WorkspacePaths(root=Path(root)), root)
-    return LedgerPaths(_PlainPaths(root), root)
+    return LedgerPaths(_WorkspacePaths(root=Path(root)), root)
 
 
 class SourceInfo:
     """One source as the ledger/route/report stages need it.
 
-    A plain record rather than ``cflib.workspace.SourceRef`` so the stand-alone
-    fallback (no cflib) produces the same shape.
+    A plain record rather than ``cflib.workspace.SourceRef`` so that a workspace
+    with no readable workspace.yaml -- which :func:`load_workspace` still routes
+    and reports on -- produces the same shape as one with.
     """
 
     __slots__ = ("id", "sha256", "title", "edition", "offset", "kinds", "errata_url",
@@ -655,8 +504,7 @@ def load_workspace(root: str | None) -> WorkspaceInfo:
     one must not inherit it).
     """
     explicit = bool(root)
-    if _Workspace is not None and (not explicit
-                                   or os.path.exists(os.path.join(str(root), "workspace.yaml"))):
+    if not explicit or os.path.exists(os.path.join(str(root), "workspace.yaml")):
         try:
             ws = _Workspace.load(root)
             return WorkspaceInfo(str(ws.root), ws.data, ws)
@@ -677,39 +525,22 @@ def load_workspace(root: str | None) -> WorkspaceInfo:
 
 def read_state(paths: Any, companion: str) -> dict:
     """Read companions/<name>/state.json ({} when absent or unreadable)."""
-    if _state is not None:
-        try:
-            return _state.read_state(paths, companion, missing_ok=True)
-        except Exception:
-            return {}
-    path = paths.state(companion)
-    if not os.path.exists(path):
-        return {}
     try:
-        return read_json(path)
-    except Exception:
+        return _state.read_state(paths, companion, missing_ok=True)
+    except Exception:  # noqa: BLE001 - a half-written state.json must not stop a report
         return {}
 
 
 def update_state(paths: Any, companion: str, mutate: Callable[[dict], None]) -> dict:
     """Read-modify-write companions/<name>/state.json; returns the new state."""
-    if _state is not None:
-        with _state.update(paths, companion) as st:
-            mutate(st)
-            return st
-    state = read_state(paths, companion) or {"name": companion}
-    mutate(state)
-    write_json(paths.state(companion), state)
-    return state
+    with _state.update(paths, companion) as st:
+        mutate(st)
+        return st
 
 
 def state_section(state: dict, section: str, values: dict) -> dict:
     """Set one state.json section, stamped (cflib.state.set_section)."""
-    if _state is not None:
-        return _state.set_section(state, section, values)
-    body = dict(values)
-    state[section] = body
-    return body
+    return _state.set_section(state, section, values)
 
 
 def iter_json_files(directory: str) -> Iterator[str]:

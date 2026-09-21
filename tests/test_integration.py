@@ -20,6 +20,14 @@ The baseline-backed cases skip cleanly when CF_BASELINE_CORPUS is unset.
 """
 from __future__ import annotations
 
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import io
 import json
 import os
@@ -92,8 +100,12 @@ class TestCommandDiscovery(unittest.TestCase):
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
         mapping = cf_main.discover_commands(subparsers)
-        broken = [name for name, mod in mapping.items() if mod is None]
-        self.assertEqual(broken, [], f"command modules failed to register: {broken}")
+        # `mod is None` could never be true: discover_commands registers a
+        # _BrokenCommand STUB for a module that fails to import, so this test
+        # passed unchanged with a syntactically broken cfcmd module in the tree.
+        broken = {name: mod.exc for name, mod in mapping.items()
+                  if isinstance(mod, cf_main._BrokenCommand)}
+        self.assertEqual(broken, {}, f"command modules failed to register: {broken}")
 
     def test_the_documented_commands_are_all_registered(self):
         import argparse
@@ -103,7 +115,7 @@ class TestCommandDiscovery(unittest.TestCase):
         mapping = cf_main.discover_commands(subparsers)
         # the command index of SKILL.md S"Command index". `book` is deleted: a
         # source is discovered by `cf onboard` and re-prepared by
-        # `cf sources refresh` (docs/design/multi-source-model.md S7).
+        # `cf sources refresh` (docs/design/archive/multi-source-model.md S7).
         for name in ("init", "onboard", "sources", "extract", "pair", "plan-run", "run",
                      "harvest", "import-corpus", "tally", "detect-proxies",
                      "adjudicate", "route", "report", "status"):
@@ -118,11 +130,14 @@ class TestCommandDiscovery(unittest.TestCase):
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
         cf_main.discover_commands(subparsers)
-        documented = set(re.findall(r"^\| `sources (\w+)",
+        # `[\w-]+`, not `\w+`: `sources validate-registry` parsed as "validate",
+        # which is not a subcommand, so a hyphenated row failed here rather than
+        # being checked.
+        documented = set(re.findall(r"^\| `sources ([\w-]+)",
                                     (HERE.parent / "SKILL.md").read_text(), re.M))
         self.assertIn("remove", documented, "cf sources remove is undocumented")
         extra = {"show": ["x"], "remove": ["x"], "set": ["x", "y=1"],
-                 "add": ["x.pdf", "--for", "ours"]}
+                 "add": ["x.pdf", "--for", "ours"], "promote": ["x"]}
         for sub in sorted(documented):
             with self.subTest(sub=sub):
                 args = parser.parse_args(["sources", sub, *extra.get(sub, [])])
@@ -168,7 +183,7 @@ class TestHandoffRunTable(unittest.TestCase):
 
     RUN_YAML = {
         "mode": "attack", "model": "claude-sonnet-5",
-        "host": {"name": "ffmain", "kind": "remote", "remote_root": "/home/x", "ssh": "x@y"},
+        "host": {"name": "examplebox", "kind": "remote", "remote_root": "/srv/runs", "ssh": "x@y"},
         "sources": [{"id": PUBLISHED_ID, "sha256": PUBLISHED_SHA, "offset": 16}],
         "source_access": "text+images",
         "tasks": {"count": 519, "universe": "targets.ours.json", "expected": 519},
@@ -176,7 +191,7 @@ class TestHandoffRunTable(unittest.TestCase):
 
     def test_nested_fields_render_as_values(self):
         table = make_handoff.render_runs_table({"r1": self.RUN_YAML}, [])
-        self.assertIn("ffmain", table)
+        self.assertIn("examplebox", table)
         self.assertIn("text+images", table)
         self.assertIn("519", table)
         self.assertNotIn("{'name'", table)      # a dict repr in the report
@@ -184,8 +199,8 @@ class TestHandoffRunTable(unittest.TestCase):
 
     def test_a_flat_run_yaml_still_works(self):
         table = make_handoff.render_runs_table(
-            {"r1": {"host": "ffmain", "source_access": "text", "tasks": 12}}, [])
-        self.assertIn("ffmain", table)
+            {"r1": {"host": "examplebox", "source_access": "text", "tasks": 12}}, [])
+        self.assertIn("examplebox", table)
         self.assertIn("text", table)
         self.assertIn("12", table)
 
@@ -428,8 +443,8 @@ class TestImportCorpus(unittest.TestCase):
         self.assertEqual(first, second)
 
     def test_import_refuses_an_empty_or_missing_directory(self):
-        # cf.main() RAISES for a library caller; the CLI wrapper in cf.py's
-        # __main__ block is what turns a CfError into exit 2.
+        # cf.main() RAISES for a library caller; cf.cli() is the wrapper that
+        # turns a CfError into exit 2.
         empty = self.tmp / "empty"
         empty.mkdir()
         with self.assertRaises(CfError):
@@ -521,14 +536,27 @@ class TestImportCorpus(unittest.TestCase):
         self.assertEqual(receipt["actual"]["count"], 2)
 
     def test_the_gate_says_what_it_needs_when_it_cannot_build_one(self):
-        """No preset and no config: name both ways out, do not gate nothing."""
-        with self.assertRaises(CfError) as ctx:
-            self._cf("import-corpus", "--run-id", "nop", "--from", str(self.source),
-                     "--workspace", str(self.workspace), "--no-tally",
-                     "--preset", "", "--gate")
-        said = str(ctx.exception) + str(getattr(ctx.exception, "hint", ""))
+        """No preset and no config: name both ways out, and do not become a refusal.
+
+        The gate is on by default now, so this is the path every import of a
+        foreign directory takes.  It may not turn `cf import-corpus --from X`
+        into a hard failure -- the import still has to be possible -- so it warns
+        with both ways out, records `gate: null`, and leaves `cf tally` to repeat
+        that the run is ungated.
+        """
+        err = io.StringIO()
+        with redirect_stderr(err):                      # log.warn is a diagnostic
+            rc = self._cf("import-corpus", "--run-id", "nop", "--from", str(self.source),
+                          "--workspace", str(self.workspace), "--no-tally", "--preset", "")
+        said = err.getvalue()
+        self.assertEqual(rc, 0, self.out)
         self.assertIn("--preset", said)
         self.assertIn("--gate-config", said)
+        self.assertIn("UNGATED", said)
+        receipt = json.loads(
+            (self.workspace / "corpus" / "nop" / "RECEIPT.json").read_text())
+        self.assertIsNone(receipt["gate"])
+        self.assertTrue(receipt["complete"])
 
     V1_DEFECT_DOC = {
         "item": "In-text, book p. 71",
@@ -676,9 +704,9 @@ class TestHarvestSafety(unittest.TestCase):
         self.assertIn("allowlist", str(ctx.exception))
 
     def test_an_allowlisted_host_still_needs_consent(self):
-        self._allow("ffmain", "ffmain")
+        self._allow("examplebox", "examplebox")
         with self.assertRaises(CfError) as ctx:
-            self._cf("harvest", "r1", "--from", "ffmain:/findings", "--execute",
+            self._cf("harvest", "r1", "--from", "examplebox:/findings", "--execute",
                      "--workspace", str(self.workspace), "-q")
         self.assertIn("consent", str(ctx.exception))
 
@@ -907,9 +935,15 @@ class TestExportPolicyIsRead(unittest.TestCase):
         from cflib.workspace import Workspace
 
         policy = Workspace.load(self.workspace).policy
+        # `git` is not a template key: setUp passes --no-git, which records the
+        # choice as policy.git: false so `cf status` can report a repo-less
+        # workspace as deliberate instead of warning about it on every run.
+        # `destinations` is read by route.quote_policy: how much of a quoted
+        # sentence a draft carries is a property of who it is addressed to.
         self.assertEqual(set(policy),
-                         {"publish_unchallenged", "redact_quotes_on_export", "allow_remote",
-                          "allow_download", "require_confirmed_sources", "allow_errata_fetch"})
+                         {"publish_unchallenged", "redact_quotes_on_export", "destinations",
+                          "allow_remote", "allow_download", "require_confirmed_sources",
+                          "allow_errata_fetch", "git"})
 
     def test_require_confirmed_sources_is_enforced_by_plan_run(self):
         """Discovery appends a new source with confirmed: false (R3).
@@ -930,7 +964,10 @@ class TestExportPolicyIsRead(unittest.TestCase):
         with self.assertRaises(CfError) as ctx:
             plan_cmd._check_confirmed(ws, source)
         self.assertIn("not confirmed", str(ctx.exception))
-        self.assertIn("cf sources confirm", getattr(ctx.exception, "hint", ""))
+        # `cf sources confirm` is not a subcommand; the spelling that works is
+        # the one sources.py and status.py already print.
+        self.assertIn("cf sources set %s confirmed=true" % PUBLISHED_ID,
+                      getattr(ctx.exception, "hint", ""))
 
         # confirmed, or the policy off, and it plans
         ws.upsert_source(PUBLISHED_ID, confirmed=True)

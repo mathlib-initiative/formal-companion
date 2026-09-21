@@ -6,9 +6,9 @@ Two layers:
 * **regression tests** against the real baseline -- skipped unless the
   environment names it:
 
-      CF_TML           /Users/jack/Desktop/tao-measure-lean
-      CF_MT            /Users/jack/Desktop/measure_theory
-      CF_BASELINE_DIFF /Users/jack/Desktop/tao-differential   (ours.jsonl, adam.jsonl)
+      CF_TML           a docstring-tag companion checkout
+      CF_MT            an attribution-table companion checkout
+      CF_BASELINE_DIFF the v1 differential directory (ours.jsonl, adam.jsonl)
       CF_TEST_TMP      where the end-to-end test may create a scratch workspace
                        (default: the system temp directory)
 
@@ -22,6 +22,14 @@ anchors tao-measure-lean re-anchored afterwards listed explicitly.
 """
 
 from __future__ import annotations
+
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
 
 import json
 import os
@@ -82,7 +90,7 @@ namespace Demo
 
 open Set
 
-/-- `Definition 1.1.1` (intervals).  An *interval* is a subset of `ℝ`. -/
+/-- `Definition 1.1.1` (widgets).  A *widget* is a gadget built over `ℝ`. -/
 def IsInterval (I : Set ℝ) : Prop :=
   ∃ a b : ℝ, a ≤ b
 
@@ -97,7 +105,7 @@ private noncomputable def helper (x : ℝ) : ℝ :=
   x + 1
 
 /-- `Exercise 1.2.17` (Caratheodory criterion).  (4) is the condition of
-§1.7 (previewed on book p. 20).  Here `0 < d` is essential. -/
+§1.7 (it is sketched early, on book p. 20).  The bound `0 < d` matters. -/
 theorem crossref_case : True := by
   sorry -- TODO(autoform)
 
@@ -181,7 +189,7 @@ class TagAndAnchorTest(unittest.TestCase):
     """The tag grammar and the own-versus-cross-reference anchor rule."""
 
     def test_leading_backticked_tag_wins(self):
-        hit = itemtag.find_tag("`Definition 1.1.1` (intervals).  See `Lemma 1.2.5`.")
+        hit = itemtag.find_tag("`Definition 1.1.1` (widgets).  See `Lemma 1.2.5`.")
         self.assertEqual(hit.tag, "Definition 1.1.1")
         self.assertEqual(hit.position, "leading")
 
@@ -205,7 +213,7 @@ class TagAndAnchorTest(unittest.TestCase):
         self.assertEqual((hit.page, hit.source), (24, "own"))
 
     def test_page_in_the_following_clause_is_own(self):
-        doc = "The distance between two sets (`Lemma 1.2.5`, book p. 23), taken in ℝ≥0∞."
+        doc = "How far apart two widgets sit (`Lemma 1.2.5`, book p. 23), valued in ℝ≥0∞."
         hit = itemtag.find_page_anchor(doc, itemtag.find_tag(doc))
         self.assertEqual((hit.page, hit.source), (23, "own"))
 
@@ -216,12 +224,12 @@ class TagAndAnchorTest(unittest.TestCase):
 
     def test_cross_reference_page_is_refused(self):
         doc = ("`Exercise 1.2.17` (Caratheodory criterion, one direction).  (4) is the "
-               "full condition of §1.7 (previewed on book p. 20).  Here 0 < d matters.")
+               "full condition of §1.7 (it is sketched early, on book p. 20).  The bound matters.")
         hit = itemtag.find_page_anchor(doc, itemtag.find_tag(doc))
         self.assertEqual((hit.page, hit.source), (None, "crossref"))
 
     def test_no_page_at_all(self):
-        doc = "`Definition 1.1.1` (intervals).  An interval is a subset of ℝ."
+        doc = "`Definition 1.1.1` (widgets).  A widget is a gadget built over ℝ."
         hit = itemtag.find_page_anchor(doc, itemtag.find_tag(doc))
         self.assertEqual((hit.page, hit.source), (None, "none"))
 
@@ -307,11 +315,47 @@ class AdapterLoadingTest(unittest.TestCase):
     """adapter.yaml -> Adapter, and the errors a bad config gives."""
 
     def test_shipped_templates_load(self):
+        """Both examples parse and name their kind -- on any machine.
+
+        `repo:` in a shipped template is a placeholder, so the config is loaded
+        and then pointed at a scratch repo carrying the exports the
+        attribution-table adapter validates.  With the template naming one
+        developer's absolute path, this test passed only on that machine.
+        """
+        from adapters import yamlio
+        parent = Path(tempfile.mkdtemp(prefix="cf-tmpl-",
+                                       dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
+        repo = parent / "companion"
+        exports = repo / "pdf-overlay" / "data"
+        exports.mkdir(parents=True)
+        for name in ("target-refinement.json", "declaration-snippets.json"):
+            (exports / name).write_text("{}", encoding="utf-8")
+        cfg_path = parent / "adapter.yaml"
         for path, kind in ((TEMPLATES / "docstring_tags.tao-measure-lean.yaml", "docstring_tags"),
                            (TEMPLATES / "attribution_table.measure_theory.yaml", "attribution_table")):
             with self.subTest(path.name):
-                adapter = load(path)
+                config = yamlio.load_yaml(path)
+                self.assertEqual(config["repo"], "<path to the companion repo>",
+                                 "a shipped template names no real repo")
+                # `repo:` is written RELATIVE here, because that is the second
+                # thing `load` does and the only place it is exercised: a
+                # relative repo resolves against the adapter.yaml's own parent.
+                cfg_path.write_text(
+                    path.read_text(encoding="utf-8").replace(
+                        f"repo: {config['repo']}", f"repo: {repo.name}"),
+                    encoding="utf-8")
+                adapter = load(cfg_path)
                 self.assertEqual(adapter.kind, kind)
+                self.assertEqual(Path(adapter.config["repo"]), repo.resolve())
+
+    def test_a_missing_adapter_yaml_names_the_command_that_writes_one(self):
+        """The refusal every command reaches through `cflib.adapters_api.load`."""
+        missing = Path(tempfile.gettempdir()) / "cf-no-such-companion" / "adapter.yaml"
+        with self.assertRaises(api.AdapterError) as caught:
+            load(missing)
+        self.assertIn("adapter config not found", str(caught.exception))
+        self.assertIn("cf onboard", caught.exception.hint or "")
 
     def test_unknown_kind_is_a_readable_error(self):
         with self.assertRaises(api.AdapterError):

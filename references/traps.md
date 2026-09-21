@@ -7,6 +7,11 @@ symptom you will actually see), *the fix*, and *where the evidence is*. Most of 
 Host names, server addresses, agentbox profile names and session ids deliberately do not appear
 here; they belong in `workspace.yaml`.
 
+**Contents** — **A** sources, editions and discovery (read before your first run on a new
+book) · **B** counting, harvesting, reporting · **C** the orchestrator and the bridge ·
+**D** the local Workflow path · **E** shell, Python and small tools · **F** Lean, Lake and
+Verso · **G** repos, worktrees and permissions.
+
 ---
 
 ## A. Sources, editions and discovery
@@ -24,10 +29,10 @@ against each candidate's `items.json` (`agreement = ok / (ok + mismatched)`), ac
 with a ≥0.05 margin, and let prose corroborate rather than decide. Record the bundled-but-not-
 anchored edition in `bundled_sources` with `role: reference` so it is prepared for page-map
 checking and audited by nobody. Stamp `source_id` + `source_sha` into every artifact; the gate
-refuses a mismatch. Measured 2026-09-16: published 0.89 (271 ok / 35 mismatched) vs draft 0.66
-(202 / 103).
-*Evidence:* `/Users/jack/Desktop/tao-measure-lean/CLAUDE.md` lines 48-55;
-`/Users/jack/Desktop/tao-differential/refuted.adam.jsonl` `_meta.official_pdf` and row 1; the
+refuses a mismatch. Measured 2026-09-21: published 0.91 (271 ok / 27 mismatched) vs draft 0.68
+(202 / 95).
+*Evidence:* the docstring-tag companion's own `CLAUDE.md`, "anchor edition" section;
+the v1 differential's `refuted.adam.jsonl` `_meta.official_pdf` and row 1; the
 `anchor edition` block `cf onboard` prints.
 
 **A1b — Both editions share the offset, so the error is exactly one page.**
@@ -53,6 +58,11 @@ on this machine — 265 pages each, 245 voting pages with 244 agreeing on 16 (0.
 with 248 agreeing (0.9960). A guessed 16 at 0.71 would produce exactly the class of defect the
 audit exists to find, so the command refuses and names `cf sources set <id> offset=N`, which stamps
 `offset_method: manual` so a reader can tell an inference from a claim.
+*The case with no offset at all:* a source that is not a paginated document (a `.tex` manuscript,
+notes in Markdown, an HTML chapter) has no printed page, so it carries `pagination: none`,
+`offset_method: none` and `locator: section`, and every page-dependent feature refuses on it by
+name — `offset=`, `--images`, a page bind — instead of computing from a 0 that nothing supports
+(`scripts/sources/locator.py`).
 *Evidence:* the run prompts' "You can SEE the page" block; `sources/<id>/meta.json`
 `offset_histogram` and `offset_voting_pages`.
 
@@ -83,7 +93,7 @@ entry count, `changed`). Never use a summarising fetch for a source of record. A
 raw HTML is checked for the word "errata"; absent, the confidence is halved and
 `meta.json.warnings` records `errata_url_unconfirmed` — a page that does not mention errata is a
 guess, however plausible its URL.
-*Evidence:* `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §4;
+*Evidence:* the docstring-tag companion's `HANDOFF.md` §4 and its
 `REVIEW_PATTERNS.md` P13.
 
 **A4 — `pdftotext` destroys notation.**
@@ -99,13 +109,18 @@ those two variants.
 *Presents as:* a convenient copy of `text.txt`, page images or crops inside a repo.
 *Fix:* source text, page images and crops live only in the workspace's gitignored `sources/`,
 never in the skill repo or a companion; findings quote 1-3 sentences and stay in the workspace;
-`--redact-quotes` replaces `book_quote` with (page, normalised hash) for anything shared. The
+what leaves is an export with the quotes redacted to a hash. Two of them, and they hash the same
+normalised sentence: `cf route --redact-quotes` replaces `book_quote` with (raw length, sha256) in
+one companion's upstream report, and `cf share export` replaces it with (page, normalised length,
+sha256, and up to a quarter of the quote's words from each end, none at all below fourteen words)
+for a whole campaign — from which `cf quotes hydrate` recovers the sentence on a machine that
+already holds that edition, and nowhere else. The
 registry holds metadata and URLs only, which is what makes *it* committable. A download happens
 only with `--download` **and** a licence note saying the author publishes the file himself, and
 nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails
 closed** when it is absent — which presents as a run failure, not as a missing file, so check that
 first.
-*Evidence:* `~/Desktop/tao-diff-run/README.md`; `docs/HANDOFF.md` §7 ("DO NOT DELETE");
+*Evidence:* the harvested corpus's own README; `tao-measure-lean/docs/HANDOFF.md` §7 ("DO NOT DELETE");
 `registry/README.md`.
 
 **A6 — `sources/` in `.gitignore` hides `scripts/sources/`.**
@@ -116,7 +131,7 @@ of workspace data cannot be committed by accident. `sources/` matches a director
 the code package is `scripts/sources/`.
 *Fix:* the `!scripts/sources/` negation, which must move in the same commit as anything that
 renames either side. Two lines, one meaning; they are commented in `.gitignore` as such.
-*Evidence:* `.gitignore` in this repo; `docs/design/multi-source-model.md` §6.3.
+*Evidence:* `.gitignore` in this repo; `docs/design/archive/multi-source-model.md` §6.3.
 
 ---
 
@@ -126,7 +141,7 @@ renames either side. Two lines, one meaning; they are commented in `.gitignore` 
 *Presents as:* every derived count off by one, in the "cleaner" direction.
 *Fix:* `RECEIPT.json` with the source count and a sha manifest; `harvest` fails on a mismatch.
 rsync completing is not proof of completeness.
-*Evidence:* `docs/HANDOFF.md` §4 (762 local vs 763 on the server; the missing file was a real
+*Evidence:* `tao-measure-lean/docs/HANDOFF.md` §4 (762 local vs 763 on the server; the missing file was a real
 `CONTENT` finding).
 
 **B2 — The task generator dropped an item.**
@@ -141,8 +156,8 @@ against `items.json ∩ any-repo`, failing loudly on a gap.
 *Presents as:* "everything is fixed" while three findings — one high — have never been adjudicated.
 *Fix:* the work list is always re-derived mechanically from the merged corpus; "nothing open" ships
 with the command that recomputes it.
-*Evidence:* `docs/OPEN_FAITHFULNESS_FINDINGS.md` (three successive wrong counts, all toward
-"cleaner"); `docs/HANDOFF.md` §4.
+*Evidence:* `tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md` (three successive wrong counts, all toward
+"cleaner"); `tao-measure-lean/docs/HANDOFF.md` §4.
 
 **B4 — A grep is not the authoritative count.**
 *Presents as:* 523 `sorry` where the repo's own classifier says 516 (510 exercises + 6 gaps),
@@ -176,7 +191,7 @@ normaliser.
 *Presents as:* `aggregate usage: input=0, output=0` and a budget command that caps nothing.
 *Fix:* treat the gateway/host as the only enforceable cap; record a `max_cost` and the billing path
 in `run.yaml`; never claim tend's budget protects a bridged run.
-*Evidence:* `RUNBOOK.md` addendum; `docs/HANDOFF.md` §8.
+*Evidence:* `RUNBOOK.md` addendum; `tao-measure-lean/docs/HANDOFF.md` §8.
 
 **C3 — The host caps concurrent sessions per account.**
 *Presents as:* HTTP 409s once you pass 16 sessions — and the cap is per account, across workspaces,
@@ -184,7 +199,7 @@ so two workspaces cannot both run at full width.
 *Fix:* `plan-run` writes worker+reviewer concurrency into `run.yaml`, and `cf run` refuses a total
 above `defaults.max_concurrent_sessions` (16) unless `--over-session-cap` is passed; the plan prints
 `<n> sessions, cap <m>` so the number is visible before anything starts. A second workspace waits.
-*Evidence:* `docs/HANDOFF.md` §8.
+*Evidence:* `tao-measure-lean/docs/HANDOFF.md` §8.
 
 **C4 — The worktree explosion.**
 *Presents as:* 382 git worktrees and 1.1 GB appearing within minutes of starting a run, even with
@@ -220,7 +235,7 @@ limit, **not** on instruction); the recovered harvest-from-journal script.
 *Cause:* it was launched with `[]`.
 *Fix:* build `args` with a script that prints the JSON, and assert a non-zero length in the script's
 first `log()`.
-*Evidence:* `/Users/jack/Desktop/notes/camera-ready-HANDOFF-2026-09-08.md` §6.
+*Evidence:* the camera-ready handoff note of the v1 campaign, §6.
 
 **D3 — A Workflow script has no filesystem.**
 *Presents as:* a design that says "run the gate inside the script after each agent" and cannot.
@@ -293,13 +308,13 @@ edits **within their line count** or re-run the whole pin cascade.
 *Fix:* build the library target only (`lake build <Lib>`); never build a narrative layer in CI on a
 hosted runner. Also: killing `lake` leaves orphaned `lean` children holding mmapped artifacts —
 check for them after any interrupted build.
-*Evidence:* `notes/camera-ready-HANDOFF-2026-09-08.md` §6; `docs/HANDOFF.md` §7;
+*Evidence:* `notes/camera-ready-HANDOFF-2026-09-08.md` §6; `tao-measure-lean/docs/HANDOFF.md` §7;
 `memory/camera-ready-pass-2026-09-07.md`.
 
 **F4 — Generated layers are not covered by CI.**
 *Presents as:* a generated table or blueprint drifting behind the Lean across many sections.
 *Fix:* regenerate after any declaration change, as part of the fix stage's invariants.
-*Evidence:* `docs/HANDOFF.md` §7.
+*Evidence:* `tao-measure-lean/docs/HANDOFF.md` §7.
 
 **F5 — This Lake has no jobs flag.**
 *Presents as:* `-j`/`--jobs` rejected.
@@ -334,8 +349,8 @@ from that copy.
 `changed files ⊆ {findings/<id>.json, tasks/<id>.yaml}` before merge. Mount or copy source repos
 read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Evidence:* the tend config's two `validation` commands, both
-`python3 scripts/verify_findings.py` relative to the worktree; design critique
-`critique.json` gap 3.
+`python3 <entrypoint>/scripts/verify_findings.py` relative to the worktree;
+the design critique, gap 3.
 
 **G4 — `git add <deleted-path>` aborts the whole add.**
 *Presents as:* a staging step that quietly stages nothing.
@@ -346,6 +361,17 @@ read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Presents as:* a convenient example in a skill file that names a private repo's conventions, a
 host, or a session id.
 *Fix:* skill examples are synthetic; repo paths, hosts, profiles, owners and session ids live in
-`workspace.yaml` / `adapter.yaml` only; the workspace repo has no remote by default and a pre-push
-guard, because "no remote" is a default and not a control.
-*Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); `critique.json` risks 1-3.
+`workspace.yaml` / `adapter.yaml` only; the workspace itself stays local, and what makes it stay
+local is that `cf init` REFUSES a workspace repo with a remote unless `policy.allow_remote` says
+otherwise. The pre-push hook is a reminder on top of that, not the control: `git push --no-verify`
+skips it, a fresh clone does not carry it, and a remote added after `cf init` never passes through
+it — which is why `cf status` prints, every run, whether there is a remote and whether the hook is
+still in place. `cf init --no-remote-guard` adds the one guard a bare `git push --no-verify` does
+not get past (`remote.pushDefault` to a remote that does not exist, `push.default nothing`, both in
+that repo's local config); an explicit `git push <remote> <ref>` still works, so it is a guard and
+not the control either. Staying local is not the same as being unshareable: `cf share export`
+writes the campaign's conclusions — ledger rows, routed findings, tallies, receipts, source
+metadata — with every quote redacted, and `cf share import` merges such a bundle into another
+workspace without overwriting a verdict, which is how two people work one campaign.
+*Evidence:* `CLAUDE.md` §1 (what may live here: source metadata and nothing else) and `POLICY.md`
+§3 (never redistributed); the design critique, risks 1-3.

@@ -1,25 +1,61 @@
 #!/usr/bin/env python3
 """cf -- the companion-faithfulness workspace CLI.
 
-New code (design/architecture.md S8 item 1).  Run it by path:
+New code (CLAUDE.md S5 is the contract for adding one).  Run it through the
+shim on PATH, or by path:
 
-    python3 /Users/jack/Desktop/companion-faithfulness/scripts/cf.py status
-    python3 .../scripts/cf.py --workspace ~/Desktop/tao-workspace status
+    cf status
+    python3 <skill>/scripts/cf.py status
+    python3 <skill>/scripts/cf.py --workspace <workspace> status
 
 Commands live one-per-module in ``scripts/cfcmd/``; each module exposes
 ``register(subparsers)`` and ``run(args)``.  cf.py discovers them with
 pkgutil, so a new stage is a new file and nothing else.  A command module that
 fails to import is reported but does not stop the others from working.
+
+``main()`` RAISES CfError, for a library caller that wants the exception;
+``cli()`` is the process entry point and renders it as ``error:``/``hint:`` with
+the error's own exit code.  Every entry point -- ``__main__``, ``bin/cf`` and the
+``cf`` console script -- goes through ``cli()``, so none of them can print a
+traceback where the CLI promises one line.
 """
 from __future__ import annotations
 
-import argparse
-import importlib
-import os
-import pkgutil
 import sys
-import traceback
-from pathlib import Path
+
+#: The floor README.md and CLAUDE.md S3 state, and the versions CI runs.
+#: Enforced here because it was enforced nowhere: the tree happens to run on 3.9
+#: today, so the day someone writes `match` or imports tomllib an older
+#: interpreter fails with a SyntaxError deep inside a fleet worker instead of
+#: refusing in one line at startup.
+MIN_PYTHON = (3, 11)
+
+
+def python_too_old(version_info=None) -> str:
+    """The one-sentence refusal for an interpreter below :data:`MIN_PYTHON`.
+
+    Empty string when the interpreter is new enough.  Written in 3.6-compatible
+    syntax and called before anything else is imported, so the refusal survives
+    on the interpreter it is refusing.
+    """
+    found = tuple(sys.version_info if version_info is None else version_info)
+    if found >= MIN_PYTHON:
+        return ""
+    return ("error: cf needs Python %d.%d or newer, but this is Python %d.%d; "
+            "re-run it with a newer interpreter."
+            % (MIN_PYTHON[0], MIN_PYTHON[1], found[0], found[1]))
+
+
+if python_too_old():  # pragma: no cover - the interpreter running the tests passes
+    sys.stderr.write(python_too_old() + "\n")
+    raise SystemExit(2)
+
+import argparse  # noqa: E402
+import importlib  # noqa: E402
+import os  # noqa: E402
+import pkgutil  # noqa: E402
+import traceback  # noqa: E402
+from pathlib import Path  # noqa: E402
 
 SCRIPTS_DIR = Path(__file__).resolve().parent
 if str(SCRIPTS_DIR) not in sys.path:
@@ -37,13 +73,14 @@ workspace directory:
 A workspace holds N COMPANIONS and M SOURCES; a companion is audited against a
 LIST of sources, and a differential is possible exactly where two companions'
 source lists overlap.  Nothing about a source is typed in: `cf onboard <repo>`
-discovers it, fingerprints the PDF and infers the page offset, the item kinds
-and the errata page.
+discovers it, fingerprints the source and infers the page offset, the item
+kinds, the numbering depth and the errata page.
 
 typical program:
-  cf init ~/Desktop/tao-workspace
-  cf onboard ~/Desktop/tao-measure-lean
-  cf onboard ~/Desktop/measure_theory
+  cf doctor                             # git, poppler and curl on PATH?
+  cf init <workspace>
+  cf onboard <path to a companion repo>
+  cf onboard <path to the other companion repo>
   cf sources list
   cf pair
 
@@ -155,14 +192,26 @@ def main(argv: list[str] | None = None) -> int:
     return int(result or 0)
 
 
-if __name__ == "__main__":
+def cli(argv: list[str] | None = None) -> int:
+    """Process entry point: run a command and render a CfError as one line.
+
+    This lived in the ``if __name__ == "__main__"`` block, where only ``python3
+    scripts/cf.py`` could reach it -- a ``cf`` on PATH or a console script
+    calling ``main()`` would print a traceback for every refusal the CLI
+    promises to report as ``error:`` plus ``hint:``.  ``main()`` still raises, so
+    a library caller (and the tests that assert on CfError) is unaffected.
+    """
     try:
-        sys.exit(main())
+        return main(argv)
     except CfError as exc:
         log.error(exc.render())
-        sys.exit(exc.exit_code)
+        return exc.exit_code
     except KeyboardInterrupt:  # pragma: no cover
         log.error("interrupted")
-        sys.exit(130)
+        return 130
     except BrokenPipeError:  # pragma: no cover
-        sys.exit(0)
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

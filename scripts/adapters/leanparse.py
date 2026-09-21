@@ -1,18 +1,17 @@
 """ONE Lean 4 source parser for every docstring-tag companion.
 
-Ported from the recovered extractors
-  scratchpad/recovered/b174aa13_L5547_Bash.txt  ``extract_ours.py``   (tao-measure-lean)
-  scratchpad/recovered/b174aa13_L5564_Bash.txt  ``extract_teorth.py`` (teorth/analysis)
-and hardened against the three parsers that already live on disk and disagree
-(1,248 vs 1,414 vs 1,413 declarations, design/stage_map.md Stage 0):
+Ported from the v1 campaign's two extractors (not in this repo, ``extract_ours``
+and ``extract_teorth``) and hardened against the three parsers that live in the
+companion repos themselves and disagree (1,248 vs 1,414 vs 1,413 declarations --
+the measurement is in the design record, not in any document here):
 
-  /Users/jack/Desktop/tao-measure-lean/scripts/review_audit.py:26-34
+  tao-measure-lean's ``review_audit.py``
       ``private``/``protected``/``noncomputable``/``@[...]`` prefixes and the
       ``code_lines`` guard against declaration keywords inside prose.
-  /Users/jack/Desktop/tao-measure-lean/scripts/make_verso_tables.py:103-260
+  tao-measure-lean's ``make_verso_tables.py``
       comment-depth tracking that survives ``/--`` and ``--``, the upward
       docstring attach that skips attribute lines, and the body rule.
-  /Users/jack/Desktop/measure_theory/scripts/extract_declaration_snippets.py:41-116
+  measure_theory's ``extract_declaration_snippets.py``
       namespace/section tracking for fully qualified names and def bodies.
 
 Measured on tao-measure-lean HEAD this parser sees 1,544 declarations =

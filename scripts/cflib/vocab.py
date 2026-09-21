@@ -2,7 +2,7 @@
 
 New code, consolidating the five drifting vocabularies the design records
 (match verdict -> finding kind -> challenge classification -> ledger verdict
--> viewer verdict; design/architecture.md S3).  Every stage imports its enums
+-> viewer verdict).  Every stage imports its enums
 from here: a value that is not in these sets is a gate failure, never a new
 convention.
 """
@@ -46,7 +46,7 @@ FINDING_KINDS = frozenset({CONTENT, VACUITY, PROXY, SUSPECTED_ERRATA, COVERAGE, 
 
 #: PAGE_ANCHOR is produced by pair/anchor_check.py only. An LLM that emits it
 #: is failing the kinds gate: 22 of 40 batch-1 differential findings were
-#: pagination noise (design/architecture.md S5 "Kinds gate").
+#: pagination noise (the kinds gate; references/findings-schema-v2.md S7).
 MECHANICAL_ONLY_KINDS = frozenset({PAGE_ANCHOR})
 
 # --- run modes and the kinds each mode may emit
@@ -64,7 +64,7 @@ KINDS_BY_MODE: dict[str, frozenset] = {
     ATTACK_HUNT: frozenset({CONTENT, VACUITY, SUSPECTED_ERRATA}),
 }
 
-#: Per-kind evidence matrix (design/critique.json: "A per-kind gate matrix is
+#: Per-kind evidence matrix (the design critique: "A per-kind gate matrix is
 #: needed (PROXY: bridge field + closure path as evidence; COVERAGE: item +
 #: items.json page; CONTENT/VACUITY: quote + witness)").  Values are the
 #: finding fields the mechanical gate requires for that kind.
@@ -110,6 +110,19 @@ UNCHALLENGED = "UNCHALLENGED"
 CHALLENGED = "CHALLENGED"
 ROUTE_STATUSES = frozenset({UNCHALLENGED, CHALLENGED})
 
+# --- re-check status (`cf recheck`: a pinned finding against the current repo).
+#: These are facts about the CODE, never verdicts: `changed` and `gone` say a
+#: human must look again, not that a finding is closed.  `unpinned` is the honest
+#: answer for an imported corpus and for every row written before the pin
+#: existed -- it is reported rather than guessed at, so re-checking a legacy
+#: ledger cannot move an adjudicated number.  Ordered worst-last for display.
+RECHECK_UNCHANGED = "unchanged"
+RECHECK_UNPINNED = "unpinned"
+RECHECK_CHANGED = "changed"
+RECHECK_GONE = "gone"
+RECHECK_STATUSES = (RECHECK_UNCHANGED, RECHECK_UNPINNED, RECHECK_CHANGED, RECHECK_GONE)
+RECHECK_STATUS_SET = frozenset(RECHECK_STATUSES)
+
 # --- viewer layer (publish-verdicts; measure_theory only in v1)
 VIEWER_VERDICTS = frozenset({"faithful", "convention", "attribution_gap", "proxy", "deviation"})
 VIEWER_STATUS = frozenset({"unconfirmed", "contested", "human_confirmed", "fixed"})
@@ -123,7 +136,7 @@ LEDGER_TO_VIEWER = {
 }
 KIND_TO_VIEWER = {PROXY: "proxy"}
 
-# --- sources (docs/design/multi-source-model.md S1, S2)
+# --- sources (docs/design/archive/multi-source-model.md S1, S2)
 #: audited = a companion is checked against it; reference = prepared only so the
 #: page map to a sibling edition can be checked, and audited by nobody.
 SOURCE_AUDITED = "audited"
@@ -147,7 +160,8 @@ PDF_FOUND_IN = ("repo_declared", "repo_cache", "workspace_store", "library_path"
 OFFSET_METHODS = frozenset({"running_head_mode", "declared", "manual", "registry", "unknown"})
 
 # --- adapter kinds and policies (Stage 0 contract)
-ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes", "custom"})
+ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex",
+                           "ledger_nodes", "custom"})
 
 #: Adapter kinds v1 actually IMPLEMENTS.  ``ADAPTER_KINDS`` is the vocabulary --
 #: what an adapter.yaml may legally say -- and it is deliberately wider, because
@@ -156,7 +170,7 @@ ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "ledger_nodes"
 #: BEFORE it writes anything; otherwise it registered a companion nothing could
 #: parse and the next ``cf extract`` failed for the whole workspace.
 #: ``tests/test_cflib`` asserts this equals ``adapters.api.registry()``.
-IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table"})
+IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex"})
 GRANULARITIES = frozenset({"item", "node"})
 WRITE_POLICIES = ("read_only", "branch_only", "branch_and_pr")
 WRITE_POLICY_SET = frozenset(WRITE_POLICIES)

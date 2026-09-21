@@ -1,8 +1,8 @@
 """Build the FULL declaration index the schema gate checks `repo:decl` against.
 
-New code. architecture.md S5 makes "``repo:decl`` ids against ... the declaration
-set (new: reject phantom names, which produced 5 of 6 'unsure' ledger rows)" part
-of the schema gate, and critique.json re-scopes it to a *full* declaration index.
+New code. The design put "``repo:decl`` ids against ... the declaration set
+(new: reject phantom names, which produced 5 of 6 'unsure' ledger rows)" into the
+schema gate, and the design critique re-scoped it to a *full* declaration index.
 ``scripts/gate/verify_findings.py`` implements the check and ``plan/presets.py``
 exposes ``decl_index`` -- but ``cf plan-run`` never passed one, so every
 generated ``gate.json`` carried ``"decl_index": null`` and the check was dead.

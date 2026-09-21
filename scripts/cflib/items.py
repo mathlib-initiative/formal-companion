@@ -1,16 +1,16 @@
 """The strict book-item grammar: one parser for every stage.
 
-Ported from the normaliser in /Users/jack/Desktop/tao-differential/compare.py
-(``norm()``, lines 13-20) and the ITEM regexes of the recovered extractors
-(scratchpad/recovered/b174aa13_L5547_Bash.txt ``extract_ours.py`` and
-b174aa13_L5564 ``extract_teorth.py``), with the defects the design records
-fixed:
+Ported from the normaliser in the v1 campaign's ``compare.py`` (``norm()``) and
+the ITEM regexes of its two extractors, ``extract_ours.py`` and
+``extract_teorth.py``.  None of the three are in this repo; what they did is
+written down in ``docs/design/stage_map.md`` §1.1, and these are the defects the
+design records fixed:
 
 * whitespace tolerance -- ``compare.norm`` used a single-space regex and
-  silently dropped ``Exercise    1.3.19`` (design/stage_map.md Stage 1/3);
+  silently dropped ``Exercise    1.3.19`` (docs/design/stage_map.md Stage 1/3);
 * a reject list -- ``norm`` fell through to ``return s``, so junk such as
   ``Corollary (Lemma 1.2.5 + Exercise 1.2.4)`` became a first-class key
-  (design/architecture.md Stage 3 "strict grammar + reject list");
+  (the strict grammar and its reject list; docs/design/stage_map.md S1.1);
 * sub-parts -- ``(i)``/``(iv)``/``(3)`` are parsed out instead of being
   glued into the key or thrown away by the title regex;
 * trailing code leak -- teorth rows like ``Definition 1.3.8 (Unsigned
@@ -20,9 +20,21 @@ fixed:
   "proof of Lemma 1.1.2(ii)") is accepted, the printed page wins over any
   cross-reference, and page ranges collapse to their first page.
 
-The canonical id is ``"<Kind> <c>.<s>.<n>"`` or ``"In-text p.<n>"``; the
+The canonical id is ``"<Kind> <n>[.<n>...]"`` or ``"In-text p.<n>"``; the
 sub-part is carried separately so ``Exercise 1.1.6(i)`` and
 ``Exercise 1.1.6(ii)`` pair on the same book item but stay distinguishable.
+
+How many numeric segments a label may carry is the SOURCE's numbering, not a
+constant: ``Theorem 7``, ``Theorem 3.4`` and ``Lemma 2.3.4.1`` are all real
+book numbering, and ``cflib.inference.infer_numbering`` reads a source's own
+headings to find out which one it uses, and ``cf sources set <id>
+numbering=<min>,<max>`` is the override for a book whose deeper labels are too
+few to be inferred from.  Callers that know the source pass it
+in; ``DEFAULT_NUMBERING`` is what a caller that does not know gets, and it is
+the two-or-three-segment grammar this parser has always applied.  A label
+DEEPER than the numbering allows is rejected (``too_many_segments``), never
+truncated -- truncating ``Theorem 2.3.4.5`` to ``Theorem 2.3.4`` merged every
+item of a section onto one audit key with nothing on the reject list.
 
 Two functions normalise a label and they are not interchangeable: ``clean()``
 is the ID transformation (whitespace only, hashed by ``finding_id``, frozen),
@@ -53,13 +65,62 @@ REJECT_UNKNOWN_KIND = "unknown_kind"
 REJECT_NO_NUMBER = "no_number"
 REJECT_IN_TEXT_NO_TARGET = "in_text_no_target"
 REJECT_UNPARSEABLE = "unparseable"
+#: the label carries more numeric segments than the source's numbering has
+REJECT_TOO_MANY_SEGMENTS = "too_many_segments"
+
+#: the deepest numbering any source may declare (``Lemma 2.3.4.1``)
+MAX_NUMBER_SEGMENTS = 4
+
+#: ``(min, max)`` numeric segments for a caller that does not know the source.
+#: Two-or-three is the grammar every existing corpus was keyed with, so this is
+#: what keeps a re-parse of the baseline byte-identical; a prepared source
+#: carries its own ``numbering`` and passes it in.
+DEFAULT_NUMBERING: tuple[int, int] = (2, 3)
 
 _DASHES = {"‐": "-", "‑": "-", "‒": "-", "–": "-",
            "—": "-", "―": "-", "−": "-"}
 _SUB_RE = re.compile(r"^(?:[ivxl]{1,6}|\d{1,2}|[a-h])$", re.I)
-_NUM_RE = re.compile(r"(\d+)\.(\d+)(?:\.(\d+))?")
 _PAGE_RE = re.compile(r"(?:pp?\.|pages?\s*|p\s+)\s*(\d+)", re.I)
 _IN_TEXT_RE = re.compile(r"^in[-\s]?text\b", re.I)
+#: the whole dotted run, however deep -- the depth is judged, never truncated
+_SEGMENTS_RE = re.compile(r"^(\d+(?:\.\d+)*)")
+
+
+def numbering_range(numbering=None) -> tuple[int, int]:
+    """``(min, max)`` numeric segments a label of this source may carry.
+
+    Accepts what a source records: ``None`` (use :data:`DEFAULT_NUMBERING`), a
+    ``(min, max)`` pair, a single int (exactly that many), or the mapping
+    ``items.json``/``meta.json`` store (``{"min_segments": …, "max_segments":
+    …}``).  Unusable values -- out of range, non-numeric, an EMPTY mapping --
+    fall back rather than raise, because this reads a number off disk that a
+    human may have edited.
+
+    The empty mapping is the case that matters: ``items.json`` stores
+    ``numbering: {}`` whenever the preparing host had no ``cflib`` to infer
+    with, and in exactly that case the table was built with
+    :data:`DEFAULT_NUMBERING`.  Collapsing ``{}`` onto its ``min_segments``
+    would tell a caller that reads the stored value the source is numbered
+    ``(2, 2)``, and every three-segment label in the baseline corpus would come
+    back ``too_many_segments`` -- a mass reject out of a missing default.
+    """
+    if not numbering:
+        return DEFAULT_NUMBERING
+    try:
+        if isinstance(numbering, int):
+            lo = hi = numbering
+        elif isinstance(numbering, dict):
+            lo = int(numbering.get("min_segments") or DEFAULT_NUMBERING[0])
+            hi = int(numbering.get("max_segments") or lo)
+        else:
+            seq = tuple(numbering)
+            lo = int(seq[0])
+            hi = int(seq[1]) if len(seq) > 1 else lo
+        lo = max(1, min(int(lo), MAX_NUMBER_SEGMENTS))
+        hi = max(lo, min(int(hi), MAX_NUMBER_SEGMENTS))
+    except (TypeError, ValueError):
+        return DEFAULT_NUMBERING
+    return lo, hi
 
 
 @dataclass(frozen=True)
@@ -71,6 +132,7 @@ class Item:
     chapter: int | None = None
     section: int | None = None
     number: int | None = None
+    levels: tuple[int, ...] = ()  # every numeric segment, however many
     sub: str = ""               # "" or "(iv)" / "(3)" / "(i)(a)"
     page: int | None = None     # printed page, for In-text items
     qualifier: str = ""         # "definition", "proof of Lemma 1.1.2(ii)", ...
@@ -91,6 +153,13 @@ class Item:
     def numbered(self) -> bool:
         return self.chapter is not None
 
+    @property
+    def number_levels(self) -> tuple[int, ...]:
+        """Every numeric segment, for an Item built here or by hand."""
+        if self.levels:
+            return self.levels
+        return tuple(n for n in (self.chapter, self.section, self.number) if n is not None)
+
     def slug(self, style: str = "underscore") -> str:
         return slug(self, style=style)
 
@@ -98,6 +167,7 @@ class Item:
         return {
             "id": self.id, "full": self.full, "kind": self.kind,
             "chapter": self.chapter, "section": self.section, "number": self.number,
+            "levels": list(self.number_levels),
             "sub": self.sub, "page": self.page, "qualifier": self.qualifier,
             "title": self.title, "trailing": self.trailing, "raw": self.raw,
         }
@@ -168,14 +238,23 @@ def _parse_subs(text: str) -> tuple[str, str]:
     return "".join(subs), rest
 
 
-def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[Item | None, Reject | None]:
-    """Parse a raw item string. Returns (Item, None) or (None, Reject)."""
+def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS,
+              *, numbering=None) -> tuple[Item | None, Reject | None]:
+    """Parse a raw item string. Returns (Item, None) or (None, Reject).
+
+    ``numbering`` is the SOURCE's numbering (see :func:`numbering_range`): a
+    label with fewer segments than it allows is ``no_number``, and one with more
+    is ``too_many_segments``.  The second is the case that used to be silent:
+    the old two-or-three-segment regex matched the first three segments of
+    ``Theorem 2.3.4.5`` and dropped ``.5`` into ``trailing``, so nineteen
+    distinct theorems became one key and nothing was reported anywhere.
+    """
     s = clean(raw)
     if not s:
         return None, Reject(raw, REJECT_EMPTY)
 
     if _IN_TEXT_RE.match(s):
-        return _parse_in_text(raw, s, kinds)
+        return _parse_in_text(raw, s, kinds, numbering=numbering)
 
     m = re.match(r"^([A-Za-z][A-Za-z.\-]*)\s*(.*)$", s, re.S)
     if not m:
@@ -185,23 +264,33 @@ def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[Item | No
         return None, Reject(raw, REJECT_UNKNOWN_KIND, {"word": m.group(1), "kinds": list(kinds)})
 
     rest = m.group(2).strip()
-    num = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", rest)
-    if not num:
-        return None, Reject(raw, REJECT_NO_NUMBER, {"kind": kind, "rest": rest[:60]})
-    chapter, section, number = (int(num.group(1)), int(num.group(2)),
-                                int(num.group(3)) if num.group(3) else None)
+    low, high = numbering_range(numbering)
+    num = _SEGMENTS_RE.match(rest)
+    levels = tuple(int(x) for x in num.group(1).split(".")) if num else ()
+    if len(levels) < low:
+        return None, Reject(raw, REJECT_NO_NUMBER,
+                            {"kind": kind, "rest": rest[:60], "min_segments": low})
+    if len(levels) > high:
+        return None, Reject(raw, REJECT_TOO_MANY_SEGMENTS,
+                            {"kind": kind, "number": num.group(1),
+                             "min_segments": low, "max_segments": high,
+                             "segments": len(levels)})
+    chapter = levels[0]
+    section = levels[1] if len(levels) > 1 else None
+    number = levels[2] if len(levels) > 2 else None
     rest = rest[num.end():].strip()
     sub, rest = _parse_subs(rest)
     title, rest = _take_parens(rest)
     if title and _SUB_RE.match(title.strip()):  # a second sub after the title slot
         sub += f"({title.strip().lower()})"
         title = ""
-    ident = f"{kind} {chapter}.{section}" + (f".{number}" if number is not None else "")
+    ident = kind + " " + ".".join(str(n) for n in levels)
     return Item(id=ident, kind=kind, chapter=chapter, section=section, number=number,
-                sub=sub, title=title.strip(), trailing=rest.strip(), raw=raw), None
+                levels=levels, sub=sub, title=title.strip(), trailing=rest.strip(),
+                raw=raw), None
 
 
-def _parse_in_text(raw: str, s: str, kinds: Sequence[str]):
+def _parse_in_text(raw: str, s: str, kinds: Sequence[str], *, numbering=None):
     """In-text items: the printed page wins; else a named cross-reference."""
     body = _IN_TEXT_RE.sub("", s).strip().lstrip(",").strip()
     page_m = _PAGE_RE.search(s)
@@ -210,50 +299,67 @@ def _parse_in_text(raw: str, s: str, kinds: Sequence[str]):
         page = int(page_m.group(1))
         return Item(id=f"{IN_TEXT} p.{page}", kind=IN_TEXT, page=page,
                     qualifier=qualifier, raw=raw), None
-    ref = _find_reference(body, kinds)
+    ref = _find_reference(body, kinds, numbering=numbering)
     if ref is not None and ref.numbered:
         return Item(id=f"{IN_TEXT} {ref.full}", kind=IN_TEXT, chapter=ref.chapter,
-                    section=ref.section, number=ref.number, qualifier=qualifier,
-                    raw=raw), None
+                    section=ref.section, number=ref.number, levels=ref.levels,
+                    qualifier=qualifier, raw=raw), None
     return None, Reject(raw, REJECT_IN_TEXT_NO_TARGET, {"body": body[:60]})
 
 
-def _find_reference(body: str, kinds: Sequence[str]) -> Item | None:
+def _find_reference(body: str, kinds: Sequence[str], *, numbering=None) -> Item | None:
     """Find a numbered item named anywhere inside an In-text qualifier.
 
     ``In-text definition, Lemma 1.2.13(iii)`` and ``In-text step in the proof
     of Lemma 1.2.13(ii)`` both point at a numbered item with no printed page.
+    The search pattern follows the source's own numbering, so a book numbered
+    ``Theorem 7`` can anchor an in-text item too; the parse that follows is the
+    one that decides, so a run the pattern finds but the grammar refuses is
+    still a reject.
     """
-    pattern = r"\b(" + "|".join(re.escape(k) for k in kinds) + r")\s+\d+\.\d+"
+    low, _high = numbering_range(numbering)
+    digits = r"\d+" + (r"(?:\.\d+)" * (low - 1) if low > 1 else "")
+    pattern = r"\b(" + "|".join(re.escape(k) for k in kinds) + r")\s+" + digits
     m = re.search(pattern, body, re.I)
     if not m:
         return None
-    ref, _ = try_parse(body[m.start():], kinds)
+    ref, _ = try_parse(body[m.start():], kinds, numbering=numbering)
     return ref
 
 
-def parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> Item:
+def parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS, *, numbering=None) -> Item:
     """Parse or raise ItemGrammarError."""
-    item, reject = try_parse(raw, kinds)
+    item, reject = try_parse(raw, kinds, numbering=numbering)
     if item is None:
         assert reject is not None
-        raise ItemGrammarError(raw, reject.reason,
-                               hint="fix the tag in the companion repo, or add the kind to "
-                                    "workspace.yaml sources.<id>.kinds")
+        hint = ("fix the tag in the companion repo, or add the kind to "
+                "workspace.yaml sources.<id>.kinds")
+        if reject.reason == REJECT_TOO_MANY_SEGMENTS:
+            # `cf sources refresh --force` would NOT settle this: it re-runs
+            # infer_numbering over the same text and reaches the same depth.
+            # The only thing that can say "the book really numbers this deep"
+            # is the override, which stamps `numbering_method: manual`.
+            hint = (f"this source's numbering has at most "
+                    f"{reject.context.get('max_segments')} numeric segments; if the book really "
+                    f"numbers this deep: cf sources set <id> numbering="
+                    f"{reject.context.get('min_segments')},{reject.context.get('segments')}")
+        raise ItemGrammarError(raw, reject.reason, hint=hint)
     return item
 
 
-def normalise(raw: str, kinds: Sequence[str] = DEFAULT_KINDS, with_sub: bool = False) -> str:
+def normalise(raw: str, kinds: Sequence[str] = DEFAULT_KINDS, with_sub: bool = False,
+              *, numbering=None) -> str:
     """Canonical id string (``with_sub`` keeps ``(iv)``). Raises on junk."""
-    item = parse(raw, kinds)
+    item = parse(raw, kinds, numbering=numbering)
     return item.full if with_sub else item.id
 
 
-def parse_all(raws: Iterable[str], kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[list[Item], list[Reject]]:
+def parse_all(raws: Iterable[str], kinds: Sequence[str] = DEFAULT_KINDS,
+              *, numbering=None) -> tuple[list[Item], list[Reject]]:
     """Bulk parse: (items, rejects). Callers report the reject list, never drop it."""
     items, rejects = [], []
     for raw in raws:
-        item, reject = try_parse(raw, kinds)
+        item, reject = try_parse(raw, kinds, numbering=numbering)
         (items if item is not None else rejects).append(item if item is not None else reject)
     return items, rejects
 
@@ -310,7 +416,8 @@ def is_in_text(raw: str) -> bool:
     return bool(_IN_TEXT_RE.match(clean(raw)))
 
 
-def try_join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[str, Reject | None]:
+def try_join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS,
+                 *, numbering=None) -> tuple[str, Reject | None]:
     """The key to join *raw* on, and the Reject to report (``None`` when clean).
 
     The sub-part is KEPT: ``In-text Lemma 1.2.13(ii)`` and ``In-text Lemma
@@ -324,15 +431,15 @@ def try_join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[str, R
         return "", Reject(raw, REJECT_EMPTY)
     if not _IN_TEXT_RE.match(s):
         return s, None                      # numbered/other labels: untouched
-    item, reject = _parse_in_text(raw, s, kinds)
+    item, reject = _parse_in_text(raw, s, kinds, numbering=numbering)
     if item is None:
         return s, reject                    # reported, never guessed onto an item
     return item.full, None
 
 
-def join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> str:
+def join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS, *, numbering=None) -> str:
     """:func:`try_join_key`, raising ItemGrammarError on an unjoinable label."""
-    key, reject = try_join_key(raw, kinds)
+    key, reject = try_join_key(raw, kinds, numbering=numbering)
     if reject is not None:
         raise ItemGrammarError(raw, reject.reason,
                                hint="an in-text label needs a printed page ('book p. 71') "
@@ -340,8 +447,8 @@ def join_key(raw: str, kinds: Sequence[str] = DEFAULT_KINDS) -> str:
     return key
 
 
-def join_keys(raws: Iterable[str],
-              kinds: Sequence[str] = DEFAULT_KINDS) -> tuple[dict[str, str], list[Reject]]:
+def join_keys(raws: Iterable[str], kinds: Sequence[str] = DEFAULT_KINDS,
+              *, numbering=None) -> tuple[dict[str, str], list[Reject]]:
     """Bulk :func:`try_join_key`: ``({raw: key}, [Reject, ...])``.
 
     The rejects are the report; the keys still contain every input, so a caller
@@ -353,7 +460,7 @@ def join_keys(raws: Iterable[str],
         text = str(raw)
         if text in keys:
             continue
-        key, reject = try_join_key(text, kinds)
+        key, reject = try_join_key(text, kinds, numbering=numbering)
         keys[text] = key
         if reject is not None:
             rejects.append(reject)
@@ -379,12 +486,21 @@ def sub_rank(sub: str) -> tuple:
     return tuple(out)
 
 
-def sort_key(item: "Item | str", kinds: Sequence[str] = DEFAULT_KINDS) -> tuple:
-    """Stable book order: numbered items by c.s.n, then In-text by page."""
-    obj = item if isinstance(item, Item) else parse(item, kinds)
+def sort_key(item: "Item | str", kinds: Sequence[str] = DEFAULT_KINDS, *, numbering=None) -> tuple:
+    """Stable book order: numbered items by their segments, then In-text by page.
+
+    The tuple keeps its six slots and its element types: ``plan/make_tasks.py``
+    sorts parseable and unparseable items into one list and supplies a literal
+    ``(9, 0, 0, 0, (), item)`` for the second, so a slot that changed shape
+    would raise there rather than mis-sort.  Segments past the third ride in the
+    sub-part slot, which orders tuples already.
+    """
+    obj = item if isinstance(item, Item) else parse(item, kinds, numbering=numbering)
     if obj.numbered:
-        return (0, obj.chapter or 0, obj.section or 0, obj.number if obj.number is not None else -1,
-                sub_rank(obj.sub), obj.kind)
+        levels = obj.number_levels
+        return (0, levels[0], levels[1] if len(levels) > 1 else -1,
+                levels[2] if len(levels) > 2 else -1,
+                tuple((0, n) for n in levels[3:]) + sub_rank(obj.sub), obj.kind)
     return (1, obj.page or 0, 0, 0, (), obj.kind)
 
 
@@ -400,8 +516,8 @@ def slug(item: "Item | str", style: str = "underscore") -> str:
         base = (f"in-text-p{obj.page}" if obj.page is not None
                 else re.sub(r"[^a-z0-9]+", "-", obj.id.lower().replace(".", sep)).strip("-"))
     elif obj.numbered:
-        nums = [obj.chapter, obj.section] + ([obj.number] if obj.number is not None else [])
-        base = obj.kind.lower().replace(" ", "-") + "-" + sep.join(str(n) for n in nums)
+        base = (obj.kind.lower().replace(" ", "-") + "-"
+                + sep.join(str(n) for n in obj.number_levels))
     else:
         base = re.sub(r"[^a-z0-9]+", "-", obj.id.lower()).strip("-")
     if obj.sub:
@@ -441,7 +557,7 @@ QUALIFIED_SEP = "::"
 def qualified_item(source_id: str, item: "Item | str") -> str:
     """``"<source_id>::Exercise 1.3.19"`` -- an item id that cannot collide.
 
-    An item is the pair ``(source_id, item)`` (docs/design/multi-source-model.md
+    An item is the pair ``(source_id, item)`` (docs/design/archive/multi-source-model.md
     S6.1): ``Exercise 1.3.19`` means one thing in one source and something else
     in another, so a bare item string is NEVER used as a cross-source key.  Rows
     carry two fields; a task id, a log line or a finding payload -- anywhere only

@@ -1,23 +1,33 @@
 """Unit tests for the cf core: item grammar, state, workspace, registry,
 discovery, inference, yaml, vocab.
 
-Run:  python3 -m unittest discover -s /Users/jack/Desktop/companion-faithfulness/tests -v
-(or:  python3 /Users/jack/Desktop/companion-faithfulness/tests/test_cflib.py)
+Run:  python3 -m unittest discover -s tests -v
+(or:  python3 tests/test_cflib.py, from the checkout root)
 
 Regression tests that read the local baseline are skipped cleanly unless the
 environment names it:
 
-    CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential   (statement tables)
-    CF_BASELINE_CORPUS=/Users/jack/Desktop/tao-diff-run     (2,672 findings)
-    CF_TML=/Users/jack/Desktop/tao-measure-lean
-    CF_MT=/Users/jack/Desktop/measure_theory
-    CF_BOOK_TXT=/Users/jack/Desktop/tao-differential/book.official.txt
+    CF_BASELINE_DIFF=<the v1 differential directory>   (statement tables)
+    CF_BASELINE_CORPUS=<the v1 findings corpus>         (2,672 findings)
+    CF_TML=<a docstring-tag companion checkout>
+    CF_MT=<an attribution-table companion checkout>
+    CF_BOOK_TXT=<the book's extracted text>
 
-Nothing here touches the network, and nothing reads a PDF: discovery is
-exercised against FIXTURE repos that carry the same signals the two real
-companions carry (docs/design/multi-source-model.md S4.3).
+Nothing here touches the network, and the only PDFs read are the fixture PDFs
+the suite generates in a temporary directory (`tests/_hermetic.py` pins HOME, so
+`library_paths`' `~/Downloads` entry reaches nothing of the developer's):
+discovery is exercised against FIXTURE repos that carry the same signals the two
+real companions carry (docs/design/archive/multi-source-model.md S4.3).
 """
 from __future__ import annotations
+
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
 
 import json
 import os
@@ -194,7 +204,7 @@ class TestItemJoinKey(unittest.TestCase):
         ("In-text, book p. 29", "In-text p.29"),
         ("In-text definition (book p. 29)", "In-text p.29"),
         ("In-text convention, book p. 29 "
-         "(Exercise 1.2.5: extension of Jordan inner measure to unbounded sets)",
+         "(Exercise 1.2.5: extension of widget weight to unbounded assemblies)",
          "In-text p.29"),
         ("In-text proof (book p. 227)", "In-text p.227"),
         ("In-text record (book p. 156; author's errata)", "In-text p.156"),
@@ -1605,6 +1615,9 @@ block: |
         "gate_command": "python3 /gate/verify_findings.py", "printed_page": "12",
         "repos_inline": "ours, adam", "repo_count": "2",
         "decls_inline": "ours:Foo, adam:Bar",
+        # the rendered value for a preset whose gate accepts PAGE_ANCHOR; empty
+        # on one that does not
+        "anchor_question": " Is the page anchor correct?",
     }
 
     @staticmethod
@@ -1701,7 +1714,9 @@ class TestTemplates(unittest.TestCase):
         text = templates.render_template("adapter.yaml.example", {
             "name": "ours", "repo": "/r", "commit": "null", "adapter": "docstring_tags",
             "granularity": "item", "glob": '"**/*.lean"', "anchor": "docstring",
-            "write_policy": "read_only", "owner": '"jack"',
+            "write_policy": "read_only", "owner": '"external"',
+            # the tag spelling `cf onboard` MEASURES per repo, not a default
+            "require_backticks": "true",
             "source_default": PUBLISHED_ID, "source_map": ""})
         data = yamlio.load_yaml_minimal(text)
         self.assertEqual(data["sources"]["default"], PUBLISHED_ID)

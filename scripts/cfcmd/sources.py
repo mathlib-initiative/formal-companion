@@ -1,19 +1,28 @@
 """cf sources -- list, show, add, set and refresh the workspace's sources.
 
-docs/design/multi-source-model.md S7.  `cf onboard` is the path; these are the
+docs/design/archive/multi-source-model.md S7.  `cf onboard` is the path; these are the
 exceptions:
 
     cf sources list                       one row per source
     cf sources show <id>                  the full record and its provenance
-    cf sources add <pdf> --for <name>     add one by hand (fingerprint + prepare)
+    cf sources add <source> --for <name>  add one by hand (fingerprint + prepare)
     cf sources set <id> offset=16 ...     override a field discovery got wrong
     cf sources remove <id>                drop one that should not be here
     cf sources refresh [<id>]             re-prepare text / items / errata
 
 ``cf sources set`` marks what it touches: an overridden offset gets
-``offset_method: manual``, an overridden scope gets ``scope_method: manual``, and
-the override is recorded in the source's ``meta.json`` -- so a number a human
-typed is never mistaken later for one the text supports.
+``offset_method: manual``, an overridden scope gets ``scope_method: manual``, an
+overridden numbering depth gets ``numbering_method: manual``, an accepted small
+table gets ``completeness_method: manual``, and the override is recorded in the
+source's ``meta.json`` -- so a number a human typed is never mistaken later for
+one the text supports.
+
+A source is a PDF or a manuscript that is already text (``.tex``, ``.md``,
+``.rst``, ``.html``, a ``pdftotext`` dump): see ``scripts/sources/locator.py``.
+A text with no page breaks is UNPAGINATED, and the page-dependent parts of this
+command (``offset=``) refuse on it by name rather than invent a page.
+``--images`` refuses on any manuscript, paginated or not: page images come from
+the PDF, and form feeds in a text dump are not one.
 
 (This command replaces ``cf book``: there is no single book any more.)
 """
@@ -29,6 +38,7 @@ from cflib.jsonio import read_json, write_json
 from cflib.log import format_table
 from cflib.registry import Registry, entry_from_claim, source_id_for
 from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
+from sources.locator import text_suffixes_help
 
 LIST_COLUMNS = ["source", "sha", "edition", "offset", "conf", "kinds", "items",
                 "errata", "companions", "role", "confirmed"]
@@ -45,10 +55,39 @@ SETTABLE = {
     "sha256": str,
     "role": str,
     "confirmed": lambda v: str(v).lower() in {"1", "true", "yes", "on"},
+    # the escape hatch for the item-completeness refusal: a table that really is
+    # this small (a booklet, one chapter of a reader) stays adoptable, and says
+    # who vouched for it -- `completeness_method: manual`.
+    "completeness_ok": lambda v: str(v).lower() in {"1", "true", "yes", "on"},
+    # the escape hatch for `too_many_segments`: the numbering is inferred from
+    # the source's own headings, so a book whose four-level labels are too few
+    # to clear MIN_DEPTH_SHARE drops them as rejects and re-inferring cannot
+    # change that.  `numbering=3,4` says the book really numbers this deep.
+    "numbering": lambda v: _numbering_value(v),
     "kinds": lambda v: [k.strip() for k in v.split(",") if k.strip()],
     "chapters": lambda v: [int(c.strip()) for c in v.split(",") if c.strip()],
     "pdf": str,
 }
+
+#: the deepest numbering the item grammar carries (`cflib.items.MAX_NUMBER_SEGMENTS`)
+MAX_NUMBERING = 4
+
+
+def _numbering_value(raw: str) -> list[int]:
+    """``"3,4"`` -> ``[3, 4]``; ``"4"`` -> ``[4, 4]``. Raises on anything else.
+
+    Typed by a human, so it is checked here rather than clamped on the way in:
+    a silently clamped depth would put the same headings back on the reject list
+    and leave the user reading the same refusal.
+    """
+    parts = [p.strip() for p in str(raw).split(",") if p.strip()]
+    if not 1 <= len(parts) <= 2 or not all(p.isdigit() for p in parts):
+        raise ValueError("expected <min>,<max> numeric segments, e.g. 3,4")
+    low = int(parts[0])
+    high = int(parts[-1])
+    if not 1 <= low <= high <= MAX_NUMBERING:
+        raise ValueError(f"numeric segments must run 1..{MAX_NUMBERING} with min <= max")
+    return [low, high]
 
 
 def register(subparsers) -> None:
@@ -62,7 +101,12 @@ def register(subparsers) -> None:
     show.add_argument("--json", action="store_true", dest="as_json")
 
     add = sub.add_parser("add", help="add a source by hand (the exception, not the path)")
-    add.add_argument("pdf", help="path to the PDF (never copied into the skill repo)")
+    # the accepted set is read off `locator.TEXT_SUFFIXES` rather than retyped:
+    # a help string that advertised fewer formats than the code accepts is how a
+    # suffix with no heading pattern got in unnoticed.
+    add.add_argument("source", help="path to the source: a PDF, or a manuscript that is "
+                                    "already text (%s) -- never copied into the skill repo"
+                                    % text_suffixes_help())
     add.add_argument("--for", dest="companion", required=True,
                      help="the companion this source is audited against")
     add.add_argument("--anchor", action="store_true",
@@ -75,17 +119,34 @@ def register(subparsers) -> None:
     st = sub.add_parser("set", help="override a discovered field")
     st.add_argument("source_id")
     st.add_argument("assignments", nargs="+", metavar="key=value",
-                    help="offset=16 errata_url=... chapters=1,2 kinds=A,B confirmed=true")
+                    help="offset=16 errata_url=... chapters=1,2 kinds=A,B numbering=3,4 "
+                         "confirmed=true completeness_ok=true")
 
     rm = sub.add_parser("remove", help="drop a source from this workspace")
     rm.add_argument("source_id")
     rm.add_argument("--keep-files", action="store_true",
                     help="leave sources/<id>/ on disk (the default deletes the prepared text)")
 
+    val = sub.add_parser("validate-registry",
+                         help="check the shipped registry (structure + metadata only)")
+    val.add_argument("--overlay", action="store_true",
+                     help="also check this workspace's registry.yaml overlay")
+
+    promote = sub.add_parser("promote",
+                             help="write a registry patch file for a confirmed source")
+    promote.add_argument("source_id")
+    promote.add_argument("--out", default="",
+                         help="where to write the patch (default: "
+                              "<workspace>/registry-patch.<id>.yaml)")
+    promote.add_argument("--force", action="store_true",
+                         help="overwrite an existing patch file")
+
     refresh = sub.add_parser("refresh", help="re-prepare text, page map, items and errata")
     refresh.add_argument("source_id", nargs="?", help="default: every source")
     refresh.add_argument("--force", action="store_true")
-    refresh.add_argument("--images", action="store_true", help="also render page images (local only)")
+    refresh.add_argument("--images", action="store_true",
+                         help="also render page images (local only; needs the PDF itself, so it "
+                              "refuses on a text manuscript)")
     refresh.add_argument("--image-pages", default="", help="PDF pages to render, e.g. 20-40,55")
     refresh.add_argument("--dpi", type=int, default=150)
     refresh.add_argument("--no-errata", action="store_true")
@@ -93,12 +154,17 @@ def register(subparsers) -> None:
 
 def run(args) -> int:
     command = getattr(args, "sources_command", None) or "list"
+    if command == "validate-registry" and not getattr(args, "overlay", False):
+        # the shipped registry is a file in this checkout, so CI can check it
+        # in a clone with no workspace anywhere near it.
+        return _validate_registry(None, args)
     # `remove` is the repair path: it must load a workspace whose own validator
     # rejects it, because that is precisely when a source has to come out.
     workspace = from_args(args, validate=(command != "remove"))
     return {
         "list": _list, "show": _show, "add": _add, "set": _set, "remove": _remove,
-        "refresh": _refresh,
+        "refresh": _refresh, "validate-registry": _validate_registry,
+        "promote": _promote,
     }[command](workspace, args)
 
 
@@ -113,12 +179,15 @@ def _list(workspace, args) -> int:
     rows = []
     for sid, ref in sources.items():
         items = _item_count(workspace, sid)
+        # an unpaginated source has no printed page, so `offset 0  conf 1.00`
+        # would state the same relation `cf sources show` refuses to print.
+        paginated = _is_paginated(workspace, sid)
         rows.append([
             sid,
             short(ref.sha256, 8) if ref.sha256 else "-",
             (ref.edition or "")[:34],
-            ref.offset,
-            f"{ref.offset_confidence:.2f}",
+            ref.offset if paginated else "-",
+            f"{ref.offset_confidence:.2f}" if paginated else "-",
             len(ref.kinds),
             items if items is not None else "-",
             "yes" if workspace.paths.source_errata_md(sid).exists() else "no",
@@ -151,9 +220,15 @@ def _show(workspace, args) -> int:
     log.info(f"edition   : {ref.edition}")
     log.info(f"sha256    : {ref.sha256 or '(not located)'}"
              + (f"   {ref.bytes} bytes" if ref.bytes else ""))
-    log.info(f"pdf       : {ref.pdf or '(not on this machine)'}")
-    log.info(f"offset    : {ref.offset}   confidence {ref.offset_confidence:.4f} "
-             f"({ref.offset_method})   printed = pdf_page - {ref.offset}")
+    log.info(f"file      : {ref.pdf or '(not on this machine)'}")
+    # an unpaginated source has no printed page, so printing the rule would state
+    # a relation that does not hold for it (`printed = pdf_page - 0`).
+    if (meta.get("pagination") or "formfeed") == "none":
+        log.info(f"offset    : (none)   this source is unpaginated; items are located by "
+                 f"{meta.get('locator', 'section')}")
+    else:
+        log.info(f"offset    : {ref.offset}   confidence {ref.offset_confidence:.4f} "
+                 f"({ref.offset_method})   printed = pdf_page - {ref.offset}")
     log.info(f"kinds     : {', '.join(ref.kinds)}")
     log.info(f"chapters  : {list(ref.chapters) or '(whole source)'}   ({ref.scope_method})")
     log.info(f"errata    : {ref.errata_url or '(none found)'}   "
@@ -181,28 +256,44 @@ def _show(workspace, args) -> int:
     if meta:
         log.info(f"            text {meta.get('pages')} pages, {meta.get('items')} items, "
                  f"text sha {short(meta.get('text_sha256') or '', 8)}")
+        numbering = meta.get("numbering") or {}
+        if numbering:
+            log.info(f"            numbering {numbering.get('min_segments')}-"
+                     f"{numbering.get('max_segments')} numeric segments "
+                     f"({numbering.get('method')}, confidence "
+                     f"{float(numbering.get('confidence') or 0):.2f})")
+        if meta.get("item_completeness") is not None:
+            log.info(f"            completeness {float(meta['item_completeness']):.3f} of the "
+                     f"numbering's own slots   locator {meta.get('locator')}   "
+                     f"pagination {meta.get('pagination')}")
         for warning in meta.get("warnings") or []:
             log.warn(f"            {warning}")
     else:
         log.warn(f"            not prepared -- run `cf sources refresh {ref.id}`")
     if not ref.confirmed:
         log.info("")
-        log.warn("nobody has checked this source. Confirm it with:")
-        log.info(f"  cf sources set {ref.id} confirmed=true")
-        log.info("  or promote it into the skill's registry/sources.yaml")
+        log.warn_block("nobody has checked this source. Confirm it with:",
+                       [f"  cf sources set {ref.id} confirmed=true",
+                        "  or promote it into the skill's registry/sources.yaml"])
     return 0
 
 
 def _add(workspace, args) -> int:
     from cflib import discovery
-    pdf = Path(args.pdf).expanduser().resolve()
+    pdf = Path(args.source).expanduser().resolve()
     if not pdf.is_file():
         raise CfError(f"{pdf} is not a file")
     companion = workspace.companion(args.companion)          # raises when unknown
-    fp = discovery.fingerprint(pdf)
+    fp = _fingerprint(pdf)
     registry = Registry.load(workspace)
     entry = registry.by_sha(fp["sha256"])
     existing = workspace.source_by_sha(fp["sha256"])
+    # WHAT THIS WORKSPACE LOOKED LIKE BEFORE THE CALL, so a refusal below can undo
+    # exactly what this call created and nothing else. `cf onboard` reaches the
+    # same refusals and undoes them the same way, so the snapshot and the undo
+    # live in one place.
+    from cfcmd.onboard import SourceRegistration
+    registration = SourceRegistration(workspace)
     if existing is not None:
         source_id = existing.id
         log.info(f"{pdf.name} is already source {source_id} ({short(fp['sha256'], 8)})")
@@ -212,6 +303,7 @@ def _add(workspace, args) -> int:
         fields = entry.to_source_fields()
         fields.update({"pdf": str(pdf), "bytes": fp["bytes"], "pages": fp["pages"],
                        "text_sha256": fp["text_sha256"], "role": args.role,
+                       "source_format": fp["source_format"], "pagination": fp["pagination"],
                        "discovered": {"at": _now(), "from": ["cf sources add"],
                                       "pdf_found_in": "manual"}})
         workspace.upsert_source(source_id, **fields)
@@ -232,9 +324,49 @@ def _add(workspace, args) -> int:
         workspace.upsert_source(
             source_id, sha256=fp["sha256"], title=title, edition=args.edition or "unspecified",
             bytes=fp["bytes"], pages=fp["pages"], text_sha256=fp["text_sha256"], pdf=str(pdf),
+            source_format=fp["source_format"], pagination=fp["pagination"],
             role=args.role, confirmed=False, registry="overlay",
             licence={"note": "", "fetch": "none", "redistribute": False},
             discovered={"at": _now(), "from": ["cf sources add"], "pdf_found_in": "manual"})
+
+    # PREPARE BEFORE BINDING. `_prepare_source` is where the wrong-document
+    # refusals live (0 numbered items, a kind list belonging to another book, an
+    # item table far below the slots the numbering counts), and binding first
+    # left every one of them with the refused source still in the companion's
+    # audited scope -- with `--anchor`, as the companion's anchor edition -- and
+    # the workspace quietly moved off the auto-pick path, so the NEXT command
+    # failed blaming a source count. The reorder is safe because `_prepare_source`
+    # reads the source row alone and never the companion binding, which its own
+    # docstring already states.
+    if not args.no_prepare:
+        from cfcmd.onboard import _prepare_source
+        # a PDF a human named by hand is as confirmed as a source gets, so its
+        # errata URL may be fetched -- but only when the URL itself is confirmed
+        # too, which `_errata_provenance` decides.
+        try:
+            _prepare_source(workspace, source_id, force=False, no_errata=False)
+        except CfError:
+            # `_prepare_source` says `ok   prepared  sources/<id>/ ...` before it
+            # runs the wrong-document refusals, and that line is true right up
+            # until this rollback deletes the directory it names. Retract it by
+            # name rather than leaving the operator with an `ok` and a `warn`
+            # that contradict each other. No `workspace.save()`: nothing has
+            # written workspace.yaml yet on this path, and re-dumping it from
+            # memory is the one way to change a file the refusal is supposed to
+            # leave alone.
+            dropped = registration.retract([source_id])
+            if dropped:
+                undone = " (sources/%s/ was removed again)" % source_id \
+                    if dropped[source_id] else ""
+                log.warn(f"{source_id} was not added; {args.companion} is unchanged{undone}")
+            else:
+                # The source was already here, so it is not this call's to remove:
+                # say so, and name the command that does remove it.
+                log.warn_block(
+                    f"{source_id} was already in this workspace and stays; only the "
+                    f"binding to {args.companion} was not made",
+                    [f"  drop it with:  cf sources remove {source_id}"])
+            raise
 
     sources = list(companion.sources)
     if source_id not in sources and args.role == ROLE_AUDITED:
@@ -247,13 +379,6 @@ def _add(workspace, args) -> int:
                                anchor_source=anchor)
     workspace.save()
     log.ok(f"{args.companion}: sources = {', '.join(sources)}   anchor = {anchor}")
-    if not args.no_prepare:
-        from cfcmd.onboard import _prepare_source
-        # a PDF a human named by hand is as confirmed as a source gets, so its
-        # errata URL may be fetched -- but only when the URL itself is confirmed
-        # too, which `_errata_provenance` decides.
-        _prepare_source(workspace, source_id, force=False, no_errata=False)
-        workspace.save()
     return 0
 
 
@@ -275,10 +400,17 @@ def _set(workspace, args) -> int:
             raise CfError(f"{assignment}: {exc}") from exc
     # a human typing a number must never be mistaken for a number the text supports
     if "offset" in changes:
+        # an unpaginated source has no printed page for an offset to shift: the
+        # override is refused by name rather than stored where nothing reads it.
+        _require_pagination(workspace, ref.id, "a page offset")
         changes["offset_method"] = "manual"
         changes["offset_confidence"] = 1.0
     if "chapters" in changes:
         changes["scope_method"] = "manual"
+    if "completeness_ok" in changes:
+        changes["completeness_method"] = "manual"
+    if "numbering" in changes:
+        changes["numbering_method"] = "manual"
     # the same rule for the errata URL: a URL a human typed is CONFIRMED, and
     # only a confirmed URL is fetched without being asked (a repo-supplied one
     # is an outbound request the repo chose, and text that reaches prompts).
@@ -297,7 +429,7 @@ def _set(workspace, args) -> int:
         meta.setdefault("overrides", []).append({"at": _now(), "changes": changes})
         write_json(meta_path, meta)
         log.detail(f"recorded the override in {meta_path}")
-    if "offset" in changes or "kinds" in changes:
+    if {"offset", "kinds", "numbering"} & set(changes):
         log.info(f"re-prepare so items.json follows: cf sources refresh {ref.id}")
     return 0
 
@@ -318,6 +450,10 @@ def _remove(workspace, args) -> int:
     users = [name for name, comp in (workspace.data.get("companions") or {}).items()
              if isinstance(comp, dict)
              and source_id in ((comp.get("sources") or []) + (comp.get("bundled_sources") or []))]
+    # Read before the id is gone: a corpus keeps the source it was judged
+    # against, so these runs survive the removal pointing at nothing this
+    # workspace holds.
+    harvested = _corpus_runs_naming(workspace, source_id)
     orphaned = workspace.remove_source(source_id)
     repos = {name: str((workspace.data.get("companions") or {}).get(name, {}).get("repo") or "")
              for name in orphaned}
@@ -334,8 +470,20 @@ def _remove(workspace, args) -> int:
             log.warn(f"{name} no longer lists {source_id}; re-run "
                      f"`cf onboard <repo> --force` if that companion needs another source")
     for name in orphaned:
-        log.warn(f"{name} had no other source, so it was removed too")
-        log.info(f"  bring it back with:  cf onboard {repos.get(name) or '<repo>'}")
+        log.warn_block(f"{name} had no other source, so it was removed too",
+                       [f"  bring it back with:  cf onboard {repos.get(name) or '<repo>'}"])
+    if harvested:
+        # Nothing else says it: `cf tally` goes on counting their rows and
+        # `cf report` can only file them under `unknown_source_documents`, so a
+        # removal that says nothing here leaves a corpus counted by the
+        # authority and by no figure of the handoff's section 0.
+        log.warn_block(
+            f"{len(harvested)} corpus run(s) were judged against {source_id} and still name it",
+            [f"  {', '.join(harvested)}",
+             "  `cf tally` still counts their rows; `cf report` can only file them under",
+             "  `unknown_source_documents`, and no section-0 figure counts them",
+             "  re-import that corpus under an id this workspace holds:",
+             "    cf import-corpus --run-id <run-id> --from <dir> --source <id>"])
     _drop_overlay_row(workspace, source_id)
     prepared = workspace.paths.source_dir(source_id)
     if prepared.exists() and not args.keep_files:
@@ -345,6 +493,52 @@ def _remove(workspace, args) -> int:
     elif prepared.exists():
         log.info(f"{prepared} left on disk (--keep-files)")
     return 0
+
+
+def _corpus_runs_naming(workspace, source_id: str) -> list:
+    """Corpus runs whose receipt or ``run.yaml`` names this source, in id order.
+
+    The receipt is where a harvested or imported corpus records the edition its
+    documents were judged against; a planned run records it in
+    ``runs/<run>/run.yaml``.  ``cf report`` attributes a document that carries no
+    ``source_id`` of its own from either, so both are read here, or the warning
+    misses exactly the run the next report files under an unknown source.
+    """
+    from cflib.yamlio import read_yaml
+    root = workspace.paths.corpus_dir
+    if not root.exists():
+        return []
+    found = set()
+    for entry in sorted(root.iterdir()):
+        receipt = entry / "RECEIPT.json"
+        if not receipt.is_file():
+            continue
+        try:
+            doc = read_json(receipt)
+        except Exception:      # an unreadable receipt is `cf tally`'s to refuse
+            continue
+        if not isinstance(doc, dict):
+            continue
+        ids = _source_ids_of(doc.get("sources"))
+        run_yaml = workspace.paths.run_yaml(entry.name)
+        if run_yaml.is_file():
+            try:
+                planned = read_yaml(run_yaml)
+            except Exception:  # an unreadable run.yaml is `cf run`'s to refuse
+                planned = None
+            if isinstance(planned, dict):
+                ids |= _source_ids_of(planned.get("sources"))
+        if source_id in ids:
+            found.add(str(doc.get("run_id") or entry.name))
+    return sorted(found)
+
+
+def _source_ids_of(block) -> set:
+    """The ids a ``sources`` block names, whether it is a map or a list of rows."""
+    if isinstance(block, dict):
+        return {str(k) for k in block}
+    return {str(e.get("id") or e.get("source_id") or "") if isinstance(e, dict) else str(e)
+            for e in (block or [])} - {""}
 
 
 def _drop_overlay_row(workspace, source_id: str) -> None:
@@ -370,6 +564,125 @@ def _drop_overlay_row(workspace, source_id: str) -> None:
     log.ok(f"removed {source_id} from {path.name}")
 
 
+def _validate_registry(workspace, args) -> int:
+    """`Registry.validate()` plus the metadata-only check, over real files.
+
+    Both existed only as functions nothing ran against the shipped file: the
+    tests that called ``validate()`` built their own fixtures, and the rule
+    ``registry/README.md`` states as hard -- "metadata only, never a line of the
+    book" -- had nothing mechanical behind it at all.  The registry is the one
+    file a contributor writes by hand, so it is the one that most needs a check
+    they can run before opening the PR.  CI runs this command.
+    """
+    from cflib.registry import metadata_problems, skill_registry_path
+
+    checked: list[Path] = [skill_registry_path()]
+    problems = list(metadata_problems(skill_registry_path()))
+    if getattr(args, "overlay", False):
+        overlay = workspace.root / "registry.yaml"
+        checked.append(overlay)
+        if overlay.exists():
+            problems += metadata_problems(overlay)
+        else:
+            log.info(f"no overlay at {overlay} (nothing discovered here yet)")
+    # the cross-entry half (page-map symmetry, same_work, licence enum) reads
+    # the merged view, which is what any command that looks a source up sees.
+    overlay_too = bool(getattr(args, "overlay", False))
+    merged = Registry.load(workspace if overlay_too else None)
+    problems += merged.validate()
+    for path in checked:
+        log.info(f"checked {path}")
+    if problems:
+        for problem in problems:
+            log.warn(problem)
+        raise CfError(f"{len(problems)} registry problem(s)",
+                      hint="registry/README.md says what an entry may hold; POLICY.md "
+                           "says why metadata is the boundary")
+    # Count what was CHECKED, not what ships: with --overlay the run had just
+    # passed a third, overlay-only edition and still reported "2 shipped".
+    # `origin` is "overlay" for a row the overlay contributed OR overrode, which
+    # is what "touched" says and "from" would not.
+    total = len(merged.entries)
+    if overlay_too:
+        touched = sum(1 for e in merged.entries.values() if e.origin != "skill")
+        log.ok(f"registry ok ({total} edition(s); {touched} touched by the overlay)")
+    else:
+        log.ok(f"registry ok ({total} shipped edition(s))")
+    return 0
+
+
+def _promote(workspace, args) -> int:
+    """Write this workspace's confirmed source out as a registry PATCH file.
+
+    Promotion was four prose steps a human performed by hand, and the one thing
+    the steps must not do -- write the shipped registry from a workspace -- is
+    exactly what a script would have been tempted to automate.  So this writes a
+    file the contributor sends as a PR and touches nothing else: the shipped
+    registry stays curated, and the reviewer sees one readable diff.
+    """
+    from cflib.registry import (REGISTRY_VERSION, Registry as _Registry, metadata_problems)
+    from cflib.jsonio import atomic_write
+    from cflib.yamlio import dump_yaml
+
+    registry = _Registry.load(workspace)
+    entry = registry.get(args.source_id)
+    if entry is None:
+        raise SourceError(f"unknown source {args.source_id!r}",
+                          hint="known: " + (", ".join(sorted(registry.entries)) or "(none)"))
+    if entry.origin == "skill" and args.source_id not in registry.shadowed:
+        raise CfError(f"{args.source_id} already ships in the skill's registry",
+                      hint=f"cf sources show {args.source_id} to see the curated entry")
+    ref = workspace.source(args.source_id)
+    if not ref.confirmed:
+        raise CfError(f"{args.source_id} is not confirmed in this workspace",
+                      hint=f"check it with `cf sources show {args.source_id}`, then "
+                           f"`cf sources set {args.source_id} confirmed=true`")
+    if not entry.sha256:
+        raise CfError(f"{args.source_id} carries no sha256",
+                      hint="a registry entry is identified by the bytes; re-run "
+                           f"`cf sources refresh {args.source_id}` with the file on this machine")
+    body = entry.to_dict()
+    body["confirmed"] = True
+    body.pop("added", None)
+    out = Path(args.out) if args.out else workspace.root / f"registry-patch.{args.source_id}.yaml"
+    if out.exists() and not args.force:
+        raise CfError(f"{out} already exists", hint="pass --force to overwrite it")
+    header = (
+        f"# A registry patch for {args.source_id}, written by `cf sources promote`.\n"
+        "# Send it as a pull request against the skill's registry/sources.yaml: paste\n"
+        "# the `sources:` entry below into that file's map, keeping it sorted. Nothing\n"
+        "# writes the shipped registry from a workspace, deliberately -- see\n"
+        "# registry/README.md, \"Adding an edition\".\n"
+        "# Metadata only: no book text, ever (POLICY.md).\n"
+    )
+    text = header + dump_yaml({"version": REGISTRY_VERSION, "sources": {args.source_id: body}})
+    problems = _write_checked_patch(out, text)
+    if problems:
+        for problem in problems:
+            log.warn(problem)
+        raise CfError(f"{len(problems)} problem(s) in the entry; nothing was written",
+                      hint="registry/README.md says what an entry may hold")
+    atomic_write(out, text)
+    log.ok(f"wrote {out}")
+    log.info("next:")
+    log.info(f"  1. open a PR adding that entry to registry/sources.yaml")
+    log.info(f"  2. `cf sources validate-registry` in the checkout you edited")
+    log.info(f"  3. once it ships, delete the overlay row: cf sources remove "
+             f"{args.source_id} --keep-files, then re-run `cf onboard <repo>`")
+    return 0
+
+
+def _write_checked_patch(out: Path, text: str) -> list[str]:
+    """The metadata-only check, run on the patch BEFORE it is written."""
+    from cflib.registry import metadata_problems
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        probe = Path(tmp) / "patch.yaml"
+        probe.write_text(text, encoding="utf-8")
+        return [p.replace(str(probe), str(out)) for p in metadata_problems(probe)]
+
+
 def _refresh(workspace, args) -> int:
     from cfcmd.onboard import _prepare_source
     ids = [args.source_id] if args.source_id else workspace.source_ids()
@@ -378,6 +691,13 @@ def _refresh(workspace, args) -> int:
                           hint="run `cf onboard <repo>`")
     for source_id in ids:
         ref = workspace.source(source_id)
+        if args.images:
+            # pdftoppm renders PAGES *of a PDF*, and the two conditions are not
+            # the same one: a pdftotext dump kept as .txt has form feeds, so it
+            # is paginated, and handing its bytes to pdftoppm raised
+            # "Couldn't read xref table" as a traceback.
+            _require_pagination(workspace, source_id, "page images (--images)")
+            _require_pdf(workspace, source_id, "page images (--images)")
         _prepare_source(workspace, source_id, force=args.force, no_errata=args.no_errata)
         if args.images and ref.pdf:
             from sources import render_pages
@@ -393,9 +713,82 @@ def _refresh(workspace, args) -> int:
 
 # ---------------------------------------------------------------------------
 
+def _require_pagination(workspace, source_id: str, feature: str) -> None:
+    """Refuse a page-dependent feature on an unpaginated source.
+
+    The prepared ``meta.json`` is what knows -- it read the text -- and the
+    workspace row is the fallback for a source `cf sources add` recorded but
+    nothing has prepared yet.
+    """
+    from sources.locator import require_pagination
+    meta = read_json(workspace.paths.source_meta(source_id), default={}) or {}
+    body = (workspace.data.get("sources") or {}).get(source_id) or {}
+    pagination = meta.get("pagination") or body.get("pagination")
+    require_pagination({"pagination": pagination} if pagination else {}, feature,
+                       source_id=source_id)
+
+
+def _require_pdf(workspace, source_id: str, feature: str) -> None:
+    """Refuse a feature that needs the PDF itself on a text manuscript.
+
+    Same three places to ask as the pagination guard, in the same order: the
+    prepared ``meta.json`` read the file, the workspace row recorded what
+    `cf sources add` was given, and the path on disk is the last word for a
+    source neither of them describes.
+    """
+    from sources.locator import require_pdf
+    meta = read_json(workspace.paths.source_meta(source_id), default={}) or {}
+    body = (workspace.data.get("sources") or {}).get(source_id) or {}
+    fmt = meta.get("source_format") or body.get("source_format") or body.get("pdf") or ""
+    require_pdf(fmt, feature, source_id=source_id)
+
+
+def _fingerprint(path: Path) -> dict:
+    """``discovery.fingerprint`` for a PDF; the same shape for a text manuscript.
+
+    A text source's identity is the sha256 of its BYTES, exactly as a PDF's is,
+    and ``text_sha256`` is the same poppler tripwire -- for a manuscript the two
+    differ only by the utf-8 decode, which is the honest answer: nothing was
+    extracted.  ``pages`` counts ``\\f`` page breaks (a ``pdftotext`` dump keeps
+    them) and is ``None`` when there are none, which is what makes the source
+    unpaginated.
+    """
+    from cflib import discovery
+    from cflib.hashing import sha256_file, sha256_text
+    from sources.locator import FORMAT_PDF, PAGINATION_FORMFEED, PAGINATION_NONE
+    from sources.locator import detect_pagination, source_format
+    try:
+        fmt = source_format(str(path))
+    except ValueError as exc:
+        raise CfError(str(exc),
+                      hint="give the PDF, or the manuscript itself (%s)"
+                           % text_suffixes_help()) from exc
+    if fmt == FORMAT_PDF:
+        data = discovery.fingerprint(path)
+        data["source_format"] = FORMAT_PDF
+        data["pagination"] = PAGINATION_FORMFEED
+        return data
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    pagination = detect_pagination(text)
+    pages = text.count("\f") if pagination == PAGINATION_FORMFEED else None
+    return {"path": str(path), "sha256": sha256_file(path), "bytes": path.stat().st_size,
+            "pages": pages, "text_sha256": sha256_text(text), "header": text[:8],
+            "text": text, "source_format": fmt,
+            "pagination": pagination or PAGINATION_NONE}
+
+
 def _item_count(workspace, source_id: str):
     data = read_json(workspace.paths.source_items(source_id), default={}) or {}
     return data.get("count")
+
+
+def _is_paginated(workspace, source_id: str) -> bool:
+    """Does this source have printed pages? (prepared meta first, then the row)."""
+    from sources.locator import is_paginated
+    meta = read_json(workspace.paths.source_meta(source_id), default={}) or {}
+    body = (workspace.data.get("sources") or {}).get(source_id) or {}
+    pagination = meta.get("pagination") or body.get("pagination")
+    return is_paginated({"pagination": pagination} if pagination else {})
 
 
 def _parse_pages(spec: str) -> list[int]:

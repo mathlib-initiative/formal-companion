@@ -1,7 +1,7 @@
 """Build the args for workflows/verify-claims.workflow.js.
 
-Ported from: the hand-written lens list and source list in
-recovered/verify-audit-summary-wf_9da8dddd-e4b.js, which hard-coded five audit
+Ported from: the hand-written lens list and source list of the v1 campaign's
+verify-audit-summary workflow (not in this repo), which hard-coded five audit
 corpora, two repo checkouts, six note files and a PR list.  Here the same lenses
 are generated from the workspace's own paths, and the numbers lens is generated
 from the verification commands the handoff already prints -- so the verifier

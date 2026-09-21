@@ -3,10 +3,10 @@
 Regression tests read the LOCAL baseline through environment variables and skip
 cleanly when they are unset:
 
-    CF_BASELINE_CORPUS=/Users/jack/Desktop/tao-diff-run      2,672 v1 findings
-    CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential    queue/pairs/ledgers
-    CF_BOOK_TXT=/Users/jack/Desktop/tao-differential/book.official.txt
-    CF_TEND=/Users/jack/Desktop/tend                         for tend-task verify
+    CF_BASELINE_CORPUS=<the v1 findings corpus>       2,672 v1 findings
+    CF_BASELINE_DIFF=<the v1 differential directory>  queue/pairs/ledgers
+    CF_BOOK_TXT=<the book's extracted text>
+    CF_TEND=<a tend checkout>                         for tend-task verify
 
     python3 -m unittest discover -s tests -v
 
@@ -143,7 +143,7 @@ class TestRenderer(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# presets == the recorded diff of the five ffmain roots
+# presets == the recorded diff of the v1 campaign's five roots
 # --------------------------------------------------------------------------- #
 class TestPresets(unittest.TestCase):
     def test_five_original_presets_match_PRESETS_md(self):
@@ -1121,6 +1121,9 @@ class TestMakeTasksGuards(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 CONVENTIONS = """# House conventions -- ours
 
+confirmed_by: the repo owner
+confirmed_at: 2026-01-01
+
 ## 1. Total functions and junk values
 
 - `measure` of a non-measurable set is `0` by junk value.
@@ -1180,10 +1183,21 @@ class TestPrompts(unittest.TestCase):
         self.assertIn("/home/x/gate/verify_findings.py", out["worker.md"])
 
     def test_differential_text_prompt_has_no_attack_blocks(self):
+        """No page images, no witness demand — but the citation ban is the GATE's.
+
+        The `citation_ban` block used to be a hand-set flag that only the attack
+        presets carried, so a differential prompt invited "a wrong page anchor"
+        its own gate does not accept. It is now a function of `preset.kinds`, so
+        the block appears here too — naming PAGE_ANCHOR only, because COVERAGE is
+        a kind this preset's gate does accept.
+        """
         preset, ctx = self.ctx("differential-text")
         out = rp.render_prompts(preset, ctx)
-        self.assertNotIn("citation findings", out["worker-system.md"])
         self.assertNotIn("p-NNN.png", out["worker-system.md"])
+        self.assertNotIn("must carry a concrete witness", out["worker-system.md"])
+        self.assertIn("citation findings", out["worker-system.md"])
+        self.assertIn("kind `PAGE_ANCHOR` are not accepted", out["worker-system.md"])
+        self.assertNotIn("`COVERAGE`", out["worker-system.md"])
         self.assertIn("CONVENTION vs CONTENT", out["worker-system.md"])
         self.assertIn("faithful` is a **list", out["worker-system.md"])
 
@@ -1355,6 +1369,7 @@ class TestPlanRunEndToEnd(unittest.TestCase):
             max_cost = None
             i_have_consent = False
             force = False
+            conventions_unconfirmed = False
             allow_unreconciled = False
 
         for k, v in over.items():
@@ -1365,9 +1380,13 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         return f"{cfitems.source_slug(source_id)}--{tail}"
 
     def read_run(self):
-        import yaml
+        # yamlio, not a bare `import yaml`: PyYAML is optional (CLAUDE.md S3) and
+        # this helper was the one unguarded import in the suite, so five tests
+        # failed on any machine without it -- including the worker hosts whose
+        # run.yaml the fallback reader is there to parse.
+        from cflib.yamlio import read_yaml
 
-        return yaml.safe_load((self.root / "runs" / "r1" / "run.yaml").read_text())
+        return read_yaml(self.root / "runs" / "r1" / "run.yaml")
 
     def test_attack_run_writes_everything(self):
         self.assertEqual(self.plan(), 0)
@@ -1453,16 +1472,32 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         """A differential is possible exactly where two source lists overlap.
 
         ``ours`` audits both editions and ``peer`` only the published one, so
-        ``--source`` is not needed: the intersection is a single source, and
-        naming the draft -- which ``peer`` does not audit -- is refused.
+        ``--source`` is not needed: the differentiable source is a single one.
+
+        The second half used to assert that ``--source <draft>`` is REFUSED
+        because ``peer`` does not audit the draft.  That refusal was the defect:
+        the operator never named ``peer``, and in a workspace whose companions
+        span several sources it left no invocation at all that plans a correctly
+        scoped differential -- the no-flag path answered "share no source" and
+        ``--source`` answered "peer is not audited against it".  ``--source`` now
+        NARROWS to that source's own companions, and the refusal is kept for the
+        companion the operator did name (the case below).
         """
         self.assertEqual(self.ws.shared_sources(), {PUBLISHED_ID: ["ours", "peer"]})
         self.assertEqual(self.plan(preset="differential-text", companion=None,
                                    source_id=None), 0)
         self.assertEqual([s["id"] for s in self.read_run()["sources"]], [PUBLISHED_ID])
+        self.assertEqual(self.read_run()["repos"], ["ours", "peer"])
+        self.assertEqual(self.plan(preset="differential-text", companion=None,
+                                   source_id=DRAFT_ID, run_id="r2"), 0)
+        from cflib.yamlio import read_yaml
+
+        r2 = read_yaml(self.root / "runs" / "r2" / "run.yaml")
+        self.assertEqual([s["id"] for s in r2["sources"]], [DRAFT_ID])
+        self.assertEqual(r2["repos"], ["ours"], "the draft's only companion")
         with self.assertRaises(CfError) as cm:
-            self.plan(preset="differential-text", companion=None, source_id=DRAFT_ID,
-                      run_id="r2")
+            self.plan(preset="differential-text", companion="peer", source_id=DRAFT_ID,
+                      run_id="r3")
         self.assertIn("peer", str(cm.exception))
         self.assertIn("not audited against", str(cm.exception))
 

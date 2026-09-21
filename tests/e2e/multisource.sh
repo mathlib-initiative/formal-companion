@@ -22,13 +22,24 @@
 # pushed and `lake` is never run.  The only network access is the errata fetch
 # (curl, raw HTML kept verbatim), which --offline skips.
 #
+# The SYNTHETIC half -- the booklet, its two companions, the planted defects and
+# the score -- lives in tests/e2e/synthetic.sh, which needs no private checkout
+# and which step 1 runs.  Anyone can run that half on its own; this script is
+# the full regression and keeps the two Tao companions.
+#
 # usage:  e2e-multisource.sh [--offline] [<workspace dir>]
+#
+# With no <workspace dir> it makes one under $TMPDIR, as synthetic.sh does.  It
+# may not default to one inside the checkout: `cf init` refuses a workspace
+# under the skill repo, so the documented no-argument invocation exited 2.
 
 set -u
 
-SKILL="${CF_SKILL:-/Users/jack/Desktop/companion-faithfulness}"
-CF="python3 $SKILL/scripts/cf.py"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# The skill is two directories up from tests/e2e: derived, so a checkout
+# anywhere runs, and no path from one machine is baked in.
+SKILL="${CF_SKILL:-$(cd "$HERE/../.." && pwd)}"
+CF="python3 $SKILL/scripts/cf.py"
 
 OFFLINE=""
 WS=""
@@ -38,11 +49,15 @@ for arg in "$@"; do
     *)         WS="$arg" ;;
   esac
 done
-WS="${WS:-$HERE/ws-test}"
+WS="${WS:-$(mktemp -d "${TMPDIR:-/tmp}/cf-multisource.XXXXXX")/ws}"
 
-TML="${CF_TML:-/Users/jack/Desktop/tao-measure-lean}"
-MT="${CF_MT:-/Users/jack/Desktop/measure_theory}"
-CORPUS="${CF_BASELINE_CORPUS:-/Users/jack/Desktop/tao-diff-run}"
+# The two companion checkouts and the baseline corpus are NAMED BY THE
+# ENVIRONMENT, never defaulted to one machine's layout: they are private
+# repositories, so there is no path this script may guess.  CF_BASELINE_CORPUS is
+# optional -- without it steps 7 and 8 are skipped and the script says so.
+TML="${CF_TML:-}"
+MT="${CF_MT:-}"
+CORPUS="${CF_BASELINE_CORPUS:-}"
 
 PUB=tao-measure-gsm126-published
 DRAFT=tao-measure-2011-draft
@@ -87,6 +102,12 @@ for k in sys.argv[3].split("."):
 print(len(g) if isinstance(g, (list, dict)) else g)' "$PUB" "$1" "$2"; }
 
 step "0. preconditions"
+for var in CF_TML CF_MT; do
+  [ -n "${!var:-}" ] || { echo "set $var to a companion checkout:"; \
+    echo "  CF_TML=<docstring-tag companion> CF_MT=<attribution-table companion> \\"; \
+    echo "  [CF_BASELINE_CORPUS=<v1 findings corpus>] bash tests/e2e/multisource.sh"; \
+    echo "(tests/e2e/synthetic.sh is the half that needs no private checkout)"; exit 2; }
+done
 for p in "$TML" "$MT"; do
   [ -d "$p" ] || { echo "missing companion repo: $p"; exit 2; }
 done
@@ -96,12 +117,16 @@ printf '  skill       %s\n  workspace   %s\n  companions  %s\n              %s\n
 [ -n "$OFFLINE" ] && echo "  (offline: the errata fetch is skipped)"
 
 # ---------------------------------------------------------------------------
-step "1. generate the synthetic second source and its two companions"
-# A public-domain booklet written here from the stdlib, plus two Lean companions
-# that formalise it.  Nothing is downloaded; no copyrighted text is copied.
+step "1. the synthetic half -- booklet, two companions, planted defects, score"
+# tests/e2e/synthetic.sh writes the public-domain booklet and the two Lean
+# companions of it, onboards them into a workspace of its own and scores the
+# model-free detector against tests/e2e/answer-key.json.  It needs no private
+# checkout, which is why it is a separate script; this run keeps its fixtures in
+# tests/e2e/ because steps 11-14 below onboard them into the Tao workspace too.
 PDF="$HERE/elementary-notes.pdf"
-run python3 "$HERE/make_pdf.py" "$PDF" || exit 2
-run python3 "$HERE/make_notes_repos.py" "$HERE" "$PDF" || exit 2
+run bash "$HERE/synthetic.sh" --fixtures "$HERE" "$(mktemp -d "${TMPDIR:-/tmp}/cf-synthetic.XXXXXX")/ws" \
+  || FAILED=$((FAILED+1))
+[ -f "$PDF" ] || { echo "the synthetic half wrote no booklet"; exit 2; }
 echo "  booklet sha $(shasum -a 256 "$PDF" | cut -c1-12)"
 
 # ---------------------------------------------------------------------------
@@ -165,15 +190,40 @@ check "differential task universe" "$(jget "pairs/$PUB/reconciliation.json" task
 
 # ---------------------------------------------------------------------------
 step "6. plan every preset"
+# Both companions' conventions.md are the shipped template, so nothing has been
+# confirmed by an owner: planning over an unconfirmed convention list is refused
+# and the override is recorded in run.yaml.
+$CF plan-run --preset differential-text --run-id x-unconfirmed -q >/dev/null 2>&1
+check "plan-run refuses unconfirmed conventions" "$?" "2"
 for P in differential-text differential-pdf differential-gpt; do
-  $CF plan-run --preset "$P" --run-id "p-$P" -q >/dev/null || FAILED=$((FAILED+1))
+  $CF plan-run --preset "$P" --run-id "p-$P" --conventions-unconfirmed -q >/dev/null \
+    || FAILED=$((FAILED+1))
   check "plan-run $P" "$(yget "runs/p-$P/run.yaml" tasks.count)" "383"
 done
 for P in attack-vac attack-hunt; do
-  $CF plan-run --preset "$P" --companion tao-measure-lean --run-id "p-$P" -q >/dev/null \
-    || FAILED=$((FAILED+1))
+  $CF plan-run --preset "$P" --companion tao-measure-lean --run-id "p-$P" \
+    --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
   check "plan-run $P" "$(yget "runs/p-$P/run.yaml" tasks.count)" "506"
 done
+# --chapters narrows an ATTACK universe too (it used to be accepted and ignored),
+# and the narrowing is recorded.  No figure is pinned here: the assertion is that
+# the narrowed run is smaller than the full one and not empty.
+$CF plan-run --preset attack-hunt --companion tao-measure-lean --run-id p-ch1 \
+  --chapters 1 --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
+check "plan-run --chapters narrows the attack universe" \
+      "$(py 'import sys
+sys.path.insert(0, sys.argv[1])
+from cflib.yamlio import read_yaml
+full = read_yaml("runs/p-attack-hunt/run.yaml")["tasks"]["count"]
+narrow = read_yaml("runs/p-ch1/run.yaml")["tasks"]["count"]
+print("narrower" if 0 < narrow < full else "%s vs %s" % (narrow, full))' "$SKILL/scripts")" "narrower"
+# The VALUE, not the length: `yget` prints len() for a list, so a run narrowed to
+# chapter 9 would also have printed "1" here.
+check "  and run.yaml records which chapters" \
+      "$(py 'import sys
+sys.path.insert(0, sys.argv[1])
+from cflib.yamlio import read_yaml
+print(",".join(str(c) for c in read_yaml("runs/p-ch1/run.yaml")["tasks"]["chapters"]))' "$SKILL/scripts")" "1"
 # the other three presets are gate-only scoring configs, not runnable plans
 for P in differential-legacy attack-legacy mechanical; do
   $CF plan-run --preset "$P" --run-id "x-$P" -q >/dev/null 2>&1
@@ -182,13 +232,19 @@ done
 
 # ---------------------------------------------------------------------------
 step "7. import the five baseline runs (2,672 findings)"
-if [ -d "$CORPUS" ]; then
+if [ -n "$CORPUS" ] && [ -d "$CORPUS" ]; then
   # A v1 finding records no source.  This workspace holds more than one, so the
   # import REFUSES to guess which edition they read -- that is the gate, not a
   # nuisance, and batch 1 is exactly the corpus that read a different edition.
   $CF import-corpus --run-id guess --from "$CORPUS/findings" --no-tally -q >/dev/null 2>&1
   check "import refuses to guess the edition" "$?" "2"
 
+  # The gate runs on import unless --no-gate, so these go in under the presets
+  # written FOR an imported v1 corpus: differential-legacy keeps PAGE_ANCHOR in
+  # KINDS because those three runs emitted it (20 rows), and attack-legacy does
+  # not run the operator pass, which flags 2 of findings-vac's 763 quotes. Under
+  # a runnable preset the gate refuses them, which is the gate being right about
+  # a legacy corpus, not a reason to import ungated.
   import_one () {  # <run-id> <dir> <mode> <preset> <expected>
     $CF import-corpus --run-id "$1" --from "$CORPUS/$2" --mode "$3" --preset "$4" \
        --source "$PUB" --repos ours,teorth,adam --no-tally -q >/dev/null \
@@ -196,12 +252,14 @@ if [ -d "$CORPUS" ]; then
     check "import $1" "$(jget "corpus/$1/RECEIPT.json" actual.count)" "$5"
     check "  complete, every file accounted for" \
           "$(jget "corpus/$1/RECEIPT.json" complete)" "True"
+    check "  and it passed the gate on the way in" \
+          "$(jget "corpus/$1/RECEIPT.json" gate.ok)" "True"
   }
-  import_one batch1     findings      differential differential-text 382
-  import_one batch-gpt  findings-gpt  differential differential-gpt  382
-  import_one batch-pdf  findings-pdf  differential differential-pdf  382
-  import_one batch-hunt findings-hunt attack       attack-hunt       763
-  import_one batch-vac  findings-vac  attack       attack-vac        763
+  import_one batch1     findings      differential differential-legacy 382
+  import_one batch-gpt  findings-gpt  differential differential-legacy 382
+  import_one batch-pdf  findings-pdf  differential differential-legacy 382
+  import_one batch-hunt findings-hunt attack       attack-legacy       763
+  import_one batch-vac  findings-vac  attack       attack-legacy       763
   check "  2,672 findings in all" \
         "$(py 'import json,glob
 print(sum(json.load(open(p))["actual"]["count"]
@@ -225,7 +283,7 @@ print(sum(json.load(open(p))["actual"]["count"]
   check "adam items"                 "$(tally adam   raw.items)"          "5"
   check "adam high"                  "$(tally adam   raw.high)"           "1"
 else
-  echo "  (no baseline corpus at $CORPUS -- skipping steps 7 and 8)"
+  echo "  (no baseline corpus: set CF_BASELINE_CORPUS -- skipping steps 7 and 8)"
 fi
 
 # ---------------------------------------------------------------------------
@@ -253,7 +311,7 @@ print(",".join(sorted(rows)))')" \
 step "10. the gates still refuse"
 $CF run p-differential-text --host evil.example.com --i-have-consent -q >/dev/null 2>&1
 check "run refuses a non-allowlisted host" "$?" "2"
-$CF run p-differential-text --host ffmain -q >/dev/null 2>&1
+$CF run p-differential-text --host examplebox -q >/dev/null 2>&1
 check "run refuses a server run without consent" "$?" "2"
 rm -f emitted.json
 $CF route --companion tao-measure-lean --emit-upstream emitted.json -q >/dev/null 2>&1
@@ -351,6 +409,38 @@ check "and no booklet item leaked into the Tao tree" \
 rows = [json.loads(l) for l in open("pairs/'"$PUB"'/pairs.jsonl") if l.strip()]
 ids = {r["source_id"] for r in rows if "_meta" not in r}
 print(",".join(sorted(ids)))')" "$PUB"
+
+# A DIFFERENTIAL OF THE BOOKLET, planned in the finished shape -- 4 companions
+# over 3 sources -- and not at step 6, where there is only one paired source and
+# every companion happens to be one of the run's.  This is the case the scoping
+# defect needed: a run used to stage every companion in the workspace, so the
+# worker prompt called measure_theory one of "N INDEPENDENT formalizations" of a
+# booklet it has never seen, and gate.json accepted findings against its
+# declarations.  The booklet's own companions are notes-a, notes-b and
+# tao-measure-lean; measure_theory audits the Tao source only.
+$CF plan-run --preset differential-text --source "$BOOK" --run-id p-multi \
+  --conventions-unconfirmed -q >/dev/null || FAILED=$((FAILED+1))
+check "a differential stages only its own source's companions" \
+      "$(yget "runs/p-multi/run.yaml" repos)" "3"
+check "  named, not just counted" \
+      "$(py 'import sys
+sys.path.insert(0, sys.argv[1])
+from cflib.yamlio import read_yaml
+print(",".join(sorted(read_yaml("runs/p-multi/run.yaml")["repos"])))' "$SKILL/scripts")" \
+      "notes-a,notes-b,tao-measure-lean"
+check "  and only their statement tables are staged" \
+      "$(cd "runs/p-multi/data" && ls *.jsonl | sort | tr '\n' ',')" \
+      "notes-a.jsonl,notes-b.jsonl,pairs.jsonl,tao-measure-lean.jsonl,"
+# The companion names are DERIVED from the checkouts, so this reads the state
+# files rather than naming the foreign companion: every companion whose
+# state.json recorded the run, which used to be all four of them.
+check "  and no other companion recorded the run" \
+      "$(py 'import json, pathlib
+print(",".join(sorted(
+    d.name for d in pathlib.Path("companions").iterdir()
+    if (d / "state.json").exists()
+    and "p-multi" in (json.load(open(d / "state.json")).get("runs") or {}))))')" \
+      "notes-a,notes-b,tao-measure-lean"
 
 step "15. R1 -- the finished shape"
 run $CF status

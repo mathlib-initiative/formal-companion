@@ -1,6 +1,6 @@
 ---
 name: companion-faithfulness
-description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalises, and produce challenged, routed findings. Use when asked to check whether formal statements faithfully match a book's definitions, lemmas, theorems and exercises; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace.
+description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalises — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — it reads repositories and reports on them, it never edits Lean or repairs a proof.
 ---
 
 # Companion faithfulness audits
@@ -34,6 +34,22 @@ not.
 Do **not** use it to fix Lean proofs, to review a PR, or to answer a single
 "does this one lemma match the book" question that a direct read settles.
 
+## Before you start
+
+- The **skill directory** is the directory holding this file; everything below
+  writes it `<skill>`. Set it once — `CF=<skill>/scripts/cf.py`, then
+  `python3 $CF <command>` — or put the shim on PATH
+  (`ln -s <skill>/bin/cf ~/.local/bin/cf`) and write `cf <command>`, which is
+  the spelling the commands themselves print. `README.md` has the install.
+- **Python 3.11+**, standard library only (PyYAML is used when importable).
+- On PATH: `git`; `pdftotext` and `pdftoppm` (poppler) to prepare a PDF source;
+  `curl` for errata. A `.tex`/`.md`/`.txt` manuscript needs no poppler.
+- **`cf doctor`** checks all of that, prints what is missing and lists the PDF
+  search roots. It needs no workspace: run it first on a new machine.
+- A **workspace** directory (`cf init <dir>`), outside every companion repo.
+- For a server fleet: an allowlisted host, the box owner's **consent**, and
+  `tend` + `agentbox` on that host (see Substrate).
+
 ## Workspaces, companions and sources
 
 The unit of organisation is a **companion with a list of sources**, not a book
@@ -50,8 +66,17 @@ not audited against are recorded in `bundled_sources` with `role: reference`,
 prepared so the page map between siblings can be checked, and audited by
 nobody.
 
+A source need not be a PDF. A manuscript that is already text (`.txt .md
+.markdown .tex .html .htm .rst`) is a source too, located by heading path and
+line instead of by printed page, and a **leanblueprint** repo's manuscript *is*
+its `.tex` tree, which the `blueprint_tex` adapter claims for it. Caveat for a
+mixed repo that ships both a blueprint and a real book: the paginated book wins
+the anchor election, the manuscript registers as a second audited source that
+receives no rows, and `cf onboard` warns that the tags were attributed to the
+anchor.
+
 **Nothing about a source is typed in.** `cf onboard <repo>` reads the
-repository, fingerprints the PDF bytes wherever they can be found on this
+repository, fingerprints the source bytes wherever they can be found on this
 machine, infers the page offset and the item kinds from the text, finds the
 errata page, prepares the source and runs extraction — one command, no flags in
 the common case. What it cannot decide it **refuses** and names the override,
@@ -60,35 +85,42 @@ page is exactly the defect class this audit exists to find.
 
 | what used to be typed | where it comes from now |
 |---|---|
-| which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven signals, `references/onboarding-contract.md` §0) |
-| which edition | sha256 of the actual PDF bytes, looked up in `registry/sources.yaml` |
+| which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven repo signals, `references/onboarding-contract.md` §0) plus whatever the adapter itself claims — a leanblueprint's manuscript IS its `.tex` tree, so its adapter claims it |
+| which edition | sha256 of the actual source bytes, looked up in `registry/sources.yaml` |
 | the page offset | the mode of the running-head votes, with a confidence; below 0.9 it refuses (`cflib.inference.MIN_OFFSET_CONFIDENCE`) |
-| the item kinds | the capitalised words that really head numbered items in this source's text |
+| the item kinds | the capitalised words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
+| the numbering depth | how many numeric segments this source's own headings carry, stored as `numbering`; a deeper label is a reject, never a truncation (`cflib.inference.infer_numbering`) |
+| whether the table is the book | items found against the slots the numbering itself counts; below 0.6 it refuses (`cflib.inference.MIN_ITEM_COMPLETENESS`) |
 | the errata URL | the registry, corroborated by the book page the repo cites; fetched with `curl`, raw HTML kept. A URL the REPO supplies waits for `--fetch-errata`: the page reaches workers as authoritative text |
 | the audited scope | the chapters the companions actually tag |
 | the anchor edition | scoring the repo's own page anchors against each candidate edition; prose only corroborates |
 
 Overrides exist and are the exception: `cf sources set <id> offset=16`,
-`cf sources add <pdf> --for <companion>`, `cf onboard --adapter`,
-`--anchor-source`.
+`cf sources set <id> numbering=3,4`, `cf sources set <id> completeness_ok=true`,
+`cf sources add <source> --for <companion>`, `cf onboard --source`,
+`cf onboard --adapter`, `--anchor-source`.
 
 ## Two directories, never mixed
 
 | | holds | git |
 |---|---|---|
 | the skill repo (`companion-faithfulness/`) | code, templates, docs, the source **registry** (metadata only) | committed, may be shared |
-| the workspace (e.g. `~/Desktop/tao-workspace/`) | source text, page images, statement tables, corpus, ledgers, reports | local repo, **no remote**, source material gitignored |
+| the workspace | source text, page images, statement tables, corpus, ledgers, reports | local repo, **no remote**, source material gitignored |
 
 Source text, page images and crops never enter the skill repo. Workspace data
 is never committed to a companion repo. Companion repos are never written to at
-all.
+all. Staying local is not the same as being unshareable: `cf share export`
+hands over the campaign's conclusions — ledger rows, routed findings, tallies,
+receipts, source metadata — with every quote redacted to (page, normalised
+length, sha256, and at most a quarter of the quote's words from each end, none
+at all below fourteen words).
 
 ## The default program
 
 Cheapest finders first; LLM slots spent only where mechanics cannot decide.
 
 1. `cf init <dir>` — the workspace: `workspace.yaml`, an empty registry
-   overlay, `.gitignore`, `git init` with no remote and a pre-push hook.
+   overlay, `.gitignore`, `git init` with no remote and a pre-push reminder.
 2. `cf onboard <repo>` — per companion, and this is the whole of stage 0:
    detect the adapter, discover the sources, fingerprint them, infer offset /
    kinds / errata / anchor edition, prepare each source (text, page map,
@@ -97,7 +129,10 @@ Cheapest finders first; LLM slots spent only where mechanics cannot decide.
    its confidence and the file it came from.
 3. **Edit `companions/<name>/conventions.md` and have the owner confirm it.**
    The one manual step that matters: an unconfirmed convention list is the
-   largest single source of false positives.
+   largest single source of false positives, and `cf plan-run` refuses a
+   companion whose file carries no `confirmed_by:` stamp or has no filled
+   section — `--conventions-unconfirmed` overrides it, and is recorded in
+   `run.yaml`.
 4. `cf pair` — per source: coverage, def-coverage, queue, **mechanical
    page-anchor check**. Def-coverage alone reports missing and bridge-only
    definitions as COVERAGE findings.
@@ -107,52 +142,137 @@ Cheapest finders first; LLM slots spent only where mechanics cannot decide.
    `mechanical` gate, so they reach the tally, the ledger and the report like
    any other finding (`--no-emit-corpus` to keep them out).
 6. `cf plan-run --preset attack-vac` then `--preset attack-hunt` — each attack
-   run found more real defects than all three differentials combined.
+   run found more real defects than all three differentials combined (5 runs,
+   one chapter, one repo; the ratio is partly definitional, because the attack
+   gate bans PAGE_ANCHOR).
 7. `cf plan-run --preset differential-text` where two companions share a
    source — the only stage that sees specialisation and attribution deltas
    between repos.
-8. `cf run <run-id>` → `cf harvest <run-id>` → `cf tally` — receipts, counts,
-   union. (`cf import-corpus` adopts findings produced before this skill.)
+8. `cf run <run-id> --i-have-consent --execute` → `cf harvest <run-id>` →
+   `cf tally` — receipts, counts, union. **`cf run` is a dry run until
+   `--execute`**: without it the plan is printed and nothing is transferred or
+   started. `cf harvest` runs the findings **gate by default** — quote, witness
+   and kinds, against the pinned `text.txt` — and fails the receipt when the
+   gate fails. `--no-gate` is the documented escape; it records `gate: null`,
+   and `cf tally` then names that run as ungated every time it counts it.
 9. `cf adjudicate` — lenses → reconciler → refute-by-default skeptics. Assume a
-   first-pass finding is wrong about 40% of the time.
+   first-pass finding is wrong about 40% of the time (4 of 10 adjudicated rows,
+   one chapter of one book). The model work runs in a Workflow, not inside
+   `cf`: see **Workflow stages**.
 10. `cf route` — per-owner files; challenged rows only.
 11. `cf report` — every number recomputed from the corpus and re-verified.
 
+`cf import-corpus` adopts findings produced before this skill, with the same
+receipt and the same gate. A directory this workspace never planned has no gate
+config to build, so it lands `gate: null` and warns; re-harvest it with
+`--gate-config` when you want it checked.
+
 ## Command index
 
-Run everything as `python3 <skill>/scripts/cf.py <command> …` (`cf` below).
-Global: `--workspace <dir>` (defaults to `$CF_WORKSPACE`, else the nearest
-ancestor holding `workspace.yaml`), `-v`, `-q`. `cf --help` lists what your
-checkout actually has.
+Run everything as `cf <command> …`, or as
+`python3 <skill>/scripts/cf.py <command> …` without the PATH shim. Global:
+`--workspace <dir>` (defaults to `$CF_WORKSPACE`, else the nearest ancestor
+holding `workspace.yaml`), `-v`, `-q`. `cf --help` lists what your checkout
+actually has, and is generated from the parsers themselves.
 
 | command | one line |
 |---|---|
-| `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No source flags**; only `--name`, `--no-git`, `--allow-nested`, `--force` |
-| `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
+| `doctor [--json]` | check this machine's prerequisites (python floor, git, poppler's `pdftotext`/`pdftoppm`, `curl`, optional node and PyYAML) and print the PDF search roots. Exit 2 when a required one is missing, 0 when only optional ones are. Needs no workspace |
+| `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No source flags**; only `--name`, `--no-git`, `--no-remote-guard`, `--allow-nested`, `--force` |
+| `onboard <repo>` | discover → register → prepare → extract, printing every inference with its confidence. `--name`, `--adapter`, `--source` (names a PDF or text manuscript the repo does not name; repeatable), `--anchor-source`, `--download`, `--fetch-errata`, `--dry-run`, `--no-errata`, `--no-extract` are the exceptions, not the path. The repo is read as data: never written, never built, and never allowed to name a program (`cflib.gitsafe`) |
 | `sources list` | one row per source: id, sha8, edition, offset ± confidence, kinds, items, errata, companions, role, confirmed |
 | `sources show <id>` | the full record: provenance, licence, `same_work` siblings, the page map, the prepared artifacts |
-| `sources add <pdf> --for <companion>` | add a source by hand; fingerprints, registers, prepares, appends to that companion's list |
-| `sources set <id> key=value …` | override a discovered field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `confirmed=true`); sets the matching `*_method: manual` |
+| `sources add <source> --for <companion>` | add a source by hand; fingerprints, registers, prepares, appends to that companion's list. A source is a PDF or a manuscript that is already text (`.txt .md .tex .html`), which is located by heading path instead of printed page |
+| `sources set <id> key=value …` | override a discovered field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `numbering=3,4`, `completeness_ok=true`, `confirmed=true`); sets the matching `*_method: manual` |
 | `sources remove <id>` | drop a source that should never have been registered: workspace.yaml, the overlay row and the prepared directory. Loads even a workspace its own validator rejects — it is the repair path |
-| `sources refresh [<id>]` | re-prepare text, page map, items and errata for one source or all of them. **This replaces the old `cf book`** |
+| `sources refresh [<id>]` | re-prepare text, page map, items and errata for one source or all of them. **This replaces the deleted `cf book`** |
+| `sources validate-registry [--overlay]` | check the shipped registry (and with `--overlay` this workspace's): required fields, sha shape, licence enum, page-map symmetry, and **no free text outside the allowlisted fields** — the mechanical half of "metadata only, never a line of the book". CI runs it on every push |
+| `sources promote <id>` | turn a confirmed workspace source into a **registry patch file** to send as a PR. It never edits the shipped registry in place from a workspace |
 | `extract [--companion X]` | adapters → `statements.jsonl`; every row carries `source_id` + `source_sha`; no-op when (repo commit, adapter key) is unchanged |
 | `pair [--source ID]` | iterates the shared sources: one `pairs/<source_id>/` tree per source — pairs, coverage, queue, targets, def-coverage, uncovered, page-anchor differential |
-| `plan-run --preset <p> [--source ID] --host <h>` | tasks, prompts, `gate.json`, tend root; a run is scoped to one source; reconciles the task count against items ∩ any-repo |
-| `run <run-id> --i-have-consent` | drive the fleet (server via tend+agentbox, or a local Workflow under ~100 items) |
-| `status [--companion X] [--source ID] [--json]` | the sources table, the differential line, every companion's `state.json`, and the **unconfirmed sources** block; prints nothing it did not read |
-| `harvest <run-id>` | pull findings, write `RECEIPT.json` (count + sha manifest + `sources`), tally |
-| `import-corpus --run-id <id> --from <dir> [--repo-map ours=<companion>]` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt, source never touched. `--repo-map` states which of this workspace's companions a foreign repo name is — the union key is `(source_id, repo, item, kind)`, so without it the imported rows join nothing here, and the import warns |
-| `tally [--union] [--agreed] [--source ID]` | recompute every finding count from `corpus/`, grouped by `(source_id, repo)`; nothing downstream may count by hand |
-| `adjudicate [--companion X]` | lenses → reconciler → skeptics; challenge unchallenged rows; write ledger rows |
-| `detect-proxies <name> [--source ID]` | definition coverage and (with a built Lean env) dependency-stage analysis; publishes PROXY/COVERAGE rows into `corpus/detect-<name>-<tier>/` through the `mechanical` gate |
-| `route` | per-companion routed files with `_meta`, plus owner messages |
-| `report` | tally + handoff + claims verification |
+| `plan-run --preset <p> [--source ID] --host <h>` | tasks, prompts, `gate.json`, tend root; a run is scoped to one source; reconciles the task count against items ∩ any-repo. Refuses an unconfirmed `conventions.md`; `--allow-sandbox-bypass` is the recorded opt-in that stages the agent permission bypass |
+| `run <run-id> --i-have-consent` | transfer a planned run to its host and drive the fleet — **a dry run that only prints the plan until `--execute`**. `--local` drives the Workflow fleet instead (under ~100 items); `--status` reads progress back |
+| `status [--companion X] [--source ID] [--runs] [--json]` | the sources table, the differential line, every companion's `state.json`, the **unconfirmed sources** block, and whether the workspace repo has a remote and still carries the pre-push reminder; prints nothing it did not read |
+| `harvest <run-id>` | bring a run's findings into `corpus/<run-id>/`, run the findings **gate (the default; `--no-gate` records `gate: null`)**, write `RECEIPT.json` (count + sha manifest + `sources` + the gate block) and recompute the tally |
+| `import-corpus --run-id <id> --from <dir> [--repo-map ours=<companion>]` | adopt an existing findings directory as a run: v1 → v2 on the way in, same receipt and gate, source never touched. `--repo-map` states which of this workspace's companions a foreign repo name is — the union key is `(source_id, repo, item, kind)`, so without it the imported rows join nothing here, and the import warns |
+| `tally [--union] [--agreed] [--source ID]` | recompute every finding count from `corpus/`, grouped by `(source_id, repo)`, and name any ungated run, or run whose gate rejected it, that it counted; nothing downstream may count by hand |
+| `score --answer-key <file> [--run <id>]` | precision / recall / F1 against an answer key — the only measurement here with a **recall** denominator, because a defect nobody raised leaves no artifact behind. `tests/e2e/answer-key.json` ships one for the synthetic fixture |
+| `adjudicate [--companion X]` | **prepare, transcribe and validate** the adjudication. With no flags it prints how many rows are still unchallenged and the next command; `--emit-args` writes the Workflow args and prints the invocation *you* run; `--transcribe <file> --from {adjudicate,challenge}` turns the result into ledger rows; `--validate` machine-checks the ledger against the corpus. The lenses, reconciler and skeptics run in the Workflow, not in this process |
+| `recheck [--companion X]` | re-extract the companion's statements at its **current** commit and label every open finding `unchanged` / `changed` / `gone` / `unpinned` against the `repo_commit` + `decl_fingerprints` it was pinned to. Writes `reports/recheck.<companion>.json` and a `recheck` block on the ledger rows; **changes no verdict** and calls no model |
+| `detect-proxies <name> [--source ID]` | definition coverage and (with a built Lean env) dependency-stage analysis; publishes PROXY/COVERAGE rows into `corpus/detect-<name>-<tier>/` through the `mechanical` gate. It never runs `lake`: without the dump it prints the command and stops |
+| `route` | per-companion routed files with `_meta`, plus owner-message drafts. `--github` writes one draft issue body per accepted finding and the exact `gh` command line for each — it calls no network. How much of a quote a draft carries belongs to the **destination**: `--destination owner` the sentence, `--destination public` the printed page, a hash and at most a quarter of the quote's words at each end (none at all below fourteen words), with every other free-text field scrubbed of verbatim runs of the source, configured under `policy.destinations` and never inferred from a git remote |
+| `report` | tally + coverage + handoff + the claims-verification args |
+| `share export \| import` | hand a campaign to somebody else without handing over the book: ledger rows, routed findings, tallies, receipts and source metadata, every quote redacted. It refuses a companion whose routed `_meta.status` is not CHALLENGED unless `--skip-unchallenged` leaves those rows behind |
+| `quotes hydrate` | put a redacted quote's text back from **your own** copy of that edition, verified by hash. Three outcomes, all counted: hydrated, not-found, ambiguous |
 
 Deleted: `cf book` — a source is discovered, and re-prepared by
 `cf sources refresh`. Out of scope in v1 (documented, not implemented): `fix`,
 `review-pr`, `camera-ready`, `publish-verdicts`, `curate` (item-level curation
 for `granularity: node` repos) and `lint` (repo-only mechanical detectors — the
 model-free checks that exist today live in `detect-proxies` and `pair`).
+
+## Workflow stages
+
+Four stages do their model work in a **Workflow script** under `workflows/`,
+which only a Claude Code session can launch: a Python CLI cannot start one. The
+shape is the same in all four — `cf` emits the arguments, **you** invoke the
+Workflow tool, `cf` transcribes the result.
+
+| stage | emit | you run | transcribe |
+|---|---|---|---|
+| adjudication | `cf adjudicate --companion X --emit-args` | `Workflow({ scriptPath: <the copy it names>, args: … })` over `workflows/adjudicate.workflow.js` | `cf adjudicate --transcribe <result> --from adjudicate` |
+| challenge | `cf adjudicate --companion X --challenge-only --emit-args` | the same, over `workflows/challenge.workflow.js` | `cf adjudicate --transcribe <result> --from challenge` |
+| local fleet | `cf run <id> --local` | `workflows/fleet-local.workflow.js` | `cf harvest <id> --journal <wf dir>` |
+| claims verification | `cf report` (writes `reports/verify-claims.args.json`) | `workflows/verify-claims.workflow.js` | read its result into the draft |
+
+The args are **embedded into a copy of the script**, and that copy is what
+`scriptPath` points at, because the Workflow tool has no filesystem API and
+cannot read an args file for itself. Each command prints the exact invocation;
+`references/workflow-patterns.md` holds the skeletons and the survival rules.
+
+**When the Workflow tool is not available** — no permission, or a
+non-interactive session — say so and stop at that stage instead of working
+around it. `cf route` refuses to export anything while a routed file says
+UNCHALLENGED, so a skipped adjudication cannot leak upstream; the honest
+hand-off is the emitted args file plus the count `cf adjudicate` prints.
+
+## Experimental and unverified
+
+Shipped, real code that has **not** been demonstrated end to end. Say so when
+you use it.
+
+- **The server substrate.** `cf run --execute` has never been exercised against
+  `tend` + `agentbox` from this repo; the five recorded runs pre-date it.
+- **The tend-agent bridge** (`scripts/run/bridge-tend-agent.sh`) is a stub, and
+  its own TODO says that backend's CLI contract has not been exercised.
+- **The codex presets** (`attack-vac`, `differential-gpt`) plan against a
+  pinned non-Claude model id; a renamed tier fails on the host, per agent.
+- **`TEND_TASK_ID`.** Whether the orchestrator exports it into a validation
+  command is unverified here. Without it the gate's ownership check falls back
+  to the weaker single-stem rule and says so in its last line — read that line
+  once per tend version (`references/runbook-server.md` §4).
+- **`detect-proxies --lean`** needs a `deps.json` from a built `.lake` and a
+  per-source stage table a human has filled in; the generated skeleton
+  deliberately counts as no table.
+- **`detect-proxies` stage analysis for a new book** needs that table written
+  from scratch; without one the cheap tier still runs and reports the scan as
+  SKIPPED rather than clean.
+- **Three presets cannot be planned at all**: `differential-legacy`,
+  `attack-legacy` and `mechanical` describe imported corpora, and `cf plan-run`
+  exits 2 on them.
+
+## Substrate
+
+Server fleets are driven by two tools that do **not** ship here: `tend` (the
+orchestrator — worktrees, retries, validation, merge) and `agentbox` (the
+hosted session the bridges shell out to). Nothing in this repo installs or
+pins either, and the version last used is **not recorded**; the only check is
+`hosts.<host>.tend_version` in your own `workspace.yaml`, which `cf run`'s
+preflight compares against `tend --version` on the host and refuses on a
+mismatch; with no spec recorded, preflight only prints the version and
+continues. Without them the supported path is the **local Workflow fleet**
+(`cf run <id> --local`, under ~100 items) plus every mechanical stage, which
+needs neither.
 
 ## Hard rules
 
@@ -184,8 +304,11 @@ model-free checks that exist today live in `detect-proxies` and `pair`).
    skill repo or a companion repo. The registry holds metadata and URLs only.
    A download happens only with `--download` **and** a registry licence note
    that permits fetching from the author's own site; nothing is ever
-   redistributed. Exports redact quotes to (page, hash) by default. Quote at
-   most a sentence or two of a source in any artifact.
+   redistributed. Exports redact quotes to (page, normalised length, sha256,
+   and at most a quarter of the quote's words from each end, none at all below
+   fourteen words) by default. Quote at most a sentence or two of a source in
+   any artifact. `POLICY.md` is the whole rule and `registry/README.md` is how
+   the registry implements it.
 7. **Consent and allowlist for runs.** `cf run` refuses any host not in
    `workspace.yaml` `hosts.allowlist` and requires `--i-have-consent`, recorded
    in `run.yaml`. A run copies private Lean sources and copyrighted source text
@@ -205,9 +328,10 @@ model-free checks that exist today live in `detect-proxies` and `pair`).
     and PDFs, and writes nothing back.
 11. **Low confidence is a refusal.** An inferred offset below 0.9, an
     undecidable anchor edition (agreement under 0.80, or a margin under 0.05
-    between two editions), an adapter score under 0.5: each stops and names the
-    flag that settles it. Nothing is guessed silently, and every confidence it
-    did accept is written into `workspace.yaml` where a reader can see it.
+    between two editions), an adapter score under 0.5, an item table under 0.6
+    complete: each stops and names the flag that settles it. Nothing is guessed
+    silently, and every confidence it did accept is written into
+    `workspace.yaml` where a reader can see it.
 
 ## Vocabulary
 
@@ -227,9 +351,11 @@ One set, defined in `scripts/cflib/vocab.py`, documented in
   `open`
 
 **An item is the pair `(source_id, item)`.** The item half follows one strict
-grammar (`cflib/items.py`): `<Kind> <c>.<s>.<n>` with an optional sub-part, or
-`In-text p.<n>`, where the kind list is the *source's* — inferred from its own
-headings. Anything else is rejected with a reason and reported, never silently
+grammar (`cflib/items.py`): `<Kind> <n>[.<n>…]`, one to four numeric levels, the
+depth inferred per source and stored as `numbering`, with an optional sub-part —
+or `In-text p.<n>`, where the kind list is the *source's*, inferred from its own
+headings. A label deeper than the source's numbering is a reject, never a
+truncation. Anything else is rejected with a reason and reported, never silently
 turned into a key. Rows carry the two halves as two fields; where one string is
 needed the spelling is `source_id::item` (`cflib.items.qualified_item`), and a
 filename uses `qualified_slug`. A bare item string is never a cross-source key,
@@ -238,18 +364,34 @@ decls)`.
 
 ## References
 
-- `docs/design/multi-source-model.md` — the binding spec for workspaces,
-  companions, sources, discovery and inference.
-- `references/method.md` — why the audit works: disjoint evidence classes,
-  calibration, "every bug came from a second reading".
-- `references/vocabulary.md` — the enums above with mapping tables.
+In the order an audit needs them. Each is loaded on demand: read the one whose
+trigger you have just hit, not the list.
+
+- `references/traps.md` — the trap → fix index. Read **before your first run on
+  a new book**: the anchor edition is not the bundled edition, offset
+  confidence, summarised errata, Workflow args, session limits, tend's strict
+  schema.
 - `references/onboarding-contract.md` — what a repo must expose for discovery
-  to succeed, and the seven obligations (Stage 0).
-- `references/findings-schema-v2.md` — row, finding, ledger and task schemas.
-- `references/review-patterns.md` — the pattern catalogue the lint stage runs.
-- `references/traps.md` — the trap → fix index (the anchor edition is not the
-  bundled edition, offset confidence, summarised errata, Workflow args, session
-  limits, tend's strict schema).
-- `references/runbook-server.md` — the tend + agentbox procedure.
-- `references/workflow-patterns.md` — the workflow skeletons.
-- `registry/README.md` — the shipped source registry and a workspace's overlay.
+  to succeed, per convention, and the seven obligations of Stage 0. Read
+  **when onboarding refuses**, or before teaching it a new convention.
+- `templates/PRESETS.md` — what each `--preset` plans, and how the five
+  recorded runs differed. Read **before choosing a preset**.
+- `references/findings-schema-v2.md` — row, finding, ledger and task schemas,
+  and the gate matrix. Read **when the gate refuses a document**.
+- `references/vocabulary.md` — the enums above, with the v1 → v2 mapping tables.
+  Read when a value is rejected as not in the vocabulary.
+- `references/method.md` — why the audit works: disjoint evidence classes, the
+  ~40% first-pass false-positive rate, "every bug came from a second reading".
+  Read when deciding **what to run**.
+- `references/workflow-patterns.md` — the Workflow skeletons and the survival
+  rule for adversarial verification. Read **before editing `workflows/`**.
+- `references/runbook-server.md` — the tend + agentbox procedure, the 1/1 smoke
+  test and the failure modes. Read **before a server fleet**.
+- `references/review-patterns.md` — the defect-pattern catalogue (P9–P13) the
+  attack prompts are built from.
+- `registry/README.md` — the shipped source registry and a workspace's overlay;
+  `POLICY.md` is the licence rule it implements.
+- `README.md` — install, quick start, and an honest statement of what has and
+  has not been exercised on a second book. For changing the skill:
+  `CLAUDE.md`, `CONTRIBUTING.md`, and `docs/design/stage_map.md` for the data
+  model and the stage map.

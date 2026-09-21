@@ -1,7 +1,7 @@
 """Stage 1: source preparation (text, page map, items, errata, page images).
 
 One source directory serves every companion bound to that source
-(docs/design/multi-source-model.md S6.2), which is the point of the multi-source
+(docs/design/archive/multi-source-model.md S6.2), which is the point of the multi-source
 model: two companions of the same book prepare the text ONCE and are compared
 against the same bytes.
 

@@ -8,6 +8,11 @@ belong on the server orchestrator instead (`references/runbook-server.md`).
 Each skeleton is parameterised by `args` and ships in `workflows/`. The originals they were
 distilled from are named per section.
 
+**Contents** — **§0 the rules that apply to all of them** (read this one) · §1 lens → refute +
+consequence · §2 three-vote majority · §3 lenses → reconciler → opposing skeptics (the
+adjudication skeleton) · §4 claims-verify with a second vote on the numbers · §5 the
+completeness critic · §6 the per-item local fleet.
+
 ---
 
 ## 0. The rules that apply to all of them
@@ -56,8 +61,8 @@ log(`inputs: ${args.findings.length}`)          // fails loudly on an empty args
 ## 1. Lens → refute + consequence (the PR-review skeleton)
 
 Parallel lenses produce findings; each non-`note` finding is attacked twice, once on **truth** and
-once on **materiality**. Distilled from `review-mt-pr13-wf_2b97cc16-c60.js` and
-`review-tml-pr9-pr10-wf_cbc8f48e-98f.js`.
+once on **materiality**. Distilled from the two PR-review workflow runs of the v1
+campaign (one per companion).
 
 ```js
 const FINDINGS = { type:'object', required:['findings','verdict','summary'], properties:{
@@ -117,7 +122,7 @@ const survivors = judged.filter(Boolean).filter(x => x.survives)
 matter if it were true. The shipped rule separates the two votes: truth must survive the refuter,
 and the materiality vote sets severity and scope. Anything comparing new results against the
 baseline must state this, because the baseline was produced under the OR rule
-(design `decisions.json`, "Survival rule for adversarial verification").
+(the design decisions record, "Survival rule for adversarial verification").
 
 **Evidence bar for a survivor:** `file:line` at a named commit, a book line, or a command and its
 output. A lens with no findings is a good result.
@@ -145,14 +150,14 @@ const dissent   = votes.filter(x => x.overturned && x.confidence < args.threshol
 ```
 
 Record `dissent` even below the threshold: a 0.6-confidence dissent was dropped from "contested"
-once and had to be re-surfaced by hand (design `decisions.json`; `stage_map.md` Stage 7).
+once and had to be re-surfaced by hand (the design decisions record; `docs/design/stage_map.md` stage 7).
 
 ---
 
 ## 3. Lenses → reconciler → opposing skeptics (the adjudication skeleton)
 
-The topology that produced the ledger. Distilled from
-`adam-faithfulness-adjudication-wf_60a87e92-dd5.js`. Three readings of one finding — **book-literal**,
+The topology that produced the ledger. Distilled from the v1 campaign's
+adam-faithfulness-adjudication run. Three readings of one finding — **book-literal**,
 **Lean-semantics**, **convention-vs-content policy** — then a reconciler that *decides* rather than
 averages, then two skeptics pushing in opposite directions.
 
@@ -220,14 +225,14 @@ Two variants of the same shape, both worth keeping:
 **Refute-by-default challenge** is the cut-down version for rows that only need a second reading:
 two independent refuters per finding, `survives_all = every refuter agrees`, default REFUTED unless
 the ruling survives the refuter's own independent reading
-(`challenge-batch1-findings-wf_c3f0e5d0-d65.js`).
+(the v1 challenge-batch1-findings run).
 
 ---
 
 ## 4. Claims-verify, with an independent second vote on the numbers
 
 Before any report leaves the workspace, every claim in it is re-derived from primary sources by
-lenses that are told to **refute**. Distilled from `verify-audit-summary-wf_9da8dddd-e4b.js`,
+lenses that are told to **refute**. Distilled from the v1 verify-audit-summary run,
 which found 19 wrong claims of 173 in one pass, and 36 in an earlier draft.
 
 ```js
@@ -284,8 +289,8 @@ ${JSON.stringify(summary, null, 1)}`, { label:'critic', phase:'Completeness crit
 
 The local analogue of a server run: `pipeline(args, item => agent(...), result => challenge(...))`,
 one agent per item, its challenge stage chained onto the same pipeline so a finding is attacked in
-the same run that produced it. Distilled from the batch-1 fleet (recovered transcript `b174aa13`
-L5600) and `differential-batch2-wf_2decc288-5a7.js`.
+the same run that produced it. Distilled from the v1 campaign's batch-1 fleet and its
+differential-batch2 run.
 
 Three things that skeleton must carry:
 

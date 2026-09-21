@@ -1,11 +1,11 @@
 """Adapter: declarations tagged by a book label in their docstring.
 
-Ported from
-  scratchpad/recovered/b174aa13_L5547_Bash.txt  ``extract_ours.py``   (tao-measure-lean)
-  scratchpad/recovered/b174aa13_L5564_Bash.txt  ``extract_teorth.py`` (teorth/analysis)
+Ported from the v1 campaign's two extraction scripts (not in this repo):
+``extract_ours.py`` (tao-measure-lean) and ``extract_teorth.py``
+(teorth/analysis).
 
 Both originals were one-off cells; this adapter is the generalisation
-design/stage_map.md Stage 2 asks for, with their recorded defects fixed:
+docs/design/stage_map.md Stage 2 asks for, with their recorded defects fixed:
 
 1. ONE parser for every repo, handling ``private`` / ``protected`` /
    ``noncomputable`` / ``@[...]`` prefixes.  ``extract_ours``'s prefix list
@@ -59,6 +59,74 @@ DEFAULT_GLOBS = ("**/*.lean",)
 #: other, and the kinds only those declarations use then never appear.
 DOCSTRING_HEAD_RE = re.compile(r"/--(?=(.{0,120}))", re.S)
 
+# -- detection (design S4.2) -------------------------------------------------
+# These constants describe THIS convention and nothing else, so they live beside
+# the parser that uses them: adding a convention is adding a file, not editing
+# the core's detector as well.
+
+#: Below this many .lean files a tree is not a Lean companion.  Kept as a floor
+#: on FILES rather than declarations deliberately: a repo with fewer carries too
+#: little evidence either way, and admitting it only lets it score 0 further on.
+MIN_LEAN_FILES = 20
+#: The score is a sample, not a census: reading every file of a large companion
+#: to decide which adapter to use costs more than the decision is worth.
+DETECT_FILE_LIMIT = 400
+DETECT_SAMPLE = 200
+#: score = BASE + SPAN * (tagged / documented), capped.  A repo where every
+#: documented file opens with a tag scores 0.95, never 1.0: detection is
+#: evidence, and `cf onboard --adapter` is what certainty looks like.
+DETECT_BASE_SCORE = 0.6
+DETECT_SPAN = 0.35
+DETECT_MAX_SCORE = 0.95
+#: A bare label has no delimiter, so a docstring that merely OPENS with a prose
+#: sentence naming a numbered theorem matches it.  The bare reading is therefore
+#: believed only when it is the repo's HABIT: below this fraction of documented
+#: files the backticked count stands.  Measured over the Lean repos to hand: the
+#: two bare-label companions sit at 0.84 and 0.96, while a blueprint research
+#: project with five such docstrings sits at 0.03 -- and without this floor that
+#: project was auto-classified as a docstring-tagged companion at 0.61, which is
+#: a worse answer than the refusal it used to get.
+MIN_BARE_FRACTION = 0.25
+
+
+def _tag_counts(files, sample: int = DETECT_SAMPLE) -> tuple[int, int, int]:
+    """``(backticked, bare, documented)`` over the sampled files.
+
+    Both spellings of the convention are counted, because both are real and the
+    repo decides which: tao-measure-lean wraps the label in backticks and
+    teorth/analysis writes it bare at the start of the docstring (see
+    :func:`adapters.itemtag.find_tag`).  Scoring only the backticked spelling is
+    what made teorth/analysis -- the second convention this adapter was written
+    for -- undetectable: 0 of its 102 documented files match it and 86 match the
+    bare one.
+
+    The bare count is a superset of the backticked one (``find_tag`` prefers a
+    backticked leading tag whatever the flag says), so the two are comparable
+    directly and equality means "no bare-only tags", i.e. keep the strict
+    spelling.
+
+    The denominator counts only files that carry a docstring at all.  A file
+    with none is not evidence against the convention: tao-measure-lean has 154
+    Lean files of which 112 are generated blueprint stubs with no docstring, and
+    counting those would score a repo whose every documented declaration is
+    tagged at 0.70 instead of 0.95.
+    """
+    backticked = bare = documented = 0
+    for path in list(files)[:sample]:
+        try:
+            text = path.read_text(encoding="utf-8", errors="ignore")
+        except OSError:                                   # pragma: no cover
+            continue
+        heads = [m.group(1).strip() for m in DOCSTRING_HEAD_RE.finditer(text)]
+        if not heads:
+            continue
+        documented += 1
+        if any(find_tag(head) for head in heads):
+            backticked += 1
+        if any(find_tag(head, require_backticks=False) for head in heads):
+            bare += 1
+    return backticked, bare, documented
+
 
 def _declaration_collisions(rows: list[dict]) -> list[dict]:
     """Declarations that appear in more than one file, with the files.
@@ -90,6 +158,76 @@ class DocstringTagsAdapter(Adapter):
     #: ``graph.json`` metadata a docstring-tagged repo is usually built from.
     #: Ranked first by :meth:`discover_sources`; the rest still run.
     PRIMARY_SIGNALS = ("formalization_yaml", "graph_json")
+
+    # -- detection (design S4.2) -------------------------------------------
+    @classmethod
+    def _measure(cls, repo: str | Path) -> tuple[list, int, int, int, int]:
+        """``(files, sampled, backticked, bare, documented)`` for one repo."""
+        from cflib.discovery import lean_files
+
+        files = lean_files(Path(repo), limit=DETECT_FILE_LIMIT)
+        sampled = min(len(files), DETECT_SAMPLE)
+        backticked, bare, documented = _tag_counts(files, sample=sampled)
+        return files, sampled, backticked, bare, documented
+
+    @classmethod
+    def detect(cls, repo: str | Path) -> tuple[float, dict]:
+        """Score this repo, and decide WHICH SPELLING of the tag it uses.
+
+        The spelling is a fact about the repo, not a default: the winner is
+        recorded as ``require_backticks`` in the evidence and `cf onboard`
+        writes it into the generated adapter.yaml, so a bare-label companion
+        extracts rows instead of finding one backticked tag in 2,371 docstrings.
+        Ties keep backticks, which is the stricter reading -- it is what keeps a
+        prose mention of "Lemma 1.2.5" out of the table.
+        """
+        files, sampled, backticked, bare, documented = cls._measure(repo)
+        if len(files) < MIN_LEAN_FILES:
+            return 0.0, {}
+        bare_is_the_habit = (bare > backticked
+                             and documented
+                             and bare / documented >= MIN_BARE_FRACTION)
+        require_backticks = not bare_is_the_habit
+        tagged = backticked if require_backticks else bare
+        if not tagged:
+            return 0.0, {}
+        score = min(DETECT_MAX_SCORE,
+                    DETECT_BASE_SCORE + DETECT_SPAN * (tagged / documented if documented else 0.0))
+        spelling = "backticked" if require_backticks else "bare (teorth/analysis style)"
+        return round(score, 4), {
+            "reason": f"{tagged} of {documented} sampled .lean files with a docstring open "
+                      f"one with a {spelling} book tag "
+                      f"({sampled - documented} carry no docstring)",
+            "lean_files": len(files), "sampled": sampled,
+            "documented": documented, "tagged": tagged,
+            "tagged_backticked": backticked, "tagged_bare": bare,
+            # written into adapter.yaml by `cf onboard` (tag.require_backticks)
+            "require_backticks": require_backticks,
+        }
+
+    @classmethod
+    def explain(cls, repo: str | Path) -> list[str]:
+        files, sampled, backticked, bare, documented = cls._measure(repo)
+        if len(files) < MIN_LEAN_FILES:
+            return [f"docstring tags: {len(files)} .lean files, "
+                    f"fewer than the {MIN_LEAN_FILES} this convention needs"]
+        line = (f"docstring tags: {max(backticked, bare)}/{documented} documented files "
+                f"({backticked} backticked, {bare} bare)")
+        if bare > backticked:
+            if documented and bare / documented < MIN_BARE_FRACTION:
+                # Below the floor the measurement KEEPS the backticked spelling,
+                # so `--adapter docstring_tags` writes require_backticks: true.
+                # Saying "set it false in adapter.yaml" without saying that read
+                # as a promise the tool would write false, and the user found
+                # true in the file it had just generated.
+                line += (f" -- {bare / documented:.0%} bare, below the "
+                         f"{MIN_BARE_FRACTION:.0%} that reads as a convention: "
+                         "`--adapter docstring_tags` writes tag.require_backticks: true, "
+                         "edit it to false in the generated adapter.yaml")
+            else:
+                line += (" -- the bare spelling is the habit here, so "
+                         "`--adapter docstring_tags` writes tag.require_backticks: false")
+        return [line]
 
     # -- config ------------------------------------------------------------
     def validate_config(self) -> None:

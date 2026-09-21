@@ -1,6 +1,6 @@
 """companions/<name>/state.json: the durable per-companion state.
 
-New code (design/architecture.md S2).  Before the skill, this state lived in
+New code (docs/design/stage_map.md S4).  Before the skill, this state lived in
 prose handoffs and was re-derived by reading files, which is how counts drifted
 ("every counting error so far ran toward cleaner").  Every command writes its
 counts back here, atomically, and `cf status` prints nothing it did not read
@@ -15,7 +15,7 @@ Layout (sections are created on demand; unknown sections are preserved):
      "ledger_sha": null, "stale_since_commit": null,
      "extract": {...}, "coverage": {...}, "lint": {...},
      "runs": {"<run-id>": {...}}, "tally": {...}, "adjudication": {...},
-     "routed": {...}, "detect": {...}, "fixes": {...},
+     "routed": {...}, "recheck": {...}, "detect": {...}, "fixes": {...},
      "verdict_layer": null, "updated_at": "...", "history": [...]}
 """
 from __future__ import annotations
@@ -30,9 +30,12 @@ from .jsonio import read_json, write_json
 
 STATE_VERSION = 2
 
-#: Sections `cf status` knows how to summarise, in pipeline order.
+#: Sections `cf status` knows how to summarise, in pipeline order.  A section a
+#: command WRITES and this tuple omits is a block `cf status --companion <name>`
+#: silently drops: `cf recheck` wrote one for a whole release and the verbose
+#: view never showed it.  Adding a writer means adding its name here.
 SECTIONS = ("extract", "lint", "coverage", "runs", "tally", "adjudication",
-            "routed", "detect", "fixes")
+            "routed", "recheck", "detect", "fixes")
 
 _HISTORY_CAP = 100
 

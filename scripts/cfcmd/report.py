@@ -1,16 +1,31 @@
 """``cf report`` -- render the handoff and the claims-verification args.
 
-    python3 scripts/cf.py report
-    python3 scripts/cf.py report --tally reports/tally.hunt.json --gh-json prs.json
+    cf report
+    cf report --tally reports/tally.hunt.json --gh-json prs.json
 
-Two outputs, both mechanical:
+Four outputs, all mechanical:
 
 1. ``reports/handoff.<date>.md`` from ``templates/handoff.md``, filled ONLY from
    computed artifacts -- tally files, ledger rows, routed ``_meta``, state.json,
    run.yaml and saved ``gh`` output.  A figure with no artifact behind it is
    written as ``TODO(...)`` with the command that would produce it; this module
    never calls the network and never counts anything by reading prose.
-2. ``reports/verify-claims.args.json`` -- the args for
+2. ``reports/coverage.json`` -- every figure of the handoff's section 0, per
+   source and per chapter: items in the source, items in the audited scope, items
+   in the differential's task universe, items paired by two or more companions,
+   items a run examined, of those the ones whose run passed the quote gate, items
+   that carried a finding, and items in scope no run ever looked at.  Beside them
+   the documents those figures do NOT cover, because a figure that silently
+   excludes a counted document is the failure this section exists to prevent:
+   items examined outside the audited chapters (``cf tally`` counts them and
+   section 0 does not), corpus documents that could not be read at all, which
+   make every figure above a lower bound, and corpus documents naming a source
+   this workspace does not hold (``unknown_source_documents``), which no source
+   block can count.  Every one of them is echoed on the terminal too.
+3. ``reports/unexamined.<source_id>.json``, one per source -- the items in scope
+   that no run examined, BY NAME.  A count can say "381 of 411"; only the names
+   say which item was missed, and the handoff points its reader at this file.
+4. ``reports/verify-claims.args.json`` -- the args for
    ``workflows/verify-claims.workflow.js``, whose lenses re-derive every claim in
    the draft from the same sources, with an independent second vote on the
    numbers.  An earlier pass of that workflow found 19 wrong claims out of 173.
@@ -80,6 +95,28 @@ def run(args) -> int:
     ctx = report["context"]
     paths = ctx["_paths"]
     print("wrote %s" % report["path"])
+    # Named, not written silently: the handoff tells its reader to open
+    # unexamined.<source_id>.json, and `cf report` used to print neither it nor
+    # coverage.json, so the reader had to guess that the file existed at all.
+    for path in report["coverage_files"]:
+        print("wrote %s" % path)
+    # Said on the terminal as well as in the document: `cf tally` REFUSES a
+    # corpus holding one of these (exit 2, "makes every number a lower bound")
+    # and this command exits 0, so without a line here the same corpus is
+    # complete to one command and unreadable to the other.
+    unreadable = _unreadable(ctx["_coverage"])
+    if unreadable:
+        print("  %d corpus document(s) could not be read, so every coverage figure is a "
+              "LOWER BOUND:" % len(unreadable))
+        for name in unreadable[:12]:
+            print("    %s" % name)
+        print("    `cf tally --run <run-id>` refuses them by name and says why")
+    # The same set §0 carries, for the same reason: `cf tally` prints UNGATED and
+    # GATE FAILED for this corpus and exits 2 over some of it, and this command
+    # exits 0, so a caveat only the document carries is one the reader meets only
+    # if they open it.
+    for line in _caveats(ctx["_coverage"]):
+        print("  %s" % line)
     if report["todos"]:
         print("  %d figure(s) have no artifact behind them yet:" % len(report["todos"]))
         for t in report["todos"][:12]:
@@ -112,8 +149,78 @@ def run(args) -> int:
     return 0
 
 
+def _unreadable(coverage: dict) -> list:
+    """Every corpus document `cf report` could not parse, wherever it was filed.
+
+    All three places it can be filed: under a source this workspace holds, under
+    none at all, and -- where a run whose receipt names a source the workspace
+    no longer holds lands -- under an id no source block covers.
+    """
+    names = set(coverage.get("unreadable_documents") or ())
+    for block in ((coverage.get("sources") or [])
+                  + (coverage.get("unknown_source_documents") or [])):
+        names.update(block.get("unreadable_documents") or ())
+    return sorted(names)
+
+
+def _caveats(coverage: dict) -> list:
+    """The rest of what section 0 does not count, one line each.
+
+    The unreadable documents have had their own block above since they were
+    first published; these four had none at all -- an ungated or gate-FAILED
+    run, an examined item outside the audited chapters, a document carrying no
+    `source_id`, and a corpus naming a source this workspace does not hold -- so
+    `cf tally` named them and `cf report` said nothing about the same corpus.
+    """
+    ungated, failed, outside, outside_found, unstamped = [], [], 0, 0, 0
+    for src in coverage.get("sources") or []:
+        ungated.extend(src.get("ungated_runs") or ())
+        failed.extend(src.get("gate_failed_runs") or ())
+        outside += len(src.get("examined_outside_scope") or ())
+        outside_found += len(src.get("with_findings_outside_scope") or ())
+        unstamped += int(src.get("unstamped_documents") or 0)
+    ungated.extend(coverage.get("unattributed_ungated_runs") or ())
+    failed.extend(coverage.get("unattributed_gate_failed_runs") or ())
+    unknown = coverage.get("unknown_source_documents") or []
+    for block in unknown:
+        ungated.extend(block.get("ungated_runs") or ())
+        failed.extend(block.get("gate_failed_runs") or ())
+    lines = []
+    if ungated:
+        lines.append("ungated run(s) %s: no quote in them was checked against the source text"
+                     % ", ".join(sorted(set(ungated))))
+    if failed:
+        lines.append("gate FAILED for run(s) %s: their quotes were checked and rejected, and "
+                     "their rows are counted" % ", ".join(sorted(set(failed))))
+    if outside:
+        lines.append("%d examined item(s) lie outside the audited chapter(s) (%d with findings): "
+                     "`cf tally` and §3 count them and no coverage figure does"
+                     % (outside, outside_found))
+    if unstamped:
+        lines.append("%d corpus document(s) carry no `source_id` and were attributed from their "
+                     "run's receipt" % unstamped)
+    if unknown:
+        lines.append("%d corpus document(s) in run(s) %s name source(s) %s this workspace does "
+                     "not hold, so no coverage figure counts them; `cf tally` does"
+                     % (sum(int(b.get("documents") or 0) for b in unknown),
+                        ", ".join(sorted({r for b in unknown for r in (b.get("runs") or ())})),
+                        ", ".join(str(b.get("source_id")) for b in unknown)))
+    if lines:
+        lines.append("every one of these is in §0 of the handoff and in reports/coverage.json")
+    return lines
+
+
 def _skill_root() -> str:
-    return os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    """The skill checkout, from the ONE resolver (``cflib.paths.skill_root``).
+
+    Every printed ``scriptPath``/``script:`` line must be absolute: ``cf``
+    defaults its workspace to the current directory and a workspace has no
+    ``workflows/`` directory, so a relative path resolves against the wrong
+    root. Three sibling commands print one; they resolve it the same way.
+    """
+    from cflib.paths import skill_root
+
+    return str(skill_root())
 
 
 if __name__ == "__main__":  # pragma: no cover

@@ -1,12 +1,28 @@
 # The multi-source model: workspaces, companions and sources
 
-**Status:** binding. Every work package named in §9 implements this document; a
-package that needs to deviate changes this file first, in its own commit, and
-says why in the commit message.
+> **ARCHIVED — historical.** This is the design record the multi-source
+> implementation was written from, kept because the module docstrings cite its
+> sections for provenance. It is **not** a description of current behaviour and
+> nothing is bound by it any more. For what is true today read
+> `docs/design/stage_map.md` (the data model, the layout and the stages),
+> `SKILL.md` (the program, the command index and the one canonical list of hard
+> rules) and `cf <command> --help` (the CLI surface, which has moved).
+>
+> Four statements below are known to be false, and they are marked
+> `SUPERSEDED` where they occur: §0.2's claim to enumerate every hard rule (it
+> lists ten; `SKILL.md` has eleven), §7.2's worked transcript (two of its
+> "real values measured on this machine" no longer reproduce), §7's CLI table
+> (`cf sources add` takes a source path — never a URL, and no `--download`),
+> and §6.2's `lint.json` plus its omission of `fixes/` and `reviews/`, which
+> `cf init` really creates. The file was last edited substantively
+> before the implementation commits, and the paths it names — `scripts/book/`,
+> `templates/campaign.yaml.example`, `tests/test_book_pair.py` — are the
+> pre-rename ones.
 
-**Written:** 2026-09-16. **Supersedes:** the one-campaign-per-book model in
-`SKILL.md`, `README.md`, `templates/campaign.yaml.example` and
-`scripts/cflib/campaign.py`.
+**Written:** 2026-09-16. **Superseded:** 2026-09-21 by
+`docs/design/stage_map.md`. What it itself superseded: the
+one-campaign-per-book model in `SKILL.md`, `README.md`,
+`templates/campaign.yaml.example` and `scripts/cflib/campaign.py`.
 
 ---
 
@@ -60,6 +76,11 @@ findings schema field is well known to the baseline corpus. What changes is
 
 ### 0.2 What does not change
 
+**SUPERSEDED.** The list below enumerates ten hard rules and claims to cover
+every one; `SKILL.md` now has eleven (rule 11, "Low confidence is a refusal").
+Re-enumerating them in a second document is what let the count drift: the one
+canonical list is `SKILL.md` §"Hard rules".
+
 Every hard rule in `SKILL.md` survives, with `source_sha` substituted for
 `book_sha` and "the source named by the row" substituted for "the book":
 
@@ -107,7 +128,8 @@ workspace:
 companions:                      # MAP keyed by companion name (was a LIST)
   <name>:
     repo: <abs path>             # required; never written to
-    adapter: <adapter kind>      # required; docstring_tags | attribution_table | ledger_nodes | custom
+    adapter: <adapter kind>      # required; docstring_tags | attribution_table | blueprint_tex |
+                                 #   ledger_nodes | custom
     sources: [<source_id>, …]    # required, >=1, ordered; the sources this companion is audited against
     anchor_source: <source_id>   # required; MUST be one of `sources`; whose pagination the repo's
                                  #   page anchors follow (§4.6)
@@ -130,10 +152,18 @@ sources:                         # MAP keyed by source_id (§3)
     edition: <str>               # required; the human label that distinguishes it from siblings
     isbn: <str|null>
     kinds: [<Kind>, …]           # item kinds the strict grammar accepts for THIS source
+    numbering: [<min>, <max>]    # OVERRIDE only: numeric segments a label may carry (§5.5).
+                                 #   Absent means "read it off the headings"
+    numbering_method: manual     # present only when `numbering` was typed
+    source_format: pdf | text    # §5.7; a manuscript that is already text is a source too
+    pagination: formfeed | none  # §5.7; `none` = no printed page, items located by section
     offset: <int>                # printed page = pdf page - offset
     offset_confidence: <0..1>    # §5.1; < 0.9 means `cf sources set` was required
-    offset_method: running_head_mode | declared | manual
-    pages: <int|null>            # PDF page count
+    offset_method: running_head_mode | declared | manual | none
+                                 #   `none` = unpaginated, so there is no offset to be sure of
+    completeness_ok: <bool>      # §5.6 override: this table really is this small
+    completeness_method: manual  # present only when `completeness_ok` was set
+    pages: <int|null>            # PDF page count; 0 for an unpaginated source
     text_sha256: <64 hex|null>   # sha of the pdftotext -layout output (catches a poppler change)
     bytes: <int|null>
     errata_url: <url|null>
@@ -178,10 +208,10 @@ budget: {billing_path, max_cost_usd, require_consent}
 policy: {publish_unchallenged, redact_quotes_on_export, allow_remote,
          allow_download, require_confirmed_sources}
 
-library_paths:                   # where `cf onboard` may look for a PDF it was told about
-  - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf
+library_paths:                   # where `cf onboard` may look for a PDF it was told about,
+  - ~/Downloads                  # PLUS the derived roots: the workspace's own sources/ store,
+                                 # and <p>/**/sources + <p>/**/.lake/official-pdf for the
+                                 # parent <p> of every onboarded repo (never the bare <p>)
 ```
 
 Renames inside the config blocks: `defaults.book_access` → `defaults.source_access`
@@ -220,14 +250,14 @@ workspace:
 
 companions:
   ours:
-    repo: /Users/jack/Desktop/tao-measure-lean
+    repo: <path to tao-measure-lean>
     adapter: docstring_tags
     sources: [tao-measure-gsm126-published]
     anchor_source: tao-measure-gsm126-published
     # the repo SHIPS the 2011 draft at sources/tao-measure-theory.pdf, but its
     # docstring anchors follow the PUBLISHED pagination (corrected 2026-09-04).
     bundled_sources: [tao-measure-2011-draft]
-    owner: jack
+    owner: external
     write_policy: read_only
     discovered:
       at: 2026-09-16T00:00:00Z
@@ -239,7 +269,7 @@ companions:
         - CLAUDE.md#L48-L55
         - sources/tao-measure-theory.pdf
   adam:
-    repo: /Users/jack/Desktop/measure_theory
+    repo: <path to measure_theory>
     adapter: attribution_table
     sources: [tao-measure-gsm126-published]
     anchor_source: tao-measure-gsm126-published
@@ -277,7 +307,7 @@ sources:
       note: "AMS copyright (GSM 126); the author publishes a free preliminary version on his own site."
       fetch: author_site
       redistribute: false
-    pdf: /Users/jack/Desktop/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
+    pdf: <path to measure_theory>/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
     chapters: [1]
     role: audited
     same_work: [tao-measure-2011-draft]
@@ -318,7 +348,7 @@ sources:
     download_url: null
     book_page_url: https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
     licence: {note: "author's pre-publication draft; not redistributable", fetch: none, redistribute: false}
-    pdf: /Users/jack/Desktop/tao-measure-lean/sources/tao-measure-theory.pdf
+    pdf: <path to tao-measure-lean>/sources/tao-measure-theory.pdf
     chapters: [1]
     role: reference
     same_work: [tao-measure-gsm126-published]
@@ -369,8 +399,6 @@ policy:
 
 library_paths:
   - ~/Downloads
-  - ~/Desktop/**/sources
-  - ~/Desktop/**/.lake/official-pdf
 ```
 
 The differential surface falls straight out: `shared_sources()` returns
@@ -576,9 +604,13 @@ it.
 
 ```
 detect_adapter(repo)                       -> (kind, confidence, evidence)
-discover_sources(repo, adapter=kind)       -> [SourceClaim, …]
+discover_sources_with_adapter(repo, adapter=kind)
+                                           -> [SourceClaim, …]
+  the seven signals, plus whatever Adapter.discover_sources ADDS (§4.3)
+  plus one claim per `cf onboard --source <file>`
 resolve_claims(claims, …)                  -> DiscoveryResult
   for each claim:  registry lookup -> locate_pdf -> fingerprint -> infer -> source record
+  a claim that NAMES its files skips locate_pdf: the bytes are already in hand
 choose_anchor_source(repo, rows, …)        -> (source_id, confidence, evidence)
 register:   workspace.yaml + registry.yaml overlay
 prepare:    sources/<id>/{text.txt, pages/, items.json, meta.json, errata.*}
@@ -626,6 +658,20 @@ that "belongs" to another kind (`tao-measure-lean` has both
 | **S5** | prose | `CLAUDE.md`, `AGENTS.md`, `README.md`, `docs/**/*.md` | `sha256_prefix` (8–63 hex followed by `…`/`...`/word boundary), full `sha256`, `urls`, `pdf_hints` (quoted paths ending `.pdf`), `offset_hint` (`PDF page = book page + N`, `printed page = PDF page - N`), `anchor_hint` (a sentence containing "anchor" and an edition word) | 0.5 |
 | **S6** | filesystem | `sources/*.pdf`, `.lake/official-pdf/*.pdf`, `pdf-overlay/vendor/**/*.pdf`, any `*.pdf` in the repo excluding `.lake/packages/**` | `pdf_hints`, and after fingerprinting a real `sha256` | 0.6 |
 | **S7** | citation links | `README.md` first 40 lines, `lakefile.toml`, `formalization.yaml` | `book_page_url` candidates (a link whose text contains the title) | 0.4 |
+
+**The adapter adds an eighth voice, and may only add.** `cf onboard` merges
+`Adapter.discover_sources(repo)` into the seven
+(`discovery.discover_sources_with_adapter`); a claim repeating a signal cflib
+already read is dropped in favour of cflib's, so no companion's prepared item
+table depends on the companion's own reading of its source. The addition that
+matters is a convention that IS its own manuscript (`blueprint_tex`): such a
+claim carries `files` — absolute paths in **reading order** — instead of
+`pdf_hints`, and `resolve_claims` builds the source record from those bytes
+(`sha256` over the concatenation in that order, `source_format`, `pagination`
+from §5.7) rather than locating a PDF. `cf onboard` writes a multi-file
+concatenation once into `<workspace>/sources/<id>/manuscript.<suffix>` and the
+row points there. `cf onboard --source <file>` makes the same shape of claim with
+`discovered.pdf_found_in: manual`.
 
 **Truncated shas are never written as `sha256`.** S5 stores them in
 `sha256_prefix`; they resolve only by matching a registry alias prefix or a
@@ -679,9 +725,20 @@ when no sha is known the first candidate that fingerprints successfully wins.
    `<workspace>/sources/*.pdf`. `rank = 2`, `workspace_store`.
 4. **`workspace.yaml library_paths`** — each pattern expanded with `~` and
    `glob`, depth-capped at 4 levels below the pattern's fixed prefix, at most
-   5000 files scanned per pattern, `*.pdf` only. Defaults:
-   `~/Downloads`, `~/Desktop/**/sources`, `~/Desktop/**/.lake/official-pdf`.
-   `rank = 3`, `library_path`.
+   5000 files scanned per pattern, `*.pdf` only. The configured list is joined
+   by the DERIVED roots — this workspace's own `sources/` store, plus
+   `<p>/**/sources` and `<p>/**/.lake/official-pdf` for the parent directory
+   `<p>` of every onboarded companion repo — so a sibling checkout holding the
+   PDF is reachable on any layout. Those two shapes, and never the bare `<p>`:
+   this list is also the allowlist for an absolute path a repo names (rank 0),
+   and the parent of a checkout kept on the desktop is the whole desktop, so a
+   bare parent would widen the allowlist rather than narrow it. The only shipped
+   entry is `~/Downloads`. `rank = 3`, `library_path`.
+
+   The repo currently being onboarded contributes its own derived roots too,
+   before it is registered as a companion: otherwise the first `cf onboard`
+   searched without them and the second searched with them, and two identical
+   commands differed in whether the anchor edition had any text at all.
 5. **download** — the registry's `download_url`, **only** when all of:
    `--download` was passed, `policy.allow_download` is not `false`… (the flag
    alone suffices; the policy key exists to let a workspace forbid it
@@ -703,7 +760,8 @@ On this machine, step 1 finds `tao-measure-lean/sources/tao-measure-theory.pdf`
 does **not** exist, so step 2 finds `.lake/official-pdf/gsm-126-tao5-measure-book.pdf`
 (`64498329…`). Onboarding `tao-measure-lean` second finds the published edition
 already in the workspace store (step 3) — or, onboarding it first, at step 4
-via `~/Desktop/**/.lake/official-pdf`.
+via the derived root that `measure_theory`'s own checkout sits in, once that
+companion has been onboarded too.
 
 ### 4.5 Fingerprinting (`fingerprint`)
 
@@ -752,6 +810,19 @@ error: cannot decide which edition ours anchors to
 hint:  re-run with `cf onboard <repo> --anchor-source <id>`, or check whether the
        companion's anchors are internally consistent at all (`cf pair`)
 ```
+
+The refusal is where a mechanical decision was really *attempted*. `cf onboard`
+elects twice: once before extraction, where there are no rows and rule 3 is all
+there is, and once after, against the rows this run just wrote. The first
+election warns and keeps its 0.6 pick; the second refuses. Refusing at the first
+refused every *first* onboard of any two-edition work, flags or not, because rule
+3 scores 0.6 whether or not the editions are actually distinguishable — an anchor
+that is undetermined until extraction is not an undecidable one. Both runs of the
+identical command still end the same way: run 1 refuses after extracting, and run
+2 scores the same rows at the first election and refuses there. The second
+election covers **every** cluster of two or more editions, not only the anchor's
+own, because the anchor may win a single-candidate cluster while another work's
+editions are the undecided pair.
 
 The bundled-but-not-anchored edition is recorded in
 `companions.<name>.bundled_sources` and given `role: reference` in `sources:`,
@@ -811,16 +882,28 @@ disagreement is a refusal quoting both.
 ### 5.2 Item kinds from headings
 
 ```
-HEADING = r"^[ \t]*([A-Z][a-z]{2,15})\s+(\d+)\.(\d+)(?:\.(\d+))?\.?(?=[\s.(])"
+ANY_HEADING = r"^[ \t]*([A-Z][A-Za-z]{2,15})\s+(\d+(?:\.\d+)*)\.?(?=[\s.(]|$)"
 ```
 
-Count matches per capitalised word over the whole text. Drop the structural
-words `Chapter Section Subsection Part Figure Table Page Appendix Volume Step
-Case Equation` into `structural_kinds` (reported, never used as item kinds).
-Keep the rest with `count >= min_count` (default 3), ordered by count. The
-result is written to `meta.json.kind_counts` and becomes the source's `kinds:`.
-A kind in the registry that the text does not produce is kept (the registry is
-the more careful record) but flagged in `meta.json.kind_warnings`.
+Count matches per capitalised word over the whole text, keeping only headings
+at least as deep as the source's own numbering (§5.5). Case is folded onto one
+spelling per word (`canonical_kind_word`: `THEOREM` → `Theorem`, `McShane`
+untouched), because an AMS-style ALL-CAPS head is the same kind set differently
+and was otherwise invisible. Drop the structural words `Chapter Section
+Subsection Part Figure Table Page Appendix Volume Step Case Equation` into
+`structural_kinds` (reported, never used as item kinds). Keep the rest with
+`count >= min_count` (default 3), ordered by count. The result is written to
+`meta.json.kind_counts` and becomes the source's `kinds:`. A kind in the
+registry that the text does not produce is kept (the registry is the more
+careful record) but flagged in `meta.json.kind_warnings`.
+
+The leading capital stays required: `pdftotext -layout` wraps body lines, so a
+continuation can start with any lower-case word and `and 1.2.3` is not a
+heading. The heading regex that builds the item TABLE
+(`sources.prepare_source.heading_regex`) matches its kind alternation
+case-insensitively for the same reason and canonicalises the matched word
+against this source's declared `kinds` at the match site — never in
+`items.clean()`, which is frozen.
 
 ### 5.3 Scope from what the companions tag
 
@@ -865,16 +948,123 @@ Definition 1.5.11 once). After the fetch, the raw HTML is checked for the word
 which is where the errata live, so this resolves at confidence 1.0 from the
 registry and is corroborated by both repos.
 
+### 5.5 Numbering depth from headings
+
+How many numeric segments an item label carries is the **source's**, not a
+constant. `Theorem 7`, `Theorem 3.4`, `Definition 1.2.3` and `Lemma 2.3.4.1`
+are four real book conventions, and reading a book with the wrong one either
+finds nothing or — the failure that produces *wrong* results rather than
+missing ones — matches a deep label down to its first segments and merges
+every item of a section onto one audit key.
+
+```
+infer_numbering(text, min_count=3, min_share=MIN_DEPTH_SHARE) ->
+  NumberingGuess(min_segments, max_segments, confidence, headings, counts, method)
+```
+
+Count `ANY_HEADING` matches by segment depth (structural words excluded). A
+depth is part of the numbering when it carries at least `min_count` (3)
+headings **and** `MIN_DEPTH_SHARE` (0.05) of them — which drops the handful of
+stray one-number lines a typeset book always has (`Let 2`, `Bibliography 1`;
+both Tao editions carry four) without dropping a real appendix convention.
+`confidence` is the share of headings the accepted depths account for. A text
+with no numbered heading at all returns `DEFAULT_NUMBERING` `(2, 3)` at
+confidence 0.0 with `method: "default"`.
+
+The result is stored as `numbering: {min_segments, max_segments, confidence,
+headings, counts, method}` in both `items.json` and `meta.json`, so every stage
+reads one definition. `cflib.items` takes it as the `numbering=` keyword;
+`items.DEFAULT_NUMBERING` `(2, 3)` is what a caller that does not know the
+source gets, and it is the grammar the existing corpus was keyed with, so a
+re-parse of the baseline is byte-identical. **An empty mapping means "nothing
+was inferred" and reads back as `DEFAULT_NUMBERING`, never as `(2, 2)`** — a
+host without `cflib` writes `numbering: {}` and its table really was built with
+the default.
+
+A label deeper than `max_segments` is a **reject**, `too_many_segments`, and
+becomes no row at all; the caller reports it exactly as the item grammar's
+reject list is reported. Both Tao editions infer `(3, 3)` at confidence > 0.95
+and produce zero such rejects, so nothing in the corpus moves.
+
+This is the one inference a re-run cannot settle, because re-running reads the
+same headings and reaches the same depth. Its override is therefore
+`cf sources set <id> numbering=<min>,<max>`, which stamps `numbering_method:
+manual` on the workspace row and `method: "manual"` on the stored dict; both
+the `too_many_segments` refusal and the `headings_deeper_than_the_numbering`
+warning name it.
+
+### 5.6 Item completeness
+
+The only wrong-document guard used to be `items == 0`, which a real book almost
+never trips: a 404-page book whose numbering puts the kind *after* the number
+(`3.22 theorem`) prepared a table a fraction of a percent of its own size and
+was adopted in silence. A book's numbering is its own denominator:
+
+```
+item_completeness(numbers) -> {found, expected, completeness, groups, worst}
+
+    slots[prefix] = {last index seen}        # prefix = every segment but the last
+    expected     = Σ max(slots[prefix])      # "items run up to 1.3.21" ⇒ 21 slots
+    found        = Σ |{i ∈ slots[prefix] : 1 ≤ i ≤ max}|
+    completeness = found / expected
+```
+
+The slots of one numeric prefix are **pooled across kinds**, deliberately
+deviating from a per-`(kind, chapter, section)` denominator: whether a book runs
+one counter per section (Tao: `Definition 1.3.8` then `Lemma 1.3.9`) or one per
+kind is its own convention, and this estimate does not get to dictate it.
+Pooling reads the numbering the most complete way it can be read, so the score
+is a floor on what was found, never an accusation.
+
+Below `MIN_ITEM_COMPLETENESS` (**0.6**) `cf onboard` / `cf sources refresh`
+refuse, in the same style as the offset rule: say which signal fired, echo the
+top few `kind_counts` so the user can see the grammar read prose rather than
+headings, and name the settlement — `cf sources set <id> kinds=…`, or
+`cf sources set <id> completeness_ok=true`, which stamps `completeness_method:
+manual`. Measured, not chosen: both Tao editions score **0.9961** (254 of the
+255 slots their sections number) and the kind-after-number book scores 0.086,
+so the floor sits an order of magnitude above the bad case and 0.39 below the
+good one.
+
+A source declaring kinds of which the text uses none (`kinds_not_in_text`
+covering every one, or `kinds_not_inferred`) is refused by the same function,
+before the completeness figure is consulted: that kind list belongs to another
+book.
+
+### 5.7 Source format and pagination
+
+A source need not be a paginated PDF. `sources/locator.py` holds the two facts
+that make a manuscript a source and the refusals that keep it honest:
+
+- `source_format(path)` → `pdf` | `text`, from the suffix alone (a human named
+  the file; sniffing the bytes could prepare a different document than the one
+  they meant). The accepted text suffixes are `locator.TEXT_SUFFIXES`, and
+  every one of them either has a branch in `heading_paths` or is plain text by
+  nature.
+- `detect_pagination(text)` → `formfeed` when the text carries `\f` page breaks
+  (a `pdftotext` dump kept as a file still has its pages, and everything
+  page-dependent then works exactly as it does on the PDF), else `none`.
+
+An unpaginated source has `pages: 0`, `offset: 0`, `offset_method: none`,
+`locator: section`, and its items carry a heading path plus a line instead of a
+`pdf_page`. Page-dependent features refuse on it by name rather than compute
+from a zero nothing supports: `require_pagination(meta, feature)` for an
+offset, a page bind or a printed-page anchor. Page IMAGES ask a second question,
+because form feeds are not a PDF: `require_pdf(meta, feature)` refuses
+`cf sources refresh --images` on any text manuscript, paginated or not.
+
 ---
 
 ## 6. Item namespacing and the on-disk layout
 
 ### 6.1 The namespacing rule
 
-An item is the pair **`(source_id, item)`**. The item half keeps the strict
-grammar of `cflib/items.py` unchanged — `<Kind> <c>.<s>.<n>` with an optional
-sub-part, or `In-text p.<n>` — because the grammar is per-source and the kinds
-list is per-source.
+An item is the pair **`(source_id, item)`**. The item half follows the strict
+grammar of `cflib/items.py` — `<Kind> <n>[.<n>…]`, one to four numeric levels
+with the depth inferred per source and stored as `numbering` (§5.5), with an
+optional sub-part, or `In-text p.<n>` — because the grammar is per-source and
+the kinds list is per-source. A label deeper than the source's numbering is a
+reject (`too_many_segments`), never truncated onto a shorter item's key.
 
 **The item half has two normal forms, and a join must use the right one.**
 `items.clean(label)` is the ID form: whitespace only, what `finding_id` hashes,
@@ -954,6 +1144,11 @@ inlines the function for a host without `cflib`), `sources/compat.py`,
 
 ### 6.2 Workspace layout
 
+**SUPERSEDED in two places.** `companions/<name>/lint.json` has a path in
+`cflib/paths.py` and no writer, because `lint` is out of scope in v1; and the
+tree below omits `fixes/` and `reviews/`, which `cf init` really creates. The
+layout that is true today is `docs/design/stage_map.md` §2.1.
+
 ```
 <workspace>/
   workspace.yaml                 committed
@@ -964,10 +1159,12 @@ inlines the function for a host without `cflib`), `sources/compat.py`,
     text.txt                     pdftotext -layout output          (was book/<id>/book.txt)
     pages/pNNN.txt               one file per PDF page
     images/pNNN.png              only when rendered
-    items.json                   {source_id, source_sha, offset, kinds, count, by_kind,
-                                  by_chapter, ambiguous, items:[…]}
-    meta.json                    identity + pagination + inference + provenance
-                                                                   (was book/<id>/book.json)
+    items.json                   {source_id, source_sha, offset, kinds, numbering,
+                                  pagination, locator, count, by_kind, by_chapter,
+                                  ambiguous, rejects, items:[…]}
+    meta.json                    identity + source_format + pagination + locator +
+                                 inference (offset, kinds, numbering, item_completeness)
+                                 + provenance        (was book/<id>/book.json)
     errata.md                    rendered verbatim
     errata.raw.html              the bytes curl returned
     errata.json                  fetch metadata (url, status, shas, changed)
@@ -987,6 +1184,7 @@ inlines the function for a host without `cflib`), `sources/compat.py`,
                                  adjudicated.<name>.md routed/findings.<name>.jsonl
   detect/<name>/                 proxy-detection artifacts
   reports/                       tally.<run>.json union.<name>.json handoff.<date>.md
+                                 pin.<run>.json recheck.<name>.json
 ```
 
 Rows and files carry the source everywhere it can be ambiguous:
@@ -995,12 +1193,33 @@ Rows and files carry the source everywhere it can be ambiguous:
 - `pairs/<source_id>/*`: the source is in the path **and** in each row.
 - `runs/<id>/run.yaml`: `sources: [<id>, …]` plus per-task `source_id`.
 - `runs/<id>/gate.json`: `sources: {<id>: {text, sha256, text_sha256,
-  page_offset, images_dir}}` — the gate picks the text by the document's
-  `source_id`.
+  page_offset, images_dir, item_pages}}` — the gate picks the text by the
+  document's `source_id`. `item_pages` is `{item: page OF THE PINNED TEXT}`
+  (`items.json`'s `pdf_page`, never its printed `page`), the first of the three
+  routes the gate uses to bind a quote to the page its item is stated on. The
+  gate also reads a top-level `max_match_pages`: how many pages the matched text
+  may occur on before it is refused as a running head (0 turns that off).
 - findings documents and every `disagreements[]` row: `source_id`, `source_sha`.
 - ledger rows, routed rows, tally rows, union entries: `source_id`,
   `source_sha`.
 - `corpus/<run>/RECEIPT.json`: `sources: {<id>: <sha>}` and a per-source count.
+
+A finding is a claim about a source item **and** about a companion revision, so
+the companion is pinned the same way the source is:
+
+- `runs/<id>/run.yaml`: `companion_pins: {<name>: {repo_commit, dirty, method}}`
+  — the companion's HEAD when the run was planned, read through `cflib.gitsafe`.
+- `reports/pin.<run>.json`: written by `cf harvest`, never by a worker. The
+  commit from `run.yaml` plus `{repo:decl → decl_fingerprint}` taken over the
+  statement table extracted **at that commit**; a declaration the pin cannot
+  vouch for is listed under `unpinned` rather than fingerprinted against HEAD.
+  It is a report and not a corpus file, because a new file in `corpus/<run>/`
+  would be read as a finding by the gate and would change the receipt manifest.
+- ledger rows: `repo_commit` and `decl_fingerprints`, both optional (every
+  imported corpus is unpinned), plus the `recheck` block `cf recheck` writes.
+- `reports/recheck.<name>.json`: the latest re-check, one row per open finding,
+  status ∈ `unchanged | changed | gone | unpinned`
+  (`references/vocabulary.md` §1.8).
 
 ### 6.3 `.gitignore` (both repos)
 
@@ -1017,18 +1236,24 @@ from the next `git add`.
 
 ## 7. The CLI surface
 
+**SUPERSEDED.** This table is the CLI as designed, not as shipped: it is
+missing `doctor`, `recheck`, `score`, `share`, `quotes` and `sources remove`,
+and `sources add` takes neither a URL nor `--download`. The current surface is
+`SKILL.md`'s command index and `cf <command> --help`, which is generated from
+the parsers themselves.
+
 Global: `--workspace <dir>` (default `$CF_WORKSPACE`, else the nearest ancestor
 holding `workspace.yaml`), `-v`, `-q`. No `--campaign`, no `$CF_CAMPAIGN`.
 
 | command | one line |
 |---|---|
 | `init <dir>` | create the workspace as a local git repo with no remote; write `workspace.yaml`, `registry.yaml`, `.gitignore`, pre-push hook. **No other flags** except `--name`, `--no-git`, `--allow-nested`, `--force` |
-| `onboard <repo> [--name N] [--adapter K] [--download] [--anchor-source ID] [--dry-run] [--force]` | discover → register → prepare → extract, printing every inference and its confidence |
+| `onboard <repo> [--name N] [--adapter K] [--download] [--anchor-source ID] [--source FILE] [--dry-run] [--force]` | discover → register → prepare → extract, printing every inference and its confidence. `--source` (repeatable) names a PDF or text manuscript the repo does not name (§4.3); it gives the LOCATION only, like `sources add`, and is what the "no source could be discovered" refusal points at — a companion that does not exist yet cannot be `--for`ed |
 | `sources list` | one row per source: id, sha8, edition, offset±conf, kinds, items, errata, companions, confirmed |
 | `sources show <id>` | the full record, its `same_work` siblings, its `page_map_to`, its provenance and its prepared artifacts |
-| `sources add <pdf\|url> --for <companion> [--anchor] [--download]` | add a source by hand (the exception); fingerprints, registers, prepares, and appends to that companion's `sources` |
-| `sources set <id> key=value …` | override a field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `confirmed=true`); sets the matching `*_method: manual` and records the override in `meta.json` |
-| `sources refresh [<id>] [--force] [--images] [--no-errata]` | re-prepare text / page map / items / errata for one or every source. **This replaces `cf book`** |
+| `sources add <source> --for <companion> [--anchor] [--download]` | add a source by hand (the exception); fingerprints, registers, prepares, and appends to that companion's `sources`. `<source>` is a PDF or a manuscript that is already text (§5.7) |
+| `sources set <id> key=value …` | override a field (`offset=16`, `errata_url=…`, `chapters=1,2`, `kinds=…`, `numbering=3,4`, `completeness_ok=true`, `confirmed=true`); sets the matching `*_method: manual` and records the override in `meta.json` |
+| `sources refresh [<id>] [--force] [--images] [--no-errata]` | re-prepare text / page map / items / errata for one or every source. `--images` needs the PDF itself and refuses on a text manuscript. **This replaces `cf book`** |
 | `extract [--companion X]` | adapters → `statements.jsonl`; rows carry `source_id` + `source_sha` |
 | `pair [--source ID] [--only a,b] [--chapter N]` | **iterates the shared sources**: one `pairs/<source_id>/` per source with ≥2 companions, plus per-source coverage/targets/anchors for single-companion sources |
 | `plan-run --preset P [--source ID] [--companion X] [--host H]` | a run is scoped to one source; `--source` is required only when the selected companions share more than one |
@@ -1045,17 +1270,17 @@ Deleted: `cf book`. Out of scope in v1, unchanged: `fix`, `review-pr`,
 ### 7.1 `cf init <dir>` — no flags
 
 ```
-$ cf init ~/Desktop/tao-workspace
-wrote ~/Desktop/tao-workspace/workspace.yaml
-wrote ~/Desktop/tao-workspace/registry.yaml        (overlay; empty)
-wrote ~/Desktop/tao-workspace/.gitignore
-git init ~/Desktop/tao-workspace (no remote)
-installed ~/Desktop/tao-workspace/.git/hooks/pre-push
+$ cf init <workspace>
+wrote <workspace>/workspace.yaml
+wrote <workspace>/registry.yaml        (overlay; empty)
+wrote <workspace>/.gitignore
+git init <workspace> (no remote)
+installed <workspace>/.git/hooks/pre-push
 
-workspace : ~/Desktop/tao-workspace
+workspace : <workspace>
 sources   : none yet
 next:
-  cf onboard ~/Desktop/tao-measure-lean
+  cf onboard <path to tao-measure-lean>
 ```
 
 The refusals `cf init` already performs are kept verbatim: not inside the skill
@@ -1064,12 +1289,21 @@ repo, not inside a Lean companion, not inside a git repo that has a remote,
 
 ### 7.2 `cf onboard <repo>` — what it prints
 
+**SUPERSEDED.** The transcript below is labelled further down as carrying "the
+real values measured on this machine", and two of its figures do not reproduce:
+the adapter confidence is `0.93 (42 of 44 sampled .lean files …)`, not `0.95
+(1,413 of 1,487 declarations tagged)`, and the published edition's anchor
+agreement is `0.89 (271 ok / 35 mismatched)`, not `0.99 (1,281 ok / 13
+mismatched)` — the figures `README.md` and `references/onboarding-contract.md`
+carry. The shape of the output is still roughly right; none of its numbers
+should be quoted.
+
 One command, no flags in the common case, and every inference is shown with its
 confidence and the file it came from.
 
 ```
-$ cf onboard ~/Desktop/tao-measure-lean
-repo      : /Users/jack/Desktop/tao-measure-lean @ 9afe70f
+$ cf onboard <path to tao-measure-lean>
+repo      : <path to tao-measure-lean> @ 9afe70f
 adapter   : docstring_tags                       confidence 0.95   (1,413 of 1,487 declarations tagged)
 name      : ours                                 (from the directory name; --name overrides)
 
@@ -1078,8 +1312,8 @@ sources discovered
       title    An Introduction to Measure Theory — Terence Tao
       edition  AMS GSM 126, author's preliminary AMS version (published pagination)
       from     CLAUDE.md#L48-L55 (sha prefix), formalization.yaml#sources (title/licence)
-      pdf      ~/Desktop/measure_theory/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
-               found in: library_path (~/Desktop/**/.lake/official-pdf)
+      pdf      <path to measure_theory>/.lake/official-pdf/gsm-126-tao5-measure-book.pdf
+               found in: library_path (<the derived root measure_theory sits in>)
       offset   16                                confidence 0.996  (244/245 running heads)
       kinds    Definition Lemma Theorem Proposition Corollary Exercise Example Remark
       errata   https://terrytao.wordpress.com/books/an-introduction-to-measure-theory/
@@ -1104,7 +1338,7 @@ scope     chapters [1]                           from the items ours actually ta
 
 next:
   edit companions/ours/conventions.md and have the repo owner confirm it
-  cf onboard ~/Desktop/measure_theory
+  cf onboard <path to measure_theory>
 ```
 
 (The extraction and item counts above are illustrative; the confidences,
@@ -1114,7 +1348,7 @@ offsets, shas and file provenance are the real values measured on this machine.)
 
 ```
 unconfirmed sources (discovered, nobody has checked them)
-  smith-analysis-2e   sha 1a2b3c4d…   from ~/Desktop/foo/CLAUDE.md
+  smith-analysis-2e   sha 1a2b3c4d…   from <another repo>/CLAUDE.md
       confirm with:  cf sources show smith-analysis-2e
                      cf sources set smith-analysis-2e confirmed=true
       or promote it into the skill's registry/sources.yaml
@@ -1416,6 +1650,12 @@ class SourceClaim:
     licence: str = ""
     offset_hint: int | None = None
     anchor_hint: str = ""
+    files: tuple[str, ...] = ()      # §4.3: absolute paths, in READING order, whose
+                                     # concatenated bytes ARE this source (no PDF to locate)
+    source_format: str = ""          # pdf | text  (§5.7), read off those bytes
+    pagination: str = ""             # formfeed | none  (§5.7)
+    locator: str = ""                # how the ADAPTER keys its rows: number | label
+    discovered_by: str = ""          # adapter | manual — recorded as `pdf_found_in`
     confidence: float = 0.0
 
     def merge(self, other: "SourceClaim") -> "SourceClaim": ...
@@ -1455,6 +1695,8 @@ class DiscoveryResult:
 
 def detect_adapter(repo: Path) -> tuple[str, float, dict]: ...
 def discover_sources(repo: Path, *, adapter: str | None = None) -> list[SourceClaim]: ...
+def discover_sources_with_adapter(repo: Path, *,
+                                  adapter: str | None = None) -> list[SourceClaim]: ...
 def merge_claims(claims: Sequence[SourceClaim], registry: Registry) -> list[SourceClaim]: ...
 def search_order(claim: SourceClaim, *, repo: Path, workspace: "Workspace | None",
                  library_paths: Sequence[str]) -> list[tuple[Path, str, int]]: ...
@@ -1655,7 +1897,12 @@ def gate_config(preset: Preset, *, run_id: str, sources: Mapping[str, Mapping],
                 repos: list[str], decl_index: str | None = None) -> dict:
     """gate.json `sources` block:
        {source_id: {"text": <path>, "sha256": …, "text_sha256": …,
-                    "images_dir": …, "page_offset": int}}"""
+                    "images_dir": …, "page_offset": int,
+                    "item_pages": {item: pdf_page}}}
+       plus a top-level "max_match_pages": int (0 = off)."""
+def item_pages(items: Mapping[str, Mapping]) -> dict[str, int]:
+    """{item: pdf_page} for that block, from an items_index — the PINNED-TEXT
+    page, never items.json's printed `page`."""
 
 # gate/verify_findings.py   (rsynced to a host with no cflib: keep it stdlib-only)
 class GateConfig:
@@ -1746,7 +1993,7 @@ matching lines, as a rough size signal.
 | ✦ `scripts/cflib/workspace.py` | new | `Workspace`, `SourceRef`, `CompanionRef`, `find_workspace_root`, `from_args`, `require_source_sha`, `shared_sources`, `check_host`, `validate` (§8) |
 | `scripts/cflib/campaign.py` | 41 | **delete** once `workspace.py` lands; no shim, no alias |
 | ✦ `scripts/cflib/registry.py` | new | `Registry`, `RegistryEntry`, `source_id_for`, `slugify`, overlay append, page-map symmetry validation |
-| ✦ `scripts/cflib/discovery.py` | new | `detect_adapter`, `discover_sources`, `merge_claims`, `search_order`, `locate_pdf`, `fingerprint`, `resolve_claims`, `choose_anchor_source` |
+| ✦ `scripts/cflib/discovery.py` | new | `detect_adapter`, `discover_sources`, `discover_sources_with_adapter`, `merge_claims`, `search_order`, `locate_pdf`, `fingerprint`, `resolve_claims`, `choose_anchor_source` |
 | ✦ `scripts/cflib/inference.py` | new | `infer_offset`/`OffsetGuess`, `infer_kinds`, `infer_scope`, `infer_errata_url`, `confirm_errata` |
 | ✦ `registry/sources.yaml` | new | the shipped registry, seeded with the two Tao editions (§2.2) |
 | ✦ `templates/workspace.yaml.example` | new | replaces `campaign.yaml.example`; keeps every load-bearing comment, adds `sources:`, `library_paths:`, the map-shaped `companions:` |
@@ -1917,7 +2164,10 @@ Three seams need an explicit handshake:
    (CORE) calls `pair.anchor_check.check_edition` (STAGES-A). Same rule: the
    signature is fixed here, and CORE degrades to rule 1/rule 3 of §4.6 (and a
    refusal) while the mechanical half is unimplemented.
-3. **`finding_id` is defined five times on purpose.** `cflib/hashing.py`,
+3. **SUPERSEDED: `finding_id` is now defined twice** (`cflib/hashing.py` and
+   `gate/verify_findings.py`, the one module transferred to a host without
+   `cflib`); the compat shims delegate. The original text follows.
+   **`finding_id` is defined five times on purpose.** `cflib/hashing.py`,
    `gate/verify_findings.py`, `sources/compat.py`, `ledger/compat.py` and
    `detect/_compat.py` each carry the definition because the gate and the
    compat layers run where `cflib` is not importable. All five change in
@@ -1934,8 +2184,9 @@ Three seams need an explicit handshake:
 - `grep -rn 'campaign\|book_sha\|CF_CAMPAIGN' $(git ls-files)` returns only
   deliberate historical prose (this document, `references/traps.md`,
   `references/method.md` where it explains what the old model was) — no code.
-- On this machine: `cf init <tmp>` then `cf onboard ~/Desktop/tao-measure-lean`
-  then `cf onboard ~/Desktop/measure_theory`, with **no other flags**, produces
+- On a machine holding both companions: `cf init <tmp>` then `cf onboard <path to
+  tao-measure-lean>` then `cf onboard <path to measure_theory>`, with **no other
+  flags**, produces
   the `workspace.yaml` of §1.3 (modulo timestamps and the row counts), and
   `cf pair` produces exactly one `pairs/tao-measure-gsm126-published/` tree.
 - Every gate in §0.2 still refuses what it refused before, now per source.

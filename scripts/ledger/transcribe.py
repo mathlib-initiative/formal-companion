@@ -1,11 +1,10 @@
 """Turn a Workflow result JSON into ledger rows, files and the record markdown.
 
-Ported from: the hand transcription that produced
-/Users/jack/Desktop/tao-differential/{accepted,refuted}.adam.jsonl and
-adjudicated.adam.md from the adam-faithfulness-adjudication run
-(recovered/adam-faithfulness-adjudication-wf_60a87e92-dd5.js), plus the
-challenge result shape of recovered/challenge-batch1-findings-wf_c3f0e5d0-d65.js
-({challenged, findings:[{key, survives_all, verdicts}]}).
+Ported from: the hand transcription that produced the v1 campaign's
+``{accepted,refuted}.adam.jsonl`` and ``adjudicated.adam.md`` from its
+adjudication workflow run, plus the challenge result shape of its
+challenge workflow ({challenged, findings:[{key, survives_all, verdicts}]}).
+None of those artifacts travel with this repo.
 
 Workflow scripts cannot touch the filesystem, so the session saves the tool's
 return value to a JSON file and this module transcribes it.  Two rules from the
@@ -41,6 +40,63 @@ SURVIVING_VERDICT = {
 }
 
 
+class Pins:
+    """The revision pin ``cf harvest`` wrote for a run, read lazily per run id.
+
+    ``reports/pin.<run-id>.json`` is written by the stage that can be trusted with
+    it (harvest computes the commit from ``run.yaml`` and the fingerprints from
+    the statement table extracted at that commit).  This class only READS it, and
+    only to copy the two fields onto the ledger row -- the row is what outlives
+    the corpus, so the pin has to live there too or nothing can be re-checked.
+
+    A run with no pin file (an imported v1 corpus, or a run harvested before the
+    pin existed) yields empty values.  That is the ``unpinned`` verdict
+    ``cf recheck`` reports, and it is deliberately not filled in from today's
+    HEAD: a fingerprint the finding was never judged against is worse than none.
+    """
+
+    def __init__(self, paths: Any):
+        self._paths = paths
+        self._cache: dict[str, dict] = {}
+
+    def _doc(self, run_id: str) -> dict:
+        if run_id not in self._cache:
+            doc: dict = {}
+            path = ""
+            getter = getattr(self._paths, "pin_json", None)
+            if run_id and callable(getter):
+                try:
+                    path = str(getter(run_id))
+                except Exception:  # an id no path accessor accepts is simply unpinned
+                    path = ""
+            if path and os.path.exists(path):
+                loaded = compat.read_json(path)
+                doc = loaded if isinstance(loaded, dict) else {}
+            self._cache[run_id] = doc
+        return self._cache[run_id]
+
+    def for_row(self, run_id: str, decls: Iterable[str], companion: str = "") -> dict:
+        """``{repo_commit, decl_fingerprints}`` for one row's declarations."""
+        doc = self._doc(str(run_id or ""))
+        entries = doc.get("decls")
+        entries = entries if isinstance(entries, dict) else {}
+        out: dict[str, str] = {}
+        commit = ""
+        for decl in decls:
+            entry = entries.get(str(decl))
+            if isinstance(entry, dict) and entry.get("decl_fingerprint"):
+                out[str(decl)] = str(entry["decl_fingerprint"])
+                commit = commit or str(entry.get("repo_commit") or "")
+        if not commit and companion:
+            # No declaration of this row was fingerprinted, but the run still
+            # recorded which revision the companion was at: keep it, so the row
+            # says what it was judged against even when it cannot say how.
+            companions = doc.get("companions")
+            block = (companions or {}).get(companion) if isinstance(companions, dict) else None
+            commit = str((block or {}).get("repo_commit") or "")
+        return {"repo_commit": commit, "decl_fingerprints": out}
+
+
 def _num(value: Any) -> float | None:
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
@@ -68,6 +124,7 @@ def _base_row(
     source_sha: str,
     method: str,
     at: str,
+    pins: "Pins | None" = None,
 ) -> dict:
     fields = _finding_fields(finding)
     decls = [
@@ -75,6 +132,10 @@ def _base_row(
         for d in fields["unfaithful_decls"]
         if not companion or compat.decl_repo(d) in ("", companion)
     ]
+    # The revision pin travels with the row, because the row is what outlives the
+    # corpus: a ledger row with no commit and no fingerprint is a claim nobody can
+    # re-check, close or expire later (that is what `cf recheck` reads).
+    pin = pins.for_row(fields["run_id"], decls, companion) if pins else {}
     return {
         "finding_id": finding_id,
         "run_id": fields["run_id"],
@@ -93,6 +154,11 @@ def _base_row(
         "method": method,
         "schema": "ledger-v2",
         "at": at,
+        # "" / {} rather than absent: a reader must be able to tell a row that was
+        # written without a pin from one whose run had none, and both from a row
+        # that predates the field entirely (that one has no key at all).
+        "repo_commit": pin.get("repo_commit", ""),
+        "decl_fingerprints": pin.get("decl_fingerprints", {}),
     }
 
 
@@ -106,6 +172,7 @@ def rows_from_adjudication(
     method: str = "workflow:adjudicate",
     at: str = "",
     contested_threshold: float = CONTESTED_THRESHOLD,
+    pins: Pins | None = None,
 ) -> list[dict]:
     """Map adjudicate.workflow.js output onto ledger rows."""
     index = index or {}
@@ -125,6 +192,7 @@ def rows_from_adjudication(
             source_sha=source_sha,
             method=method,
             at=at,
+            pins=pins,
         )
         row["verdict"] = migrate.map_verdict(reconciled.get("verdict"))
         row["severity"] = str(reconciled.get("severity") or row.get("severity") or "")
@@ -189,6 +257,7 @@ def rows_from_challenge(
     index: dict[str, dict] | None = None,
     method: str = "workflow:challenge",
     at: str = "",
+    pins: Pins | None = None,
 ) -> list[dict]:
     """Map challenge.workflow.js output onto ledger rows (refute-by-default)."""
     index = index or {}
@@ -209,6 +278,7 @@ def rows_from_challenge(
             source_sha=source_sha,
             method=method,
             at=at,
+            pins=pins,
         )
         kind = row.get("kind") or str(entry.get("kind") or "")
         if survives_all:
@@ -420,12 +490,12 @@ def transcribe(
     if kind == "challenge":
         rows = rows_from_challenge(
             result, companion=companion, source_id=source_id, source_sha=source_sha,
-            index=index, method=method, at=at
+            index=index, method=method, at=at, pins=Pins(paths)
         )
     else:
         rows = rows_from_adjudication(
             result, companion=companion, source_id=source_id, source_sha=source_sha,
-            index=index, method=method, at=at
+            index=index, method=method, at=at, pins=Pins(paths)
         )
     accepted, refuted = split_rows(rows)
     meta_common = {

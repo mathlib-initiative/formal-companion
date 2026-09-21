@@ -1,9 +1,9 @@
 """``cf pair`` -- pair the companions' statement tables, one SOURCE at a time.
 
-    python3 scripts/cf.py pair [--source <id>] [--only ours,adam] [--chapter 1]
+    cf pair [--source <id>] [--only ours,adam] [--chapter 1]
 
 A workspace holds N companions and M sources, and a differential is possible
-exactly where two companions' source lists overlap (docs/design/multi-source-model.md
+exactly where two companions' source lists overlap (docs/design/archive/multi-source-model.md
 R1).  So this command does not pair "the campaign": it walks every source at
 least one companion is bound to -- ``workspace.shared_sources()`` plus the
 single-companion ones -- and writes one tree per source:
@@ -31,8 +31,9 @@ Two source gates are enforced before anything is compared:
   published book; checking its anchors against the wrong edition of the same work
   is what made 22 of 40 batch-1 findings pagination noise.
 
-Ported from: /Users/jack/Desktop/tao-differential/compare.py and recovered cells
-b174aa13_L5589 (queue), L6099 (def-coverage), L6145 (uncovered), L5762 (anchors).
+Ported from: the v1 campaign's ``compare.py`` and its queue, def-coverage,
+uncovered and anchor cells -- none of which are in this repo; the stages they
+became are ``docs/design/stage_map.md`` §4 stage 3.
 """
 
 from __future__ import annotations
@@ -145,8 +146,8 @@ def _pair_one(workspace, source_id: str, wanted, args, per_companion: dict) -> b
         log.warn("    no companion selected; skipped")
         return False
     if not paths.source_items(source_id).exists():
-        log.warn(f"    sources/{source_id}/items.json is missing; skipped")
-        log.info(f"    prepare it: cf sources refresh {source_id}")
+        log.warn_block(f"    sources/{source_id}/items.json is missing; skipped",
+                       [f"    prepare it: cf sources refresh {source_id}"])
         return False
 
     source_dir = str(paths.source_dir(source_id))
@@ -213,7 +214,7 @@ def _pair_one(workspace, source_id: str, wanted, args, per_companion: dict) -> b
         result["pairs"], source_id=source_id, offset=offset, max_pages=args.max_page_hints,
         book_items=index_by_item, printed_max=printed_max,
     )
-    # the attack runs address every tagged item, In-text included (decisions.json
+    # the attack runs address every tagged item, In-text included (the design decisions record,
     # "item scope"); the differential queue above stays numbered-only.
     all_index = dict(result["index"])
     all_index.update(result["intext"])
@@ -335,7 +336,7 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
                         offset: int, index_by_item) -> None:
     """Publish one source's mechanical PAGE_ANCHOR rows into ``corpus/<run-id>/``.
 
-    critique.json correction 2: "Route them as mechanical low-severity rows from
+    the design critique, correction 2: "Route them as mechanical low-severity rows from
     anchor_check.py against the pinned edition."  They could not be routed while
     they lived only in ``pairs/<id>/anchor-check.json``, which ``route`` reads as
     a withdrawal oracle and never as a source (its sources are ``corpus/<run>/``).
@@ -362,15 +363,20 @@ def _emit_anchor_corpus(paths, anchors, *, source_id: str, run_id: str, source_s
         sources={source_id: {"text": str(paths.source_text(source_id)),
                              "sha256": source_sha,
                              "images_dir": str(images) if images.is_dir() else None,
-                             "page_offset": offset}}))
+                             "page_offset": offset,
+                             # the PINNED-TEXT page per item, which is what the
+                             # gate binds a quote to.  `pages` above is the
+                             # PRINTED page, for detect's own printed_page field:
+                             # the two differ by `offset` and swapping them puts
+                             # every item that far from its own quotes.
+                             "item_pages": presets_mod.item_pages(index_by_item)}}))
     books, problems = vf.load_sources(cfg)
     for doc in docs:
         problems += vf.validate_doc(doc, mech_corpus.slug(doc["item"]) + ".json", cfg, books)
     if problems:
-        log.warn("the mechanical gate refused %s's anchor rows; corpus/%s not written"
-                 % (source_id, run_id))
-        for problem in problems[:8]:
-            log.info("      - " + problem)
+        log.warn_block("the mechanical gate refused %s's anchor rows; corpus/%s not written"
+                       % (source_id, run_id),
+                       ["      - " + problem for problem in problems[:8]])
         return
     dest = paths.corpus_run_dir(run_id)
     receipt = mech_corpus.write_corpus(docs, dest, run_id=run_id,

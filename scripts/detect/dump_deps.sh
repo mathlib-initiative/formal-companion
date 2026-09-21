@@ -11,9 +11,14 @@
 #   * PATH is fronted with /usr/bin so a Homebrew python/node ahead of the
 #     system ones cannot break `lake env`.
 #
-# This is the one step of the pipeline that runs Lean. `cf detect-proxies --lean`
-# never calls it for you: it prints this command line and stops when deps.json
-# is missing, because the dump needs a built .lake the skill must not rebuild.
+# This is the one step of the pipeline that runs Lean -- and running Lean here
+# means `lake env lean --run` EXECUTES THE COMPANION'S OWN lakefile and toolchain
+# as the invoking user, i.e. code the companion's author chose, with your
+# permissions. Everywhere else a companion tree is read as data (see
+# scripts/cflib/gitsafe.py). So run this only against a repo you trust, or inside
+# a sandbox. `cf detect-proxies --lean` never calls it for you: it prints this
+# command line and stops when deps.json is missing, because the dump needs a
+# built .lake the skill must not rebuild.
 #
 # Usage:
 #   dump_deps.sh --repo <companion root> --out <abs path to deps.json> \
@@ -38,7 +43,7 @@ while [ $# -gt 0 ]; do
     --template) template="${2:?}"; shift 2 ;;
     --timeout) timeout_s="${2:?}"; shift 2 ;;
     --dry-run) dry_run=1; shift ;;
-    -h|--help) sed -n '1,25p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,26p' "$0"; exit 0 ;;
     *) die "unknown argument: $1" ;;
   esac
 done
@@ -92,9 +97,19 @@ if [ "$dry_run" -eq 1 ]; then exit 0; fi
 [ -s "$out_abs" ] || die "the dump did not write $out_abs"
 printf 'wrote %s (%s bytes)\n' "$out_abs" "$(wc -c < "$out_abs" | tr -d ' ')"
 
+# `git status` refreshes the index, and an index refresh runs core.fsmonitor --
+# a command named in the COMPANION's own .git/config. These are the inlined
+# cflib.gitsafe flags (this script cannot import cflib: it runs from a bare
+# shell, and `cf detect-proxies` only prints its command line).
+git_safe() {
+  GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0 \
+  git -c core.fsmonitor= -c core.hooksPath=/dev/null -c diff.external= \
+      -c core.pager=cat -c core.sshCommand= -c core.askPass= "$@"
+}
+
 # The repo must be exactly as we found it.
-if git -C "$repo_abs" rev-parse --git-dir >/dev/null 2>&1; then
-  if [ -n "$(git -C "$repo_abs" status --porcelain)" ]; then
+if git_safe -C "$repo_abs" rev-parse --git-dir >/dev/null 2>&1; then
+  if [ -n "$(git_safe -C "$repo_abs" status --porcelain)" ]; then
     printf 'warning: %s has uncommitted changes after the dump -- check nothing was written into the tree\n' \
       "$repo_abs" >&2
   fi

@@ -1,0 +1,19 @@
+{
+ "source_id": "{{source_id}}",
+ "_unedited": true,
+ "_unedited_note": "This table is a bootstrap skeleton, not an answer. While `_unedited` is present cf detect-proxies treats it as NO table: the coverage split still runs and the body-proxy scan reports that it was skipped. Fill in module_stages and mathlib_objects, then delete this key -- a placeholder object would otherwise make the scan invent findings against a library constant that exists nowhere.",
+ "_source_ids_note": "One table serves every edition of one work: a stage is which SECTION first develops a concept, and two editions share that even when their pagination differs. List the sibling ids here.",
+ "source_ids": {{source_ids}},
+ "title": "{{title}}",
+ "chapters": {{chapters}},
+ "_chapters_note": "The chapters this table places items in. cf detect-proxies overrides it with workspace.yaml's sources.<id>.chapters, so leave it as written unless you are using the table outside a workspace.",
+ "stage_beyond_book": 8,
+ "_stage_beyond_book_note": "The stage of a library concept the work never reaches. Anything at or past it is later than the whole book.",
+ "default_stage": 0,
+ "_default_stage_note": "A library module matching no prefix below is foundations (stage 0): fair game at any point in the work.",
+ "_module_stages_note": "ORDERED; FIRST match wins. [module prefix, stage]: the section of this work that first develops what the module is about. A null stage means 'in the subject, not yet classified': the run reports it and fails unless --allow-unclassified is passed, because an unclassified module silently suppresses every hit through it. FILL THIS IN; the shape, with synthetic names, is [[\"Lib.Subject.Advanced\", 4], [\"Lib.Subject.Basic\", 2], [\"Lib.Subject.Unsorted\", null]].",
+ "module_stages": [],
+ "_mathlib_objects_note": "The library constants that ARE the work's own concepts. A definition whose body is one of these, at the same stage or later, is the proxy shape this detector looks for. FILL THIS IN; the shape, with synthetic names, is {\"Lib.Subject.Basic.size\": {\"label\": \"size\", \"module\": \"Lib.Subject.Basic\", \"stage\": 2}}, where `label` is the short name a body would spell and `stage` is the section that develops the concept. A made-up entry does not leave the scan empty -- it makes it report every body that happens to name `label`.",
+ "mathlib_objects": {},
+ "_companion_facts_note": "Nothing about one COMPANION belongs here. Its module layout (repo_module_stages) and its own identifier vocabulary (native_tokens) go in companions/<name>/stage-overlay.json -- see templates/detect/stage-overlay.json.tmpl."
+}

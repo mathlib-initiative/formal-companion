@@ -8,6 +8,41 @@ after the run moved to the server. Written as: **what `cf` automates**, **what y
 No host address, account or profile name appears in this file. They live in `workspace.yaml`, and
 `cf run` refuses any host not in its allowlist.
 
+**Contents** — §0 the two tools this needs · §1 the topology · §2 preconditions ·
+§3 `cf plan-run` · §4 `cf run` · §5 monitoring · §6 failure modes · §7 `cf harvest` ·
+§8 the local fallback · §9 what stays manual · §10 sources.
+
+---
+
+## 0. The two tools this needs, and where they come from
+
+Everything in this file depends on two programs that **do not ship with this skill**:
+
+- **`tend`** — the orchestrator. It owns a sqlite state database, a worktree per task, the
+  retry/merge policy and the validation hooks. `cf plan-run` writes a *tend root* (a `config.yaml`,
+  `.tend/*.yaml` and a `bin/` of bridges) for it; `cf run` copies that root to the host and starts
+  it. Roughly 4,400 lines under `scripts/plan/` and `scripts/run/` exist to produce and drive it.
+- **`agentbox`** — the hosted-session runner the bridges shell out to
+  (`agentbox host claude --profile <profile> -- -p … --output-format json`, or
+  `agentbox host codex … exec -m <model>`). It is what turns a rendered prompt into an agent turn.
+
+**Where they come from: not recorded here.** Neither tool is vendored, pinned, installed or
+version-checked by anything in this repository, and the repo does not record the version the 2026-09
+runs used. Do not infer one from this file. The only version contract that exists is the one *you*
+write: put a spec in your own `workspace.yaml` as `hosts.<host>.tend_version` (for example
+`">=0.4,<0.6"`), and `cf run`'s preflight compares it against `tend --version` on the host and
+refuses the run on a mismatch. With no spec recorded, preflight only prints the version and
+continues — which is how a config-schema change becomes a run that validates locally and fails on
+the host with no diagnosis.
+
+**Without them**, the supported path is the local Workflow fleet (§8) for anything under ~100
+items, plus every mechanical stage — `pair`, `detect-proxies`, the anchor check, `import-corpus`,
+`tally`, `route`, `report` — which needs neither tool and produced the whole def-coverage baseline.
+
+**`cf run --execute` has never been exercised against this pair from this repo**: the five runs
+that produced the baseline corpus pre-date the code that drives them. Treat the first server run as
+a smoke test (§4.4), not as a resumption.
+
 ---
 
 ## 1. The topology
@@ -56,6 +91,12 @@ tend (orchestrator)                       entrypoint repo (git, main)
 7. **A billing decision.** When agents run inside a hosted session the orchestrator's usage counters
    read zero by construction and its budget command cannot cap the run; the only enforceable cap is
    gateway-side. Decide and record it before raising concurrency.
+8. **git 2.31 or later on the host.** The one version floor this skill has. The gate blanks the
+   content-filter drivers a worktree names, and a driver whose own name carries an `=` is reachable
+   only through `GIT_CONFIG_COUNT`, which arrived in 2.31 — `git -c` splits its argument at the
+   first `=`. Below that there is no channel left, so the gate stops (exit 3, "the gate could not
+   run") rather than execute the program a worker named, and every task blocks. Debian 11 ships
+   2.30.2. `cf doctor` reports the version and warns below the floor.
 
 ## 3. `cf plan-run` — what it writes
 
@@ -66,13 +107,13 @@ cf plan-run --preset attack-vac --companion ours --host <alias> --i-have-consent
 - `runs/<run-id>/run.yaml` — mode, companion set, model ids, book access, gate mode, host alias,
   concurrency, consent record, billing path, task count, prompt shas.
 - `runs/<run-id>/tasks/*.yaml` — one per item, title prefixed `DIFFERENTIAL:` / `SINGLE-SOURCE:` /
-  `ATTACK:`; reconciled against `items.json ∩ any-repo` (`references/findings-schema-v2.md` §2).
+  `hunt:` / `vac:`; reconciled against `items.json ∩ any-repo` (`references/findings-schema-v2.md` §2).
 - `runs/<run-id>/prompts/*.md` — worker-system, worker, worker-revision, reviewer-system, reviewer,
   rendered from `templates/prompts/` with the companion's `conventions.md` injected.
 - `runs/<run-id>/gate.json` — `KINDS`, `VERDICTS`, witness requirement, a `sources` block
-  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir}}`) and the allowed repo
-  prefixes. The gate picks the text by the document's `source_id`; the two paths the legacy gate
-  hard-wired (the book file and the repo-name regex) are fields here.
+  (`{<source_id>: {text, sha256, text_sha256, page_offset, images_dir, item_pages}}`) and the
+  allowed repo prefixes. The gate picks the text by the document's `source_id`; the two paths the
+  legacy gate hard-wired (the book file and the repo-name regex) are fields here.
 - a tend root — `config.yaml`, `.tend/*.yaml`, `bin/` (the two bridges, the normaliser, the
   out-of-tree gate invocation).
 
@@ -89,7 +130,24 @@ What it does, in order — and each step is one you can also do by hand:
 4. **Smoke test 1/1.** Set limits to one worker and one reviewer, start the run, and watch exactly
    one task through worker → gate → reviewer → merge. Do not launch hundreds of tasks blind: model
    ids that have never been exercised from this machine fail immediately and repeatedly.
-5. Only then raise the limits to the preset's concurrency.
+5. **Read that task's gate output once per tend version.** Its last line is `changed files: …`.
+   `ownership checked against task <id>` means the orchestrator exported `TEND_TASK_ID` into the
+   validation command's environment and the full ownership rule is running. `ownership: single-stem
+   rule` means it did not: only the weaker rule (one task's findings/task pair per contribution) is
+   in force, so a worker that rewrites a neighbour's landed findings file inside its own single
+   stem is not caught. **Whether tend exports it has never been verified here**, and it is a
+   property of the orchestrator version, not of the run — so check it again after an upgrade. To
+   restore the full rule, append `--task-id <the id>` to both gate commands in the tend root's
+   `config.yaml` by whatever substitution that version supports; an argv list is not shell-expanded,
+   so a literal `$TEND_TASK_ID` element makes the gate refuse every run. The same argv serves
+   `validation_commands` and `pre_merge_validation_commands`, and with `batched_merge: true` a
+   pre-merge change set carries one findings/task pair per batched task — the findings file added,
+   the task file modified, because step 3 above committed the tasks to the merge target. The stem
+   count therefore only refuses several stems when some stem's findings file was already on the
+   merge target, so a batch of new findings merges and a rewritten neighbour is still named. A 1/1
+   smoke test cannot exercise that
+   — there is nothing to batch at limits 1/1 — so read the pre-merge gate output again after step 6.
+6. Only then raise the limits to the preset's concurrency.
 
 ```bash
 # the manual equivalents, for when you are debugging rather than driving
@@ -152,8 +210,11 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 - The **default local bridge is `claude -p`**, not an API-key agent runtime: the 2026-09-05 attempt
   to run locally on an API key with no credit balance produced 20 requests, 18 retries and repeated
   HTTP 404/credit errors, which is what moved the run to the server in the first place.
-- There is **no local analogue of the request-changes loop**. The worker self-gates; the gate runs
-  post-hoc at harvest and failures come back as a second run.
+- There is **no local analogue of the request-changes loop**. The worker self-gates; the real gate
+  runs post-hoc at harvest — by default, since `cf harvest` gates unless `--no-gate` — and failures
+  come back as a second run. On this path the harvest gate is the *only* independent check, which
+  is why turning it off here is worse than turning it off on the server path, where
+  `validation_commands` and `pre_merge_validation_commands` have already run it per task.
 
 ## 9. What stays manual, permanently
 
@@ -164,8 +225,10 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 - watching the first task end-to-end before limits are raised;
 - deciding the billing path and setting any gateway-side cap;
 - every command in `workflows/` — the Workflow tool is invoked inside a session, not from `cf`, so
-  `cf adjudicate` / `report` / local `run` print the script path and the `args` file and expect the
-  results to be handed back (`cf ingest <results.json>`);
+  `cf adjudicate` / `report` / local `run` print the script path and the `args`, and the result is
+  handed back with `cf adjudicate --transcribe <result.json> --from {adjudicate,challenge}` (a
+  local fleet's journal comes back through `cf harvest <id> --journal <wf dir>`). There is no
+  `cf ingest`: it never existed, and this line used to send a stuck reader looking for it;
 - opening, merging or reporting anything to a repository owner.
 
 ---
@@ -177,8 +240,8 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 | pipeline, smoke test, steering commands, budget-before-concurrency, harvest snippet | the five run roots' `RUNBOOK.md` (identical across the three differential variants) |
 | the bridge architecture, zero usage counters, the normaliser's necessity | the same file's "ADDENDUM — the run as actually launched" |
 | worktree reclamation and the pre-run state | the same file's "NOTE 2026-09-07" |
-| per-variant differences (gate kinds, prompt add-ons, bridge, concurrency) | diffing `config.yaml`, `prompts/*`, `bin/*` and `scripts/verify_findings.py` across the five roots |
-| 16 concurrent hosted sessions per account; 10–15 min/task; 16–24 h for 763 tasks; coordinate heavy jobs | `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §8 |
-| the gate fails closed without the book text, and the two hard-wired paths | same, §8; `~/Desktop/tao-diff-run/scripts/verify_findings.py` |
-| the local API-key bridge failure (20 requests, 18 retries, HTTP 404 on no credit) | design critique `critique.json`, risks |
-| gate out of tree + changed-files check; read-only source mounts; host allowlist and recorded consent | design critique `critique.json`, gaps 3 and 13, risks 2–3 |
+| per-variant differences (gate kinds, prompt add-ons, bridge, concurrency) | diffing `config.yaml`, `prompts/*`, `bin/*` and each root's own `verify_findings.py` across the five roots |
+| 16 concurrent hosted sessions per account; 10–15 min/task; 16–24 h for 763 tasks; coordinate heavy jobs | the docstring-tag companion's `HANDOFF.md` §8 |
+| the gate fails closed without the book text, and the two hard-wired paths | same, §8; the v1 corpus's own `verify_findings.py` |
+| the local API-key bridge failure (20 requests, 18 retries, HTTP 404 on no credit) | the design critique, risks |
+| gate out of tree + changed-files check; read-only source mounts; host allowlist and recorded consent | the design critique, gaps 3 and 13, risks 2–3 |

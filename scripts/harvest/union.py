@@ -1,11 +1,11 @@
 """Union a repo's findings across runs, with run provenance.
 
-Rewrite of the ad hoc 2026-09-06 scripts that produced
-/Users/jack/Desktop/tao-diff-run/union.{ours,adam}.json.  Those grouped by
+Rewrite of the ad hoc v1 scripts that produced the campaign's
+``union.{ours,adam}.json``.  Those grouped by
 ``(item, kind, concept[:50])``, so the SAME defect found by two runs became two
 rows whenever the two agents phrased the concept differently -- visible in
 union.adam.json, where Exercise 1.6.39 appears twice with runs ``["c-text"]``
-and ``["c-pdf"]``.  design/critique.json names that defect: "concept is
+and ``["c-pdf"]``.  The design critique names that defect: "concept is
 LLM-written text, so the same defect in two runs gets different ids and
 cross-run linking cannot use it".
 
@@ -16,6 +16,19 @@ part of the key because an item label means a different item in a different
 source: unioning across sources would merge two books' ``Exercise 1.3.19`` into
 one entry and report a single defect where there are two.  ``--new-only`` answers the question a new
 run is actually run to answer: what did it find that the baseline did not?
+
+``--group-by defect-key`` -- spelled ``finding-id`` until it was renamed, which is
+still accepted -- does NOT group on the finding_id.  The run id is the first part
+of that hash, so the same defect found by two runs has two ids and
+nothing links them: the "exact" grouping answered "everything is new", which is
+the regression -- re-found defects scored as misses -- this module was written to
+fix.  It groups on ``defect_key`` instead (``cflib.hashing.defect_key``: the
+identical hash with the run id dropped and over the COLLAPSED item), so it
+distinguishes two defects that share an item and a kind, which the default
+cannot, and still links a defect across runs, which the id cannot.  Because both
+keys read the same collapsed item, this grouping is a REFINEMENT of the default
+one -- it can only split a group the default merges, never split a defect the
+default joined.  Nothing stored changes.
 """
 from __future__ import annotations
 
@@ -28,10 +41,24 @@ from typing import Iterable, Sequence
 if __package__ in (None, ""):  # `python3 scripts/harvest/union.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harvest._compat import SUBSTANTIVE_KINDS, iso_now
+from harvest._compat import CfError, SUBSTANTIVE_KINDS, iso_now
 from harvest.tally import UNATTRIBUTED, collect, parse_run_arg, unjoinable
 
 SEVERITY_RANK = {"low": 0, "medium": 1, "high": 2}
+
+#: the grouping the exact option has always DONE, now also what it is called.
+#: ``finding-id`` stays as an alias because it is what every existing caller and
+#: every recorded union document says, and it is a name for the same behaviour --
+#: but it is a misleading one (it never grouped on the finding_id), so a run that
+#: uses it is told once.
+GROUP_BY_ALIASES = {"finding-id": "defect-key"}
+GROUP_BY_CHOICES = ("item-kind", "defect-key", "finding-id")
+
+
+def canonical_group_by(value: str) -> str:
+    """The grouping *value* means, resolving the deprecated spelling."""
+    text = str(value or "item-kind")
+    return GROUP_BY_ALIASES.get(text, text)
 
 
 def _worst(severities: Iterable[str]) -> str:
@@ -40,19 +67,49 @@ def _worst(severities: Iterable[str]) -> str:
     return max(known, key=lambda s: SEVERITY_RANK[s]) if known else ""
 
 
+def _refuse_unlinkable(rows: Sequence[dict]) -> None:
+    """Refuse ``--group-by defect-key`` over rows that cannot link across runs.
+
+    ``harvest.tally`` stamps every row with a ``defect_key``.  Rows from anywhere
+    else have only the ``finding_id``, whose first hashed part is the run id, so
+    grouping several runs by it puts the same defect in two groups and
+    ``--new-only`` reports every re-found defect as new.  Refusing beats
+    answering that.
+    """
+    keyless = sorted({str(r.get("run") or "") for r in rows if not r.get("defect_key")})
+    runs = sorted({str(r.get("run") or "") for r in rows})
+    if keyless and len(runs) > 1:
+        raise CfError(
+            "--group-by defect-key cannot link a defect across runs on these rows: "
+            f"{len(keyless)} of {len(runs)} run(s) carry no run-independent key "
+            f"({', '.join(keyless[:3])})",
+            hint="the finding_id hashes the run id, so the same defect in two runs has two "
+                 "ids and --new-only would call every re-found defect new. Use --group-by "
+                 "item-kind, or build the rows with harvest.tally.collect, which stamps "
+                 "defect_key on every row")
+
+
 def union(rows: Sequence[dict], repo: str | None = None,
           baseline_runs: Iterable[str] = (), new_only: bool = False,
           substantive_only: bool = False, group_by: str = "item-kind",
           source_id: str | None = None) -> list[dict]:
     """Group rows into one entry per defect, tagged with the runs that found it.
 
-    ``group_by`` is ``item-kind`` (mechanical, the default) or ``finding-id``
-    (exact, but only usable on a v2 corpus where every row carries one).
+    ``group_by`` is ``item-kind`` (mechanical, the default) or ``defect-key``
+    (exact: the item, the kind AND the declarations, keyed on the row's
+    ``defect_key`` -- the finding_id with the run id dropped and over the
+    collapsed item, because the id itself cannot link a defect across runs).
+    Every ``defect-key`` group is inside exactly one ``item-kind`` group: both
+    read the same collapsed item, so the exact key only ever splits further.
     ``source_id`` restricts the union to one source; with it left None every
     source is unioned, but never ACROSS sources -- the source is part of the key
     either way.
     """
     baseline = set(baseline_runs)
+    rows = list(rows)
+    group_by = canonical_group_by(group_by)
+    if group_by == "defect-key":
+        _refuse_unlinkable(rows)
     groups: dict[tuple, list[dict]] = collections.defaultdict(list)
     for row in rows:
         if repo is not None and row["repo"] != repo:
@@ -62,8 +119,8 @@ def union(rows: Sequence[dict], repo: str | None = None,
             continue
         if substantive_only and row["kind"] not in SUBSTANTIVE_KINDS:
             continue
-        if group_by == "finding-id" and row.get("finding_id"):
-            key = (row_source, row["repo"], str(row["finding_id"]))
+        if group_by == "defect-key" and row.get("defect_key"):
+            key = (row_source, row["repo"], str(row["defect_key"]))
         else:
             key = (row_source, row["repo"], row["item"], row["kind"])
         groups[key].append(row)
@@ -84,6 +141,9 @@ def union(rows: Sequence[dict], repo: str | None = None,
             "rows": len(group),
             "decls": sorted({d for r in group for d in r["decls"]}),
             "finding_ids": sorted({str(r["finding_id"]) for r in group if r.get("finding_id")}),
+            # one per RUN above; one per DEFECT here (the same hash without the
+            # run id), which is what `--group-by defect-key` groups on
+            "defect_keys": sorted({str(r["defect_key"]) for r in group if r.get("defect_key")}),
             "concepts": [{"run": r["run"], "concept": r.get("concept")} for r in group],
             "files": sorted({r["file"] for r in group}),
             "in_baseline": bool(baseline & set(runs)),
@@ -123,7 +183,7 @@ def build(runs: dict[str, str | Path], repo: str | None = None,
         "source_id": source_id or "*",
         "runs": sorted(runs),
         "baseline_runs": sorted(kwargs.get("baseline_runs") or []),
-        "group_by": kwargs.get("group_by", "item-kind"),
+        "group_by": canonical_group_by(kwargs.get("group_by", "item-kind")),
         "summary": summary(entries),
         # in-text labels whose spelling the grammar could not canonicalise.  A
         # union joins by item, so such a row cannot be matched to the same item
@@ -142,9 +202,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--new-only", action="store_true",
                         help="keep only defects no baseline run found")
     parser.add_argument("--substantive-only", action="store_true")
-    parser.add_argument("--group-by", choices=("item-kind", "finding-id"), default="item-kind")
+    parser.add_argument("--group-by", choices=GROUP_BY_CHOICES, default="item-kind",
+                        help="item-kind (default) groups on (source, repo, item, kind); "
+                             "defect-key also groups on the declarations, keyed on the "
+                             "finding_id with the run id dropped and over the collapsed "
+                             "item so two runs of one defect still meet (finding-id is the "
+                             "deprecated spelling of defect-key)")
     parser.add_argument("--source", default=None, help="restrict to one source_id")
     args = parser.parse_args(argv)
+    if args.group_by in GROUP_BY_ALIASES:
+        print(f"note: --group-by {args.group_by} is the old name for "
+              f"--group-by {GROUP_BY_ALIASES[args.group_by]}; it never grouped on the "
+              f"finding_id (the run id is that hash's first part). Same behaviour, and "
+              f"the document below records the new name.", file=sys.stderr)
     runs = dict(parse_run_arg(v) for v in args.run)
     doc = build(runs, repo=args.repo, source_id=args.source, baseline_runs=args.baseline,
                 new_only=args.new_only, substantive_only=args.substantive_only,

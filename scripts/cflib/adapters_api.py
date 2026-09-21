@@ -1,6 +1,6 @@
 """The adapter interface: how a companion repo becomes a statement table.
 
-New code. It formalises the Stage 0/2 contract of design/stage_map.md so the
+New code. It formalises the Stage 0/2 contract of docs/design/stage_map.md so the
 three shipped adapters (``docstring_tags`` for tao-measure-lean and
 teorth/analysis, ``attribution_table`` for measure_theory's overlay data,
 ``ledger_nodes`` for its source-formalization ledger) and any future ``custom``
@@ -22,7 +22,7 @@ from . import gitsafe
 from .errors import AdapterError
 from .hashing import sha256_json
 
-#: Row schema v2 (docs/design/multi-source-model.md S6.2). Required on every row.
+#: Row schema v2 (docs/design/archive/multi-source-model.md S6.2). Required on every row.
 #: An item is the pair ``(source_id, item)``: the same label means different
 #: things in different sources, so a row that does not say which source it is
 #: about cannot be paired, gated or tallied.
@@ -72,19 +72,41 @@ class Adapter(ABC):
         self.name = name or self.config.get("name") or self.config.get("repo_name") or ""
         self.workspace = workspace
 
-    # -- discovery (docs/design/multi-source-model.md S4.2, S4.3) ------
+    # -- discovery (docs/design/archive/multi-source-model.md S4.2, S4.3) ------
     @classmethod
     def detect(cls, repo: str | Path) -> tuple[float, dict]:
         """How sure are we that ``repo`` follows THIS convention, and why?
 
         ``cf onboard`` takes no --adapter in the common case: the kinds score
         themselves and the best one wins (a tie, or a best below 0.5, is a
-        refusal asking for the flag).  Until each adapter implements this, the
-        shipped heuristics live in :func:`cflib.discovery.detect_scores`.
+        refusal asking for the flag).  :func:`cflib.discovery.detect_scores`
+        calls this on every class in ``adapters.api.registry()``, so the
+        heuristic for a convention -- its globs, its floors, its score constants
+        -- lives on that convention's adapter and a new convention is a new
+        file.  The default is 0.0: a kind that cannot recognise itself is never
+        chosen automatically, only through ``--adapter``.
+
+        The evidence dict is printed by `cf onboard` and stored in state.json.
+        ``reason`` is the one line a human reads; everything else is the
+        measurement behind it.  A key the adapter names here can also be written
+        into the generated adapter.yaml, which is how a per-repo spelling of the
+        convention (``tag.require_backticks``) stops being a hard-coded default.
         """
-        from .discovery import detect_scores
-        score, evidence = detect_scores(Path(repo)).get(cls.kind, (0.0, {}))
-        return score, evidence
+        return 0.0, {}
+
+    @classmethod
+    def explain(cls, repo: str | Path) -> list[str]:
+        """Why this kind scored what it did -- the near-miss lines of a refusal.
+
+        One "looked for / found" line per signal this convention keys on, for a
+        repo it did NOT claim: ``pdf-overlay/official-source.json: absent``,
+        ``docstring tags: 0/102 documented files (0 backticked, 86 bare -- set
+        tag.require_backticks: false)``.  Without them the only thing an
+        unrecognised repo is told is that it was not recognised, and the user's
+        next move is to read the source.  Naming the override that would settle
+        it is the point: a line that only counts is half a diagnosis.
+        """
+        return []
 
     #: The repo signals (:data:`cflib.discovery.SIGNALS`) this convention reads
     #: as its own.  They are ranked first by :meth:`discover_sources`, and they
@@ -109,6 +131,19 @@ class Adapter(ABC):
         only its convention can say: chiefly the item kinds its own tags use,
         which no signal over the SOURCE can supply when the PDF is not on this
         machine (:attr:`cflib.discovery.SourceClaim.kinds`).
+
+        `cf onboard` calls this and merges what it ADDS into the seven repo
+        signals (:func:`cflib.discovery.discover_sources_with_adapter`), so a
+        convention whose source no signal can see has a way in.  A convention
+        that IS its own manuscript says so by naming the files: a claim carrying
+        :attr:`cflib.discovery.SourceClaim.files` -- absolute paths, in reading
+        order -- is a source whose bytes are already in hand, and onboarding
+        concatenates exactly that sequence, fingerprints it and registers it
+        unconfirmed like any other discovered source, rather than searching for a
+        PDF that does not exist.  A claim that repeats a signal cflib already
+        read is dropped in favour of cflib's: an adapter may add a source, never
+        restate one, because every later stage's item table is built from the
+        source's own text and not from the companion's reading of it.
         """
         from .discovery import discover_sources
         claims = list(discover_sources(Path(repo), adapter=self.kind))
@@ -217,7 +252,7 @@ class Adapter(ABC):
         """Everything that changes the extraction result.
 
         Subclasses extend this: ledger-backed adapters MUST add their export
-        shas (design/critique.json: "the extract key must include ledger sha
+        shas (the design critique: "the extract key must include ledger sha
         and target-refinement sha for ledger repos"), otherwise `cf extract`
         replays a stale table after the repo moves on.  The bound source shas
         belong in the key too: the same repo extracted against another edition

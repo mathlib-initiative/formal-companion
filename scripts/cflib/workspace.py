@@ -1,6 +1,6 @@
 """Load, validate and update workspace.yaml.
 
-Replaces ``cflib/campaign.py`` (docs/design/multi-source-model.md R1): the unit
+Replaces ``cflib/campaign.py`` (docs/design/archive/multi-source-model.md R1): the unit
 of organisation is a COMPANION with a LIST OF SOURCES, and the directory a user
 works in is a WORKSPACE holding N companions and M sources.
 
@@ -36,7 +36,7 @@ WORKSPACE_VERSION = 2
 
 #: `sources.<id>.role`: audited = a companion is checked against it; reference =
 #: prepared only so page_map_to can be checked (the bundled-but-not-anchored
-#: edition of docs/design/multi-source-model.md S4.6).
+#: edition of docs/design/archive/multi-source-model.md S4.6).
 ROLE_AUDITED = "audited"
 ROLE_REFERENCE = "reference"
 
@@ -80,7 +80,11 @@ _SECTION_COMMENTS: dict[str, str] = {
     "library_paths": (
         "# Where `cf onboard` may look for a PDF a repo names but does not commit. Searched\n"
         "# in order after the repo's own paths and caches and the workspace store; matched\n"
-        "# by sha when one is known, by filename/title otherwise.\n"
+        "# by sha when one is known, by filename/title otherwise. This list is ALSO the\n"
+        "# allowlist for an absolute path a companion repo names in its own files, so add to\n"
+        "# it deliberately; the roots derived from this workspace are searched too -- its own\n"
+        "# sources/ store, and <parent>/**/sources plus <parent>/**/.lake/official-pdf for the\n"
+        "# parent of every onboarded repo, never the bare parent. `cf doctor` prints the set.\n"
     ),
 }
 
@@ -301,7 +305,7 @@ class Workspace:
                 hint="nothing was written; this is a bug in the command that built this state")
         out = [f"# workspace.yaml -- N companions, M sources.\n"
                f"# Rewritten by cf on {date.today().isoformat()}; see\n"
-               f"# docs/design/multi-source-model.md for the schema.\n"]
+               f"# docs/design/archive/multi-source-model.md for the schema.\n"]
         for key, value in self.data.items():
             comment = _SECTION_COMMENTS.get(key)
             out.append("\n")
@@ -395,7 +399,7 @@ class Workspace:
             raise WorkspaceError(
                 "workspace.yaml `companions:` must be a map keyed by companion name",
                 hint="schema version 2 replaced the list with a map; see "
-                     "docs/design/multi-source-model.md S1.1")
+                     "docs/design/archive/multi-source-model.md S1.1")
         return {name: CompanionRef.from_dict(name, body) for name, body in raw.items()}
 
     def companion(self, name: str) -> CompanionRef:
@@ -535,11 +539,41 @@ class Workspace:
 
     @property
     def library_paths(self) -> list[str]:
-        """Directories `cf onboard` may search for a PDF a repo names."""
+        """Directories `cf onboard` may search for a PDF a repo names.
+
+        The configured list plus :meth:`derived_library_paths`.  This is also the
+        allowlist for an absolute path a companion repo names in its own files
+        (:func:`cflib.discovery.search_order`), which is why the derived half is
+        both DERIVED and kept to the two shapes of :data:`DERIVED_ROOT_SHAPES`.
+        The home-directory globs it replaces let any audited repo point the
+        extractor at anything under them, and only worked at all on a machine that
+        keeps its checkouts there.
+        """
         raw = self.data.get("library_paths")
-        if raw is None:
-            return list(DEFAULT_LIBRARY_PATHS)
-        return [str(p) for p in raw]
+        configured = list(DEFAULT_LIBRARY_PATHS) if raw is None else [str(p) for p in raw]
+        out = list(configured)
+        for path in self.derived_library_paths():
+            if path not in out:
+                out.append(path)
+        return out
+
+    def derived_library_paths(self) -> list[str]:
+        """Search roots this workspace has already been told about.
+
+        Its own ``sources/`` store, plus :func:`derived_roots_for` of every
+        onboarded companion repo.  A repo path that is not a directory (a stale
+        entry, a checkout that moved) is skipped rather than walked.
+
+        Nothing here is a bare directory except the workspace's own store, and
+        `cf init` / `cf doctor` print the effective set rather than leaving it in
+        a file nobody opens.
+        """
+        out: list[str] = [str(self.root / "sources")]
+        for ref in self.companions.values():
+            for root in derived_roots_for(ref.repo):
+                if root not in out:
+                    out.append(root)
+        return out
 
     # -- validation ----------------------------------------------------
     def validate(self, *, structural_only: bool = False) -> list[str]:
@@ -640,12 +674,47 @@ class Workspace:
         return problems
 
 
-#: Searched by `cf onboard` for a PDF a repo names but does not commit.
+#: Searched by `cf onboard` for a PDF a repo names but does not commit, when
+#: workspace.yaml names no ``library_paths`` at all.  One home-relative entry and
+#: nothing else: the rest of the search roots are derived from the workspace
+#: (:meth:`Workspace.derived_library_paths`), because this list doubles as the
+#: allowlist for absolute paths a companion repo names in its own files.
 DEFAULT_LIBRARY_PATHS: tuple[str, ...] = (
     "~/Downloads",
-    "~/Desktop/**/sources",
-    "~/Desktop/**/.lake/official-pdf",
 )
+
+#: The two places a companion's own PDF actually sits, relative to the directory
+#: that holds the checkouts: a sibling repo's ``sources/`` directory, or its Lake
+#: cache of the file the author publishes.  A derived root is ALWAYS one of these
+#: shapes and never the bare parent, because ``library_paths`` doubles as the
+#: allowlist for an absolute path a companion repo names in its own files
+#: (:func:`cflib.discovery.search_order`): the bare parent of a checkout kept on
+#: the desktop is the whole desktop, so onboarding one repo would swap a handful
+#: of reachable PDFs for every PDF within ``LIBRARY_MAX_DEPTH`` of it.
+DERIVED_ROOT_SHAPES: tuple[str, ...] = (
+    "**/sources",
+    "**/.lake/official-pdf",
+)
+
+
+def derived_roots_for(repo: str | Path) -> list[str]:
+    """The ``library_paths`` entries onboarding *repo* adds.
+
+    Onboarding ``<somewhere>/<companion>`` is how the user says ``<somewhere>``
+    holds their companions, so a sibling repo that carries the PDF is reachable
+    on any layout instead of only under one person's home-directory layout -- but
+    only in the two shapes of :data:`DERIVED_ROOT_SHAPES`, which is strictly
+    narrower than the home-directory globs this replaces.  A path that is not a
+    directory (a stale entry, a checkout that moved) contributes nothing.
+    """
+    raw = str(repo or "")
+    if not raw:
+        return []
+    path = Path(raw).expanduser()
+    if not path.is_dir():
+        return []
+    parent = path.resolve().parent
+    return [str(parent / shape) for shape in DERIVED_ROOT_SHAPES]
 
 
 def _is_sha256(value: str) -> bool:

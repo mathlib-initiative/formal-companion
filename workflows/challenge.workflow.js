@@ -7,8 +7,8 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/challenge-batch1-findings-wf_c3f0e5d0-d65.js
-// (identical to transcript b174aa13 L5953). Generalised:
+// Ported from: the v1 campaign's challenge-batch1-findings workflow, which does
+// not travel with this repo. Generalised:
 //   * the three repo paths, the book path, the errata path and the convention
 //     list were constants in the original and are `args` fields here;
 //   * findings arrive with a stable `finding_id`; the original matched a
@@ -30,7 +30,9 @@ const sourceLines = SOURCES.map(s =>
   '  ' + s.source_id + ' -- ' + (s.title || s.source_id) + (s.edition ? ' (' + s.edition + ')' : '') +
   '\n    text: ' + s.text + '  (sha256 ' + s.source_sha + ')' +
   '\n    pages: ' + s.pages_dir + '/pNNN.txt   (PDF page = printed page + ' + s.page_offset + ')' +
-  '\n    errata: ' + s.errata).join('\n')
+  // an errata page whose URL came from the audited repo and that nobody
+  // confirmed is NOT authoritative: the prompt says so instead of naming it
+  '\n    errata: ' + (s.errata || s.errata_withheld || '(none)')).join('\n')
 const COMP = A.companion || {}
 const PEERS = A.peers || []
 const FINDINGS = A.findings || []

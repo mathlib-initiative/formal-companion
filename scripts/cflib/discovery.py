@@ -1,6 +1,6 @@
 """Discovery: read the repo, find its sources, fingerprint the bytes.
 
-docs/design/multi-source-model.md R2 / S4.  `cf onboard <repo>` types nothing:
+docs/design/archive/multi-source-model.md R2 / S4.  `cf onboard <repo>` types nothing:
 this module reads a companion repository -- and NEVER writes to it -- and
 answers four questions the user used to answer with flags.
 
@@ -44,6 +44,13 @@ SIGNALS = ("formalization_yaml", "ledger_source", "official_source_json",
 MIN_ANCHOR_AGREEMENT = 0.80
 MIN_ANCHOR_MARGIN = 0.05
 MIN_ADAPTER_CONFIDENCE = 0.5
+
+#: :attr:`SourceClaim.discovered_by`, and the value `cf onboard` writes into
+#: ``sources.<id>.discovered.pdf_found_in`` for such a source.  Named here, with
+#: the field, because both the adapter that sets it and the command that reads it
+#: have to spell it the same way.
+DISCOVERED_BY_ADAPTER = "adapter"
+DISCOVERED_BY_MANUAL = "manual"
 
 #: a sha we cannot find is worth saying once per candidate, not 450 times: past
 #: this many `edition_mismatch` lines the search stops reporting and just keeps
@@ -103,6 +110,27 @@ class SourceClaim:
     #: it is what `cf sources` has to fall back on when the PDF is not on this
     #: machine and :func:`cflib.inference.infer_kinds` has no text to read.
     kinds: tuple[str, ...] = ()
+    #: A source that IS files on this machine rather than a book to be located:
+    #: the absolute paths whose CONCATENATED bytes are the source, in reading
+    #: order.  A leanblueprint's manuscript is its own ``.tex`` tree and
+    #: `cf onboard --source <file>` names one outright, so neither has a PDF to
+    #: search for: :func:`resolve_claims` builds the body from these bytes and
+    #: never calls :func:`locate_pdf`, which is also why the ``pdf_hints``
+    #: boundary does not apply to them -- the repo is not choosing the path, the
+    #: adapter's own glob or the operator is.
+    files: tuple[str, ...] = ()
+    #: ``pdf`` / ``text`` and ``formfeed`` / ``none`` for such a source, read off
+    #: the bytes by `cf onboard` (``sources/locator.py`` owns both rules).
+    source_format: str = ""
+    pagination: str = ""
+    #: how the ADAPTER locates an item in this source (``number``, ``label``).
+    #: Provenance, recorded under ``discovered``: it is what the adapter keys its
+    #: rows on, never a fact about the source's own pages.
+    locator: str = ""
+    #: who named this source: :data:`DISCOVERED_BY_ADAPTER` (the companion's own
+    #: manuscript) or :data:`DISCOVERED_BY_MANUAL` (``cf onboard --source``).
+    #: Empty for a book the seven signals described.
+    discovered_by: str = ""
     confidence: float = 0.0
     sources: tuple[str, ...] = ()          # every file that contributed
 
@@ -139,6 +167,14 @@ class SourceClaim:
             # kinds are unioned, never picked: two signals that each see part of
             # the grammar (an adapter's tags, a sibling claim's) both saw it.
             kinds=_uniq(hi.kinds + lo.kinds),
+            # a claim that names its own bytes keeps them whichever side it was
+            # on: a corroborating prose claim with the higher confidence must not
+            # turn a manuscript back into a book nobody can find.
+            files=hi.files or lo.files,
+            source_format=pick("source_format"),
+            pagination=pick("pagination"),
+            locator=pick("locator"),
+            discovered_by=pick("discovered_by"),
             confidence=max(self.confidence, other.confidence),
             sources=_uniq(self.sources + other.sources),
         )
@@ -253,12 +289,28 @@ class DiscoveryResult:
             frm = (body.get("discovered") or {}).get("from") or []
             if frm:
                 out.append(f"      from     {', '.join(frm)}")
+            manuscript = body.get("manuscript_files") or []
             if body.get("pdf"):
-                out.append(f"      pdf      {body['pdf']}")
+                # `--source` makes a text manuscript land on this line routinely,
+                # and calling one "pdf" is the same wrong word this module already
+                # took out of its refusals ("no source file", `cf sources add
+                # <source>`): a source is not a PDF.
+                label = "source" if body.get("source_format") == "text" else "pdf"
+                out.append(f"      {label:<8s} {body['pdf']}")
                 out.append(f"               found in: {(body.get('discovered') or {}).get('pdf_found_in')}")
+            elif manuscript:
+                # not "NOT FOUND": these bytes are in hand, they are simply not
+                # one file yet -- `cf onboard` concatenates them in this order.
+                out.append(f"      text     {len(manuscript)} file(s), concatenated in this order")
+                for path in manuscript[:8]:
+                    out.append(f"               {path}")
             else:
                 out.append("      pdf      NOT FOUND on this machine "
                            "(text, items and the quote gate cannot be prepared)")
+            if body.get("pagination"):
+                out.append(f"      pages    {body['pagination']}"
+                           + ("   (located by section and line, not by printed page)"
+                              if body["pagination"] == "none" else ""))
             if body.get("offset") is not None:
                 out.append(f"      offset   {body['offset']:<34d} confidence "
                            f"{float(body.get('offset_confidence') or 0):.3f}"
@@ -302,57 +354,157 @@ class DiscoveryResult:
 # S4.2 adapter detection
 # --------------------------------------------------------------------------
 
+def _adapters_api():
+    """The real ``adapters.api`` module, or None when there is none to import.
+
+    Imported lazily and never at module scope: nothing in cflib may depend on
+    ``scripts/adapters/`` being importable (``cflib.adapters_api``), and this is
+    the one place in discovery that reads it.
+
+    The dance around ``sys.modules`` is for a caller that has REPLACED the
+    top-level ``adapters`` module with a stand-in exposing only ``load()`` --
+    which is how the suite onboards a repo without running a real parser.  A
+    stand-in has no ``__path__``, so importing the submodule through it fails;
+    detection is core behaviour (`cf onboard` cannot even choose a parser without
+    it), so the real package is imported beside the stand-in and the stand-in is
+    handed straight back.
+
+    The stand-in is tested for FIRST, before the ``adapters.api`` shortcut, and
+    ``registry()`` is called while the real package is still in ``sys.modules``.
+    Both halves matter: any process that has imported the package at all leaves
+    ``adapters.api`` cached, so the shortcut used to return early and the dance
+    never ran; and ``registry()`` imports the shipped adapter modules on first
+    call, which needs a parent with a ``__path__``.  Getting either wrong makes
+    detection raise ``ImportError: cannot import name 'attribution_table' from
+    'adapters'`` for every test class that onboards behind a stand-in, and makes
+    a green suite a matter of which test file imported the adapters first.
+    """
+    import importlib
+    import sys
+
+    stand_in = sys.modules.get("adapters")
+    if stand_in is not None and not hasattr(stand_in, "__path__"):
+        del sys.modules["adapters"]
+        try:
+            mod = importlib.import_module("adapters.api")
+            mod.registry()
+            return mod
+        except Exception:                                 # pragma: no cover - adapters absent
+            return None
+        finally:
+            sys.modules["adapters"] = stand_in
+    mod = sys.modules.get("adapters.api")
+    if mod is not None and hasattr(mod, "registry"):
+        return mod
+    try:
+        return importlib.import_module("adapters.api")
+    except Exception:                                     # pragma: no cover - adapters absent
+        return None
+
+
+def _adapter_classes() -> dict:
+    """``{kind: Adapter class}``, or ``{}`` when the adapters package is absent."""
+    api = _adapters_api()
+    if api is None:                                       # pragma: no cover - adapters absent
+        return {}
+    try:
+        return dict(api.registry())
+    except Exception:                                     # pragma: no cover - broken adapter
+        return {}
+
+
 def detect_scores(repo: Path) -> dict[str, tuple[float, dict]]:
-    """``{kind: (score, evidence)}`` -- the shipped heuristics of design S4.2."""
+    """``{kind: (score, evidence)}`` -- design S4.2, one entry per REGISTERED kind.
+
+    The heuristic that recognises a convention lives on that convention's
+    adapter (``adapters.api.Adapter.detect``); this is the ranking loop over
+    them, so adding a convention is adding a file rather than editing the core
+    as well.  Only kinds an adapter actually implements can appear, which is the
+    behaviour change: a repo carrying a ``source-formalization-ledger.json`` used
+    to score a flat 0.9 for the unimplemented ``ledger_nodes``, win on the
+    maximum, and be refused at onboarding even when ``docstring_tags`` would
+    have read it.
+    """
     repo = Path(repo)
-    scores: dict[str, tuple[float, dict]] = {}
+    api = _adapters_api()
+    if api is None:                                       # pragma: no cover - adapters absent
+        warn("the adapters package is not importable: no convention can be detected")
+        return {}
+    return {kind: (score, evidence)
+            for kind, (score, evidence) in api.detect_all(repo).items() if score > 0}
 
-    overlay_data = sorted((repo / "pdf-overlay" / "data").glob("*.json")) if (
-        repo / "pdf-overlay" / "data").is_dir() else []
-    official = repo / "pdf-overlay" / "official-source.json"
-    if overlay_data and official.exists():
-        scores["attribution_table"] = (0.98, {
-            "reason": f"{len(overlay_data)} pdf-overlay/data/*.json + official-source.json",
-            "files": ["pdf-overlay/data", "pdf-overlay/official-source.json"]})
 
-    ledger = repo / "source-formalization-ledger.json"
-    if ledger.exists() and not (repo / "pdf-overlay").is_dir():
-        scores["ledger_nodes"] = (0.9, {"reason": "source-formalization-ledger.json, no pdf-overlay/",
-                                        "files": ["source-formalization-ledger.json"]})
+def detect_report(repo: str | Path) -> list[str]:
+    """Why every kind scored what it did -- the lines a refusal prints.
 
-    lean_files = _lean_files(repo, limit=400)
-    if len(lean_files) >= 20:
-        sampled = min(len(lean_files), 200)
-        tagged, documented = _count_tagged(lean_files, sample=sampled)
-        score = min(0.95, 0.6 + 0.35 * (tagged / documented if documented else 0.0))
-        if tagged:
-            scores["docstring_tags"] = (round(score, 4), {
-                "reason": f"{tagged} of {documented} sampled .lean files with a docstring open "
-                          f"one with a book tag ({sampled - documented} carry no docstring)",
-                "lean_files": len(lean_files), "sampled": sampled,
-                "documented": documented, "tagged": tagged})
-    return scores
+    Onboarding is the front door, and "cannot tell what kind of companion this
+    is" told the user only that it had failed: not what was looked for, not what
+    was found, not which convention was nearly matched.  These lines are the
+    ranked scores followed by one "looked for / found" line per kind, each
+    naming the override that would settle it.
+
+    A detector that RAISED is printed too.  ``detect_all`` records the exception
+    under ``evidence["error"]`` with score 0, and a report that filtered on
+    ``score > 0`` swallowed exactly the reason the user is reading it for: the
+    repo was called unrecognisable while the crash that made it so went
+    unmentioned in the one place that exists to say why.
+    """
+    repo = Path(repo)
+    api = _adapters_api()
+    if api is None:                                       # pragma: no cover - adapters absent
+        return ["  the adapters package is not importable; no convention could be measured"]
+
+    out: list[str] = []
+    measured = api.detect_all(repo)
+    scored = {k: v for k, v in measured.items() if v[0] > 0}
+    if scored:
+        out.append("  scores:")
+        for kind, (score, evidence) in sorted(scored.items(), key=lambda kv: (-kv[1][0], kv[0])):
+            out.append(f"    {kind:<20s} {score:.2f}  {evidence.get('reason', '')}".rstrip())
+    failed = {k: v[1]["error"] for k, v in sorted(measured.items()) if v[1].get("error")}
+    if failed:
+        out.append("  failed:")
+        for kind, error in failed.items():
+            out.append(f"    {kind:<20s} could not be measured: {error}")
+    out.append("  looked for:")
+    for kind, lines in sorted(api.explain_all(repo).items()):
+        for line in lines or [f"{kind}: nothing this convention keys on"]:
+            out.append(f"    {line}")
+    from .vocab import ADAPTER_KINDS
+
+    declared = sorted(set(ADAPTER_KINDS) - set(api.registry()))
+    if declared:
+        out.append(f"  declared in the vocabulary but not implemented in v1: {', '.join(declared)} "
+                   "(references/onboarding-contract.md)")
+    return out
 
 
 def detect_adapter(repo: str | Path) -> tuple[str, float, dict]:
     """Which convention this repo follows. Refuses a tie or a weak best guess."""
     repo = Path(repo)
     scores = detect_scores(repo)
+    kinds = sorted(_adapter_classes()) or sorted(scores)
+    flags = " | ".join(f"--adapter {k}" for k in kinds) or "--adapter <kind>"
     if not scores:
         raise DiscoveryError(
-            f"cannot tell what kind of companion {repo} is",
-            hint="pass `cf onboard <repo> --adapter docstring_tags|attribution_table`; "
+            "\n".join([f"cannot tell what kind of companion {repo} is"] + detect_report(repo)),
+            hint=f"pass one of `{flags}` to `cf onboard <repo>`; "
                  "see references/onboarding-contract.md for what each kind needs")
     ranked = sorted(scores.items(), key=lambda kv: (-kv[1][0], kv[0]))
     (kind, (score, evidence)) = ranked[0]
     if len(ranked) > 1 and abs(ranked[1][1][0] - score) < 1e-9:
         raise DiscoveryError(
-            f"{repo}: {kind} and {ranked[1][0]} both score {score:.2f}",
-            hint="pass --adapter to say which convention to read")
+            "\n".join([f"{repo}: {kind} and {ranked[1][0]} both score {score:.2f}"]
+                      + detect_report(repo)),
+            hint=f"pass `--adapter {kind}` or `--adapter {ranked[1][0]}` to say which "
+                 "convention to read")
     if score < MIN_ADAPTER_CONFIDENCE:
         raise DiscoveryError(
-            f"{repo}: best adapter guess {kind} scores only {score:.2f}",
-            hint="pass --adapter to say which convention to read")
+            "\n".join([f"{repo}: best adapter guess {kind} scores only {score:.2f}, "
+                       f"below the {MIN_ADAPTER_CONFIDENCE} a guess has to clear"]
+                      + detect_report(repo)),
+            hint=f"pass `--adapter {kind}` to read it as that convention anyway, "
+                 f"or one of `{flags}`")
     evidence = dict(evidence)
     evidence["scores"] = {k: v[0] for k, v in scores.items()}
     return kind, score, evidence
@@ -384,41 +536,23 @@ def _walk(repo: Path, suffix: str, *, limit: int = 4000) -> list[Path]:
     return out
 
 
-def _lean_files(repo: Path, limit: int = 400) -> list[Path]:
-    """The repo's own .lean files, sorted (the score must not depend on readdir order)."""
+def lean_files(repo: Path, limit: int = 400) -> list[Path]:
+    """The repo's own .lean files, sorted (the score must not depend on readdir order).
+
+    Public because an adapter's :meth:`detect` needs it and the walk (which
+    prunes ``.lake/packages`` and the other vendor trees) belongs here, with the
+    rest of "read the repo", rather than being copied into every convention.
+    """
     out = [p for p in _walk(repo, ".lean", limit=limit * 4) if ".lake" not in p.parts]
     return sorted(out)[:limit]
 
 
-def _count_tagged(files: Sequence[Path], sample: int = 200) -> tuple[int, int]:
-    """``(files whose docstrings open with a book tag, files that HAVE a docstring)``.
-
-    The denominator counts only files that carry a docstring at all.  A file with
-    none is not evidence against the convention: tao-measure-lean has 154 Lean
-    files of which 112 are generated blueprint stubs with no docstring, and
-    counting those would score a repo whose every documented declaration is
-    tagged at 0.70 instead of 0.95.
-    """
-    try:
-        from adapters.itemtag import find_tag  # type: ignore
-    except Exception:                                    # pragma: no cover - adapters absent
-        find_tag = None
-    tagged = with_docstring = 0
-    for path in files[:sample]:
-        try:
-            text = path.read_text(encoding="utf-8", errors="ignore")
-        except OSError:                                   # pragma: no cover
-            continue
-        heads = [m.group(1).strip() for m in re.finditer(r"/--(.{0,120})", text, re.S)]
-        if not heads:
-            continue
-        with_docstring += 1
-        for head in heads:
-            if find_tag(head) if find_tag is not None else re.match(
-                    r"`?(?:[A-Z][a-z]{2,15}\s+\d+\.\d+|In-text)", head):
-                tagged += 1
-                break
-    return tagged, with_docstring
+def tex_files(repo: Path, subdir: str = "blueprint", limit: int = 400) -> list[Path]:
+    """The repo's ``<subdir>/**/*.tex``, sorted; empty when there is no such tree."""
+    root = Path(repo) / subdir
+    if not root.is_dir():
+        return []
+    return sorted(p for p in _walk(root, ".tex", limit=limit))[:limit]
 
 
 # --------------------------------------------------------------------------
@@ -443,13 +577,89 @@ def discover_sources(repo: str | Path, *, adapter: str | None = None) -> list[So
     claims += _s6_filesystem(repo)
     claims += _s7_citations(repo)
     if adapter:
-        bonus = {"attribution_table": ("official_source_json", "ledger_source"),
-                 "ledger_nodes": ("ledger_source",),
-                 "docstring_tags": ("formalization_yaml", "graph_json")}.get(adapter, ())
+        # The signals a convention owns are declared ONCE, on its adapter class
+        # (``PRIMARY_SIGNALS``), which is also what ranks the claims in
+        # ``Adapter.discover_sources``.  A second hand-written table here is how
+        # the two drifted apart: this one gave attribution_table no bonus for the
+        # `citation` signal its own class lists.
+        cls = _adapter_classes().get(adapter)
+        bonus = tuple(getattr(cls, "PRIMARY_SIGNALS", ()) or ()) if cls is not None else ()
         for claim in claims:
             if claim.signal in bonus:
                 claim.confidence = min(1.0, claim.confidence + 0.05)
     return claims
+
+
+def discover_sources_with_adapter(repo: str | Path, *,
+                                  adapter: str | None = None) -> list[SourceClaim]:
+    """Every claim the repo makes, INCLUDING the ones only the adapter can make.
+
+    ``CLAUDE.md`` S6 promises every adapter a ``discover_sources(repo)`` and
+    `cf onboard` never called it: it called the module-level
+    :func:`discover_sources` instead, so a convention whose source is not a
+    published book could not contribute the one claim that would unblock it.  A
+    leanblueprint project is the whole of that case -- its manuscript IS its
+    ``.tex`` tree, so the seven signals find no title, no ISBN, no PDF and no
+    sha, and every blueprint repo stopped at "no source could be discovered".
+
+    The adapter may only ADD a claim here.  Its own ``discover_sources`` returns
+    these same seven signals (re-ranked, and enriched with the item kinds its
+    tags use), and adopting that reading would make the prepared item table of
+    every already-onboarded companion depend on the adapter's view of the
+    companion rather than on the source's own headings -- which is the opposite
+    of S4's "nothing about a source is typed in", and would move figures this
+    repo pins.  So a claim cflib's signals already produced is kept exactly as
+    cflib produced it, and only a genuinely new claim is appended.
+    """
+    repo = Path(repo)
+    claims = discover_sources(repo, adapter=adapter)
+    seen = {_claim_key(c) for c in claims}
+    for claim in _adapter_claims(repo, adapter):
+        key = _claim_key(claim)
+        if key in seen:
+            continue
+        seen.add(key)
+        claims.append(claim)
+    return claims
+
+
+def _claim_key(claim: SourceClaim) -> tuple:
+    """What makes two claims the same claim, for the merge above."""
+    return (claim.signal, claim.path, claim.sha256, claim.sha256_prefix,
+            claim.title, tuple(claim.files), tuple(claim.pdf_hints))
+
+
+def _adapter_claims(repo: Path, adapter: str | None) -> list[SourceClaim]:
+    """``Adapter.discover_sources(repo)`` for one kind, or nothing.
+
+    The adapter is instantiated with the minimum a discovery pass needs (its
+    kind and the repo), because no ``adapter.yaml`` exists yet the first time
+    `cf onboard` runs -- writing one is a later step of the same command.  A kind
+    whose config check needs more than that, or whose reader raises, is reported
+    and skipped: source discovery must not be lost because one convention could
+    not measure a repo it does not claim.
+
+    EVERY kind is asked, including the ones that add nothing.  The base
+    implementation re-reads the repo's own tags (``observed_kinds``), which costs
+    about a second on a companion of a hundred files -- measured on a once-per-
+    companion command that already spends several seconds running ``pdftotext``.
+    The alternative is to ask only the kinds that override the method, which means
+    inspecting a class to decide whether to call its contract: get that wrong and
+    a future convention is silently back behind the wall this function exists to
+    remove, which is the more expensive mistake.
+    """
+    if not adapter:
+        return []
+    cls = _adapter_classes().get(adapter)
+    if cls is None:
+        return []
+    try:
+        instance = cls({"adapter": adapter, "name": repo.name, "repo": str(repo)})
+        return list(instance.discover_sources(repo))
+    except Exception as exc:                              # noqa: BLE001 - see the docstring
+        detail(f"{adapter}: discover_sources could not run "
+               f"({exc.__class__.__name__}: {exc}); using the repo signals only")
+        return []
 
 
 def _rel(repo: Path, path: Path) -> str:
@@ -809,8 +1019,8 @@ def _within(path: Path, root: Path | None) -> bool:
     return path == root or root in path.parents
 
 
-#: expansions are cached per process: onboarding two sources must not walk
-#: ~/Desktop twice, and `cf onboard` already walks it once too often.
+#: expansions are cached per process: onboarding two sources must not walk a
+#: library root twice, and `cf onboard` already walks it once too often.
 _LIBRARY_CACHE: dict[str, list[Path]] = {}
 
 #: how far below a library pattern's FIXED prefix the search may descend, and how
@@ -846,8 +1056,9 @@ def _expand_library(pattern: str, max_files: int = LIBRARY_MAX_FILES,
                     max_depth: int = LIBRARY_MAX_DEPTH) -> list[Path]:
     """Expand one ``library_paths`` entry to PDFs, depth-capped and count-capped.
 
-    ``~/Desktop/**/sources`` walks Desktop to at most four levels, pruning build
-    and vendor trees, and collects the PDFs in every directory that matches.
+    ``~/books/**/sources`` walks ``~/books`` to at most four levels, pruning
+    build and vendor trees, and collects the PDFs in every directory that
+    matches.
     """
     raw = os.path.expanduser(str(pattern))
     cached = _LIBRARY_CACHE.get(raw)
@@ -1167,6 +1378,14 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
     if library_paths is None:
         library_paths = getattr(workspace, "library_paths", []) or []
     merged = merge_claims(claims, registry)
+    #: A location an OPERATOR named is the last word to be asked, not the first.
+    #: `cf onboard --source` exists for the case where nothing else answered, so
+    #: when its bytes turn out to be a source the repo itself catalogues, the fold
+    #: below has to run the repo's way round: the repo's name for the work
+    #: survives (S3's derivation step prefers a declared title to a filename stem)
+    #: and the flag only adds its path to the evidence.  `sort` is stable, so
+    #: nothing else moves.
+    merged.sort(key=lambda c: c.discovered_by == DISCOVERED_BY_MANUAL)
     result = DiscoveryResult(repo=repo, name=repo.name, adapter="")
     taken: set[str] = set(getattr(workspace, "sources", {}) or {})
     #: the fingerprint is the identity the whole model is built on, so two claims
@@ -1178,12 +1397,18 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         if _is_noise(claim):
             continue
         entry = _entry_for(claim, registry)
-        located = locate_pdf(claim, repo=repo, workspace=workspace, registry=registry,
-                             library_paths=library_paths, download=download, entry=entry,
-                             warnings=result.warnings)
+        # A claim that NAMES its files has nothing to search for: the bytes are
+        # already in hand (an adapter's own manuscript, or `cf onboard --source`),
+        # and a locate_pdf pass over them would rank a file against the filename
+        # it already is.
+        located = None if claim.files else locate_pdf(
+            claim, repo=repo, workspace=workspace, registry=registry,
+            library_paths=library_paths, download=download, entry=entry,
+            warnings=result.warnings)
         if located is not None and entry is None:
             entry = registry.by_sha(located.sha256)
-        if entry is None and located is None and claim.signal in ("prose", "citation"):
+        if entry is None and located is None and not claim.files \
+                and claim.signal in ("prose", "citation"):
             # Prose is evidence, not authority (rule 1). A sha quoted in a README
             # that matches no registry entry and no local PDF is reported, never
             # adopted: in measure_theory's README that string is the sha of
@@ -1195,8 +1420,17 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         if entry is None and located is None and not claim.title and not claim.sha256:
             result.unresolved.append(f"{claim.path} named no source we could resolve")
             continue
-        if located is not None and located.sha256 in by_sha:
-            _fold_into(by_sha[located.sha256], claim, entry, located, result, taken)
+        # Keyed on whichever sha the claim RESOLVED to, not on `located` alone: a
+        # claim that named its own files has no located PDF and its sha was read
+        # off those bytes, so keying on `located` let a `--source` file whose
+        # bytes the repo's own signals also found become a SECOND id for one sha
+        # -- the state workspace.yaml's loader refuses, reached by a flag rather
+        # than by a bug. A sha somebody merely QUOTED is deliberately not a key
+        # here: those bytes are not in hand, so folding a located claim into such
+        # a body would keep the fingerprint and drop the file.
+        sha = located.sha256 if located is not None else (claim.sha256 if claim.files else "")
+        if sha and sha in by_sha:
+            _fold_into(by_sha[sha], claim, entry, located, result, taken)
             result.claims.append(claim)
             continue
 
@@ -1206,14 +1440,14 @@ def resolve_claims(claims: Sequence[SourceClaim], *, repo: Path, workspace: Any,
         result.claims.append(claim)
         result.claims_by_source[source_id] = claim
         result.sources.append(body)
-        if located is not None:
-            by_sha[located.sha256] = body
+        if sha:
+            by_sha[sha] = body
     result.sources.sort(key=lambda b: (b.get("role") != "audited", b["id"]))
     return result
 
 
 def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
-               located: LocatedPdf, result: DiscoveryResult, taken: set[str]) -> None:
+               located: LocatedPdf | None, result: DiscoveryResult, taken: set[str]) -> None:
     """Merge a second claim on the SAME bytes into the source already accepted.
 
     The claims were worded differently enough that :func:`merge_claims` kept
@@ -1222,8 +1456,16 @@ def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
     pointed here; a registry entry found on the second pass upgrades a source
     that had been named from a filename, because a catalogued id is the stable
     one (S3: sha -> registry alias -> derivation).
+
+    ``located`` is None for a claim that NAMED its files -- an adapter's own
+    manuscript, or `cf onboard --source` -- whose sha was read off those bytes
+    rather than found by a search.  Such a claim reaches here whenever the
+    operator named a file the repo already declares, so nothing below may
+    dereference it.
     """
-    discovered = body.setdefault("discovered", {"from": [], "pdf_found_in": located.where,
+    where = located.where if located is not None else (claim.discovered_by or "none")
+    sha8 = (located.sha256 if located is not None else claim.sha256 or "")[:8]
+    discovered = body.setdefault("discovered", {"from": [], "pdf_found_in": where,
                                                 "signal": claim.signal})
     discovered["from"] = _uniq(tuple(discovered.get("from") or ()) + tuple(claim.sources))
     discovered["from"] = list(discovered["from"])
@@ -1247,17 +1489,17 @@ def _fold_into(body: dict, claim: SourceClaim, entry: RegistryEntry | None,
         body["id"] = entry.id
         body["registry"] = entry.origin
         result.claims_by_source[entry.id] = result.claims_by_source.pop(old_id)
-        detail(f"{old_id} and {entry.id} are the same bytes ({located.sha256[:8]}); "
+        detail(f"{old_id} and {entry.id} are the same bytes ({sha8}); "
                f"keeping the catalogued id {entry.id}")
     else:
         detail(f"{body['id']}: a second claim ({claim.signal} {claim.path}) names the same "
-               f"bytes {located.sha256[:8]}; folded in")
+               f"bytes {sha8}; folded in")
 
 
 def _is_noise(claim: SourceClaim) -> bool:
     """Drop a claim that names nothing identifying at all."""
     return not any([claim.sha256, claim.sha256_prefix, claim.title, claim.pdf_hints,
-                    claim.urls, claim.book_page_url])
+                    claim.urls, claim.book_page_url, claim.files])
 
 
 def _entry_for(claim: SourceClaim, registry: Registry) -> RegistryEntry | None:
@@ -1317,15 +1559,33 @@ def _source_body(source_id: str, claim: SourceClaim, entry: RegistryEntry | None
                 body["pages"] = located.pages
             body["text_sha256"] = located.text_sha256
         body["pdf"] = str(located.path)
+    elif claim.files:
+        # The bytes are the source.  One file IS the source file; several are
+        # concatenated in this order by `cf onboard`, which is also what the sha
+        # covers -- so `manuscript_files` is the order, not merely the set.
+        body["sha256"] = claim.sha256
+        if claim.bytes is not None:
+            body["bytes"] = claim.bytes
+        if claim.source_format:
+            body["source_format"] = claim.source_format
+        if claim.pagination:
+            body["pagination"] = claim.pagination
+        if len(claim.files) == 1:
+            body["pdf"] = str(claim.files[0])
+        else:
+            body["manuscript_files"] = list(claim.files)
     elif claim.sha256:
         body["sha256"] = claim.sha256
     body["offset_hint"] = claim.offset_hint
     body["anchor_hint"] = claim.anchor_hint
     body["discovered"] = {
         "from": list(claim.sources),
-        "pdf_found_in": located.where if located is not None else "none",
+        "pdf_found_in": (located.where if located is not None
+                         else (claim.discovered_by or "none") if claim.files else "none"),
         "signal": claim.signal,
     }
+    if claim.locator:
+        body["discovered"]["locator"] = claim.locator
     return body
 
 
