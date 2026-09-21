@@ -135,6 +135,20 @@ class Workspace(unittest.TestCase):
                            "items": {i: {COMPANION: ["%s:Book.d" % COMPANION]} for i in items},
                            "intext": {}})
 
+    def write_reconciliation(self, **body) -> None:
+        """``pairs/<id>/reconciliation.json`` in the shape `cf pair` writes.
+
+        Every scope figure is computed from ``items.json`` (``pair/compare.py``
+        takes ``in_scope`` from ``book_items``), so a manuscript's are all 0 --
+        the defaults here.
+        """
+        compat.write_json(
+            os.path.join(self.root, "pairs", SOURCE_ID, "reconciliation.json"),
+            dict({"source_id": SOURCE_ID, "source_sha": SOURCE_SHA, "repos": [COMPANION],
+                  "chapters": None, "items_in_book": 0, "items_in_scope": 0,
+                  "items_in_scope_and_any_repo": 0, "items_in_scope_uncovered": [],
+                  "task_universe": 0, "task_universe_items": []}, **body))
+
     def write_corpus(self, run_id: str, docs: dict, *, gate: dict | None = None) -> str:
         """``{file name: document}`` plus the RECEIPT the gate block decides."""
         directory = os.path.join(self.root, "corpus", run_id)
@@ -206,6 +220,38 @@ class TestAManuscriptIsCountedAgainstItsTaggedEnvironments(ManuscriptFixture):
         cov = self.coverage()
         self.assertFalse(cov["manuscript"])
         self.assertEqual(cov["items_in_source"], 0)
+
+    def test_the_reconciliation_is_not_a_second_opinion_about_the_scope(self):
+        """`cf pair` computes its scope from the table that is empty by design.
+
+        So for a manuscript it writes 0, always, and taking that figure beside
+        the recomputed one published "3 of 0 item(s) in scope", chapter rows
+        summing to 3 under a total row reading 0, and a staleness line sending
+        the reader to `cf pair` -- which leaves the file byte-identical.
+        """
+        self.write_reconciliation()
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_scope"], 3)
+        self.assertEqual(cov["items_in_source"], 3)
+        self.assertEqual(cov["items_in_task_universe"], 3)
+        text = self.handoff()["text"]
+        self.assertNotIn("of 0 item(s) in scope", text)
+        self.assertNotIn("re-run `cf pair`", text)
+        self.assertNotIn("TODO(coverage)", text)
+
+    def test_the_chapter_rows_add_up_to_the_total_row(self):
+        """Section 0's per-chapter rows and its `**all audited**` row are one sum.
+
+        Fixing the total alone would have left the table contradicting itself
+        the other way round: the chapter rows read the task universe off the
+        reconciliation too.
+        """
+        self.write_reconciliation()
+        cov = self.coverage()
+        for column in ("in_scope", "in_task_universe", "examined", "gated", "with_findings"):
+            with self.subTest(column=column):
+                self.assertEqual(sum(b[column] for b in cov["by_chapter"].values()),
+                                 cov["items_" + column])
 
 
 class TestAManuscriptWithNoPairingHasNoDenominator(ManuscriptFixture):
