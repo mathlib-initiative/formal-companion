@@ -215,8 +215,13 @@ read local baselines read their paths from `CF_BASELINE_CORPUS`,
 `CF_BASELINE_DIFF`, `CF_TML`, `CF_MT`, `CF_BOOK_TXT` and **skip cleanly** when
 those are unset — the suite must pass on a machine that has none of them.
 Discovery and inference tests use fixture repos and synthetic text: no network,
-no PDF. Never write outside a temporary directory, and never into a companion
-repo.
+and the only PDFs read are the fixture PDFs the suite generates in a temporary
+directory. `tests/_hermetic.py` is what makes that true: importing it pins HOME
+at a temporary directory, so `library_paths`' `~/Downloads` entry cannot reach
+the developer's own files. Every test module that builds a workspace imports it
+as its first import — `tests/conftest.py` is a pytest hook, and the command
+above loads no such hook. Never write outside a temporary directory, and never
+into a companion repo.
 
 ## 8. Git
 
@@ -232,7 +237,9 @@ at once; add the paths you own. End a commit message with the
 Tao companions with no flags, generates a public-domain booklet and two
 synthetic companions of it, and checks about seventy artifacts (never log
 lines) against pinned figures. Run it with `bash tests/e2e/multisource.sh
-[--offline]`; it needs poppler's `pdftotext`, the two companion checkouts named
+[--offline] [<workspace dir>]`; with no workspace argument it makes one under
+`$TMPDIR`, never inside the checkout — `cf init` refuses a workspace under the
+skill repo. It needs poppler's `pdftotext`, the two companion checkouts named
 by `CF_TML` and `CF_MT` (plus the optional `CF_BASELINE_CORPUS`) — it defaults to
 no path of its own and says what to set — and, unless `--offline`, network access
 for the errata fetch. Its generated

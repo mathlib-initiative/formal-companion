@@ -50,7 +50,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - run: python -m pip install --upgrade pip
       - run: python -m pip install pytest pyyaml
-      # No env vars: the suite must be green with none set. tests/conftest.py
+      # No env vars: the suite must be green with none set. tests/_hermetic.py
       # points HOME at a temporary directory so nothing reads a real home.
       - run: python -m pytest -q tests/
 
@@ -89,7 +89,8 @@ jobs:
       - run: python -m pip install --upgrade pip
       - run: python -m pip install pyyaml
       # CLAUDE.md S7's gate. It does not load tests/conftest.py, so it is also
-      # the check that no test needs that hook to pass.
+      # the check that no test needs that hook to pass -- which is why the HOME
+      # pin lives in tests/_hermetic.py, imported by each module, and not there.
       - run: python -m unittest discover -s tests
 
   registry:
@@ -107,6 +108,24 @@ jobs:
       # states as hard had nothing mechanical behind it at all.
       - name: cf sources validate-registry
         run: python scripts/cf.py sources validate-registry
+
+  shell:
+    name: shellcheck (bridge + e2e scripts)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # The shipped shell -- the three run bridges, the dependency dump and the
+      # two e2e scripts -- was written against a linter that ran nowhere (one of
+      # them already carries a `# shellcheck disable=` directive). The suite's
+      # own `bash -n` case catches a script that stops parsing; this catches the
+      # ones that parse and are still wrong.
+      - run: sudo apt-get update && sudo apt-get install -y shellcheck
+      # --severity=error on this first landing: the default severity also
+      # reports style warnings, and nobody has run shellcheck over these files
+      # yet, so a bare invocation would fail the job on pre-existing lines. Drop
+      # the flag in a follow-up once the job is green and fix or `disable=` what
+      # it then reports.
+      - run: shellcheck --severity=error scripts/run/bridge-*.sh scripts/detect/dump_deps.sh tests/e2e/*.sh
 
   synthetic-e2e:
     name: synthetic end-to-end (booklet, planted defects, score)

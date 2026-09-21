@@ -973,7 +973,10 @@ class TestFindingIdDocstringIsTrue(unittest.TestCase):
         from harvest import tally
 
         args = (SOURCE_ID, "Exercise 1.2.1", "CONTENT", ["ours:mono"])
-        self.assertEqual(tally.defect_key(*args), tally.defect_key(*args))
+        # the item goes through items.clean first, so a run that spells the
+        # label with a double space joins the one that does not
+        self.assertEqual(tally.defect_key(SOURCE_ID, "Exercise  1.2.1", "CONTENT", ["ours:mono"]),
+                         tally.defect_key(*args))
         self.assertEqual(tally.defect_key(*args), hashing.finding_id("", *args))
 
     def test_the_docstring_says_so(self):
