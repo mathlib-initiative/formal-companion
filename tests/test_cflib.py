@@ -204,7 +204,7 @@ class TestItemJoinKey(unittest.TestCase):
         ("In-text, book p. 29", "In-text p.29"),
         ("In-text definition (book p. 29)", "In-text p.29"),
         ("In-text convention, book p. 29 "
-         "(Exercise 1.2.5: extension of Jordan inner measure to unbounded sets)",
+         "(Exercise 1.2.5: extension of widget weight to unbounded assemblies)",
          "In-text p.29"),
         ("In-text proof (book p. 227)", "In-text p.227"),
         ("In-text record (book p. 156; author's errata)", "In-text p.156"),

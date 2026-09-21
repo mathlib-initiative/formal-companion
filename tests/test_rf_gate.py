@@ -66,7 +66,7 @@ _BOOK_TXT = _env_dir("CF_BOOK_TXT")
 #: whose operators are the point.  ``\f`` is what pdftotext writes between pages,
 #: and the running head is the shape that defeated the gate: >=25 normalised
 #: characters, on every page of the section.
-RUNNING_HEAD = "2.3. Outer measures, pre-measures, and product measures"
+RUNNING_HEAD = "2.3. Widget weights, gadget weights, and weights of assemblies"
 PAGE_1 = (
     "Exercise 2.3.4 (Monotonicity). Let E and F be elementary sets. "
     "Show that if E is contained in F then m(E) <= m(F), and that every "

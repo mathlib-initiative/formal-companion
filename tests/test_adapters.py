@@ -90,7 +90,7 @@ namespace Demo
 
 open Set
 
-/-- `Definition 1.1.1` (intervals).  An *interval* is a subset of `ℝ`. -/
+/-- `Definition 1.1.1` (widgets).  A *widget* is a gadget built over `ℝ`. -/
 def IsInterval (I : Set ℝ) : Prop :=
   ∃ a b : ℝ, a ≤ b
 
@@ -105,7 +105,7 @@ private noncomputable def helper (x : ℝ) : ℝ :=
   x + 1
 
 /-- `Exercise 1.2.17` (Caratheodory criterion).  (4) is the condition of
-§1.7 (previewed on book p. 20).  Here `0 < d` is essential. -/
+§1.7 (it is sketched early, on book p. 20).  The bound `0 < d` matters. -/
 theorem crossref_case : True := by
   sorry -- TODO(autoform)
 
@@ -189,7 +189,7 @@ class TagAndAnchorTest(unittest.TestCase):
     """The tag grammar and the own-versus-cross-reference anchor rule."""
 
     def test_leading_backticked_tag_wins(self):
-        hit = itemtag.find_tag("`Definition 1.1.1` (intervals).  See `Lemma 1.2.5`.")
+        hit = itemtag.find_tag("`Definition 1.1.1` (widgets).  See `Lemma 1.2.5`.")
         self.assertEqual(hit.tag, "Definition 1.1.1")
         self.assertEqual(hit.position, "leading")
 
@@ -213,7 +213,7 @@ class TagAndAnchorTest(unittest.TestCase):
         self.assertEqual((hit.page, hit.source), (24, "own"))
 
     def test_page_in_the_following_clause_is_own(self):
-        doc = "The distance between two sets (`Lemma 1.2.5`, book p. 23), taken in ℝ≥0∞."
+        doc = "How far apart two widgets sit (`Lemma 1.2.5`, book p. 23), valued in ℝ≥0∞."
         hit = itemtag.find_page_anchor(doc, itemtag.find_tag(doc))
         self.assertEqual((hit.page, hit.source), (23, "own"))
 
@@ -224,12 +224,12 @@ class TagAndAnchorTest(unittest.TestCase):
 
     def test_cross_reference_page_is_refused(self):
         doc = ("`Exercise 1.2.17` (Caratheodory criterion, one direction).  (4) is the "
-               "full condition of §1.7 (previewed on book p. 20).  Here 0 < d matters.")
+               "full condition of §1.7 (it is sketched early, on book p. 20).  The bound matters.")
         hit = itemtag.find_page_anchor(doc, itemtag.find_tag(doc))
         self.assertEqual((hit.page, hit.source), (None, "crossref"))
 
     def test_no_page_at_all(self):
-        doc = "`Definition 1.1.1` (intervals).  An interval is a subset of ℝ."
+        doc = "`Definition 1.1.1` (widgets).  A widget is a gadget built over ℝ."
         hit = itemtag.find_page_anchor(doc, itemtag.find_tag(doc))
         self.assertEqual((hit.page, hit.source), (None, "none"))
 

@@ -791,9 +791,9 @@ class TestTheRegistryIsCheckedMechanically(unittest.TestCase):
             "    title: A Book\n"
             "    edition: first\n"
             "    excerpt: >\n"
-            "      Let E be a subset of the reals. We say that E is elementary if it\n"
-            "      can be expressed as the finite union of intervals, and its measure\n"
-            "      is then the sum of their lengths.\n", encoding="utf-8")
+            "      Let W be a widget of the first kind. We say that W is regular if it\n"
+            "      can be assembled from finitely many gadgets, and its weight is then\n"
+            "      the sum of the weights of those gadgets.\n", encoding="utf-8")
         problems = metadata_problems(path)
         self.assertTrue(any("unknown key `excerpt`" in p for p in problems), problems)
         self.assertTrue(any("never a passage of it" in p for p in problems), problems)
