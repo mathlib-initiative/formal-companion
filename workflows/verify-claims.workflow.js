@@ -1,7 +1,7 @@
 export const meta = {
   name: 'cf-verify-claims',
   description: 'Adversarially verify every claim in a report draft against the primary sources, with an independent second vote on the numbers and a completeness critic',
-  whenToUse: 'Before any handoff, weekly report or PR body derived from this workspace goes out. Build args with `cf report --emit-verify-args`.',
+  whenToUse: 'Before any handoff, weekly report or PR body derived from this workspace goes out. Build args with `cf report` (it writes `reports/verify-claims.args.json` unless `--no-verify-args`).',
   phases: [
     { title: 'Verify', detail: 'one verifier per claim lens re-derives the draft claims from the sources', model: 'opus' },
     { title: 'Numbers', detail: 'an independent second vote recomputes every number from the corpus', model: 'opus' },

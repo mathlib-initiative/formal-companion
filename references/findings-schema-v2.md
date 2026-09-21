@@ -73,33 +73,33 @@ tagged. The schema gate validates `repo:decl` against that index (see §7).
 ## 2. `runs/<run-id>/tasks/<task-id>.yaml` — one item per task
 
 tend's task schema; `tend-task verify tasks` must pass before a run starts. A run is scoped to one
-source, so `run.yaml` records `sources: [<id>]` and every task names its own.
+source, so `run.yaml` records `sources: [<id>]` and every task carries that source in its own id.
 
 ```yaml
 schema_version: 1
-id: lemma-2-3-4                      # slug of the item; dashes, lowercase
-source_id: widget-theory-2e          # which source this item belongs to
-title: "ATTACK: Lemma 2.3.4"         # DIFFERENTIAL: | SINGLE-SOURCE: | ATTACK: — the evidence class survives into the corpus
-status: pending
+id: widget-theory-2e--lemma-2-3-4    # <source-slug>--<item-slug>; dashes, lowercase
+title: "vac: Lemma 2.3.4"            # DIFFERENTIAL: | SINGLE-SOURCE: | hunt: | vac: — the evidence class survives into the corpus
+status: open
 priority: max                        # attack runs: max; differential: default
 depends_on: []
-summary: "vac probe of Lemma 2.3.4"
+summary: "vac probe of Lemma 2.3.4 (widget-theory-2e)"
 description: |
   <rendered from templates/tasks/<mode>.yaml.tmpl with the item's rows, the peer repos,
   the source (title, edition, sha8, printed page, errata path), and the companion's
   conventions summary>
 
-  Write exactly one file `findings/lemma-2-3-4.json` and change nothing else except this
-  task file. Set status to complete when the findings file passes the gate.
+  Write exactly one file `findings/widget-theory-2e--lemma-2-3-4.json` and change nothing else
+  except this task file. Set status to complete when the findings file passes the gate.
 ```
 
 Rules:
 
 - `id` is the **slug of the item id**, so a findings file and its task are joined by name. Both
-  dash and underscore slugs exist in the baseline; the harvester accepts either. Where one run
-  spans more than one source the slug is `qualified_slug` (`<source-slug>--<item-slug>`), so two
+  dash and underscore slugs exist in the baseline; the harvester accepts either. The slug is
+  `qualified_slug` (`<source-slug>--<item-slug>`) whenever the entry carries a `source_id`
+  (`assign_slugs`, `scripts/plan/make_tasks.py`), which is every planned run today, so two
   sources with a colliding item id cannot collide as filenames.
-- The three title prefixes are load-bearing: the baseline's 382 tasks split 224 `DIFFERENTIAL:`
+- The four title prefixes are load-bearing: the baseline's 382 tasks split 224 `DIFFERENTIAL:`
   and 158 `SINGLE-SOURCE:` (recomputed from the v1 corpus's `tasks/`), and that split is how
   the report distinguishes strong from weak evidence.
 - `make_tasks` **reconciles** its output against `items.json ∩ any-repo` and fails on a gap.

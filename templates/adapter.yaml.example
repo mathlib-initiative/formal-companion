@@ -11,8 +11,9 @@ commit: {{ commit }}
 #                       (measure_theory pdf-overlay data)
 # blueprint_tex      -- a leanblueprint manuscript: \lean{} / \leanok inside the
 #                       statement environments of blueprint/**/*.tex
-# ledger_nodes       -- a source-node -> formalization ledger; needs `cf curate`
-#                       first because its granularity is node, not item
+# ledger_nodes       -- a source-node -> formalization ledger; needs an item-level
+#                       curation pass (`cf curate`, not implemented in v1) first,
+#                       because its granularity is node, not item
 # custom             -- any script emitting row schema v2
 adapter: {{ adapter }}
 granularity: {{ granularity }}      # item | node
