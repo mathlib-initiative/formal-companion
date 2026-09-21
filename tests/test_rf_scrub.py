@@ -208,7 +208,7 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
         self.assertTrue(desktop("cf onboard ~/Desktop/tao-measure-lean"))
         self.assertFalse(desktop("library_paths: [~/Downloads]"))
         address, run_id = RULES["ip_address"][0], RULES["workflow_run_id"][0]
-        self.assertEqual(address("ssh jack@49.13.63.134"), ["49.13.63.134"])
+        self.assertEqual(address("ssh operator@192.168.1.50"), ["192.168.1.50"])
         self.assertEqual(address("Exercise 2.3.4.1 and 2.3.4.10"), [])
         self.assertEqual(address("bind 127.0.0.1 or 192.0.2.7"), [])
         self.assertEqual(run_id("recovered/challenge-wf_c3f0e5d0-d65.js"),
