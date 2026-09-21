@@ -209,8 +209,10 @@ def run(args) -> int:
             quotes=args.quotes,
         )
     except route_mod.PolicyRefused as exc:
-        raise CfError(str(exc), hint="policy.destinations lives in workspace.yaml; "
-                                     "`cf route --help` lists the destinations and policies")
+        raise CfError(str(exc), hint="policy.destinations lives in workspace.yaml and "
+                                     "`cf route --help` lists the destinations; the pinned "
+                                     "text a non-owner destination is checked against comes "
+                                     "from `cf sources refresh`")
     if not reports:
         print("nothing routed: no companions found", file=sys.stderr)
         return 2
@@ -249,7 +251,10 @@ def run(args) -> int:
                 print("  %s" % exc, file=sys.stderr)
                 rc = 2
             except route_mod.PolicyRefused as exc:
-                raise CfError(str(exc), hint="`cf route --help` lists the quote policies")
+                raise CfError(str(exc),
+                              hint="`cf route --help` lists the quote policies; the pinned "
+                                   "text a public body is checked against comes from "
+                                   "`cf sources refresh`")
     return rc
 
 
