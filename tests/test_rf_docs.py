@@ -100,6 +100,7 @@ DOCS = _existing("SKILL.md", "README.md", "CLAUDE.md", "CONTRIBUTING.md",
                  "POLICY.md", "CHANGELOG.md", "templates/PRESETS.md",
                  "registry/README.md", "evals/README.md")
 DOCS += [f"references/{p.name}" for p in sorted((SKILL / "references").glob("*.md"))]
+DOCS += [f"docs/{p.name}" for p in sorted((SKILL / "docs").glob("*.md"))]
 DOCS += [f"docs/design/{p.name}" for p in sorted((SKILL / "docs" / "design").glob("*.md"))]
 
 #: `docs/design/archive/` is deliberately NOT in DOCS.  An archived design record

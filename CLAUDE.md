@@ -198,6 +198,12 @@ narrower set against what `adapters.api.registry()` provides. `cf onboard` also
 needs a row in `cfcmd.onboard.DEFAULTS` (glob, anchor, granularity) and a
 default block in `templates/adapter.yaml.example` for anything it configures.
 
+`docs/adding-an-adapter.md` is the same list as a walkthrough against the
+`notes-a` fixture, and it says what a new **book** needs instead — which is
+nothing from here, except the hand-written
+`scripts/detect/mathlib_stages/<source_id>.json` that `detect-proxies --lean`
+reads.
+
 ## 7. Tests
 
 `python3 -m unittest discover -s tests`. Stdlib `unittest` only. Tests that
