@@ -50,6 +50,7 @@ from plan import models as models_mod
 from plan import presets as presets_mod
 from plan import render_prompts as rp
 from plan.make_tend_root import TendRootPlan, make_tend_root
+from recheck import pin as pin_mod
 
 NAME = "plan-run"
 HELP = "plan a fleet run: tend tasks, prompts, gate.json and a tend root"
@@ -676,6 +677,23 @@ def run(args) -> int:
     if model_warning:
         built["warnings"].append(model_warning)
 
+    # ---- the revision pin --------------------------------------------------
+    # `.companions.get`, not `.companion()`: companion_names() also returns a
+    # companion that exists only on disk, and a missing pin is a pin that says so.
+    pins = {name: pin_mod.repo_pin(getattr(camp.companions.get(name), "repo", None))
+            for name in repos}
+    for name, pin in sorted(pins.items()):
+        if pin.get("dirty"):
+            built["warnings"].append(
+                f"{name}: the checkout is dirty, so commit "
+                f"{str(pin['repo_commit'])[:12]} does not hold the statements this run "
+                f"audits; every finding from it re-checks as unpinned. Commit or stash "
+                f"in the companion, then re-run `cf plan-run`")
+        elif not pin.get("repo_commit"):
+            built["warnings"].append(
+                f"{name}: no git checkout to pin ({pin.get('method')}), so its findings "
+                f"cannot be re-checked against a revision later")
+
     # ---- run.yaml ----------------------------------------------------------
     entrypoint_bytes = _dir_bytes(p.tasks_dir(run_id)) + _dir_bytes(rd / "data")
     concurrent = args.max_open_tasks or len(tasks)
@@ -689,6 +707,15 @@ def run(args) -> int:
         "attack_label": preset.attack_label or None,
         "companion": companion,
         "repos": repos,
+        # WHICH REVISION of each companion this run audits. A finding is a claim
+        # about a Lean statement at a revision; without it, six months later a
+        # live finding and one already fixed upstream read identically, and
+        # `cf recheck` has nothing to compare against. Read here rather than at
+        # harvest because here is where the statements the workers will read are
+        # staged -- and read through cflib.gitsafe, because a companion tree is
+        # data. `dirty` is part of the pin: a working tree that does not match
+        # its commit is not pinned by it.
+        "companion_pins": pins,
         # A LIST, because `cf run` decides what leaves this machine from it and
         # `cf harvest` checks the landed corpus against it. One source today;
         # the shape does not assume it.

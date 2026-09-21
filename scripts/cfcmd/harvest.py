@@ -27,6 +27,7 @@ from cflib.yamlio import read_yaml
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, tally as tally_mod
+from recheck import pin as pin_mod
 from run import manifest
 
 
@@ -98,8 +99,9 @@ def run(args) -> int:
                  "this corpus. Re-run them against the pinned edition, or pass "
                  "--allow-edition-mismatch and say so in the report.")
 
+    pin = _pin(workspace, args.run_id, data, dest)
     counts = {} if args.no_tally else _tally(workspace, args.run_id, dest)
-    _record_state(workspace, args.run_id, data, receipt, counts)
+    _record_state(workspace, args.run_id, data, receipt, counts, pin)
     return 0 if receipt["complete"] else 1
 
 
@@ -357,6 +359,38 @@ def _tally(workspace, run_id: str, dest: Path) -> dict:
     return result
 
 
+def _pin(workspace, run_id: str, data: dict, dest: Path) -> dict:
+    """Stamp the companion revision this corpus was judged against.
+
+    A finding is a claim about a Lean statement at a revision, and nothing in the
+    corpus says which one: the commit comes from ``run.yaml`` (written at plan
+    time) and the per-declaration fingerprints from the statement table extracted
+    at that same commit -- never from the worker, for the same reason
+    ``finding_id`` is recomputed here rather than read.
+
+    A corpus nobody planned (an imported v1 directory) has no ``run.yaml`` with a
+    pin, so every declaration lands in ``unpinned`` and `cf recheck` says so.
+    That is the whole reason the pinned regression figures cannot move: a legacy
+    import is reported as unpinned, not fingerprinted against today's HEAD.
+    """
+    decls = pin_mod.corpus_decls(dest)
+    doc = pin_mod.build(workspace, run_id, data, decls)
+    out = Path(workspace.paths.pin_json(run_id))
+    out.parent.mkdir(parents=True, exist_ok=True)
+    write_json(out, doc, indent=1, sort_keys=True)
+    unpinned = len(doc["unpinned"])
+    log.info(f"pin: {len(doc['decls'])} declaration(s) fingerprinted, {unpinned} unpinned "
+             f"-> {out}")
+    if unpinned:
+        notes = sorted({str(c.get("note") or "") for c in doc["companions"].values()
+                        if not c.get("fingerprinted")} - {""})
+        log.warn(f"UNPINNED: {unpinned} declaration(s) in this corpus carry no revision "
+                 f"fingerprint, so `cf recheck` cannot tell a live finding from one already "
+                 f"fixed upstream" + (f" ({'; '.join(notes)})" if notes else "") +
+                 ". Re-extract at the planned commit and re-harvest to pin them.")
+    return doc
+
+
 def _companions(data: dict) -> list[str]:
     """The companions a run covers (plan-run writes `companion`, a string)."""
     for key in ("companions", "companion", "repos"):
@@ -368,18 +402,25 @@ def _companions(data: dict) -> list[str]:
     return []
 
 
-def _record_state(workspace, run_id: str, data: dict, receipt: dict, counts: dict) -> None:
+def _record_state(workspace, run_id: str, data: dict, receipt: dict, counts: dict,
+                  pin: dict | None = None) -> None:
     """Record findings/receipt counts against every companion the run covers."""
     names = _companions(data) or workspace.companion_names()
     repos = (counts.get("repos") or {}) if counts else {}
+    pinned = ((pin or {}).get("companions") or {})
     for name in names:
         try:
             with state_mod.update(workspace, str(name)) as state:
+                block = pinned.get(str(name)) or {}
                 values = {
                     "findings": receipt["actual"]["count"],
                     "expected": receipt["expected"]["count"],
                     "receipt_ok": receipt["complete"],
                     "harvested_at": receipt["harvested_at"],
+                    # which revision this run's findings are claims about, so
+                    # `cf status` can say it without re-reading the corpus
+                    "repo_commit": block.get("repo_commit"),
+                    "pinned": bool(block.get("fingerprinted")),
                 }
                 state_mod.record_run(state, run_id, values)
                 if str(name) in repos:
