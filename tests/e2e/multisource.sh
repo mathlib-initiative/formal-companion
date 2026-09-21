@@ -28,6 +28,10 @@
 # the full regression and keeps the two Tao companions.
 #
 # usage:  e2e-multisource.sh [--offline] [<workspace dir>]
+#
+# With no <workspace dir> it makes one under $TMPDIR, as synthetic.sh does.  It
+# may not default to one inside the checkout: `cf init` refuses a workspace
+# under the skill repo, so the documented no-argument invocation exited 2.
 
 set -u
 
@@ -45,7 +49,7 @@ for arg in "$@"; do
     *)         WS="$arg" ;;
   esac
 done
-WS="${WS:-$HERE/ws-test}"
+WS="${WS:-$(mktemp -d "${TMPDIR:-/tmp}/cf-multisource.XXXXXX")/ws}"
 
 # The two companion checkouts and the baseline corpus are NAMED BY THE
 # ENVIRONMENT, never defaulted to one machine's layout: they are private
