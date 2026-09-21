@@ -1101,9 +1101,18 @@ class TestAnUngatedRunIsNamed(CoverageFixture):
         self.assertEqual(block["ungated_runs"], ["hunt"])
 
     def test_the_prose_names_the_run_and_the_command(self):
+        """The remedy has to be runnable: a bare `cf harvest <run-id>` is not.
+
+        It refuses an imported run and a local-fleet one ("records no host") and
+        needs --execute for a remote one, so the hint names the flag each branch
+        takes.  This assertion used to pin the bare spelling.
+        """
         text = self.handoff()["text"]
         self.assertIn("ungated run(s) `hunt`", text)
-        self.assertIn("cf harvest <run-id>", text)
+        self.assertIn("--gate-config", text)
+        self.assertIn("cf import-corpus", text)
+        self.assertNotIn("--no-gate", text)
+        self.assertNotRegex(text, r"`cf harvest <run-id>`(?!\s*--)")
 
 
 class TestAStaleReconciliationIsNamed(CoverageFixture):
