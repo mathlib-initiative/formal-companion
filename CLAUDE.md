@@ -110,11 +110,12 @@ Those two lines move together or not at all.
 - **Findings are content-addressed.** `finding_id = sha256(run_id, source_id,
   item, kind, sorted unfaithful_decls)` — `cflib.hashing.finding_id`, five
   parts joined with `\n`, the item passed through `items.clean()` first. Never
-  re-key on prose. The definition is inlined in four other places
-  (`gate/verify_findings.py`, `sources/compat.py`, `ledger/compat.py`,
-  `detect/_compat.py`) because they run where `cflib` is not importable; all
-  five change in lockstep and
-  `tests/test_plan_gate.py::TestFindingIdIsOneDefinition` is the enforcement.
+  re-key on prose. The definition is inlined in exactly one other place,
+  `gate/verify_findings.py`, because the gate is transferred to a run host where
+  `cflib` is not importable; the two change in lockstep and
+  `tests/test_plan_gate.py::TestFindingIdIsOneDefinition` is the enforcement —
+  it also pins the compat shims' `finding_id`, which now delegate rather than
+  inline.
 - **The gate runs out of tree.** It is never executed from the worktree a
   worker can edit, and pre-merge checks the changed-file set.
 - **Consent and allowlist.** Anything that copies sources or source text to

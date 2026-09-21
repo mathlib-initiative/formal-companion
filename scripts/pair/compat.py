@@ -3,8 +3,8 @@
 The pair stage consumes ``sources/<source_id>/items.json``, so it depends on
 ``sources`` anyway; keeping ONE adapter avoids two views of the item grammar.
 Delete both this file and ``sources/compat.py`` when every call site has been
-switched to ``cflib`` directly -- the names below already resolve to cflib
-whenever it is importable.
+switched to ``cflib`` directly -- every name below resolves to cflib, with no
+second implementation behind it.
 
 The names below are the workspace model's throughout (``campaign_paths`` ->
 ``workspace_paths``, ``load_campaign`` -> ``load_workspace``, ``book_sha`` ->
