@@ -92,6 +92,22 @@ jobs:
       # the check that no test needs that hook to pass.
       - run: python -m unittest discover -s tests
 
+  registry:
+    name: registry (structure + metadata only)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      # No pip install: this is the stdlib-only path, and it runs in a clone
+      # with no workspace anywhere near it -- which is the case the command was
+      # written for. `Registry.validate()` existed for months and nothing ran it
+      # against the shipped file; the metadata-only rule registry/README.md
+      # states as hard had nothing mechanical behind it at all.
+      - name: cf sources validate-registry
+        run: python scripts/cf.py sources validate-registry
+
   synthetic-e2e:
     name: synthetic end-to-end (booklet, planted defects, score)
     runs-on: ubuntu-latest

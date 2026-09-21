@@ -1,0 +1,62 @@
+[
+  {
+    "id": "whole-repo-faithfulness",
+    "query": "Does this Lean repo actually match Tao's measure theory book? I want to know which declarations say something different from the book.",
+    "should_trigger": true,
+    "why": "The canonical case: a whole repository against a source. A correct first move is `cf init` then `cf onboard <repo>`."
+  },
+  {
+    "id": "vocabulary-autoformalization",
+    "query": "We have an autoformalization of a textbook chapter and I want a statement-level audit of whether the formal statements are faithful to the text.",
+    "should_trigger": true,
+    "why": "The words a mathlib-initiative user actually types -- autoformalization, statement-level, faithful -- and the reason the description carries them."
+  },
+  {
+    "id": "vocabulary-blueprint",
+    "query": "Can you check our leanblueprint project against the paper it formalises? Some of the \\lean-tagged statements look weaker than the paper's.",
+    "should_trigger": true,
+    "why": "A blueprint repo is a companion whose manuscript is its .tex tree; `blueprint_tex` is an implemented adapter."
+  },
+  {
+    "id": "differential-two-repos",
+    "query": "Two groups formalised the same book chapter. Can we compare the two formalizations item by item and find where they disagree about what the book says?",
+    "should_trigger": true,
+    "why": "A differential is exactly where two companions' source lists overlap."
+  },
+  {
+    "id": "adjudicate-existing-findings",
+    "query": "I have a pile of faithfulness findings from an earlier run. Can you challenge them, tally them and route them to the right repo owners?",
+    "should_trigger": true,
+    "why": "Adjudicate / tally / route over a corpus somebody else produced -- `cf import-corpus` is the entry point."
+  },
+  {
+    "id": "single-declaration",
+    "query": "Does this one lemma match Theorem 1.2.13 in the book? Here is the statement and here is the page.",
+    "should_trigger": false,
+    "why": "One item against one statement is settled by a direct read. Firing here costs a workspace and ~5k tokens of skill for a question a human answers in a minute. SKILL.md says so in the body; this case is what measures whether the description should say it too."
+  },
+  {
+    "id": "review-a-pr",
+    "query": "Review this PR for me before I merge it -- it touches a few Lean files in our formalization repo.",
+    "should_trigger": false,
+    "why": "The nearest over-trigger: 'review', 'formalization', 'Lean'. This skill audits statements against a source; it is not a code reviewer, and hard rule 10 forbids it writing to the repo anyway."
+  },
+  {
+    "id": "fix-the-proof",
+    "query": "This Lean proof does not compile and the statement is probably wrong. Can you fix it?",
+    "should_trigger": false,
+    "why": "v1 is findings-only and never edits Lean. The description says 'not a proof checker, not a Lean linter and not a fixer' for this case."
+  },
+  {
+    "id": "mathlib-style-lint",
+    "query": "Run the linter over these Mathlib declarations and tell me which ones violate the naming convention.",
+    "should_trigger": false,
+    "why": "A Lean linter question with no source to be faithful to. `cf lint` is documented and not implemented, which makes this the easiest name collision to fire on wrongly."
+  },
+  {
+    "id": "summarise-a-book",
+    "query": "Summarise chapter 1 of this measure theory textbook for me.",
+    "should_trigger": false,
+    "why": "A book and no companion. Nothing here is being audited, and the skill would only get in the way."
+  }
+]
