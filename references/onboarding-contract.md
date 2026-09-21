@@ -94,6 +94,22 @@ exactly as `cf sources add` reads them, and the source is registered
 needs it *before* a companion exists — which is why it, and not `cf sources add`,
 is what the "no source could be discovered" refusal names.
 
+Two things follow from naming a location rather than a source:
+
+- **One sha is one source, whichever door it came in by.** Naming a file whose
+  bytes a repo signal also found does not add a second source: the fingerprint
+  dedupe folds the two claims together, the repo's own name for the work survives
+  (a declared title outranks a filename stem) and the path given is kept as
+  evidence under `discovered.from`. Nothing about that is settled by a flag,
+  because two ids on one sha is a state `workspace.yaml`'s own loader refuses.
+- **A re-onboard does not have to repeat the flag.** A source with
+  `pdf_found_in: manual` is invisible to all seven signals by construction, so
+  `cf onboard` re-claims the ones this companion already lists, from the path the
+  workspace recorded, and re-reads the facts off the file as on the first run.
+  Only `manual` rows are re-claimed — everything else a signal finds again, and a
+  stale workspace row must never outrank what the repo says today. If the file has
+  moved, the run says so and names the flag again.
+
 Two rules keep the signals honest:
 
 - **A truncated sha is a candidate, never an identity.** `64498329…` in a
