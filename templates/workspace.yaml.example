@@ -88,11 +88,12 @@ budget:
 policy:
   # Nothing leaves the workspace directory while _meta.status is UNCHALLENGED.
   publish_unchallenged: false
-  # Exports replace book_quote with a hash of the normalised sentence unless this
-  # is turned off: `cf route --redact-quotes` records (raw length, sha256) and
-  # `cf share export` records (page, normalised length, sha256, first/last six
-  # words), from which `cf quotes hydrate` recovers the text on a machine that
-  # already holds that edition.
+  # Read by BOTH exports, each of which a flag can still override: `cf route
+  # --redact-quotes`/`--no-redact-quotes` records (raw length, sha256), and `cf
+  # share export --redact-quotes`/`--full-quotes` records (page, normalised length,
+  # sha256, first/last six words) -- and also redacts a verbatim run of 40+
+  # characters of the source inside a reason or a reasoning. `cf quotes hydrate`
+  # recovers either on a machine that already holds that edition.
   redact_quotes_on_export: true
   # false is the control: `cf init` REFUSES a workspace repo that has a remote,
   # and `cf status` reports one that appears later. The pre-push hook it installs
