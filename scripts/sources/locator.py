@@ -46,6 +46,17 @@ LOCATOR_SECTION = "section"
 TEXT_SUFFIXES: tuple[str, ...] = (".txt", ".md", ".markdown", ".tex", ".html", ".htm", ".rst")
 PDF_SUFFIXES: tuple[str, ...] = (".pdf",)
 
+
+def text_suffixes_help() -> str:
+    """``".txt .md .markdown .tex .html .htm .rst"`` -- exactly what is accepted.
+
+    Lives here rather than in a command module because `cf sources add` and
+    `cf onboard --source` both advertise the set, and a message that advertised
+    fewer formats than :data:`TEXT_SUFFIXES` accepts is how a suffix with no
+    heading pattern got in unnoticed.
+    """
+    return " ".join(TEXT_SUFFIXES)
+
 FORMAT_PDF = "pdf"
 FORMAT_TEXT = "text"
 
