@@ -1,7 +1,7 @@
 """A very small ``{{var}}`` template renderer (no Jinja dependency).
 
-Ported from: the prompt/task/config text that was maintained by hand in
-``ffmain:~/tao-diff-tend/prompts/*`` and ``ffmain:~/tao-diff-run/tasks/*.yaml``
+Ported from: the prompt/task/config text the v1 campaign maintained by hand in
+its ``tao-diff-tend/prompts/*`` and ``tao-diff-run/tasks/*.yaml``
 (five near-identical copies, which is why they drifted). The renderer exists so
 those five copies become one template plus a preset flag.
 

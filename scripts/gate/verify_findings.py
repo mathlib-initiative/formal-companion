@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """The mechanical findings gate (schema v2), driven by ``gate.json``.
 
-Ported from ``ffmain:~/tao-diff-run/scripts/verify_findings.py`` (md5 ca976440,
-the three differential entrypoints) and ``ffmain:~/tao-attack-vac/scripts/
-verify_findings.py`` (md5 f4cc21a8, the two attack entrypoints). Those two files
+Ported from the v1 campaign's two ``verify_findings.py`` scripts, neither in this
+repo: the differential one (md5 ca976440, three entrypoints) and the attack one
+(md5 f4cc21a8, two entrypoints). Those two files
 differ only in the ``KINDS``/``VERDICTS`` constants; everything they hard-wired —
 book path, repo list, kind and verdict sets — is now read from ``gate.json``.
 

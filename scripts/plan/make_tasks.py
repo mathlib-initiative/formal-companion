@@ -1,7 +1,7 @@
 """Generate tend task files for a run, and reconcile the count.
 
-Ported from the task files of the five entrypoints retrieved from ffmain
-(``tao-diff-run/tasks/*.yaml``, ``tao-attack-hunt/tasks/*.yaml``) — the
+Ported from the task files of the v1 campaign's five entrypoints (its
+``tao-diff-run`` and ``tao-attack-hunt`` roots) — the
 generator itself was never committed anywhere, which is how the 411-vs-410
 discrepancy survived: the differential run shipped 382 tasks and nobody could
 show the rule that produced them. ``Exercise    1.3.19`` (multiple spaces in

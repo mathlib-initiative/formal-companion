@@ -1,6 +1,6 @@
 """Run presets: the five original runs, plus the v2 and legacy variants.
 
-Ported from the five orchestration roots retrieved from ffmain — see
+Ported from the v1 campaign's five orchestration roots — see
 ``templates/PRESETS.md`` for the byte-level diff these values come from:
 
 * ``tao-diff-tend``       -> ``differential-text``

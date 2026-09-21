@@ -1,9 +1,9 @@
 """Plan what `cf run` sends to the server, and refuse what it must not send.
 
-New code.  The original was a hand-run sequence of rsyncs recorded in
-scratchpad/ffmain/tao-diff-run/RUNBOOK.md ("Start it" / "Steer it") and the five
-server roots ~/tao-{diff,attack}-* whose only differences were the entrypoint
-path, the bridge path and the concurrency limits.
+New code.  The original was a hand-run sequence of rsyncs recorded in the v1
+campaign's runbook ("Start it" / "Steer it", written down here as
+references/runbook-server.md) and its five server roots, whose only differences
+were the entrypoint path, the bridge path and the concurrency limits.
 
 Three controls the original had no place for (the design critique, risks):
 
@@ -59,6 +59,18 @@ def _as_dict(value: Any) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def default_remote_root() -> str:
+    """The run root when the workspace's host entry does not name one.
+
+    The operator's own home on the host, read from the environment.  It used to
+    fall back to one developer's username, which is a wrong path on every other
+    machine and a name this repo may not carry; with no user in the environment
+    the placeholder is printed instead, so the dry run shows what to set.
+    """
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+    return f"/home/{user}" if user else "/home/<user>"
+
+
 def resolve_host(workspace, host: str) -> dict:
     """Resolve *host* against ``workspace.yaml: hosts`` or raise.
 
@@ -79,7 +91,7 @@ def resolve_host(workspace, host: str) -> dict:
     entry = _as_dict(hosts.get(host)) or _as_dict(_as_dict(hosts.get("entries")).get(host))
     ssh = entry.get("ssh") or entry.get("target") or host
     remote_root = str(entry.get("remote_root") or entry.get("root") or hosts.get("remote_root")
-                      or f"/home/{os.environ.get('USER', 'jack')}").rstrip("/")
+                      or default_remote_root()).rstrip("/")
     budget_gb = workspace.default("worktree_budget_gb", None)
     return {
         "name": host,

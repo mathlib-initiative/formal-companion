@@ -1,8 +1,7 @@
 """Build the args for the local Workflow fleet (the <100-item fallback).
 
-Ported from the queue builder in scratchpad/recovered/b174aa13_L5589_Bash.txt
-(``queue_args.json``: item, repos, pdf_pages) and the fleet script it fed,
-recovered/b174aa13_L5600_Workflow.txt.
+Ported from the v1 campaign's queue builder (``queue_args.json``: item, repos,
+pdf_pages) and the fleet script it fed.  Neither is in this repo.
 
 The local path exists because the server path needs ssh, an agentbox profile and
 the box owner's consent.  It is a FALLBACK, and the record says why: the local

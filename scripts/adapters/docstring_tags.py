@@ -1,8 +1,8 @@
 """Adapter: declarations tagged by a book label in their docstring.
 
-Ported from
-  scratchpad/recovered/b174aa13_L5547_Bash.txt  ``extract_ours.py``   (tao-measure-lean)
-  scratchpad/recovered/b174aa13_L5564_Bash.txt  ``extract_teorth.py`` (teorth/analysis)
+Ported from the v1 campaign's two extraction scripts (not in this repo):
+``extract_ours.py`` (tao-measure-lean) and ``extract_teorth.py``
+(teorth/analysis).
 
 Both originals were one-off cells; this adapter is the generalisation
 docs/design/stage_map.md Stage 2 asks for, with their recorded defects fixed:

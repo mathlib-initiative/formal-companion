@@ -29,8 +29,8 @@ fi
 
 # TODO(v1): tend-agent's own CLI contract (flags, prompt-registry variant, how the
 # role is selected) has not been exercised from this machine, so the invocation below
-# is a placeholder.  Confirm it against /Users/jack/Desktop/tend `tend-agent --help`
-# and a 1/1 smoke test before using this backend for a real run.
+# is a placeholder.  Confirm it against your own `tend-agent --help` and a 1/1
+# smoke test before using this backend for a real run.
 exec tend-agent \
   --role "$ROLE" \
   --prompt-file "$PROMPTS/$ROLE.md" \

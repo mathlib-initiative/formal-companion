@@ -1,10 +1,10 @@
 """The strict book-item grammar: one parser for every stage.
 
-Ported from the normaliser in /Users/jack/Desktop/tao-differential/compare.py
-(``norm()``, lines 13-20) and the ITEM regexes of the recovered extractors
-(scratchpad/recovered/b174aa13_L5547_Bash.txt ``extract_ours.py`` and
-b174aa13_L5564 ``extract_teorth.py``), with the defects the design records
-fixed:
+Ported from the normaliser in the v1 campaign's ``compare.py`` (``norm()``) and
+the ITEM regexes of its two extractors, ``extract_ours.py`` and
+``extract_teorth.py``.  None of the three are in this repo; what they did is
+written down in ``docs/design/stage_map.md`` §1.1, and these are the defects the
+design records fixed:
 
 * whitespace tolerance -- ``compare.norm`` used a single-space regex and
   silently dropped ``Exercise    1.3.19`` (docs/design/stage_map.md Stage 1/3);

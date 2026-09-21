@@ -1,9 +1,8 @@
 """Machine-validate ledger rows against the findings they answer.
 
-Ported from: no single original -- this replaces the hand checking of
-/Users/jack/Desktop/tao-differential/{accepted,refuted}.adam.jsonl described in
-recovered/b174aa13_L5702_Bash.txt's `_meta` note ("transcribed decisions; no
-re-adjudication").  The rules it enforces are the Stage 7 ledger gate named in
+Ported from: no single original -- this replaces the hand checking of the v1
+campaign's ``{accepted,refuted}.adam.jsonl``, whose `_meta` note recorded what
+was done to them ("transcribed decisions; no re-adjudication").  The rules it enforces are the Stage 7 ledger gate named in
 docs/design/stage_map.md §4 -- finding_id linkage, one vocabulary, the stamped
 source, a written recovery argument, sub-threshold dissent -- plus the
 critique's corrections:

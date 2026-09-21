@@ -8,9 +8,9 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/b174aa13_L5600_Workflow.txt (the batch-1
-// three-way-faithfulness-differential fleet: 199 agents, 129 of 225 items done
-// before the session limit killed it).
+// Ported from: the v1 campaign's batch-1 three-way-faithfulness-differential
+// fleet (199 agents, 129 of 225 items done before the session limit killed it),
+// which does not travel with this repo.
 // Changes the record forces:
 //   * inputs come from `args` -- repos, book paths, conventions and the gate
 //     command were constants in the original;

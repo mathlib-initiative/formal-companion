@@ -1,6 +1,6 @@
 """Build a run's tend root: config.yaml, .tend/*.yaml, bin/ wrappers, gate/.
 
-Ported from the five orchestration roots retrieved from ffmain
+Ported from the v1 campaign's five orchestration roots
 (``tao-diff-tend`` and its four siblings): their ``config.yaml`` files differed
 only in the entrypoint, the two ``bin/*.sh`` paths and the two concurrency
 numbers, and their four ``.tend/*.yaml`` files were byte-identical. Everything

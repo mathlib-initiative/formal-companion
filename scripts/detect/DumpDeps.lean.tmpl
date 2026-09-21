@@ -1,7 +1,7 @@
 /-
   DumpDeps -- constant-level dependency dump of one companion's own modules.
 
-  Template. Ported from /Users/jack/Desktop/tao-differential/adam-detector/DumpDeps.lean,
+  Template. Ported from the v1 campaign's `DumpDeps.lean` (not in this repo),
   which hard-wired `MeasureTheory` (import, importModules and the `MeasureTheory.Tao`
   module test). Rendered by `cf detect-proxies <name> --lean --render-dump-deps`
   (or scripts/detect/dump_deps.sh) with:
@@ -10,7 +10,7 @@
     {{root_module}}    the module that imports the whole library, e.g. MeasureTheory
     {{module_prefix}}  namespace prefix of the companion's own modules, e.g. MeasureTheory.Tao
     {{output_path}}    ABSOLUTE path for deps.json -- must be OUTSIDE the repo tree
-                       (adam-detector/README.md:12-13: "Move deps.json OUT of the
+                       (the v1 detector's README: "Move deps.json OUT of the
                        repo afterwards (the tree must stay clean)")
 
   Run from the companion root, against a built .lake:

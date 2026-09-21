@@ -1,8 +1,8 @@
 """Index over a ``deps.json`` dump produced by ``DumpDeps.lean``.
 
-Ported from /Users/jack/Desktop/tao-differential/adam-detector/analyze2.py:
-``closure`` L132-147, ``direct_deps`` L127-131, ``path_to`` L148-151, the
-statement closure L241-252 / L285-295 and the generated-name filter L213.
+Ported from the v1 campaign's ``analyze2.py`` (not in this repo): ``closure``,
+``direct_deps``, ``path_to``, the statement closure and the generated-name
+filter.
 
 ``deps.json`` shape (see detect/DumpDeps.lean.tmpl)::
 
