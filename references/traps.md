@@ -104,7 +104,11 @@ those two variants.
 *Presents as:* a convenient copy of `text.txt`, page images or crops inside a repo.
 *Fix:* source text, page images and crops live only in the workspace's gitignored `sources/`,
 never in the skill repo or a companion; findings quote 1-3 sentences and stay in the workspace;
-`--redact-quotes` replaces `book_quote` with (page, normalised hash) for anything shared. The
+what leaves is an export with the quotes redacted to a hash. Two of them, and they hash the same
+normalised sentence: `cf route --redact-quotes` replaces `book_quote` with (raw length, sha256) in
+one companion's upstream report, and `cf share export` replaces it with (page, normalised length,
+sha256, first/last six words) for a whole campaign — from which `cf quotes hydrate` recovers the
+sentence on a machine that already holds that edition, and nowhere else. The
 registry holds metadata and URLs only, which is what makes *it* committable. A download happens
 only with `--download` **and** a licence note saying the author publishes the file himself, and
 nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails
@@ -356,5 +360,11 @@ local is that `cf init` REFUSES a workspace repo with a remote unless `policy.al
 otherwise. The pre-push hook is a reminder on top of that, not the control: `git push --no-verify`
 skips it, a fresh clone does not carry it, and a remote added after `cf init` never passes through
 it — which is why `cf status` prints, every run, whether there is a remote and whether the hook is
-still in place.
+still in place. `cf init --no-remote-guard` adds the one guard a bare `git push --no-verify` does
+not get past (`remote.pushDefault` to a remote that does not exist, `push.default nothing`, both in
+that repo's local config); an explicit `git push <remote> <ref>` still works, so it is a guard and
+not the control either. Staying local is not the same as being unshareable: `cf share export`
+writes the campaign's conclusions — ledger rows, routed findings, tallies, receipts, source
+metadata — with every quote redacted, and `cf share import` merges such a bundle into another
+workspace without overwriting a verdict, which is how two people work one campaign.
 *Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); `critique.json` risks 1-3.

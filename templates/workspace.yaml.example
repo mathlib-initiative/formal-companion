@@ -88,8 +88,12 @@ budget:
 policy:
   # Nothing leaves the workspace directory while _meta.status is UNCHALLENGED.
   publish_unchallenged: false
-  # Exports replace book_quote with (page, normalised hash) unless turned off.
-  # This governs the machine-readable `cf route --emit-upstream` file only.
+  # Read by BOTH exports, each of which a flag can still override: `cf route
+  # --redact-quotes`/`--no-redact-quotes` records (raw length, sha256), and `cf
+  # share export --redact-quotes`/`--full-quotes` records (page, normalised length,
+  # sha256, first/last six words) -- and also redacts a verbatim run of 40+
+  # characters of the source inside a reason or a reasoning. `cf quotes hydrate`
+  # recovers either on a machine that already holds that edition.
   redact_quotes_on_export: true
   # How much of a quoted sentence a DRAFT carries is a property of who it is
   # addressed to, not of this workspace: the repository owner owns the book and
@@ -103,7 +107,10 @@ policy:
       quotes: full
     public:                       # `cf route --github` issue bodies
       quotes: excerpt
-  # `cf init` installs a pre-push hook; the workspace repo has no remote.
+  # false is the control: `cf init` REFUSES a workspace repo that has a remote,
+  # and `cf status` reports one that appears later. The pre-push hook it installs
+  # is a reminder on top of that -- `git push --no-verify` skips it -- and
+  # `cf init --no-remote-guard` is the stronger, optional local-config guard.
   allow_remote: false
   # false forbids `cf onboard --download` outright. Even when true, a download
   # happens only with the flag AND a registry licence note saying the author
