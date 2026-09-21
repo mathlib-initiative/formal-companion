@@ -1,7 +1,8 @@
 """Statement-table row schema v2 and its mechanical validation.
 
-New code; the field list is docs/design/stage_map.md Stage 2 ("Extract statement
-tables"), which generalises the three row shapes that were produced by hand:
+New code; the field list is references/findings-schema-v2.md §1
+(``companions/<name>/statements.jsonl`` -- one declaration per line), which
+generalises the three row shapes that were produced by hand:
 
   ours.jsonl / teorth.jsonl  (extract_ours.py, extract_teorth.py)
       item, decl, file, line, statement, sorry, page_anchor, repo

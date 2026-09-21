@@ -1,8 +1,9 @@
 """Finding rows emitted by the detector (kinds ``PROXY`` and ``COVERAGE``).
 
-New code. Stage 8 of docs/design/stage_map.md: "each hit [is] emitted as a finding
-row of kind ``PROXY`` with ``bridge: proved|fiat|none`` so it joins the corpus
-and the ledger like any other finding".
+New code. Stage 8 of docs/design/stage_map.md §4: "a detector hit counts only
+once it is emitted as a finding row of kind ``PROXY`` (with ``bridge:
+proved|fiat|none`` ...), so it joins the corpus and the ledger like any other
+finding".
 
 These rows are *mechanical*: they carry no ``book_quote`` and no ``witness``,
 which is exactly why the design critique asks for a per-kind gate matrix

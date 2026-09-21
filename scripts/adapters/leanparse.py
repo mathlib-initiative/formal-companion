@@ -4,7 +4,8 @@ Ported from the recovered extractors
   scratchpad/recovered/b174aa13_L5547_Bash.txt  ``extract_ours.py``   (tao-measure-lean)
   scratchpad/recovered/b174aa13_L5564_Bash.txt  ``extract_teorth.py`` (teorth/analysis)
 and hardened against the three parsers that already live on disk and disagree
-(1,248 vs 1,414 vs 1,413 declarations, docs/design/stage_map.md Stage 0):
+(1,248 vs 1,414 vs 1,413 declarations -- the measurement is in the design
+record, not in any document here):
 
   /Users/jack/Desktop/tao-measure-lean/scripts/review_audit.py:26-34
       ``private``/``protected``/``noncomputable``/``@[...]`` prefixes and the

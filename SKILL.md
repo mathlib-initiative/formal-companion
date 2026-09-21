@@ -264,7 +264,8 @@ hosted session the bridges shell out to). Nothing in this repo installs or
 pins either, and the version last used is **not recorded**; the only check is
 `hosts.<host>.tend_version` in your own `workspace.yaml`, which `cf run`'s
 preflight compares against `tend --version` on the host and refuses on a
-mismatch. Without them the supported path is the **local Workflow fleet**
+mismatch; with no spec recorded, preflight only prints the version and
+continues. Without them the supported path is the **local Workflow fleet**
 (`cf run <id> --local`, under ~100 items) plus every mechanical stage, which
 needs neither.
 
