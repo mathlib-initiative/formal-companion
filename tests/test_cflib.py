@@ -13,11 +13,21 @@ environment names it:
     CF_MT=<an attribution-table companion checkout>
     CF_BOOK_TXT=<the book's extracted text>
 
-Nothing here touches the network, and nothing reads a PDF: discovery is
-exercised against FIXTURE repos that carry the same signals the two real
-companions carry (docs/design/archive/multi-source-model.md S4.3).
+Nothing here touches the network, and the only PDFs read are the fixture PDFs
+the suite generates in a temporary directory (`tests/_hermetic.py` pins HOME, so
+`library_paths`' `~/Downloads` entry reaches nothing of the developer's):
+discovery is exercised against FIXTURE repos that carry the same signals the two
+real companions carry (docs/design/archive/multi-source-model.md S4.3).
 """
 from __future__ import annotations
+
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
 
 import json
 import os

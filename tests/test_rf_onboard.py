@@ -32,6 +32,14 @@ What the cases below guard:
 """
 from __future__ import annotations
 
+# The first import, before anything reads HOME: it pins HOME at a temporary
+# directory for `unittest discover`, which loads no conftest.py.  The second
+# spelling is for `python3 -m unittest tests.<module>`.  See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import json
 import os
 import re
@@ -434,12 +442,16 @@ class TestOnboardingABlueprint(OnboardCase):
     def test_a_second_onboard_re_derives_rather_than_duplicating(self):
         self.assertEqual(self.onboard(self.repo), 0)
         first = Workspace.load(self.ws)
+        first_rows = self.rows("bprepo")
         self.assertEqual(self.onboard(self.repo), 0)
         second = Workspace.load(self.ws)
         self.assertEqual(second.source_ids(), first.source_ids())
         self.assertEqual(second.source(second.source_ids()[0]).sha256,
                          first.source(first.source_ids()[0]).sha256)
-        self.assertEqual(len(self.rows("bprepo")), len(self.rows("bprepo")))
+        # the rows read BEFORE the second onboard, so an append rather than a
+        # re-derive is what this compares against; the whole list, not its
+        # length, so a re-derive that silently rewrites a row fails here too
+        self.assertEqual(self.rows("bprepo"), first_rows)
 
     def test_the_forced_adapter_path_reaches_the_same_source(self):
         self.assertEqual(self.onboard(self.repo, "--adapter", "blueprint_tex"), 0)
