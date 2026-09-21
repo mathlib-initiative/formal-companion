@@ -918,20 +918,25 @@ class TestTheRecordedBaselineFiguresReDerive(unittest.TestCase):
         """PAGE_BIND_WINDOW's comment and gate_config()'s bind_item_page comment."""
         f, n = self.f, self.OFFSET
         self.assertEqual(f["unbound"][n], 26)
-        self.assertEqual(f["straddle"][n], 8)
-        self.assertEqual(f["bindable"][n], 2985)
+        # the 8 quotes that used to straddle a page break are bindable now that
+        # `pages_matching` searches adjacent pages as pairs: an empty page list
+        # turned the bind off, which is all a quote spliced across a seam needed
+        self.assertEqual(f["straddle"][n], 0)
+        self.assertEqual(f["bindable"][n], 2993)
         self.assertEqual(f["beyond"][n], 16)
-        self.assertEqual(f["bindable"][n] - f["beyond"][n], 2969)
+        self.assertEqual(f["bindable"][n] - f["beyond"][n], 2977)
         self.assertEqual(len(f["beyond_files"]), 16)
 
     def test_the_same_figures_without_the_offset(self):
         """PageBind's docstring: the count of unplaceable quotes, and why."""
         f = self.f
         self.assertEqual(f["unbound"][0], 262)
-        self.assertEqual(f["bindable"][0], 2750)
+        self.assertEqual(f["bindable"][0], 2757)
         self.assertEqual(f["beyond"][0], 16)
+        # these 230 name a printed page and lack only the offset, which is what
+        # the unbound note now says; the string it used to say denied it
         printed = sum(c for why, c in f["unbound_why"].items()
-                      if "neither a numbered label nor a printed page" in why)
+                      if "does not know the source's page_offset" in why)
         missing = sum(c for why, c in f["unbound_why"].items()
                       if "occurs nowhere in the pinned text" in why)
         self.assertEqual((printed, missing), (230, 32))
