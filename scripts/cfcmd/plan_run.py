@@ -1,6 +1,6 @@
 """``cf plan-run`` -- plan one fleet run: tasks, prompts, gate.json, tend root.
 
-    python3 scripts/cf.py plan-run --preset attack-hunt --companion ours \\
+    cf plan-run --preset attack-hunt --companion ours \\
         --host examplebox --model claude-sonnet-5 --i-have-consent
 
 Writes ``<workspace>/runs/<run-id>/``:

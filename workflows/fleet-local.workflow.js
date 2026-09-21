@@ -322,9 +322,14 @@ return {
     note: 'Workflow scripts cannot write files. Save this return value, then run the post-hoc harvest -> gate -> requeue loop.',
     // These are the REAL command lines; `cf harvest` takes the run id
     // positionally, `--journal <wf_* directory>`, and `--gate` (there is no
-    // --from-journal, no --run and no --verify).
-    harvest: 'python3 scripts/cf.py harvest ' + (A.run_id || '<run-id>') + ' --journal <transcriptDir> --gate',
+    // --from-journal, no --run and no --verify).  They are spelled `cf <command>`
+    // -- the shim, the one spelling the skill prints everywhere else -- because
+    // this block is saved into the workspace and read from there, where a
+    // skill-relative `scripts/cf.py` does not exist.  `scripts/run/fleet_local.py`
+    // prints the same two steps and must keep saying the same thing.  The gate
+    // line stays a script path on purpose: it runs OUT OF TREE, from the skill.
+    harvest: 'cf harvest ' + (A.run_id || '<run-id>') + ' --journal <transcriptDir> --gate',
     gate: 'python3 scripts/gate/verify_findings.py --gate-config ' + (GATE.config || '<run>/gate.local.json') + ' --root <workspace>/corpus/' + (A.run_id || '<run-id>') + ' --findings-dir .   # the gate OUT OF TREE',
-    requeue: 'python3 scripts/cf.py plan-run --preset <preset> --run-id ' + (A.run_id || '<run-id>') + ' --force   # rebuilds tasks and args; re-run this script for the items listed in summary.remaining',
+    requeue: 'cf plan-run --preset <preset> --run-id ' + (A.run_id || '<run-id>') + ' --force   # rebuilds tasks and args; re-run this script for the items listed in summary.remaining',
   },
 }
