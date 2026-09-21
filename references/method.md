@@ -11,6 +11,13 @@ is audited against a *list* of sources, and a differential is possible exactly w
 companions' source lists overlap. Everything below about evidence classes, yields and
 calibration is unchanged by that — it is measured per (source, companion) pair either way.
 
+**Contents** — §1 attack runs vs differentials · §2 the three changes that flip it ·
+§3 program order for a new companion · §4 the ~40% first-pass false-positive rate ·
+§5 the five recurring defect shapes · §6 safe bridge vs definitional fiat ·
+§7 why the techniques find disjoint classes · §8 every bug came from a second reading ·
+§9 count from the merged corpus · §10 what the numbers do not license ·
+§11 where each rule lives in the code.
+
 Primary sources, all read for this document:
 
 | source | what it establishes |
@@ -33,7 +40,7 @@ Primary sources, all read for this document:
 Five runs over one book chapter, same corpus, same repository under test. Counting **distinct book
 items whose findings name a declaration of the audited repo**, and how many of those are
 substantive (`CONTENT` / `VACUITY` / `SUSPECTED_ERRATA` rather than a page anchor or a coverage
-note) — `docs/HANDOFF.md` §2, recomputed there from `~/Desktop/tao-diff-run`:
+note) — `tao-measure-lean/docs/HANDOFF.md` §2, recomputed there from `~/Desktop/tao-diff-run`:
 
 | run | design | model | book access | items | substantive |
 |---|---|---|---|---:|---:|
@@ -55,7 +62,7 @@ blind to: a statement that is vacuous, weaker than the book, or true only by a j
 exactly the case where two independent repos are wrong the *same* way and therefore agree.
 
 Cost of the cheap finding: **22 of the 40 differential-flagged items were pure pagination**
-(`docs/OPEN_FAITHFULNESS_FINDINGS.md`, tally at the foot of the file), and each consumed an
+(`tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md`, tally at the foot of the file), and each consumed an
 adjudication slot. Comparing two repos rewards *any* difference, and a page number is the cheapest
 difference available.
 
@@ -97,7 +104,7 @@ Consequences the skill enforces:
   `_meta.status` is `UNCHALLENGED`; `publish-verdicts` refuses to write `human_confirmed`.
   The batch-1 findings routed against the third companion — **32 rows, 7 high, over 26 items**
   (recomputed from `/Users/jack/Desktop/tao-differential/findings.teorth.jsonl`) — carry
-  `_meta.status: UNCHALLENGED` and were never reported upstream; `docs/HANDOFF.md` §6 records
+  `_meta.status: UNCHALLENGED` and were never reported upstream; `tao-measure-lean/docs/HANDOFF.md` §6 records
   holding them back as a deliberate decision.
 - **The reviewer's job is refutation, not approval.** The shipped reviewer prompt carries the 40%
   figure as its own justification, and says approving a wrong finding is a worse failure than
@@ -187,22 +194,22 @@ Two corollaries with evidence:
 
 - **A documented restriction is not a justified one.** One exercise carried a docstring reading
   "NARROWER THAN THE BOOK" and blamed an open stub; the needed fact was already proved and the
-  proof was discarding it with `obtain ⟨-, hPsum⟩` (`docs/HANDOFF.md` §4). A plausible excuse
+  proof was discarding it with `obtain ⟨-, hPsum⟩` (`tao-measure-lean/docs/HANDOFF.md` §4). A plausible excuse
   survives every reading until someone checks the excuse itself.
 - **A summarised source is not the source.** The local errata file was a summarising fetch and had
-  silently dropped the entry that decided a high-severity finding (`docs/HANDOFF.md` §4; P13).
+  silently dropped the entry that decided a high-severity finding (`tao-measure-lean/docs/HANDOFF.md` §4; P13).
   The skill therefore fetches errata with a raw HTTP client (`curl`) and keeps the raw HTML beside
   the rendered form, dated. A fetch tool that summarises is never used for a source of record.
 
 A finding wrong in its *citation* can still point at something real — a reason to look harder, not
 to close. Conversely, an erratum that *observes* a divergence and points to a blog post does not
 license changing a book companion: the companion formalises the book
-(`docs/HANDOFF.md` §5, the one finding deliberately not acted on).
+(`tao-measure-lean/docs/HANDOFF.md` §5, the one finding deliberately not acted on).
 
 ## 9. Count from the merged corpus, never from prose
 
 The ledger's own closing command tallies every `unfaithful_decls` entry with the repo's prefix
-over **every merged finding file** (`docs/OPEN_FAITHFULNESS_FINDINGS.md`, "The tally that closes
+over **every merged finding file** (`tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md`, "The tally that closes
 this file"). As of 2026-09-07 it prints **72 rows over 40 distinct items**, partitioning as
 
 | class | items |
@@ -219,7 +226,7 @@ anything inherited.
 Four mechanical rules follow, all enforced by the skill:
 
 1. **Re-tally from the corpus, not from the findings you read.** Triaging from read findings missed
-   three items, one of them high severity (`docs/HANDOFF.md` §4).
+   three items, one of them high severity (`tao-measure-lean/docs/HANDOFF.md` §4).
 2. **Diff the harvest against its source.** The local harvest held 762 files where the server had
    763, and the missing file was a real `CONTENT` finding; every derived count was off by one.
    `harvest` writes a `RECEIPT.json` with the source count and a sha manifest, and refuses to
@@ -264,4 +271,4 @@ and an earlier pass found 36 wrong claims in a first draft.
 | count from corpus | `harvest/tally.py`, `report` + `verify-claims.workflow.js` |
 | harvest completeness | `harvest/harvest.py` `RECEIPT.json` |
 | task/item reconciliation | `plan/make_tasks.py` |
-| errata fetched raw | `book/fetch_errata.py` (curl; raw HTML kept, dated) |
+| errata fetched raw | `scripts/sources/fetch_errata.py` (curl; raw HTML kept, dated) |

@@ -9,6 +9,10 @@ touching it.
 The enums here are the single source of truth in code: `scripts/cflib/vocab.py`. Anything not
 listed is invalid and the schema gate rejects it.
 
+**Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
+verdicts, resolutions, source roles, re-check statuses) · §2 mapping tables from the five
+legacy vocabularies · §3 `finding_id`, the frozen rule · §4 item ids.
+
 ---
 
 ## 1. The canonical vocabulary
