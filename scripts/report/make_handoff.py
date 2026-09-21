@@ -331,17 +331,14 @@ def load_examined(paths: Any, runs: dict[str, dict],
             continue
         receipt = receipts.get(run_id) or {}
         gated = bool((receipt.get("gate") or {}).get("ok"))
+        rejected = harvest_mod.gate_rejected(receipt)
         fallback = _run_source(receipt, runs.get(run_id) or {})
         # Recorded from the RECEIPT, before a single document is read: a run
         # whose documents are all unreadable -- or that landed none at all --
         # is still a run no gate passed, and the backstop this warning exists
         # to be is that `cf report` names it at all.
         if not gated:
-            block = out.setdefault(fallback, _examined_block())
-            if run_id not in block["ungated_runs"]:
-                block["ungated_runs"].append(run_id)
-            if harvest_mod.gate_rejected(receipt) and run_id not in block["gate_failed_runs"]:
-                block["gate_failed_runs"].append(run_id)
+            _record_gate_state(out.setdefault(fallback, _examined_block()), run_id, rejected)
         counted = {os.path.basename(str(p))
                    for p in tally_mod.iter_finding_files(directory)}
         for path in compat.iter_json_files(directory):
@@ -380,12 +377,26 @@ def load_examined(paths: Any, runs: dict[str, dict],
             # Also here, not only above: a document stamped with a source the
             # receipt does not name lands in another block, and that block is
             # where this source's reader looks for the warning.
-            if not gated and run_id not in block["ungated_runs"]:
-                block["ungated_runs"].append(run_id)
-            if (harvest_mod.gate_rejected(receipt)
-                    and run_id not in block["gate_failed_runs"]):
-                block["gate_failed_runs"].append(run_id)
+            if not gated:
+                _record_gate_state(block, run_id, rejected)
     return out
+
+
+def _record_gate_state(block: dict, run_id: str, rejected: bool) -> None:
+    """File a run that is not gated under the ONE state it is in.
+
+    "No gate ever ran" and "a gate ran and rejected" are two states, and a run
+    is in one of them, not both: ``cf tally`` publishes ``ungated`` and
+    ``gate_failed`` as disjoint lists (``harvest.ungated_runs`` tests for the
+    gate BLOCK, ``harvest.gate_rejected`` for its ``ok``), and this block feeds
+    the same two lists in ``reports/coverage.json``.  Putting a rejected run in
+    both published one corpus described two ways by two artifacts -- the shape
+    the distinction was added to end -- while the prose filtered it out of the
+    sentence and only looked consistent.
+    """
+    key = "gate_failed_runs" if rejected else "ungated_runs"
+    if run_id not in block[key]:
+        block[key].append(run_id)
 
 
 def _examined_block() -> dict:
@@ -1058,9 +1069,10 @@ def source_coverage(cfg: Any, paths: Any, source_id: str,
         "never_examined": never,
         "examined_outside_scope": sorted(seen - in_scope_set) if scope_known else [],
         "unstamped_documents": int(block.get("unstamped") or 0),
+        # disjoint, and the same two lists `cf tally` publishes: no gate ever
+        # ran, versus a gate that ran and REJECTED, which is a different thing
+        # to say than "no quote was ever checked"
         "ungated_runs": sorted(block.get("ungated_runs") or []),
-        # a subset of ungated_runs: a gate that ran and REJECTED, which is a
-        # different thing to say than "no quote was ever checked"
         "gate_failed_runs": sorted(block.get("gate_failed_runs") or []),
         "runs": dict(sorted((block.get("runs") or {}).items())),
         "by_chapter": {str(k): v for k, v in sorted(
@@ -1212,12 +1224,11 @@ def coverage_note(coverage: dict) -> str:
         if src.get("items_paired") is None:
             lines.append("  - no `pairs/%s/index.json`, so the paired figure could not be "
                          "computed at all; run `cf pair`." % src["source_id"])
-        failed = set(src.get("gate_failed_runs") or ())
-        ungated = [r for r in src["ungated_runs"] if r not in failed]
-        if ungated:
+        if src["ungated_runs"]:
             lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
                          "text. %s"
-                         % (", ".join("`%s`" % r for r in ungated), tally_mod.REGATE_HINT))
+                         % (", ".join("`%s`" % r for r in src["ungated_runs"]),
+                            tally_mod.REGATE_HINT))
         # Said separately: for these runs the quotes WERE checked, and failed, so
         # "no quote was checked" would be a second wrong statement about them.
         if src.get("gate_failed_runs"):
