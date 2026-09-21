@@ -884,5 +884,95 @@ class TestRecheckVocabularyAndDocumentation(unittest.TestCase):
                     paths.recheck_json(bad)
 
 
+# ---------------------------------------------------------------------------
+# gates-correctness#6 -- the passages named callers that never read the key
+
+
+class TestThePassagesNameTheCallerThatLinksOnTheKey(unittest.TestCase):
+    """Vocabulary §3.1 and `finding_id`'s docstring listed `agreed`,
+    adjudication and `cf recheck` as linking on `defect_key`.  None of them
+    reads it: `agreed` groups on `(source_id, repo, collapsed item, kind)` plus
+    a shared declaration, and everything that addresses ONE observation joins on
+    `finding_id`.  Left standing, the passage is licence for a later change to
+    re-key `agreed` on the defect key, which would move the pinned agreement
+    figures without anyone re-adjudicating a thing.
+    """
+
+    #: the callers the retracted sentences named as linking on the key
+    NAMED = ("harvest/agreed.py", "cfcmd/adjudicate.py", "ledger/transcribe.py")
+
+    #: the sentences that described behaviour the code does not have
+    RETRACTED = (
+        "`agreed`, re-adjudication and `cf recheck` all link on it",
+        "it is what union, agreed, adjudication and ``cf recheck`` match across runs",
+    )
+
+    def flat(self, text: str) -> str:
+        """*text* with every run of whitespace collapsed, so a claim can be
+        matched whatever line it happens to wrap on."""
+        return " ".join(str(text or "").split())
+
+    def read(self, rel: str) -> str:
+        return (SKILL / rel).read_text(encoding="utf-8")
+
+    def section(self) -> str:
+        body = self.read("references/vocabulary.md").split("### 3.1 ", 1)[1]
+        return self.flat(body.split("\n### ", 1)[0])
+
+    def test_none_of_the_callers_it_named_reads_the_key(self):
+        for rel in self.NAMED:
+            with self.subTest(rel=rel):
+                self.assertNotIn("defect_key", self.read("scripts/" + rel))
+
+    def test_union_is_the_one_that_groups_on_it(self):
+        self.assertIn('key = (row_source, row["repo"], str(row["defect_key"]))',
+                      self.read("scripts/harvest/union.py"))
+
+    def test_the_vocabulary_assigns_each_caller_to_the_key_it_uses(self):
+        section = self.section()
+        self.assertIn("`union --group-by defect-key` groups on it", section)
+        self.assertIn("join on `finding_id`", section)
+        for claim in self.RETRACTED:
+            self.assertNotIn(claim, section)
+
+    def test_the_docstrings_say_the_same_thing(self):
+        for doc in (hashing.finding_id.__doc__, hashing.defect_key.__doc__):
+            flat = self.flat(doc)
+            for claim in self.RETRACTED:
+                self.assertNotIn(claim, flat)
+        self.assertIn("``harvest/union.py --group-by defect-key`` is what matches on it "
+                      "across runs", self.flat(hashing.finding_id.__doc__))
+        self.assertIn("Callers that LINK a defect across runs use this",
+                      self.flat(hashing.defect_key.__doc__))
+        self.assertIn("``agreed`` groups on the collapsed item and the kind plus a "
+                      "shared declaration and reads neither key",
+                      self.flat(hashing.defect_key.__doc__))
+
+
+class TestARowWithNoRunIndependentKeyIsStillReChecked(WorkspaceCase):
+    """`cf recheck` joins a row to its pin on `finding_id` and `run_id`, which
+    is why it works on a ledger at all: `ledger/transcribe.py` stamps no
+    `defect_key`, so a re-check keyed on that would find nothing to check."""
+
+    def setUp(self):
+        super().setUp()
+        self.plan_run_yaml()
+        self.corpus()
+        self.harvest_pin()
+        self.assertEqual(self.transcribe()["errors"], [])
+
+    def test_the_transcribed_row_carries_no_defect_key(self):
+        row = self.ledger_rows()[0]
+        self.assertEqual(str(row.get("defect_key") or ""), "")
+        self.assertTrue(row["finding_id"])
+
+    def test_the_re_check_still_classifies_it_against_its_pin(self):
+        report = self.recheck()
+        entry = report["entries"][0]
+        self.assertEqual(entry["defect_key"], "")
+        self.assertEqual(entry["finding_id"], self.ledger_rows()[0]["finding_id"])
+        self.assertEqual(entry["status"], vocab.RECHECK_UNCHANGED)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
