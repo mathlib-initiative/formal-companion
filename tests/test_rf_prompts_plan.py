@@ -819,7 +819,7 @@ class TestTheModelTableCitesASpecThatSaysIt(unittest.TestCase):
     it does not have cannot itself carry a false citation.
     """
 
-    DESIGN = pathlib.Path("docs/design/multi-source-model.md")
+    DESIGN = pathlib.Path("docs/design/archive/multi-source-model.md")
     METHOD = pathlib.Path("references/method.md")
 
     def _cited(self, doc: str, name: str) -> list[str]:

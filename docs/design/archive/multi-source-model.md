@@ -1,12 +1,28 @@
 # The multi-source model: workspaces, companions and sources
 
-**Status:** binding. Every work package named in §9 implements this document; a
-package that needs to deviate changes this file first, in its own commit, and
-says why in the commit message.
+> **ARCHIVED — historical.** This is the design record the multi-source
+> implementation was written from, kept because the module docstrings cite its
+> sections for provenance. It is **not** a description of current behaviour and
+> nothing is bound by it any more. For what is true today read
+> `docs/design/stage_map.md` (the data model, the layout and the stages),
+> `SKILL.md` (the program, the command index and the one canonical list of hard
+> rules) and `cf <command> --help` (the CLI surface, which has moved).
+>
+> Four statements below are known to be false, and they are marked
+> `SUPERSEDED` where they occur: §0.2's claim to enumerate every hard rule (it
+> lists ten; `SKILL.md` has eleven), §7.2's worked transcript (two of its
+> "real values measured on this machine" no longer reproduce), §7's CLI table
+> (`cf sources add` takes a source path — never a URL, and no `--download`),
+> and §6.2's `lint.json` plus its omission of `fixes/` and `reviews/`, which
+> `cf init` really creates. The file was last edited substantively
+> before the implementation commits, and the paths it names — `scripts/book/`,
+> `templates/campaign.yaml.example`, `tests/test_book_pair.py` — are the
+> pre-rename ones.
 
-**Written:** 2026-09-16. **Supersedes:** the one-campaign-per-book model in
-`SKILL.md`, `README.md`, `templates/campaign.yaml.example` and
-`scripts/cflib/campaign.py`.
+**Written:** 2026-09-16. **Superseded:** 2026-09-21 by
+`docs/design/stage_map.md`. What it itself superseded: the
+one-campaign-per-book model in `SKILL.md`, `README.md`,
+`templates/campaign.yaml.example` and `scripts/cflib/campaign.py`.
 
 ---
 
@@ -59,6 +75,11 @@ findings schema field is well known to the baseline corpus. What changes is
 `source_id`.
 
 ### 0.2 What does not change
+
+**SUPERSEDED.** The list below enumerates ten hard rules and claims to cover
+every one; `SKILL.md` now has eleven (rule 11, "Low confidence is a refusal").
+Re-enumerating them in a second document is what let the count drift: the one
+canonical list is `SKILL.md` §"Hard rules".
 
 Every hard rule in `SKILL.md` survives, with `source_sha` substituted for
 `book_sha` and "the source named by the row" substituted for "the book":
@@ -1123,6 +1144,11 @@ inlines the function for a host without `cflib`), `sources/compat.py`,
 
 ### 6.2 Workspace layout
 
+**SUPERSEDED in two places.** `companions/<name>/lint.json` has a path in
+`cflib/paths.py` and no writer, because `lint` is out of scope in v1; and the
+tree below omits `fixes/` and `reviews/`, which `cf init` really creates. The
+layout that is true today is `docs/design/stage_map.md` §2.1.
+
 ```
 <workspace>/
   workspace.yaml                 committed
@@ -1210,6 +1236,12 @@ from the next `git add`.
 
 ## 7. The CLI surface
 
+**SUPERSEDED.** This table is the CLI as designed, not as shipped: it is
+missing `doctor`, `recheck`, `score`, `share`, `quotes` and `sources remove`,
+and `sources add` takes neither a URL nor `--download`. The current surface is
+`SKILL.md`'s command index and `cf <command> --help`, which is generated from
+the parsers themselves.
+
 Global: `--workspace <dir>` (default `$CF_WORKSPACE`, else the nearest ancestor
 holding `workspace.yaml`), `-v`, `-q`. No `--campaign`, no `$CF_CAMPAIGN`.
 
@@ -1256,6 +1288,15 @@ repo, not inside a Lean companion, not inside a git repo that has a remote,
 `--allow-nested` for the remote-less nested case.
 
 ### 7.2 `cf onboard <repo>` — what it prints
+
+**SUPERSEDED.** The transcript below is labelled further down as carrying "the
+real values measured on this machine", and two of its figures do not reproduce:
+the adapter confidence is `0.93 (42 of 44 sampled .lean files …)`, not `0.95
+(1,413 of 1,487 declarations tagged)`, and the published edition's anchor
+agreement is `0.89 (271 ok / 35 mismatched)`, not `0.99 (1,281 ok / 13
+mismatched)` — the figures `README.md` and `references/onboarding-contract.md`
+carry. The shape of the output is still roughly right; none of its numbers
+should be quoted.
 
 One command, no flags in the common case, and every inference is shown with its
 confidence and the file it came from.

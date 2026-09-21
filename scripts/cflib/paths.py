@@ -1,6 +1,6 @@
 """Every path in a workspace directory, in one place.
 
-New code. The layout is docs/design/multi-source-model.md S6.2; no stage may
+New code. The layout is docs/design/archive/multi-source-model.md S6.2; no stage may
 invent a path of its own, because `cf status`, the gate and harvest all have to
 agree on where an artifact lives.
 

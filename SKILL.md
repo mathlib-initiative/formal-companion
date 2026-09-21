@@ -245,7 +245,7 @@ decls)`.
 
 ## References
 
-- `docs/design/multi-source-model.md` — the binding spec for workspaces,
+- `docs/design/archive/multi-source-model.md` — the binding spec for workspaces,
   companions, sources, discovery and inference.
 - `references/method.md` — why the audit works: disjoint evidence classes,
   calibration, "every bug came from a second reading".

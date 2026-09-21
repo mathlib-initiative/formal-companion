@@ -6,7 +6,7 @@ theorems about someone else's notion -- the "bridge-only" case that hides a
 proxy, adam.NOTES.md 16-19) and recovered/b174aa13_L6145_Bash.txt (numbered
 items with no declaration at all).
 
-Generalised per design/stage_map.md Stage 3/8:
+Generalised per docs/design/stage_map.md Stage 3/8:
 
 * the item universe comes from ``sources/<source_id>/items.json``
   (whitespace-tolerant headings) instead of re-grepping the book text with a

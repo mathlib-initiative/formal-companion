@@ -1,6 +1,6 @@
 """The source registry: what the skill remembers about a known edition.
 
-docs/design/multi-source-model.md R3 / S2.  Two files, same schema, different
+docs/design/archive/multi-source-model.md R3 / S2.  Two files, same schema, different
 authority:
 
     <skill>/registry/sources.yaml   curated, shipped, committed here; no command

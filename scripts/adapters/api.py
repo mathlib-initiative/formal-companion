@@ -26,7 +26,7 @@ it was read against.
 with the sha of the content it actually reads, so ``cf extract`` is a no-op
 only when nothing it depends on changed -- including on a dirty worktree, and
 including the ledger/target-refinement exports of a table-driven companion
-(design/critique.json: "the extract key must include ledger sha and
+(the design critique: "the extract key must include ledger sha and
 target-refinement sha for ledger repos").
 """
 

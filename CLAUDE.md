@@ -1,9 +1,16 @@
 # Contributor rules for companion-faithfulness
 
 Read `SKILL.md` first for what the skill does, then
-`docs/design/multi-source-model.md` for the data model it is built on
-(workspaces, companions, sources, discovery, inference). This file is how to
-change it.
+`docs/design/stage_map.md` for the data model it is built on (workspaces,
+companions, sources, the layout, the eleven stages). This file is how to change
+it, and `CONTRIBUTING.md` is the same ground for a human sending a patch.
+
+`docs/design/stage_map.md` is the **current** spec: a normative statement there
+was checked against the code, and a package that must deviate changes that file
+in the same commit. `docs/design/archive/` holds the design record the
+implementation was written from; module docstrings cite its sections for
+provenance, but nothing is bound by it and four of its statements are marked
+superseded in place.
 
 ## 1. What may live here
 
@@ -24,18 +31,21 @@ source or their owners' details into this repo.
 ## 2. Layout
 
 ```
-SKILL.md README.md CLAUDE.md
-docs/design/         binding specs; a package that must deviate changes the spec first
+SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
+docs/design/stage_map.md   the current spec; change it in the same commit as the code
+docs/design/archive/       the design record it came from (historical)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
+evals/               trigger evals: prompts as data, run by hand
+bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
 scripts/cflib/       shared library (no stage logic, no network):
                      workspace, paths, registry, discovery, inference, state,
                      items, vocab, hashing, yamlio/jsonio, adapters_api
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
-                     route, detect, report
-templates/  workflows/  tests/
+                     route, detect, report, recheck, score, share
+templates/  workflows/  tests/  .github/workflows/
 ```
 
 Run everything by path: `python3 scripts/cf.py <command> …`. `cf.py` puts
@@ -59,7 +69,11 @@ Those two lines move together or not at all.
   run/harvest commands (ssh/rsync to an allowlisted host).
 - Every module starts with a docstring naming the original it was ported from
   (path plus transcript line) or saying it is new code, and pointing at the
-  spec section it implements.
+  section it implements — `docs/design/stage_map.md` for current behaviour, or
+  a section of `docs/design/archive/` for provenance. Cite a document that is
+  in the tree: 44 docstrings once cited four design documents nobody had
+  written, and `tests/test_rf_docs.py` now fails on a citation that resolves
+  nowhere.
 - Small functions, real docstrings, type hints where they help. Prefer
   correctness over breadth; mark anything unfinished with `TODO` and say so in
   the handoff.

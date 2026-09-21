@@ -125,7 +125,7 @@ of workspace data cannot be committed by accident. `sources/` matches a director
 the code package is `scripts/sources/`.
 *Fix:* the `!scripts/sources/` negation, which must move in the same commit as anything that
 renames either side. Two lines, one meaning; they are commented in `.gitignore` as such.
-*Evidence:* `.gitignore` in this repo; `docs/design/multi-source-model.md` §6.3.
+*Evidence:* `.gitignore` in this repo; `docs/design/archive/multi-source-model.md` §6.3.
 
 ---
 
@@ -344,7 +344,7 @@ from that copy.
 read-only rather than relying on the prompt's "READ-ONLY" instruction.
 *Evidence:* the tend config's two `validation` commands, both
 `python3 scripts/verify_findings.py` relative to the worktree; design critique
-`critique.json` gap 3.
+the design critique, gap 3.
 
 **G4 — `git add <deleted-path>` aborts the whole add.**
 *Presents as:* a staging step that quietly stages nothing.
@@ -367,4 +367,4 @@ not the control either. Staying local is not the same as being unshareable: `cf 
 writes the campaign's conclusions — ledger rows, routed findings, tallies, receipts, source
 metadata — with every quote redacted, and `cf share import` merges such a bundle into another
 workspace without overwriting a verdict, which is how two people work one campaign.
-*Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); `critique.json` risks 1-3.
+*Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); the design critique, risks 1-3.

@@ -239,5 +239,5 @@ python3 -m unittest discover -s ~/Desktop/companion-faithfulness/tests
 
 v1: findings only. `fix`, `review-pr`, `camera-ready` and `publish-verdicts`
 are designed and documented but not implemented. See `SKILL.md` for the hard
-rules, `docs/design/multi-source-model.md` for the data model, and `CLAUDE.md`
+rules, `docs/design/archive/multi-source-model.md` for the data model, and `CLAUDE.md`
 for contributor conventions.

@@ -1,6 +1,6 @@
 """Discovery: read the repo, find its sources, fingerprint the bytes.
 
-docs/design/multi-source-model.md R2 / S4.  `cf onboard <repo>` types nothing:
+docs/design/archive/multi-source-model.md R2 / S4.  `cf onboard <repo>` types nothing:
 this module reads a companion repository -- and NEVER writes to it -- and
 answers four questions the user used to answer with flags.
 

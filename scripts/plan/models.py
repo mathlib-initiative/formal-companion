@@ -22,7 +22,7 @@ other place an id lives.
 
 Spec: references/method.md S10 ("the yields belong to the models that produced
 them ... model ids unrecorded in the run metadata"); the ``runs/<id>/run.yaml``
-layout this module writes into is docs/design/multi-source-model.md S6.2.
+layout this module writes into is docs/design/archive/multi-source-model.md S6.2.
 """
 
 from __future__ import annotations

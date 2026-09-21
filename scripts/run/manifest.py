@@ -5,7 +5,7 @@ scratchpad/ffmain/tao-diff-run/RUNBOOK.md ("Start it" / "Steer it") and the five
 server roots ~/tao-{diff,attack}-* whose only differences were the entrypoint
 path, the bridge path and the concurrency limits.
 
-Three controls the original had no place for (design/critique.json, risks):
+Three controls the original had no place for (the design critique, risks):
 
 * **host allowlist** -- `cf run` automates rsync of private Lean repos and
   copyrighted source text to a machine the operator does not own, so the host
@@ -41,7 +41,7 @@ from ._compat import CfError, human_bytes
 #: rsync flags used for every component (archive, no device/special files).
 BASE_RSYNC = ["-a", "--no-D", "--omit-dir-times"]
 #: read-only transfer for companion sources: the run must not be able to edit them.
-#: (design/critique.json: "'sources read-only' is prompt-enforced only".)
+#: (the design critique: "'sources read-only' is prompt-enforced only".)
 READONLY_CHMOD = ["--chmod=D0555,F0444"]
 #: the opt-in that lets a run's agents run with approvals and the sandbox off
 #: (scripts/run/bridge-agentbox.sh); absent, both hosts deny by default.
@@ -618,7 +618,7 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
 
     tend creates the worktree for every ready task immediately: 382 tasks became
     382 worktrees and 1.1 GB in 11 minutes with a single worker allowed
-    (design/critique.json).  N companions x 763 tasks needs `depends_on` gating or
+    (the design critique).  N companions x 763 tasks needs `depends_on` gating or
     ``--copy-dir --cow``; this is the number that tells the operator which.
     """
     entrypoint_bytes = sum(e["bytes"] for e in entries
@@ -646,7 +646,7 @@ def check_budget_cap(workspace, run: dict, max_cost: float | None,
                      no_budget_cap: bool) -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
-    design/critique.json: "No budget gate ... run.yaml carries a billing-path
+    the design critique: "No budget gate ... run.yaml carries a billing-path
     field but no max_cost".  With agentbox the only enforceable cap is
     gateway-side, so the cap recorded here is what the operator must also set at
     the gateway; tend's own --max-cost counts tend-agent sessions only.
@@ -752,7 +752,7 @@ def source_shas(workspace, run: dict) -> dict[str, str]:
 def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict) -> list[str]:
     """Check the staged tend config actually calls the OUT-OF-TREE gate.
 
-    The defect this catches (design/critique.json, gaps): both
+    The defect this catches (the design critique, gaps): both
     ``validation_commands`` and ``pre_merge_validation_commands`` ran
     ``python3 scripts/verify_findings.py`` from the worktree the worker may edit
     and commit, so a worker that rewrote the gate passed both runs.  The staged

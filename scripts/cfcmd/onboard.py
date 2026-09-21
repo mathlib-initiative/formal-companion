@@ -1,6 +1,6 @@
 """cf onboard <repo> -- discover, register, prepare, extract. One command.
 
-docs/design/multi-source-model.md R2 / S4 / S7.2.  The user rejected typing
+docs/design/archive/multi-source-model.md R2 / S4 / S7.2.  The user rejected typing
 sources, editions, page offsets and errata URLs, so onboarding reads them off
 the repository instead:
 

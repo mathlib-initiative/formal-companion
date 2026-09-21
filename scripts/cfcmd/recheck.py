@@ -1,7 +1,7 @@
 """``cf recheck`` -- are the pinned findings still claims about today's code?
 
-New code (the pin recorded by ``scripts/recheck/pin.py``; design/
-multi-source-model.md S6.2).
+New code (the pin recorded by ``scripts/recheck/pin.py``; docs/design/archive/multi-source-model.md
+S6.2).
 
 A routed finding is a claim about a specific Lean statement at a specific
 revision.  Without re-checking it, six months later nobody can tell a live

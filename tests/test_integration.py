@@ -107,7 +107,7 @@ class TestCommandDiscovery(unittest.TestCase):
         mapping = cf_main.discover_commands(subparsers)
         # the command index of SKILL.md S"Command index". `book` is deleted: a
         # source is discovered by `cf onboard` and re-prepared by
-        # `cf sources refresh` (docs/design/multi-source-model.md S7).
+        # `cf sources refresh` (docs/design/archive/multi-source-model.md S7).
         for name in ("init", "onboard", "sources", "extract", "pair", "plan-run", "run",
                      "harvest", "import-corpus", "tally", "detect-proxies",
                      "adjudicate", "route", "report", "status"):

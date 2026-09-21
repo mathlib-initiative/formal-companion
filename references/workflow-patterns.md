@@ -117,7 +117,7 @@ const survivors = judged.filter(Boolean).filter(x => x.survives)
 matter if it were true. The shipped rule separates the two votes: truth must survive the refuter,
 and the materiality vote sets severity and scope. Anything comparing new results against the
 baseline must state this, because the baseline was produced under the OR rule
-(design `decisions.json`, "Survival rule for adversarial verification").
+(the design decisions record, "Survival rule for adversarial verification").
 
 **Evidence bar for a survivor:** `file:line` at a named commit, a book line, or a command and its
 output. A lens with no findings is a good result.
@@ -145,7 +145,7 @@ const dissent   = votes.filter(x => x.overturned && x.confidence < args.threshol
 ```
 
 Record `dissent` even below the threshold: a 0.6-confidence dissent was dropped from "contested"
-once and had to be re-surfaced by hand (design `decisions.json`; `stage_map.md` Stage 7).
+once and had to be re-surfaced by hand (the design decisions record; `docs/design/stage_map.md` stage 7).
 
 ---
 

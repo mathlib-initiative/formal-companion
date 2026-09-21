@@ -1,6 +1,6 @@
 """cf init -- create a workspace: N companions, M sources.
 
-New code (docs/design/multi-source-model.md S7.1).  The workspace directory is
+New code (docs/design/archive/multi-source-model.md S7.1).  The workspace directory is
 the ~/Desktop/tao-differential role: a local git repo with NO remote holding the
 source text, the statement tables, the findings corpus and the ledgers.  The
 skill repo holds code, templates and docs only; workspace data never enters it.

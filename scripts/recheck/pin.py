@@ -1,6 +1,6 @@
 """The companion-revision pin: which Lean text a finding was judged against.
 
-New code (design/multi-source-model.md S6.2's row schema; the gap it closes is
+New code (docs/design/archive/multi-source-model.md S6.2's row schema; the gap it closes is
 "no finding is pinned to a companion revision, so nothing can be re-checked,
 closed or expired").
 

@@ -1,6 +1,6 @@
 """Scoring a run against an answer key: the repo's recall instrument.
 
-New code (design/critique.json has no stage for it; references/method.md S10
+New code (the design critique has no stage for it; references/method.md S10
 "What the measured numbers do not license" is the reason it exists).
 
 Every other stage measures what the fleet DID report.  Nothing measured what it
