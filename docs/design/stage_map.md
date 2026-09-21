@@ -224,8 +224,11 @@ The numbers are the ones the module docstrings use.
 | — | `cf recheck`, `cf score`, `cf share`, `cf quotes` | `reports/recheck.<name>.json`, `reports/score.<run>.json`, a redacted bundle, a hydrated quote file |
 | 14 | `cf report` | `reports/handoff.<date>.md`, `coverage.json`, `unexamined.<id>.json`, `verify-claims.args.json` |
 
-Stages 10–13 (`fix`, `review-pr`, `camera-ready`, `publish-verdicts`) are
-documented and **not implemented**: v1 is findings-only.
+`cf share` calls itself stage 14 too, beside `cf report`; `recheck`, `score`
+and `quotes` carry no number because they sit beside the pipeline rather than
+in it. `fix`, `review-pr`, `camera-ready` and `publish-verdicts` (which
+`ledger/compat.py` numbers stage 13) are documented and **not implemented**:
+v1 is findings-only, and `fixes/` and `reviews/` are where they would write.
 
 Two properties hold across all of them. **Idempotence**: every command may be
 re-run — extraction keys on (repo commit, adapter key), planning is
