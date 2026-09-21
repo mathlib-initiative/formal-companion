@@ -30,6 +30,7 @@ LOCATION is ever given, never a fact about the source.
 from __future__ import annotations
 
 import hashlib
+import shutil
 import subprocess
 import traceback
 from pathlib import Path
@@ -39,7 +40,7 @@ from cflib.adapters_api import DRY_RUN_REQUIRED_KEYS
 from cflib.errors import AdapterError, CfError, DiscoveryError, SourceError
 from cflib.jsonio import write_jsonl
 from cflib.log import format_table
-from cflib.registry import Registry, entry_from_claim
+from cflib.registry import OVERLAY_FILE, Registry, entry_from_claim
 from cflib.templates import copy_template, render_template
 from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, derived_roots_for, from_args
 from cflib.jsonio import atomic_write
@@ -176,10 +177,17 @@ def run(args) -> int:
         return 0
 
     # ---- register ----------------------------------------------------
+    # PREPARE BEFORE SAVING, the shape `cf sources add` uses. `_prepare_source`
+    # is where the wrong-document refusals live (0 numbered items, a kind list
+    # belonging to another book), and `cf onboard <repo> --source <the wrong
+    # file>` reaches every one of them -- so writing workspace.yaml first left a
+    # command that exits 2 with a source row, a registry overlay row and a
+    # prepared directory to its name, in a directory that is a git repo, and
+    # only `cf sources remove <id>` took them away again.
+    registration = SourceRegistration(workspace)
     for body in result.sources:
         _assemble_manuscript(workspace, body, repo)
         _register_source(workspace, registry, body, result)
-    workspace.save()
 
     # ---- prepare -----------------------------------------------------
     log.info("")
@@ -190,12 +198,9 @@ def run(args) -> int:
                             fetch_errata_ok=_errata_allowed(workspace, args),
                             onboarding=repo)
     except CfError:
-        # A refusal here must not strand the workspace: the sources above are
-        # already saved as `audited`, and one that no companion lists is a file
-        # this loader rejects -- so every later cf command in the directory would
-        # die on the state a refusal left behind. Park them, then raise.
-        _park_unlisted_sources(workspace, result)
+        _retract_registration(registration, result, name)
         raise
+    workspace.save()
 
     # ---- the anchor edition (needs prepared items) --------------------
     audited, bundled, anchor, anchor_conf, anchor_evidence = _decide_sources(
@@ -286,6 +291,33 @@ def _default_name(repo: Path) -> str:
     return repo.name.strip().lower().replace("_", "-").replace(" ", "-")
 
 
+def _retract_registration(registration: "SourceRegistration", result, name: str) -> None:
+    """Undo what this onboard registered, and say by name what was undone.
+
+    `_prepare_source` prints ``ok   prepared  sources/<id>/ ...`` before it runs
+    the wrong-document refusals, and that line is true right up until this
+    deletes the directory it names: retract it by name rather than leaving the
+    operator with an ``ok`` and an ``error`` that contradict each other.  A
+    source the workspace already held is not this command's to remove, so it is
+    named with the command that does remove it, as `cf sources add` does.
+    """
+    dropped = registration.retract(body["id"] for body in result.sources)
+    for source_id, removed in sorted(dropped.items()):
+        log.warn(f"{source_id} was not added; the workspace is unchanged"
+                 + (f" (sources/{source_id}/ was removed again)" if removed else ""))
+    # Only for a source the OPERATOR named: one the repo itself declared and this
+    # workspace already held is not something they were offered a choice about,
+    # and `cf sources remove` on it would drop it from the companions that are
+    # audited against it.
+    kept = sorted(body["id"] for body in result.sources
+                  if body["id"] in registration.source_ids
+                  and (body.get("discovered") or {}).get("pdf_found_in") == "manual")
+    for source_id in kept:
+        log.warn_block(
+            f"{source_id} was already in this workspace and stays; {name} was not onboarded",
+            [f"  drop it with:  cf sources remove {source_id}"])
+
+
 def _park_unlisted_sources(workspace, result) -> None:
     """Demote every just-registered source no companion lists to `reference`.
 
@@ -293,6 +325,11 @@ def _park_unlisted_sources(workspace, result) -> None:
     companion entry is written that is not true, and `Workspace.validate` says
     so.  A source parked here comes back as audited on the next successful
     onboard, and `cf sources remove <id>` drops it for good.
+
+    This is the REPAIR for a workspace that already holds such a source.
+    Onboarding no longer makes one: it saves workspace.yaml only after every
+    source has been prepared, and a refusal before that goes through
+    :func:`_retract_registration` instead, which leaves the file untouched.
     """
     for body in result.sources:
         source_id = body["id"]
@@ -496,6 +533,59 @@ def _assemble_manuscript(workspace, body: dict, repo: Path | None = None) -> Non
     body["pdf"] = str(out)
     log.ok(f"assembled {out.name}   {len(files)} manuscript file(s), {len(blob)} bytes "
            f"(the sha covers them in this order)")
+
+
+class SourceRegistration:
+    """What the workspace held before a command registered a source.
+
+    `cf sources add` and `cf onboard` both have to write the source row -- and,
+    for a source nobody has catalogued, the registry overlay row -- BEFORE
+    :func:`_prepare_source` can read the file and say whether it is the document
+    at all.  A refusal there must leave neither behind: it is exactly the case
+    where the operator names a different file and runs the command again, and a
+    refusal that keeps the row, the overlay entry and a prepared directory is
+    then nagged about by `cf status` for good, under a name nothing tells them
+    is recoverable.
+
+    Snapshot before the first ``upsert_source``/``append_overlay``; call
+    :meth:`retract` from the refusal's handler.  The overlay is put back from its
+    BYTES rather than re-dumped, because a re-dump normalises the comment header
+    `cf init` wrote and leaves a refused command with a diff to its name.
+    """
+
+    def __init__(self, workspace):
+        self.workspace = workspace
+        self.source_ids = set(workspace.data.get("sources") or {})
+        self.overlay_path = workspace.root / OVERLAY_FILE
+        self.overlay_bytes = (self.overlay_path.read_bytes()
+                              if self.overlay_path.exists() else None)
+        sources_dir = workspace.paths.sources_dir
+        self.prepared = ({p.name for p in sources_dir.iterdir()}
+                         if sources_dir.is_dir() else set())
+
+    def retract(self, source_ids) -> dict[str, bool]:
+        """Undo the rows, overlay entries and directories *source_ids* added.
+
+        Returns ``{source_id: a prepared directory was removed}`` for the ids
+        this call created.  A source the workspace already held is not this
+        call's to remove, so it is left alone and reported by the caller.
+        """
+        dropped: dict[str, bool] = {}
+        for source_id in source_ids:
+            if source_id in self.source_ids:
+                continue
+            self.workspace.remove_source(source_id)
+            directory = self.workspace.paths.source_dir(source_id)
+            removed = source_id not in self.prepared and directory.exists()
+            if removed:
+                shutil.rmtree(directory, ignore_errors=True)
+            dropped[source_id] = removed
+        if dropped:
+            if self.overlay_bytes is None:
+                self.overlay_path.unlink(missing_ok=True)
+            else:
+                self.overlay_path.write_bytes(self.overlay_bytes)
+        return dropped
 
 
 def _register_source(workspace, registry: Registry, body: dict, result) -> None:
