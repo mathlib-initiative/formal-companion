@@ -1321,6 +1321,210 @@ class TestEveryCommandTheseWarningsPrintExists(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# NEW#h-report-1 -- a corpus run attributed to a source the workspace does not hold
+# ---------------------------------------------------------------------------
+
+#: an id no ``sources:`` block below lists -- what a removed source, or a corpus
+#: imported under another workspace's id, leaves behind in the receipts
+GHOST_SOURCE_ID = "a-book-3rd-edition"
+GHOST_SOURCE_SHA = "c" * 64
+
+
+class GhostCorpus(Workspace):
+    """Helpers for a corpus whose receipt names an id ``workspace.yaml`` lacks."""
+
+    def write_ghost_corpus(self, run_id: str, docs: dict, *, gate: dict | None,
+                           source_id: str = GHOST_SOURCE_ID,
+                           sha: str = GHOST_SOURCE_SHA) -> str:
+        """Like :meth:`Workspace.write_corpus`, but stamped with *source_id*."""
+        directory = os.path.join(self.root, "corpus", run_id)
+        for name, doc in docs.items():
+            if isinstance(doc, str):
+                compat.write_text(os.path.join(directory, name), doc)
+            else:
+                compat.write_json(os.path.join(directory, name), doc)
+        compat.write_json(os.path.join(directory, "RECEIPT.json"),
+                          {"run_id": run_id, "sources": {source_id: sha},
+                           "actual": {"count": len(docs)}, "complete": True, "gate": gate})
+        return directory
+
+    def unknown(self) -> list:
+        return self.handoff()["context"]["_coverage"]["unknown_source_documents"]
+
+
+class TestACorpusNamingASourceTheWorkspaceDoesNotHoldIsNotDropped(GhostCorpus):
+    """NEW#h-report-1: ``load_examined``'s key space is wider than the workspace's.
+
+    A block is keyed by the document's own ``source_id``, falling back to the
+    run's receipt, and ``build_coverage`` read exactly two kinds of key -- the
+    ids ``cfg.source_ids()`` lists and ``""``.  A block under any other id had no
+    reader anywhere in the tree, so its documents, its findings, its unreadable
+    files and its ungated runs left section 0 and ``coverage.json`` without a
+    word, while `cf tally` counted the same rows and section 2 printed the run by
+    name.  `cf sources remove <id>` after a harvest reaches it with no
+    hand-editing at all.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Definition 1.1.1", "page": 10, "chapter": 1, "kind": "Definition"},
+            {"item": "Lemma 1.2.2", "page": 12, "chapter": 1, "kind": "Lemma"},
+        ])
+        self.dest = self.write_ghost_corpus("second-run", {
+            "definition-1-1-1.json": dict(document("Definition 1.1.1"),
+                                          source_id=GHOST_SOURCE_ID,
+                                          source_sha=GHOST_SOURCE_SHA),
+        }, gate={"ok": True, "checked": 1})
+
+    def test_the_block_is_published_with_everything_it_carries(self):
+        self.assertEqual(self.unknown(), [{
+            "source_id": GHOST_SOURCE_ID, "documents": 1, "items_examined": 1,
+            "items_with_findings": 1, "runs": ["second-run"],
+            "unreadable_documents": [], "ungated_runs": [], "gate_failed_runs": [],
+        }])
+
+    def test_the_authority_counts_the_row_no_figure_counts(self):
+        """The disagreement this fix exists to end: one row, two artifacts."""
+        rows = tally_mod.rows_for_run("second-run", self.dest, kinds=None)
+        self.assertEqual([r["item"] for r in rows], ["Definition 1.1.1"])
+        self.assertEqual(self.coverage()["items_with_findings"], 0)
+
+    def test_the_item_behind_it_is_never_published_as_unexamined_unremarked(self):
+        """It is still counted as never examined; the document may not be silent."""
+        text = self.handoff()["text"]
+        published = compat.read_json(
+            os.path.join(self.root, "reports", "unexamined.%s.json" % SOURCE_ID))
+        self.assertIn("Definition 1.1.1", published["items"])
+        self.assertIn("may be counted as never examined above", text)
+
+    def test_the_handoff_names_the_run_the_source_and_a_remedy_that_exists(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("name source(s) `%s` that this workspace does not hold" % GHOST_SOURCE_ID,
+                      text)
+        self.assertIn("in run(s) `second-run`", text)
+        self.assertIn("`reports/coverage.json` (`unknown_source_documents`)", text)
+        for command, flags in (("sources add", ("--for",)),
+                               ("import-corpus", ("--run-id", "--from", "--source"))):
+            with self.subTest(command=command):
+                self.assertIn("cf %s" % command, text)
+                rc, out, _err = cf(*command.split(), "--help")
+                self.assertEqual(rc, 0, "`cf %s` does not exist" % command)
+                for flag in flags:
+                    self.assertIn(flag, out, "`cf %s` does not take %s" % (command, flag))
+
+    def test_the_command_says_so_on_the_terminal_too(self):
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("second-run", out)
+        self.assertIn("this workspace does not hold", out)
+
+
+class TestTheGhostBlockKeepsItsUnreadableAndUngatedLists(GhostCorpus):
+    """The stronger shape: the new warnings were swallowed with the block.
+
+    NEW#g-report-1's ``_record_unreadable`` and the ungated backstop both write
+    into the block ``load_examined`` keys by the run's receipt, so a receipt
+    naming an id this workspace does not hold took both of them out of the
+    document with it -- `grep -i ungated` over the handoff then found only the
+    template's standing sentence.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Definition 1.1.1", "page": 10, "chapter": 1, "kind": "Definition"},
+            {"item": "Lemma 1.2.2", "page": 12, "chapter": 1, "kind": "Lemma"},
+        ])
+        # unstamped, so both are attributed from the receipt; one will not parse
+        self.dest = self.write_ghost_corpus("imp", {
+            "definition-1-1-1.json": {k: v for k, v in document("Definition 1.1.1").items()
+                                      if k != "source_id"},
+            "lemma-1-2-2.json": "[]\n",
+        }, gate=None)
+
+    def test_both_lists_survive_with_the_block(self):
+        block = self.unknown()[0]
+        self.assertEqual(block["unreadable_documents"], ["imp/lemma-1-2-2.json"])
+        self.assertEqual(block["ungated_runs"], ["imp"])
+        self.assertEqual(block["runs"], ["imp"], "a run with no per-run count is still named")
+
+    def test_the_handoff_says_ungated_and_lower_bound(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("ungated run(s) `imp`: no quote in them was checked", text)
+        self.assertIn("`imp/lemma-1-2-2.json`", text)
+        self.assertIn("LOWER BOUND", text)
+
+    def test_the_terminal_says_the_same_two_things(self):
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("ungated run(s) imp", out)
+        self.assertIn("imp/lemma-1-2-2.json", out)
+
+
+class TestEveryKeyOfTheExaminedMapHasAReader(GhostCorpus):
+    """Nothing ``load_examined`` builds may be unreachable again.
+
+    The three readers in ``build_coverage`` have to partition its key space, so
+    this fixture carries one key of every kind there is: a source the workspace
+    holds, the ``""`` of a run whose receipt names two sources, a ghost id a
+    document stamped itself, and a ghost id only a receipt names.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([{"item": "Definition 1.1.1", "page": 10, "chapter": 1,
+                           "kind": "Definition"}])
+        self.write_corpus("owned", {"definition-1-1-1.json": document("Definition 1.1.1")},
+                          gate={"ok": True, "checked": 1})
+        self.write_ghost_corpus("ghost-stamped", {
+            "lemma-1-2-2.json": dict(document("Lemma 1.2.2"), source_id=GHOST_SOURCE_ID,
+                                     source_sha=GHOST_SOURCE_SHA)},
+            gate={"ok": True, "checked": 1})
+        self.write_ghost_corpus("ghost-receipt", {
+            "lemma-1-3-3.json": {k: v for k, v in document("Lemma 1.3.3").items()
+                                 if k != "source_id"}},
+            gate={"ok": True, "checked": 1}, source_id="a-book-4th-edition")
+        # two sources in one receipt: `_run_source` refuses to guess, so the ""
+        # key is the one that catches these
+        directory = os.path.join(self.root, "corpus", "wide")
+        compat.write_json(os.path.join(directory, "lemma-1-4-4.json"),
+                          {k: v for k, v in document("Lemma 1.4.4").items()
+                           if k != "source_id"})
+        compat.write_json(os.path.join(directory, "RECEIPT.json"),
+                          {"run_id": "wide",
+                           "sources": {GHOST_SOURCE_ID: GHOST_SOURCE_SHA,
+                                       "a-book-4th-edition": GHOST_SOURCE_SHA},
+                           "actual": {"count": 1}, "complete": True,
+                           "gate": {"ok": True, "checked": 1}})
+
+    def examined_map(self) -> dict:
+        runs = handoff_mod.load_runs(self.paths)
+        return handoff_mod.load_examined(self.paths, runs,
+                                         handoff_mod.load_receipts(self.paths))
+
+    def test_the_fixture_really_holds_one_key_of_every_kind(self):
+        self.assertEqual(sorted(self.examined_map()),
+                         ["", SOURCE_ID, GHOST_SOURCE_ID, "a-book-4th-edition"])
+
+    def test_no_key_is_left_without_one(self):
+        coverage = self.handoff()["context"]["_coverage"]
+        read = {s["source_id"] for s in coverage["sources"]}
+        read |= {b["source_id"] for b in coverage["unknown_source_documents"]}
+        # the unattributed reader is the third, and its key is the empty one
+        read.add("")
+        unread = sorted(set(self.examined_map()) - read)
+        self.assertEqual(unread, [], "these blocks have no reader anywhere in the tree")
+
+    def test_each_of_the_three_readers_says_its_own_share(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("1 corpus document(s) in run(s) `wide` name no source", text)
+        self.assertIn("2 corpus document(s) in run(s) `ghost-receipt`, `ghost-stamped` name "
+                      "source(s) `%s`, `a-book-4th-edition`" % GHOST_SOURCE_ID, text)
+        self.assertIn("1 examined (1 of them gated)", text)
+
+
+# ---------------------------------------------------------------------------
 # NEW#h-report-2 -- the other four caveats, on the branches that end early
 # ---------------------------------------------------------------------------
 
