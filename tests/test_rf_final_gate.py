@@ -1066,6 +1066,29 @@ class TestABatchOfSeveralTasksMerges(unittest.TestCase):
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("findings/carol.json", proc.stderr)
 
+    def test_both_gate_entry_points_print_the_same_rule(self):
+        """``--help`` is the fourth place this rule is written, and it drifted.
+
+        ``templates/tend/config.yaml.tmpl`` runs ``verify_findings.py
+        --changed-files``, so the help an operator of a real run reads is that
+        one -- and it still said a two-stem contribution is refused after the
+        sibling entry point had been corrected, i.e. it promised a refusal of the
+        batch the same binary merges.  Both are asserted, against each other's
+        sentence, so neither can be fixed alone again.
+        """
+        clause = ("two stems are refused once some stem's findings file was already "
+                  "on --base (a batched pre-merge set, which adds one findings file "
+                  "per task, passes), but nothing can tell whose the one stem is")
+        for name in ("verify_findings.py", "check_changed_files.py"):
+            with self.subTest(entry_point=name):
+                proc = subprocess.run(
+                    [sys.executable, str(SKILL / "scripts" / "gate" / name), "--help"],
+                    capture_output=True, text=True, env=self.env)
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+                # whitespace-blind: argparse wraps the help, and it breaks a line
+                # at a hyphen ("single- stem"), so the words alone are not a join
+                self.assertIn("".join(clause.split()), "".join(proc.stdout.split()))
+
     def test_the_two_documents_say_what_the_rule_does(self):
         """Both were rewritten one clause too early: they described the per-path
         rule, which refused the batch they promise merges."""
