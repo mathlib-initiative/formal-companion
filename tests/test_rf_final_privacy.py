@@ -14,7 +14,7 @@ Ten findings, every one reproduced against the code before it was changed:
   sentence in `concept`, `reasoning`, `suggested_fix` and `witness`, published a
   quote of twelve words or fewer WHOLE, and passed a row's absolute checkout path
   through while `_issue_body` promised it carried none.  One redactor now serves
-  both emitters, and a destination with no pinned text to check against is
+  both emitters, and a checked policy with no pinned text to check against is
   refused rather than drafted.
 * **FR#5 / FR#9 / FR#18** -- `cf quotes hydrate --out` asked an arbitrary repo
   whether it ignored the operator's path, with plain `git check-ignore`, which
@@ -88,6 +88,16 @@ def scratch(case: unittest.TestCase) -> Path:
     path = Path(tempfile.mkdtemp(dir=os.environ.get("CF_TEST_TMP") or None))
     case.addCleanup(shutil.rmtree, path, ignore_errors=True)
     return path.resolve()   # /var -> /private/var on macOS: cflib resolves its paths
+
+
+def lines_saying(text: str, phrase: str) -> list[str]:
+    """``"<line no>: <line>"`` for each line of *text* carrying *phrase*.
+
+    A negative assertion about a whole document prints the whole document when it
+    fails, which buries the one line the reader needs.
+    """
+    return [f"{n}: {line.strip()}" for n, line in enumerate(text.splitlines(), 1)
+            if phrase in line]
 
 
 def walk_strings(value, path: str = ""):
@@ -354,7 +364,11 @@ class TheEdgeWordsAreProportionateTest(unittest.TestCase):
         They did not: a 10-word sentence was published WHOLE to a tracker while
         the bundle's own record of it withheld its edges.
         """
-        self.assertIs(route_mod.EXCERPT_WORDS, redact_mod.EDGE_WORDS)
+        # a value comparison would prove nothing here: both are small ints, which
+        # CPython interns, so a literal `EXCERPT_WORDS = 6` would pass it.
+        source = (SCRIPTS / "route" / "route.py").read_text(encoding="utf-8")
+        self.assertTrue(lines_saying(source, "EXCERPT_WORDS = redact_mod.EDGE_WORDS"),
+                        "route's ceiling must BE the redactor's, not a copy of its value")
         words = SENTENCE.split(" ")
         keep = redact_mod.edge_words(words)
         rendered = route_mod.render_quote(SENTENCE, route_mod.QUOTE_EXCERPT, page=24)
@@ -465,16 +479,71 @@ class PublicDraftsCarryNoBookProseTest(unittest.TestCase):
         self.assertNotIn(SENTENCE, message)
 
     def test_a_workspace_with_no_pinned_text_is_refused_not_drafted(self):
+        """And the refusal of a PUBLISHABLE draft offers no way to widen it.
+
+        `--destination owner` settles this refusal by resolving to `full`, which
+        on this path is issue bodies carrying the book's own sentence beside the
+        `gh issue create --body-file` command `index.json` prints for each --
+        i.e. the leak the refusal exists to prevent.
+        """
         workspace = make_workspace(self, text=None)
         with self.assertRaises(route_mod.PolicyRefused) as ctx:
             route_mod.github_issues(routed([routed_row()]), companion=COMPANION,
                                     workspace=str(workspace.root))
         message = str(ctx.exception)
         self.assertIn("cf sources refresh", message)
-        self.assertIn("--destination owner", message)
+        self.assertNotIn("--destination owner", message)
+        self.assertNotIn("--quotes full", message)
+
+    def test_the_owner_draft_may_be_told_where_the_sentence_is_allowed(self):
+        """The same refusal on the draft that stays put keeps its escape hatch."""
+        workspace = make_workspace(self, text=None)
+        with self.assertRaises(route_mod.PolicyRefused) as ctx:
+            route_mod.owner_message(routed([routed_row()]), COMPANION,
+                                    destination="public", workspace=str(workspace.root))
+        self.assertIn("--destination owner", str(ctx.exception))
+
+    def test_a_narrowed_policy_is_told_to_widen_the_policy_not_the_destination(self):
+        """`--destination owner --quotes hash`: naming `owner` again changes nothing."""
+        workspace = make_workspace(self, text=None)
+        with self.assertRaises(route_mod.PolicyRefused) as ctx:
+            route_mod.owner_message(routed([routed_row()]), COMPANION,
+                                    destination="owner", quotes=route_mod.QUOTE_HASH,
+                                    workspace=str(workspace.root))
+        message = str(ctx.exception)
+        self.assertIn("--quotes full", message)
+        self.assertNotIn("--destination owner", message)
+
+    def test_the_prose_scrub_is_keyed_on_the_policy_the_documents_now_name(self):
+        """`--destination public --quotes full` scrubs nothing, and says so.
+
+        The switch is the RESOLVED policy, not the destination name. The help and
+        POLICY.md promised it destination-first, which was false on this path.
+        """
+        workspace = make_workspace(self, text=None)
+        message = route_mod.owner_message(
+            routed([routed_row(reasoning=SENTENCE)]), COMPANION, destination="public",
+            quotes=route_mod.QUOTE_FULL, workspace=str(workspace.root))
+        self.assertIn(SENTENCE, message)
+        help_text = (SCRIPTS / "cfcmd" / "route.py").read_text(encoding="utf-8")
+        self.assertTrue(lines_saying(help_text, "Any quote policy but ``full`` also scrubs"),
+                        "the help must key the promise on the resolved policy")
+        self.assertEqual(lines_saying(help_text, "A destination other than ``owner`` also"), [],
+                         "the help keyed the promise on the destination, not the policy")
+        policy_md = (REPO / "POLICY.md").read_text(encoding="utf-8")
+        self.assertTrue(lines_saying(policy_md, "Unless the destination's resolved policy is"),
+                        "POLICY.md S4 must key the promise on the resolved policy")
+
+    def test_the_redaction_record_is_described_the_same_way_everywhere(self):
+        """A5 promised "first/last six words", which stopped being true here."""
+        traps = (REPO / "references" / "traps.md").read_text(encoding="utf-8")
+        self.assertEqual(lines_saying(traps, "first/last six words"), [],
+                         "A5 still describes the record the flat six-word rule wrote")
+        self.assertTrue(lines_saying(traps, "up to a quarter of the quote's words from each"),
+                        "A5 must describe the record `share.redact.edge_words` writes")
 
     def test_the_owner_draft_still_works_without_the_pinned_text(self):
-        """The refusal is about a destination that must be checked, not about text."""
+        """The refusal is about a policy that must be checked, not about text."""
         workspace = make_workspace(self, text=None)
         message = route_mod.owner_message(routed([routed_row()]), COMPANION,
                                           destination="owner",
@@ -654,9 +723,12 @@ class NoBareGitIsReachableFromAnOperatorPathTest(unittest.TestCase):
 
     #: the functions that may run plain `git`: each one is only ever asked about
     #: the workspace repository `cf init` created, never about a path an operator
-    #: named.  `remotes` and `_config` say so in their own docstrings.
-    WORKSPACE_ONLY = {"remotes", "_config", "_set_config", "_install_no_remote_guard",
-                      "_init_git", "run", "argv"}
+    #: named.  `remotes` and `_config` say so in their own docstrings.  Exactly
+    #: the four the scan reaches, and no more: a wider name re-opens the hole.
+    #: `run` in particular is the operator-facing entry point of EVERY module
+    #: under `scripts/cfcmd`, so allowing it allowed a bare
+    #: `subprocess.run(["git", "-C", <operator path>, ...])` in any command.
+    WORKSPACE_ONLY = {"remotes", "_config", "_install_no_remote_guard", "_init_git"}
 
     def bare_git_calls(self, path: Path) -> list[tuple[str, int]]:
         """``(enclosing function, line)`` for each ``subprocess.run(["git", ...])``."""
@@ -679,14 +751,33 @@ class NoBareGitIsReachableFromAnOperatorPathTest(unittest.TestCase):
         walk(tree, "<module>")
         return found
 
-    def test_every_git_in_cfcmd_and_cflib_is_pinned_or_workspace_only(self):
-        offenders = []
+    def scan(self) -> list[tuple[str, str, int]]:
+        """``(module, enclosing function, line)`` for every bare-git site scanned."""
+        sites = []
         for directory in ("cfcmd", "cflib"):
             for path in sorted((SCRIPTS / directory).glob("*.py")):
                 for where, line in self.bare_git_calls(path):
-                    if where not in self.WORKSPACE_ONLY:
-                        offenders.append(f"{directory}/{path.name}:{line} in {where}()")
+                    sites.append((f"{directory}/{path.name}", where, line))
+        return sites
+
+    def test_every_git_in_cfcmd_and_cflib_is_pinned_or_workspace_only(self):
+        offenders = [f"{module}:{line} in {where}()"
+                     for module, where, line in self.scan()
+                     if where not in self.WORKSPACE_ONLY]
         self.assertEqual(offenders, [], "plain `git` reachable from an operator's path")
+
+    def test_every_allowlist_entry_is_needed(self):
+        """A stale exemption is how an allowlist becomes a second rulebook.
+
+        Three of the seven names this set started with were dead -- `run` and
+        `argv` (`gitsafe`'s own, whose argv is a call and never a list literal)
+        and `_set_config`, which is in no module of `scripts/` -- and `run` is the
+        name of every command's entry point, so the guard passed a planted
+        `subprocess.run(["git", "-C", <operator path>, "status"])` in one.
+        """
+        reached = {where for _module, where, _line in self.scan()}
+        self.assertEqual(sorted(self.WORKSPACE_ONLY), sorted(reached),
+                         "the allowlist and the sites the scan reaches must be the same set")
 
     def test_the_hydrate_command_holds_no_git_of_its_own(self):
         source = (SCRIPTS / "cfcmd" / "quotes.py").read_text(encoding="utf-8")
