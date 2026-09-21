@@ -91,6 +91,12 @@ tend (orchestrator)                       entrypoint repo (git, main)
 7. **A billing decision.** When agents run inside a hosted session the orchestrator's usage counters
    read zero by construction and its budget command cannot cap the run; the only enforceable cap is
    gateway-side. Decide and record it before raising concurrency.
+8. **git 2.31 or later on the host.** The one version floor this skill has. The gate blanks the
+   content-filter drivers a worktree names, and a driver whose own name carries an `=` is reachable
+   only through `GIT_CONFIG_COUNT`, which arrived in 2.31 — `git -c` splits its argument at the
+   first `=`. Below that there is no channel left, so the gate stops (exit 3, "the gate could not
+   run") rather than execute the program a worker named, and every task blocks. Debian 11 ships
+   2.30.2. `cf doctor` reports the version and warns below the floor.
 
 ## 3. `cf plan-run` — what it writes
 

@@ -791,6 +791,60 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
             self.assertIn("filter.lfs.clean", gitsafe.filter_env(self.repo).values())
 
 
+class TestTheGitVersionFloorIsAnnouncedBeforeARunBlocksOnIt(FilterDriverTestCase):
+    """The gate can now hard-stop on a run host whose git predates 2.31.
+
+    Its refusal says to install git 2.31 or later, which is right and far too
+    late: nothing named the floor beforehand -- `cf doctor` checked only that
+    git was on PATH, and the server runbook's preconditions did not mention a
+    version at all -- so an operator met the requirement for the first time as a
+    blocked run with every task stopped behind it.
+    """
+
+    @property
+    def floor(self) -> str:
+        return ".".join(str(n) for n in gitsafe.CONFIG_ENV_SINCE)
+
+    def test_cf_doctor_reports_the_version_beside_the_presence_check(self):
+        from cfcmd import doctor
+
+        rows = {row["name"]: row for row in doctor.check()}
+        self.assertIn("git", rows)
+        row = rows.get("git %s+" % self.floor)
+        self.assertIsNotNone(row, sorted(rows))
+        self.assertFalse(row["required"], "an old git warns; it does not fail `cf doctor`")
+        self.assertIn(self.floor, row["fix"])
+        version = gitsafe.git_version()
+        if version:                          # pragma: no branch - git is installed here
+            self.assertEqual(row["detail"], ".".join(str(n) for n in version))
+            self.assertEqual(row["ok"], version >= gitsafe.CONFIG_ENV_SINCE)
+
+    def test_an_old_git_reads_as_a_warning_with_its_own_version_shown(self):
+        from cfcmd import doctor
+
+        bin_dir = self.a_git_that_ignores_the_config_environment()
+        with self.running_under(bin_dir):
+            rows = {row["name"]: row for row in doctor.check()}
+        row = rows["git %s+" % self.floor]
+        self.assertFalse(row["ok"])
+        self.assertEqual(row["detail"], self.OLD_GIT)
+        self.assertFalse(row["required"])    # `cf doctor` still exits 0 for it
+
+    def test_the_warning_and_the_gates_refusal_name_the_same_remedy(self):
+        from cfcmd import doctor
+
+        remedy = "install git %s or later on the run host" % self.floor
+        row = {r["name"]: r for r in doctor.check()}["git %s+" % self.floor]
+        self.assertIn(remedy, row["fix"])
+        self.assertIn(remedy, vf._filter_refusal(pathlib.Path("wt"), "filter.a=b.clean"))
+
+    def test_the_server_runbook_records_the_floor_among_its_preconditions(self):
+        runbook = (SKILL / "references" / "runbook-server.md").read_text(encoding="utf-8")
+        section = runbook.split("## 2. Preconditions")[1].split("\n## ")[0]
+        self.assertIn("git %s" % self.floor, section)
+        self.assertIn("GIT_CONFIG_COUNT", section)
+
+
 # --------------------------------------------------------------------------- #
 # FR#13 — the operator pass must not be switchable off by a word
 # --------------------------------------------------------------------------- #
@@ -974,11 +1028,18 @@ class TestTheGateCouldNotRunIsNotARejection(BookTestCase):
         self.assertIn("findings_dir must be a string", err.getvalue())
 
     def test_the_infrastructure_messages_read_alike(self):
-        """The three the fix wave added, plus every way the source text fails to
-        arrive: missing, unreadable, unconfigured, or not the pinned extraction."""
+        """Five sites now: the unreadable ``gate.json``, the findings directory
+        that is not one, and the three ways the source text fails to arrive
+        (missing or unreadable, unconfigured, not the pinned extraction) -- plus
+        :func:`_filter_refusal`, the driver no channel can blank.
+
+        A source-level pin, so the phrase has to sit on ONE source line at each
+        site: this count read 4 while the refusal's wording wrapped across two,
+        which is a pin that cannot see the site it was bumped for.
+        """
         source = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
             encoding="utf-8")
-        self.assertEqual(source.count("this is not a finding of yours"), 4)
+        self.assertEqual(source.count("this is not a finding of yours"), 5)
 
 
 # --------------------------------------------------------------------------- #
