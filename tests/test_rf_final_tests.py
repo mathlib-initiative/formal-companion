@@ -33,6 +33,7 @@ import ast
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -160,40 +161,95 @@ class TestBothLoadersAreHermetic(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # FR#21 -- an e2e script may not default its workspace inside the checkout
 # ---------------------------------------------------------------------------
+def _first_statement(line: str) -> str:
+    """*line* up to its first ``;`` outside quotes: the assignment on its own.
+
+    A script may write ``SCRATCH=<somewhere>; mkdir -p "$SCRATCH"``, and this
+    reads the value without running the rest of the line.
+    """
+    out: list[str] = []
+    quote = None
+    for char in line:
+        if quote:
+            out.append(char)
+            quote = None if char == quote else quote
+            continue
+        if char in "\"'":
+            quote = char
+        elif char == ";":
+            break
+        out.append(char)
+    return "".join(out).strip()
+
+
+def e2e_ws_default(script: Path, tmpdir: Path) -> str:
+    """The workspace *script* defaults to, resolved the way the script builds it.
+
+    The default is expanded in a shell carrying the script's OWN assignments of
+    every variable it names, because synthetic.sh builds its default through one
+    (``SCRATCH="$(mktemp -d …)"``, then ``WS="${WS:-$SCRATCH/ws}"``).  A shell
+    that defined only ``HERE`` expanded that to the bare string ``/ws`` -- a path
+    at the filesystem root, which every check below accepts -- so the one e2e
+    script CI runs counted as checked without its default ever being looked at.
+
+    ``TMPDIR`` is the calling case's own scratch directory, so the ``mktemp -d``
+    that really runs (here and inside multisource.sh's own default) is removed
+    with it rather than leaving an empty directory behind on every suite run.
+
+    Returns ``""`` for a script that declares no ``WS`` default.
+    """
+    text = script.read_text(encoding="utf-8")
+    match = re.search(r'^WS="\$\{WS:-(.*)\}"$', text, re.M)
+    if not match:
+        return ""
+    prologue = [f"HERE={shlex.quote(str(script.parent))}"]
+    for name in dict.fromkeys(re.findall(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)", match.group(1))):
+        if name in ("HERE", "TMPDIR"):
+            continue
+        prologue += [_first_statement(line) for line in text.splitlines()
+                     if re.match(rf"\s*{name}=", line)]
+    probe = "; ".join(prologue + ['echo "%s"' % match.group(1)])
+    return subprocess.run(["bash", "-c", probe], capture_output=True, text=True, check=True,
+                          timeout=CHILD_TIMEOUT,
+                          env={**os.environ, "TMPDIR": str(tmpdir)}).stdout.strip()
+
+
 class TestE2EWorkspaceDefaults(unittest.TestCase):
     def test_no_e2e_script_defaults_its_workspace_inside_the_skill_repo(self):
         """`cf init` refuses a workspace under skill_root(), so such a default
         makes the documented `bash tests/e2e/<script>.sh` invocation exit 2."""
         from cfcmd.init import _refuse_unsafe_location
 
+        tmpdir = scratch(self)
         checked = 0
         for script in sorted((SKILL / "tests" / "e2e").glob("*.sh")):
-            match = re.search(r'^WS="\$\{WS:-(.*)\}"$',
-                              script.read_text(encoding="utf-8"), re.M)
-            if not match:
+            default = e2e_ws_default(script, tmpdir)
+            if not default:
                 continue
-            default = subprocess.run(
-                ["bash", "-c", f'HERE={script.parent}; echo "{match.group(1)}"'],
-                capture_output=True, text=True, check=True,
-                timeout=CHILD_TIMEOUT).stdout.strip()
             with self.subTest(script=script.name):
                 _refuse_unsafe_location(Path(default))   # raises CfError if inside
+                # and it must be the directory the script would really make: a
+                # default that did not expand lands at the filesystem root, which
+                # the check above accepts for the wrong reason.
+                self.assertTrue(default.startswith(f"{tmpdir}{os.sep}"),
+                                f"{script.name}: the WS default expanded to {default!r}, "
+                                f"which is not under $TMPDIR")
             checked += 1
         self.assertTrue(checked, "no e2e script declared a WS default: glob is wrong")
 
     def test_the_default_is_a_fresh_directory_each_run(self):
         """Two runs must not share a workspace; `rm -rf "$WS"` is step 2's only
         cleanup, and a shared default would let one run inherit the other."""
-        script = SKILL / "tests" / "e2e" / "multisource.sh"
-        match = re.search(r'^WS="\$\{WS:-(.*)\}"$', script.read_text(encoding="utf-8"), re.M)
-        self.assertIsNotNone(match, "multisource.sh no longer declares a WS default")
-        seen = set()
-        for _ in range(2):
-            seen.add(subprocess.run(
-                ["bash", "-c", f'HERE={script.parent}; echo "{match.group(1)}"'],
-                capture_output=True, text=True, check=True,
-                timeout=CHILD_TIMEOUT).stdout.strip())
-        self.assertEqual(len(seen), 2, seen)
+        tmpdir = scratch(self)
+        checked = 0
+        for script in sorted((SKILL / "tests" / "e2e").glob("*.sh")):
+            seen = {e2e_ws_default(script, tmpdir) for _ in range(2)}
+            if seen == {""}:
+                continue
+            with self.subTest(script=script.name):
+                self.assertEqual(len(seen), 2, seen)
+            checked += 1
+        self.assertTrue(checked, "no e2e script declared a WS default: glob is wrong")
 
 
 # ---------------------------------------------------------------------------
