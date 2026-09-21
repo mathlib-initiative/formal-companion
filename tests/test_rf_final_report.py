@@ -55,6 +55,9 @@ TMPDIR = os.environ.get("CF_TMPDIR") or None
 
 SOURCE_ID = "a-book-1st-edition"
 SOURCE_SHA = "a" * 64
+#: an earlier printing the workspace keeps and no companion is bound to
+OTHER_SOURCE_ID = "a-book-2nd-edition"
+OTHER_SOURCE_SHA = "b" * 64
 COMPANION = "ours"
 #: a sentence a finding quotes; invented, not a line of any real book
 QUOTE = ("Show that the union of two elementary sets is elementary, and that "
@@ -89,6 +92,8 @@ class Workspace(unittest.TestCase):
 
     #: "" narrows nothing, so the whole source is in scope
     CHAPTERS = ""
+    #: extra ``sources:`` entries, for a row no companion is bound to
+    EXTRA_SOURCES = ""
 
     def setUp(self):
         self.root = os.path.realpath(tempfile.mkdtemp(prefix="cf-rf-final-", dir=TMPDIR))
@@ -113,15 +118,16 @@ class Workspace(unittest.TestCase):
                           "    offset: 16\n"
                           "%s"
                           "    role: audited\n"
+                          "%s"
                           "hosts:\n  allowlist: []\n"
                           % (COMPANION, self.repo, COMPANION, SOURCE_ID, SOURCE_ID,
-                             SOURCE_ID, SOURCE_SHA, self.CHAPTERS))
+                             SOURCE_ID, SOURCE_SHA, self.CHAPTERS, self.EXTRA_SOURCES))
         self.paths = compat.workspace_paths(self.root)
 
     # -- fixture writers -------------------------------------------------
-    def write_items(self, rows) -> None:
-        compat.write_json(os.path.join(self.root, "sources", SOURCE_ID, "items.json"),
-                          {"source_id": SOURCE_ID, "sha256": SOURCE_SHA,
+    def write_items(self, rows, source_id: str = SOURCE_ID, sha: str = SOURCE_SHA) -> None:
+        compat.write_json(os.path.join(self.root, "sources", source_id, "items.json"),
+                          {"source_id": source_id, "sha256": sha,
                            "count": len(rows), "items": list(rows)})
 
     def write_meta(self, **body) -> None:
@@ -316,6 +322,78 @@ class TestTheChapterCellAgreesWithTheProse(Workspace):
         self.assertIn("TODO(coverage)", cell)
         self.assertIn("cf onboard", cell)
         self.assertNotIn("cf pair", cell)
+
+
+class TestASourceNobodyIsBoundToClaimsNoChapters(Workspace):
+    """A reference edition the workspace keeps: `role: reference`, no companion."""
+
+    EXTRA_SOURCES = ("  %s:\n"
+                     '    sha256: "%s"\n'
+                     "    title: A Book\n"
+                     '    edition: "second edition"\n'
+                     "    offset: 16\n"
+                     "    role: reference\n" % (OTHER_SOURCE_ID, OTHER_SOURCE_SHA))
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([{"item": "Exercise 1.1.1", "page": 10, "chapter": 1,
+                           "kind": "Exercise"}])
+        # prepared, because onboarding extracts a reference edition's items too
+        self.write_items([{"item": "Exercise 1.1.1", "page": 9, "chapter": 1,
+                           "kind": "Exercise"},
+                          {"item": "Exercise 2.1.1", "page": 57, "chapter": 2,
+                           "kind": "Exercise"}],
+                         source_id=OTHER_SOURCE_ID, sha=OTHER_SOURCE_SHA)
+        self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                          gate={"ok": True, "checked": 1})
+
+    def test_the_chapters_cell_does_not_claim_every_chapter_was_audited(self):
+        """"empty means all" is the audited source's rule, not this one's.
+
+        The prose two lines below says the source is not under audit at all, so
+        `all / 2` there was one document stating one fact two contradictory ways.
+        """
+        row = next(l for l in self.handoff()["text"].splitlines()
+                   if l.startswith("| `%s` | bbbb" % OTHER_SOURCE_ID))
+        self.assertIn("| — | — |", row)
+        self.assertNotIn("all /", row)
+        self.assertNotIn("TODO(coverage)", row)
+
+    def test_the_audited_source_still_gets_its_figures(self):
+        row = next(l for l in self.handoff()["text"].splitlines()
+                   if l.startswith("| `%s` | aaaa" % SOURCE_ID))
+        self.assertIn("| all / 1 |", row)
+        self.assertIn("| 1 / 1 |", row)
+
+    def test_the_prose_says_it_owes_no_denominator(self):
+        self.assertIn("`%s`: not under audit — no companion is bound to it "
+                      "(`role: reference`)" % OTHER_SOURCE_ID, self.handoff()["text"])
+
+    def test_section_zero_does_not_label_its_chapters_all_audited(self):
+        """`cf onboard` prepares an items.json for every edition a repo ships.
+
+        So a reference edition arrives with chapters, and section 0 gave them a
+        `**all audited**` total row and counted them as never examined — the
+        figures the first paragraph is specifically taught not to count.
+        """
+        section = self.handoff()["text"].split("## 0.")[1].split("## 1.")[0]
+        mine = [l for l in section.splitlines()
+                if l.startswith("| `%s` |" % OTHER_SOURCE_ID)]
+        self.assertEqual(len(mine), 1, mine)
+        self.assertNotIn("all audited", mine[0])
+        self.assertEqual(mine[0],
+                         "| `%s` | — | 2 | — | — | — | 0 | 0 | 0 | — |" % OTHER_SOURCE_ID)
+        self.assertIn("| `%s` | **all audited** |" % SOURCE_ID, section,
+                      "the audited source keeps its own total row")
+
+    def test_neither_cell_names_a_command_nor_invents_a_figure(self):
+        """`cf pair && cf harvest` cannot put a scope on a source nothing audits."""
+        for part, whole in ((None, None), (2, 2)):
+            with self.subTest(part=part):
+                self.assertEqual(handoff_mod._fraction(part, whole, False, False),
+                                 handoff_mod.NO_DENOMINATOR_OWED)
+        self.assertIn("TODO(coverage)", handoff_mod._fraction(None, None, False, True))
+        self.assertEqual(handoff_mod._fraction(2, 2, False, True), "2 / 2")
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +677,33 @@ class TestTheHintIsRunAndItSettlesIt(unittest.TestCase):
         self.assertIn("GATE FAILED run(s): bad", tallied)
         self.assertIn("gate FAILED for run(s): bad", warned)
         self.assertIn("RECEIPT.json gate.problems", warned)
+
+
+class TestTheReportNamesNoPrivateAlias(unittest.TestCase):
+    """The item grammar is reached by its own name, not through a shim's alias."""
+
+    def test_no_underscore_name_of_another_package_is_reached_through(self):
+        """`compat._cf_items.try_parse` is what the shim exists to prevent.
+
+        The shim publishes only the canonicaliser, and its own deadline test says
+        to move a call site it cannot serve onto cflib rather than to grow it, so
+        this one goes to `cflib.items` directly.
+        """
+        source = (SKILL / "scripts" / "report" / "make_handoff.py").read_text(encoding="utf-8")
+        self.assertNotIn("compat._cf_items", source)
+        self.assertNotIn("compat._", source.replace("compat._cf_items", ""))
+
+    def test_the_source_s_own_kinds_decide_what_parses(self):
+        """A manuscript with an unusual kind list gets a reject, not a guess."""
+        self.assertEqual(self.chapters(kinds=()), [], "no default kind list admits Widget")
+        self.assertEqual(self.chapters(kinds=("Widget",)), [2])
+
+    def chapters(self, *, kinds) -> list:
+        universe = handoff_mod._manuscript_universe(
+            {"path": "", "present": True, "count": 0, "by_item": {}, "chapters": [],
+             "manuscript": True},
+            {"Widget 2.3.4": {COMPANION}}, kinds)
+        return universe["chapters"]
 
 
 class TestEveryCommandTheseWarningsPrintExists(unittest.TestCase):

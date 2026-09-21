@@ -44,6 +44,7 @@ import re
 import sys
 from typing import Any, Iterable
 
+from cflib import items as cf_items
 from harvest import harvest as harvest_mod
 from harvest import tally as tally_mod
 from ledger import compat
@@ -896,7 +897,7 @@ def render_sources_table(cfg: Any, tallies: list[dict], coverage: dict | None = 
             src.offset,
             _chapter_fraction(cov),
             _fraction(cov.get("items_in_scope"), cov.get("items_in_source"),
-                      bool(cov.get("manuscript"))),
+                      bool(cov.get("manuscript")), cov.get("under_audit", True)),
             ", ".join("`%s`" % n for n in bound) or "(none)",
             ", ".join("`%s`" % n for n in anchors) or "—",
             "yes" if src.confirmed else "**no**",
@@ -933,16 +934,18 @@ def _manuscript_universe(items: dict, pair_index: dict[str, set],
     if not pair_index:
         out.update({"present": False, "count": 0, "by_item": {}, "chapters": []})
         return out
-    # ``ledger.compat`` is this stage's one door to cflib, and the chapter of a
-    # label is a parse: ``item_join_key`` canonicalises a label, it does not
-    # decompose one.  The source's own kinds decide what parses at all, so a
-    # manuscript with an unusual kind list keeps its unnumbered items unnumbered
-    # rather than having a chapter guessed onto them (CLAUDE.md S4).
-    parse = compat._cf_items.try_parse
-    parse_kinds = tuple(kinds or ())
+    # The chapter of a label is a parse, and ``ledger.compat`` publishes only the
+    # canonicaliser (``item_join_key``), so this one call goes to `cflib.items`
+    # itself rather than through the shim's private ``_cf_items`` alias -- which
+    # is what that shim's own deadline says to do with a call site it cannot
+    # serve (``tests/test_rf_compat.py::TestTheShimsHaveADeadline``).  The
+    # source's own kinds decide what parses at all, so a manuscript with an
+    # unusual kind list keeps its unnumbered items unnumbered rather than having
+    # a chapter guessed onto them (CLAUDE.md S4).
+    parse_kinds = tuple(kinds or ()) or cf_items.DEFAULT_KINDS
     by_item: dict[str, dict] = {}
     for key in pair_index:
-        parsed, _reject = parse(key, parse_kinds) if parse_kinds else parse(key)
+        parsed, _reject = cf_items.try_parse(key, parse_kinds)
         by_item[key] = {"item": key, "chapter": parsed.chapter if parsed else None}
     out.update({
         "present": True,
@@ -1095,7 +1098,18 @@ def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
     }
 
 
-def _fraction(part: Any, whole: Any, manuscript: bool = False) -> str:
+#: the cell of a source no companion is bound to: it owes no denominator
+NO_DENOMINATOR_OWED = "—"
+
+
+def _fraction(part: Any, whole: Any, manuscript: bool = False,
+              under_audit: bool = True) -> str:
+    # Nothing is in the audit's scope for a source the audit does not cover, so
+    # the figure is not a figure here: with a reference edition's items.json
+    # prepared this cell read "2 / 2" two columns from "(none)" companions and
+    # two lines above prose saying the source needs no denominator.
+    if not under_audit:
+        return NO_DENOMINATOR_OWED
     if part is None or whole in (None, 0):
         # A manuscript has no numbered-prose denominator to compute, so naming a
         # command here names one that provably cannot change the cell: its
@@ -1115,7 +1129,15 @@ def _chapter_fraction(cov: dict) -> str:
     ``chapters_in_source`` is a real hole -- and the command that fills it is
     `cf onboard`, which infers the scope; nothing in `cf pair` or `cf harvest`
     ever writes a chapter list.
+
+    A source no companion is bound to audited no chapter of anything, so "all"
+    would be the same over-claim in the other direction: a reference edition
+    with a prepared ``items.json`` has chapters in the source and none audited,
+    and the cell said every one of them was audited two lines above prose saying
+    the source is not under audit at all.
     """
+    if not cov.get("under_audit", True):
+        return NO_DENOMINATOR_OWED
     whole = len(cov.get("chapters_in_source") or []) or None
     if whole is None:
         return MANUSCRIPT_CELL if cov.get("manuscript") else todo("coverage", "cf onboard <repo>")
@@ -1146,6 +1168,23 @@ def render_coverage_table(coverage: dict) -> str:
     for src in coverage.get("sources") or []:
         audited = bool(src.get("under_audit", True))
         chapters = src.get("by_chapter") or {}
+        if not audited:
+            # A source the audit does not cover has no audited scope, so it also
+            # missed nothing: its per-chapter rows under a `**all audited**`
+            # total claimed every chapter of a reference edition HAD been
+            # audited, in the section whose whole purpose is honest
+            # denominators, while the first paragraph and the prose below it
+            # both say the source owes no denominator.  Not an edge case:
+            # `cf onboard` prepares an items.json for every edition a repo
+            # ships and demotes the unbound ones to `role: reference`
+            # afterwards, so a reference edition WITH an item table is the
+            # ordinary shape.
+            rows.append(["`%s`" % src["source_id"], NO_DENOMINATOR_OWED,
+                         src.get("items_in_source"), None, None,
+                         _paired_cell(src.get("items_paired"), audited),
+                         src.get("items_examined"), src.get("items_gated"),
+                         src.get("items_with_findings"), None])
+            continue
         entries = list(chapters.items()) or [("all", None)]
         for chapter, block in entries:
             if block is None:
