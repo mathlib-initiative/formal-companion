@@ -1609,7 +1609,9 @@ def main(argv: list[str] | None = None) -> int:
         help="with --changed-files: the worker's own task id, so a contribution that "
              "touches another task's findings/<id>.json or tasks/<id>.yaml is refused "
              "(default: $TEND_TASK_ID). Without one only the single-stem rule runs: "
-             "two stems are refused, but nothing can tell whose the one stem is",
+             "two stems are refused once some stem's findings file was already on "
+             "--base (a batched pre-merge set, which adds one findings file per task, "
+             "passes), but nothing can tell whose the one stem is",
     )
     ap.add_argument(
         "--allow-empty",
