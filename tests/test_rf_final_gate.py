@@ -26,6 +26,8 @@ this repo (CLAUDE.md S1).  Every test here runs without the private baselines.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
 import pathlib
@@ -570,10 +572,59 @@ class TestTheGateCouldNotRunIsNotARejection(BookTestCase):
                 argv[1] = str(cfgp)
                 self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
 
-    def test_the_three_infrastructure_messages_read_alike(self):
+    def test_a_source_text_that_exists_but_cannot_be_read_is_not_a_rejection(self):
+        """``exists()`` is true for a directory and for a file this user may not
+        read -- a partial rsync makes the first, a wrong run-host user the second.
+
+        The prompts name "an unreadable source text" as an infrastructure fault
+        in the same breath as the missing config and the missing index, and the
+        module docstring reserves exit 3 for it; only the MISSING file arrived
+        that way, the unreadable one came out as exit 1 and a traceback.
+        """
+        argv = self.gate_dir(doc_for())
+        unreadable = self.root / "asdir"
+        unreadable.mkdir()
+        cases = [("a directory", unreadable)]
+        blocked = self.root / "blocked.txt"
+        if os.name == "posix" and os.geteuid() != 0:
+            blocked.write_text(BOOK, encoding="utf-8")
+            blocked.chmod(0o000)
+            cases.append(("mode 000", blocked))
+        for what, path in cases:
+            with self.subTest(source=what):
+                data = dict(self.cfg.data)
+                data["sources"] = {SOURCE_ID: dict(data["sources"][SOURCE_ID],
+                                                   text=str(path))}
+                cfgp = self.root / "gate-unreadable.json"
+                cfgp.write_text(json.dumps(data), encoding="utf-8")
+                argv[1] = str(cfgp)
+                err = io.StringIO()
+                with contextlib.redirect_stderr(err):
+                    self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
+                self.assertIn("could not be read", err.getvalue())
+                self.assertIn("this is not a finding of yours", err.getvalue())
+        if blocked.exists():
+            blocked.chmod(0o600)        # before the temporary directory goes
+
+    def test_a_findings_dir_of_the_wrong_type_is_not_a_rejected_finding(self):
+        """The same class one function further on: the key is joined onto
+        ``--root``, so a number raised a TypeError after the load guard had
+        already returned."""
+        argv = self.gate_dir(doc_for())
+        cfgp = self.root / "gate-dir.json"
+        cfgp.write_text(json.dumps(dict(self.cfg.data, findings_dir=3)), encoding="utf-8")
+        argv[1] = str(cfgp)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(vf.main(argv), vf.EXIT_GATE_BROKEN)
+        self.assertIn("findings_dir must be a string", err.getvalue())
+
+    def test_the_infrastructure_messages_read_alike(self):
+        """The three the fix wave added, plus every way the source text fails to
+        arrive: missing, unreadable, unconfigured, or not the pinned extraction."""
         source = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
             encoding="utf-8")
-        self.assertEqual(source.count("this is not a finding of yours"), 3)
+        self.assertEqual(source.count("this is not a finding of yours"), 4)
 
 
 # --------------------------------------------------------------------------- #

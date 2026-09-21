@@ -708,7 +708,14 @@ class GateConfig:
         # short, legitimately repeated sentence needs a documented way out, and 0
         # turns the rule off.
         self.max_match_pages: int = int(data.get("max_match_pages", MAX_MATCH_PAGES))
+        # Checked here rather than where it is joined onto --root: a non-string
+        # reached `root / cfg.findings_dir` and raised a TypeError out of main,
+        # which is exit 1 with a traceback -- a broken gate wearing a rejected
+        # contribution's clothes.  Raising is what puts it through the load guard.
         self.findings_dir: str = data.get("findings_dir", "findings")
+        if not isinstance(self.findings_dir, str):
+            raise ValueError(f"gate.json findings_dir must be a string, not "
+                             f"{type(self.findings_dir).__name__}")
         self.decl_index: str | None = data.get("decl_index")
         rules = dict(DEFAULT_KIND_RULES)
         for kind, override in (data.get("kind_rules") or {}).items():
@@ -1465,7 +1472,17 @@ def ownership_line(task_id: str) -> str:
 
 
 def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[str]]:
-    """Read and normalise one source's text; returns (BookText, errors)."""
+    """Read and normalise one source's text; returns (BookText, errors).
+
+    Every way the text can fail to arrive is an ERROR here, never an exception:
+    ``exists()`` is true for a directory and for a file this user may not read,
+    and a partial rsync produces the first while a wrong run-host user produces
+    the second.  Both used to come out of ``main`` as the interpreter's exit 1
+    with a traceback -- the code the prompts define as "your findings were
+    rejected: fix them" -- next to a sentence promising that an unreadable source
+    text is an infrastructure fault a worker must not answer by deleting
+    findings.
+    """
     sid = block.get("source_id") or "?"
     empty = BookText("")
     path = block.get("text")
@@ -1473,7 +1490,11 @@ def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[st
         return empty, [f"gate.json sources.{sid} has no text path"]
     if not path.exists():
         return empty, [f"{sid}: source text missing at {path} (the gate fails closed)"]
-    raw = path.read_bytes()
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return empty, [f"{sid}: source text at {path} could not be read ({exc}) "
+                       f"(the gate fails closed)"]
     errs: list[str] = []
     want = block.get("text_sha256")
     if cfg.verify_text_sha and want:
@@ -1587,8 +1608,12 @@ def main(argv: list[str] | None = None) -> int:
 
     books, errs = load_sources(cfg)
     if errs:
+        # Every one of these is the source text not arriving as pinned -- missing,
+        # unreadable, unconfigured, or not the extraction gate.json names.  They
+        # read like the other infrastructure failures because they are one.
         for e in errs:
-            print(f"FAIL: {e}", file=sys.stderr)
+            print(f"FAIL: {e} — the gate could not run: "
+                  f"this is not a finding of yours", file=sys.stderr)
         return EXIT_GATE_BROKEN
 
     decl_index = None
