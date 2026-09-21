@@ -320,6 +320,31 @@ def ungated_runs(runs: Mapping[str, str | Path]) -> list[str]:
     return sorted(out)
 
 
+def gate_rejected(receipt: Mapping | None) -> bool:
+    """Did a gate RUN over this receipt's corpus and REJECT it?
+
+    :func:`ungated_runs` answers "was a gate run at all"; this answers "did it
+    reject".  The two are different states and only one of them was ever read:
+    a run whose gate found a fabricated quote still leaves its rows in the
+    corpus, and every reader that tested the gate BLOCK rather than its ``ok``
+    counted those rows as if the gate had passed them.  One definition, because
+    the tally and the report disagreeing about it is what made a rejected run
+    invisible to `cf tally` while `cf report` named it.
+    """
+    gate = receipt.get("gate") if isinstance(receipt, dict) else None
+    return bool(isinstance(gate, dict) and gate and not gate.get("ok"))
+
+
+def gate_failed_runs(runs: Mapping[str, str | Path]) -> list[str]:
+    """Which of *runs* carry a RECEIPT.json whose gate did not pass.
+
+    A rejected run's rows are still in the corpus and are still counted, so the
+    count has to say so.
+    """
+    return sorted(str(run_id) for run_id, directory in dict(runs or {}).items()
+                  if gate_rejected(read_receipt(Path(directory))))
+
+
 def describe(receipt: dict) -> str:
     """One-screen summary of a receipt, complete or not."""
     lines = [
