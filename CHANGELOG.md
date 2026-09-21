@@ -110,8 +110,55 @@ release has something to say.
   bound to the source the run audits.
 - `cf sources add` bound the source to the companion and saved the workspace
   before preparing it, so a source it then refused with exit 2 stayed in the
-  audited scope. It prepares first, and a refusal leaves no binding, no overlay
-  row and no half-prepared directory behind.
+  audited scope; `cf onboard <repo> --source <file>` reached the same refusals
+  and left a source row, a registry overlay row and a prepared directory behind,
+  recoverable only with a `cf sources remove` nothing named. Both prepare
+  first now: a refusal leaves no binding and no overlay row, and removes a
+  directory it prepared for a source the workspace did not already hold. A
+  source the workspace did already hold stays, and the refusal says so and names
+  the command that drops it.
+- `cf status` exited 2 on a companion directory that has an adapter but no
+  `workspace.yaml` entry — the state a half-finished onboard or a copied
+  directory leaves — one line after printing it as `not onboarded`. It prints it
+  and exits 0.
+- the printed `cf adjudicate` and `cd` next steps interpolated the workspace
+  path unquoted, so in a workspace whose directory name contains a space they
+  could not be pasted. `cf route` writes one of them into the routed ledger and
+  into the owner-message draft, so the broken command travelled upstream.
+- `cf share export` told the operator that `cf share import` would refuse a
+  bundle with no ledger rows. The import accepts that bundle and merges nothing;
+  the export says what it does instead. Its summary also named three field names
+  for the prose scan, which has covered every free-text field of a row, at any
+  depth, since that scan was widened.
+- the findings gate blanked the git filter drivers a companion's own config
+  names by passing `git -c <driver>=`, which cannot express a driver whose name
+  contains `=`; such a driver still ran during the gate, and the gate still
+  reported the contribution clean. The blanks travel in the environment now.
+- the batched pre-merge check refused every merge of two or more tasks: each
+  task's own task file is modified rather than added, and the relaxation only
+  fired when every changed path was new.
+- a source text that exists but cannot be read — a directory left by a partial
+  copy, or a file the run host's user may not open — ended the gate in a
+  traceback instead of the exit code reserved for infrastructure faults.
+- a quote spread over three or more pages of the source matched no page at all,
+  which turned the item-page check off rather than refusing the finding; one
+  folio-only page at the seam was enough to reach it.
+- a quote whose edge carries a sign written apart from its operand (`- 1` where
+  the source has `≤`) was certified verbatim.
+- `cf report` dropped a corpus document `cf tally` refuses to read, publishing
+  coverage figures that were a lower bound with nothing in the report saying so;
+  it also dropped every examined item outside the audited chapters from those
+  figures, including the count of items with findings, while the tally counted
+  them.
+- `cf report` counted a manuscript companion's items with the default numbering
+  depth rather than the source's own, so a deeper label was dropped and the
+  coverage line could read "0 of 0 item(s) in scope examined" for a manuscript
+  that was examined in full.
+- the remedy printed for an ungated run named a `cf import-corpus` invocation
+  that exits 2 in a workspace with more than one source, because `--source` was
+  missing from it.
+- the per-chapter "in task universe" column printed 0 where the total row
+  printed a dash: nothing had computed the figure.
 
 ## 0.2.0 — the multi-source model
 
