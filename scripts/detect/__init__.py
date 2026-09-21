@@ -10,7 +10,8 @@ Two tiers, both mechanical:
   ``DumpDeps.lean`` inside the companion's built Lean environment, and applies
   the two development-order rules ORDER_VIOLATION and SAME_STAGE_PRIMITIVE.
 
-Ported from /Users/jack/Desktop/tao-differential/adam-detector/ (README.md,
-analyze2.py, DumpDeps.lean) and from the def-coverage cells of transcript
-b174aa13 (L6099 def-coverage, L6145 uncovered).
+Ported from the v1 campaign's proxy detector -- its README, ``analyze2.py`` and
+``DumpDeps.lean``, none of which are in this repo -- and from that campaign's
+def-coverage and uncovered-items cells.  ``docs/design/stage_map.md`` §4 stage 8
+is the spec both tiers answer to.
 """

@@ -1,7 +1,7 @@
 """Bring a run's findings home, with a receipt that proves the corpus is whole.
 
-New code.  The original was one line of RUNBOOK.md ("Findings land as
-findings/<item>.json on main of ~/Desktop/tao-diff-run") plus an rsync typed by
+New code.  The original was one line of the v1 campaign's runbook ("Findings land
+as findings/<item>.json on main of the corpus repo") plus an rsync typed by
 hand, and it is exactly where the audit lost a finding: ``findings-hunt/`` held
 762 files locally where the server had 763, and the missing
 ``exercise-1-1-17.json`` was a real CONTENT finding.  Every downstream number is

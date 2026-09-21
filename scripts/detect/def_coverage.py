@@ -1,11 +1,10 @@
 """Cheap-tier proxy detection: does a source Definition have a native definition?
 
-Ported from the def-coverage cell of transcript b174aa13 (recovered/
-b174aa13_L6099_Bash.txt), which produced
-/Users/jack/Desktop/tao-differential/def-coverage.ours.json (32 stated,
-4 bridge-only, 0 missing), and from the uncovered-items cell (L6145).
+Ported from the v1 campaign's def-coverage cell, which produced that campaign's
+``def-coverage.ours.json`` (32 stated, 4 bridge-only, 0 missing), and from its
+uncovered-items cell.  Neither is in this repo.
 
-adam-detector/README.md:75-79 argues this is the query worth asking first:
+The v1 detector's README argues this is the query worth asking first:
 
     For a Mathlib-first repo (where proxies are a deliberate convention, not a
     bug), the more useful query is not "is there a proxy" but "is there a book

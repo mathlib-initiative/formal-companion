@@ -1,7 +1,7 @@
 """Stage 9 -- route findings to the repository that owns them.
 
-Ported from: recovered/b174aa13_L5702_Bash.txt (the routing cell that wrote
-/Users/jack/Desktop/tao-differential/findings.{adam,ours}.jsonl), with three
+Ported from: the v1 campaign's routing cell (which wrote its
+``findings.{adam,ours}.jsonl``, neither of them in this repo), with three
 changes the record forces:
 
 1.  The fallback branch is GONE.  The original ``side()`` also admitted a row

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Ported from scratchpad/ffmain/tao-diff-tend/bin/{worker,reviewer}-agent.sh and the
-# codex variants in .../tao-diff-tend-gpt/bin and .../tao-attack-{vac,hunt}-tend/bin.
+# Ported from the v1 campaign's tao-diff-tend/bin/{worker,reviewer}-agent.sh and the
+# codex variants in its tao-diff-tend-gpt and tao-attack-{vac,hunt}-tend roots.
 # Those five roots differed only in (a) role, (b) agentbox host claude|codex, (c) the
 # model id, (d) the tend root path -- so this is one script driven by CF_* env.
 #
@@ -58,7 +58,8 @@ esac
 ROOT="${CF_BRIDGE_ROOT:-$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)}"
 PROMPTS="${CF_PROMPT_DIR:-$ROOT/prompts}"
 HOST="${CF_AGENT_HOST:-claude}"
-PROFILE="${CF_AGENTBOX_PROFILE:-${USER:-jack}}"
+PROFILE="${CF_AGENTBOX_PROFILE:-${USER:-}}"
+[ -n "$PROFILE" ] || { echo "bridge-agentbox: no agentbox profile -- set CF_AGENTBOX_PROFILE" >&2; exit 78; }
 ERR="$ROOT/agentbox-$ROLE.err"
 
 for f in "$PROMPTS/$ROLE-system.md" "$PROMPTS/$ROLE.md"; do

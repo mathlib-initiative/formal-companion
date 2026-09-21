@@ -1,7 +1,7 @@
 """``cf plan-run`` -- plan one fleet run: tasks, prompts, gate.json, tend root.
 
     python3 scripts/cf.py plan-run --preset attack-hunt --companion ours \\
-        --host ffmain --model claude-sonnet-5 --i-have-consent
+        --host examplebox --model claude-sonnet-5 --i-have-consent
 
 Writes ``<workspace>/runs/<run-id>/``:
 
@@ -20,7 +20,7 @@ Nothing here contacts a host: planning is local, deterministic and idempotent
 ``run.yaml`` records the sha of every rendered prompt so a resumed run can prove
 the prompt did not change under it.
 
-Ported from the five orchestration roots retrieved from ffmain (see
+Ported from the five orchestration roots of the v1 campaign (see
 templates/PRESETS.md) — the generator that produced their tasks and configs was
 never committed.
 """
@@ -50,6 +50,7 @@ from plan import models as models_mod
 from plan import presets as presets_mod
 from plan import render_prompts as rp
 from plan.make_tend_root import TendRootPlan, make_tend_root
+from run import manifest as manifest_mod
 from recheck import pin as pin_mod
 
 NAME = "plan-run"
@@ -130,7 +131,7 @@ def _host_paths(ws, host: str, run_id: str, source_id: str) -> dict:
     if not isinstance(entry, dict):
         entry = {}
     root = str(entry.get("remote_root") or ws.hosts.get("remote_root")
-               or f"/home/{os.environ.get('USER', 'jack')}").rstrip("/")
+               or manifest_mod.default_remote_root()).rstrip("/")
     return {
         "kind": "remote",
         "remote_root": root,

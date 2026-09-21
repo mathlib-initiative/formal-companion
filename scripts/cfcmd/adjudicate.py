@@ -12,8 +12,8 @@ three things that ARE mechanical:
 
 1. ``--emit-args`` builds the workflow's ``args`` from the routed findings, the
    statement tables and the workspace paths, and prints the invocation to paste
-   into the session (replacing the hand-assembled workflow_inputs.json of
-   recovered/c4082627_L225_Bash.txt);
+   into the session (replacing the hand-assembled workflow_inputs.json the v1
+   campaign typed by hand);
 2. ``--transcribe`` turns the saved result into ledger rows, the two .jsonl
    files and ``adjudicated.<name>.md``, and advances ``state.json.adjudication``;
 3. ``--validate`` machine-checks the ledger against the corpus.

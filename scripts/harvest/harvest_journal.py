@@ -1,8 +1,8 @@
 """Recover a killed local Workflow run's results from its journal.
 
-Ported from scratchpad/recovered/b174aa13_L5690_Bash.txt -- the cell that saved
-batch 1 after the local fleet died on the subscription session limit at 129 of
-225 agents.  It reads the Workflow's ``journal.jsonl`` and ``agent-*.meta.json``
+Ported from the v1 campaign's recovery cell (not in this repo) -- the one that
+saved batch 1 after the local fleet died on the subscription session limit at
+129 of 225 agents.  It reads the Workflow's ``journal.jsonl`` and ``agent-*.meta.json``
 labels, pulls out the per-item results and the challenge rulings, and writes
 both the recovered findings and the list of items still to do.
 

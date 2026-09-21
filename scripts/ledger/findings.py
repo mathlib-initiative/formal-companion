@@ -1,9 +1,9 @@
 """Read findings out of a corpus, a routed .jsonl or a killed run's harvest.
 
-Ported from: recovered/b174aa13_L5702_Bash.txt (which read
-``harvest.partial.json['result']['findings']`` inline) and the corpus reader in
-recovered/verify-audit-summary-wf_9da8dddd-e4b.js (the ``disagreements`` array
-per item file).
+Ported from: the v1 campaign's routing cell (which read
+``harvest.partial.json['result']['findings']`` inline) and the corpus reader of
+its verify-audit-summary workflow (the ``disagreements`` array per item file).
+Neither is in this repo.
 
 This module normalises every shape the workspace can hold into ONE in-memory row
 so that route/validate_ledger/adjudicate all speak the same language:

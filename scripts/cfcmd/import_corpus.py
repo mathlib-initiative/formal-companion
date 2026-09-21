@@ -1,7 +1,7 @@
 """cf import-corpus -- adopt an existing findings directory as a run of this workspace.
 
 New code (the design's "import the baseline corpus as runs").  The 2,672-file
-corpus at ``~/Desktop/tao-diff-run`` was produced before this skill existed: its
+baseline corpus was produced before this skill existed: its
 findings are schema v1, they carry no ``run_id``, no ``finding_id``, no
 ``source_id`` and no ``source_sha``, and nothing records which edition they were
 judged against.  This
@@ -9,7 +9,7 @@ command lifts such a directory into ``corpus/<run-id>/`` as schema v2 and writes
 the same RECEIPT.json ``cf harvest`` writes, so an imported run is
 indistinguishable downstream from one this skill ran itself::
 
-    cf import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt \
+    cf import-corpus --run-id findings-hunt --from <corpus>/findings-hunt \
         --mode attack --preset attack-hunt
 
 The INPUT DIRECTORY IS NEVER MODIFIED -- not renamed, not stamped, not deleted.
@@ -32,8 +32,8 @@ same repository ``tml-prefix`` produce two entries for one defect and
 Nothing is guessed: without the flag the v1 names are kept and the import WARNS,
 naming the repos this workspace does not have.
 
-Ported from: recovered/b174aa13_L5690_Bash.txt (harvest-from-journal) for the
-receipt discipline, and scripts/gate/convert_v1.py for the v1 -> v2 mapping.
+Ported from: the v1 campaign's harvest-from-journal cell (not in this repo) for
+the receipt discipline, and scripts/gate/convert_v1.py for the v1 -> v2 mapping.
 """
 from __future__ import annotations
 

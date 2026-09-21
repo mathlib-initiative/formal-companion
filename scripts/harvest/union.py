@@ -1,7 +1,7 @@
 """Union a repo's findings across runs, with run provenance.
 
-Rewrite of the ad hoc 2026-09-06 scripts that produced
-/Users/jack/Desktop/tao-diff-run/union.{ours,adam}.json.  Those grouped by
+Rewrite of the ad hoc v1 scripts that produced the campaign's
+``union.{ours,adam}.json``.  Those grouped by
 ``(item, kind, concept[:50])``, so the SAME defect found by two runs became two
 rows whenever the two agents phrased the concept differently -- visible in
 union.adam.json, where Exercise 1.6.39 appears twice with runs ``["c-text"]``
