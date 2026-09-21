@@ -22,6 +22,16 @@ worse than no merge:
 Rows are joined by ``finding_id`` first and by the run-independent DEFECT KEY
 second, because ``run_id`` is the first part of a finding id: the same defect
 found by two people's runs has two ids and only the defect key links them.
+
+A companion's two ledger files are merged TOGETHER, not one at a time.  The
+ledger is partitioned by verdict -- ``accepted.*`` holds the verdicts that keep a
+finding open and ``refuted.*`` the ones that close it
+(``ledger.transcribe.split_rows``, enforced by ``validate_ledger``'s partition
+rule) -- so confirm-versus-refute, the disagreement this module exists for, puts
+the two rows in two different FILES.  Merging each file against itself would
+report ``added=1`` and no conflict at all for exactly that case, so the index is
+built over the union of both files and each row is then written back to the file
+its own verdict belongs to.
 """
 from __future__ import annotations
 
@@ -31,7 +41,9 @@ from typing import Any, Iterable, Sequence
 from cflib import log
 from cflib.errors import CfError
 from cflib.jsonio import read_jsonl, write_jsonl
-from harvest.tally import defect_key  # the run-independent key; see the module note
+# integrator: swap for `cflib.hashing.defect_key` once that lands; the two
+# definitions must agree or a row shared between two workspaces stops joining.
+from harvest.tally import defect_key
 from ledger import compat
 
 from . import bundle as bundle_mod
@@ -77,14 +89,21 @@ def check_sources(workspace: Any, rows: Iterable[dict], manifest: dict) -> dict[
                 hint="every row is stamped with the edition it was judged against; re-export "
                      "the bundle from a workspace whose ledger validates (`cf adjudicate "
                      "--validate`)")
-        sha = str(row.get("source_sha") or declared.get(source_id) or "")
+        # The manifest's declaration is a CROSS-CHECK, never a substitute: CLAUDE.md
+        # S4 stamps source_id and source_sha on every artifact that judges a source,
+        # per row, and a row that leans on the bundle's summary is a row nobody can
+        # re-check once it has been merged into somebody else's ledger.
+        sha = str(row.get("source_sha") or "")
         if not sha:
             raise CfError(
                 f"a shared ledger row for {row.get('item') or '(no item)'} does not say which "
                 f"edition of {source_id} it was judged against",
                 hint="source_id AND source_sha are stamped on every artifact that judges a "
                      "source (CLAUDE.md S4); re-export the bundle from a workspace whose "
-                     "ledger validates (`cf adjudicate --validate`)")
+                     "ledger validates (`cf adjudicate --validate`)"
+                     + (f" -- its MANIFEST.json declares {declared[source_id]} for "
+                        f"{source_id}, but a manifest vouches for the bundle, not for the row"
+                        if declared.get(source_id) else ""))
         if source_id not in known:
             raise CfError(
                 f"the bundle's rows cite source {source_id!r}, which this workspace does not "
@@ -112,6 +131,16 @@ def _conflict_marks(row: dict, verdicts: Sequence[str]) -> dict:
     return out
 
 
+def is_closed(row: dict) -> bool:
+    """Does *row*'s verdict CLOSE the finding (``refuted.*``) or keep it open?
+
+    The same test ``ledger.transcribe.split_rows`` partitions on, so a row written
+    back by a merge lands in the file ``validate_ledger``'s partition rule expects
+    it in.
+    """
+    return str(row.get("verdict") or "") in compat.CLOSED_VERDICTS
+
+
 def merge_rows(existing: list[dict], incoming: list[dict], *, origin: str,
                bundle_id: str) -> dict:
     """Merge *incoming* into *existing*; returns the new list and what happened.
@@ -120,10 +149,15 @@ def merge_rows(existing: list[dict], incoming: list[dict], *, origin: str,
     the only change a merge may make to a row already here is to mark it
     ``conflict``.  New rows are appended in the bundle's own order, so the result
     is a function of (existing file, bundle) and a re-import changes nothing.
+
+    ``existing`` is a companion's WHOLE ledger -- accepted rows then refuted rows,
+    see :func:`merge_bundle` -- not one file of it.  Confirm-versus-refute is the
+    disagreement this merge exists for and it spans the two files, so an index
+    built per file would never see it.
     """
     out = [dict(r) for r in existing]
     added: list[dict] = []
-    unchanged = 0
+    unchanged: list[dict] = []
     conflicts: list[dict] = []
 
     def matches(row: dict) -> list[int]:
@@ -142,7 +176,7 @@ def merge_rows(existing: list[dict], incoming: list[dict], *, origin: str,
         found = matches(row)
         same = [i for i in found if str(out[i].get("verdict") or "") == verdict]
         if same:
-            unchanged += 1
+            unchanged.append(row)
             continue
         if found:
             verdicts = sorted({verdict} | {str(out[i].get("verdict") or "") for i in found})
@@ -152,14 +186,16 @@ def merge_rows(existing: list[dict], incoming: list[dict], *, origin: str,
             conflicts.append({
                 "finding_id": str(row.get("finding_id") or ""),
                 "item": str(row.get("item") or ""),
-                "verdicts": verdicts,
+                "verdict": verdict,          # the INCOMING one, so a caller knows
+                "verdicts": verdicts,        # which file the new row lands in
                 "joined_by": ("finding_id" if any(
                     str(out[i].get("finding_id") or "") == str(row.get("finding_id") or "")
                     for i in found) else "defect_key"),
             })
         out.append(row)
         added.append(row)
-    return {"rows": out, "added": len(added), "unchanged": unchanged, "conflicts": conflicts}
+    return {"rows": out, "added": len(added), "unchanged": len(unchanged),
+            "added_rows": added, "unchanged_rows": unchanged, "conflicts": conflicts}
 
 
 def _check_verdicts(rows: Iterable[dict], where: str) -> None:
@@ -195,7 +231,7 @@ def merge_bundle(workspace: Any, bundle: Path, manifest: dict, *,
     report = {"bundle_id": bundle_id, "workspace": origin, "added": 0, "unchanged": 0,
               "conflicts": [], "files": [], "sources": {}, "dry_run": bool(dry_run)}
     all_incoming: list[dict] = []
-    per_file: list[tuple[Path, str, list[dict]]] = []
+    per_companion: dict[str, list[dict]] = {}
     for path in files:
         _, rows = _data_rows(path)
         _check_verdicts(rows, f"{path.name}")
@@ -204,31 +240,51 @@ def merge_bundle(workspace: Any, bundle: Path, manifest: dict, *,
             raise CfError(f"{path.name} does not name a companion",
                           hint="a bundle's ledger files are accepted.<companion>.jsonl and "
                                "refuted.<companion>.jsonl")
-        per_file.append((path, companion, rows))
+        per_companion.setdefault(companion, []).extend(rows)
         all_incoming.extend(rows)
     report["sources"] = check_sources(workspace, all_incoming, manifest)
 
     known = set(workspace.companion_names())
-    for path, companion, rows in per_file:
+    for companion, rows in per_companion.items():
+        dests = {False: paths.accepted_jsonl(companion), True: paths.refuted_jsonl(companion)}
         if companion not in known:
             log.warn(f"{companion} is not a companion of this workspace: its rows are merged "
-                     f"into ledger/{path.name}, and `cf adjudicate --validate` will report "
-                     f"them until `cf onboard` adds the repo")
-        dest = (paths.accepted_jsonl(companion) if path.name.startswith("accepted.")
-                else paths.refuted_jsonl(companion))
-        meta, existing = _data_rows(dest)
-        merged = merge_rows(existing, rows, origin=origin, bundle_id=bundle_id)
+                     f"into ledger/{dests[False].name} and ledger/{dests[True].name}, and "
+                     f"`cf adjudicate --validate` will report them until `cf onboard` adds "
+                     f"the repo")
+        # Both files at once: the index has to span them or confirm-versus-refute,
+        # the disagreement this merge exists for, is reported as two unrelated rows.
+        metas = {closed: _data_rows(dest)[0] for closed, dest in dests.items()}
+        before = {closed: _data_rows(dest)[1] for closed, dest in dests.items()}
+        merged = merge_rows(before[False] + before[True], rows,
+                            origin=origin, bundle_id=bundle_id)
+        # ...and back out by verdict, so validate_ledger's partition rule still
+        # holds.  Within each file the order is the one it already had, because
+        # merge_rows reorders nothing and appends at the end.
+        after = {closed: [r for r in merged["rows"] if is_closed(r) == closed]
+                 for closed in dests}
         report["added"] += merged["added"]
         report["unchanged"] += merged["unchanged"]
         for conflict in merged["conflicts"]:
-            report["conflicts"].append(dict(conflict, companion=companion, file=dest.name))
-        report["files"].append({
-            "file": str(dest), "companion": companion, "added": merged["added"],
-            "unchanged": merged["unchanged"], "conflicts": len(merged["conflicts"]),
-            "rows": len(merged["rows"]),
-        })
-        # Nothing added means nothing changed: a conflict always appends the row it
-        # conflicts with, so there is no case where only the marks moved.
-        if not dry_run and merged["added"]:
-            write_jsonl(dest, merged["rows"], meta=meta)
+            # Named once, against the file the NEW row went into: a conflict whose
+            # two verdicts straddle accepted and refuted is one disagreement, not two.
+            report["conflicts"].append(dict(
+                conflict, companion=companion,
+                file=dests[is_closed({"verdict": conflict["verdict"]})].name))
+        for closed, dest in dests.items():
+            rows_in = after[closed]
+            if not rows_in and not before[closed]:
+                continue            # this half of the ledger is empty and stays empty
+            report["files"].append({
+                "file": str(dest), "companion": companion,
+                "added": sum(1 for r in merged["added_rows"] if is_closed(r) == closed),
+                "unchanged": sum(1 for r in merged["unchanged_rows"] if is_closed(r) == closed),
+                "conflicts": sum(1 for r in rows_in if r.get("conflict")),
+                "rows": len(rows_in),
+            })
+            # Compared, not counted: a conflict across the two files marks a row in
+            # one of them while the new row is appended to the other, so "nothing
+            # added here" no longer means "nothing changed here".
+            if not dry_run and rows_in != before[closed]:
+                write_jsonl(dest, rows_in, meta=metas[closed])
     return report
