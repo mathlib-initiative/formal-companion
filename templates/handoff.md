@@ -27,7 +27,10 @@ that no run ever looked at.
 {{coverage_note}}
 
 The items never examined are listed by name in `reports/unexamined.<source_id>.json`, and every
-figure in this section is in `reports/coverage.json`.
+figure in this section is in `reports/coverage.json`. Every figure here is over the audited scope,
+so anything counted outside it — an examined item in an unaudited chapter, or a corpus document
+that could not be read — is named in the notes above rather than dropped: those documents are
+counted in §3 and in no column of this table.
 
 ## 1. State in one screen
 

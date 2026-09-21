@@ -23,6 +23,22 @@ Six findings, each reproduced against the code before it was changed:
 * FR#26 -- a gate that RAN and rejected was indistinguishable from one that
   passed: `cf tally`, the authority every number comes from, said nothing.
 
+and the four the confirmation pass found while attacking those fixes:
+
+* FR#1 again, on the two nearest variants -- a manuscript whose labels need the
+  source's OWN numbering to parse at all, and one whose workspace pins chapters.
+  The first restored "0 of 0 item(s) in scope examined" on a fully examined
+  source; the second dropped every planned item outside the pin, findings and
+  all, although `cf plan-run` never narrows a manuscript's task universe.
+* a corpus document `cf tally` REFUSES to read (exit 2, "every number a lower
+  bound") was skipped here without a word, so `cf report` published the lower
+  bound as a figure and called the item behind it never examined.
+* an examined item outside the audited chapters vanished from every section-0
+  figure INCLUDING ``items_with_findings``, with nothing in the document saying
+  so, while section 3 counted its rows.
+* the per-chapter "in task universe" cell printed a hard 0 for a figure nothing
+  had computed, where the total row printed "—".
+
 The book, the companion and the findings below are invented: no source text and
 no companion's Lean lives in this repo (CLAUDE.md S1).  Every test here runs
 without the private baselines.
@@ -54,6 +70,8 @@ SKILL = HERE.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 import cf as cf_main  # noqa: E402
+from cflib import items as cf_items  # noqa: E402
+from cflib.errors import CfError  # noqa: E402
 from harvest import harvest as harvest_mod  # noqa: E402
 from harvest import tally as tally_mod  # noqa: E402
 from ledger import compat  # noqa: E402
@@ -188,22 +206,36 @@ class Workspace(unittest.TestCase):
 MANUSCRIPT_ITEMS = ["Definition 1.1.1", "Lemma 1.2.2", "Exercise 1.3.3"]
 
 
+def slug(item: str) -> str:
+    """The file name `cf plan-run` gives an item's task document."""
+    return item.lower().replace(" ", "-").replace(".", "-") + ".json"
+
+
 class ManuscriptFixture(Workspace):
     """A self-authored manuscript: its items.json is empty ON PURPOSE."""
 
     PAIRED = True
+    #: the tagged environments the pairing index lists -- the universe itself
+    ITEMS = MANUSCRIPT_ITEMS
+    #: the one document that carries a defect row
+    DEFECT_ON = MANUSCRIPT_ITEMS[0]
+    #: what `sources/<id>/meta.json` records as this source's own numbering
+    NUMBERING: dict | None = None
 
     def setUp(self):
         super().setUp()
         self.write_items([])
-        self.write_meta(source_format="text", pagination="none", locator="section")
+        meta = {"source_format": "text", "pagination": "none", "locator": "section"}
+        if self.NUMBERING:
+            meta["numbering"] = self.NUMBERING
+        self.write_meta(**meta)
         if self.PAIRED:
-            self.write_pair_index(MANUSCRIPT_ITEMS)
+            self.write_pair_index(self.ITEMS)
         self.write_corpus("hunt", {
-            "definition-1-1-1.json": document("Definition 1.1.1"),
-            "lemma-1-2-2.json": dict(document("Lemma 1.2.2"), disagreements=[]),
-            "exercise-1-3-3.json": dict(document("Exercise 1.3.3"), disagreements=[]),
-        }, gate={"ok": True, "checked": 3})
+            slug(item): (document(item) if item == self.DEFECT_ON
+                         else dict(document(item), disagreements=[]))
+            for item in self.ITEMS
+        }, gate={"ok": True, "checked": len(self.ITEMS)})
 
 
 class TestAManuscriptIsCountedAgainstItsTaggedEnvironments(ManuscriptFixture):
@@ -266,6 +298,91 @@ class TestAManuscriptIsCountedAgainstItsTaggedEnvironments(ManuscriptFixture):
             with self.subTest(column=column):
                 self.assertEqual(sum(b[column] for b in cov["by_chapter"].values()),
                                  cov["items_" + column])
+
+
+class TestAManuscriptIsParsedWithItsOwnNumbering(ManuscriptFixture):
+    """FR#1, variant 1: the labels need this source's numbering to parse at all.
+
+    ``sources/<id>/meta.json`` records the numbering `cf onboard` inferred, and a
+    label DEEPER than it is a hard reject rather than a truncation.  Parsed
+    against ``DEFAULT_NUMBERING`` instead, every label of a book numbered
+    ``2.3.4.1`` rejects, every item loses its chapter, and under a workspace that
+    pins chapters every one of them falls out of scope -- which put the headline
+    figure FR#1 was filed over, "0 of 0 item(s) in scope examined", back on a
+    fully examined source.
+    """
+
+    NUMBERING = {"min_segments": 4, "max_segments": 4, "method": "inferred",
+                 "confidence": 0.93}
+    ITEMS = ["Definition 2.3.1.1", "Lemma 2.3.4.1", "Theorem 2.4.1.1"]
+    DEFECT_ON = "Lemma 2.3.4.1"
+    #: what `cf onboard`'s `(\d+)\.(\d+)` scope inference writes from such a label
+    CHAPTERS = "    chapters: [2]\n"
+
+    def test_the_default_numbering_is_what_rejected_these_labels(self):
+        """The reject the fix removes, shown against the grammar itself."""
+        self.assertIsNone(cf_items.try_parse("Lemma 2.3.4.1", cf_items.DEFAULT_KINDS)[0])
+        self.assertEqual(cf_items.try_parse("Lemma 2.3.4.1", cf_items.DEFAULT_KINDS)[1].reason,
+                         "too_many_segments")
+        parsed, reject = cf_items.try_parse("Lemma 2.3.4.1", cf_items.DEFAULT_KINDS,
+                                            numbering=self.NUMBERING)
+        self.assertIsNone(reject)
+        self.assertEqual(parsed.chapter, 2)
+
+    def test_the_universe_keeps_its_chapters_and_its_scope(self):
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_source"], 3)
+        self.assertEqual(cov["items_in_scope"], 3)
+        self.assertEqual(cov["chapters_in_source"], [2])
+        self.assertEqual(cov["items_examined"], 3)
+        self.assertEqual(cov["items_with_findings"], 1)
+
+    def test_the_headline_figure_is_not_zero_of_zero_again(self):
+        text = self.handoff()["text"]
+        self.assertNotIn("of 0 item(s) in scope examined", text)
+        self.assertIn("`%s`: 3 of 3 item(s) in scope examined (3 in the source)" % SOURCE_ID,
+                      text)
+
+
+class TestAPinnedChapterDoesNotNarrowAManuscript(ManuscriptFixture):
+    """FR#1, variant 2: the pairing index IS the planned universe.
+
+    `cf plan-run` never narrows a manuscript's task universe by chapter
+    (``pair/compare.py`` needs a non-empty ``book_items``, and a manuscript's
+    item table is empty by design), so every planned and examined item outside
+    the pin was counted by `cf tally` and by no figure in section 0 -- 7 of 293
+    on the companion this was reproduced against, one of them carrying the run's
+    only CONTENT finding.
+    """
+
+    CHAPTERS = "    chapters: [1]\n"
+    ITEMS = MANUSCRIPT_ITEMS + ["Lemma 2.1.1"]
+    DEFECT_ON = "Lemma 2.1.1"
+
+    def test_every_planned_item_is_counted(self):
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_source"], 4)
+        self.assertEqual(cov["items_examined"], 4)
+        self.assertEqual(cov["items_with_findings"], 1)
+        self.assertEqual(cov["examined_outside_scope"], [],
+                         "the planned universe cannot be outside the reported scope")
+        self.assertEqual(cov["chapters_audited"], [])
+        self.assertEqual(cov["chapters_pinned"], [1], "the pin is published, not thrown away")
+
+    def test_section_zero_cannot_say_none_while_section_three_counts_one(self):
+        """The contradiction FR#10 was filed about, reached through the scope."""
+        rows = tally_mod.rows_for_run("hunt", os.path.join(self.root, "corpus", "hunt"),
+                                      kinds=None)
+        self.assertEqual([r["item"] for r in rows], ["Lemma 2.1.1"])
+        self.assertEqual(self.coverage()["items_with_findings"], len({r["item"] for r in rows}))
+
+    def test_the_document_says_the_pin_did_not_apply(self):
+        """Silently ignoring it would be the same false denominator the other way."""
+        text = self.handoff()["text"]
+        self.assertIn("`chapters: 1` does not narrow this source", text)
+        self.assertIn("`pairs/%s/index.json`, which no chapter list narrows" % SOURCE_ID, text)
+        self.assertIn("`%s`: 4 of 4 item(s) in scope examined (4 in the source)" % SOURCE_ID,
+                      text)
 
 
 class TestAManuscriptWithNoPairingHasNoDenominator(ManuscriptFixture):
@@ -481,6 +598,153 @@ class TestADocumentWithNoTopLevelItemIsNotDropped(Workspace):
         self.assertEqual(set(examined[SOURCE_ID]["examined"]), {"task-0042"})
 
 
+class TestADocumentTheTallyRefusesIsNotDroppedInSilence(Workspace):
+    """NEW#g-report-1: the counting authority fails closed, the report failed open.
+
+    `cf tally` refuses a corpus holding a findings file that is valid JSON and
+    not an object ("a corpus with one it cannot read makes every number a lower
+    bound", exit 2).  The report skipped the same file at ``except Exception:
+    continue`` and published the lower bound as a figure -- with the item behind
+    it named as NEVER EXAMINED, although it has a gated corpus document.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Exercise 1.1.1", "page": 10, "chapter": 1, "kind": "Exercise"},
+            {"item": "Exercise 1.1.2", "page": 11, "chapter": 1, "kind": "Exercise"},
+        ])
+        self.dest = self.write_corpus("hunt", {
+            "exercise-1-1-1.json": document("Exercise 1.1.1"),
+            "exercise-1-1-2.json": document("Exercise 1.1.2"),
+        }, gate={"ok": True, "checked": 2})
+        # a findings file that is valid JSON and not a findings object
+        compat.write_text(os.path.join(self.dest, "exercise-1-1-2.json"), "[]\n")
+
+    def test_the_tally_still_refuses_the_file(self):
+        with self.assertRaises(CfError) as caught:
+            tally_mod.rows_for_run("hunt", self.dest, kinds=None)
+        self.assertIn("is not a findings object", str(caught.exception))
+
+    def test_the_report_counts_the_file_it_could_not_read(self):
+        self.assertEqual(self.coverage()["unreadable_documents"],
+                         ["hunt/exercise-1-1-2.json"])
+
+    def test_the_handoff_names_it_and_calls_the_figures_a_lower_bound(self):
+        text = self.handoff()["text"]
+        self.assertIn("could not be read", text)
+        self.assertIn("`hunt/exercise-1-1-2.json`", text)
+        self.assertIn("LOWER BOUND", text)
+
+    def test_the_command_says_so_on_the_terminal_too(self):
+        """`cf tally` exits 2 on this corpus and `cf report` exits 0 over it."""
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("could not be read", out)
+        self.assertIn("hunt/exercise-1-1-2.json", out)
+        self.assertIn("cf tally --run <run-id>", out)
+
+    def test_the_item_behind_it_is_never_published_as_unexamined_unremarked(self):
+        """It has a gated document; the figures cannot say otherwise in silence."""
+        cov = self.coverage()
+        self.assertIn("Exercise 1.1.2", cov["never_examined"])
+        text = self.handoff()["text"]
+        self.assertIn("may be counted as never examined", text)
+        self.assertEqual(cf_cli("tally", "--workspace", self.root, "--no-write")[0], 2,
+                         "the tally this sentence sends the reader to must still refuse")
+
+
+class TestAnExaminedItemOutsideTheScopeIsNotDropped(Workspace):
+    """NEW#g-report-2: ``examined_outside_scope`` had no reader anywhere in the tree.
+
+    Every section-0 figure is an intersection with the items in scope, so a
+    corpus document for an item outside the audited chapters is counted by
+    `cf tally` and by none of them -- ``items_with_findings`` included.  It is
+    reachable on an ordinary path: `cf import-corpus` of a legacy corpus wider
+    than the current chapter scope is how the imported baseline arrives.
+    """
+
+    CHAPTERS = "    chapters: [1]\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Definition 1.1.1", "page": 10, "chapter": 1, "kind": "Definition"},
+            {"item": "Lemma 2.1.1", "page": 58, "chapter": 2, "kind": "Lemma"},
+        ])
+        self.dest = self.write_corpus("hunt", {
+            "definition-1-1-1.json": dict(document("Definition 1.1.1"), disagreements=[]),
+            "lemma-2-1-1.json": document("Lemma 2.1.1"),
+        }, gate={"ok": True, "checked": 2})
+
+    def test_the_finding_outside_the_scope_is_still_published(self):
+        cov = self.coverage()
+        rows = tally_mod.rows_for_run("hunt", self.dest, kinds=None)
+        self.assertEqual([r["item"] for r in rows], ["Lemma 2.1.1"])
+        self.assertEqual(cov["items_with_findings"], 0, "it is outside the audited chapters")
+        self.assertEqual(cov["with_findings_outside_scope"], ["Lemma 2.1.1"],
+                         "a counted finding may not be absent from every published figure")
+        self.assertEqual(cov["examined_outside_scope"], ["Lemma 2.1.1"])
+        self.assertEqual(cov["chapters_outside_scope"], ["2"])
+
+    def test_the_document_names_the_items_and_where_they_are_counted(self):
+        text = self.handoff()["text"]
+        self.assertIn("lie OUTSIDE the audited chapter(s)", text)
+        self.assertIn("`Lemma 2.1.1`", text)
+        self.assertIn("1 of them with findings", text)
+        self.assertIn("`cf tally` and §3 count them and no figure above does", text)
+
+    def test_the_per_run_block_and_the_per_source_figures_do_not_disagree_in_silence(self):
+        cov = self.coverage()
+        self.assertEqual(cov["runs"]["hunt"], {"examined": 2, "with_findings": 1, "gated": True})
+        self.assertEqual(cov["items_examined"] + len(cov["examined_outside_scope"]),
+                         cov["runs"]["hunt"]["examined"])
+
+
+class TestAnUncomputedTaskUniverseIsNotZeroPerChapter(Workspace):
+    """NEW#g-report-4: one figure, three renderings, in one document.
+
+    With no ``reconciliation.json`` nothing has computed a task universe, so the
+    total row prints "—" and the prose "?" -- while the per-chapter row counted
+    against an empty set and printed a hard 0, which is the overclaim the
+    neighbouring ``paired`` cell was already taught not to make.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Exercise 1.1.1", "page": 10, "chapter": 1, "kind": "Exercise"},
+            {"item": "Exercise 1.1.2", "page": 11, "chapter": 1, "kind": "Exercise"},
+        ])
+        self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                          gate={"ok": True, "checked": 1})
+
+    def test_the_figure_nothing_computed_is_not_a_zero(self):
+        cov = self.coverage()
+        self.assertIsNone(cov["items_in_task_universe"])
+        self.assertEqual([b["in_task_universe"] for b in cov["by_chapter"].values()], [None])
+
+    def test_the_chapter_row_prints_what_the_total_row_prints(self):
+        section = self.handoff()["text"].split("## 0.")[1].split("## 1.")[0]
+        rows = [l for l in section.splitlines() if l.startswith("| `%s` |" % SOURCE_ID)]
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual([c.strip() for c in rows[0].split("|")][5],
+                         [c.strip() for c in rows[1].split("|")][5])
+        self.assertEqual([c.strip() for c in rows[0].split("|")][5], "—")
+
+    def test_the_chapter_rows_still_add_up_to_the_total_row(self):
+        """The invariant, widened to the case where the figure is uncomputed."""
+        cov = self.coverage()
+        for column in ("in_scope", "in_task_universe", "examined", "gated", "with_findings"):
+            with self.subTest(column=column):
+                values = [b[column] for b in cov["by_chapter"].values()]
+                total = cov["items_" + column]
+                if total is None:
+                    self.assertTrue(all(v is None for v in values), values)
+                else:
+                    self.assertEqual(sum(values), total)
+
+
 # ---------------------------------------------------------------------------
 # FR#26 -- a gate that ran and REJECTED is its own state
 # ---------------------------------------------------------------------------
@@ -552,6 +816,22 @@ def cf(*argv) -> tuple:
     try:
         with redirect_stdout(out), redirect_stderr(err):
             rc = cf_main.main(list(argv))
+    except SystemExit as exc:            # --help
+        rc = int(exc.code or 0)
+    return rc, out.getvalue(), err.getvalue()
+
+
+def cf_cli(*argv) -> tuple:
+    """The same, through the process entry point: a refusal is an EXIT CODE.
+
+    ``cf_main.main`` raises ``CfError`` for a library caller; ``cf_main.cli`` is
+    what a shell runs, and what a hint printed for a user to paste reaches.  A
+    hint is only settled if the command in it exits 0 there.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cf_main.cli(list(argv))
     except SystemExit as exc:            # --help
         rc = int(exc.code or 0)
     return rc, out.getvalue(), err.getvalue()
