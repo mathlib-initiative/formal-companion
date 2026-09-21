@@ -73,7 +73,16 @@ def run(args) -> int:
     if result.get("ungated"):
         log.warn(f"ungated run(s): {', '.join(result['ungated'])} -- their RECEIPT.json carries "
                  "no gate block, so no quote in them was checked against the source text. "
-                 "The counts above include them. Re-harvest those runs with a gate config.")
+                 f"The counts above include them. {tally_mod.REGATE_HINT}")
+    # A gate that RAN and rejected is not the same state as no gate at all, and
+    # only the second one was ever named here: a rejected run's rows -- a quote
+    # the gate could not find in the source text -- were counted, and routed,
+    # with nothing in the counting authority's own output saying so.
+    if result.get("gate_failed"):
+        log.warn(f"gate FAILED for run(s): {', '.join(result['gate_failed'])} -- their quotes "
+                 "were checked against the source text and rejected (see "
+                 "corpus/<run-id>/RECEIPT.json gate.problems). The counts above include them; "
+                 f"re-run those tasks or drop that corpus. {tally_mod.REGATE_HINT}")
     if result.get("finding_id_mismatches"):
         log.warn(f"{len(result['finding_id_mismatches'])} row(s) carry a finding_id that is not "
                  "the id their content hashes to. The computed id is the one counted and "
