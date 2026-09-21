@@ -134,10 +134,18 @@ def normalise_finding(
     return row
 
 
-def _rows_of_document(doc: Any) -> list[tuple[dict, str]]:
-    """Pull (raw_row, item) pairs out of any corpus document shape."""
+def _rows_of_document(doc: Any, path: str = "") -> list[tuple[dict, str]]:
+    """Pull (raw_row, item) pairs out of any corpus document shape.
+
+    ``path`` is the file the document came from, because the ``{"result": {...}}``
+    unwrap below is read only under the ONE name that shape has.  Applied to every
+    corpus document it was a bypass: the gate validates the top-level
+    ``disagreements``/``findings`` of an item file (``gate/verify_findings.py``
+    DEFECT_LISTS) and would have counted rows out of a place it never validated.
+    """
     out: list[tuple[dict, str]] = []
-    if isinstance(doc, dict) and "result" in doc and isinstance(doc["result"], dict):
+    if (os.path.basename(path) == "harvest.partial.json"
+            and isinstance(doc, dict) and isinstance(doc.get("result"), dict)):
         doc = doc["result"]  # harvest.partial.json of a killed local fleet
     if isinstance(doc, list):
         for r in doc:
@@ -171,7 +179,10 @@ def load_findings(
     (``{"item": ..., "disagreements": [...]}``) and the directory's basename is
     the default ``run_id``.  A ``.jsonl`` file is read as routed/ledger-adjacent
     rows with an optional ``_meta`` header.  A ``.json`` file may hold a corpus
-    item, a ``{"findings": [...]}`` bundle or a ``{"result": {...}}`` harvest.
+    item or a ``{"findings": [...]}`` bundle; the ``{"result": {...}}`` harvest of
+    a killed local fleet is unwrapped only under its own name,
+    ``harvest.partial.json``, so that no corpus item can carry counted rows in a
+    key the gate does not validate.
     """
     rows: list[dict] = []
     for src in paths_in:
@@ -183,7 +194,7 @@ def load_findings(
                 if isinstance(doc, dict):
                     sid = str(doc.get("source_id") or source_id or "")
                     sha = str(doc.get("source_sha") or doc.get("book_sha") or source_sha or "")
-                for raw, item in _rows_of_document(doc):
+                for raw, item in _rows_of_document(doc, path):
                     rows.append(
                         normalise_finding(raw, item=item, run_id=rid, source_id=sid,
                                           source_sha=sha, source=path)
@@ -205,7 +216,7 @@ def load_findings(
         sid = source_id or (doc.get("source_id") if isinstance(doc, dict) else "") or ""
         sha = source_sha or (
             (doc.get("source_sha") or doc.get("book_sha")) if isinstance(doc, dict) else "") or ""
-        for raw, item in _rows_of_document(doc):
+        for raw, item in _rows_of_document(doc, src):
             rows.append(
                 normalise_finding(raw, item=item, run_id=str(rid), source_id=str(sid),
                                   source_sha=str(sha), source=src)
