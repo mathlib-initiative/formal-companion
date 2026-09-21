@@ -706,8 +706,17 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         ``gitsafe.run`` refuses by returning, not by raising, because three of its
         callers catch only ``TimeoutExpired``: a new exception would have turned a
         blanked driver into a traceback out of ``cf onboard`` and ``cf quotes``.
+
+        "No information" is not the same as "no repository", and one caller read
+        it that way: ``cf quotes --out`` asks ``rev-parse --show-toplevel`` for
+        the repo that would TRACK the destination, and a non-zero status alone
+        meant "nothing encloses this path", so the refusal turned the check that
+        stops recovered book text landing in a tracked file into permission to
+        write it.  The pin's recorded ``method`` is the other half: it said "not
+        a git checkout" of a checkout that is one, and threw the reason away.
         """
         from cfcmd import onboard as onboard_mod
+        from cfcmd import quotes as quotes_mod
         from recheck import pin as pin_mod
 
         self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
@@ -715,7 +724,28 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         with self.running_under(bin_dir):
             pinned = pin_mod.repo_pin(self.repo)
             self.assertEqual((pinned["repo_commit"], pinned["dirty"]), (None, None))
+            self.assertIn("filter.a=b.clean", pinned["method"])
+            self.assertNotEqual(pinned["method"], "not a git checkout")
             self.assertIsNone(onboard_mod._commit(self.repo))
+            # the destination is tracked by the repo whose driver was refused, so
+            # "I could not read" must come back as a path and refuse the write
+            out = self.repo / "quotes" / "hydrated.jsonl"
+            self.assertIsNotNone(quotes_mod._tracked_by_git(out),
+                                 "a refused read became permission to write")
+
+    def test_the_tracked_check_still_answers_on_a_git_that_reads_the_pairs(self):
+        """The guard above may not turn every ordinary answer into a refusal.
+
+        On this host's git the same destination is tracked (the repo does not
+        ignore it) and a path outside any repository is still ``None``.
+        """
+        from cfcmd import quotes as quotes_mod
+
+        self.assertEqual(quotes_mod._tracked_by_git(self.repo / "quotes" / "h.jsonl"),
+                         self.repo.resolve())
+        loose = self.root / "not-a-repo"
+        loose.mkdir()
+        self.assertIsNone(quotes_mod._tracked_by_git(loose / "h.jsonl"))
 
     def test_a_driver_is_pinned_only_once_it_is_named_and_never_raises(self):
         self.assertNotIn("filter.x.clean", gitsafe.filter_names(self.repo))

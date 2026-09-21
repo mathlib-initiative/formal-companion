@@ -175,6 +175,12 @@ release has something to say.
   macro read as prose, so `- lim sup En …` and `… \alpha -` were stripped back
   to the book's own words and certified verbatim while the glued spellings were
   refused. Those are operands now, at both edges.
+- `cf quotes hydrate --out` read a git read the safety boundary REFUSED as "no
+  repository encloses this path", so a refusal became permission to write
+  recovered book text into a tracked file — the one thing that check exists to
+  stop. A refused read means "do not write" now, as a hung git already did, and
+  `cf recheck`'s pin records the refusal's own reason instead of calling a
+  checkout "not a git checkout".
 
 ## 0.2.0 — the multi-source model
 
