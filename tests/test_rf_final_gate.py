@@ -76,6 +76,19 @@ QUOTE_1 = ("Show that if E is contained in F then m(E) <= m(F), and that the "
 #: that is in the book but on no single page
 STRADDLE_QUOTE = ("for later use in section 6. " + RUNNING_HEAD + " " +
                   PAGE_7.split("\n")[0])
+#: a folio-only page, which is what pdftotext writes for a page carrying nothing
+#: but its number -- the short page an attacker puts at the seam
+FOLIO_PAGE = "42\n"
+#: the same splice with that page in the middle of it: three pages, not two
+SPLICED_QUOTE = ("for later use in section 6. " + FOLIO_PAGE.strip() + " " +
+                 RUNNING_HEAD + " " + PAGE_7.split("\n")[0])
+
+
+def book_with_a_folio_page() -> "vf.BookText":
+    """:data:`BOOK` with a folio-only page inserted before the last one."""
+    return vf.BookText.from_text(BOOK.replace(
+        "\f" + RUNNING_HEAD + "\n\n" + PAGE_7,
+        "\f" + FOLIO_PAGE + "\f" + RUNNING_HEAD + "\n\n" + PAGE_7))
 
 BOGUS_ROW = {
     "concept": "invented",
@@ -594,6 +607,34 @@ class TestAQuoteSplicedAcrossAPageBreakIsStillBound(BookTestCase):
                            + "\n\n" + PAGE_7)
         book = vf.BookText.from_text(raw)
         self.assertEqual(vf.quote_match(book, STRADDLE_QUOTE).pages, [6, 8])
+
+    def test_a_short_page_at_the_seam_does_not_buy_the_splice_a_pass_either(self):
+        """Pairs left the same attack open one page wider, and cheaply.
+
+        A folio-only page between the two halves makes the splice span THREE
+        pages, which the pair search reported as ``[]`` -- and an empty page list
+        is exactly what turns the bind off.  Two hundred characters against a
+        3,000-character ceiling then bought a quote from six pages away a
+        "straddles a page break" note and exit 0.
+        """
+        book = book_with_a_folio_page()
+        m = vf.quote_match(book, SPLICED_QUOTE)
+        self.assertLess(len(SPLICED_QUOTE), vf.MAX_QUOTE_CHARS)
+        self.assertEqual(m.pages, [6, 7, 8])
+        errs = vf.validate_doc(doc_for(SPLICED_QUOTE, item=ITEM), "x.json", self.cfg,
+                               {SOURCE_ID: book})
+        self.assertTrue(any("not the item's passage" in e for e in errs), errs)
+        self.assertEqual(vf.binding_notes(doc_for(SPLICED_QUOTE), "x.json", self.cfg, book), [])
+
+    def test_the_run_search_reports_the_narrowest_run_that_holds_the_quote(self):
+        """The widening stops at the first width that matches, so a quote inside
+        one page is still one page and the recurrence ceiling counts it once."""
+        book = book_with_a_folio_page()
+        self.assertEqual(vf.quote_match(book, QUOTE_1).pages, [1])
+        self.assertEqual(vf.quote_match(book, STRADDLE_QUOTE.split(RUNNING_HEAD)[0]
+                                        + FOLIO_PAGE.strip()).pages, [6, 7])
+        # the running head is still on every page, and still refused for it
+        self.assertFalse(vf.quote_ok(book, RUNNING_HEAD)[0])
 
 
 # --------------------------------------------------------------------------- #
