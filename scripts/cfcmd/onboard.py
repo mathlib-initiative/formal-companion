@@ -4,9 +4,10 @@ docs/design/multi-source-model.md R2 / S4 / S7.2.  The user rejected typing
 sources, editions, page offsets and errata URLs, so onboarding reads them off
 the repository instead:
 
-    discover  detect the adapter, read the repo's seven signals, locate and
-              FINGERPRINT the PDF bytes, infer the offset and the item kinds,
-              find the errata page, decide which edition the anchors follow
+    discover  detect the adapter, read the repo's seven signals AND whatever the
+              adapter itself claims, locate and FINGERPRINT the source bytes,
+              infer the offset and the item kinds, find the errata page, decide
+              which edition the anchors follow
     register  workspace.yaml + the registry overlay (unconfirmed sources are
               written as `confirmed: false` and surfaced by `cf status`)
     prepare   sources/<id>/{text.txt, pages/, items.json, meta.json, errata.*}
@@ -16,11 +17,19 @@ Nothing is written to the companion repo, ever.  Every inference is printed with
 its confidence and the file it came from, and a weak inference is a REFUSAL with
 the one command that settles it -- never a default.
 
-    cf onboard ~/Desktop/tao-measure-lean
-    cf onboard ~/Desktop/measure_theory --name adam
+A source is a published edition, a manuscript the companion itself wrote (a
+leanblueprint's .tex tree, claimed by its adapter and concatenated here), or a
+file the operator names with ``--source`` because the repo names none.  All three
+are fingerprinted, registered unconfirmed and prepared the same way: only the
+LOCATION is ever given, never a fact about the source.
+
+    cf onboard <repo>
+    cf onboard <repo> --name adam
+    cf onboard <repo> --source <the book's PDF or manuscript>
 """
 from __future__ import annotations
 
+import hashlib
 import subprocess
 import traceback
 from pathlib import Path
@@ -55,6 +64,11 @@ def register(subparsers) -> None:
                    help="override the detected adapter kind")
     p.add_argument("--anchor-source", metavar="ID",
                    help="override which edition this repo's page anchors follow")
+    p.add_argument("--source", metavar="FILE", action="append", default=[],
+                   help="name a source the repo does not: a PDF, or a manuscript that is "
+                        "already text. Repeatable. Its LOCATION is all this gives -- the sha, "
+                        "the page offset, the item kinds and the numbering are still read off "
+                        "the file")
     p.add_argument("--download", action="store_true",
                    help="allow fetching a source PDF from the author's own site when the "
                         "registry licence note permits it (never redistributed)")
@@ -112,7 +126,7 @@ def run(args) -> int:
     if not repo.is_dir():
         raise CfError(f"{repo} is not a directory",
                       hint="cf onboard takes the PATH to a companion repo: "
-                           "`cf onboard ~/Desktop/tao-measure-lean`")
+                           "`cf onboard <path to the checkout>`")
     if repo == workspace.root or workspace.root in repo.parents:
         raise CfError("the companion repo must live outside the workspace directory")
     name = args.name or _default_name(repo)
@@ -121,7 +135,12 @@ def run(args) -> int:
     kind, adapter_confidence, adapter_evidence = _detect(repo, args.adapter)
     _check_adapter_implemented(kind, repo)
     registry = Registry.load(workspace)
-    claims = discovery.discover_sources(repo, adapter=kind)
+    # The ADAPTER's claims too, not only the module-level signals: CLAUDE.md S6
+    # promises every convention a `discover_sources`, and a convention whose
+    # source is its own manuscript has no other way to say so.
+    claims = discovery.discover_sources_with_adapter(repo, adapter=kind)
+    claims += [_named_source_claim(raw) for raw in (getattr(args, "source", None) or [])]
+    _read_named_sources(claims)
     #: The repo being onboarded is not in `workspace.companions` yet -- `upsert_companion`
     #: runs further down -- so the search roots DERIVED from it would only exist from the
     #: second run on, and the identical command would then discover a different set of
@@ -139,8 +158,14 @@ def run(args) -> int:
     if not result.sources:
         raise DiscoveryError(
             f"{repo}: no source could be discovered",
-            hint="the repo names no book, ships no PDF and quotes no sha. Add one by hand: "
-                 f"`cf sources add <pdf> --for {name}`")
+            # NOT `cf sources add --for <companion>`: that takes a companion this
+            # workspace already has, and this refusal is exactly the case where
+            # there is none -- so the hint used to name a command that answers
+            # "unknown companion". `--source` names the file on the way in.
+            hint="the repo names no book, ships no PDF and quotes no sha. Name the source "
+                 f"yourself: `cf onboard {repo} --source <file>` (a PDF, or the manuscript "
+                 "itself; repeatable). Only its location is given -- the sha, the offset, the "
+                 "kinds and the numbering are still read off the file")
 
     _fold_offset_hints(result)
     log.info(result.render())
@@ -151,6 +176,7 @@ def run(args) -> int:
 
     # ---- register ----------------------------------------------------
     for body in result.sources:
+        _assemble_manuscript(workspace, body, repo)
         _register_source(workspace, registry, body, result)
     workspace.save()
 
@@ -160,7 +186,8 @@ def run(args) -> int:
         for body in result.sources:
             _prepare_source(workspace, body["id"], force=args.force, no_errata=args.no_errata,
                             declared_offset=body.get("declared_offset"),
-                            fetch_errata_ok=_errata_allowed(workspace, args))
+                            fetch_errata_ok=_errata_allowed(workspace, args),
+                            onboarding=repo)
     except CfError:
         # A refusal here must not strand the workspace: the sources above are
         # already saved as `audited`, and one that no companion lists is a file
@@ -316,6 +343,117 @@ def _fold_offset_hints(result: discovery.DiscoveryResult) -> None:
             body["declared_offset"] = hint
 
 
+def _accepted_suffixes() -> str:
+    """What ``--source`` takes, read off ``locator.TEXT_SUFFIXES`` not retyped.
+
+    `cf sources add`'s help does the same, and for the same reason: a message
+    that advertised fewer formats than the code accepts is how a suffix with no
+    heading pattern got in unnoticed.
+    """
+    from cfcmd.sources import _text_suffixes
+    return "a PDF, or the manuscript itself (%s)" % _text_suffixes()
+
+
+def _named_source_claim(raw: str) -> discovery.SourceClaim:
+    """The claim behind one ``cf onboard --source <file>``.
+
+    The operator names the LOCATION and nothing else.  Every fact about the
+    source -- its sha, its page offset, its item kinds, its numbering depth, its
+    completeness -- is still read off the file by `prepare`, exactly as
+    `cf sources add` reads them, so this is not the "typed-in source" S4 forbids:
+    it is the same override, moved to the one command that needs it before a
+    companion exists.
+    """
+    path = Path(raw).expanduser().resolve()
+    if not path.is_file():
+        raise SourceError(f"--source {raw}: not a file",
+                          hint="give the path to " + _accepted_suffixes())
+    return discovery.SourceClaim(
+        signal="filesystem", path=str(path), files=(str(path),),
+        title=path.stem.replace("-", " ").replace("_", " "),
+        discovered_by=discovery.DISCOVERED_BY_MANUAL, confidence=1.0, sources=(str(path),))
+
+
+def _read_named_sources(claims) -> None:
+    """Fingerprint every claim that NAMES its files instead of describing a book.
+
+    Two kinds of claim arrive with the bytes already in hand: an adapter's own
+    manuscript (``blueprint_tex``) and an operator's ``--source``.  Neither has a
+    PDF to locate, so the facts a search would have established are read here,
+    once, before anything is registered or printed: the sha256 over the
+    CONCATENATED bytes in the order the claim gives, the byte count, the format
+    and -- from ``sources/locator.py``, which owns both rules -- whether the text
+    has printed pages at all.
+
+    The concatenation is the point for a manuscript spread over chapter files: a
+    sha over the master alone would not move when a chapter was edited, and every
+    row stamped with it would claim to have been read from bytes it was not.
+    """
+    from sources.locator import FORMAT_PDF, PAGINATION_FORMFEED, detect_pagination, source_format
+    for claim in claims:
+        if not claim.files:
+            continue
+        try:
+            fmt = source_format(claim.files[0])
+        except ValueError as exc:
+            raise SourceError(str(exc), hint="give " + _accepted_suffixes()) from exc
+        blob = _concatenated(claim.files)
+        claim.sha256 = _sha256_bytes(blob)
+        claim.bytes = len(blob)
+        claim.source_format = fmt
+        claim.pagination = (PAGINATION_FORMFEED if fmt == FORMAT_PDF
+                            else detect_pagination(blob.decode("utf-8", errors="ignore")))
+
+
+def _concatenated(files) -> bytes:
+    """The bytes of these files, in this order, with nothing between them."""
+    return b"".join(Path(p).read_bytes() for p in files)
+
+
+def _sha256_bytes(blob: bytes) -> str:
+    """sha256 of raw bytes.
+
+    ``cflib.hashing`` fingerprints a file or a str; a manuscript assembled from
+    several files is neither until it is written, and hashing the decoded text
+    would fingerprint the decode rather than the bytes.
+    """
+    return hashlib.sha256(blob).hexdigest()
+
+
+def _assemble_manuscript(workspace, body: dict, repo: Path | None = None) -> None:
+    """Write a multi-file manuscript into the workspace as one source file.
+
+    A source has to BE a file for `prepare` to read it, fingerprint it and answer
+    the source gate, and a blueprint's manuscript is a tree.  The concatenation
+    the claim's sha covers is written once into the workspace's own
+    ``sources/<id>/`` directory -- never into the companion repo, which is read
+    as data -- and the workspace row points at it from then on, so
+    `cf sources refresh <id>` re-prepares the same bytes and a later
+    `cf onboard` re-derives them.
+
+    The sha is re-checked here rather than trusted: the files were read a moment
+    ago to make the claim, and a tree that changed in between would otherwise be
+    registered under a sha that describes neither version.
+    """
+    files = body.pop("manuscript_files", None)
+    if not files:
+        return
+    blob = _concatenated(files)
+    if _sha256_bytes(blob) != body.get("sha256"):
+        raise SourceError(
+            f"{body['id']}: the manuscript changed while it was being onboarded "
+            f"({len(files)} files)",
+            hint=f"re-run `cf onboard {repo or '<repo>'}`")
+    out = workspace.paths.source_dir(body["id"]) / f"manuscript{Path(files[0]).suffix}"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(out.suffix + ".tmp")
+    tmp.write_bytes(blob)
+    tmp.replace(out)
+    body["pdf"] = str(out)
+    log.ok(f"assembled {out.name}   {len(files)} manuscript file(s), {len(blob)} bytes "
+           f"(the sha covers them in this order)")
+
+
 def _register_source(workspace, registry: Registry, body: dict, result) -> None:
     """workspace.yaml + (for an unknown source) the registry overlay."""
     source_id = body["id"]
@@ -359,7 +497,8 @@ def _empty_claim(body: dict) -> discovery.SourceClaim:
 
 def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
                     declared_offset: int | None = None,
-                    fetch_errata_ok: bool = False) -> None:
+                    fetch_errata_ok: bool = False,
+                    onboarding: Path | None = None) -> None:
     """Run STAGES-A's prepare() + errata fetch for one source.
 
     ``declared_offset`` is the offset the repo's own prose declares, handed
@@ -367,6 +506,14 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
     used to be dropped): :func:`cflib.inference.infer_offset` REFUSES when the
     running heads say something else.  ``fetch_errata_ok`` allows the one
     fetch a repo-supplied URL would otherwise not get.
+
+    ``onboarding`` is the repo `cf onboard` is working on, and it is here for the
+    REFUSALS below: this runs before the companion entry is written, so a hint
+    that said ``cf sources add <source> --for <companion>`` named a command that
+    answers "unknown companion" every time it was printed from here.  With the
+    repo in hand the same refusal can name ``cf onboard <repo> --source <file>``,
+    which works.  `cf sources add` / `cf sources refresh` pass nothing and keep
+    the `--for` spelling, which is right for a companion that already exists.
     """
     ref = workspace.source(source_id)
     out_dir = workspace.paths.source_dir(source_id)
@@ -411,7 +558,7 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
     log.ok(f"prepared  sources/{source_id}/   text {payload['pages']} pages, "
            f"{payload['items']} items, offset {payload['offset']} "
            f"(confidence {confidence:.3f}, {payload['offset_method']})")
-    _refuse_an_empty_source(source_id, ref, payload, workspace)
+    _refuse_an_empty_source(source_id, ref, payload, workspace, onboarding=onboarding)
     _teach_the_overlay(workspace, source_id, sha256=ref.sha256, bytes=ref.bytes,
                        pages=payload["pages"], offset=payload["offset"],
                        offset_confidence=confidence, offset_method=payload["offset_method"],
@@ -480,7 +627,36 @@ def _teach_the_overlay(workspace, source_id: str, **learned) -> None:
                    f"offset {learned.get('offset')}, {len(learned.get('kinds') or [])} kinds")
 
 
-def _refuse_an_empty_source(source_id: str, ref, payload: dict, workspace=None) -> None:
+def _name_the_source(onboarding: Path | None) -> str:
+    """The command that names a different source, for the refusals below.
+
+    Two contexts, two spellings, and the wrong one is a dead end: during
+    `cf onboard` no companion entry exists yet, so only ``--source`` can be
+    followed; from `cf sources refresh` the companion is already there and
+    ``cf sources add --for`` is the command that exists.
+    """
+    if onboarding is not None:
+        return f"cf onboard {onboarding} --source <file>"
+    return "cf sources add <source> --for <companion>"
+
+
+def _self_authored(workspace, source_id: str) -> bool:
+    """Did the ADAPTER claim this source out of the companion's own tree?
+
+    A manuscript the companion wrote has no printed-book headings for the item
+    grammar to number, and there is no other document its bytes could be mistaken
+    for -- they are the ones the adapter's own glob just matched.  That is the one
+    case the two "this is the wrong document" refusals below do not cover, and it
+    is read off the row rather than guessed: a file an OPERATOR named is somebody
+    else's book, and every one of those checks still applies to it.
+    """
+    body = ((workspace.data.get("sources") or {}).get(source_id) or {}) if workspace else {}
+    return ((body.get("discovered") or {}).get("pdf_found_in")
+            == discovery.DISCOVERED_BY_ADAPTER)
+
+
+def _refuse_an_empty_source(source_id: str, ref, payload: dict, workspace=None, *,
+                            onboarding: Path | None = None) -> None:
     """A source table that is not a source table -- empty, or almost empty.
 
     `locate_pdf` can only rank the candidates it finds; the text is the last
@@ -501,16 +677,28 @@ def _refuse_an_empty_source(source_id: str, ref, payload: dict, workspace=None) 
       `kinds_not_inferred`): the kind list belongs to another book;
     * `item_completeness` below `MIN_ITEM_COMPLETENESS`: the grammar read prose,
       not headings.
+
+    All three ask the same question -- "is this the document this companion
+    formalises?" -- and all three are answered before it is asked for a source the
+    adapter claimed out of the companion's own tree (:func:`_self_authored`),
+    whose empty item table is reported instead.
     """
     kind_warnings = payload.get("kind_warnings") or []
     kinds = list(payload.get("kinds") or [])
+    if _self_authored(workspace, source_id):
+        # Not a refusal, but not silence either: a reader of `cf status` has to be
+        # able to see that this source's item table is empty ON PURPOSE.
+        if not payload.get("items"):
+            log.info(f"         {source_id}: 0 numbered items in the manuscript's own prose, "
+                     f"as expected -- its items are the tagged environments the adapter reads")
+        return
     if not payload.get("items"):
         raise SourceError(
             f"{source_id}: {ref.pdf} has 0 numbered items in its text "
             f"({payload.get('pages')} pages, kinds {', '.join(kinds) or 'none'})"
             + (f"; {kind_warnings[0]}" if kind_warnings else ""),
             hint=f"this is almost certainly not the document this companion formalises. "
-                 f"Name the right source: cf sources add <source> --for <companion>")
+                 f"Name the right source: {_name_the_source(onboarding)}")
     body = ((workspace.data.get("sources") or {}).get(source_id) or {}) if workspace else {}
     if body.get("completeness_ok"):
         return
