@@ -1472,16 +1472,32 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         """A differential is possible exactly where two source lists overlap.
 
         ``ours`` audits both editions and ``peer`` only the published one, so
-        ``--source`` is not needed: the intersection is a single source, and
-        naming the draft -- which ``peer`` does not audit -- is refused.
+        ``--source`` is not needed: the differentiable source is a single one.
+
+        The second half used to assert that ``--source <draft>`` is REFUSED
+        because ``peer`` does not audit the draft.  That refusal was the defect:
+        the operator never named ``peer``, and in a workspace whose companions
+        span several sources it left no invocation at all that plans a correctly
+        scoped differential -- the no-flag path answered "share no source" and
+        ``--source`` answered "peer is not audited against it".  ``--source`` now
+        NARROWS to that source's own companions, and the refusal is kept for the
+        companion the operator did name (the case below).
         """
         self.assertEqual(self.ws.shared_sources(), {PUBLISHED_ID: ["ours", "peer"]})
         self.assertEqual(self.plan(preset="differential-text", companion=None,
                                    source_id=None), 0)
         self.assertEqual([s["id"] for s in self.read_run()["sources"]], [PUBLISHED_ID])
+        self.assertEqual(self.read_run()["repos"], ["ours", "peer"])
+        self.assertEqual(self.plan(preset="differential-text", companion=None,
+                                   source_id=DRAFT_ID, run_id="r2"), 0)
+        from cflib.yamlio import read_yaml
+
+        r2 = read_yaml(self.root / "runs" / "r2" / "run.yaml")
+        self.assertEqual([s["id"] for s in r2["sources"]], [DRAFT_ID])
+        self.assertEqual(r2["repos"], ["ours"], "the draft's only companion")
         with self.assertRaises(CfError) as cm:
-            self.plan(preset="differential-text", companion=None, source_id=DRAFT_ID,
-                      run_id="r2")
+            self.plan(preset="differential-text", companion="peer", source_id=DRAFT_ID,
+                      run_id="r3")
         self.assertIn("peer", str(cm.exception))
         self.assertIn("not audited against", str(cm.exception))
 

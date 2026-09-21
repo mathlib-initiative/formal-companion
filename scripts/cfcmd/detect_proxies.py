@@ -642,6 +642,17 @@ def _item_pdf_pages(items_source, kinds) -> dict[str, int]:
     place every item 16 pages from its own quotes.  Nothing binds while the
     detector's rows carry no quote, which is why the wrong map would have been
     invisible until the first row that does.
+
+    It is keyed by :func:`item_base` ON PURPOSE, which is the one thing it must
+    not share with :func:`plan.presets.item_pages`: that builder keys the RAW
+    label because plan-run/harvest/pair documents carry raw labels, while every
+    document this module hands the gate carries ``parsed.base``
+    (``detect/def_coverage.py``, ``detect/analyze_stages.py``).  Keyed the other
+    way, an ``Exercise 1.6.27(iii)`` row would bind nothing and the gate would
+    fall back to its heading search.  The VALUE test is the shared one: a
+    ``pdf_page`` that is 0, negative or a bool is dropped, exactly as
+    ``presets.item_pages`` drops it, so the gate falls back to the heading rather
+    than binding every quote of that item to page 0.
     """
     data = read_json(items_source) if isinstance(items_source, (str, Path)) else items_source
     if isinstance(data, dict):
@@ -654,8 +665,8 @@ def _item_pdf_pages(items_source, kinds) -> dict[str, int]:
         base = item_base(entry.get("item") or entry.get("id") or entry.get("label") or "",
                          kinds or DEFAULT_KINDS)
         page = entry.get("pdf_page")
-        if base and isinstance(page, int):
-            out[base] = page
+        if base and isinstance(page, int) and not isinstance(page, bool) and page > 0:
+            out[base] = int(page)
     return out
 
 
