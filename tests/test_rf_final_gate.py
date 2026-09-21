@@ -15,7 +15,13 @@ supposed to agree with:
   every prompt defines as "your findings were rejected, fix them";
 * a quote spliced across a page break bound to no page, and an empty page list
   turns the item-page bind off;
-* a typographic dash at a quote's edge was read as a minus sign the book lacks;
+* a typographic dash at a quote's edge was read as a minus sign the book lacks
+  -- and then the guard against the reverse read a digit, and the word rule that
+  replaced it read ``lim``, ``inf`` and a LaTeX macro's letters as prose;
+* a read the boundary REFUSED arrived at one caller as "no repository here",
+  which turned the check that keeps recovered book text out of a tracked file
+  into permission to write it, and nothing announced the git version the refusal
+  rests on before a run blocked on it;
 * the unbound note told the operator the item names no printed page when it does
   and the run only lacks the offset;
 * the tend README claimed a guarantee the shipped configuration does not give.
@@ -121,15 +127,21 @@ def quote_spliced_over(count: int) -> str:
     return ("for later use in section 6. " + folios + " " + RUNNING_HEAD + " "
             + PAGE_7.split("\n")[0])
 
-#: Four operands a sign can be written in front of, one sentence each, and for
+#: Six operands a sign can be written in front of, one sentence each, and for
 #: every one the quote that STARTS at the operand and the quote that ENDS on it.
-#: The digit column is the one FR#46's guard read; the other three are the
-#: spellings the same laundering survived in.
+#: The digit column is the one FR#46's guard read; the next three are the
+#: spellings the same laundering survived in; the last two are the operands the
+#: WORD rule that replaced it still read as prose -- a display opening with a
+#: mathematical word, and a LaTeX macro at the trailing edge, whose letter run
+#: the tail pattern matched inside the backslash.
 SIGN_BOOK = (
     "Lemma 4.2.1. For an elementary set we have 1 <= m(F) for every set F that covers it.\n"
     "Lemma 4.2.2. By monotonicity we know m*(F) <= m*(E) whenever F is contained in E.\n"
     "Lemma 4.2.3. From the previous display we obtain (1 <= m(F)) for every such cover.\n"
-    "Lemma 4.2.4. Under the stated hypotheses x <= y holds for every pair considered.\n\f"
+    "Lemma 4.2.4. Under the stated hypotheses x <= y holds for every pair considered.\n"
+    "Lemma 4.2.5. By the previous display lim sup En is contained in E, and at each "
+    "stage the bound is an inf.\n"
+    "Lemma 4.2.6. Under the same hypotheses \\alpha <= m(F) is attained at that one set.\n\f"
 )
 SIGN_OPERANDS = (
     ("a digit", "1 <= m(F) for every set F that covers it",
@@ -140,6 +152,10 @@ SIGN_OPERANDS = (
      "From the previous display we obtain (1 <= m(F))"),
     ("a single letter", "x <= y holds for every pair considered",
      "Under the stated hypotheses x"),
+    ("a mathematical word", "lim sup En is contained in E, and at each stage the bound is an inf",
+     "By the previous display lim sup En is contained in E, and at each stage the bound is an inf"),
+    ("a LaTeX macro", "\\alpha <= m(F) is attained at that one set",
+     "Under the same hypotheses \\alpha"),
 )
 #: the six spellings of the sign, glued and spaced, at each edge
 SIGNS_BEFORE = ("-", "- ", "-  ", "− ", "— ", "— — ")
@@ -1121,6 +1137,54 @@ class TestATypographicDashAtTheEdgeIsNotAnOperator(BookTestCase):
                     ok, why = vf.quote_ok(book, tail + sign)
                     self.assertFalse(ok, f"a trailing sign was laundered: {why}")
                     self.assertIn("OPERATOR", why)
+
+    def test_a_display_opening_with_a_mathematical_word_is_not_prose(self):
+        """The word rule survived one WORD over, as the digit rule had one char.
+
+        ``sup``, ``inf``, ``lim``, ``dist``: a book of analysis opens a display
+        with one of these, 56 lines of the pinned source text do, and the
+        attacker picks the operand.  One sentence per word, the six spellings of
+        the sign over each, at the leading edge where the display begins.
+        """
+        for word in ("sup", "inf", "lim", "log", "max", "dist", "diam", "det"):
+            with self.subTest(word=word):
+                book = vf.BookText.from_text(
+                    "Lemma 4.3.1. By the previous display %s En is contained in E "
+                    "for every n considered.\n\f" % word)
+                quote = "%s En is contained in E for every n considered" % word
+                self.assertEqual(vf.quote_ok(book, quote), (True, "verbatim"))
+                for sign in SIGNS_BEFORE:
+                    ok, why = vf.quote_ok(book, sign + quote)
+                    self.assertFalse(ok, f"a leading sign was laundered: {why}")
+                    self.assertIn("OPERATOR", why)
+
+    def test_the_two_shapes_the_word_rule_refuses_are_recorded_costs(self):
+        """Refusing these two is the price of the rule, not a regression.
+
+        An em dash in front of prose beginning with a one-letter article, and a
+        trailing pdftotext hyphen after a closing bracket: both were stripped
+        while the rule read only the spacing.  A lone letter and a bracket are
+        exactly what a sign is written in front of, so the rule cannot tell them
+        from a flip -- it refuses, the finding is re-quoted, and the corpus
+        measurement says neither shape occurs there.  Named in the constant's
+        comment so the next reader does not read them as regressions, and
+        asserted here so nobody has to take the comment's word for it.
+        """
+        book = vf.BookText.from_text(
+            "Definition 1.2.1. A set E is said to be Jordan measurable when the two "
+            "elementary quantities agree (see Section 1.2) and nothing else is asked.\n\f")
+        prose = ("A set E is said to be Jordan measurable when the two elementary "
+                 "quantities agree")
+        self.assertEqual(vf.quote_ok(book, prose), (True, "verbatim"))
+        for quote in ("— " + prose, prose + " (see Section 1.2) -"):
+            with self.subTest(quote=quote[:10] + "..." + quote[-10:]):
+                ok, why = vf.quote_ok(book, quote)
+                self.assertFalse(ok, "the accepted cost has quietly changed: " + why)
+                self.assertIn("OPERATOR", why)
+        source = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
+            encoding="utf-8")
+        for named in ("A set E is said to be", "(see Section 1.2) -"):
+            self.assertIn(named, source, "the refused shape is not named in the comment")
 
     def test_the_laundered_quote_does_not_reach_the_receipt(self):
         """Not only ``quote_ok``: the document was ACCEPTED and the gate exited 0.

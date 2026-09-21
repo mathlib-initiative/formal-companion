@@ -170,6 +170,11 @@ release has something to say.
   book's own words and certified verbatim while the same flips written without
   the space were refused. A dash at a quote's edge is now punctuation only when
   the text beside it is an alphabetic word.
+- an alphabetic word was not enough either: the words a display opens with
+  (`lim`, `sup`, `inf`, `dist`, …) and the letter run inside a trailing LaTeX
+  macro read as prose, so `- lim sup En …` and `… \alpha -` were stripped back
+  to the book's own words and certified verbatim while the glued spellings were
+  refused. Those are operands now, at both edges.
 
 ## 0.2.0 — the multi-source model
 
