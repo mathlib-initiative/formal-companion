@@ -14,6 +14,9 @@ Each case here fails against the tree as it was:
   and then -- keyed on the ledger ROW count rather than on the ledger FILES the
   import refuses over -- told a findings-only campaign that the import merges a
   bundle it exits 2 on;
+* `cf share export --help` was a fourth copy of the redaction record, promising
+  the flat six edge words and scoping the prose scan to "a reason or a
+  reasoning" after all three documents had been corrected;
 * `cf onboard <repo> --source <the wrong file>` bound before preparing, so a
   refusal exited 2 with a source row, a registry overlay row and a prepared
   directory to its name;
@@ -120,6 +123,16 @@ class TestEveryDocumentDescribesTheSameRedactedQuote(unittest.TestCase):
             found += [(name, hit) for hit in _QUOTE_RECORD.findall(flat)]
         return found
 
+    def assert_whole_record(self, where: str, record: str) -> None:
+        """Every spelling of the record states all four parts of it."""
+        self.assertIn("sha256", record.lower(),
+                      f"{where} names a hash the export does not write")
+        self.assertIn("length", record.lower())
+        self.assertIn("quarter", record.lower(),
+                      f"{where} omits the words that travel with the record")
+        self.assertIn("fourteen", record.lower(),
+                      f"{where} omits the floor below which nothing travels")
+
     def test_the_policy_states_the_same_budget_in_prose(self):
         """POLICY.md spells no ``(page, ...)`` record, so the scan above finds none in it."""
         policy = " ".join(read("POLICY.md").split())
@@ -131,13 +144,26 @@ class TestEveryDocumentDescribesTheSameRedactedQuote(unittest.TestCase):
         self.assertTrue(records, "no document spells the redacted-quote record: regex is wrong")
         for name, record in records:
             with self.subTest(doc=name, record=record):
-                self.assertIn("sha256", record.lower(),
-                              f"{name} names a hash the export does not write")
-                self.assertIn("length", record.lower())
-                self.assertIn("quarter", record.lower(),
-                              f"{name} omits the words that travel with the record")
-                self.assertIn("fourteen", record.lower(),
-                              f"{name} omits the floor below which nothing travels")
+                self.assert_whole_record(name, record)
+
+    def test_the_export_help_is_the_fourth_copy_and_states_it_too(self):
+        """The three documents were corrected together; `--help` was not.
+
+        It is the copy an operator deciding whether a bundle may go to a third
+        party actually reads, and it promised the flat six edge words the
+        behaviour fix deleted while scoping the prose scan to two v1 field names.
+        """
+        rendered = cf("share", "export", "--help")
+        self.assertEqual(rendered.returncode, 0, rendered.stderr)
+        flat = " ".join(rendered.stdout.split())
+        records = _QUOTE_RECORD.findall(flat)
+        self.assertTrue(records, "`cf share export --help` spells no redacted-quote record")
+        for record in records:
+            with self.subTest(record=record):
+                self.assert_whole_record("`cf share export --help`", record)
+        self.assertNotIn("inside a reason or a reasoning", flat,
+                         "the help scopes the prose scan to two field names; the walk "
+                         "covers every free-text field of a row, at any depth")
 
     def test_the_bounds_the_documents_state_are_the_bounds_the_code_applies(self):
         """The documents are checked against `share.redact`, not against each other."""
