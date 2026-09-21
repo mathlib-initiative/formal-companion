@@ -388,10 +388,8 @@ def ledger_coverage(rows: Iterable[dict], findings: Iterable[dict]) -> dict:
     for each).  A ledger row can only be addressed TO the id, so such an id
     cannot be cleared by adjudicating it harder: the way out is to split the
     finding -- give the second claim its own declaration, item or kind -- so that
-    the two claims get two ids.  Nothing else calls this function yet; ``route``
-    still builds its own first-wins ``finding_id -> ledger row`` lookup
-    (``route/route.py``), so a colliding id there is handed one row for both
-    findings, which is the remaining half of this fix.
+    the two claims get two ids.  ``route/route.py`` takes ``collisions`` from here
+    and holds those rows back, so the two agree by construction.
     """
     from ledger.findings import claim_key
 

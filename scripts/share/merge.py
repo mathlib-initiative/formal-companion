@@ -40,10 +40,8 @@ from typing import Any, Iterable, Sequence
 
 from cflib import log
 from cflib.errors import CfError
+from cflib.hashing import defect_key
 from cflib.jsonio import read_jsonl, write_jsonl
-# integrator: swap for `cflib.hashing.defect_key` once that lands; the two
-# definitions must agree or a row shared between two workspaces stops joining.
-from harvest.tally import defect_key
 from ledger import compat
 
 from . import bundle as bundle_mod
