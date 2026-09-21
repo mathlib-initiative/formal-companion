@@ -2,13 +2,13 @@
 
 Run:
 
-    python3 -m unittest discover -s /Users/jack/Desktop/companion-faithfulness/tests -v
+    python3 -m unittest discover -s tests -v
 
 The tests that read the real audit read it through environment variables and
 skip cleanly when they are unset:
 
-    CF_BASELINE_CORPUS=/Users/jack/Desktop/tao-diff-run      the 2,672-file corpus
-    CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential    batch 1 + the adam ledger
+    CF_BASELINE_CORPUS=<the v1 findings corpus>      the 2,672-file corpus
+    CF_BASELINE_DIFF=<the v1 differential directory>  batch 1 + the adam ledger
 
 Scratch workspaces are created under ``$CF_TEST_TMP`` when it is set (point it
 at a scratch directory), else under the system temp directory.  Nothing in here
@@ -959,6 +959,25 @@ class TestHandoff(unittest.TestCase):
         self.assertTrue(report["todos"], "an empty workspace must not look complete")
         self.assertIn("TODO(what went wrong)", report["text"])
 
+    @staticmethod
+    def _escaped(sources, root, allowed_repos) -> list[str]:
+        """Source paths that are neither the workspace's nor a repo it names.
+
+        `build_sources` hands a verifier the directories it may re-derive claims
+        from: the workspace's own trees, plus each companion repo the workspace
+        itself names (read-only). Anything else is a path nobody in this
+        workspace asked for.
+        """
+        root = os.path.realpath(root)
+        allowed = {os.path.realpath(p) for p in allowed_repos if p}
+        out = []
+        for source in sources:
+            real = os.path.realpath(source["path"])
+            if real == root or real.startswith(root + os.sep) or real in allowed:
+                continue
+            out.append(source["path"])
+        return out
+
     def test_verify_claims_args_reference_only_workspace_sources(self):
         report = handoff_mod.make_handoff(self.root, date="2026-09-16")
         ctx = report["context"]
@@ -971,8 +990,17 @@ class TestHandoff(unittest.TestCase):
         self.assertIn("ledger-and-routing", keys)
         self.assertTrue(payload["numbers"]["enabled"])
         self.assertTrue(payload["numbers"]["commands"])
-        self.assertTrue(all(s["path"].startswith(self.root) or os.path.isabs(s["path"])
-                            for s in payload["sources"]))
+        repos = [c.get("repo") for c
+                 in (ctx["_workspace"].data.get("companions") or {}).values()
+                 if isinstance(c, dict)]
+        self.assertEqual(self._escaped(payload["sources"], self.root, repos), [])
+        # ... and the check is not vacuous: it used to read `startswith(root) or
+        # os.path.isabs(path)`, which admits /etc/passwd in a test named
+        # "reference only workspace sources".
+        self.assertEqual(
+            self._escaped(payload["sources"] + [{"label": "x", "path": "/etc/passwd"}],
+                          self.root, repos),
+            ["/etc/passwd"])
         self.assertEqual(payload["model"], "opus")
 
 

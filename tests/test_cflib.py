@@ -1,17 +1,17 @@
 """Unit tests for the cf core: item grammar, state, workspace, registry,
 discovery, inference, yaml, vocab.
 
-Run:  python3 -m unittest discover -s /Users/jack/Desktop/companion-faithfulness/tests -v
-(or:  python3 /Users/jack/Desktop/companion-faithfulness/tests/test_cflib.py)
+Run:  python3 -m unittest discover -s tests -v
+(or:  python3 tests/test_cflib.py, from the checkout root)
 
 Regression tests that read the local baseline are skipped cleanly unless the
 environment names it:
 
-    CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential   (statement tables)
-    CF_BASELINE_CORPUS=/Users/jack/Desktop/tao-diff-run     (2,672 findings)
-    CF_TML=/Users/jack/Desktop/tao-measure-lean
-    CF_MT=/Users/jack/Desktop/measure_theory
-    CF_BOOK_TXT=/Users/jack/Desktop/tao-differential/book.official.txt
+    CF_BASELINE_DIFF=<the v1 differential directory>   (statement tables)
+    CF_BASELINE_CORPUS=<the v1 findings corpus>         (2,672 findings)
+    CF_TML=<a docstring-tag companion checkout>
+    CF_MT=<an attribution-table companion checkout>
+    CF_BOOK_TXT=<the book's extracted text>
 
 Nothing here touches the network, and nothing reads a PDF: discovery is
 exercised against FIXTURE repos that carry the same signals the two real
@@ -1704,7 +1704,7 @@ class TestTemplates(unittest.TestCase):
         text = templates.render_template("adapter.yaml.example", {
             "name": "ours", "repo": "/r", "commit": "null", "adapter": "docstring_tags",
             "granularity": "item", "glob": '"**/*.lean"', "anchor": "docstring",
-            "write_policy": "read_only", "owner": '"jack"',
+            "write_policy": "read_only", "owner": '"external"',
             # the tag spelling `cf onboard` MEASURES per repo, not a default
             "require_backticks": "true",
             "source_default": PUBLISHED_ID, "source_map": ""})
