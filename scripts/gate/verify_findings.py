@@ -34,7 +34,8 @@ Exit status (errors on stderr):
 * 3  the gate itself could not run (no gate.json, a gate.json that does not
   parse or is not an object, unreadable source text, a ``--source-text`` that
   names no source of this gate, a ``decl_index`` that is missing or does not
-  parse, a missing base ref for the changed-files check).  The prompts name that
+  parse, a missing base ref for the changed-files check, a worktree naming a
+  content filter this host's git cannot be made to ignore).  The prompts name that
   list -- "a missing config, an unreadable source text, a missing index" -- so
   every one of them has to arrive as 3 rather than as the interpreter's 1 out of
   a traceback.  A worker must answer this by stopping and reporting blocked,
@@ -46,6 +47,7 @@ Exit status (errors on stderr):
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import os
@@ -193,31 +195,75 @@ def _fold(s: str) -> str:
 #: -- an em dash introducing the quotation, pdftotext debris at a line end.
 _LOOSE_DASH_HEAD = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)")
 _LOOSE_DASH_TAIL = re.compile(r"(?<=\s)[\s\u2010-\u2015\u2212-]*$")
-#: the operand a boundary dash must never be separated from.  The whitespace
+#: what a boundary dash may be stripped BEFORE (resp. AFTER).  The whitespace
 #: condition alone reads the spacing the QUOTE chose, and the quote is written
 #: by the agent: against a book saying ``1 <= m*(F)``, ``-1 <= m*(F)`` was
 #: refused as a sign the book lacks while ``- 1 <= m*(F)`` -- the same flip with
 #: one space in it -- was stripped back to the book's own words and certified
-#: verbatim.  So a dash is punctuation only when what follows (or precedes) it
-#: is not a number.  Measured in the pinned text of the audited source: a dash,
-#: a space and a digit occur 4 times against 128 glued spellings, and the
-#: innocent 4 are inside a passage, not at a quote's edge.
-_SIGNED_HEAD = re.compile(r"^\s*[0-9]")
-_SIGNED_TAIL = re.compile(r"[0-9]\s*$")
+#: verbatim.  Asking whether the operand is a NUMBER only moved that one
+#: character: a sign is a sign whatever it is written in front of, so
+#: ``- m*(F) <= m*(E)`` and ``- (1 <= m(F))`` were laundered exactly as ``- 1``
+#: had been.  The rule is therefore about PROSE, not about digits -- a dash at
+#: the edge is punctuation only when the text beside it is an alphabetic word of
+#: two or more letters (at the trailing edge, with the sentence punctuation that
+#: may follow one), which is what an em dash introducing a quotation and a
+#: pdftotext hyphen at a line end both sit against.  Everything else a
+#: mathematical quote can begin or end with -- a digit, a bracket, a LaTeX
+#: backslash, a bar, a lone variable letter -- is a term the dash would be the
+#: sign of, so the run stays and the operator pass judges it.  A LaTeX macro is
+#: not a word at EITHER edge: the head pattern refuses to strip before a
+#: backslash, and the trailing lookbehind is what stops ``\u2026 the bound \alpha``
+#: plus a loose ``-`` from dropping its sign by matching the letter run inside
+#: the macro.
+#:
+#: Two shapes the whitespace rule used to accept are refused now, and both are
+#: deliberate: an em dash in front of prose beginning with a one-letter article
+#: (``\u2014 A set E is said to be \u2026``) and a trailing pdftotext hyphen after a
+#: closing bracket (``\u2026 agree (see Section 1.2) -``).  A lone letter and a
+#: bracket are exactly what a sign is written in front of, so the rule cannot
+#: tell those two apart from a flip; a false refusal costs the finding a
+#: re-quote, and a false acceptance costs the pass its whole value.  Measured
+#: over the baseline corpus's 3,019 quotes: 4 strip differently from the digit
+#: guard this replaced and all 4 differ only in leading whitespace, so not one
+#: of them reaches the operator pass as a different token stream -- which is
+#: also the measurement that says neither refused shape occurs there.
+_WORD_AFTER_DASH = re.compile(r"^\s*[\"'\u201c\u2018]*([A-Za-z]{2,})")
+_WORD_BEFORE_DASH = re.compile(
+    r"(?<![\\A-Za-z])([A-Za-z]{2,})[.,;:!?]*[\"'\u201d\u2019]*\s*$")
+#: subtracted from the word rule above, at both edges.  The attacker picks the
+#: operand as well as the spacing, and a book of analysis opens a display with a
+#: word: 56 lines of the pinned source text begin with one of these, so
+#: ``- lim supn\u2192\u221e 1En (x) \u2026`` was stripped back to the book's own words and
+#: certified *verbatim* while the glued ``-lim \u2026`` was refused -- the same
+#: laundering one WORD over, exactly as the digit guard left it one CHARACTER
+#: over.  ``sup`` and ``inf`` at a quote's edge are the operand of the dash, not
+#: prose it introduces, whatever else they are; the cost is that a sentence
+#: genuinely beginning "Max and Min are the two names \u2026" keeps a loose dash,
+#: which the operator pass then reports.
+_MATH_WORDS = frozenset((
+    "sup", "inf", "lim", "limsup", "liminf", "log", "exp", "max", "min",
+    "sin", "cos", "tan", "det", "dim", "diam", "dist", "vol", "deg", "ker",
+    "arg", "mod", "gcd", "lcm",
+))
+
+
+def _is_prose_word(found: "re.Match | None") -> bool:
+    """Did the word rule match a word that is PROSE, not a mathematical term?"""
+    return found is not None and found.group(1).casefold() not in _MATH_WORDS
 
 
 def _strip_loose_dashes(s: str) -> str:
     """The quote without the punctuation dashes at its own edges.
 
-    Never across a sign: a run that would leave a number bare at the edge stays,
-    operators and all, and the operator pass then judges it.
+    Never across a sign: a run whose operand is anything but a word of prose
+    stays, operators and all, and the operator pass then judges it.
     """
     s = s or ""
     head = _LOOSE_DASH_HEAD.match(s)
-    if head and not _SIGNED_HEAD.match(s[head.end():]):
+    if head and _is_prose_word(_WORD_AFTER_DASH.match(s[head.end():])):
         s = s[head.end():]
     tail = _LOOSE_DASH_TAIL.search(s)
-    if tail and not _SIGNED_TAIL.search(s[: tail.start()]):
+    if tail and _is_prose_word(_WORD_BEFORE_DASH.search(s[: tail.start()])):
         s = s[: tail.start()]
     return s
 
@@ -346,9 +392,10 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
     with the edges in scope a leading em dash or a trailing pdftotext hyphen was
     an ``opminus`` the book lacks, so a verbatim, correctly-operatored quote was
     refused and the refusal called the punctuation mathematics.  That strip never
-    crosses a sign -- a dash beside a NUMBER stays, whatever the spacing -- and
-    it moves none of the figures below: not one of the 3,019 baseline quotes
-    strips differently for it.
+    crosses a sign -- a dash whose operand is anything but a WORD stays, whatever
+    the spacing -- and it moves none of the figures below: 4 of the 3,019
+    baseline quotes strip differently for that rule and all 4 differ only in
+    leading whitespace, which both normalisations drop.
     Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
     (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
     sign the extraction dropped), against 2 under the old one, and the edges add
@@ -1292,9 +1339,73 @@ def _filter_pin_args(names: list[str]) -> list[str]:
     (``references/runbook-server.md`` §2), where Debian 11's 2.30.2 is an ordinary
     answer.  ``-c`` covers every name without an ``=``; the environment pairs
     cover the ``=`` ones.  Neither channel is the other's superset, so both go on
-    every call.
+    every call -- and where neither reaches, which is an ``=`` name on such a
+    host, :func:`_unexpressible_filter` stops the read instead.
     """
     return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
+
+
+#: the git that learned ``GIT_CONFIG_COUNT`` and its pairs; before it they are
+#: ignored in silence, so the environment channel does not exist there.  Kept in
+#: step with ``cflib.gitsafe.CONFIG_ENV_SINCE``.
+_CONFIG_ENV_SINCE: tuple[int, int] = (2, 31)
+
+
+@functools.lru_cache(maxsize=1)
+def _git_version() -> "tuple[int, ...] | None":
+    """``git --version`` as a tuple of integers, asked once per process.
+
+    ``None`` when there is no git, when the call fails, or when the answer does
+    not parse, and the caller reads that as "older than anything": the run host's
+    git is nobody's to assume (``references/runbook-server.md`` §2), so a version
+    that cannot be read may not hold a safety floor up.
+
+    Carries the pins although ``--version`` reads no repository: every ``git``
+    this file spells carries them, and an exemption is how the next one loses them.
+    """
+    import subprocess
+
+    try:
+        got = subprocess.run(["git", *_GIT_SAFE_CONFIG, "--version"], capture_output=True,
+                             text=True, check=False, env={**os.environ, **_GIT_SAFE_ENV})
+    except OSError:
+        return None
+    found = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", got.stdout or "")
+    if got.returncode != 0 or not found:
+        return None
+    return tuple(int(part) for part in found.groups() if part is not None)
+
+
+def _unexpressible_filter(names: list[str]) -> "str | None":
+    """The first driver name NEITHER channel of the blanking reaches, if any.
+
+    A name carrying an ``=`` is invisible to ``-c`` (git splits at the first
+    ``=``), so the environment pairs are its only blank, and a git before
+    :data:`_CONFIG_ENV_SINCE` ignores those pairs in silence.  On such a host the
+    driver is armed whatever the gate passes, and the gate's own diff would run
+    it and then report the contribution clean -- so it stops instead.  ``None``
+    on a git that reads the pairs, which leaves every other host unchanged.
+    """
+    if (_git_version() or (0,)) >= _CONFIG_ENV_SINCE:
+        return None
+    return next((key for key in names if "=" in key), None)
+
+
+def _filter_refusal(cwd: pathlib.Path, key: str) -> str:
+    """Why the gate read nothing — an infrastructure failure, not a finding."""
+    version = _git_version()
+    shown = ".".join(str(n) for n in version) if version else "unreadable"
+    since = ".".join(str(n) for n in _CONFIG_ENV_SINCE)
+    return (f"the worktree {cwd} names the content filter {key!r}, whose '=' no "
+            f"`git -c` blank can express, and this git ({shown}) is older than the "
+            f"{since} that reads the GIT_CONFIG_* blanking which can — so reading the "
+            f"change set would run that driver (the gate could not run: "
+            f"this is not a finding of yours; install git {since} or later on the "
+            f"run host)")
+
+
+class _GateBroken(Exception):
+    """A read the gate cannot make safely, and so does not make."""
 
 
 def _filter_names(cwd: pathlib.Path) -> list[str]:
@@ -1371,10 +1482,17 @@ def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
 
     The worktree's filter drivers are discovered ONCE and spliced into both
     channels from that one list, so a call costs one ``git config --list``.
+
+    A driver neither channel reaches (:func:`_unexpressible_filter`) raises
+    :class:`_GateBroken` instead: no read at all beats a read that executes the
+    worker's program and then reports the contribution clean.
     """
     import subprocess
 
     names = _filter_names(cwd)
+    blocked = _unexpressible_filter(names)
+    if blocked is not None:
+        raise _GateBroken(_filter_refusal(cwd, blocked))
     environ = {**os.environ, **_GIT_SAFE_ENV}
     environ.update(_filter_pairs(names, environ))
     proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pin_args(names), *args],
@@ -1393,29 +1511,36 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
     worker's landed findings -- which is the failure ``harvest.py`` exists
     because of, reachable at the merge gate and silent in the direction of
     "cleaner".
+
+    A worktree this git cannot be read safely in returns no entries and one
+    error, which reaches the operator as EXIT_GATE_BROKEN: the change set is
+    unknown, and "unknown" may never arrive as "clean".
     """
-    code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
-    if code != 0:
-        return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
     errs: list[str] = []
     entries: dict[str, str] = {}
-    code, out = _git(["diff", "--name-status", base], root)
-    if code != 0:
-        errs.append(f"git diff against {base} failed")
-    for line in out.splitlines():
-        if not line.strip():
-            continue
-        parts = line.split("\t")
-        status = parts[0].strip()[:1]
-        if status == "R" and len(parts) >= 3:
-            entries[parts[1]] = "R"
-            entries[parts[2]] = "A"
-        elif status and len(parts) >= 2 and parts[1].strip():
-            entries[parts[1]] = status
-        else:
-            errs.append(f"could not parse `git diff --name-status` line {line!r} "
-                        f"(the check fails closed)")
-    _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
+    try:
+        code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
+        if code != 0:
+            return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
+        code, out = _git(["diff", "--name-status", base], root)
+        if code != 0:
+            errs.append(f"git diff against {base} failed")
+        for line in out.splitlines():
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            status = parts[0].strip()[:1]
+            if status == "R" and len(parts) >= 3:
+                entries[parts[1]] = "R"
+                entries[parts[2]] = "A"
+            elif status and len(parts) >= 2 and parts[1].strip():
+                entries[parts[1]] = status
+            else:
+                errs.append(f"could not parse `git diff --name-status` line {line!r} "
+                            f"(the check fails closed)")
+        _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
+    except _GateBroken as exc:
+        return {}, [str(exc)]
     for path in out.splitlines():
         if path.strip():
             entries.setdefault(path, "A")
