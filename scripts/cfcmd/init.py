@@ -35,6 +35,9 @@ sources/
 **/images/
 **/crops/
 *.pdf
+# ... including book text `cf quotes hydrate --out` recovered from this machine's
+# own copy of a source, which is the directory that command suggests:
+quotes/
 
 # Agent transcripts, tend logs and its sqlite copy quote the book verbatim:
 runs/*/tend-root/
@@ -47,7 +50,8 @@ detect/*/deps.json
 # corpus/ is deliberately NOT ignored: the findings corpus is the calibration
 # baseline and must be durable. It quotes 1-3 book sentences per finding, so the
 # workspace itself stays local (no remote; the pre-push hook is only a reminder)
-# and what is shared is an export: `cf route --redact-quotes`.
+# and what is shared is an export: `cf share export` for a whole campaign,
+# `cf route --redact-quotes` for one companion's findings upstream.
 #
 # registry.yaml is NOT ignored either: it is metadata about editions (shas, URLs,
 # page maps), never a line of the text itself.
@@ -72,15 +76,25 @@ PRE_PUSH_HOOK = """\
 # fresh clone of this repo does not carry it, and nothing reinstalls it. The
 # control is that the workspace repo has no remote -- `cf init` refuses one
 # unless workspace.yaml sets policy.allow_remote, and `cf status` prints whether
-# a remote has appeared since.
+# a remote has appeared since. `cf init --no-remote-guard` adds the stronger
+# local-config guard, which a bare `git push --no-verify` does NOT get past.
 if [ "$CF_ALLOW_PUSH" != "1" ]; then
     echo "pre-push refused: workspace repositories have no remote by default." >&2
-    echo "  book quotes + unchallenged findings live here; export instead" >&2
-    echo "  (cf route --redact-quotes), or set CF_ALLOW_PUSH=1 to override." >&2
+    echo "  book quotes + unchallenged findings live here; share an export" >&2
+    echo "  instead (cf share export --out <bundle>, which redacts the quotes," >&2
+    echo "  or cf route --redact-quotes for one companion's findings upstream)," >&2
+    echo "  or set CF_ALLOW_PUSH=1 to override." >&2
+    echo "  NOTE: this hook is a reminder. git push --no-verify skips it." >&2
     exit 1
 fi
 exit 0
 """
+
+#: the remote name `cf init --no-remote-guard` points ``remote.pushDefault`` at.
+#: It deliberately does not exist: git resolves the default push remote before it
+#: runs the pre-push hook, so a bare `git push --no-verify` fails on the remote
+#: rather than on the hook it just skipped.
+NO_REMOTE_GUARD_REMOTE = "cf-no-remote-guard"
 
 
 REGISTRY_OVERLAY = """\
@@ -111,6 +125,11 @@ def register(subparsers) -> None:
                    help="create the workspace inside an existing git repo anyway; the pre-push "
                         "hook and the ignore rules are then installed in THAT repo. Refused "
                         "outright when the enclosing repo has a remote")
+    p.add_argument("--no-remote-guard", action="store_true",
+                   help="also set `remote.pushDefault` to a remote that does not exist and "
+                        "`push.default nothing` in this repo's LOCAL config, so a bare `git "
+                        "push` fails even with --no-verify. An explicit `git push <remote> "
+                        "<ref>` still works: the control remains that the repo has no remote")
     p.add_argument("--force", action="store_true", help="overwrite an existing workspace.yaml")
 
 
@@ -147,7 +166,8 @@ def run(args) -> int:
     workspace = Workspace.load(root)  # validates what we just wrote
     if not args.no_git:
         _init_git(root, allow_nested=args.allow_nested,
-                  allow_remote=bool(workspace.policy.get("allow_remote", False)))
+                  allow_remote=bool(workspace.policy.get("allow_remote", False)),
+                  no_remote_guard=args.no_remote_guard)
     log.info("")
     log.info(f"workspace : {workspace.root}")
     log.info(f"sources   : {', '.join(workspace.source_ids()) or 'none yet'}")
@@ -276,6 +296,60 @@ def hook_state(repo: Path) -> str:
     return "cf" if HOOK_MARKER in body else "foreign"
 
 
+def _config(repo: Path, key: str) -> str:
+    """One value from *repo*'s LOCAL git config (``""`` when unset).
+
+    Plain ``git`` for the same reason as :func:`remotes`: this is the operator's
+    own workspace repository, not a companion tree whose config is untrusted.
+    """
+    res = subprocess.run(["git", "-C", str(repo), "config", "--local", "--get", key],
+                         capture_output=True, text=True)
+    return res.stdout.strip() if res.returncode == 0 else ""
+
+
+def no_remote_guard_set(repo: Path) -> bool:
+    """Is the optional bare-push guard set in *repo*?  (`cf status` prints this.)
+
+    Both halves have to be there: ``push.default nothing`` refuses a push that
+    names no refspec, and ``remote.pushDefault`` pointing at a remote that does
+    not exist refuses one that names a refspec but no remote.  Neither stops an
+    explicit ``git push <remote> <ref>``, which is why this is a guard and the
+    absence of a remote is still the control.
+    """
+    return (_config(repo, "remote.pushDefault") == NO_REMOTE_GUARD_REMOTE
+            and _config(repo, "push.default") == "nothing")
+
+
+def _install_no_remote_guard(repo: Path) -> None:
+    """Set the bare-push guard in *repo*'s local config (idempotent)."""
+    for key, value in (("remote.pushDefault", NO_REMOTE_GUARD_REMOTE),
+                       ("push.default", "nothing")):
+        res = subprocess.run(["git", "-C", str(repo), "config", "--local", key, value],
+                             capture_output=True, text=True)
+        if res.returncode != 0:
+            log.warn(f"could not set {key} in {repo}: {res.stderr.strip()}")
+            return
+    log.ok(f"bare-push guard set in {repo}/.git/config (remote.pushDefault "
+           f"{NO_REMOTE_GUARD_REMOTE}, push.default nothing)")
+
+
+def _guard_note(repo: Path) -> None:
+    """Say what the guard on *repo* is, and what it is not.
+
+    Printed on every `cf init`, not only the first: the whole finding this
+    answers is that a pre-push hook reads as enforcement to the next person, and
+    the place they meet it is this output.
+    """
+    log.info("the pre-push hook is a REMINDER: `git push --no-verify` skips it and a fresh "
+             "clone does not")
+    log.info("  carry it. The control is that this repo has NO REMOTE -- `cf init` refuses "
+             "one and `cf status`")
+    log.info("  reports one that appears later.")
+    if not no_remote_guard_set(repo):
+        log.info(f"  `cf init {repo} --no-remote-guard` also makes a bare `git push "
+                 f"--no-verify` fail.")
+
+
 def _install_hook(repo: Path) -> None:
     """Install the pre-push guard in *repo* (never overwrites an existing hook)."""
     hook = repo / ".git" / "hooks" / "pre-push"
@@ -301,7 +375,8 @@ def _install_hook(repo: Path) -> None:
     log.ok(f"installed {hook}")
 
 
-def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False) -> None:
+def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False,
+              no_remote_guard: bool = False) -> None:
     """git init with no remote; install the pre-push guard.
 
     The nested case -- a workspace created INSIDE an existing repository -- used
@@ -319,7 +394,10 @@ def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False
             # _refuse_nested_git() already refused the cases that must not happen.
             log.warn(f"{root} is inside {top}: guarding THAT repo instead of running git init")
             _install_hook(top)
+            if no_remote_guard:
+                _install_no_remote_guard(top)
             _append_ignore(top, root)
+            _guard_note(top)
             return
         res = subprocess.run(["git", "init", "-q", str(root)], capture_output=True, text=True)
         if res.returncode != 0:
@@ -346,6 +424,9 @@ def _init_git(root: Path, allow_nested: bool = False, allow_remote: bool = False
         log.warn(f"this workspace repo has a remote ({remote_names[0]}) and policy.allow_remote "
                  "is true: book quotes and unchallenged findings must not be pushed")
     _install_hook(root)
+    if no_remote_guard:
+        _install_no_remote_guard(root)
+    _guard_note(root)
 
 
 def _append_ignore(outer: Path, workspace: Path) -> None:
