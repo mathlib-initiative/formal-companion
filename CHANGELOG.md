@@ -160,6 +160,11 @@ release has something to say.
   missing from it.
 - the per-chapter "in task universe" column printed 0 where the total row
   printed a dash: nothing had computed the figure.
+- on a host whose git predates 2.31 the blanking of a content filter driver
+  whose name contains `=` reached it through neither channel, so such a driver
+  still ran on a read. The gate now refuses to read that worktree at all (exit
+  3, naming the driver and the git version) and `cflib.gitsafe` returns a
+  refusal instead of a read; on git 2.31 and later nothing changes.
 
 ## 0.2.0 — the multi-source model
 

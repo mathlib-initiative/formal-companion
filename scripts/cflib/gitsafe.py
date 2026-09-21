@@ -42,6 +42,14 @@ blanks (:func:`filter_pin_args`) for every name without an ``=``, because
 whose git version nothing here checks (``references/runbook-server.md`` §2), and
 Debian 11 ships 2.30.2.
 
+Which leaves one square where the two channels do not overlap: an ``=``-named
+driver on a git that ignores the environment pairs has no blank at all.  There
+:func:`run` STOPS -- :func:`unexpressible_filter` names the driver and
+:func:`git_version` the git -- and returns a refusal instead of a read, because
+the alternative is to run the repository's program and report the tree clean.
+A git whose version does not parse counts as old: a version we cannot read is
+not one a safety floor may rest on.
+
 plus ``GIT_CONFIG_NOSYSTEM=1`` (ignore ``/etc/gitconfig``),
 ``GIT_OPTIONAL_LOCKS=0`` (never take a lock in someone else's repo) and
 ``GIT_TERMINAL_PROMPT=0``.
@@ -56,13 +64,16 @@ audit pays it.
 """
 from __future__ import annotations
 
+import functools
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Sequence
 
-__all__ = ["SAFE_CONFIG", "SAFE_ENV", "argv", "env", "filter_env", "filter_names",
-           "filter_pin_args", "run"]
+__all__ = ["CONFIG_ENV_SINCE", "REFUSED", "SAFE_CONFIG", "SAFE_ENV", "argv", "env",
+           "filter_env", "filter_names", "filter_pin_args", "git_version",
+           "honours_config_env", "refusal", "run", "unexpressible_filter"]
 
 #: ``-c key=value`` pairs, flattened; every one of these is a program git would
 #: otherwise run on behalf of the repository being read.  Fixed keys only: the
@@ -88,6 +99,77 @@ SAFE_ENV: dict[str, str] = {
 #: the three filter hooks; ``smudge`` never runs on a read, but a pin costs
 #: nothing and this list is what a reader checks against ``git help attributes``
 _FILTER_HOOKS = ("clean", "process", "smudge")
+
+#: the git that learned ``GIT_CONFIG_COUNT``/``_KEY_i``/``_VALUE_i``.  Before it
+#: those variables are ignored in silence, so the environment channel does not
+#: exist there and a name ``-c`` cannot express has no blank at all.
+CONFIG_ENV_SINCE: tuple[int, int] = (2, 31)
+
+#: what :func:`run` reports when it refuses to read at all: a non-zero status and
+#: no output, which is what every caller in this skill already reads as "no
+#: information" (``recheck/pin.py`` records a pin that says so, ``cf onboard``
+#: records no commit).  126 is the shell's "found but not executable" and no git
+#: command returns it, so a caller that wants to tell them apart can.
+REFUSED = 126
+
+
+@functools.lru_cache(maxsize=1)
+def git_version() -> tuple[int, ...] | None:
+    """``git --version`` as a tuple of integers, asked once per process.
+
+    ``None`` when there is no git on PATH, when the call fails, or when the
+    answer does not parse (``git version 2.39.5 (Apple Git-154)`` does).  Every
+    caller here reads ``None`` as "older than anything we may rely on": a version
+    that cannot be read is not one a safety floor may be built on.
+
+    Carries :data:`SAFE_CONFIG` although ``--version`` reads no repository: the
+    rule in this file is that no ``git`` it spells runs without the boundary, and
+    an exemption is how the next call loses it.
+    """
+    try:
+        got = subprocess.run(["git", *SAFE_CONFIG, "--version"], capture_output=True,
+                             text=True, timeout=30, check=False,
+                             env={**os.environ, **SAFE_ENV})
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = re.search(r"(\d+)\.(\d+)(?:\.(\d+))?", got.stdout or "")
+    if got.returncode != 0 or not found:
+        return None
+    return tuple(int(part) for part in found.groups() if part is not None)
+
+
+def honours_config_env() -> bool:
+    """Does the git on PATH read ``GIT_CONFIG_COUNT`` and its pairs?"""
+    version = git_version()
+    return version is not None and version >= CONFIG_ENV_SINCE
+
+
+def unexpressible_filter(names: Sequence[str]) -> str | None:
+    """The first driver in *names* that NEITHER channel of the blanking reaches.
+
+    A name carrying an ``=`` is invisible to ``-c`` (git splits at the first
+    ``=``), so the environment pairs are its only blank -- and on a git before
+    :data:`CONFIG_ENV_SINCE` those pairs are ignored in silence.  There the
+    driver is armed whatever this module passes, so the read must stop: the
+    alternative is to execute the repository's own program while reporting
+    nothing.  ``None`` on a git that honours the pairs, which is the ordinary
+    case and leaves behaviour unchanged.
+    """
+    if honours_config_env():
+        return None
+    return next((key for key in names if "=" in key), None)
+
+
+def refusal(repo: str | Path, key: str) -> str:
+    """Why :func:`run` read nothing, in the shape the callers' messages take."""
+    version = git_version()
+    shown = ".".join(str(n) for n in version) if version else "unreadable"
+    return (f"refusing to read {repo}: it names the content filter {key!r}, whose "
+            f"'=' no `git -c` blank can express, and this git ({shown}) is older "
+            f"than the {'.'.join(str(n) for n in CONFIG_ENV_SINCE)} that reads the "
+            f"GIT_CONFIG_* blanking which can -- so the read would run that driver. "
+            f"Install git {'.'.join(str(n) for n in CONFIG_ENV_SINCE)} or later "
+            f"(`git --version`), or rename the driver in the repository's config.")
 
 
 def filter_names(repo: str | Path) -> list[str]:
@@ -123,6 +205,9 @@ def filter_pin_args(names: Sequence[str]) -> list[str]:
     carrying Debian 11's 2.30.2 the env pairs alone leave every driver armed.
     ``-c`` is as old as the fixed pins above and covers every name but the ``=``
     ones, so both go on every call: each is the floor the other does not have.
+    An ``=`` name on a git that reads neither is the square with no floor at all,
+    and :func:`unexpressible_filter` stops the read there rather than pass a
+    blank that does nothing.
     """
     return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
 
@@ -213,10 +298,20 @@ def run(repo: str | Path, args: Sequence[str], *, input: str | None = None,
     channels from that one list -- the ``-c`` blanks and the environment pairs --
     so a call costs one ``git config --list``, not two.
 
+    A driver neither channel reaches (:func:`unexpressible_filter`) stops the read
+    instead: the result is a :data:`REFUSED` status, no stdout and
+    :func:`refusal` on stderr, which is the "no information" every caller here
+    already handles for a git that fails -- and the one answer that cannot end
+    with the repository's program having run.
+
     Raises the same exceptions ``subprocess.run`` does; callers decide what a
     failure means (every caller in this skill treats it as "no information").
     """
     names = filter_names(repo)
+    blocked = unexpressible_filter(names)
+    if blocked is not None:
+        return subprocess.CompletedProcess(_argv(repo, args, names), REFUSED, "",
+                                           refusal(repo, blocked))
     environ = {**os.environ, **SAFE_ENV}
     environ.update(_filter_pairs(names, environ))
     return subprocess.run(_argv(repo, args, names), input=input, capture_output=True,
