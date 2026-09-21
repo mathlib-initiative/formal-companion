@@ -372,4 +372,5 @@ not the control either. Staying local is not the same as being unshareable: `cf 
 writes the campaign's conclusions — ledger rows, routed findings, tallies, receipts, source
 metadata — with every quote redacted, and `cf share import` merges such a bundle into another
 workspace without overwriting a verdict, which is how two people work one campaign.
-*Evidence:* `CLAUDE.md` lines 69-81 (nothing published without checking); the design critique, risks 1-3.
+*Evidence:* `CLAUDE.md` §1 (what may live here: source metadata and nothing else) and `POLICY.md`
+§3 (never redistributed); the design critique, risks 1-3.

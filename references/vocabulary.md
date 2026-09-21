@@ -167,7 +167,7 @@ recorded in `findings.adam.jsonl`'s `_meta.withdrawn`). That is the whole point 
 source rather than assuming one: the rows stay importable and stay honest about what they were
 judged against.
 
-### 2.2 Corpus v1 (the five tend runs; `verify_findings.py` L18-20 and its attack variant)
+### 2.2 Corpus v1 (the five tend runs; the v1 gate's verdict set and its attack variant, now `plan/presets.py`'s `LEGACY_*_VERDICTS`)
 
 | legacy | canonical |
 |---|---|

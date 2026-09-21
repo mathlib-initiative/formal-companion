@@ -230,6 +230,30 @@ in it. `fix`, `review-pr`, `camera-ready` and `publish-verdicts` (which
 `ledger/compat.py` numbers stage 13) are documented and **not implemented**:
 v1 is findings-only, and `fixes/` and `reviews/` are where they would write.
 
+Three stages carry a gate of their own, and each one is a number that was once
+wrong. The module docstrings cite these sentences, so they move with the code:
+
+- **Stage 7.** `ledger/validate_ledger.py` refuses — never warns about — a
+  ledger row that does not answer a real finding by `finding_id` (a 22-char
+  label prefix is how batch-1 challenge results were mislinked); that uses a
+  verdict, severity, kind or `resolution` outside `references/vocabulary.md`;
+  that omits `source_id` / `source_sha`, or names a sha the workspace did not
+  pin for that source — the source gate at the ledger boundary; that returns a
+  verdict in `VERDICTS_REQUIRING_ARGUMENT` with under `MIN_RECOVERY_CHARS` (40)
+  of written recovery argument; or that drops a skeptic's sub-threshold dissent.
+- **Stage 8.** A detector hit counts only once it is emitted as a finding row of
+  kind `PROXY` (with `bridge: proved|fiat|none`, `cflib.vocab.BRIDGE_KINDS`), so
+  it joins the corpus and the ledger like any other finding: rows left in
+  `detect/<name>/` are read by nothing downstream. Every emitted document is
+  validated against the `mechanical` gate preset before it is written, and the
+  run refuses while `unclassified_modules` is non-empty, because an unclassified
+  module suppresses every hit that goes through it (`--allow-unclassified` is the
+  recorded escape).
+- **Stage 9.** Routing is on the `unfaithful_decls` prefix and nothing else
+  (`route.ROUTING_RULE`). The fallback it replaced also admitted a row where the
+  repo merely appeared in `repos_involved`, and that is what produced the
+  "31 findings" scare for a repo named in none of them.
+
 Two properties hold across all of them. **Idempotence**: every command may be
 re-run — extraction keys on (repo commit, adapter key), planning is
 deterministic given `run.yaml`, harvest diffs against the previous receipt, a
@@ -254,6 +278,7 @@ hosted-session bridge). Neither ships here, neither is pinned by anything in
 this repo, and the version last used is **not recorded**: the only version
 check is `hosts.<host>.tend_version` in a workspace's own `workspace.yaml`,
 which `cf run`'s preflight compares against `tend --version` on the host and
-refuses on a mismatch. Without them the supported path is the local Workflow
-fleet under ~100 items. `references/runbook-server.md` §0 says the same thing
-to an operator.
+refuses on a mismatch; with no spec recorded, preflight only prints the version
+and continues (`run/remote.py::_tend_version_step`). Without them the supported
+path is the local Workflow fleet under ~100 items.
+`references/runbook-server.md` §0 says the same thing to an operator.
