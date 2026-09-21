@@ -102,7 +102,10 @@ policy:
   # --destination <name>` chooses one; it is never inferred from a git remote,
   # because a private fork of a public repo and a public mirror of a private one
   # both exist and that guess decides whether a copyrighted sentence is
-  # published. quotes: full | excerpt (page + 6 words each end + sha256) | hash.
+  # published. quotes: full | excerpt (page + sha256 + up to a quarter of the
+  # words at each end, withheld entirely below 14 words) | hash. Anything but
+  # `full` also scrubs the row's own prose against the pinned source text, and is
+  # refused when this workspace has none to check against.
   destinations:
     owner:                        # the owner-message draft, privately
       quotes: full
