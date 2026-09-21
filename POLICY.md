@@ -66,9 +66,10 @@ against the text is not a finding. The limits:
   public tracker gets the printed page, a hash, and at most a quarter of the
   quote's words at each end — nothing at all below fourteen words, where the
   ends would be the sentence (`--destination public`). It is never inferred
-  from a git remote. The row's own prose is scrubbed the same way an exported
-  bundle's is, so a sentence of the book inside a `reasoning` or a witness does
-  not reach the tracker either.
+  from a git remote. Unless the destination's resolved policy is `full`, the
+  row's own prose is scrubbed the same way an exported bundle's is, so a
+  sentence of the book inside a `reasoning` or a witness does not reach the
+  tracker either.
 - `cf share export` redacts every quote by default, and scans every free-text
   field of a row, at any depth, for a verbatim run of the source. A reader who
   holds the same edition recovers each one with `cf quotes hydrate`, out of
