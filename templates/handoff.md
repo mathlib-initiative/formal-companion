@@ -28,9 +28,10 @@ that no run ever looked at.
 
 The items never examined are listed by name in `reports/unexamined.<source_id>.json`, and every
 figure in this section is in `reports/coverage.json`. Every figure here is over the audited scope,
-so anything counted outside it — an examined item in an unaudited chapter, or a corpus document
-that could not be read — is named in the notes above rather than dropped: those documents are
-counted in §3 and in no column of this table.
+so anything the columns do not cover is named in the notes above rather than dropped: an item
+examined outside the audited chapters is counted in §3 and in no column of this table, and a
+corpus document that could not be read is counted nowhere — `cf tally` refuses it — so wherever
+the notes above name one, every figure here is a lower bound.
 
 ## 1. State in one screen
 
