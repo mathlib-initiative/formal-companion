@@ -742,8 +742,8 @@ class NoBareGitIsReachableFromAnOperatorPathTest(unittest.TestCase):
     def carries_the_pins(argv: ast.List) -> bool:
         """Is ``*SAFE_CONFIG`` spliced into this argv literal?
 
-        ``gitsafe.filter_pins`` has to ask git which filter drivers a repo names
-        before ``gitsafe.argv`` can blank them, so it spells its one call out --
+        ``gitsafe.filter_names`` has to ask git which filter drivers a repo names
+        before ``gitsafe.env`` can blank them, so it spells its one call out --
         with the pins in it.  That is a pinned call, not a bare one.
         """
         return any(isinstance(e, ast.Starred) and isinstance(e.value, ast.Name)

@@ -166,13 +166,19 @@ class FilterDriverTestCase(unittest.TestCase):
         subprocess.run(["git", *args], cwd=str(cwd or self.repo), check=True,
                        env=self.env, capture_output=True, text=True)
 
-    def arm_filter(self, repo: pathlib.Path, pattern: str) -> pathlib.Path:
-        """Point ``filter.x.clean`` at a script and apply it through .git/."""
+    def arm_filter(self, repo: pathlib.Path, pattern: str, *,
+                   driver: str = "x") -> pathlib.Path:
+        """Point ``filter.<driver>.clean`` at a script and apply it through .git/.
+
+        ``driver`` is the name the repository chooses, and a name carrying an
+        ``=`` is the one a ``-c`` blank cannot express: see
+        :func:`cflib.gitsafe.filter_env`.
+        """
         proof = repo / ".git" / "proof-filter.txt"
         script = repo / ".git" / "f.sh"
         script.write_text("#!/bin/sh\necho ran > %s\ncat\n" % proof, encoding="utf-8")
         script.chmod(0o755)
-        self.git("config", "filter.x.clean", str(script), cwd=repo)
+        self.git("config", f"filter.{driver}.clean", str(script), cwd=repo)
         (repo / ".git" / "info").mkdir(exist_ok=True)
         (repo / ".git" / "info" / "attributes").write_text(pattern, encoding="utf-8")
         proof.unlink(missing_ok=True)
@@ -209,6 +215,17 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
         (self.repo / "findings" / "carol.json").write_text("{}\n")
         (self.repo / "tasks" / "carol.yaml").write_text("id: carol\n")
 
+    def make_stat_stale(self) -> None:
+        """Same bytes, newer mtime on the LANDED file: git must re-read it.
+
+        Which is when the clean filter runs.  Without this the arming is inert on
+        a fresh checkout and the test skips itself, proving nothing.
+        """
+        path = self.repo / "findings" / "alice.json"
+        path.write_bytes(path.read_bytes())
+        stamp = os.stat(path).st_mtime + 5
+        os.utime(path, (stamp, stamp))
+
     def bare_diff_fires(self, proof: pathlib.Path) -> bool:
         """Whether the unsafe spelling runs it -- the exposure, for comparison."""
         subprocess.run(["git", "diff", "--name-status", "main"], cwd=str(self.repo),
@@ -228,15 +245,65 @@ class TestTheGateRunsNoFilterTheWorkerChose(FilterDriverTestCase):
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `diff --name-status`")
 
-    def test_the_pins_name_every_driver_the_repo_defines(self):
+    def test_a_driver_whose_name_carries_an_equals_sign_is_blanked_too(self):
+        """``-c`` splits at the first ``=``, so the driver name defeated the blank.
+
+        ``-c 'filter.a=b.clean='`` sets ``filter.a`` to ``b.clean=`` and leaves
+        the driver the worktree called ``a=b`` armed; the gate ran it and printed
+        its OK line.  The blanks travel in ``GIT_CONFIG_KEY_i`` instead, which
+        carries the whole key.
+        """
+        proof = self.arm_filter(self.repo, "*.json filter=a=b\n", driver="a=b")
+        self.write_own_pair()
+        self.make_stat_stale()
+        unsafe_ran = self.bare_diff_fires(proof)
+        self.make_stat_stale()
+        paths, errs = vf.changed_entries(self.repo, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(set(paths), {"findings/carol.json", "tasks/carol.yaml"})
+        self.assertFalse(proof.exists(), "the gate executed a program the worker chose")
+        # and through the shipped argv, which is what the rendered tend config
+        # runs: the same contribution, reported clean while the payload ran
+        self.make_stat_stale()
+        script = str(SKILL / "scripts" / "gate" / "check_changed_files.py")
+        proc = subprocess.run(
+            [sys.executable, script, "--base", "main", "--root", str(self.repo)],
+            capture_output=True, text=True, env={**self.env, "TEND_TASK_ID": "carol"})
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertFalse(proof.exists(), "the shipped argv executed the worker's program")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `diff --name-status`")
+
+    def test_the_blanks_name_every_driver_the_repo_defines(self):
         self.arm_filter(self.repo, "*.json filter=x\n")
         self.git("config", "filter.y.process", "/bin/false")
-        pins = vf._filter_pins(self.repo)
-        self.assertIn("filter.x.clean=", pins)
-        self.assertIn("filter.y.process=", pins)
-        self.assertEqual(pins.count("-c"), len(pins) // 2)
+        self.git("config", "filter.a=b.clean", "/bin/false")
+        pinned = vf._filter_env(self.repo)
+        keys = {v for k, v in pinned.items() if k.startswith("GIT_CONFIG_KEY_")}
+        self.assertLessEqual({"filter.x.clean", "filter.y.process", "filter.a=b.clean"}, keys)
+        self.assertEqual(int(pinned["GIT_CONFIG_COUNT"]), len(keys))
+        # every one of them is blanked, and the count covers exactly the pairs
+        for i in range(int(pinned["GIT_CONFIG_COUNT"])):
+            self.assertIn(f"GIT_CONFIG_KEY_{i}", pinned)
+            self.assertEqual(pinned[f"GIT_CONFIG_VALUE_{i}"], "")
         # the gate ships without cflib, so its copy and gitsafe's must agree
-        self.assertEqual(pins, gitsafe.filter_pins(self.repo))
+        self.assertEqual(pinned, gitsafe.filter_env(self.repo))
+
+    def test_the_blanks_extend_a_count_the_callers_environment_already_carries(self):
+        """A ``GIT_CONFIG_*`` the operator set is extended, never overwritten."""
+        from unittest import mock
+
+        self.arm_filter(self.repo, "*.json filter=x\n")
+        with mock.patch.dict(os.environ, {"GIT_CONFIG_COUNT": "1",
+                                          "GIT_CONFIG_KEY_0": "user.name",
+                                          "GIT_CONFIG_VALUE_0": "operator"}):
+            pinned = vf._filter_env(self.repo)
+            self.assertEqual(pinned, gitsafe.filter_env(self.repo))
+        count = int(pinned["GIT_CONFIG_COUNT"])
+        named = [pinned[f"GIT_CONFIG_KEY_{i}"] for i in range(1, count)]
+        self.assertNotIn("GIT_CONFIG_KEY_0", pinned)        # the operator's own pair
+        self.assertIn("filter.x.clean", named)
+        self.assertEqual(count, 1 + len(named))
 
     def test_an_uncommitted_rewrite_of_a_neighbours_pair_is_still_refused(self):
         """What a tree-to-tree diff would have cost: the case the rule exists for.
@@ -297,20 +364,36 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         if not unsafe_ran:                                   # pragma: no cover - git build
             self.skipTest("this git does not run a clean filter on `status --porcelain`")
 
+    def test_a_companions_equals_named_filter_does_not_run_on_a_read_either(self):
+        """The name the companion chose is the one ``-c`` could not blank."""
+        proof = self.arm_filter(self.repo, "*.lean filter=a=b\n", driver="a=b")
+        self.make_stat_stale()
+        subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain"],
+                       capture_output=True, text=True, check=False, env=self.env)
+        unsafe_ran = proof.exists()
+        proof.unlink(missing_ok=True)
+        self.make_stat_stale()
+        gitsafe.run(self.repo, ["status", "--porcelain"])
+        self.assertFalse(proof.exists(), "the companion's own program ran on a read")
+        if not unsafe_ran:                                   # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `status --porcelain`")
+
     def test_a_driver_is_pinned_only_once_it_is_named_and_never_raises(self):
-        self.assertNotIn("filter.x.clean=", gitsafe.filter_pins(self.repo))
+        self.assertNotIn("filter.x.clean", gitsafe.filter_names(self.repo))
         self.arm_filter(self.repo, "*.lean filter=x\n")
-        pins = gitsafe.filter_pins(self.repo)
-        self.assertEqual(pins[pins.index("filter.x.clean=") - 1], "-c")
+        pinned = gitsafe.filter_env(self.repo)
+        i = gitsafe.filter_names(self.repo).index("filter.x.clean")
+        self.assertEqual(pinned[f"GIT_CONFIG_KEY_{i}"], "filter.x.clean")
+        self.assertEqual(pinned[f"GIT_CONFIG_VALUE_{i}"], "")
         # a path that is no repo at all is no pins, not an exception: the
         # caller's own command is what reports that there is nothing to read
-        self.assertEqual(gitsafe.filter_pins(self.root / "nowhere"), [])
+        self.assertEqual(gitsafe.filter_env(self.root / "nowhere"), {})
         self.assertEqual(gitsafe.argv(self.root / "nowhere", "rev-parse", "HEAD")[-2:],
                          ["rev-parse", "HEAD"])
 
     def test_the_boundary_comments_do_not_claim_the_wider_closure(self):
         """Both files said the fsmonitor pin closes the class; it closes that hook."""
-        for text in (gitsafe.__doc__ or "", gitsafe.filter_pins.__doc__ or ""):
+        for text in (gitsafe.__doc__ or "", gitsafe.filter_env.__doc__ or ""):
             self.assertNotIn("verified: this alone stops it", text)
         pins_comment = (SKILL / "scripts" / "gate" / "verify_findings.py").read_text(
             encoding="utf-8")
@@ -335,7 +418,8 @@ class TestGitsafeRunsNoFilterTheCompanionChose(FilterDriverTestCase):
         (home / ".gitconfig").write_text('[filter "lfs"]\n\tclean = /bin/false\n',
                                          encoding="utf-8")
         with mock.patch.dict(os.environ, {"HOME": str(home), "XDG_CONFIG_HOME": str(home)}):
-            self.assertIn("filter.lfs.clean=", gitsafe.filter_pins(self.repo))
+            self.assertIn("filter.lfs.clean", gitsafe.filter_names(self.repo))
+            self.assertIn("filter.lfs.clean", gitsafe.filter_env(self.repo).values())
 
 
 # --------------------------------------------------------------------------- #
