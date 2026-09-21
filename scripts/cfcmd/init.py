@@ -307,6 +307,21 @@ def _config(repo: Path, key: str) -> str:
     return res.stdout.strip() if res.returncode == 0 else ""
 
 
+def check_ignore(repo: Path, path: Path) -> bool:
+    """Would *repo* ignore *path*?  (`cf quotes hydrate --out` asks before writing.)
+
+    Plain ``git`` for the same reason as :func:`remotes`, and it lives here for the
+    same reason: this module is the one that acts on the operator's own workspace
+    repository.  ``git check-ignore`` is the only authority on the answer, because
+    the rule may come from the workspace's .gitignore, an enclosing repo's, or the
+    user's global excludes -- and because a workspace created before `cf init`
+    learned to ignore ``quotes/`` has no such rule at all.
+    """
+    res = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", str(path)],
+                         capture_output=True, text=True)
+    return res.returncode == 0
+
+
 def no_remote_guard_set(repo: Path) -> bool:
     """Is the optional bare-push guard set in *repo*?  (`cf status` prints this.)
 
