@@ -22,8 +22,9 @@ a line **of** it.
   machine of somebody who already holds that edition.
 - `cf sources validate-registry` is the mechanical half: it refuses an unknown
   field and any string outside the four free-text fields that runs past a word
-  cap or into a second sentence. The rule was stated as hard for months with
-  nothing enforcing it.
+  cap or into a second sentence of prose (an edition statement after a full stop
+  is not one, so a real title and an author's initials pass). The rule was stated
+  as hard for months with nothing enforcing it.
 
 ## 2. Fetching: the author's own site, once, with a note
 

@@ -492,7 +492,9 @@ def _validate_registry(workspace, args) -> int:
             log.info(f"no overlay at {overlay} (nothing discovered here yet)")
     # the cross-entry half (page-map symmetry, same_work, licence enum) reads
     # the merged view, which is what any command that looks a source up sees.
-    problems += Registry.load(workspace if getattr(args, "overlay", False) else None).validate()
+    overlay_too = bool(getattr(args, "overlay", False))
+    merged = Registry.load(workspace if overlay_too else None)
+    problems += merged.validate()
     for path in checked:
         log.info(f"checked {path}")
     if problems:
@@ -501,7 +503,16 @@ def _validate_registry(workspace, args) -> int:
         raise CfError(f"{len(problems)} registry problem(s)",
                       hint="registry/README.md says what an entry may hold; POLICY.md "
                            "says why metadata is the boundary")
-    log.ok(f"registry ok ({len(Registry.load(None).entries)} shipped edition(s))")
+    # Count what was CHECKED, not what ships: with --overlay the run had just
+    # passed a third, overlay-only edition and still reported "2 shipped".
+    # `origin` is "overlay" for a row the overlay contributed OR overrode, which
+    # is what "touched" says and "from" would not.
+    total = len(merged.entries)
+    if overlay_too:
+        touched = sum(1 for e in merged.entries.values() if e.origin != "skill")
+        log.ok(f"registry ok ({total} edition(s); {touched} touched by the overlay)")
+    else:
+        log.ok(f"registry ok ({total} shipped edition(s))")
     return 0
 
 

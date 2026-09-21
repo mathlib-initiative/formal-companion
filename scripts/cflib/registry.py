@@ -461,11 +461,35 @@ FREE_TEXT_FIELDS = {
 #: Everything else is an identifier, a label or a URL.
 MAX_FIELD_WORDS = 25
 
+#: A full stop that ends a real word.  A bare ``[.!?]\s+[A-Z]`` fires on an
+#: author's middle initial (``John B. Conway``), a volume numeral
+#: (``Analysis I. Fourth edition``) and an abbreviation (``2nd ed. Revised``) --
+#: the ordinary contents of ``title``, ``authors`` and ``edition`` -- so it
+#: refused the edition contributions this check exists to admit, and would refuse
+#: a title ``cf onboard`` itself read out of a repo and wrote to the overlay.
+_SECOND_SENTENCE = re.compile(r"[a-z]{3,}[.!?]\s+[A-Z(]")
+#: And what follows the stop has to be a sentence.  A bibliographic field
+#: legitimately carries a short editorial tail -- "A Course in Functional
+#: Analysis. Second edition", "... Revised and expanded", "... Hindustan Book
+#: Agency" -- while a passage of the book does not stop after five words ("Let E
+#: be a subset of the reals. We say that E is elementary if ...").  The word cap
+#: above is what bounds these fields; this catches prose.
+MIN_SECOND_SENTENCE_WORDS = 6
+
 
 def _field_cap(path: str) -> int:
     generic = re.sub(r"page_map_to\.[^.]+\.", "page_map_to.*.", path)
     generic = re.sub(r"\[\d+\]", "", generic)
     return FREE_TEXT_FIELDS.get(generic, MAX_FIELD_WORDS)
+
+
+def _runs_to_a_second_sentence(value: str) -> bool:
+    """Prose, not an edition statement: a real word, a stop, then a sentence."""
+    for match in _SECOND_SENTENCE.finditer(value):
+        rest = value[match.end() - 1:]                 # from the capital letter
+        if len(rest.split()) >= MIN_SECOND_SENTENCE_WORDS:
+            return True
+    return False
 
 
 def _prose_problems(sid: str, path: str, value: str) -> list[str]:
@@ -476,7 +500,7 @@ def _prose_problems(sid: str, path: str, value: str) -> list[str]:
     if len(words) > cap:
         out.append(f"{sid}: {path} is {len(words)} words (cap {cap}); the registry holds "
                    f"metadata about an edition, never a passage of it")
-    if _field_cap(path) == MAX_FIELD_WORDS and re.search(r"[.!?]\s+[A-Z(]", value):
+    if cap == MAX_FIELD_WORDS and _runs_to_a_second_sentence(value):
         out.append(f"{sid}: {path} runs to a second sentence, which no field but "
                    f"{', '.join(sorted(FREE_TEXT_FIELDS))} may do")
     return out
