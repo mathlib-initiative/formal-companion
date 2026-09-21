@@ -1,9 +1,9 @@
 # Run presets — exactly how the five original runs differed
 
-Recorded by diffing the five orchestration roots and entrypoints retrieved from `ffmain`
-(`~/tao-diff-tend`, `~/tao-diff-tend-pdf`, `~/tao-diff-tend-gpt`, `~/tao-attack-vac-tend`,
-`~/tao-attack-hunt-tend` and their entrypoints `~/tao-diff-run{,-pdf,-gpt}`,
-`~/tao-attack-{vac,hunt}`). Everything below is a diff result, not a reconstruction: where a
+Recorded by diffing the five orchestration roots and entrypoints of the v1 campaign
+(`tao-diff-tend`, `tao-diff-tend-pdf`, `tao-diff-tend-gpt`, `tao-attack-vac-tend`,
+`tao-attack-hunt-tend` and their entrypoints `tao-diff-run{,-pdf,-gpt}`,
+`tao-attack-{vac,hunt}`, each a directory in the run host's home). Everything below is a diff result, not a reconstruction: where a
 file was byte-identical across roots the md5 is noted once.
 
 The skill's preset table (`scripts/plan/presets.py`) reproduces these five and adds the v2
@@ -13,11 +13,11 @@ corrections required by the design critique (§"What v2 changes", last section).
 
 | preset | entrypoint | orchestration root | worker bridge | model | book access | KINDS (gate) | VERDICTS (gate) | witness | workers/reviewers |
 |---|---|---|---|---|---|---|---|---|---|
-| `differential-text` | `tao-diff-run` | `tao-diff-tend` | `agentbox host claude --profile jack` | Claude Code default (unrecorded) | `book.official.txt` only | CONTENT, PAGE_ANCHOR, VACUITY, SUSPECTED_ERRATA, COVERAGE | AGREE, CONVENTION_ONLY, CONTENT_DELTA, SINGLE_SOURCE_OK, SINGLE_SOURCE_DELTA | not required | 8 / 5 |
-| `differential-pdf` | `tao-diff-run-pdf` | `tao-diff-tend-pdf` | `agentbox host claude --profile jack` | Claude Code default | text **+ page images** `~/book/bookpages/p-NNN.png` | same as above | same as above | not required | 6 / 4 |
+| `differential-text` | `tao-diff-run` | `tao-diff-tend` | `agentbox host claude --profile <profile>` | Claude Code default (unrecorded) | `book.official.txt` only | CONTENT, PAGE_ANCHOR, VACUITY, SUSPECTED_ERRATA, COVERAGE | AGREE, CONVENTION_ONLY, CONTENT_DELTA, SINGLE_SOURCE_OK, SINGLE_SOURCE_DELTA | not required | 8 / 5 |
+| `differential-pdf` | `tao-diff-run-pdf` | `tao-diff-tend-pdf` | `agentbox host claude --profile <profile>` | Claude Code default | text **+ page images** `~/book/bookpages/p-NNN.png` | same as above | same as above | not required | 6 / 4 |
 | `differential-gpt` | `tao-diff-run-gpt` | `tao-diff-tend-gpt` | `agentbox host codex -- exec -m gpt-5.6-sol` | `gpt-5.6-sol` | text only | same as above | same as above | not required | 6 / 4 |
 | `attack-vac` | `tao-attack-vac` | `tao-attack-vac-tend` | `agentbox host codex -- exec -m gpt-5.6-sol` | `gpt-5.6-sol` | text only | **CONTENT, VACUITY, SUSPECTED_ERRATA** | the five **+ NO_DEFECT_FOUND + NO_WEAKNESS_FOUND** | required (prompt + reviewer) | 5 / 3 |
-| `attack-hunt` | `tao-attack-hunt` | `tao-attack-hunt-tend` | `agentbox host claude --profile jack` | Claude Code default | text **+ page images** | CONTENT, VACUITY, SUSPECTED_ERRATA | five + NO_DEFECT_FOUND + NO_WEAKNESS_FOUND | required | 5 / 3 |
+| `attack-hunt` | `tao-attack-hunt` | `tao-attack-hunt-tend` | `agentbox host claude --profile <profile>` | Claude Code default | text **+ page images** | CONTENT, VACUITY, SUSPECTED_ERRATA | five + NO_DEFECT_FOUND + NO_WEAKNESS_FOUND | required | 5 / 3 |
 
 `PAGE_ANCHOR` and `COVERAGE` are *rejected by the gate* in both attack presets — the comment in
 the attack `verify_findings.py` is literally `# citation findings banned in the attack runs`.
@@ -100,10 +100,10 @@ flavours:
 
 * **claude** (md5 `e44308a0…` / `b5d946a7…` / `d1b72eb4…`) — `differential-text`,
   `differential-pdf`, `attack-hunt`:
-  `agentbox host claude --profile jack -- -p "$PROMPT" --append-system-prompt "$SYS"
+  `agentbox host claude --profile <profile> -- -p "$PROMPT" --append-system-prompt "$SYS"
   --dangerously-skip-permissions --output-format json`
 * **codex** (md5 `7c419805…` / `58ccba1e…` / `0fcc3bc2…`) — `differential-gpt`, `attack-vac`:
-  `printf '' | agentbox host codex --profile jack -- exec --skip-git-repo-check -m gpt-5.6-sol
+  `printf '' | agentbox host codex --profile <profile> -- exec --skip-git-repo-check -m gpt-5.6-sol
   --dangerously-bypass-approvals-and-sandbox -C "$PWD" "$SYS\n\n---\n\n$TASKP"`
   (system prompt concatenated because codex has no `--append-system-prompt`).
 

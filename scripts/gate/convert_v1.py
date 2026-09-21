@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """Convert the v1 findings corpus to schema v2 — in memory or to a new tree.
 
-Ported from: nothing. v1 is the shape produced by
-``ffmain:~/tao-diff-{run,run-pdf,run-gpt}`` and ``~/tao-attack-{vac,hunt}``; the
-local baseline of 2,672 files is at ``$CF_BASELINE_CORPUS`` (=
-``/Users/jack/Desktop/tao-diff-run``) in ``findings/``, ``findings-pdf/``,
-``findings-gpt/``, ``findings-vac/`` and ``findings-hunt/``.
+Ported from: nothing. v1 is the shape the five v1 campaign runs produced; the
+local baseline of 2,672 files is the directory ``$CF_BASELINE_CORPUS`` names, in
+``findings/``, ``findings-pdf/``, ``findings-gpt/``, ``findings-vac/`` and
+``findings-hunt/``.
 
 The four v1 defects this fixes (design decision "adopt findings schema v2"):
 

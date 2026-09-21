@@ -272,9 +272,9 @@ def _show(workspace, args) -> int:
         log.warn(f"            not prepared -- run `cf sources refresh {ref.id}`")
     if not ref.confirmed:
         log.info("")
-        log.warn("nobody has checked this source. Confirm it with:")
-        log.info(f"  cf sources set {ref.id} confirmed=true")
-        log.info("  or promote it into the skill's registry/sources.yaml")
+        log.warn_block("nobody has checked this source. Confirm it with:",
+                       [f"  cf sources set {ref.id} confirmed=true",
+                        "  or promote it into the skill's registry/sources.yaml"])
     return 0
 
 
@@ -428,8 +428,8 @@ def _remove(workspace, args) -> int:
             log.warn(f"{name} no longer lists {source_id}; re-run "
                      f"`cf onboard <repo> --force` if that companion needs another source")
     for name in orphaned:
-        log.warn(f"{name} had no other source, so it was removed too")
-        log.info(f"  bring it back with:  cf onboard {repos.get(name) or '<repo>'}")
+        log.warn_block(f"{name} had no other source, so it was removed too",
+                       [f"  bring it back with:  cf onboard {repos.get(name) or '<repo>'}"])
     _drop_overlay_row(workspace, source_id)
     prepared = workspace.paths.source_dir(source_id)
     if prepared.exists() and not args.keep_files:

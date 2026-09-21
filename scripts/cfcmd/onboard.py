@@ -562,9 +562,10 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
     ref = workspace.source(source_id)
     out_dir = workspace.paths.source_dir(source_id)
     if ref.pdf is None or not Path(ref.pdf).exists():
-        log.warn(f"{source_id}: no source file on this machine -- text, items, the quote gate "
-                 f"and the anchor check cannot run")
-        log.info(f"         once you have it: cf sources add <source> --for <companion>")
+        log.warn_block(
+            f"{source_id}: no source file on this machine -- text, items, the quote gate "
+            f"and the anchor check cannot run",
+            [f"         once you have it: cf sources add <source> --for <companion>"])
         return
     from sources import prepare_source
 
@@ -624,12 +625,13 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
         # outbound GET this machine did not choose, and the page it returns is
         # shipped to the fleet and handed to workers as authoritative errata --
         # so a repo would be choosing both. It waits for a human.
-        log.warn(f"{source_id}: the errata URL {url} came from the companion repo "
-                 f"({method}); NOT fetched")
-        log.info(f"         confirm it, then re-run:  cf sources set {source_id} "
-                 f"errata_url={url}")
-        log.info(f"         or onboard with --fetch-errata (workspace policy "
-                 f"allow_errata_fetch: true does it once and for all)")
+        log.warn_block(
+            f"{source_id}: the errata URL {url} came from the companion repo "
+            f"({method}); NOT fetched",
+            [f"         confirm it, then re-run:  cf sources set {source_id} "
+             f"errata_url={url}",
+             f"         or onboard with --fetch-errata (workspace policy "
+             f"allow_errata_fetch: true does it once and for all)"])
         workspace.upsert_source(source_id, book_page_url=url, errata_method="repo_unconfirmed")
         return
     from sources import fetch_errata
@@ -1125,12 +1127,13 @@ def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anch
         # .rejected suffix so the 142-duplicate-key case can be read.
         rejected = path.parent / (path.name + ".rejected")
         write_jsonl(rejected, rows, meta={**meta, "rejected": problems[:10]})
-        log.warn(f"{name}: statements.jsonl failed schema v2 validation "
-                 f"({len(problems)} problems); nothing was written to "
-                 f"{path.relative_to(workspace.root)}")
-        log.info(f"         the rows are at {rejected.relative_to(workspace.root)} -- fix "
-                 f"adapter.yaml (glob, tag pattern, sources.map) and re-run "
-                 f"`cf onboard {repo} --force`")
+        log.warn_block(
+            f"{name}: statements.jsonl failed schema v2 validation "
+            f"({len(problems)} problems); nothing was written to "
+            f"{path.relative_to(workspace.root)}",
+            [f"         the rows are at {rejected.relative_to(workspace.root)} -- fix "
+             f"adapter.yaml (glob, tag pattern, sources.map) and re-run "
+             f"`cf onboard {repo} --force`"])
         return rows
     write_jsonl(path, rows, meta=meta)
     log.ok(f"extracted {path.relative_to(workspace.root)}   {len(rows)} rows")
@@ -1164,12 +1167,12 @@ def _report_unattributed(name: str, adapter, sources, anchor: str) -> None:
                       (list(binding.unattributed or []), "match no item in any of")):
         if not tags:
             continue
-        log.warn(f"{name}: {len(tags)} tag(s) {why} {', '.join(sources)}; "
-                 f"attributed to the anchor {anchor}")
-        for tag in sorted(set(tags))[:5]:
-            log.info(f"    {tag!r}")
-        log.info(f"    add a sources.map rule in {name}/adapter.yaml to say which source "
-                 f"they belong to")
+        log.warn_block(
+            f"{name}: {len(tags)} tag(s) {why} {', '.join(sources)}; "
+            f"attributed to the anchor {anchor}",
+            [f"    {tag!r}" for tag in sorted(set(tags))[:5]]
+            + [f"    add a sources.map rule in {name}/adapter.yaml to say which source "
+               f"they belong to"])
 
 
 def _report_schema_problems(workspace, name: str, rows, anchor: str) -> list[str]:
@@ -1199,15 +1202,14 @@ def _report_schema_problems(workspace, name: str, rows, anchor: str) -> list[str
     # validate_rows stops at `cap`, so this is a floor, not a total: saying "10"
     # of a table with 142 collisions would read as "nearly clean".
     at_least = "at least " if len(problems) > cap else ""
-    log.warn(f"{name}: {at_least}{min(len(problems), cap)} of these rows will NOT pass "
-             f"`cf extract`'s schema gate:")
-    for problem in problems[:5]:
-        log.info(f"    {problem}")
+    lines = [f"    {problem}" for problem in problems[:5]]
     if any("duplicate" in p for p in problems):
-        log.info("    two files define the same declaration: narrow `glob:` in "
-                 f"{workspace.paths.adapter_yaml(name)} to the companion's own modules "
-                 "(a generated mirror of them is inside the glob), then "
-                 f"`cf extract --companion {name} --force`")
+        lines.append("    two files define the same declaration: narrow `glob:` in "
+                     f"{workspace.paths.adapter_yaml(name)} to the companion's own modules "
+                     "(a generated mirror of them is inside the glob), then "
+                     f"`cf extract --companion {name} --force`")
+    log.warn_block(f"{name}: {at_least}{min(len(problems), cap)} of these rows will NOT pass "
+                   f"`cf extract`'s schema gate:", lines)
     return problems
 
 
@@ -1239,9 +1241,9 @@ def _report(name, repo, commit, counts, problem, conventions, rows, workspace, s
         log.info(format_table(["count", "value"], table))
         if rejects:
             log.info("")
-            log.warn(f"{len(rejects)} item tags rejected by the strict grammar; first few:")
-            for r in rejects[:5]:
-                log.info(f"    {r.get('raw')!r}  ({r.get('reason')})")
+            log.warn_block(
+                f"{len(rejects)} item tags rejected by the strict grammar; first few:",
+                [f"    {r.get('raw')!r}  ({r.get('reason')})" for r in rejects[:5]])
     elif problem and problem != "skipped":
         log.warn(f"no counts recorded: {problem}")
     unconfirmed = [s.id for s in workspace.unconfirmed_sources() if s.id in sources]

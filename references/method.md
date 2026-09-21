@@ -20,18 +20,22 @@ calibration is unchanged by that — it is measured per (source, companion) pair
 
 Primary sources, all read for this document:
 
+None of them are in this repo — they are the campaign's own notes and the two
+private companions' files — so each row says what it is, not where one machine
+kept it.
+
 | source | what it establishes |
 |---|---|
-| `/Users/jack/.claude/projects/-Users-jack-Desktop/memory/faithfulness-audit-method.md` | the five-run yield, the five defect shapes, the self-inflicted traps |
-| `/Users/jack/.claude/projects/-Users-jack-Desktop/memory/tao-differential-audit-verified-figures.md` | the corrected figures (411 vs 410, raw vs collapsed items, what the 6-reader pass covered) |
-| `/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §2, §4, §5, §8 | the run table, the four errors, the extension preconditions |
-| `/Users/jack/Desktop/tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md` | the self-recomputing tally and the 72/40 partition |
-| `/Users/jack/.claude/projects/-Users-jack-Desktop/memory/measure-theory-faithfulness-audit.md` | the safe-bridge rule, the disjoint-classes corollary, "every bug came from a second reading" |
-| `/Users/jack/Desktop/notes/measure-theory-HANDOFF.md` | the same rule as written for the other companion's owner |
-| `/Users/jack/Desktop/tao-differential/{accepted,refuted}.adam.jsonl` | the ≈40% first-pass false-positive rate |
-| `/Users/jack/Desktop/tao-diff-run/scripts/verify_findings.py` and its attack variant | the gate kinds that make the attack ratio partly definitional |
-| `/Users/jack/Desktop/tao-measure-lean/REVIEW_PATTERNS.md` P9–P13 | the defect shapes with detectors |
-| `/Users/jack/Desktop/tao-differential/adam-detector/README.md` | the two proxy-detector rules and their portability |
+| the campaign's audit-method notes | the five-run yield, the five defect shapes, the self-inflicted traps |
+| the campaign's verified-figures notes | the corrected figures (411 vs 410, raw vs collapsed items, what the 6-reader pass covered) |
+| the docstring-tag companion's `HANDOFF.md` §2, §4, §5, §8 | the run table, the four errors, the extension preconditions |
+| the docstring-tag companion's `OPEN_FAITHFULNESS_FINDINGS.md` | the self-recomputing tally and the 72/40 partition |
+| the attribution-table companion's faithfulness-audit notes | the safe-bridge rule, the disjoint-classes corollary, "every bug came from a second reading" |
+| the handoff note written for that companion's owner | the same rule as written for the other companion's owner |
+| the v1 differential's `{accepted,refuted}.adam.jsonl` | the ≈40% first-pass false-positive rate |
+| the v1 corpus's `verify_findings.py` and its attack variant | the gate kinds that make the attack ratio partly definitional |
+| the docstring-tag companion's `REVIEW_PATTERNS.md` P9–P13 | the defect shapes with detectors |
+| the v1 proxy detector's README | the two proxy-detector rules and their portability |
 
 ---
 
@@ -103,8 +107,9 @@ Consequences the skill enforces:
 - **Nothing goes upstream unchallenged.** `route` refuses to emit an upstream report while
   `_meta.status` is `UNCHALLENGED`; `publish-verdicts` refuses to write `human_confirmed`.
   The batch-1 findings routed against the third companion — **32 rows, 7 high, over 26 items**
-  (recomputed from `/Users/jack/Desktop/tao-differential/findings.teorth.jsonl`) — carry
-  `_meta.status: UNCHALLENGED` and were never reported upstream; `tao-measure-lean/docs/HANDOFF.md` §6 records
+  (recomputed from the v1 differential's `findings.teorth.jsonl`) — carry
+  `_meta.status: UNCHALLENGED` and were never reported upstream; the docstring-tag
+  companion's `HANDOFF.md` §6 records
   holding them back as a deliberate decision.
 - **The reviewer's job is refutation, not approval.** The shipped reviewer prompt carries the 40%
   figure as its own justification, and says approving a wrong finding is a worse failure than
@@ -140,9 +145,9 @@ Each recurred at least twice in one chapter of one companion. Full detectors and
 > A Mathlib-first bridge is **SAFE** when it is a *proved equivalence* that recovers the book's
 > text, and **UNSAFE** when the library object is adopted by *definitional fiat*.
 
-Established jointly by the two companion sessions on 2026-09-05
-(`/Users/jack/Desktop/notes/measure-theory-HANDOFF.md`, "The reusable finding";
-`memory/measure-theory-faithfulness-audit.md`). Evidence on both sides:
+Established jointly by the two companion sessions on 2026-09-05 (the handoff note
+written for the attribution-table companion's owner, "The reusable finding", and
+that campaign's faithfulness-audit notes). Evidence on both sides:
 
 - **Unsafe:** the attribution-table companion defined its elementary measure as the library volume
   (issue #5 → PRs #6/#8) and stated its measurability definition via the library outer measure
@@ -151,8 +156,8 @@ Established jointly by the two companion sessions on 2026-09-05
   rather than formalised.
 - **Safe:** of 36 numbered chapter-1 Definitions in the docstring-tag companion, **32 have a
   native `def`/`structure`, 0 have no declaration at all, and the 4 tagged only to theorems are
-  each a proved equivalence recovering the book's text** (artifact:
-  `/Users/jack/Desktop/tao-differential/def-coverage.ours.json`).
+  each a proved equivalence recovering the book's text** (artifact: the v1
+  differential's `def-coverage.ours.json`).
 
 Corollary the skill implements as a first-class stage: **the cheap upper bound needs no Lean.**
 From an item→declaration table alone, ask *"is there a book Definition item that no declaration

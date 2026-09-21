@@ -1,8 +1,8 @@
 """Thin adapter over ``scripts/cflib`` for the sources/ and pair/ stages.
 
-Ported from: nothing directly -- this is the glue the recovered cells never had
-(they inlined ``/Users/jack/Desktop/tao-differential`` and the ``+16`` offset,
-e.g. recovered/b174aa13_L5589_Bash.txt, b174aa13_L6099_Bash.txt).
+Ported from: nothing directly -- this is the glue the v1 campaign's cells never
+had (they inlined one machine's corpus path and the ``+16`` offset, and none of
+them are in this repo).
 
 Everything here RESOLVES to ``cflib`` (the shared library: workspace.yaml
 loading, state.json, paths, jsonl io, sha256, the strict item grammar).  There

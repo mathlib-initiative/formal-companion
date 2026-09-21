@@ -1,8 +1,8 @@
 """Lean-tier proxy detection: development-order analysis over ``deps.json``.
 
-A rewrite (not an adaptation) of
-/Users/jack/Desktop/tao-differential/adam-detector/analyze2.py, as
-adam-detector/README.md:63-73 requires: the closure logic and the two rules are
+A rewrite (not an adaptation) of the v1 campaign's proxy detector (``analyze2.py``
+and its README, neither of which is in this repo), as that README requires: the
+closure logic and the two rules are
 kept verbatim in spirit, but the item -> declaration mapping now comes from the
 workspace's ``statements.jsonl`` instead of one repo's PDF-overlay artifacts
 (``target-refinement.json`` + ``declaration-snippets.json`` + four

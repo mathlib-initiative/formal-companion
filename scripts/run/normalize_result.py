@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Coerce an agent's self-reported result into tend's strict output schema.
 
-Ported from scratchpad/ffmain/tao-diff-tend/bin/normalize_result.py (the Claude
-variant) merged with scratchpad/ffmain/tao-diff-tend-gpt/bin/normalize_result.py
+Ported from the v1 campaign's tao-diff-tend/bin/normalize_result.py (the Claude
+variant) merged with its tao-diff-tend-gpt/bin/normalize_result.py
 (the codex variant, which added prose-envelope parsing, the observable-state
 fallback and the reviewer-verdict scraper).  Both shipped only on the server.
 

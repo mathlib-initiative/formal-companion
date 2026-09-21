@@ -1,9 +1,9 @@
 """Fill templates/handoff.md from computed artifacts only.
 
-Ported from: the structure of /Users/jack/Desktop/notes/camera-ready-HANDOFF-2026-09-08.md
-(sections 1-7) and tao-measure-lean/docs/HANDOFF.md ("four things I got wrong",
-"verification that means something"), plus the tally recipe at
-tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md:296-311.
+Ported from: the structure of the camera-ready handoff note the v1 campaign wrote
+(sections 1-7, not in this repo) and tao-measure-lean's own HANDOFF.md ("four
+things I got wrong", "verification that means something"), plus the tally recipe
+in that repo's OPEN_FAITHFULNESS_FINDINGS.md.
 
 The rule this module exists to enforce: **every number comes from a computed
 artifact**, never from prose.  Its inputs are

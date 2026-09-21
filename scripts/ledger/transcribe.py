@@ -1,11 +1,10 @@
 """Turn a Workflow result JSON into ledger rows, files and the record markdown.
 
-Ported from: the hand transcription that produced
-/Users/jack/Desktop/tao-differential/{accepted,refuted}.adam.jsonl and
-adjudicated.adam.md from the adam-faithfulness-adjudication run
-(recovered/adam-faithfulness-adjudication-wf_60a87e92-dd5.js), plus the
-challenge result shape of recovered/challenge-batch1-findings-wf_c3f0e5d0-d65.js
-({challenged, findings:[{key, survives_all, verdicts}]}).
+Ported from: the hand transcription that produced the v1 campaign's
+``{accepted,refuted}.adam.jsonl`` and ``adjudicated.adam.md`` from its
+adjudication workflow run, plus the challenge result shape of its
+challenge workflow ({challenged, findings:[{key, survives_all, verdicts}]}).
+None of those artifacts travel with this repo.
 
 Workflow scripts cannot touch the filesystem, so the session saves the tool's
 return value to a JSON file and this module transcribes it.  Two rules from the

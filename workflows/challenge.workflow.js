@@ -7,8 +7,8 @@ export const meta = {
   ],
 }
 
-// Ported from: recovered/challenge-batch1-findings-wf_c3f0e5d0-d65.js
-// (identical to transcript b174aa13 L5953). Generalised:
+// Ported from: the v1 campaign's challenge-batch1-findings workflow, which does
+// not travel with this repo. Generalised:
 //   * the three repo paths, the book path, the errata path and the convention
 //     list were constants in the original and are `args` fields here;
 //   * findings arrive with a stable `finding_id`; the original matched a

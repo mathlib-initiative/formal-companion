@@ -175,7 +175,7 @@ class TestHandoffRunTable(unittest.TestCase):
 
     RUN_YAML = {
         "mode": "attack", "model": "claude-sonnet-5",
-        "host": {"name": "ffmain", "kind": "remote", "remote_root": "/home/x", "ssh": "x@y"},
+        "host": {"name": "examplebox", "kind": "remote", "remote_root": "/srv/runs", "ssh": "x@y"},
         "sources": [{"id": PUBLISHED_ID, "sha256": PUBLISHED_SHA, "offset": 16}],
         "source_access": "text+images",
         "tasks": {"count": 519, "universe": "targets.ours.json", "expected": 519},
@@ -183,7 +183,7 @@ class TestHandoffRunTable(unittest.TestCase):
 
     def test_nested_fields_render_as_values(self):
         table = make_handoff.render_runs_table({"r1": self.RUN_YAML}, [])
-        self.assertIn("ffmain", table)
+        self.assertIn("examplebox", table)
         self.assertIn("text+images", table)
         self.assertIn("519", table)
         self.assertNotIn("{'name'", table)      # a dict repr in the report
@@ -191,8 +191,8 @@ class TestHandoffRunTable(unittest.TestCase):
 
     def test_a_flat_run_yaml_still_works(self):
         table = make_handoff.render_runs_table(
-            {"r1": {"host": "ffmain", "source_access": "text", "tasks": 12}}, [])
-        self.assertIn("ffmain", table)
+            {"r1": {"host": "examplebox", "source_access": "text", "tasks": 12}}, [])
+        self.assertIn("examplebox", table)
         self.assertIn("text", table)
         self.assertIn("12", table)
 
@@ -696,9 +696,9 @@ class TestHarvestSafety(unittest.TestCase):
         self.assertIn("allowlist", str(ctx.exception))
 
     def test_an_allowlisted_host_still_needs_consent(self):
-        self._allow("ffmain", "ffmain")
+        self._allow("examplebox", "examplebox")
         with self.assertRaises(CfError) as ctx:
-            self._cf("harvest", "r1", "--from", "ffmain:/findings", "--execute",
+            self._cf("harvest", "r1", "--from", "examplebox:/findings", "--execute",
                      "--workspace", str(self.workspace), "-q")
         self.assertIn("consent", str(ctx.exception))
 

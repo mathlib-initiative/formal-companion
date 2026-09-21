@@ -3,10 +3,10 @@
 Regression tests read the LOCAL baseline through environment variables and skip
 cleanly when they are unset:
 
-    CF_BASELINE_CORPUS=/Users/jack/Desktop/tao-diff-run      2,672 v1 findings
-    CF_BASELINE_DIFF=/Users/jack/Desktop/tao-differential    queue/pairs/ledgers
-    CF_BOOK_TXT=/Users/jack/Desktop/tao-differential/book.official.txt
-    CF_TEND=/Users/jack/Desktop/tend                         for tend-task verify
+    CF_BASELINE_CORPUS=<the v1 findings corpus>       2,672 v1 findings
+    CF_BASELINE_DIFF=<the v1 differential directory>  queue/pairs/ledgers
+    CF_BOOK_TXT=<the book's extracted text>
+    CF_TEND=<a tend checkout>                         for tend-task verify
 
     python3 -m unittest discover -s tests -v
 
@@ -143,7 +143,7 @@ class TestRenderer(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
-# presets == the recorded diff of the five ffmain roots
+# presets == the recorded diff of the v1 campaign's five roots
 # --------------------------------------------------------------------------- #
 class TestPresets(unittest.TestCase):
     def test_five_original_presets_match_PRESETS_md(self):

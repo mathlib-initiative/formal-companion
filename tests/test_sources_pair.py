@@ -23,10 +23,10 @@ They also pin the multi-source model's own promises
 Everything reads the local baseline through environment variables and SKIPS
 cleanly when they are unset:
 
-    CF_BOOK_TXT       = ~/Desktop/tao-differential/book.official.txt
-    CF_BASELINE_DIFF  = ~/Desktop/tao-differential        (ours/teorth/adam.jsonl)
-    CF_BASELINE_CORPUS= ~/Desktop/tao-diff-run            (data/*.jsonl)
-    CF_MT             = ~/Desktop/measure_theory          (the pinned PDF)
+    CF_BOOK_TXT       = <the book's extracted text>
+    CF_BASELINE_DIFF  = <the v1 differential directory>   (ours/teorth/adam.jsonl)
+    CF_BASELINE_CORPUS= <the v1 findings corpus>           (data/*.jsonl)
+    CF_MT             = <an attribution-table companion>   (the pinned PDF)
     CF_TEST_TMP       = directory for scratch output (default: a temp dir)
 
 Run:  python3 -m unittest tests.test_sources_pair -v

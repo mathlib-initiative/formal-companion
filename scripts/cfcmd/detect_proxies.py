@@ -1,8 +1,9 @@
 """``cf detect-proxies <name> [--lean]`` -- stage 8, proxy detection.
 
 New code (the CLI wrapper); the analysis lives in ``scripts/detect/`` and is
-ported from /Users/jack/Desktop/tao-differential/adam-detector/ (README.md,
-analyze2.py, DumpDeps.lean) and from transcript b174aa13 L6099/L6145.
+ported from the v1 campaign's proxy detector (its README, ``analyze2.py`` and
+``DumpDeps.lean``) and from that campaign's def-coverage cells.  None of them
+travel with this repo; ``docs/design/stage_map.md`` §4 stage 8 is the spec.
 
 Two tiers:
 

@@ -1,16 +1,17 @@
 """cf init -- create a workspace: N companions, M sources.
 
-New code (docs/design/archive/multi-source-model.md S7.1).  The workspace directory is
-the ~/Desktop/tao-differential role: a local git repo with NO remote holding the
-source text, the statement tables, the findings corpus and the ledgers.  The
-skill repo holds code, templates and docs only; workspace data never enters it.
+New code (docs/design/archive/multi-source-model.md S7.1).  The workspace directory
+plays the role the v1 campaign's own directory did: a local git repo with NO
+remote holding the source text, the statement tables, the findings corpus and
+the ledgers.  The skill repo holds code, templates and docs only; workspace data
+never enters it.
 
 **It takes no source flags.**  There is nothing to say yet: a source arrives
 with `cf onboard <repo>`, which discovers it from the repository, fingerprints
 the PDF and infers the offset, the kinds and the errata page (R2).
 
-    cf init ~/Desktop/tao-workspace
-    cf onboard ~/Desktop/tao-measure-lean
+    cf init <workspace>
+    cf onboard <path to a companion repo>
 """
 from __future__ import annotations
 
@@ -226,7 +227,7 @@ def _refuse_unsafe_location(root: Path) -> None:
     if root == skill or skill in root.parents:
         raise CfError(f"refusing to create a workspace inside the skill repo ({skill})",
                       hint="the skill repo holds code, templates and docs only; "
-                           "put the workspace somewhere like ~/Desktop/<name>-workspace")
+                           "put the workspace somewhere like ~/<name>-workspace")
     if (root / ".lake").exists() or (root / "lakefile.toml").exists() or (root / "lakefile.lean").exists():
         raise CfError(f"{root} looks like a Lean companion repo",
                       hint="the workspace directory lives outside every companion repo")
@@ -376,11 +377,12 @@ def _install_hook(repo: Path) -> None:
         # This used to be log.detail, i.e. invisible at default verbosity, and
         # `cf init` still exited 0: the workspace looked guarded while somebody
         # else's hook was the only thing on the push path.
-        log.warn(f"{hook} already exists and is NOT the cf guard; left untouched -- this "
-                 f"workspace has no cf pre-push reminder")
-        log.info(f"     inspect it, then either add the same check to it yourself, or move "
-                 f"it aside and re-run `cf init {repo}` (which installs the guard when the "
-                 f"path is free)")
+        log.warn_block(
+            f"{hook} already exists and is NOT the cf guard; left untouched -- this "
+            f"workspace has no cf pre-push reminder",
+            [f"     inspect it, then either add the same check to it yourself, or move "
+             f"it aside and re-run `cf init {repo}` (which installs the guard when the "
+             f"path is free)"])
         return
     if state == "cf":
         log.detail(f"{hook} is already the cf guard; left untouched")

@@ -1,9 +1,9 @@
 """source text -> text.txt + pages/ + meta.json + items.json, for ONE source.
 
-Ported from: recovered/b174aa13_L5589_Bash.txt (``pdftotext -layout`` + the
-``\\f`` page count), recovered/b174aa13_L6099_Bash.txt (the Definition heading
-regex) and recovered/b174aa13_L6145_Bash.txt (the numbered-item regex over the
-eight Chapter-1 kinds).  Generalised per docs/design/stage_map.md Stage 1:
+Ported from: the v1 campaign's three source-preparation cells (``pdftotext
+-layout`` + the ``\\f`` page count; the Definition heading regex; the
+numbered-item regex over the eight Chapter-1 kinds), none of them in this repo.
+Generalised per docs/design/stage_map.md Stage 1:
 
 * the heading regex is whitespace-tolerant -- the originals used a literal
   single space and lost ``Exercise    1.3.19`` (410 items instead of 411);

@@ -52,6 +52,23 @@ def warn(msg: str) -> None:
         print(_color("warn", f"warn {msg}", sys.stderr), file=sys.stderr)
 
 
+def warn_block(header: str, lines: Iterable[str] = ()) -> None:
+    """One warning with continuation lines, on ONE stream, in ONE write.
+
+    A warning whose evidence was printed with `info` arrived split in two,
+    because `warn` writes to stderr and `info` to stdout: `cf onboard <repo>
+    1>out 2>err` put "32 item tags rejected by the strict grammar; first few:"
+    alone in `err` and the five rejected tags alone in `out`, sixty lines from
+    the sentence that explained them -- and under `2>&1` stdout's block
+    buffering reordered the two. The evidence of a warning belongs to the
+    warning, so it goes to stderr with it; the caller indents the continuation
+    lines as it wants them.
+    """
+    if _LEVEL >= 1:
+        body = "\n".join([f"warn {header}", *lines])
+        print(_color("warn", body, sys.stderr), file=sys.stderr)
+
+
 def error(msg: str) -> None:
     print(_color("error", msg, sys.stderr), file=sys.stderr)
 

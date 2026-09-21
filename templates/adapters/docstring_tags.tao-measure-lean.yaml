@@ -9,12 +9,14 @@
 #     def IsInterval (I : Set ℝ) : Prop := ...
 #     /-- `In-text, book p. 24` (subdivision observation ...). -/
 #
-# Measured against tao-measure-lean at 250b856: 35 files, 1,544 declarations,
+# Measured against a real docstring-tag repo (tao-measure-lean at 250b856; the
+# numbers are kept real because a synthetic count teaches nothing about
+# calibrating an adapter): 35 files, 1,544 declarations,
 # 1,169 tagged (375 untagged infrastructure, 130 private), 1,168 rows over 519
 # items, 516 sorries (508 exercise, 8 gap), 561 own page anchors, 1 crossref
 # anchor refused, 1 tag refused by the strict item grammar.
 name: ours
-repo: /Users/jack/Desktop/tao-measure-lean
+repo: <path to the companion repo>
 adapter: docstring_tags
 granularity: item
 
@@ -77,6 +79,6 @@ sorry:
 key_flag: all
 
 write_policy: read_only
-owner: jack
+owner: external
 validators: []
 key_files: []

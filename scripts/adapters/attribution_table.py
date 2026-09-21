@@ -1,8 +1,7 @@
 """Adapter: a machine-readable item -> declaration attribution table.
 
-Ported from the ``adam.jsonl`` generator,
-  scratchpad/recovered/11323fe3_L3102_Bash.txt
-which joined measure_theory's overlay artifacts:
+Ported from the ``adam.jsonl`` generator of the v1 campaign (a one-off cell, not
+in this repo), which joined measure_theory's overlay artifacts:
 
     pdf-overlay/data/geometry-batch-{a,b,c,d}.json   region -> item label + PDF page
     pdf-overlay/data/target-refinement.json          region -> formalization ids

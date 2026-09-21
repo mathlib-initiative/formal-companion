@@ -1,12 +1,12 @@
 """N-way statement differential for ONE source: pairs.jsonl, coverage.md, ...
 
-Ported from: /Users/jack/Desktop/tao-differential/compare.py (the three-way Tao
-differential; ``norm()`` L13-20, the coverage table L30-45, the pairs builder
-L46-52).  Generalised per docs/design/stage_map.md Stage 3 and
+Ported from: the v1 campaign's ``compare.py`` (the three-way Tao differential:
+``norm()``, the coverage table, the pairs builder), which is not in this repo.
+Generalised per docs/design/stage_map.md Stage 3 and
 docs/design/archive/multi-source-model.md S6:
 
 * N companions read from ``<workspace>/companions/<name>/statements.jsonl``
-  instead of the hard-coded ``('ours','teorth','adam')`` at L22;
+  instead of that script's hard-coded ``('ours','teorth','adam')``;
 * ONE SOURCE AT A TIME.  A workspace holds M sources, and a differential is
   possible exactly where two companions' source lists overlap (R1) -- so every
   artifact written here carries ``source_id`` and ``source_sha`` and lands under

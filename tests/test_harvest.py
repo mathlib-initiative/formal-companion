@@ -3,7 +3,7 @@
 The numbers asserted here are not invented: they are what the baseline corpus
 at ``$CF_BASELINE_CORPUS`` (the five runs of the 2026-09 audit, 2,672 findings
 files) actually contains, and they are the numbers
-tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md publishes -- 72 rows over 40
+tao-measure-lean's own OPEN_FAITHFULNESS_FINDINGS.md publishes -- 72 rows over 40
 items for ``ours``, of which 16 are CONTENT/VACUITY, 1 a suspected erratum, 1
 coverage-only and 22 pagination.  If a change to tally.py moves any of them, it
 has changed what the audit says, which is exactly the event these tests exist to
@@ -11,7 +11,7 @@ catch.
 
 Every test that needs the baseline skips cleanly when its env var is unset:
 
-    CF_BASELINE_CORPUS=~/Desktop/tao-diff-run python3 -m unittest discover tests
+    CF_BASELINE_CORPUS=<the v1 findings corpus> python3 -m unittest discover tests
 
 ``CF_TEST_TMP`` (optional) puts the scratch directories somewhere other than the
 system temp dir.
@@ -508,7 +508,7 @@ class TestReceipt(unittest.TestCase):
         self.assertTrue(any("NOT FOUND" in p for p in bad["problems"]))
 
     def test_remote_source_refuses_without_execute(self):
-        source = harvest_mod.parse_source("ffmain:/home/jack/tao-attack-hunt/findings")
+        source = harvest_mod.parse_source("examplebox:/srv/runs/tao-attack-hunt/findings")
         self.assertEqual(source["kind"], "remote")
         with self.assertRaises(Exception):
             harvest_mod.harvest(run_id="run-1", source=source, dest=self.dest, execute=False)
@@ -1163,7 +1163,7 @@ class TestRunPlanner(unittest.TestCase):
 
         self.assertEqual(manifest.resolve_host(self.workspace, "testbox")["ssh"], "tester@testbox")
         with self.assertRaises(Exception):
-            manifest.resolve_host(self.workspace, "ffmain")
+            manifest.resolve_host(self.workspace, "otherbox")
 
     def test_sources_and_book_are_excluded_by_default(self):
         from run import manifest
@@ -1261,7 +1261,7 @@ class TestRunPlanner(unittest.TestCase):
         with self.assertRaises(Exception):
             manifest.check_planned_host({"host": {"name": "local"}}, "testbox")
         with self.assertRaises(Exception):
-            manifest.check_planned_host({"host": {"name": "ffmain"}}, "testbox")
+            manifest.check_planned_host({"host": {"name": "otherbox"}}, "testbox")
 
     def test_staged_gate_beats_the_skill_copy(self):
         """`cf plan-run` stages the gate in tend-root/gate/ with the run's gate.json."""

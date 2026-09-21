@@ -148,9 +148,9 @@ and only the second one is an adjudication.
 
 ## 2. Mapping tables from the five legacy vocabularies
 
-### 2.1 Batch-1 Workflow findings (`~/Desktop/tao-differential/harvest.partial.json`, `findings.*.jsonl`)
+### 2.1 Batch-1 Workflow findings (the v1 differential's `harvest.partial.json`, `findings.*.jsonl`)
 
-Source: the batch-1 fleet schema (recovered transcript `b174aa13` L5600) and the routed files.
+Source: the batch-1 fleet schema and the routed files of the v1 campaign.
 
 | legacy field | legacy values | canonical |
 |---|---|---|
@@ -181,7 +181,7 @@ judged against.
 | `unfaithful_decls` bare names `repo:decl` | unchanged, plus `decl_qualified` where the statement table can supply the namespace. The `repo:` half is this campaign's vocabulary (`ours`, `teorth`, `adam`); `convert_v1 --repo-map ours=<companion id>` maps it onto the importing workspace's companions, because the union key holds the repo — see `docs/design/archive/multi-source-model.md` §6.1 |
 | task-id file name (`exercise-1_1_1.json` / `exercise-1-1-17.json`) | `run_id` + `item`; the converter accepts dash **and** underscore slugs |
 
-### 2.3 Challenge workflow (`challenge-batch1-findings-wf_c3f0e5d0-d65.js`)
+### 2.3 Challenge workflow (the v1 campaign's challenge-batch1-findings run)
 
 | legacy | canonical |
 |---|---|
@@ -194,7 +194,7 @@ judged against.
 | `survives_all` (all refuters agree) | `contested: false`; any dissent → `contested: true` with the votes in `dissent[]` |
 | linkage by `item + concept.slice(0,40)` | `finding_id` (§3) |
 
-### 2.4 Adjudication ledger (`adam-faithfulness-adjudication-wf_60a87e92-dd5.js`, `accepted/refuted.adam.jsonl`)
+### 2.4 Adjudication ledger (the v1 adam-faithfulness-adjudication run, `accepted/refuted.adam.jsonl`)
 
 Finding verdicts already match §1.4. The workflow's two other schemas map into finding kinds:
 
@@ -218,9 +218,8 @@ field; it is advisory and no gate reads it.
 
 ### 2.5 Viewer file (`measure-theory/faithfulness-verdicts` v1)
 
-Ledger → viewer, as implemented by both generators
-(`~/Desktop/notes/camera-ready-2026-09-08-tools/make_verdicts.py`,
-`~/Desktop/tao-differential/adam-detector/make_verdicts.py`):
+Ledger → viewer, as implemented by both of the v1 campaign's generators (the
+camera-ready tools' `make_verdicts.py` and the proxy detector's copy of it):
 
 | ledger verdict | viewer verdict |
 |---|---|
