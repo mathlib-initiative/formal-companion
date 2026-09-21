@@ -161,8 +161,12 @@ cf tally --union --agreed
 # 5b. findings produced before this skill existed
 #     --repo-map says which companion their repo names are: the union key holds
 #     the repo, so an unmapped import joins nothing this workspace runs
-cf import-corpus --run-id findings-hunt --from <a directory of findings> \
+cf import-corpus --run-id findings-diff --from <a directory of findings> \
     --preset differential-legacy --repo-map ours=tao-measure-lean
+#     an attack corpus goes in under its own preset -- `--mode attack --preset
+#     attack-legacy` (tests/e2e/multisource.sh) -- because the two legacy presets
+#     gate different things: differential-legacy keeps PAGE_ANCHOR in its kinds,
+#     attack-legacy carries the witness convert_v1 lifted out of `reasoning`
 # batch-1 rows were judged against the 2011 draft, so they say so:
 cf import-corpus --run-id batch1 --from <a directory of findings> \
     --preset differential-legacy \

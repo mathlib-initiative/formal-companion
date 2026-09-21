@@ -1059,12 +1059,20 @@ class TestTheDocsStateTheGrammarThatIsImplemented(unittest.TestCase):
         for name in self.DOCS:
             self.assertNotIn("sources add <pdf", self._read(name), name)
 
-    def test_the_numbering_and_completeness_refusals_are_in_the_binding_spec(self):
-        spec = self._read("docs/design/archive/multi-source-model.md")
-        self.assertIn("### 5.5 Numbering depth from headings", spec)
-        self.assertIn("### 5.6 Item completeness", spec)
+    def test_the_numbering_and_completeness_refusals_are_in_the_current_spec(self):
+        """These are two live refusals, so they are pinned in the live document.
+
+        `docs/design/archive/multi-source-model.md` also describes them, and its
+        banner says it is historical: a test that asserted current behaviour from
+        the archive would keep passing after the code and the current spec moved
+        on together.  `docs/design/stage_map.md` §3 is where both now live.
+        """
+        spec = self._read("docs/design/stage_map.md")
+        self.assertIn("**The numbering depth**", spec)
+        self.assertIn("**Item completeness**", spec)
         self.assertIn("MIN_ITEM_COMPLETENESS", spec)
-        self.assertIn("infer_numbering", spec)
+        self.assertIn("cflib.inference.infer_numbering", spec)
+        self.assertIn("MIN_DEPTH_SHARE", spec)
         for field in ("source_format", "pagination", "completeness_ok", "completeness_method",
                       "numbering_method"):
             self.assertIn(field, spec, field)

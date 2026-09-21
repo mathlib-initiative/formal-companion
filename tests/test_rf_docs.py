@@ -19,8 +19,13 @@ So this module parses the documents and asks the real argparse tree:
 * every command the CLI registers has a row in SKILL.md's command index, and
   every ``sources <sub>`` row of that index parses;
 * every repo-relative path a document cites resolves on disk, every relative
-  markdown link resolves, and no ``design/…`` citation in a code docstring
-  points at a document that is not in the tree.
+  markdown link resolves, no document cites another document of this repo by line
+  number, and no ``design/…`` citation in a code docstring points at a document
+  that is not in the tree -- nor quotes a sentence the cited document does not
+  carry, which is the stale citation made checkable rather than fixed;
+* the same command rule over the ``cf <word>`` literals in docstrings and hints
+  under ``scripts/``, ``workflows/`` and ``templates/``: a killed
+  ``cf challenge`` was recoverable only under its real spelling.
 
 The point is drift.  This repo is meant to run over many books, so the index,
 the flags and the layout will all move again -- and a document is what a fresh
@@ -30,6 +35,7 @@ missing one.
 from __future__ import annotations
 
 import argparse
+import ast
 import re
 import sys
 import unittest
@@ -259,6 +265,43 @@ class TestEveryDocumentedCommandExists(unittest.TestCase):
                                           f"{name}: {flag} is no flag of any command ({span})")
 
 
+#: `cf ` is also how the repo's prose starts a sentence about the CLI ("cf
+#: cannot", "cf needs"), and `curate` / `guard` / `pre-push` are nouns, not
+#: commands.  Everything outside this list is read as naming a command.
+_CF_PROSE_WORDS = frozenset({
+    "as", "can", "cannot", "command", "curate", "guard", "had", "needs",
+    "never", "on", "one", "pre-push", "subcommands", "with", "writes", "wrote",
+})
+_CF_WORD = re.compile(r"(?<![\w-])cf ([a-z][a-z0-9-]*)")
+
+
+class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
+    """The docs check reads .md files; `cf challenge` sat in a docstring.
+
+    `scripts/harvest/harvest_journal.py` told a reader that a killed
+    ``cf challenge`` run was the most expensive thing the skill launches. There
+    is no such command -- the spelling is ``cf adjudicate --challenge-only`` --
+    and an operator recovering a killed run is the last person who should have to
+    guess. Docstrings and error hints are read by the same people the documents
+    are written for, so they are held to the same rule.
+    """
+
+    def test_every_cf_command_in_a_code_literal_exists(self):
+        files = (sorted(SKILL.glob("scripts/**/*.py")) + sorted(SKILL.glob("workflows/*.js"))
+                 + [p for p in sorted(SKILL.glob("templates/*")) if p.is_file()])
+        for path in files:
+            text = path.read_text(encoding="utf-8", errors="replace")
+            for word in sorted(set(_CF_WORD.findall(text))):
+                if word in COMMANDS or word in _CF_PROSE_WORDS:
+                    continue
+                with self.subTest(file=str(path.relative_to(SKILL)), command=word):
+                    context = _blocks_naming(text, f"cf {word}")
+                    self.assertTrue(any(w in context for w in ABSENT_LABELS),
+                                    f"{path.relative_to(SKILL)} names `cf {word}`, "
+                                    f"which is not a command, and nothing beside it "
+                                    f"says so")
+
+
 class TestTheCommandIndexIsComplete(unittest.TestCase):
     """A command absent from the index is a command a fresh session never runs."""
 
@@ -330,6 +373,27 @@ class TestEveryCitedRepoPathExists(unittest.TestCase):
                     self.assertTrue(resolves(token),
                                     f"{name} cites {token}, which is not in this repo")
 
+    def test_no_document_cites_another_document_by_line_number(self):
+        """`traps.md` G5 cited "`CLAUDE.md` lines 69-81" and the same pass rewrote it.
+
+        A line range into a file of this repo is a citation with a half-life.
+        Section numbers and headings survive an edit; line numbers are wrong the
+        first time anyone reflows a paragraph, and a reader who follows one lands
+        on an unrelated bullet with no sign that anything moved.  A line range
+        into another tree (a companion's `CLAUDE.md`) is a different thing: this
+        repo cannot check it either way, and it is evidence, not a pointer.
+        """
+        cite = re.compile(r"`([A-Za-z0-9_./-]+\.(?:md|py|sh|yaml|json))`"
+                          r"[^`\n]{0,4}\b(?:lines?|L)\s*\d+")
+        for name in DOCS:
+            for target in cite.findall(read(name)):
+                if not (target.startswith(REPO_ROOTS) or target in REPO_FILES):
+                    continue                     # another tree's file, not ours
+                with self.subTest(doc=name, cited=target):
+                    self.assertFalse((SKILL / target).exists(),
+                                     f"{name} cites {target} by line number; cite a "
+                                     f"section or a heading, which survives an edit")
+
     def test_relative_markdown_links_resolve(self):
         for name in DOCS:
             base = (SKILL / name).parent
@@ -352,6 +416,116 @@ class TestEveryCitedRepoPathExists(unittest.TestCase):
                     broken.append(f"{path.relative_to(SKILL)}: {token}")
         self.assertEqual(sorted(broken), [],
                          "design documents cited but absent: " + "; ".join(sorted(broken)))
+
+
+# ---------------------------------------------------------------------------
+# a quotation is a stronger claim than a path
+# ---------------------------------------------------------------------------
+
+#: a quoted span long enough to be a claim rather than a field name
+_QUOTED = re.compile(r'"([^"]{20,})"', re.S)
+#: the elision a docstring writes when it quotes across a clause
+_ELIDED = re.compile(r"\s*(?:\.\.\.|…)\s*")
+#: a bullet starts a new claim even with no blank line before it
+_BULLET = re.compile(r"(?m)^\s*[*-]\s")
+#: How far after the citation a quotation may open and still be read as quoting
+#: it.  Only a quote the citation INTRODUCES is checked -- "Stage 8: …",
+#: "Stage 8 asks for -- …".  A docstring also quotes specimens (a book passage in
+#: `adapters/itemtag.py`, a prose lesson in `cflib/state.py`) in the same
+#: sentence as a citation, and those are not claims about the cited document.
+_ATTRIBUTION_WINDOW = 70
+
+
+def _flat(text: str) -> str:
+    """Comparable prose: no markup, one space between words, case-folded."""
+    return re.sub(r"\s+", " ", text.replace("`", "").replace("*", "")).strip().lower()
+
+
+def docstring_claims(path: Path) -> list[str]:
+    """Every docstring paragraph (bullets split apart) in one module.
+
+    A paragraph, not a whole docstring: a docstring routinely cites one document
+    and quotes another, and the check is per claim.
+    """
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except SyntaxError:                                      # pragma: no cover
+        return []
+    claims: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
+                                 ast.AsyncFunctionDef)):
+            continue
+        doc = ast.get_docstring(node, clean=True)
+        if not doc:
+            continue
+        for block in re.split(r"\n\s*\n", doc):
+            claims.extend(part for part in _BULLET.split(block) if part.strip())
+    return claims
+
+
+def introduced_quotes(claim: str, cited: str) -> list[str]:
+    """The quotations ``cited`` introduces in this docstring paragraph."""
+    ends = [m.end() for m in re.finditer(re.escape(cited), claim)]
+    if not ends:
+        return []
+    out: list[str] = []
+    for match in _QUOTED.finditer(claim):
+        if any(0 <= match.start() - end <= _ATTRIBUTION_WINDOW for end in ends):
+            out.append(match.group(1))
+    return out
+
+
+class TestAQuotationIsInTheDocumentItCites(unittest.TestCase):
+    """The repair for the stale citations made seven of them quotations.
+
+    Repointing `docs/design/stage_map.md` at a file that exists is only half the
+    job: four of the repointed docstrings quote a sentence and attribute it to a
+    stage of that file, so a reader can now go and check -- and finding it absent
+    is worse than the unverifiable citation it replaced.  `resolves()` cannot see
+    this, because the path does resolve.
+    """
+
+    CITED = "docs/design/stage_map.md"
+
+    def test_every_sentence_quoted_from_the_stage_map_is_in_the_stage_map(self):
+        target = _flat(read(self.CITED))
+        checked = 0
+        for path in sorted(SKILL.glob("scripts/**/*.py")):
+            for claim in docstring_claims(path):
+                for quote in introduced_quotes(claim, self.CITED):
+                    for fragment in _ELIDED.split(_flat(quote)):
+                        if len(fragment) < 20:
+                            continue
+                        checked += 1
+                        with self.subTest(module=str(path.relative_to(SKILL))):
+                            self.assertIn(fragment, target,
+                                          f"{path.relative_to(SKILL)} quotes "
+                                          f"{fragment!r} and attributes it to "
+                                          f"{self.CITED}, which does not say it")
+        # the check is only worth having while the citations it reads are there.
+        self.assertGreaterEqual(checked, 6, "no stage-map quotation was checked: "
+                                            "the attribution window or the "
+                                            "docstring wording moved")
+
+    def test_the_three_stage_gates_the_docstrings_lean_on_are_written_down(self):
+        """Stage 7's ledger gate, Stage 8's corpus join, Stage 9's routing rule."""
+        stages = _flat(read(self.CITED))
+        for sentence in (
+                "joins the corpus and the ledger like any other finding",
+                "routing is on the unfaithful_decls prefix and nothing else",
+                "the run refuses while unclassified_modules is non-empty",
+                "min_recovery_chars",
+        ):
+            with self.subTest(sentence=sentence):
+                self.assertIn(sentence, stages)
+
+    def test_the_statement_row_field_list_is_cited_where_it_lives(self):
+        """`scripts/adapters/base.py` sent a reader to a file with no field list."""
+        head = _flat("\n".join(
+            (SKILL / "scripts/adapters/base.py").read_text(encoding="utf-8").splitlines()[:6]))
+        self.assertIn("references/findings-schema-v2.md", head)
+        self.assertIn("statements.jsonl", _flat(read("references/findings-schema-v2.md")))
 
 
 class TestTheArchivedSpecSaysSo(unittest.TestCase):
@@ -388,12 +562,24 @@ class TestTheEntryPointStatesItsPreconditions(unittest.TestCase):
                                          "move detail into references/")
 
     def test_the_default_program_gates_the_corpus(self):
-        """Following the program literally must not produce an ungated corpus."""
+        """Following the program literally must not produce an ungated corpus.
+
+        Asserting the word "gate" is no guard: step 5's `mechanical` gate already
+        supplied it while step 8 still read `cf harvest <run-id>` with the
+        findings gate opt-in.  So this asserts the two things that make the
+        program safe to follow -- that the gate is the default, and that the
+        escape is named -- and not the vocabulary around them.
+        """
         program = read("SKILL.md")
         start = program.index("## The default program")
         end = program.index("## Command index")
-        self.assertRegex(program[start:end], r"gate",
-                         "the default program never mentions the findings gate")
+        section = program[start:end]
+        self.assertRegex(section, r"gate\*{0,2} by default",
+                         "the default program does not say the findings gate is "
+                         "the default; a model following it writes an ungated corpus")
+        self.assertIn("--no-gate", section,
+                      "the program gates but never names the escape, so a reader "
+                      "who must skip it invents a way")
 
     def test_the_workflow_stages_are_named_somewhere_in_the_skill(self):
         text = read("SKILL.md")
@@ -423,6 +609,8 @@ class TestTheEntryPointStatesItsPreconditions(unittest.TestCase):
 # the registry: the one file a contributor writes by hand
 # ---------------------------------------------------------------------------
 
+import contextlib                                             # noqa: E402
+import io                                                     # noqa: E402
 import os                                                     # noqa: E402
 import shutil                                                 # noqa: E402
 import tempfile                                               # noqa: E402
@@ -492,6 +680,20 @@ class TestTheRegistryIsCheckedMechanically(unittest.TestCase):
         finally:
             os.chdir(cwd)
 
+    def test_with_the_overlay_it_says_what_it_checked(self):
+        """The line reported "2 shipped" just after passing a third edition."""
+        root = _workspace(self)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertEqual(
+                _cf("--workspace", str(root), "sources", "validate-registry", "--overlay"), 0)
+        line = [ln for ln in out.getvalue().splitlines() if "registry ok" in ln]
+        self.assertTrue(line, out.getvalue())
+        shipped = len(__import__("cflib.registry", fromlist=["Registry"])
+                      .Registry.load(None).entries)
+        self.assertIn(f"{shipped + 1} edition(s)", line[0])
+        self.assertIn("1 touched by the overlay", line[0])
+
     def test_a_passage_of_the_book_in_an_entry_is_refused(self):
         path = _scratch(self) / "sources.yaml"
         path.write_text(
@@ -518,6 +720,29 @@ class TestTheRegistryIsCheckedMechanically(unittest.TestCase):
         self.assertTrue(any("second sentence" in p for p in metadata_problems(path)),
                         metadata_problems(path))
 
+    def test_an_author_initial_and_an_edition_statement_are_metadata(self):
+        """The shapes the second-sentence check must never read as prose.
+
+        An initial (``John B. Conway``), a volume numeral (``Analysis I. Fourth
+        edition``), an abbreviation (``2nd ed. Revised``) and a title with the
+        edition after the stop are what these fields are *for*, and the first
+        draft of the check refused all of them -- so a legitimate edition
+        contribution failed `cf sources validate-registry`, the command
+        CONTRIBUTING.md, POLICY.md and registry/README.md all tell a contributor
+        to run before opening the PR, and CI runs on every push.
+        """
+        path = _scratch(self) / "sources.yaml"
+        path.write_text(
+            "version: 1\n"
+            "sources:\n"
+            "  a-book-2e:\n"
+            '    title: "A Course in Functional Analysis. Second edition"\n'
+            '    authors: ["John B. Conway", "E. T. Whittaker"]\n'
+            '    edition: "2nd ed. Revised"\n'
+            "    aliases:\n"
+            '      titles: ["Analysis I. Fourth edition"]\n', encoding="utf-8")
+        self.assertEqual(metadata_problems(path), [])
+
     def test_the_free_text_fields_may_hold_a_sentence(self):
         path = _scratch(self) / "sources.yaml"
         path.write_text(
@@ -531,13 +756,33 @@ class TestTheRegistryIsCheckedMechanically(unittest.TestCase):
         self.assertEqual([p for p in metadata_problems(path) if "sentence" in p], [])
 
 
-class TestTheTriggerEvalsAreWellFormed(unittest.TestCase):
-    """Data, not a test: nothing in tests/ may call a model.
+class TestTheSuiteCallsNoModel(unittest.TestCase):
+    """The eval prompts are DATA: `tests/` stays hermetic and free.
 
-    The eval set is what measures the one thing 1,400 unit tests cannot -- does
-    the skill fire when it should, and stay out of the way when it should not.
-    Checking its shape here is free and catches the failure that wastes a real
-    eval run: a malformed set that only fails after N model calls.
+    Its own TestCase with no fixture on purpose.  This invariant has nothing to
+    do with `evals/trigger.json`; while it lived in the class below, deleting or
+    renaming that file broke it too, and the failure blamed the eval set.
+    """
+
+    def test_no_test_module_calls_a_model(self):
+        for path in sorted(SKILL.glob("tests/*.py")):
+            # this module is the one place those strings are allowed: it names
+            # them in order to look for them.
+            if path.name == Path(__file__).name:
+                continue
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(module=path.name):
+                for needle in ("claude -p", "run_eval.py", "anthropic"):
+                    self.assertNotIn(needle, text,
+                                     f"{path.name} looks like it calls a model")
+
+
+class TestTheTriggerEvalsAreWellFormed(unittest.TestCase):
+    """The eval set measures the one thing 1,400 unit tests cannot.
+
+    Does the skill fire when it should, and stay out of the way when it should
+    not.  Checking its shape here is free and catches the failure that wastes a
+    real eval run: a malformed set that only fails after N model calls.
     """
 
     def setUp(self):
@@ -562,18 +807,6 @@ class TestTheTriggerEvalsAreWellFormed(unittest.TestCase):
         self.assertGreaterEqual(len(positives), 2)
         self.assertGreaterEqual(len(negatives), 2, "the negatives are the half that "
                                                    "measures over-triggering")
-
-    def test_no_test_module_calls_a_model(self):
-        for path in sorted(SKILL.glob("tests/*.py")):
-            # this module is the one place those strings are allowed: it names
-            # them in order to look for them.
-            if path.name == Path(__file__).name:
-                continue
-            text = path.read_text(encoding="utf-8")
-            with self.subTest(module=path.name):
-                for needle in ("claude -p", "run_eval.py", "anthropic"):
-                    self.assertNotIn(needle, text,
-                                     f"{path.name} looks like it calls a model")
 
 
 class TestPromoteWritesAPatchAndNotTheShippedRegistry(unittest.TestCase):
