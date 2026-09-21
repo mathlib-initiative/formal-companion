@@ -14,7 +14,12 @@ Four outputs, all mechanical:
    source and per chapter: items in the source, items in the audited scope, items
    in the differential's task universe, items paired by two or more companions,
    items a run examined, of those the ones whose run passed the quote gate, items
-   that carried a finding, and items in scope no run ever looked at.
+   that carried a finding, and items in scope no run ever looked at.  Beside them
+   the documents those figures do NOT cover, because a figure that silently
+   excludes a counted document is the failure this section exists to prevent:
+   items examined outside the audited chapters (``cf tally`` counts them and
+   section 0 does not) and corpus documents that could not be read at all, which
+   make every figure above a lower bound.
 3. ``reports/unexamined.<source_id>.json``, one per source -- the items in scope
    that no run examined, BY NAME.  A count can say "381 of 411"; only the names
    say which item was missed, and the handoff points its reader at this file.
@@ -93,6 +98,17 @@ def run(args) -> int:
     # coverage.json, so the reader had to guess that the file existed at all.
     for path in report["coverage_files"]:
         print("wrote %s" % path)
+    # Said on the terminal as well as in the document: `cf tally` REFUSES a
+    # corpus holding one of these (exit 2, "makes every number a lower bound")
+    # and this command exits 0, so without a line here the same corpus is
+    # complete to one command and unreadable to the other.
+    unreadable = _unreadable(ctx["_coverage"])
+    if unreadable:
+        print("  %d corpus document(s) could not be read, so every coverage figure is a "
+              "LOWER BOUND:" % len(unreadable))
+        for name in unreadable[:12]:
+            print("    %s" % name)
+        print("    `cf tally --run <run-id>` refuses them by name and says why")
     if report["todos"]:
         print("  %d figure(s) have no artifact behind them yet:" % len(report["todos"]))
         for t in report["todos"][:12]:
@@ -123,6 +139,14 @@ def run(args) -> int:
           % (os.path.join(_skill_root(), VERIFY_WORKFLOW), out))
     print("  then fix every WRONG claim before the report goes anywhere.")
     return 0
+
+
+def _unreadable(coverage: dict) -> list:
+    """Every corpus document `cf report` could not parse, per source and without one."""
+    names = set(coverage.get("unreadable_documents") or ())
+    for src in coverage.get("sources") or []:
+        names.update(src.get("unreadable_documents") or ())
+    return sorted(names)
 
 
 def _skill_root() -> str:

@@ -23,6 +23,30 @@ Six findings, each reproduced against the code before it was changed:
 * FR#26 -- a gate that RAN and rejected was indistinguishable from one that
   passed: `cf tally`, the authority every number comes from, said nothing.
 
+and the four the confirmation pass found while attacking those fixes:
+
+* FR#1 again, on the two nearest variants -- a manuscript whose labels need the
+  source's OWN numbering to parse at all, and one whose workspace pins chapters.
+  The first restored "0 of 0 item(s) in scope examined" on a fully examined
+  source; the second dropped every planned item outside the pin, findings and
+  all, although `cf plan-run` never narrows a manuscript's task universe.
+* a corpus document `cf tally` REFUSES to read (exit 2, "every number a lower
+  bound") was skipped here without a word, so `cf report` published the lower
+  bound as a figure and called the item behind it never examined.
+* an examined item outside the audited chapters vanished from every section-0
+  figure INCLUDING ``items_with_findings``, with nothing in the document saying
+  so, while section 3 counted its rows.
+* the per-chapter "in task universe" cell printed a hard 0 for a figure nothing
+  had computed, where the total row printed "—".
+
+and four narrow shapes the review of those fixes reproduced, each one a place
+where a sentence above was said wrongly or not at all: the line summarising
+section 0 described both kinds of excluded document as one and claimed §3
+counts a document `cf tally` refuses; the lower-bound sentence went unsaid in
+every shape whose note ends early; two of the three name lists were uncapped
+where the third caps at eight; and a reconciliation that names a task universe
+it cannot itemise still printed 0 in every per-chapter row.
+
 The book, the companion and the findings below are invented: no source text and
 no companion's Lean lives in this repo (CLAUDE.md S1).  Every test here runs
 without the private baselines.
@@ -54,6 +78,8 @@ SKILL = HERE.parent
 sys.path.insert(0, str(SKILL / "scripts"))
 
 import cf as cf_main  # noqa: E402
+from cflib import items as cf_items  # noqa: E402
+from cflib.errors import CfError  # noqa: E402
 from harvest import harvest as harvest_mod  # noqa: E402
 from harvest import tally as tally_mod  # noqa: E402
 from ledger import compat  # noqa: E402
@@ -188,22 +214,36 @@ class Workspace(unittest.TestCase):
 MANUSCRIPT_ITEMS = ["Definition 1.1.1", "Lemma 1.2.2", "Exercise 1.3.3"]
 
 
+def slug(item: str) -> str:
+    """The file name `cf plan-run` gives an item's task document."""
+    return item.lower().replace(" ", "-").replace(".", "-") + ".json"
+
+
 class ManuscriptFixture(Workspace):
     """A self-authored manuscript: its items.json is empty ON PURPOSE."""
 
     PAIRED = True
+    #: the tagged environments the pairing index lists -- the universe itself
+    ITEMS = MANUSCRIPT_ITEMS
+    #: the one document that carries a defect row
+    DEFECT_ON = MANUSCRIPT_ITEMS[0]
+    #: what `sources/<id>/meta.json` records as this source's own numbering
+    NUMBERING: dict | None = None
 
     def setUp(self):
         super().setUp()
         self.write_items([])
-        self.write_meta(source_format="text", pagination="none", locator="section")
+        meta = {"source_format": "text", "pagination": "none", "locator": "section"}
+        if self.NUMBERING:
+            meta["numbering"] = self.NUMBERING
+        self.write_meta(**meta)
         if self.PAIRED:
-            self.write_pair_index(MANUSCRIPT_ITEMS)
+            self.write_pair_index(self.ITEMS)
         self.write_corpus("hunt", {
-            "definition-1-1-1.json": document("Definition 1.1.1"),
-            "lemma-1-2-2.json": dict(document("Lemma 1.2.2"), disagreements=[]),
-            "exercise-1-3-3.json": dict(document("Exercise 1.3.3"), disagreements=[]),
-        }, gate={"ok": True, "checked": 3})
+            slug(item): (document(item) if item == self.DEFECT_ON
+                         else dict(document(item), disagreements=[]))
+            for item in self.ITEMS
+        }, gate={"ok": True, "checked": len(self.ITEMS)})
 
 
 class TestAManuscriptIsCountedAgainstItsTaggedEnvironments(ManuscriptFixture):
@@ -266,6 +306,125 @@ class TestAManuscriptIsCountedAgainstItsTaggedEnvironments(ManuscriptFixture):
             with self.subTest(column=column):
                 self.assertEqual(sum(b[column] for b in cov["by_chapter"].values()),
                                  cov["items_" + column])
+
+
+class TestAManuscriptIsParsedWithItsOwnNumbering(ManuscriptFixture):
+    """FR#1, variant 1: the labels need this source's numbering to parse at all.
+
+    ``sources/<id>/meta.json`` records the numbering `cf onboard` inferred, and a
+    label DEEPER than it is a hard reject rather than a truncation.  Parsed
+    against ``DEFAULT_NUMBERING`` instead, every label of a book numbered
+    ``2.3.4.1`` rejects, every item loses its chapter, and under a workspace that
+    pins chapters every one of them falls out of scope -- which put the headline
+    figure FR#1 was filed over, "0 of 0 item(s) in scope examined", back on a
+    fully examined source.
+    """
+
+    NUMBERING = {"min_segments": 4, "max_segments": 4, "method": "inferred",
+                 "confidence": 0.93}
+    ITEMS = ["Definition 2.3.1.1", "Lemma 2.3.4.1", "Theorem 2.4.1.1"]
+    DEFECT_ON = "Lemma 2.3.4.1"
+    #: what `cf onboard`'s `(\d+)\.(\d+)` scope inference writes from such a label
+    CHAPTERS = "    chapters: [2]\n"
+
+    def test_the_default_numbering_is_what_rejected_these_labels(self):
+        """The reject the fix removes, shown against the grammar itself."""
+        self.assertIsNone(cf_items.try_parse("Lemma 2.3.4.1", cf_items.DEFAULT_KINDS)[0])
+        self.assertEqual(cf_items.try_parse("Lemma 2.3.4.1", cf_items.DEFAULT_KINDS)[1].reason,
+                         "too_many_segments")
+        parsed, reject = cf_items.try_parse("Lemma 2.3.4.1", cf_items.DEFAULT_KINDS,
+                                            numbering=self.NUMBERING)
+        self.assertIsNone(reject)
+        self.assertEqual(parsed.chapter, 2)
+
+    def test_the_universe_keeps_its_chapters_and_its_scope(self):
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_source"], 3)
+        self.assertEqual(cov["items_in_scope"], 3)
+        self.assertEqual(cov["chapters_in_source"], [2])
+        self.assertEqual(cov["items_examined"], 3)
+        self.assertEqual(cov["items_with_findings"], 1)
+
+    def test_the_headline_figure_is_not_zero_of_zero_again(self):
+        text = self.handoff()["text"]
+        self.assertNotIn("of 0 item(s) in scope examined", text)
+        self.assertIn("`%s`: 3 of 3 item(s) in scope examined (3 in the source)" % SOURCE_ID,
+                      text)
+
+
+class TestAManuscriptNumberedDeeperThanItsLabels(ManuscriptFixture):
+    """The shape a real leanblueprint companion has, and the reason for the union.
+
+    A manuscript's ``numbering`` is inferred from its PROSE headings, while its
+    items are the adapter's tagged environments, which the blueprint numbers
+    separately: one real companion's prose numbers `1.2.3` and all 293 of its
+    environments are `Definition 1.1`.  Taking the source's own range alone
+    there rejects every label, empties the chapter table and puts all 293 items
+    under one "unnumbered" row -- the opposite failure to the one the numbering
+    was carried in to fix, on the very companion FR#1 was reproduced against.
+    """
+
+    NUMBERING = {"min_segments": 3, "max_segments": 3, "method": "headings",
+                 "confidence": 1.0}
+    ITEMS = ["Definition 1.1", "Lemma 1.2", "Theorem 2.1"]
+    DEFECT_ON = "Theorem 2.1"
+
+    def test_the_labels_keep_their_chapters(self):
+        cov = self.coverage()
+        self.assertEqual(cov["chapters_in_source"], [1, 2])
+        self.assertEqual(sorted(cov["by_chapter"]), ["1", "2"])
+        self.assertEqual(cov["items_in_scope"], 3)
+        self.assertEqual(cov["items_examined"], 3)
+
+    def test_the_sources_own_range_alone_would_reject_every_one_of_them(self):
+        self.assertEqual(cf_items.try_parse("Definition 1.1", cf_items.DEFAULT_KINDS,
+                                            numbering=self.NUMBERING)[1].reason, "no_number")
+        self.assertEqual(handoff_mod._universe_numbering(self.NUMBERING), (2, 3),
+                         "the parse admits what either range admits")
+        self.assertEqual(handoff_mod._universe_numbering({"min_segments": 4,
+                                                          "max_segments": 4}), (2, 4))
+        self.assertEqual(handoff_mod._universe_numbering(None), cf_items.DEFAULT_NUMBERING)
+
+
+class TestAPinnedChapterDoesNotNarrowAManuscript(ManuscriptFixture):
+    """FR#1, variant 2: the pairing index IS the planned universe.
+
+    `cf plan-run` never narrows a manuscript's task universe by chapter
+    (``pair/compare.py`` needs a non-empty ``book_items``, and a manuscript's
+    item table is empty by design), so every planned and examined item outside
+    the pin was counted by `cf tally` and by no figure in section 0 -- 7 of 293
+    on the companion this was reproduced against, one of them carrying the run's
+    only CONTENT finding.
+    """
+
+    CHAPTERS = "    chapters: [1]\n"
+    ITEMS = MANUSCRIPT_ITEMS + ["Lemma 2.1.1"]
+    DEFECT_ON = "Lemma 2.1.1"
+
+    def test_every_planned_item_is_counted(self):
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_source"], 4)
+        self.assertEqual(cov["items_examined"], 4)
+        self.assertEqual(cov["items_with_findings"], 1)
+        self.assertEqual(cov["examined_outside_scope"], [],
+                         "the planned universe cannot be outside the reported scope")
+        self.assertEqual(cov["chapters_audited"], [])
+        self.assertEqual(cov["chapters_pinned"], [1], "the pin is published, not thrown away")
+
+    def test_section_zero_cannot_say_none_while_section_three_counts_one(self):
+        """The contradiction FR#10 was filed about, reached through the scope."""
+        rows = tally_mod.rows_for_run("hunt", os.path.join(self.root, "corpus", "hunt"),
+                                      kinds=None)
+        self.assertEqual([r["item"] for r in rows], ["Lemma 2.1.1"])
+        self.assertEqual(self.coverage()["items_with_findings"], len({r["item"] for r in rows}))
+
+    def test_the_document_says_the_pin_did_not_apply(self):
+        """Silently ignoring it would be the same false denominator the other way."""
+        text = self.handoff()["text"]
+        self.assertIn("`chapters: 1` does not narrow this source", text)
+        self.assertIn("`pairs/%s/index.json`, which no chapter list narrows" % SOURCE_ID, text)
+        self.assertIn("`%s`: 4 of 4 item(s) in scope examined (4 in the source)" % SOURCE_ID,
+                      text)
 
 
 class TestAManuscriptWithNoPairingHasNoDenominator(ManuscriptFixture):
@@ -481,6 +640,349 @@ class TestADocumentWithNoTopLevelItemIsNotDropped(Workspace):
         self.assertEqual(set(examined[SOURCE_ID]["examined"]), {"task-0042"})
 
 
+class TestADocumentTheTallyRefusesIsNotDroppedInSilence(Workspace):
+    """NEW#g-report-1: the counting authority fails closed, the report failed open.
+
+    `cf tally` refuses a corpus holding a findings file that is valid JSON and
+    not an object ("a corpus with one it cannot read makes every number a lower
+    bound", exit 2).  The report skipped the same file at ``except Exception:
+    continue`` and published the lower bound as a figure -- with the item behind
+    it named as NEVER EXAMINED, although it has a gated corpus document.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Exercise 1.1.1", "page": 10, "chapter": 1, "kind": "Exercise"},
+            {"item": "Exercise 1.1.2", "page": 11, "chapter": 1, "kind": "Exercise"},
+        ])
+        self.dest = self.write_corpus("hunt", {
+            "exercise-1-1-1.json": document("Exercise 1.1.1"),
+            "exercise-1-1-2.json": document("Exercise 1.1.2"),
+        }, gate={"ok": True, "checked": 2})
+        # a findings file that is valid JSON and not a findings object
+        compat.write_text(os.path.join(self.dest, "exercise-1-1-2.json"), "[]\n")
+
+    def test_the_tally_still_refuses_the_file(self):
+        with self.assertRaises(CfError) as caught:
+            tally_mod.rows_for_run("hunt", self.dest, kinds=None)
+        self.assertIn("is not a findings object", str(caught.exception))
+
+    def test_the_report_counts_the_file_it_could_not_read(self):
+        self.assertEqual(self.coverage()["unreadable_documents"],
+                         ["hunt/exercise-1-1-2.json"])
+
+    def test_the_handoff_names_it_and_calls_the_figures_a_lower_bound(self):
+        text = self.handoff()["text"]
+        self.assertIn("could not be read", text)
+        self.assertIn("`hunt/exercise-1-1-2.json`", text)
+        self.assertIn("LOWER BOUND", text)
+
+    def test_the_command_says_so_on_the_terminal_too(self):
+        """`cf tally` exits 2 on this corpus and `cf report` exits 0 over it."""
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("could not be read", out)
+        self.assertIn("hunt/exercise-1-1-2.json", out)
+        self.assertIn("cf tally --run <run-id>", out)
+
+    def test_the_item_behind_it_is_never_published_as_unexamined_unremarked(self):
+        """It has a gated document; the figures cannot say otherwise in silence."""
+        cov = self.coverage()
+        self.assertIn("Exercise 1.1.2", cov["never_examined"])
+        text = self.handoff()["text"]
+        self.assertIn("may be counted as never examined", text)
+        self.assertEqual(cf_cli("tally", "--workspace", self.root, "--no-write")[0], 2,
+                         "the tally this sentence sends the reader to must still refuse")
+
+
+class TestAnExaminedItemOutsideTheScopeIsNotDropped(Workspace):
+    """NEW#g-report-2: ``examined_outside_scope`` had no reader anywhere in the tree.
+
+    Every section-0 figure is an intersection with the items in scope, so a
+    corpus document for an item outside the audited chapters is counted by
+    `cf tally` and by none of them -- ``items_with_findings`` included.  It is
+    reachable on an ordinary path: `cf import-corpus` of a legacy corpus wider
+    than the current chapter scope is how the imported baseline arrives.
+    """
+
+    CHAPTERS = "    chapters: [1]\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Definition 1.1.1", "page": 10, "chapter": 1, "kind": "Definition"},
+            {"item": "Lemma 2.1.1", "page": 58, "chapter": 2, "kind": "Lemma"},
+        ])
+        self.dest = self.write_corpus("hunt", {
+            "definition-1-1-1.json": dict(document("Definition 1.1.1"), disagreements=[]),
+            "lemma-2-1-1.json": document("Lemma 2.1.1"),
+        }, gate={"ok": True, "checked": 2})
+
+    def test_the_finding_outside_the_scope_is_still_published(self):
+        cov = self.coverage()
+        rows = tally_mod.rows_for_run("hunt", self.dest, kinds=None)
+        self.assertEqual([r["item"] for r in rows], ["Lemma 2.1.1"])
+        self.assertEqual(cov["items_with_findings"], 0, "it is outside the audited chapters")
+        self.assertEqual(cov["with_findings_outside_scope"], ["Lemma 2.1.1"],
+                         "a counted finding may not be absent from every published figure")
+        self.assertEqual(cov["examined_outside_scope"], ["Lemma 2.1.1"])
+        self.assertEqual(cov["chapters_outside_scope"], ["2"])
+
+    def test_the_document_names_the_items_and_where_they_are_counted(self):
+        text = self.handoff()["text"]
+        self.assertIn("lie OUTSIDE the audited chapter(s)", text)
+        self.assertIn("`Lemma 2.1.1`", text)
+        self.assertIn("1 of them with findings", text)
+        self.assertIn("`cf tally` and §3 count them and no figure above does", text)
+
+    def test_the_per_run_block_and_the_per_source_figures_do_not_disagree_in_silence(self):
+        cov = self.coverage()
+        self.assertEqual(cov["runs"]["hunt"], {"examined": 2, "with_findings": 1, "gated": True})
+        self.assertEqual(cov["items_examined"] + len(cov["examined_outside_scope"]),
+                         cov["runs"]["hunt"]["examined"])
+
+
+def flat(text: str) -> str:
+    """The rendered document with its line wrapping taken out.
+
+    The template's prose is hard-wrapped, so a sentence assertion that does not
+    do this passes or fails on where a word happened to land.
+    """
+    return " ".join(text.split())
+
+
+class TestTheLineUnderTheTableSaysWhichIsCountedWhere(Workspace):
+    """Two different exclusions, one sentence, and it was false about one of them.
+
+    The line closing section 0 lumped an examined item outside the audited
+    chapters together with a corpus document nothing could read and said both
+    are "counted in §3" -- but `cf tally` REFUSES a corpus holding the second
+    (exit 2, so no ``tally.*.json`` exists and §3 renders a TODO).  It claimed
+    coverage the report does not have, two lines under per-source notes that
+    correctly say the opposite things about the two.
+    """
+
+    CHAPTERS = "    chapters: [1]\n"
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Definition 1.1.1", "page": 10, "chapter": 1, "kind": "Definition"},
+            {"item": "Lemma 2.1.1", "page": 58, "chapter": 2, "kind": "Lemma"},
+        ])
+        self.dest = self.write_corpus("hunt", {
+            "definition-1-1-1.json": dict(document("Definition 1.1.1"), disagreements=[]),
+            "lemma-2-1-1.json": document("Lemma 2.1.1"),
+            "definition-1-1-2.json": document("Definition 1.1.2"),
+        }, gate={"ok": True, "checked": 3})
+        compat.write_text(os.path.join(self.dest, "definition-1-1-2.json"), "[]\n")
+
+    def test_the_two_exclusions_are_not_described_as_one(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("an item examined outside the audited chapters is counted in §3 and in "
+                      "no column of this table", text)
+        self.assertIn("a corpus document that could not be read is counted nowhere", text)
+        self.assertNotIn("those documents are counted in §3 and in no column of this table", text)
+
+    def test_the_notes_it_summarises_still_say_the_two_things_it_now_says(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("`cf tally` and §3 count them and no figure above does", text)
+        self.assertIn("LOWER BOUND", text)
+
+    def test_the_tally_the_sentence_appeals_to_really_refuses_this_corpus(self):
+        """"counted nowhere" is true only because `cf tally` will not read it."""
+        self.assertEqual(cf_cli("tally", "--workspace", self.root, "--no-write")[0], 2)
+
+
+class TestTheLowerBoundIsSaidWhereTheRestOfTheNoteIsATodo(Workspace):
+    """The sentence sat after the branches that end a source's note early.
+
+    A source with no ``items.json`` has no denominator, so its note is one TODO
+    line and nothing else -- and a corpus document nothing could read was then
+    named on `cf report`'s terminal and in no line of the handoff, which is the
+    artifact that travels.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.dest = self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                                      gate={"ok": True, "checked": 1})
+        compat.write_text(os.path.join(self.dest, "exercise-1-1-1.json"), "[]\n")
+
+    def test_the_source_has_no_denominator_at_all(self):
+        cov = self.coverage()
+        self.assertIsNone(cov["items_in_source"])
+        self.assertEqual(cov["unreadable_documents"], ["hunt/exercise-1-1-1.json"])
+
+    def test_the_handoff_says_it_and_not_only_the_terminal(self):
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("LOWER BOUND", out)
+        text = self.handoff()["text"]
+        self.assertIn("LOWER BOUND", text)
+        self.assertIn("`hunt/exercise-1-1-1.json`", text)
+
+
+class TestALongListOfNamesIsCappedWhereverItIsPrinted(Workspace):
+    """One line of Markdown may not carry a whole malformed directory.
+
+    The out-of-scope sentence has capped at ``OUTSIDE_SCOPE_NAMES`` since it was
+    written, for exactly this reason; the two unreadable-document sentences
+    joined the full list, and a legacy import whose whole directory is the wrong
+    shape makes that list as long as the directory.
+    """
+
+    #: enough to pass the cap by 4
+    COUNT = 12
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([{"item": "Exercise 1.1.1", "page": 10, "chapter": 1,
+                           "kind": "Exercise"}])
+        self.dest = self.write_corpus("hunt", {
+            "exercise-1-1-%d.json" % n: document("Exercise 1.1.%d" % n)
+            for n in range(1, self.COUNT + 1)
+        }, gate={"ok": True, "checked": self.COUNT})
+        for n in range(1, self.COUNT + 1):
+            compat.write_text(os.path.join(self.dest, "exercise-1-1-%d.json" % n), "[]\n")
+
+    def write_unattributed_corpus(self) -> list:
+        """A second run whose receipt names TWO sources, so no source block owns it."""
+        directory = os.path.join(self.root, "corpus", "wide")
+        for n in range(1, self.COUNT + 1):
+            compat.write_text(os.path.join(directory, "exercise-2-1-%d.json" % n), "[]\n")
+        compat.write_json(os.path.join(directory, "RECEIPT.json"),
+                          {"run_id": "wide",
+                           "sources": {SOURCE_ID: SOURCE_SHA, OTHER_SOURCE_ID: OTHER_SOURCE_SHA},
+                           "actual": {"count": self.COUNT}, "complete": True,
+                           "gate": {"ok": True, "checked": self.COUNT}})
+        return sorted("wide/exercise-2-1-%d.json" % n for n in range(1, self.COUNT + 1))
+
+    def assert_capped(self, text: str, names: list) -> None:
+        cap = handoff_mod.OUTSIDE_SCOPE_NAMES
+        self.assertEqual(len(names), self.COUNT)
+        self.assertIn("and %d more" % (self.COUNT - cap), text)
+        for name in names[:cap]:
+            self.assertIn("`%s`" % name, text)
+        for name in names[cap:]:
+            self.assertNotIn("`%s`" % name, text)
+
+    def test_the_per_source_sentence_is_capped(self):
+        self.assert_capped(self.handoff()["text"], self.coverage()["unreadable_documents"])
+
+    def test_the_sentence_for_documents_no_source_owns_is_capped_too(self):
+        expected = self.write_unattributed_corpus()
+        handoff = self.handoff()
+        self.assertEqual(handoff["context"]["_coverage"]["unreadable_documents"], expected)
+        self.assert_capped(handoff["text"], expected)
+
+    def test_the_full_list_is_in_the_artifact_both_sentences_point_at(self):
+        self.write_unattributed_corpus()
+        self.handoff()
+        published = compat.read_json(os.path.join(self.root, "reports", "coverage.json"))
+        self.assertEqual(len(published["sources"][0]["unreadable_documents"]), self.COUNT)
+        self.assertEqual(len(published["unreadable_documents"]), self.COUNT)
+        self.assertIn("`reports/coverage.json` (`unreadable_documents`)", self.handoff()["text"])
+
+
+class TestATaskUniverseWithNoItemsBehindItIsNotZeroPerChapter(Workspace):
+    """NEW#g-report-4's neighbour: the same cell, an older reconciliation.
+
+    ``task_universe`` without ``task_universe_items`` is a shape the tree
+    already knows about -- `cf plan-run` warns about it and falls back to a
+    count-only check -- and the per-chapter rows counted against the empty set
+    it leaves behind, printing 0 in every row under a total row printing the
+    real figure.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Exercise 1.1.1", "page": 10, "chapter": 1, "kind": "Exercise"},
+            {"item": "Exercise 1.1.2", "page": 11, "chapter": 1, "kind": "Exercise"},
+        ])
+        # written by hand, not through write_reconciliation: the defect IS the
+        # absent key, and an older `cf pair` wrote the file without it
+        compat.write_json(
+            os.path.join(self.root, "pairs", SOURCE_ID, "reconciliation.json"),
+            {"source_id": SOURCE_ID, "source_sha": SOURCE_SHA, "repos": [COMPANION],
+             "chapters": None, "items_in_book": 2, "items_in_scope": 2,
+             "items_in_scope_and_any_repo": 2, "items_in_scope_uncovered": [],
+             "task_universe": 2})
+        self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                          gate={"ok": True, "checked": 1})
+
+    def test_the_per_chapter_figure_is_unknown_rather_than_zero(self):
+        cov = self.coverage()
+        self.assertEqual(cov["items_in_task_universe"], 2)
+        self.assertIs(cov["task_universe_itemised"], False)
+        self.assertEqual([b["in_task_universe"] for b in cov["by_chapter"].values()], [None])
+
+    def test_the_document_says_which_of_the_two_was_never_computed(self):
+        text = self.handoff()["text"]
+        self.assertIn("names a task universe of 2 and does not list the items behind it", text)
+        self.assertIn("`task_universe_items`", text)
+        section = text.split("## 0.")[1].split("## 1.")[0]
+        rows = [l for l in section.splitlines() if l.startswith("| `%s` |" % SOURCE_ID)]
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual([c.strip() for c in rows[0].split("|")][5], "—")
+        self.assertEqual([c.strip() for c in rows[1].split("|")][5], "2")
+
+    def test_an_itemised_reconciliation_is_still_counted_per_chapter(self):
+        """The guard narrows to the shape it is for, and no further."""
+        self.write_reconciliation(items_in_scope=2, task_universe=1,
+                                  task_universe_items=["Exercise 1.1.1"])
+        cov = self.coverage()
+        self.assertIs(cov["task_universe_itemised"], True)
+        self.assertEqual([b["in_task_universe"] for b in cov["by_chapter"].values()], [1])
+        self.assertNotIn("does not list the items behind it", self.handoff()["text"])
+
+
+class TestAnUncomputedTaskUniverseIsNotZeroPerChapter(Workspace):
+    """NEW#g-report-4: one figure, three renderings, in one document.
+
+    With no ``reconciliation.json`` nothing has computed a task universe, so the
+    total row prints "—" and the prose "?" -- while the per-chapter row counted
+    against an empty set and printed a hard 0, which is the overclaim the
+    neighbouring ``paired`` cell was already taught not to make.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([
+            {"item": "Exercise 1.1.1", "page": 10, "chapter": 1, "kind": "Exercise"},
+            {"item": "Exercise 1.1.2", "page": 11, "chapter": 1, "kind": "Exercise"},
+        ])
+        self.write_corpus("hunt", {"exercise-1-1-1.json": document("Exercise 1.1.1")},
+                          gate={"ok": True, "checked": 1})
+
+    def test_the_figure_nothing_computed_is_not_a_zero(self):
+        cov = self.coverage()
+        self.assertIsNone(cov["items_in_task_universe"])
+        self.assertEqual([b["in_task_universe"] for b in cov["by_chapter"].values()], [None])
+
+    def test_the_chapter_row_prints_what_the_total_row_prints(self):
+        section = self.handoff()["text"].split("## 0.")[1].split("## 1.")[0]
+        rows = [l for l in section.splitlines() if l.startswith("| `%s` |" % SOURCE_ID)]
+        self.assertEqual(len(rows), 2, rows)
+        self.assertEqual([c.strip() for c in rows[0].split("|")][5],
+                         [c.strip() for c in rows[1].split("|")][5])
+        self.assertEqual([c.strip() for c in rows[0].split("|")][5], "—")
+
+    def test_the_chapter_rows_still_add_up_to_the_total_row(self):
+        """The invariant, widened to the case where the figure is uncomputed."""
+        cov = self.coverage()
+        for column in ("in_scope", "in_task_universe", "examined", "gated", "with_findings"):
+            with self.subTest(column=column):
+                values = [b[column] for b in cov["by_chapter"].values()]
+                total = cov["items_" + column]
+                if total is None:
+                    self.assertTrue(all(v is None for v in values), values)
+                else:
+                    self.assertEqual(sum(values), total)
+
+
 # ---------------------------------------------------------------------------
 # FR#26 -- a gate that ran and REJECTED is its own state
 # ---------------------------------------------------------------------------
@@ -557,6 +1059,22 @@ def cf(*argv) -> tuple:
     return rc, out.getvalue(), err.getvalue()
 
 
+def cf_cli(*argv) -> tuple:
+    """The same, through the process entry point: a refusal is an EXIT CODE.
+
+    ``cf_main.main`` raises ``CfError`` for a library caller; ``cf_main.cli`` is
+    what a shell runs, and what a hint printed for a user to paste reaches.  A
+    hint is only settled if the command in it exits 0 there.
+    """
+    out, err = io.StringIO(), io.StringIO()
+    try:
+        with redirect_stdout(out), redirect_stderr(err):
+            rc = cf_main.cli(list(argv))
+    except SystemExit as exc:            # --help
+        rc = int(exc.code or 0)
+    return rc, out.getvalue(), err.getvalue()
+
+
 class TestTheUngatedHintNamesNothingThatDoesNotWork(Workspace):
     """Every command and flag in the two rewritten hints, run."""
 
@@ -586,7 +1104,8 @@ class TestTheUngatedHintNamesNothingThatDoesNotWork(Workspace):
         self.assertIn("cf import-corpus --run-id <run-id> --from <dir> --preset", text)
         for command, flags in (("harvest", ("--gate-config", "--from", "--journal",
                                             "--execute")),
-                               ("import-corpus", ("--run-id", "--from", "--preset"))):
+                               ("import-corpus", ("--run-id", "--from", "--preset",
+                                                  "--source"))):
             with self.subTest(command=command):
                 rc, out, _err = cf(command, "--help")
                 self.assertEqual(rc, 0, "`cf %s` does not exist" % command)
@@ -594,36 +1113,56 @@ class TestTheUngatedHintNamesNothingThatDoesNotWork(Workspace):
                     self.assertIn(flag, out, "`cf %s` does not take %s" % (command, flag))
 
     def test_the_hint_is_a_spelling_not_one_machine_s_paths(self):
-        """Every argument in it is an angle-bracketed placeholder (CLAUDE.md S1)."""
+        """Every argument in it is an angle-bracketed placeholder (CLAUDE.md S1).
+
+        ``<id>`` joined the list when the import branch gained the ``--source``
+        a multi-source workspace refuses without; the assertion still pins the
+        WHOLE set, so a real path in the hint fails here as before.
+        """
         self.assertNotRegex(tally_mod.REGATE_HINT, r"(^|\s)/\w")
         self.assertEqual(sorted(set(re.findall(r"<[a-z-]+>", tally_mod.REGATE_HINT))),
-                         ["<dir>", "<file>", "<preset>", "<run-id>"])
+                         ["<dir>", "<file>", "<id>", "<preset>", "<run-id>"])
+
+
+def build_import_workspace(case: unittest.TestCase, *source_ids: str) -> None:
+    """A workspace holding *source_ids*, plus one v1 findings file to import.
+
+    Taken out of one test class's setUp because the hint it exercises has to be
+    run in a workspace with MORE than one source too: that is the configuration
+    `cf import-corpus` refuses without ``--source``, and the one the hint's own
+    branch (an import that landed ``gate: null``) is most likely to be read in.
+    """
+    case.tmp = pathlib.Path(tempfile.mkdtemp(prefix="cf-rf-final-cli-", dir=TMPDIR)).resolve()
+    case.addCleanup(shutil.rmtree, case.tmp, True)
+    case.ws = case.tmp / "ws"
+    case.source = case.tmp / "findings"
+    case.source.mkdir(parents=True)
+    (case.source / "exercise-1-1-1.json").write_text(json.dumps({
+        "item": "Exercise 1.1.1", "book_located": True, "book_passage_quote": QUOTE,
+        "matches": [], "disagreements": [], "coverage_notes": ""}), encoding="utf-8")
+    case.assertEqual(cf("init", str(case.ws), "--no-git", "-q")[0], 0)
+    shas = {SOURCE_ID: SOURCE_SHA, OTHER_SOURCE_ID: OTHER_SOURCE_SHA}
+    blocks = "".join(
+        "  %s:\n" % sid
+        + '    sha256: "%s"\n' % shas[sid]
+        + "    title: A Book\n    edition: \"%s\"\n    offset: 16\n"
+          "    chapters: [1]\n    role: audited\n"
+          % ("first edition" if sid == SOURCE_ID else "second edition")
+        for sid in source_ids)
+    (case.ws / "workspace.yaml").write_text(
+        "version: 2\nworkspace:\n  name: ws\ncompanions: {}\nsources:\n" + blocks,
+        encoding="utf-8")
+    for sid in source_ids:
+        text = case.ws / "sources" / sid / "text.txt"
+        text.parent.mkdir(parents=True, exist_ok=True)
+        text.write_text("Exercise 1.1.1 (Boolean closure). " + QUOTE + "\n", encoding="utf-8")
 
 
 class TestTheHintIsRunAndItSettlesIt(unittest.TestCase):
     """The import branch of the hint, executed against a real ungated corpus."""
 
     def setUp(self):
-        self.tmp = pathlib.Path(tempfile.mkdtemp(prefix="cf-rf-final-cli-",
-                                                 dir=TMPDIR)).resolve()
-        self.addCleanup(shutil.rmtree, self.tmp, True)
-        self.ws = self.tmp / "ws"
-        self.source = self.tmp / "findings"
-        self.source.mkdir(parents=True)
-        (self.source / "exercise-1-1-1.json").write_text(json.dumps({
-            "item": "Exercise 1.1.1", "book_located": True, "book_passage_quote": QUOTE,
-            "matches": [], "disagreements": [], "coverage_notes": ""}), encoding="utf-8")
-        self.assertEqual(cf("init", str(self.ws), "--no-git", "-q")[0], 0)
-        (self.ws / "workspace.yaml").write_text(
-            "version: 2\nworkspace:\n  name: ws\ncompanions: {}\nsources:\n"
-            "  %s:\n" % SOURCE_ID
-            + '    sha256: "%s"\n' % SOURCE_SHA
-            + "    title: A Book\n    edition: \"first edition\"\n    offset: 16\n"
-              "    chapters: [1]\n    role: audited\n",
-            encoding="utf-8")
-        text = self.ws / "sources" / SOURCE_ID / "text.txt"
-        text.parent.mkdir(parents=True, exist_ok=True)
-        text.write_text("Exercise 1.1.1 (Boolean closure). " + QUOTE + "\n", encoding="utf-8")
+        build_import_workspace(self, SOURCE_ID)
 
     def receipt(self, run_id: str) -> dict:
         return json.loads((self.ws / "corpus" / run_id / "RECEIPT.json").read_text())
@@ -685,6 +1224,63 @@ class TestTheHintIsRunAndItSettlesIt(unittest.TestCase):
         self.assertIn("GATE FAILED run(s): bad", tallied)
         self.assertIn("gate FAILED for run(s): bad", warned)
         self.assertIn("RECEIPT.json gate.problems", warned)
+
+
+class TestTheImportHintIsRunInAMultiSourceWorkspace(unittest.TestCase):
+    """NEW#g-report-3: the same hint, in the workspace shape that refuses it.
+
+    `cf import-corpus` refuses a workspace with more than one source unless it
+    is told which one the findings read, and the remedy printed for the one
+    state it exists for -- an import that landed ``gate: null`` -- left the flag
+    out, so pasting it exited 2 and changed nothing.  The sibling class above
+    exercises the same sentence in a ONE-source workspace, which is why it
+    passed throughout.
+    """
+
+    def setUp(self):
+        build_import_workspace(self, SOURCE_ID, OTHER_SOURCE_ID)
+
+    def receipt(self, run_id: str) -> dict:
+        return json.loads((self.ws / "corpus" / run_id / "RECEIPT.json").read_text())
+
+    def test_the_workspace_refuses_the_import_without_the_flag(self):
+        """The refusal the hint has to answer, named by the command itself."""
+        rc, _out, err = cf_cli("import-corpus", "--run-id", "imp", "--from", str(self.source),
+                               "--workspace", str(self.ws), "--no-tally",
+                               "--preset", "differential-legacy")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("this workspace has 2 sources", err)
+        self.assertIn("--source", err)
+
+    def test_the_printed_invocation_settles_the_ungated_state(self):
+        rc, _out, err = cf("import-corpus", "--run-id", "imp", "--from", str(self.source),
+                           "--workspace", str(self.ws), "--no-tally", "--preset", "",
+                           "--source", SOURCE_ID)
+        self.assertEqual(rc, 0, err)
+        self.assertIsNone(self.receipt("imp")["gate"], "the fixture must start ungated")
+
+        rc, tallied, _err = cf("tally", "--workspace", str(self.ws), "--no-write")
+        self.assertEqual(rc, 0)
+        self.assertIn("UNGATED run(s): imp", tallied)
+        self.assertIn("cf import-corpus --run-id <run-id> --from <dir> --preset <preset> "
+                      "--source <id>", tallied)
+
+        # the sentence that was printed, run verbatim, with this run's own id,
+        # directory, preset and source substituted for the placeholders
+        rc, _out, err = cf_cli("import-corpus", "--run-id", "imp", "--from", str(self.source),
+                               "--workspace", str(self.ws), "--no-tally",
+                               "--preset", "differential-legacy", "--source", SOURCE_ID,
+                               "--repos", COMPANION, "--force")
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.receipt("imp")["gate"]["ok"], self.receipt("imp")["gate"])
+
+        rc, tallied, _err = cf("tally", "--workspace", str(self.ws), "--no-write")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("UNGATED", tallied)
+
+    def test_the_one_source_workspace_may_still_drop_the_flag(self):
+        """The hint says so, so the sentence without it has to keep working."""
+        self.assertIn("drop `--source` in a one-source workspace", tally_mod.REGATE_HINT)
 
 
 class TestTheReportNamesNoPrivateAlias(unittest.TestCase):
