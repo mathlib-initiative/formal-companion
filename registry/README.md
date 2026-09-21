@@ -48,9 +48,11 @@ partner back — **and** the part the dataclass cannot see, because
 `RegistryEntry.from_dict` silently drops keys it does not know: an unknown
 field, and any string outside the four free-text fields (`notes`,
 `licence.note`, `page_map_to.*.note`, `page_map_to.*.confirmed_by`) that runs
-past a word cap or into a second sentence. A passage of the book cannot arrive
-here by accident in a field nobody reviewed. CI runs the same command on every
-push.
+past a word cap or into a second sentence of prose. A passage of the book cannot
+arrive here by accident in a field nobody reviewed. An edition statement after a
+full stop is not a second sentence — "A Course in Functional Analysis. Second
+edition" and an author's `John B. Conway` pass, because that is what these fields
+are for. CI runs the same command on every push.
 
 A download happens only when all three hold: `--download` was passed to
 `cf onboard`, the workspace's `policy.allow_download` is not false, and the
