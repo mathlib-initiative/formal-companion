@@ -1320,5 +1320,162 @@ class TestEveryCommandTheseWarningsPrintExists(unittest.TestCase):
                                  "`cf %s` is printed but does not exist" % name)
 
 
+# ---------------------------------------------------------------------------
+# NEW#h-report-2 -- the other four caveats, on the branches that end early
+# ---------------------------------------------------------------------------
+
+class TestTheCaveatsAreSaidWhereTheRestOfTheNoteIsATodo(Workspace):
+    """Branch 3: no ``items.json``, so the note is one TODO line -- and a run no gate saw.
+
+    Commit 25cbda3 fixed this hole for the unreadable sentence alone; the
+    ungated, gate-FAILED, out-of-scope and unstamped ones stayed below the
+    ``continue``s, and unlike the unreadable one they were not echoed on
+    `cf report`'s terminal either.  "No quote in this corpus was checked against
+    the source text" is the safety claim the whole gate exists for.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.write_corpus("legacy", {"definition-1-1-1.json": document("Definition 1.1.1")},
+                          gate=None)
+
+    def test_the_source_has_no_denominator_at_all(self):
+        cov = self.coverage()
+        self.assertIsNone(cov["items_in_source"])
+        self.assertEqual(cov["ungated_runs"], ["legacy"])
+
+    def test_the_handoff_names_the_ungated_run_not_only_cf_tally(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("- `%s`: no `items.json` yet" % SOURCE_ID, text)
+        self.assertIn("ungated run(s) `legacy`: no quote in them was checked against the "
+                      "source text", text)
+
+    def test_the_authority_that_does_say_it_still_says_it(self):
+        """`cf tally` printed this for the same corpus all along."""
+        result = tally_mod.tally({"legacy": os.path.join(self.root, "corpus", "legacy")})
+        self.assertIn("legacy", tally_mod.render(result))
+
+    def test_the_terminal_echoes_the_same_caveat(self):
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("ungated run(s) legacy", out)
+        self.assertIn("reports/coverage.json", out)
+
+
+class TestAFailedGateIsSaidOnTheManuscriptBranchToo(Workspace):
+    """Branch 2: an unpaired manuscript, whose note is one "run `cf pair`" line."""
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([])
+        self.write_meta(source_format="text", pagination="none")
+        self.write_corpus("hunt", {"definition-1-1-1.json": document("Definition 1.1.1")},
+                          gate={"ok": False, "checked": 1, "problems": ["a quote is not in the text"]})
+
+    def test_the_note_really_is_the_manuscript_branch(self):
+        cov = self.coverage()
+        self.assertTrue(cov["manuscript"])
+        self.assertIsNone(cov["items_in_source"])
+        self.assertEqual(cov["gate_failed_runs"], ["hunt"])
+
+    def test_the_handoff_does_not_call_the_rejected_quotes_unchecked(self):
+        text = flat(self.handoff()["text"])
+        self.assertIn("a manuscript — its items are the tagged environments", text)
+        self.assertIn("gate FAILED for run(s) `hunt`", text)
+        self.assertNotIn("ungated run(s) `hunt`", text)
+
+
+class TestTheOutOfScopeSentenceIsSaidForASourceNobodyIsBoundTo(Workspace):
+    """Branch 1: not under audit, a chapter pin, and the only finding outside it.
+
+    Section 0's row prints a hard 0 under "with findings" for this source while
+    §3 counts a CONTENT row on the item, and the whole note was two sentences
+    that say nothing about either.
+    """
+
+    EXTRA_SOURCES = ("  %s:\n"
+                     '    sha256: "%s"\n'
+                     "    title: A Book\n"
+                     '    edition: "second edition"\n'
+                     "    offset: 16\n"
+                     "    chapters: [1]\n"
+                     "    role: reference\n" % (OTHER_SOURCE_ID, OTHER_SOURCE_SHA))
+
+    def setUp(self):
+        super().setUp()
+        self.write_items([{"item": "Exercise 1.1.1", "page": 10, "chapter": 1,
+                           "kind": "Exercise"}])
+        self.write_items([{"item": "Exercise 1.1.1", "page": 9, "chapter": 1,
+                           "kind": "Exercise"}],
+                         source_id=OTHER_SOURCE_ID, sha=OTHER_SOURCE_SHA)
+        directory = os.path.join(self.root, "corpus", "legacy")
+        compat.write_json(os.path.join(directory, "lemma-2-2-2.json"),
+                          dict(document("Lemma 2.2.2"), source_id=OTHER_SOURCE_ID,
+                               source_sha=OTHER_SOURCE_SHA))
+        compat.write_text(os.path.join(directory, "broken.json"), "[]\n")
+        compat.write_json(os.path.join(directory, "RECEIPT.json"),
+                          {"run_id": "legacy", "sources": {OTHER_SOURCE_ID: OTHER_SOURCE_SHA},
+                           "actual": {"count": 2}, "complete": True, "gate": None})
+
+    def unbound(self) -> dict:
+        return next(s for s in self.handoff()["context"]["_coverage"]["sources"]
+                    if s["source_id"] == OTHER_SOURCE_ID)
+
+    def test_the_figures_do_carry_what_the_note_left_unsaid(self):
+        cov = self.unbound()
+        self.assertFalse(cov["under_audit"])
+        self.assertEqual(cov["with_findings_outside_scope"], ["Lemma 2.2.2"])
+        self.assertEqual(cov["ungated_runs"], ["legacy"])
+        self.assertEqual(cov["unreadable_documents"], ["legacy/broken.json"])
+
+    def test_the_row_prints_zero_and_the_note_now_says_why(self):
+        text = self.handoff()["text"]
+        row = next(l for l in text.split("## 0.")[1].split("## 1.")[0].splitlines()
+                   if l.startswith("| `%s` |" % OTHER_SOURCE_ID))
+        self.assertIn("| — | 1 | — | — | — | 0 | 0 | 0 | — |", row)
+        flattened = flat(text)
+        self.assertIn("1 examined item(s) lie OUTSIDE the audited chapter(s)", flattened)
+        self.assertIn("`Lemma 2.2.2`", flattened)
+        self.assertIn("ungated run(s) `legacy`", flattened)
+        self.assertIn("LOWER BOUND", flattened)
+
+    def test_the_terminal_echoes_all_of_them(self):
+        rc, out, err = cf_cli("report", "--workspace", self.root, "--no-verify-args")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("ungated run(s) legacy", out)
+        self.assertIn("lie outside the audited chapter(s)", out)
+        self.assertIn("legacy/broken.json", out)
+
+
+class TestTheCaveatsAreOneHelperOnEveryBranch(unittest.TestCase):
+    """The five sentences are one list, so no branch can carry a subset again."""
+
+    SRC = {"source_id": SOURCE_ID, "role": "audited", "unreadable_documents": ["r/a.json"],
+           "examined_outside_scope": ["Lemma 2.1.1"],
+           "with_findings_outside_scope": ["Lemma 2.1.1"], "chapters_outside_scope": ["2"],
+           "ungated_runs": ["r"], "gate_failed_runs": ["s"], "unstamped_documents": 3}
+
+    def test_every_caveat_is_in_the_helper(self):
+        lines = handoff_mod._caveat_lines(self.SRC)
+        self.assertEqual(len(lines), 5, lines)
+        for fragment in ("could not be read", "lie OUTSIDE the audited chapter(s)",
+                         "ungated run(s)", "gate FAILED for run(s)",
+                         "carry no `source_id`"):
+            with self.subTest(fragment=fragment):
+                self.assertTrue(any(fragment in l for l in lines), lines)
+
+    def test_every_line_is_nested_under_the_source_bullet(self):
+        for line in handoff_mod._caveat_lines(self.SRC):
+            self.assertTrue(line.startswith("  - "), line)
+
+    def test_each_branch_of_the_note_calls_it(self):
+        """Three early `continue`s plus the main path, read off the source."""
+        body = (SKILL / "scripts" / "report" / "make_handoff.py").read_text(encoding="utf-8")
+        note = body.split("def coverage_note(")[1].split("\ndef ")[0]
+        self.assertEqual(note.count("_caveat_lines(src)"), 4, note)
+        self.assertNotIn("_unreadable_lines(src)", note,
+                         "the helper is the only caller left")
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

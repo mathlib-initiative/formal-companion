@@ -109,6 +109,12 @@ def run(args) -> int:
         for name in unreadable[:12]:
             print("    %s" % name)
         print("    `cf tally --run <run-id>` refuses them by name and says why")
+    # The same set §0 carries, for the same reason: `cf tally` prints UNGATED and
+    # GATE FAILED for this corpus and exits 2 over some of it, and this command
+    # exits 0, so a caveat only the document carries is one the reader meets only
+    # if they open it.
+    for line in _caveats(ctx["_coverage"]):
+        print("  %s" % line)
     if report["todos"]:
         print("  %d figure(s) have no artifact behind them yet:" % len(report["todos"]))
         for t in report["todos"][:12]:
@@ -147,6 +153,41 @@ def _unreadable(coverage: dict) -> list:
     for src in coverage.get("sources") or []:
         names.update(src.get("unreadable_documents") or ())
     return sorted(names)
+
+
+def _caveats(coverage: dict) -> list:
+    """The rest of what section 0 does not count, one line each.
+
+    The unreadable documents have had their own block above since they were
+    first published; these four had none at all -- an ungated or gate-FAILED
+    run, an examined item outside the audited chapters and a document carrying
+    no `source_id` -- so `cf tally` named them and `cf report` said nothing
+    about the same corpus.
+    """
+    ungated, failed, outside, outside_found, unstamped = [], [], 0, 0, 0
+    for src in coverage.get("sources") or []:
+        ungated.extend(src.get("ungated_runs") or ())
+        failed.extend(src.get("gate_failed_runs") or ())
+        outside += len(src.get("examined_outside_scope") or ())
+        outside_found += len(src.get("with_findings_outside_scope") or ())
+        unstamped += int(src.get("unstamped_documents") or 0)
+    lines = []
+    if ungated:
+        lines.append("ungated run(s) %s: no quote in them was checked against the source text"
+                     % ", ".join(sorted(set(ungated))))
+    if failed:
+        lines.append("gate FAILED for run(s) %s: their quotes were checked and rejected, and "
+                     "their rows are counted" % ", ".join(sorted(set(failed))))
+    if outside:
+        lines.append("%d examined item(s) lie outside the audited chapter(s) (%d with findings): "
+                     "`cf tally` and §3 count them and no coverage figure does"
+                     % (outside, outside_found))
+    if unstamped:
+        lines.append("%d corpus document(s) carry no `source_id` and were attributed from their "
+                     "run's receipt" % unstamped)
+    if lines:
+        lines.append("every one of these is in §0 of the handoff and in reports/coverage.json")
+    return lines
 
 
 def _skill_root() -> str:
