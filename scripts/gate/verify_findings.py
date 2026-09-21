@@ -191,13 +191,35 @@ def _fold(s: str) -> str:
 #: ``opminus``, so a dash written AGAINST its operand (``-1``) is a sign and
 #: must stay, while one with whitespace between it and the text is punctuation
 #: -- an em dash introducing the quotation, pdftotext debris at a line end.
-_LOOSE_DASH = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)"
-                         r"|(?<=\s)[\s\u2010-\u2015\u2212-]*$")
+_LOOSE_DASH_HEAD = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)")
+_LOOSE_DASH_TAIL = re.compile(r"(?<=\s)[\s\u2010-\u2015\u2212-]*$")
+#: the operand a boundary dash must never be separated from.  The whitespace
+#: condition alone reads the spacing the QUOTE chose, and the quote is written
+#: by the agent: against a book saying ``1 <= m*(F)``, ``-1 <= m*(F)`` was
+#: refused as a sign the book lacks while ``- 1 <= m*(F)`` -- the same flip with
+#: one space in it -- was stripped back to the book's own words and certified
+#: verbatim.  So a dash is punctuation only when what follows (or precedes) it
+#: is not a number.  Measured in the pinned text of the audited source: a dash,
+#: a space and a digit occur 4 times against 128 glued spellings, and the
+#: innocent 4 are inside a passage, not at a quote's edge.
+_SIGNED_HEAD = re.compile(r"^\s*[0-9]")
+_SIGNED_TAIL = re.compile(r"[0-9]\s*$")
 
 
 def _strip_loose_dashes(s: str) -> str:
-    """The quote without the punctuation dashes at its own edges."""
-    return _LOOSE_DASH.sub("", s or "")
+    """The quote without the punctuation dashes at its own edges.
+
+    Never across a sign: a run that would leave a number bare at the edge stays,
+    operators and all, and the operator pass then judges it.
+    """
+    s = s or ""
+    head = _LOOSE_DASH_HEAD.match(s)
+    if head and not _SIGNED_HEAD.match(s[head.end():]):
+        s = s[head.end():]
+    tail = _LOOSE_DASH_TAIL.search(s)
+    if tail and not _SIGNED_TAIL.search(s[: tail.start()]):
+        s = s[: tail.start()]
+    return s
 
 
 def norm(s: str) -> str:
@@ -323,7 +345,10 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
     own boundary punctuation is stripped first (:func:`_strip_loose_dashes`):
     with the edges in scope a leading em dash or a trailing pdftotext hyphen was
     an ``opminus`` the book lacks, so a verbatim, correctly-operatored quote was
-    refused and the refusal called the punctuation mathematics.
+    refused and the refusal called the punctuation mathematics.  That strip never
+    crosses a sign -- a dash beside a NUMBER stays, whatever the spacing -- and
+    it moves none of the figures below: not one of the 3,019 baseline quotes
+    strips differently for it.
     Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
     (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
     sign the extraction dropped), against 2 under the old one, and the edges add
