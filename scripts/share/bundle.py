@@ -105,10 +105,12 @@ WITHHELD = (
     "the source file itself (no PDF, no manuscript)",
     "the corpus findings documents (corpus/<run>/*.json quote the book; the routed "
     "rows carry the same findings with the quote redacted)",
-    "a verbatim run of the source inside a row's prose (reason, evidence, "
-    "finding_summary, original_concept, reasoning, concept, suggested_fix): every run "
-    "of 40 normalised characters or more is replaced by a marker and recorded in "
-    "redacted_spans, which `cf quotes hydrate` reads",
+    "a verbatim run of the source inside a row's prose: every free-text field of a "
+    "row, at any depth (a reason, a witness's why, a dissenting argument), is scanned "
+    "and every run of 40 normalised characters or more is replaced by a marker and "
+    "recorded in redacted_spans, which `cf quotes hydrate` reads. The only text of "
+    "the source a bundle carries is the edge words a redaction record keeps by "
+    "design: at most a quarter of a quote's words from each end, never a run of 40",
     "the workspace's own paths (a receipt's destination and source.path/source.host, "
     "a ledger _meta's result_file, a routed _meta's challenge_command) and the "
     "workflow ids beside them",

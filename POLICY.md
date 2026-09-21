@@ -63,11 +63,17 @@ against the text is not a finding. The limits:
   names, so a quote that is not in the book fails the gate;
 - **what leaves the workspace is a property of the destination.** The owner of
   the repository under audit gets the sentence (`--destination owner`); a
-  public tracker gets the printed page, six words at each end and a hash
-  (`--destination public`). It is never inferred from a git remote.
-- `cf share export` redacts every quote by default, including a verbatim run of
-  the source inside a `reason` or a `reasoning`. A reader who holds the same
-  edition recovers it with `cf quotes hydrate`, out of their own copy.
+  public tracker gets the printed page, a hash, and at most a quarter of the
+  quote's words at each end — nothing at all below fourteen words, where the
+  ends would be the sentence (`--destination public`). It is never inferred
+  from a git remote. Unless the destination's resolved policy is `full`, the
+  row's own prose is scrubbed the same way an exported bundle's is, so a
+  sentence of the book inside a `reasoning` or a witness does not reach the
+  tracker either.
+- `cf share export` redacts every quote by default, and scans every free-text
+  field of a row, at any depth, for a verbatim run of the source. A reader who
+  holds the same edition recovers each one with `cf quotes hydrate`, out of
+  their own copy.
 
 ## 5. Contributing an edition
 

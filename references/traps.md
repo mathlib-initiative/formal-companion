@@ -112,8 +112,9 @@ never in the skill repo or a companion; findings quote 1-3 sentences and stay in
 what leaves is an export with the quotes redacted to a hash. Two of them, and they hash the same
 normalised sentence: `cf route --redact-quotes` replaces `book_quote` with (raw length, sha256) in
 one companion's upstream report, and `cf share export` replaces it with (page, normalised length,
-sha256, first/last six words) for a whole campaign — from which `cf quotes hydrate` recovers the
-sentence on a machine that already holds that edition, and nowhere else. The
+sha256, and up to a quarter of the quote's words from each end, none at all below fourteen words)
+for a whole campaign — from which `cf quotes hydrate` recovers the sentence on a machine that
+already holds that edition, and nowhere else. The
 registry holds metadata and URLs only, which is what makes *it* committable. A download happens
 only with `--download` **and** a licence note saying the author publishes the file himself, and
 nothing is ever redistributed. The gate reads the text from a path outside every repo and **fails

@@ -52,6 +52,11 @@ from ledger import compat
 from ledger import findings as findings_mod
 from ledger import validate_ledger as vl
 from ledger import workflow_args
+# The one redactor.  `cf share export` and the drafts this module writes must
+# agree about what a run of the book is and how much of a quote may travel, or
+# two commands in one skill disagree about the same risk; share/redact.py imports
+# hashlib, re and typing only, so the stdlib-only rule is unaffected.
+from share import redact as redact_mod
 
 #: the one routing rule
 ROUTING_RULE = "row names a declaration of the repo in unfaithful_decls"
@@ -503,7 +508,10 @@ def _redact(row: dict) -> dict:
 
 #: the verbatim sentence, up to the quote gate's bound
 QUOTE_FULL = "full"
-#: printed page + the first and last few words + the hash of the whole sentence
+#: printed page + the hash of the whole sentence + the few words at each end that
+#: ``share.redact.edge_words`` allows, which is NONE for a short sentence: six
+#: words from each end of a twelve-word sentence is the sentence, and this
+#: destination is a tracker anyone can read
 QUOTE_EXCERPT = "excerpt"
 #: length and hash only -- what ``--redact-quotes`` writes into the export
 QUOTE_HASH = "hash"
@@ -514,8 +522,14 @@ QUOTE_POLICIES = (QUOTE_FULL, QUOTE_EXCERPT, QUOTE_HASH)
 #: which is the 3,000-character refusal; two modules disagreeing about what one
 #: name bounds is how the next reader greps the wrong number.
 LONG_QUOTE_CHARS = 600
-#: words kept at each end of an excerpted quote
-EXCERPT_WORDS = 6
+#: the CEILING on the words kept at each end of an excerpted quote -- not the
+#: emitted width, and read by nothing here: :func:`render_quote` asks
+#: ``share.redact.edge_words`` per quote, and its budget is at most a quarter of
+#: the sentence from each end, never an edge that is itself a run of the source,
+#: and nothing at all below ``share.redact.MIN_WORDS_FOR_EDGES`` words.  One
+#: budget for both emitters on purpose: a 10-word sentence used to be published
+#: WHOLE here while the bundle's own record of it withheld its edges.
+EXCERPT_WORDS = redact_mod.EDGE_WORDS
 
 #: The destinations a deliverable can be addressed to, and the quote policy each
 #: one gets unless ``policy.destinations.<name>.quotes`` says otherwise.  The
@@ -572,12 +586,15 @@ def render_quote(quote: Any, policy: str, *, page: Any = None) -> str:
         return '"%s"' % text
     if policy == QUOTE_EXCERPT:
         words = text.split(" ")
-        if len(words) <= 2 * EXCERPT_WORDS:
-            body = '"%s"' % text
-        else:
-            body = '"%s …" … "… %s"' % (" ".join(words[:EXCERPT_WORDS]),
-                                        " ".join(words[-EXCERPT_WORDS:]))
-        return "%s, %s (%d words, sha256 %s…)" % (body, where, len(words), digest[:12])
+        # A short sentence falls through to the withheld rendering below rather
+        # than up to the verbatim one: the excerpt branch used to emit a quote of
+        # twelve words or fewer IN FULL to a public tracker (33 of the baseline
+        # corpus's 429 quotes), which is the opposite of what the policy names.
+        keep = redact_mod.edge_words(words)
+        if keep:
+            body = '"%s …" … "… %s"' % (" ".join(words[:keep]),
+                                        " ".join(words[-keep:]))
+            return "%s, %s (%d words, sha256 %s…)" % (body, where, len(words), digest[:12])
     return "quote withheld for this destination: %s, %d characters, sha256 %s…" % (
         where, len(text), digest[:12])
 
@@ -703,6 +720,114 @@ def verdict_line(row: dict) -> str:
     return out
 
 
+def source_index(workspace: str) -> redact_mod.SourceIndex:
+    """The workspace's pinned source text, indexed for a verbatim-run search.
+
+    Built from ``sources/<id>/text.txt`` exactly as ``share.bundle`` builds it,
+    so the two emitters agree about what a run of the book is.  A workspace with
+    no prepared text yields an empty index, which is a REFUSAL for every
+    destination but ``owner`` -- see :func:`shareable_rows`.
+    """
+    if not workspace:
+        return redact_mod.SourceIndex(())
+    cfg = compat.load_workspace(workspace)
+    paths = cfg.paths
+    texts: list[str] = []
+    for source_id in cfg.source_ids():
+        path = str(paths.source_text(source_id))
+        if os.path.exists(path):
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                texts.append(fh.read())
+    return redact_mod.SourceIndex(texts)
+
+
+def _widening_escape(destination: str, *, publishable: bool) -> str:
+    """The clause a refusal adds for the operator who wants the draft anyway.
+
+    Every widening this could name -- ``--destination owner``, ``--quotes full``
+    -- resolves to the ``full`` policy, which is the book's own sentence in the
+    deliverable.  That is the right offer for the owner-message draft, which
+    stays in the workspace directory until a human sends it, and a footgun for
+    the GitHub bodies, whose ``index.json`` prints ``gh issue create
+    --body-file`` for each one: an operator who followed the hint there got the
+    public-tracker draft full of book prose the refusal exists to prevent.  So a
+    publishable deliverable gets no widening; its first remedy (`cf sources
+    refresh`, or shortening the field) is what settles it.
+
+    ``--quotes hash`` is deliberately NOT offered: it is not ``full``, so it
+    reaches the same refusal, and a remedy that refuses again is not one.
+    """
+    if publishable:
+        return ""
+    if destination == DEFAULT_DESTINATION:
+        # only the POLICY was narrowed (--quotes); the destination is already the
+        # one that carries the sentence, so naming it again changes nothing.
+        return (", or pass --quotes full, which is what the `%s` destination resolves to "
+                "by default" % DEFAULT_DESTINATION)
+    return (", or address the draft to the repository owner, who owns the book "
+            "(--destination %s)" % DEFAULT_DESTINATION)
+
+
+def shareable_rows(rows: Iterable[dict], *, quotes: str, destination: str,
+                   workspace: str, what: str, publishable: bool) -> list[dict]:
+    """*rows* with every verbatim run of the source redacted out of their prose.
+
+    ``render_quote`` governs ``book_quote`` and nothing else, so a draft for a
+    public tracker carried the book's own sentence in ``concept``, ``reasoning``,
+    ``suggested_fix`` and ``witness.why`` -- measured on the baseline corpus, a
+    verbatim run of 40+ characters is in one of those fields on 3 of 10 real
+    rows.  ``share.redact.redact_prose`` is the same scrubber ``cf share export``
+    runs, so both commands treat the same risk the same way.
+
+    ``full`` is the policy the owner's destination resolves to: the owner owns
+    the book, and the draft stays in the workspace until a human sends it.  Every
+    other POLICY is checked -- the switch is the resolved policy, not the
+    destination name, so ``--destination public --quotes full`` carries the
+    sentence exactly as ``owner`` does and ``--destination owner --quotes hash``
+    is scrubbed -- and a workspace with no pinned text is REFUSED rather than
+    emitted: warning would be right for a peer who holds the same edition and
+    wrong for a tracker anyone can read.
+
+    ``publishable`` says whether this deliverable's own printed next step sends
+    it: it decides what a refusal may offer as an alternative, see
+    :func:`_widening_escape`.
+    """
+    rows = list(rows)
+    if quotes == QUOTE_FULL:
+        return rows
+    escape = _widening_escape(destination, publishable=publishable)
+    index = source_index(workspace)
+    if not index:
+        raise PolicyRefused(
+            "refusing to draft %s for the `%s` destination: this workspace has no pinned "
+            "text for any source, so the rows' own prose could not be checked for verbatim "
+            "runs of the book. Prepare it with `cf sources refresh`%s."
+            % (what, destination, escape))
+    out = []
+    for row in rows:
+        try:
+            out.append(redact_mod.redact_prose(row, index))
+        except ValueError as exc:
+            raise PolicyRefused(
+                "refusing to draft %s: %s carries %s -- that field is a page dump, not a "
+                "remark. Shorten it in the ledger and re-run `cf route`%s."
+                % (what, row.get("item") or "(no item)", exc, escape)) from None
+    return out
+
+
+def _shareable(value: Any) -> str:
+    """A row's own prose with the exporter's machine taken out of it.
+
+    A worker cites the file it read, so ``reasoning`` can carry the auditor's own
+    absolute checkout path -- the baseline campaign's ``findings.adam.jsonl``
+    carries exactly one, inside a ``reasoning`` -- while :func:`_issue_body`
+    promises a body anyone can read carries no such path.  The file name and its
+    ``:line`` survive, because that is the evidence the row is making.  Note the
+    ``[0]``: ``elide_local_paths`` returns ``(text, count)``.
+    """
+    return redact_mod.elide_local_paths(value)[0]
+
+
 def finding_section(row: dict, *, quotes: str, heading: str = "##") -> list[str]:
     """One finding, with the evidence a maintainer needs to check it.
 
@@ -735,13 +860,13 @@ def finding_section(row: dict, *, quotes: str, heading: str = "##") -> list[str]
         for decl in row.get("unfaithful_decls") or []:
             out.append("- `%s` — no file:line recorded; re-run `cf extract` then `cf route`" % decl)
     if row.get("concept"):
-        out.append("- Concept: %s" % row["concept"])
+        out.append("- Concept: %s" % _shareable(row["concept"]))
     if row.get("reasoning"):
-        out.append("- The difference: %s" % row["reasoning"])
+        out.append("- The difference: %s" % _shareable(row["reasoning"]))
     if row.get("witness"):
-        out.append("- Witness: `%s`" % _one_line(row["witness"]))
+        out.append("- Witness: `%s`" % _shareable(_one_line(row["witness"])))
     if row.get("suggested_fix"):
-        out.append("- Suggested fix: %s" % row["suggested_fix"])
+        out.append("- Suggested fix: %s" % _shareable(row["suggested_fix"]))
     out.append("- Verdict: %s" % verdict_line(row))
     out.append("- Finding id: `%s`" % row.get("finding_id", ""))
     out.append("")
@@ -758,7 +883,8 @@ def _one_line(value: Any) -> str:
 
 
 def owner_message(routed: dict, companion: str, owner: str = "", *,
-                  destination: str = DEFAULT_DESTINATION, quotes: str = "") -> str:
+                  destination: str = DEFAULT_DESTINATION, quotes: str = "",
+                  workspace: str = "") -> str:
     """A DRAFT message for the repo owner. Nothing here sends anything.
 
     One SECTION per finding, not a row in a table: this file is the only part of
@@ -767,11 +893,19 @@ def owner_message(routed: dict, companion: str, owner: str = "", *,
     policy; the default destination is ``owner``, which carries the sentence,
     because the repository owner owns the book and this draft stays inside the
     workspace directory until a human sends it.
+
+    ``workspace`` is where the pinned source text is read from: this draft shares
+    :func:`finding_section` with the GitHub bodies, so it is addressed to a
+    destination and scrubbed for the same runs of the book (see
+    :func:`shareable_rows`), and a non-``full`` destination needs that text.
     """
     meta = routed.get("meta") or {}
     counts = meta.get("counts") or {}
     rows = [r for r in routed["rows"] if not r.get("withdrawn")]
     policy = quotes or DESTINATION_DEFAULTS.get(destination, QUOTE_EXCERPT)
+    rows = shareable_rows(rows, quotes=policy, destination=destination,
+                          workspace=workspace, what="the owner message for %s" % companion,
+                          publishable=False)
     lines = [
         "# DRAFT message to the owner of `%s`%s" % (companion, (" (%s)" % owner) if owner else ""),
         "",
@@ -929,8 +1063,9 @@ def _issue_body(rows: list[dict], *, companion: str, repo: str, quotes: str,
             "Each finding was produced by a model pass over the source and the Lean statements, "
             "then adjudicated by an independent pass with opposing skeptics. Only the verdicts "
             "%s are reported; everything else is held back, because a first-pass finding in this "
-            "pipeline is wrong about 40%% of the time and calling a house convention a content bug "
-            "is how it is wrong. The verdict and any dissent are printed with each finding above."
+            "pipeline is wrong about 40%% of the time (4 of 10 adjudicated rows in the one "
+            "campaign measured so far) and calling a house convention a content bug is how it is "
+            "wrong. The verdict and any dissent are printed with each finding above."
             % ", ".join("`%s`" % v for v in sorted(REPORTABLE_VERDICTS)),
         "verify_block": "\n".join(verify),
         "provenance":
@@ -979,6 +1114,9 @@ def github_issues(
     rows = [r for r in routed["rows"]
             if not r.get("withdrawn")
             and str(r.get("ledger_verdict") or "") in REPORTABLE_VERDICTS]
+    rows = shareable_rows(rows, quotes=policy_name, destination=destination,
+                          workspace=workspace, what="GitHub issue bodies for %s" % companion,
+                          publishable=True)
     grouped: dict[tuple, list[dict]] = {}
     for row in rows:
         grouped.setdefault((str(row.get("source_id") or ""), str(row.get("item") or "")),
@@ -1135,7 +1273,8 @@ def route_workspace(
         if write_messages:
             compat.write_text(
                 os.path.join(paths.routed, "message.%s.md" % name),
-                owner_message(routed, name, destination=destination, quotes=policy),
+                owner_message(routed, name, destination=destination, quotes=policy,
+                              workspace=resolved),
             )
         compat.update_state(
             paths,

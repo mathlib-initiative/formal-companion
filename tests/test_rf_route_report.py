@@ -163,6 +163,22 @@ def write_items_json(root: str, source_id: str, rows) -> str:
     return path
 
 
+def write_source_text(root: str, source_id: str = SOURCE_ID) -> str:
+    """sources/<id>/text.txt: the pinned text a draft's prose is checked against.
+
+    Invented, like everything else here.  A workspace without it is a workspace
+    where `cf route` cannot tell a worker's own sentence from the book's, which is
+    now a refusal for every destination but the owner's -- so the fixture pins it.
+    """
+    path = os.path.join(root, "sources", source_id, "text.txt")
+    compat.write_text(path, "\f".join([
+        "Chapter 1. Elementary measure\n\nWe begin with the elementary theory.\n",
+        f"Exercise 1.2.3. {QUOTE}\n",
+        "Lemma 1.4.1. Every elementary set has an outer measure.\n",
+    ]))
+    return path
+
+
 def item_row(item: str, *, page: int, chapter: int) -> dict:
     return {"item": item, "page": page, "pdf_page": page + 16, "chapter": chapter,
             "kind": item.split(" ")[0], "line": 1}
@@ -234,14 +250,22 @@ class Fixture(unittest.TestCase):
             item_row("Lemma 1.4.1", page=31, chapter=1),
             item_row("Exercise 2.1.1", page=58, chapter=2),
         ])
+        write_source_text(self.root)
         write_statements(self.root, [
             statement_row("Book.outerMeasure_mono", file="Book/Outer.lean", line=112,
                           item="Exercise 1.2.3",
                           statement="theorem outerMeasure_mono (E F : Set ℝ) : μ F ≤ μ E"),
         ])
         self.docs = [
+            # The reasoning and the witness QUOTE the book, which is what a worker
+            # explaining a difference does: the excerpt policy governs `book_quote`
+            # alone, so a draft for a public tracker used to carry the sentence in
+            # these two fields whatever the policy said.
             finding("Exercise 1.2.3", decls=["%s:Book.outerMeasure_mono" % COMPANION],
-                    severity="high", witness={"counterexample": "E = ∅"}),
+                    severity="high",
+                    witness={"counterexample": "E = ∅", "why": QUOTE},
+                    reasoning="the Lean statement drops the measurability hypothesis, "
+                              "where the book says: %s" % QUOTE),
             finding("Lemma 1.4.1", decls=["%s:Book.missing" % COMPANION]),
         ]
         write_corpus(self.root, "hunt", self.docs, gate_ok=self.GATE_OK)
@@ -589,6 +613,7 @@ class TwoCompanionFixture(unittest.TestCase):
                   "    role: audited", "hosts:", "  allowlist: []"]
         compat.write_text(os.path.join(self.root, "workspace.yaml"), "\n".join(lines) + "\n")
         write_items_json(self.root, SOURCE_ID, [item_row(self.ITEM, page=24, chapter=1)])
+        write_source_text(self.root)
         docs = []
         for name in self.NAMES:
             decl = "Book.m_%s" % name

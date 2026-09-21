@@ -26,8 +26,19 @@ held back for exactly that reason.
 How much of a quoted sentence an artifact carries is a property of its
 DESTINATION, not of the workspace: ``--destination owner`` (the default for the
 owner-message draft, which never leaves the workspace directory) carries the
-sentence, ``--destination public`` reduces it to the printed page, six words at
-each end and the hash of the whole.  It is never inferred from a git remote.
+sentence, ``--destination public`` reduces it to the printed page, the hash of
+the whole and at most a quarter of its words at each end -- nothing at all below
+fourteen words, where the ends would be the sentence.  It is never inferred from
+a git remote.
+
+Any quote policy but ``full`` also scrubs the ROW'S OWN prose: the quote policy
+governs ``book_quote``, and a worker quoting the book inside a ``reasoning`` or a
+witness is the same sentence by another route, so every field is checked against
+this workspace's pinned ``sources/<id>/text.txt`` with the scrubber
+``cf share export`` uses.  The switch is the RESOLVED policy, not the destination
+name: ``--destination public --quotes full`` carries the sentence.  A workspace
+with no prepared text cannot make that check, and the draft is REFUSED rather
+than written (`cf sources refresh`).
 """
 
 from __future__ import annotations
@@ -84,7 +95,8 @@ def register(subparsers):
     p.add_argument("--destination", default="",
                    choices=sorted(route_mod.DESTINATION_DEFAULTS),
                    help="who the drafts are addressed to; chooses the quote policy "
-                        "(owner: the sentence; public: page + 6 words each end + hash). "
+                        "(owner: the sentence; public: page + hash + up to a quarter of "
+                        "the words at each end, and the row's prose scrubbed too). "
                         "Default: `%s` for the owner message, `%s` for --github"
                         % (route_mod.DEFAULT_DESTINATION, route_mod.GITHUB_DESTINATION))
     p.add_argument("--quotes", default="", choices=("",) + tuple(route_mod.QUOTE_POLICIES),
@@ -199,8 +211,10 @@ def run(args) -> int:
             quotes=args.quotes,
         )
     except route_mod.PolicyRefused as exc:
-        raise CfError(str(exc), hint="policy.destinations lives in workspace.yaml; "
-                                     "`cf route --help` lists the destinations and policies")
+        raise CfError(str(exc), hint="policy.destinations lives in workspace.yaml and "
+                                     "`cf route --help` lists the destinations; the pinned "
+                                     "text any policy but `full` is checked against comes "
+                                     "from `cf sources refresh`")
     if not reports:
         print("nothing routed: no companions found", file=sys.stderr)
         return 2
@@ -239,7 +253,10 @@ def run(args) -> int:
                 print("  %s" % exc, file=sys.stderr)
                 rc = 2
             except route_mod.PolicyRefused as exc:
-                raise CfError(str(exc), hint="`cf route --help` lists the quote policies")
+                raise CfError(str(exc),
+                              hint="`cf route --help` lists the quote policies; the pinned "
+                                   "text a public body is checked against comes from "
+                                   "`cf sources refresh`")
     return rc
 
 
