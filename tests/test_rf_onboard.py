@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import sys
 import tempfile
 import unittest
@@ -52,11 +53,19 @@ from cflib import discovery                                    # noqa: E402
 from cflib.errors import CfError, DiscoveryError, SourceError   # noqa: E402
 from cflib.hashing import sha256_text                          # noqa: E402
 from cflib.jsonio import read_json                             # noqa: E402
+from cflib.registry import Registry                            # noqa: E402
 from cflib.workspace import Workspace                          # noqa: E402
+
+E2E = HERE / "e2e"
 
 
 def tmpdir(prefix: str) -> Path:
-    return Path(tempfile.mkdtemp(prefix=prefix, dir=os.environ.get("CF_TEST_TMP") or None))
+    # resolved, because every path `cf onboard` records is: on macOS mkdtemp hands
+    # back the /var symlink spelling and the command stores /private/var, which is
+    # the same directory under two names and not an assertion anyone should have
+    # to write twice.
+    return Path(tempfile.mkdtemp(
+        prefix=prefix, dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
 
 
 # ---------------------------------------------------------------------------
@@ -141,6 +150,45 @@ def notes_file(root: Path, name: str = "widget-notes.md") -> Path:
     path = root / name
     path.write_text("\n".join(lines), encoding="utf-8")
     return path
+
+
+def _make_pdf():
+    """``tests/e2e/make_pdf.py``, the booklet this repo already builds itself.
+
+    ``--source``'s PDF half is a different branch from its text half in two
+    places (the pagination rule, and everything in `prepare` that needs pages),
+    so the cases below want a real PDF rather than a manuscript.  The generated
+    booklet is the one this repo can build with the stdlib on any machine; the
+    file `tests/e2e/synthetic.sh` writes is not in git (``*.pdf`` never is).
+    """
+    if str(E2E) not in sys.path:
+        sys.path.insert(0, str(E2E))
+    import make_pdf
+
+    return make_pdf
+
+
+def booklet_pdf(root: Path, name: str = "widget-booklet.pdf") -> Path:
+    """A paginated 'book': front matter with no running head, then pages that have one."""
+    path = root / name
+    path.write_bytes(_make_pdf().build())
+    return path
+
+
+def repo_that_declares_its_own_booklet(root: Path) -> tuple[Path, Path]:
+    """A companion that NAMES its book and ships it -- the case `--source` collides with."""
+    repo = bare_label_repo(root)
+    (repo / "sources").mkdir(exist_ok=True)
+    booklet = booklet_pdf(repo / "sources")
+    (repo / "formalization.yaml").write_text(
+        "version: v0.3\n"
+        "project:\n  name: barerepo\n  license: CC0-1.0\n"
+        "sources:\n"
+        "- title: Widget Booklet\n"
+        "  authors:\n  - Anonymous\n"
+        "  type: booklet\n"
+        "  license: 'public domain; dedicated by the author'\n", encoding="utf-8")
+    return repo, booklet
 
 
 def empty_notes_file(root: Path) -> Path:
@@ -496,6 +544,125 @@ class TestNamingTheSourceOnTheWayIn(OnboardCase):
                          "--source", str(self.notes), "--source", str(second)), 0)
         # identical bytes are ONE source however many times they are named
         self.assertEqual(len(Workspace.load(self.ws).source_ids()), 1)
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs poppler's pdftotext")
+    def test_naming_a_file_the_repo_already_found_is_still_one_source(self):
+        """One sha is one source, whichever door it came in by.
+
+        The dedupe that keeps two ids off one fingerprint was keyed on the
+        LOCATED PDF, and a claim that names its files deliberately has none -- so
+        naming a file the repo's own signals had already found wrote a second id
+        for the same bytes, which is the state `workspace.yaml`'s loader refuses.
+        The refusal blamed the tool and named no flag, and it left the registry
+        overlay carrying both ids.
+        """
+        repo, booklet = repo_that_declares_its_own_booklet(self.root)
+        copy = self.root / "someone-elses-copy.pdf"
+        copy.write_bytes(booklet.read_bytes())
+        self.assertEqual(
+            self.onboard(repo, "--adapter", "docstring_tags", "--source", str(copy)), 0)
+        ws = Workspace.load(self.ws)
+        self.assertEqual(len(ws.source_ids()), 1)
+        source_id = ws.source_ids()[0]
+        body = (ws.data.get("sources") or {})[source_id]
+        # the repo's own name for the work survives the fold: a declared title
+        # outranks a filename stem (S3's derivation step)
+        self.assertEqual(body["title"], "Widget Booklet")
+        self.assertEqual(body["discovered"]["pdf_found_in"], "repo_declared")
+        # ...and the path the operator gave is kept as evidence, not discarded
+        self.assertIn(str(copy), body["discovered"]["from"])
+        # one overlay row for that sha, not two
+        entries = [e for e in Registry.load(ws).entries.values()
+                   if e.sha256 == body["sha256"]]
+        self.assertEqual([e.id for e in entries], [source_id])
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs poppler's pdftotext")
+    def test_a_named_pdf_runs_the_inferences_a_manuscript_has_no_pages_for(self):
+        """The flag's PDF half, which every other case here leaves untested.
+
+        ``--source`` advertises "a PDF, or a manuscript that is already text" in
+        its help, in the refusal's hint and in the contract, and the two halves
+        are different branches: the pagination is read off the format rather than
+        detected, and the page offset, the printed-page rule and the page bind are
+        no-ops for a manuscript.  This asserts they really run for a named PDF.
+        """
+        pdf = booklet_pdf(self.root)
+        self.assertEqual(
+            self.onboard(self.repo, "--adapter", "docstring_tags", "--source", str(pdf)), 0)
+        ws = Workspace.load(self.ws)
+        source_id = ws.source_ids()[0]
+        body = (ws.data.get("sources") or {})[source_id]
+        self.assertEqual(body["source_format"], "pdf")
+        meta = read_json(ws.paths.source_meta(source_id), default={}) or {}
+        self.assertEqual(meta["pagination"], "formfeed")
+        self.assertEqual(meta["items"], len(_make_pdf().ITEMS))
+        # the printed pages are two behind the PDF's, and the running heads say so
+        self.assertGreater(meta["offset"], 0)
+        self.assertEqual(meta["offset_method"], "running_head_mode")
+
+    def test_a_second_onboard_does_not_need_the_flag_again(self):
+        """Re-onboarding is the documented refresh; it must not need a remembered flag.
+
+        Discovery re-reads the repo every run and a `manual` source is invisible
+        to all seven signals, so the second run refused with "no source could be
+        discovered" while `workspace.yaml` listed that very source for that very
+        companion.
+        """
+        self.assertEqual(
+            self.onboard(self.repo, "--adapter", "docstring_tags", "--source", str(self.notes)), 0)
+        first = Workspace.load(self.ws).source_ids()
+        self.assertEqual(self.onboard(self.repo), 0)
+        second = Workspace.load(self.ws)
+        self.assertEqual(second.source_ids(), first)
+        body = (second.data.get("sources") or {})[first[0]]
+        self.assertEqual(body["discovered"]["pdf_found_in"], "manual")
+        self.assertEqual(body["discovered"]["from"], [str(self.notes)])
+
+    def test_a_re_claimed_source_that_moved_is_reported_and_names_the_flag(self):
+        """The location is re-used, never trusted: the facts still come off the file."""
+        self.onboard(self.repo, "--adapter", "docstring_tags", "--source", str(self.notes))
+        self.notes.rename(self.root / "moved-notes.md")
+        with self.assertRaises(DiscoveryError) as caught:
+            self.onboard(self.repo)
+        self.assertIn("--source", caught.exception.hint or "")
+
+    @unittest.skipUnless(shutil.which("pdftotext"), "needs poppler's pdftotext")
+    def test_only_a_manual_source_is_re_claimed_from_the_workspace(self):
+        """A row a signal will find again must not be re-asserted from the workspace.
+
+        Otherwise a stale workspace row outranks what the repo says today, which
+        is the whole reason discovery re-reads the repo instead of trusting itself.
+        """
+        from cfcmd.onboard import _sources_only_the_operator_named
+
+        repo, _booklet = repo_that_declares_its_own_booklet(self.root)
+        self.assertEqual(self.onboard(repo, "--adapter", "docstring_tags"), 0)
+        ws = Workspace.load(self.ws)
+        self.assertEqual(
+            _sources_only_the_operator_named(ws, repo, "barerepo"), [])
+
+
+# ---------------------------------------------------------------------------
+# what the discovery result calls a source it is about to prepare
+# ---------------------------------------------------------------------------
+
+class TestTheRenderedResultDoesNotCallATextFileAPdf(unittest.TestCase):
+    """`--source` makes a text manuscript land on that line routinely."""
+
+    def _render(self, **body) -> str:
+        result = discovery.DiscoveryResult(repo=Path("/nowhere"), name="r", adapter="x")
+        result.sources.append({"id": "widget", "sha256": "0" * 64,
+                               "pdf": "/nowhere/widget-notes.md", **body})
+        return result.render()
+
+    def test_a_text_source_is_called_a_source(self):
+        out = self._render(source_format="text", pagination="none")
+        self.assertIn("source   /nowhere/widget-notes.md", out)
+        self.assertNotIn("pdf      /nowhere", out)
+
+    def test_a_pdf_is_still_called_a_pdf(self):
+        out = self._render(source_format="pdf", pagination="formfeed")
+        self.assertIn("pdf      /nowhere/widget-notes.md", out)
 
 
 # ---------------------------------------------------------------------------
