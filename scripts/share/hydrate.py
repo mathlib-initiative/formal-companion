@@ -15,6 +15,12 @@ Three outcomes, all counted and none of them silent:
 * **ambiguous** -- two passages that differ in their raw spelling both hash to it,
   so which one the finding meant cannot be decided mechanically.
 
+``book_quote`` is not the only redacted quote in a row.  ``cf share export`` also
+replaces a verbatim run of the source inside a prose field -- a ``reason`` that
+quotes the exercise it is about -- with the same kind of record, kept in
+``redacted_spans``; :func:`redaction_records` returns both kinds and each is
+hydrated the same way, the report's ``field`` saying which one it came from.
+
 MEASURED over the baseline corpus's 241 distinct quotes, against the published
 edition's pinned text (those v1 rows carry no ``source_id`` of their own, so there
 is one text to match them against): 214 hydrate, 25 are not found (a quote
@@ -35,12 +41,11 @@ those the search tries every length a whitespace collapse can account for
 from __future__ import annotations
 
 import hashlib
-import re
 from typing import Any, Iterable, Sequence
 
 from gate.verify_findings import PAGE_BIND_WINDOW, BookText, norm
 
-from .redact import is_redacted, normalise_quote
+from .redact import is_redacted, normalise_quote, normalise_with_offsets, prose_spans
 
 #: how many characters a whitespace collapse may have removed from a quote whose
 #: record carries no ``norm_chars``.  ``route._redact`` stores ``len(quote)`` of
@@ -53,8 +58,6 @@ MAX_COLLAPSE = 32
 #: first words, i.e. one ``route._redact`` wrote) may scan before it gives up and
 #: names the command that records both.  A single-length sweep has no such cap.
 MAX_SWEEP_PAGES = 8
-
-_TOKEN = re.compile(r"\S+")
 
 #: status values, so a caller counts the same three buckets this module reports
 HYDRATED = "hydrated"
@@ -101,25 +104,10 @@ class _Page:
     def __init__(self, number: int, raw: str):
         self.number = number
         self.raw = raw
-        parts: list[str] = []
-        offsets: list[int] = []
-        for k, match in enumerate(_TOKEN.finditer(raw)):
-            a, b = match.start(), match.end()
-            if k:
-                parts.append(" ")
-                offsets.append(a - 1)          # inside the whitespace run before it
-            lowered = raw[a:b].lower()
-            parts.append(lowered)
-            if len(lowered) == b - a:
-                offsets.extend(range(a, b))
-            else:
-                # A character whose lowercase is a different LENGTH (Turkish dotted
-                # I and friends).  The digest is still exact -- norm is built with
-                # the same .lower() the record's normalisation uses -- and only the
-                # raw slice's edge can move by a character inside this one token.
-                offsets.extend([a] * len(lowered))
-        self.norm = "".join(parts)
-        self.offsets = offsets
+        # One normalisation, shared with the exporter's prose-span search
+        # (:func:`share.redact.normalise_with_offsets`): a page indexed one way
+        # and a span located the other would hash the same sentence differently.
+        self.norm, self.offsets = normalise_with_offsets(raw)
 
     def _span(self, start: int, length: int) -> tuple[str, str]:
         return (self.norm[start:start + length],
@@ -260,51 +248,78 @@ def verify_text(record: dict, text: str) -> bool:
 
 def hydrate_rows(rows: Iterable[dict], texts: dict[str, str],
                  *, window: int = PAGE_BIND_WINDOW) -> tuple[list[dict], dict[str, int]]:
-    """Hydrate every redacted row of *rows* against ``{source_id: pinned text}``.
+    """Hydrate every redacted quote of *rows* against ``{source_id: pinned text}``.
 
-    Returns ``(reports, counts)``.  One report per redacted row --
-    ``{source_id, item, kind, finding_id, status, text, page, why}`` -- and counts
-    over ``hydrated`` / ``not-found`` / ``ambiguous`` / ``no-source`` plus the
-    number of rows that carried nothing to hydrate.
+    Returns ``(reports, counts)``.  One report per redacted RECORD, not per row --
+    ``{source_id, item, kind, field, finding_id, status, text, page, why}`` -- and
+    counts over ``hydrated`` / ``not-found`` / ``ambiguous`` / ``no-source`` plus
+    the number of rows that carried nothing to hydrate.  A row has one record for
+    its ``book_quote`` and one for each span the export took out of its prose
+    (``field`` says which), because a passage the export redacted out of a
+    ``reason`` is recovered by exactly the machinery that recovers a ``book_quote``.
     """
     reports: list[dict] = []
     counts = {HYDRATED: 0, NOT_FOUND: 0, AMBIGUOUS: 0, "no-source": 0,
               "rows": 0, "redacted": 0, "verbatim": 0}
     for row in rows:
         counts["rows"] += 1
-        record = row.get("book_quote")
-        if not is_redacted(record):
-            if str(record or "").strip():
+        records = redaction_records(row)
+        if not records:
+            if str(row.get("book_quote") or "").strip():
                 counts["verbatim"] += 1
             continue
-        counts["redacted"] += 1
         source_id = str(row.get("source_id") or "")
-        report = {
-            "source_id": source_id,
-            "item": str(row.get("item") or ""),
-            "kind": str(row.get("kind") or ""),
-            "finding_id": str(row.get("finding_id") or ""),
-            "page": record.get("page"),
-        }
         raw = texts.get(source_id)
-        if raw is None:
-            report.update(status="no-source", text="", why=(
-                f"this workspace has no pinned text for {source_id or '(no source_id)'}"))
-            counts["no-source"] += 1
+        if raw is None and not source_id and len(texts) == 1:
+            # A v1 row names no edition of its own and this workspace pins exactly
+            # one, so that is the text to look in -- the same fallback the exporter
+            # uses to record the page.  A row that DOES name a source this
+            # workspace has not prepared still gets "no-source": "I have not got
+            # that edition" and "the quote is not in this one" are different
+            # answers, and the digest is the check either way.
+            raw = next(iter(texts.values()))
+        for field, record in records:
+            counts["redacted"] += 1
+            report = {
+                "source_id": source_id,
+                "item": str(row.get("item") or ""),
+                "kind": str(row.get("kind") or ""),
+                "field": field,
+                "finding_id": str(row.get("finding_id") or ""),
+                "page": record.get("page"),
+            }
+            if raw is None:
+                report.update(status="no-source", text="", why=(
+                    f"this workspace has no pinned text for {source_id or '(no source_id)'}"))
+                counts["no-source"] += 1
+                reports.append(report)
+                continue
+            result = hydrate_record(record, raw, window=window)
+            report.update(status=result["status"], text=result["text"], why=result["why"],
+                          page=result["page"] if result["page"] else record.get("page"),
+                          searched_pages=result["searched_pages"])
+            counts[result["status"]] = counts.get(result["status"], 0) + 1
             reports.append(report)
-            continue
-        result = hydrate_record(record, raw, window=window)
-        report.update(status=result["status"], text=result["text"], why=result["why"],
-                      page=result["page"] if result["page"] else record.get("page"),
-                      searched_pages=result["searched_pages"])
-        counts[result["status"]] = counts.get(result["status"], 0) + 1
-        reports.append(report)
     return reports, counts
 
 
+def redaction_records(row: dict) -> list[tuple[str, dict]]:
+    """``[(field, record)]`` for every redacted quote *row* carries.
+
+    ``book_quote`` first, then the prose spans in the order the export took them
+    out, so a report reads in the order a person reads the row.
+    """
+    out: list[tuple[str, dict]] = []
+    if is_redacted(row.get("book_quote")):
+        out.append(("book_quote", dict(row["book_quote"])))
+    for span in prose_spans(row):
+        out.append((str(span.get("field") or "?"), dict(span["quote"])))
+    return out
+
+
 def redacted_rows(rows: Iterable[dict]) -> list[dict]:
-    """Only the rows whose ``book_quote`` is a redaction record."""
-    return [r for r in rows if is_redacted(r.get("book_quote"))]
+    """Only the rows carrying a redaction record -- a quote, a prose span, or both."""
+    return [r for r in rows if redaction_records(r)]
 
 
 def source_texts(paths: Any, source_ids: Sequence[str]) -> dict[str, str]:
