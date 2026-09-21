@@ -21,9 +21,9 @@ The unit of organisation is a **companion with a list of sources**, not a book
 with a list of companions. A **workspace** holds N companions and M sources; a
 differential is possible exactly where two companions' source lists overlap.
 **Nothing about a source is typed in**: `cf onboard <repo>` reads the
-repository, fingerprints the PDF bytes, infers the page offset and the item
+repository, fingerprints the source bytes, infers the page offset and the item
 kinds from the text, finds the errata page and prepares the source. Sources are
-identified by content (the sha256 of the PDF) and remembered in a **registry**
+identified by content (the sha256 of the bytes) and remembered in a **registry**
 shipped with the skill, so the second workspace that meets an edition knows
 everything the first one learned.
 
@@ -31,16 +31,20 @@ everything the first one learned.
 
 ```
 SKILL.md          when to use it, the default program, the command index, the hard rules
-docs/design/      the binding spec: multi-source-model.md
+CONTRIBUTING.md   how to send a change; CLAUDE.md is the same ground for an agent
+POLICY.md         the copyright rule the registry and the exports implement
+docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
+evals/            trigger evals: prompts as data, run by hand against the skill
+bin/cf            the PATH shim; it resolves back to this checkout
 scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/
 scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference,
                   state.json, paths, item grammar, vocabulary
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
-                  detect, report
+                  detect, report, recheck, score, share
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
-workflows/        Workflow-tool scripts (adjudication, challenge, verification)
+workflows/        Workflow-tool scripts (adjudication, challenge, fleet, verification)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline
 ```
 
@@ -51,37 +55,47 @@ directory outside it.
 ## Install
 
 ```sh
-git clone <this repo> ~/Desktop/companion-faithfulness
-ln -s ~/Desktop/companion-faithfulness ~/.claude/skills/companion-faithfulness
+SKILL=~/skills/companion-faithfulness          # anywhere you like
+git clone <this repo's url> "$SKILL"
+
+# 1. let Claude Code load it as a skill
+ln -s "$SKILL" ~/.claude/skills/companion-faithfulness
+
+# 2. put `cf` on PATH -- a symlink, not a copy: the shim resolves back to this
+#    checkout, and every command the skill prints is spelled `cf <command>`
+mkdir -p ~/.local/bin && ln -s "$SKILL/bin/cf" ~/.local/bin/cf
+
+cf doctor            # python floor, git, poppler, curl, and the PDF search roots
 ```
 
 Requirements: Python 3.11+ (stdlib only; PyYAML is used when importable and a
 fallback reader covers the skill's own files), `git`, and for source
 preparation `pdftotext`/`pdftoppm` (poppler) and `curl` (errata). Server fleets
-additionally need `tend` and ssh access to a host you are allowed to use.
+additionally need `tend` and ssh access to a host you are allowed to use;
+neither `tend` nor `agentbox` ships here (see "What has been exercised").
+`cf doctor` reports each of these and exits 2 when a required one is missing.
 
-Everything runs as a path, so the CLI works with or without the symlink:
+Nothing is installed into Python. Without the PATH shim every command also
+works by path:
 
 ```sh
-python3 ~/Desktop/companion-faithfulness/scripts/cf.py --help
+python3 "$SKILL/scripts/cf.py" --help
 ```
 
 ## Quick start
 
 ```sh
-CF=~/Desktop/companion-faithfulness/scripts/cf.py
-
-python3 $CF init ~/Desktop/tao-workspace
-cd ~/Desktop/tao-workspace
-python3 $CF onboard ~/Desktop/tao-measure-lean
+cf init <workspace>
+cd <workspace>
+cf onboard <path to a companion repo>
 ```
 
 That is the whole of stage 0 for one companion. No `--book`, no `--pdf`, no
-`--offset`, no `--errata-url`. Abridged, `onboard` prints what it decided and
-why (a real run on the machine this was written on):
+`--offset`, no `--errata-url`. Abridged — a real run, with local paths elided —
+`onboard` prints what it decided and why:
 
 ```
-repo      : /Users/jack/Desktop/tao-measure-lean
+repo      : <tao-measure-lean>
 adapter   : docstring_tags                     confidence 0.93   (42 of 44 sampled
             .lean files with a docstring open one with a book tag (110 carry no docstring))
 
@@ -121,48 +135,84 @@ Then the rest of the program:
 
 ```sh
 # 2. the second companion of the same book
-python3 $CF onboard ~/Desktop/measure_theory
+cf onboard <path to the other companion repo>
 
-# then EDIT companions/*/conventions.md and have each owner confirm it:
-# that list is what separates CONVENTION from CONTENT, and an unconfirmed list
-# is the largest single source of false positives.
+# then EDIT companions/*/conventions.md and have each owner confirm it: that
+# list is what separates CONVENTION from CONTENT, an unconfirmed list is the
+# largest single source of false positives, and `cf plan-run` refuses a
+# companion whose file carries no `confirmed_by:` stamp.
 
 # 3. the map, at any point
-python3 $CF status
-python3 $CF sources list
+cf status
+cf sources list
 
 # 4. pairing and the free findings
-python3 $CF pair                              # one pairs/<source_id>/ tree per shared source
-python3 $CF detect-proxies tao-measure-lean   # coverage + proxies, no model, no cost
-                                              # -> corpus/detect-…-cheap/ (gated: `mechanical`)
+cf pair                              # one pairs/<source_id>/ tree per shared source
+cf detect-proxies tao-measure-lean   # coverage + proxies, no model, no cost
+                                     # -> corpus/detect-…-cheap/ (gated: `mechanical`)
 
 # 5. a run (server fleets need an allowlisted host and recorded consent)
-python3 $CF plan-run --preset attack-vac --companion tao-measure-lean \
+cf plan-run --preset attack-vac --companion tao-measure-lean \
     --run-id attack-vac-2026-09-20 --host <alias> --i-have-consent
-python3 $CF run attack-vac-2026-09-20 --host <alias> --i-have-consent   # dry run without --execute
-python3 $CF harvest attack-vac-2026-09-20 --gate
-python3 $CF tally --union --agreed
+cf run attack-vac-2026-09-20 --host <alias> --i-have-consent   # dry run without --execute
+cf harvest attack-vac-2026-09-20      # the findings gate runs by default
+cf tally --union --agreed
 
 # 5b. findings produced before this skill existed
 #     --repo-map says which companion their repo names are: the union key holds
 #     the repo, so an unmapped import joins nothing this workspace runs
-python3 $CF import-corpus --run-id findings-hunt --from ~/Desktop/tao-diff-run/findings-hunt \
-    --repo-map ours=tao-measure-lean
+cf import-corpus --run-id findings-hunt --from <a directory of findings> \
+    --preset differential-legacy --repo-map ours=tao-measure-lean
 # batch-1 rows were judged against the 2011 draft, so they say so:
-python3 $CF import-corpus --run-id batch1 --from ~/Desktop/tao-differential/batch1 \
+cf import-corpus --run-id batch1 --from <a directory of findings> \
+    --preset differential-legacy \
     --source tao-measure-2011-draft --source-sha <that edition's full sha256> \
     --allow-edition-mismatch
 
 # 6. challenge, route, report
-python3 $CF adjudicate --companion tao-measure-lean
-python3 $CF route
-python3 $CF report
+cf adjudicate --companion tao-measure-lean
+cf route
+cf report
 ```
 
 `cf status` is the map at every point: the sources table, the one line saying
-where a differential is possible, each companion's `state.json`, and any source
-nobody has confirmed. It prints nothing it did not read from a file, so a
-missing number means a stage has not run.
+where a differential is possible, each companion's `state.json`, any source
+nobody has confirmed, and whether the workspace repo has acquired a remote. It
+prints nothing it did not read from a file, so a missing number means a stage
+has not run.
+
+The findings gate runs **by default** in `cf harvest` and `cf import-corpus`.
+An import of a directory this workspace never planned has no gate config to
+build unless you name a `--preset` or a `--gate-config`: it then records
+`gate: null`, warns, and `cf tally` repeats that warning for every run it
+counts.
+
+## The end-to-end demonstration
+
+It needs no private checkout, and it is what CI runs:
+
+```sh
+bash tests/e2e/synthetic.sh
+```
+
+It generates a public-domain booklet and two synthetic Lean companions of it
+carrying eight planted defects, onboards them with no flags, runs the
+model-free detectors and scores them against `tests/e2e/answer-key.json`:
+
+```sh
+cf detect-proxies notes-a --stages tests/e2e/stages.anonymous-elementary-sets.json
+cf detect-proxies notes-b --stages tests/e2e/stages.anonymous-elementary-sets.json
+cf score --run detect-notes-a-cheap --run detect-notes-b-cheap \
+         --run anchor-check-anonymous-elementary-sets \
+         --answer-key tests/e2e/answer-key.json
+```
+
+The recorded score for the mechanical tier is **precision 1.00, recall 0.50,
+F1 0.6667**: it finds every defect of the three kinds it can see and none of
+the four it cannot, which is the point — that is the free detector's recall
+ceiling. It is also the only figure in this repo with a recall denominator,
+because a defect nobody raised leaves no artifact behind. Both the script and
+`tests/test_rf_benchmark.py` recompute it rather than trusting it.
 
 ## When discovery cannot decide
 
@@ -175,8 +225,9 @@ cf sources set <id> numbering=3,4          # the book numbers deeper than its he
 cf sources set <id> confirmed=true         # you checked a discovered entry
 cf onboard <repo> --anchor-source <id>     # two editions scored too close to call
 cf onboard <repo> --adapter docstring_tags # no adapter scored above 0.5
+cf onboard <repo> --source <file>          # the repo names no source, or not this one
 cf sources add <source> --for <companion>  # the repo names a source it does not identify
-cf sources remove <id>                    # undo one that should not be here (loads a broken workspace)
+cf sources remove <id>                     # undo one that should not be here
 cf onboard <repo> --download               # fetch from the author's own site (licence permitting)
 ```
 
@@ -202,42 +253,103 @@ manual`, `confirmed: false` until a human says otherwise.
   corpus/<run-id>/           findings + RECEIPT.json  (committed: this is the baseline)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts
-  reports/                   tally.<run>.json, union.<name>.json, handoff.<date>.md
+  reports/                   tally.<run>.json, union.<name>.json, coverage.json,
+                             score.<run>.json, handoff.<date>.md
+  fixes/  reviews/           created by `cf init` and written by nothing in v1: they
+                             are the extension points for the out-of-scope stages
 ```
+
+`docs/design/stage_map.md` §2.1 is the full version, including what carries the
+source sha and the companion pin.
 
 Rules the directory enforces:
 
-- **no remote.** `cf init` runs `git init` with no remote and installs a
-  pre-push hook, because the corpus quotes the source and holds unchallenged
-  findings.
+- **no remote.** `cf init` runs `git init` and REFUSES a workspace repo that
+  already has a remote unless `policy.allow_remote` says otherwise; that
+  refusal is the control, because the corpus quotes the source and holds
+  unchallenged findings. The pre-push hook it installs is a reminder on top of
+  it, not the control: `git push --no-verify` skips it, a fresh clone does not
+  carry it, and a remote added after `cf init` never passes through it — which
+  is why `cf status` prints, every run, whether the repo has a remote and
+  whether the hook is still in place. `cf init --no-remote-guard` adds the one
+  guard a bare `git push --no-verify` does not get past (`remote.pushDefault`
+  to a remote that does not exist and `push.default nothing`, both in that
+  repo's local config); an explicit `git push <remote> <ref>` still works, so it
+  is a guard and not the control either. Staying local is not the same as being
+  unshareable: `cf share export` writes the campaign's conclusions — ledger
+  rows, routed findings, tallies, receipts, source metadata — with every quote
+  redacted, and `cf share import` merges such a bundle into another workspace
+  without overwriting a verdict.
 - **copyright.** `sources/`, `pages/`, `images/`, `crops/` and `*.pdf` are
-  gitignored; only the PDF's sha256 and the metadata are recorded. `corpus/` is
-  deliberately *not* ignored — it is the calibration baseline.
+  gitignored; only the sha256 and the metadata are recorded. `corpus/` is
+  deliberately *not* ignored — it is the calibration baseline. `POLICY.md` is
+  the whole rule.
 - **one edition per source id.** Every artifact carries `source_id` and
   `source_sha`; a mismatch is refused.
 - **consent.** `cf run` refuses hosts outside `hosts.allowlist` and requires
   `--i-have-consent`, which is recorded in `run.yaml`.
 
+## What has been exercised, and what has not
+
+This is one book's audit generalised, not a tool proven over many. Being exact
+about which is which:
+
+- **Exercised on two real companions of one book**, two editions and a shared
+  source: discovery, inference, extraction through the `docstring_tags` and
+  `attribution_table` adapters, pairing, def-coverage, the mechanical
+  page-anchor check, `detect-proxies` (cheap tier), the gate, `import-corpus`,
+  the tally, adjudication, routing and the report. Every pinned regression
+  number in the test suite comes from that corpus.
+- **Exercised on a synthetic second book**: all of the above, from nothing,
+  over a generated public-domain booklet and two companions of it
+  (`tests/e2e/synthetic.sh`; `tests/e2e/multisource.sh` adds the Tao half).
+  That is what shows the pipeline is not wired to one title.
+- **Written from one campaign's history and still frozen to it**: the eight
+  `--preset` rows are a record of how the five 2026-09 runs differed, and three
+  of them (`differential-legacy`, `attack-legacy`, `mechanical`) describe
+  imported corpora rather than runs — `cf plan-run` exits 2 on them. The stage
+  tables `detect-proxies --lean` needs are per-source and hand-written, and the
+  shipped one covers one book.
+- **Never exercised end to end**: the server substrate. `cf run --execute`
+  drives `tend` + `agentbox`, neither of which ships here or is pinned by
+  anything here, and the five runs that produced the baseline pre-date this
+  code. The local Workflow fleet (`cf run <id> --local`, under ~100 items) is
+  the fleet path that has been driven from this repo.
+- **Not generalised yet, and where a second book will hurt first**: a numbering
+  grammar that is not `<Kind> <n>.<n>`, a source whose items are not headed by
+  a capitalised kind word, and a companion convention no adapter recognises.
+  `SKILL.md`'s "Experimental and unverified" section is the short list.
+
 ## Tests
 
 ```sh
-python3 -m unittest discover -s ~/Desktop/companion-faithfulness/tests
+python3 -m unittest discover -s "$SKILL/tests"        # the documented gate
+python3 -m pytest -q "$SKILL/tests"                   # same suite; conftest pins HOME
 ```
 
 Regression tests that read local baselines are skipped unless you name them:
 
 ```sh
-CF_BASELINE_CORPUS=~/Desktop/tao-diff-run \
-CF_BASELINE_DIFF=~/Desktop/tao-differential \
-CF_TML=~/Desktop/tao-measure-lean \
-CF_MT=~/Desktop/measure_theory \
-CF_BOOK_TXT=~/Desktop/tao-differential/book.official.txt \
-python3 -m unittest discover -s ~/Desktop/companion-faithfulness/tests
+CF_BASELINE_CORPUS=<a harvested corpus> \
+CF_BASELINE_DIFF=<the differential tree> \
+CF_TML=<one companion checkout> \
+CF_MT=<the other companion checkout> \
+CF_BOOK_TXT=<the pinned book text> \
+python3 -m unittest discover -s "$SKILL/tests"
 ```
+
+`.github/workflows/tests.yml` runs the suite on Python 3.11, 3.12 and 3.13,
+once more with PyYAML absent (its fallback reader is what parses `run.yaml` on
+a bare host), the documented `unittest` command, the synthetic end-to-end
+script, and `cf sources validate-registry`.
 
 ## Status
 
 v1: findings only. `fix`, `review-pr`, `camera-ready` and `publish-verdicts`
 are designed and documented but not implemented. See `SKILL.md` for the hard
-rules, `docs/design/archive/multi-source-model.md` for the data model, and `CLAUDE.md`
-for contributor conventions.
+rules, `docs/design/stage_map.md` for the data model, `CONTRIBUTING.md` for how
+to send a change, and `CHANGELOG.md` for what a version number promises.
+
+Licensed under Apache-2.0 (`LICENSE`). The licence covers this code and the
+source **metadata**; it never covers the sources themselves — `POLICY.md` is
+that rule.
