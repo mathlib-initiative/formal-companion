@@ -653,13 +653,39 @@ def verify_bundle(bundle: Path, manifest: dict) -> list[str]:
     return problems
 
 
+def is_ledger_file(relative: str) -> bool:
+    """Is *relative* one of a bundle's mergeable ledger files?
+
+    ``ledger/{accepted,refuted}.<companion>.jsonl``: the files whose ABSENCE is
+    what ``share.merge.merge_bundle`` refuses a bundle for.  One predicate, so the
+    sentence `cf share export` prints about the import cannot end up describing a
+    different bundle from the one the import accepts.
+    """
+    parts = Path(str(relative)).as_posix().strip("/").split("/")
+    if len(parts) != 2 or parts[0] != "ledger":
+        return False
+    return parts[1].endswith(".jsonl") and parts[1].startswith(("accepted.", "refuted."))
+
+
 def bundle_ledger_files(bundle: Path) -> list[Path]:
     """``ledger/{accepted,refuted}.<companion>.jsonl`` inside a bundle."""
     ledger = Path(bundle) / "ledger"
     if not ledger.is_dir():
         return []
-    return sorted(p for p in ledger.glob("*.jsonl")
-                  if p.name.startswith(("accepted.", "refuted.")))
+    return sorted(p for p in ledger.glob("*.jsonl") if is_ledger_file(f"ledger/{p.name}"))
+
+
+def manifest_ledger_files(manifest: dict) -> list[str]:
+    """The same files, named by a manifest rather than found on a disk.
+
+    `cf share export` has to say whether the import will take the bundle it has
+    just written, and ``--out <name>.tar.gz`` leaves no directory to look in --
+    the staging directory is gone by the time the command prints.  The manifest
+    lists exactly what was written, so it answers for both shapes.
+    """
+    return sorted(rel for rel in (str(entry.get("path") or "")
+                                  for entry in (manifest.get("files") or []))
+                  if is_ledger_file(rel))
 
 
 def bundle_routed_files(bundle: Path) -> list[Path]:

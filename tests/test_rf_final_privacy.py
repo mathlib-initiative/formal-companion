@@ -850,12 +850,31 @@ class TheNextStepAnExportPrintsSucceedsTest(unittest.TestCase):
                 manifest, out, printed = self.export(challenged=challenged)
                 self.assertEqual(manifest["counts"]["ledger_rows"], 0)
                 nxt = printed.split("next:")[-1]
-                offered = [line.strip() for line in nxt.splitlines() if line.strip()]
-                self.assertEqual([c for c in offered if c.startswith("cf share import")], [],
+                # Backticks off before the check: `cf share import` in prose names
+                # the same command a bare one does, and the check that kept them
+                # let any backticked line past without ever looking at it.
+                offered = [line.strip().replace("`", "") for line in nxt.splitlines()
+                           if line.strip()]
+                named = [c for c in offered if c.startswith("cf share import")]
+                self.assertEqual([c for c in named if "refuses this bundle" not in c], [],
                                  "the export named a command that refuses its own bundle")
+                self.assertEqual([c for c in named if str(out) in c], [],
+                                 "a line that names the bundle is an invitation to run it")
                 self.assertIn(f"cf adjudicate --companion {COMPANION}", nxt)
                 if manifest["counts"]["routed_rows"]:
                     self.assertIn("cf quotes hydrate --bundle", nxt)
+
+    def test_the_refusal_the_import_makes_is_the_one_the_export_states(self):
+        """This workspace has never adjudicated, so the bundle has no ledger FILE.
+
+        The export says so in the same words the import refuses in; the sibling
+        below runs the import and gets the refusal.
+        """
+        manifest, out, printed = self.export(challenged=True)
+        self.assertEqual(bundle_mod.manifest_ledger_files(manifest), [])
+        nxt = printed.split("next:")[-1]
+        self.assertIn("`cf share import` refuses this bundle", nxt)
+        self.assertIn("cf quotes hydrate", nxt)
 
     def test_the_refusal_it_would_have_walked_into_is_still_the_refusal(self):
         manifest, out, _ = self.export(challenged=True)

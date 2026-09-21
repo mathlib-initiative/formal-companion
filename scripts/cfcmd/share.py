@@ -159,10 +159,14 @@ def _export(workspace, args) -> int:
                  "a private repo's Lean statements")
     log.info("")
     log.info("next:")
-    # `cf share import` refuses a bundle with no accepted/refuted rows
-    # (share/merge.py), and a findings-only campaign -- everything before an
-    # adjudication has run -- exports exactly that bundle.  Printing the import
-    # unconditionally named a next step that exits 2 on the file just written.
+    # `cf share import` refuses a bundle with no accepted/refuted FILES
+    # (share/merge.py), not one with no ledger ROWS, and the two are different
+    # bundles: `cf adjudicate` writes both files even when it adjudicates nothing,
+    # so that bundle imports and merges zero rows, while a findings-only campaign
+    # -- one where `cf adjudicate` has never run -- has no ledger file at all and
+    # is the one that exits 2.  Ask what merge_bundle asks, from the manifest so
+    # that a --out <name>.tar.gz is answered for too.
+    ledger_files = bundle_mod.manifest_ledger_files(manifest)
     if counts["ledger_rows"]:
         log.info(f"  cf share import {manifest['out']}        (in the other workspace)")
     else:
@@ -172,11 +176,13 @@ def _export(workspace, args) -> int:
         for name in manifest["companions"]:
             log.info(f"  cf adjudicate --companion {name}        "
                      "(here, to produce mergeable ledger rows)")
-        # What it merges, not what it refuses: `merge_bundle` refuses on the
-        # accepted/refuted FILES being absent, and `cf adjudicate` writes both of
-        # them even when it adjudicates nothing -- so the bundle this branch
-        # describes is one the import accepts and merges zero rows from.
-        log.info("  `cf share import` merges adjudicated ledger rows; this bundle carries none")
+        if ledger_files:
+            log.info("  `cf share import` merges adjudicated ledger rows; this bundle "
+                     "carries none")
+        else:
+            log.info("  `cf share import` refuses this bundle: it carries no adjudicated "
+                     "ledger file at all -- `cf quotes hydrate --bundle <bundle>` is how it "
+                     "is read")
     return 0
 
 
