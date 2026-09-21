@@ -122,11 +122,14 @@ class TestCommandDiscovery(unittest.TestCase):
         parser = argparse.ArgumentParser()
         subparsers = parser.add_subparsers(dest="command")
         cf_main.discover_commands(subparsers)
-        documented = set(re.findall(r"^\| `sources (\w+)",
+        # `[\w-]+`, not `\w+`: `sources validate-registry` parsed as "validate",
+        # which is not a subcommand, so a hyphenated row failed here rather than
+        # being checked.
+        documented = set(re.findall(r"^\| `sources ([\w-]+)",
                                     (HERE.parent / "SKILL.md").read_text(), re.M))
         self.assertIn("remove", documented, "cf sources remove is undocumented")
         extra = {"show": ["x"], "remove": ["x"], "set": ["x", "y=1"],
-                 "add": ["x.pdf", "--for", "ours"]}
+                 "add": ["x.pdf", "--for", "ours"], "promote": ["x"]}
         for sub in sorted(documented):
             with self.subTest(sub=sub):
                 args = parser.parse_args(["sources", sub, *extra.get(sub, [])])

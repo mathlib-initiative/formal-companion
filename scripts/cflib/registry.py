@@ -432,6 +432,115 @@ class Registry:
 
 
 # --------------------------------------------------------------------------
+# "metadata only -- never a line of the book" (registry/README.md, POLICY.md)
+# --------------------------------------------------------------------------
+
+#: Every key an entry may carry.  An unknown key is refused rather than
+#: ignored, because a field nobody reviewed is how prose gets into a metadata
+#: file -- and this file is the one thing a contributor writes by hand.
+ENTRY_KEYS = frozenset({
+    "title", "authors", "edition", "isbn", "sha256", "bytes", "pages",
+    "download_url", "book_page_url", "errata_url", "licence", "offset",
+    "offset_confidence", "offset_method", "kinds", "same_work", "page_map_to",
+    "aliases", "confirmed", "notes", "added",
+})
+LICENCE_KEYS = frozenset({"note", "fetch", "redistribute"})
+PAGE_MAP_KEYS = frozenset({"default_shift", "exception_shift", "exceptions",
+                           "note", "confirmed_by"})
+ALIAS_KEYS = frozenset({"sha256_prefixes", "urls", "filenames", "titles"})
+
+#: The only fields that may hold a sentence, with the word cap on each.  The
+#: shipped entries' longest is a 38-word page-map note, so these are roughly
+#: three times what the curated file needs.
+FREE_TEXT_FIELDS = {
+    "notes": 150,
+    "licence.note": 150,
+    "page_map_to.*.note": 120,
+    "page_map_to.*.confirmed_by": 40,
+}
+#: Everything else is an identifier, a label or a URL.
+MAX_FIELD_WORDS = 25
+
+
+def _field_cap(path: str) -> int:
+    generic = re.sub(r"page_map_to\.[^.]+\.", "page_map_to.*.", path)
+    generic = re.sub(r"\[\d+\]", "", generic)
+    return FREE_TEXT_FIELDS.get(generic, MAX_FIELD_WORDS)
+
+
+def _prose_problems(sid: str, path: str, value: str) -> list[str]:
+    """Is this string metadata, or is it a passage out of the book?"""
+    out: list[str] = []
+    words = value.split()
+    cap = _field_cap(path)
+    if len(words) > cap:
+        out.append(f"{sid}: {path} is {len(words)} words (cap {cap}); the registry holds "
+                   f"metadata about an edition, never a passage of it")
+    if _field_cap(path) == MAX_FIELD_WORDS and re.search(r"[.!?]\s+[A-Z(]", value):
+        out.append(f"{sid}: {path} runs to a second sentence, which no field but "
+                   f"{', '.join(sorted(FREE_TEXT_FIELDS))} may do")
+    return out
+
+
+def metadata_problems(path: Path | str) -> list[str]:
+    """Registry problems `Registry.validate()` cannot see: shape and free text.
+
+    ``validate()`` reads :class:`RegistryEntry` objects, and ``from_dict``
+    silently drops every key it does not know -- so the one thing a hand-written
+    contribution is most likely to get wrong (a new field, holding prose) is
+    invisible to it.  This reads the FILE.
+
+    Runnable as ``cf sources validate-registry`` and in CI: the rule
+    ``registry/README.md`` states as hard ("metadata only -- never a line of the
+    book") had nothing mechanical behind it.
+    """
+    path = Path(path)
+    if not path.exists():
+        return [f"{path}: no such registry file"]
+    data = read_yaml(path)
+    if not isinstance(data, dict):
+        return [f"{path}: not a mapping"]
+    problems: list[str] = []
+    if int(data.get("version") or 0) != REGISTRY_VERSION:
+        problems.append(f"{path}: version must be {REGISTRY_VERSION}")
+    for key in sorted(set(data) - {"version", "sources"}):
+        problems.append(f"{path}: unknown top-level key `{key}`")
+    sources = data.get("sources") or {}
+    if not isinstance(sources, dict):
+        return problems + [f"{path}: `sources:` must be a map keyed by source_id"]
+    for sid, body in sorted(sources.items()):
+        if not isinstance(body, dict):
+            problems.append(f"{sid}: the entry must be a map")
+            continue
+        problems.extend(f"{sid}: unknown key `{key}`" for key in sorted(set(body) - ENTRY_KEYS))
+        for key, allowed in (("licence", LICENCE_KEYS), ("aliases", ALIAS_KEYS)):
+            sub = body.get(key)
+            if isinstance(sub, dict):
+                problems.extend(f"{sid}: unknown {key} key `{k}`"
+                                for k in sorted(set(sub) - allowed))
+        for other, sub in (body.get("page_map_to") or {}).items():
+            if isinstance(sub, dict):
+                problems.extend(f"{sid}: unknown page_map_to.{other} key `{k}`"
+                                for k in sorted(set(sub) - PAGE_MAP_KEYS))
+        problems.extend(_walk_strings(sid, "", body))
+    return problems
+
+
+def _walk_strings(sid: str, prefix: str, body: Any) -> list[str]:
+    """Every string in the entry, with the dotted path it was found at."""
+    out: list[str] = []
+    if isinstance(body, dict):
+        for key, value in body.items():
+            out.extend(_walk_strings(sid, f"{prefix}.{key}" if prefix else str(key), value))
+    elif isinstance(body, (list, tuple)):
+        for index, value in enumerate(body):
+            out.extend(_walk_strings(sid, f"{prefix}[{index}]", value))
+    elif isinstance(body, str) and prefix:
+        out.extend(_prose_problems(sid, prefix, body))
+    return out
+
+
+# --------------------------------------------------------------------------
 # source_id derivation (S3)
 # --------------------------------------------------------------------------
 
