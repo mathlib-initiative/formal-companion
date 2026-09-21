@@ -140,6 +140,7 @@ def run(args) -> int:
     # source is its own manuscript has no other way to say so.
     claims = discovery.discover_sources_with_adapter(repo, adapter=kind)
     claims += [_named_source_claim(raw) for raw in (getattr(args, "source", None) or [])]
+    claims += _sources_only_the_operator_named(workspace, repo, name)
     _read_named_sources(claims)
     #: The repo being onboarded is not in `workspace.companions` yet -- `upsert_companion`
     #: runs further down -- so the search roots DERIVED from it would only exist from the
@@ -372,6 +373,49 @@ def _named_source_claim(raw: str) -> discovery.SourceClaim:
         signal="filesystem", path=str(path), files=(str(path),),
         title=path.stem.replace("-", " ").replace("_", " "),
         discovered_by=discovery.DISCOVERED_BY_MANUAL, confidence=1.0, sources=(str(path),))
+
+
+def _sources_only_the_operator_named(workspace, repo: Path, name: str) -> list:
+    """Re-claim the sources of THIS companion that no signal can discover.
+
+    Discovery re-reads the repo on every run, and a source the repo does not name
+    is invisible to all seven signals -- so a second `cf onboard <repo>` with no
+    flags refused with "no source could be discovered" for a companion whose
+    source workspace.yaml listed two lines away.  Re-onboarding is the documented
+    way to refresh a companion; it must not need a flag the operator has to
+    remember from the first run.
+
+    Only ``discovered.pdf_found_in: manual`` rows are re-claimed, and only when
+    the companion entry of this name already names THIS repo.  Every other row is
+    something a signal will find again on its own, and re-asserting one from the
+    workspace would let a stale row outrank what the repo says today -- which is
+    the whole reason discovery re-reads the repo rather than trusting itself.
+
+    The FACTS are still read off the file, exactly as on the first run: this
+    contributes the location the operator gave, nothing more, so a source whose
+    bytes changed in the meantime is re-fingerprinted rather than re-asserted.
+    """
+    entry = workspace.companions.get(name)
+    if entry is None or Path(entry.repo).expanduser().resolve() != repo:
+        return []
+    rows = workspace.data.get("sources") or {}
+    claims = []
+    for source_id in entry.sources:
+        body = rows.get(source_id) or {}
+        if ((body.get("discovered") or {}).get("pdf_found_in")
+                != discovery.DISCOVERED_BY_MANUAL):
+            continue
+        recorded = str(body.get("pdf") or "")
+        if not recorded or not Path(recorded).is_file():
+            log.warn(f"{source_id}: {recorded or '(no file recorded)'} is not on this machine "
+                     f"any more, so this run cannot re-read it; name it again with "
+                     f"`cf onboard {repo} --source <file>`")
+            continue
+        claims.append(discovery.SourceClaim(
+            signal="filesystem", path=recorded, files=(recorded,),
+            title=body.get("title") or source_id, sources=(recorded,),
+            discovered_by=discovery.DISCOVERED_BY_MANUAL, confidence=1.0))
+    return claims
 
 
 def _read_named_sources(claims) -> None:
