@@ -282,9 +282,10 @@ defect_key(source_id, item, kind, unfaithful_decls) = finding_id(
 
 `cflib.hashing.defect_key`, beside the id so the two cannot drift. `run_id` is `finding_id`'s
 **first** part, so the same defect found by two runs gets two ids: an id addresses one
-*observation*, and this key is the *identity* two observations share. `union --group-by finding-id`,
-`agreed`, re-adjudication and `cf recheck` all link on it; `--new-only` reported every re-found
-defect as new while it did not exist.
+*observation*, and this key is the *identity* two observations share. `union --group-by defect-key`
+groups on it; `agreed` groups on `(source_id, repo, collapsed item, kind)` plus a shared
+declaration, and adjudication, transcription and `cf recheck` address one observation, so they join
+on `finding_id`. `--new-only` reported every re-found defect as new while this key did not exist.
 
 Two details are load-bearing:
 
