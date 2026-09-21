@@ -455,5 +455,57 @@ class TestTheEndToEndScriptDefaultsToNoPath(unittest.TestCase):
         self.assertIn("synthetic.sh", said, "name the half that needs no checkout")
 
 
+
+# ---------------------------------------------------------------------------
+# no tracked file quotes the book the first campaign audited
+# ---------------------------------------------------------------------------
+
+BOOK_TXT = os.environ.get("CF_BOOK_TXT", "")
+
+#: a run this long, verbatim, is a passage; the redactor uses the same floor
+BOOK_RUN_MIN = 40
+
+#: a numbered heading -- "definition 1.2.2 (lebesgue measurability)" -- is an
+#: item LABEL, which the grammar tests have to spell; it is not a passage.
+_ITEM_HEADING = re.compile(
+    r"^[ .]*(definition|theorem|lemma|proposition|corollary|exercise|example|remark)"
+    r" \d+(\.\d+)*\b")
+
+
+@unittest.skipUnless(BOOK_TXT and os.path.isfile(BOOK_TXT),
+                     "set CF_BOOK_TXT to the pinned source text to run the passage scan")
+class TestNoTrackedFileQuotesThePinnedBook(unittest.TestCase):
+    """CLAUDE.md S1: no line OF a source lives here, fixtures included.
+
+    Three fixtures written during the review work quoted the book: a section
+    title used as a running head, a definition used as a "this is a passage"
+    case, and a corpus item label.  None of the path and host rules above could
+    see them, and nothing else compared the tree with the text it must not hold.
+    The scan is the redactor's own (``share.redact.SourceIndex``), so "a passage"
+    means here what it means to `cf share export`.
+    """
+
+    def test_no_file_carries_a_passage_of_it(self):
+        from share import redact
+        with open(BOOK_TXT, encoding="utf-8", errors="replace") as handle:
+            index = redact.SourceIndex([handle.read()], minimum=BOOK_RUN_MIN)
+        blank = chr(7)
+        offenders = []
+        for name in tracked_files():
+            try:
+                body = (SKILL / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            text = redact.normalise_with_offsets(body)[0]
+            for _ in range(50):
+                span = index.longest_span(text)
+                if not span:
+                    break
+                run = text[span[0]:span[1]]
+                if not _ITEM_HEADING.match(run):
+                    offenders.append("%s: %d characters" % (name, len(run)))
+                text = text[:span[0]] + blank * (span[1] - span[0]) + text[span[1]:]
+        self.assertEqual(offenders, [], "verbatim runs of the pinned source text")
+
 if __name__ == "__main__":                                   # pragma: no cover
     unittest.main()

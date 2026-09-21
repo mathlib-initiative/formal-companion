@@ -64,7 +64,7 @@ BOOK_QUOTE = "Show that the elementary measure is finitely additive."
 #: the tail of its parenthetical -- which is the same broken join, for a shape
 #: that really occurs.
 COLON_ITEM = ("In-text convention, book p. 29 (Exercise 1.2.5: extension of "
-              "Jordan inner measure to unbounded sets)")
+              "widget weight to unbounded assemblies)")
 #: an item whose name contains an underscore, which the legacy spelling of a
 #: label (``chal0:Exercise_1.2.4``) turns into a space
 UNDERSCORE_ITEM = "In-text convention, book p. 71 (outer_measure normalisation)"
@@ -286,11 +286,11 @@ class TestLabelContract(unittest.TestCase):
         # of it, and `item_full` is the reading that names the item.  Both are
         # candidates, which is what `label_item_candidates` is for.
         ("chal0:" + COLON_ITEM + "#0", "chal",
-         "extension of Jordan inner measure to unbounded sets)#0",
-         "extension of Jordan inner measure to unbounded sets)", 0),
+         "extension of widget weight to unbounded assemblies)#0",
+         "extension of widget weight to unbounded assemblies)", 0),
         ("F0:book:" + COLON_ITEM, "F",
-         "extension of Jordan inner measure to unbounded sets)",
-         "extension of Jordan inner measure to unbounded sets)", None),
+         "extension of widget weight to unbounded assemblies)",
+         "extension of widget weight to unbounded assemblies)", None),
     )
 
     #: every declared label expression -> does the label it renders NAME an item?
