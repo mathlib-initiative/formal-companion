@@ -89,7 +89,20 @@ policy:
   # Nothing leaves the workspace directory while _meta.status is UNCHALLENGED.
   publish_unchallenged: false
   # Exports replace book_quote with (page, normalised hash) unless turned off.
+  # This governs the machine-readable `cf route --emit-upstream` file only.
   redact_quotes_on_export: true
+  # How much of a quoted sentence a DRAFT carries is a property of who it is
+  # addressed to, not of this workspace: the repository owner owns the book and
+  # needs the sentence, a public tracker must not carry it. `cf route
+  # --destination <name>` chooses one; it is never inferred from a git remote,
+  # because a private fork of a public repo and a public mirror of a private one
+  # both exist and that guess decides whether a copyrighted sentence is
+  # published. quotes: full | excerpt (page + 6 words each end + sha256) | hash.
+  destinations:
+    owner:                        # the owner-message draft, privately
+      quotes: full
+    public:                       # `cf route --github` issue bodies
+      quotes: excerpt
   # `cf init` installs a pre-push hook; the workspace repo has no remote.
   allow_remote: false
   # false forbids `cf onboard --download` outright. Even when true, a download
