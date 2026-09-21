@@ -351,8 +351,8 @@ def _accepted_suffixes() -> str:
     that advertised fewer formats than the code accepts is how a suffix with no
     heading pattern got in unnoticed.
     """
-    from cfcmd.sources import _text_suffixes
-    return "a PDF, or the manuscript itself (%s)" % _text_suffixes()
+    from sources.locator import text_suffixes_help
+    return "a PDF, or the manuscript itself (%s)" % text_suffixes_help()
 
 
 def _named_source_claim(raw: str) -> discovery.SourceClaim:

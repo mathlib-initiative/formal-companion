@@ -38,6 +38,7 @@ from cflib.jsonio import read_json, write_json
 from cflib.log import format_table
 from cflib.registry import Registry, entry_from_claim, source_id_for
 from cflib.workspace import ROLE_AUDITED, ROLE_REFERENCE, from_args
+from sources.locator import text_suffixes_help
 
 LIST_COLUMNS = ["source", "sha", "edition", "offset", "conf", "kinds", "items",
                 "errata", "companions", "role", "confirmed"]
@@ -89,12 +90,6 @@ def _numbering_value(raw: str) -> list[int]:
     return [low, high]
 
 
-def _text_suffixes() -> str:
-    """``".txt .md .markdown .tex .html .htm .rst"`` -- exactly what is accepted."""
-    from sources.locator import TEXT_SUFFIXES
-    return " ".join(TEXT_SUFFIXES)
-
-
 def register(subparsers) -> None:
     p = subparsers.add_parser("sources", help="list, show, add, set and refresh sources")
     sub = p.add_subparsers(dest="sources_command", metavar="<subcommand>")
@@ -111,7 +106,7 @@ def register(subparsers) -> None:
     # suffix with no heading pattern got in unnoticed.
     add.add_argument("source", help="path to the source: a PDF, or a manuscript that is "
                                     "already text (%s) -- never copied into the skill repo"
-                                    % _text_suffixes())
+                                    % text_suffixes_help())
     add.add_argument("--for", dest="companion", required=True,
                      help="the companion this source is audited against")
     add.add_argument("--anchor", action="store_true",
@@ -529,7 +524,7 @@ def _fingerprint(path: Path) -> dict:
     except ValueError as exc:
         raise CfError(str(exc),
                       hint="give the PDF, or the manuscript itself (%s)"
-                           % _text_suffixes()) from exc
+                           % text_suffixes_help()) from exc
     if fmt == FORMAT_PDF:
         data = discovery.fingerprint(path)
         data["source_format"] = FORMAT_PDF

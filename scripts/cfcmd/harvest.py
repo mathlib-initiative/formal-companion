@@ -18,7 +18,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from cflib import log
-from cflib import state as state_mod
 from cflib.workspace import from_args
 from cflib.errors import CfError
 from cflib.jsonio import write_json
@@ -26,7 +25,7 @@ from cflib.yamlio import read_yaml
 
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
-from harvest import harvest_journal, tally as tally_mod
+from harvest import harvest_journal, record as record_mod
 from recheck import pin as pin_mod
 from run import manifest
 
@@ -100,8 +99,9 @@ def run(args) -> int:
                  "--allow-edition-mismatch and say so in the report.")
 
     pin = _pin(workspace, args.run_id, data, dest)
-    counts = {} if args.no_tally else _tally(workspace, args.run_id, dest)
-    _record_state(workspace, args.run_id, data, receipt, counts, pin)
+    counts = ({} if args.no_tally
+              else record_mod.write_run_tally(workspace, args.run_id, dest))
+    record_mod.record_run_state(workspace, args.run_id, data, receipt, counts, pin)
     return 0 if receipt["complete"] else 1
 
 
@@ -342,23 +342,6 @@ def _from_journal(workspace, args, dest: Path, data: dict | None = None) -> dict
     return receipt
 
 
-def _tally(workspace, run_id: str, dest: Path) -> dict:
-    """Recompute this run's tally from the corpus and write reports/tally.<run>.json.
-
-    The kinds map is per source: the grammar that decides which labels collapse
-    onto one item belongs to the source, not to the workspace.
-    """
-    kinds = {sid: list(workspace.kinds(sid)) for sid in workspace.source_ids()}
-    result = tally_mod.tally({run_id: dest}, kinds=kinds)
-    out = Path(workspace.paths.tally_json(run_id))
-    out.parent.mkdir(parents=True, exist_ok=True)
-    write_json(out, result, indent=1, sort_keys=True)
-    log.info("")
-    log.info(tally_mod.render(result))
-    log.info(f"-> {out}")
-    return result
-
-
 def _pin(workspace, run_id: str, data: dict, dest: Path) -> dict:
     """Stamp the companion revision this corpus was judged against.
 
@@ -389,42 +372,3 @@ def _pin(workspace, run_id: str, data: dict, dest: Path) -> dict:
                  f"fixed upstream" + (f" ({'; '.join(notes)})" if notes else "") +
                  ". Re-extract at the planned commit and re-harvest to pin them.")
     return doc
-
-
-def _companions(data: dict) -> list[str]:
-    """The companions a run covers (plan-run writes `companion`, a string)."""
-    for key in ("companions", "companion", "repos"):
-        value = data.get(key)
-        if isinstance(value, str) and value:
-            return [value]
-        if isinstance(value, list) and value:
-            return [str(v) for v in value]
-    return []
-
-
-def _record_state(workspace, run_id: str, data: dict, receipt: dict, counts: dict,
-                  pin: dict | None = None) -> None:
-    """Record findings/receipt counts against every companion the run covers."""
-    names = _companions(data) or workspace.companion_names()
-    repos = (counts.get("repos") or {}) if counts else {}
-    pinned = ((pin or {}).get("companions") or {})
-    for name in names:
-        try:
-            with state_mod.update(workspace, str(name)) as state:
-                block = pinned.get(str(name)) or {}
-                values = {
-                    "findings": receipt["actual"]["count"],
-                    "expected": receipt["expected"]["count"],
-                    "receipt_ok": receipt["complete"],
-                    "harvested_at": receipt["harvested_at"],
-                    # which revision this run's findings are claims about, so
-                    # `cf status` can say it without re-reading the corpus
-                    "repo_commit": block.get("repo_commit"),
-                    "pinned": bool(block.get("fingerprinted")),
-                }
-                state_mod.record_run(state, run_id, values)
-                if str(name) in repos:
-                    state_mod.merge_section(state, "tally", tally_mod.state_counts(repos[str(name)]))
-                state_mod.note(state, "harvest", run=run_id, complete=receipt["complete"])
-        except Exception as exc:
-            log.detail(f"state.json for {name}: {exc}")
