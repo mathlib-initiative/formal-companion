@@ -522,12 +522,13 @@ QUOTE_POLICIES = (QUOTE_FULL, QUOTE_EXCERPT, QUOTE_HASH)
 #: which is the 3,000-character refusal; two modules disagreeing about what one
 #: name bounds is how the next reader greps the wrong number.
 LONG_QUOTE_CHARS = 600
-#: the MOST words kept at each end of an excerpted quote.  How many actually
-#: travel is ``share.redact.edge_words``'s budget -- at most a quarter of the
-#: sentence from each end, never an edge that is itself a run of the source, and
-#: nothing at all below ``share.redact.MIN_WORDS_FOR_EDGES`` words.  One budget
-#: for both emitters on purpose: a 10-word sentence used to be published WHOLE
-#: here while the bundle's own record of it withheld its edges.
+#: the CEILING on the words kept at each end of an excerpted quote -- not the
+#: emitted width, and read by nothing here: :func:`render_quote` asks
+#: ``share.redact.edge_words`` per quote, and its budget is at most a quarter of
+#: the sentence from each end, never an edge that is itself a run of the source,
+#: and nothing at all below ``share.redact.MIN_WORDS_FOR_EDGES`` words.  One
+#: budget for both emitters on purpose: a 10-word sentence used to be published
+#: WHOLE here while the bundle's own record of it withheld its edges.
 EXCERPT_WORDS = redact_mod.EDGE_WORDS
 
 #: The destinations a deliverable can be addressed to, and the quote policy each
@@ -740,8 +741,35 @@ def source_index(workspace: str) -> redact_mod.SourceIndex:
     return redact_mod.SourceIndex(texts)
 
 
+def _widening_escape(destination: str, *, publishable: bool) -> str:
+    """The clause a refusal adds for the operator who wants the draft anyway.
+
+    Every widening this could name -- ``--destination owner``, ``--quotes full``
+    -- resolves to the ``full`` policy, which is the book's own sentence in the
+    deliverable.  That is the right offer for the owner-message draft, which
+    stays in the workspace directory until a human sends it, and a footgun for
+    the GitHub bodies, whose ``index.json`` prints ``gh issue create
+    --body-file`` for each one: an operator who followed the hint there got the
+    public-tracker draft full of book prose the refusal exists to prevent.  So a
+    publishable deliverable gets no widening; its first remedy (`cf sources
+    refresh`, or shortening the field) is what settles it.
+
+    ``--quotes hash`` is deliberately NOT offered: it is not ``full``, so it
+    reaches the same refusal, and a remedy that refuses again is not one.
+    """
+    if publishable:
+        return ""
+    if destination == DEFAULT_DESTINATION:
+        # only the POLICY was narrowed (--quotes); the destination is already the
+        # one that carries the sentence, so naming it again changes nothing.
+        return (", or pass --quotes full, which is what the `%s` destination resolves to "
+                "by default" % DEFAULT_DESTINATION)
+    return (", or address the draft to the repository owner, who owns the book "
+            "(--destination %s)" % DEFAULT_DESTINATION)
+
+
 def shareable_rows(rows: Iterable[dict], *, quotes: str, destination: str,
-                   workspace: str, what: str) -> list[dict]:
+                   workspace: str, what: str, publishable: bool) -> list[dict]:
     """*rows* with every verbatim run of the source redacted out of their prose.
 
     ``render_quote`` governs ``book_quote`` and nothing else, so a draft for a
@@ -751,23 +779,30 @@ def shareable_rows(rows: Iterable[dict], *, quotes: str, destination: str,
     rows.  ``share.redact.redact_prose`` is the same scrubber ``cf share export``
     runs, so both commands treat the same risk the same way.
 
-    ``full`` is the owner's destination: the owner owns the book, and the draft
-    stays in the workspace until a human sends it.  Every other destination is
-    checked, and a workspace with no pinned text is REFUSED rather than emitted:
-    warning would be right for a peer who holds the same edition and wrong for a
-    tracker anyone can read.
+    ``full`` is the policy the owner's destination resolves to: the owner owns
+    the book, and the draft stays in the workspace until a human sends it.  Every
+    other POLICY is checked -- the switch is the resolved policy, not the
+    destination name, so ``--destination public --quotes full`` carries the
+    sentence exactly as ``owner`` does and ``--destination owner --quotes hash``
+    is scrubbed -- and a workspace with no pinned text is REFUSED rather than
+    emitted: warning would be right for a peer who holds the same edition and
+    wrong for a tracker anyone can read.
+
+    ``publishable`` says whether this deliverable's own printed next step sends
+    it: it decides what a refusal may offer as an alternative, see
+    :func:`_widening_escape`.
     """
     rows = list(rows)
     if quotes == QUOTE_FULL:
         return rows
+    escape = _widening_escape(destination, publishable=publishable)
     index = source_index(workspace)
     if not index:
         raise PolicyRefused(
             "refusing to draft %s for the `%s` destination: this workspace has no pinned "
             "text for any source, so the rows' own prose could not be checked for verbatim "
-            "runs of the book. Prepare it with `cf sources refresh`, or address the draft "
-            "to the repository owner, who owns the book (--destination owner)."
-            % (what, destination))
+            "runs of the book. Prepare it with `cf sources refresh`%s."
+            % (what, destination, escape))
     out = []
     for row in rows:
         try:
@@ -775,9 +810,8 @@ def shareable_rows(rows: Iterable[dict], *, quotes: str, destination: str,
         except ValueError as exc:
             raise PolicyRefused(
                 "refusing to draft %s: %s carries %s -- that field is a page dump, not a "
-                "remark. Shorten it in the ledger and re-run `cf route`, or address the "
-                "draft to the repository owner (--destination owner)."
-                % (what, row.get("item") or "(no item)", exc)) from None
+                "remark. Shorten it in the ledger and re-run `cf route`%s."
+                % (what, row.get("item") or "(no item)", exc, escape)) from None
     return out
 
 
@@ -870,7 +904,8 @@ def owner_message(routed: dict, companion: str, owner: str = "", *,
     rows = [r for r in routed["rows"] if not r.get("withdrawn")]
     policy = quotes or DESTINATION_DEFAULTS.get(destination, QUOTE_EXCERPT)
     rows = shareable_rows(rows, quotes=policy, destination=destination,
-                          workspace=workspace, what="the owner message for %s" % companion)
+                          workspace=workspace, what="the owner message for %s" % companion,
+                          publishable=False)
     lines = [
         "# DRAFT message to the owner of `%s`%s" % (companion, (" (%s)" % owner) if owner else ""),
         "",
@@ -1080,7 +1115,8 @@ def github_issues(
             if not r.get("withdrawn")
             and str(r.get("ledger_verdict") or "") in REPORTABLE_VERDICTS]
     rows = shareable_rows(rows, quotes=policy_name, destination=destination,
-                          workspace=workspace, what="GitHub issue bodies for %s" % companion)
+                          workspace=workspace, what="GitHub issue bodies for %s" % companion,
+                          publishable=True)
     grouped: dict[tuple, list[dict]] = {}
     for row in rows:
         grouped.setdefault((str(row.get("source_id") or ""), str(row.get("item") or "")),
