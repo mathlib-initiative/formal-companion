@@ -14,7 +14,9 @@ It also writes ``ledger/routed/message.<name>.md``: a DRAFT for the repo owner,
 one section per finding carrying the printed page, the book sentence, the
 declaration at ``file:line`` and the adjudication outcome.  ``--github`` writes
 one draft issue body per accepted finding plus an ``index.json`` holding the
-exact ``gh issue create --body-file`` command for each.
+exact ``gh issue create --body-file`` command for each, into
+``ledger/routed/github/<name>/`` -- one directory PER COMPANION, and ``--out``
+names the parent of those directories, never a directory two companions share.
 
 Nothing here sends anything: no network call, no ``gh``, no API.  ``--emit-upstream``
 and ``--github`` both REFUSE while a file's status is UNCHALLENGED -- a first-pass
@@ -76,7 +78,9 @@ def register(subparsers):
                         "(default: the companion's `owner` if it is a slug, else gh's own "
                         "current-repository default)")
     p.add_argument("--out", default="",
-                   help="directory for --github (default: ledger/routed/github/<companion>/)")
+                   help="parent directory for --github; each companion gets its own "
+                        "<out>/<companion>/ inside it, never a shared one "
+                        "(default: ledger/routed/github/<companion>/)")
     p.add_argument("--destination", default="",
                    choices=sorted(route_mod.DESTINATION_DEFAULTS),
                    help="who the drafts are addressed to; chooses the quote policy "
@@ -148,14 +152,25 @@ def _repo_slug(args, companion: str) -> str:
 
 
 def _emit_issues(args, rep) -> str:
-    """``--github``: write the bodies and print the command for each. Calls nothing."""
-    dest = args.out or route_mod.issues_dir(rep["routed_dir"], rep["companion"])
+    """``--github``: write the bodies and print the command for each. Calls nothing.
+
+    Two companions NEVER share a destination directory.  ``--out DIR`` used to be
+    taken verbatim for every report while the body's file name is the source and
+    the item, so in a two-companion workspace -- the project's normal shape --
+    both wrote into DIR: ``index.json`` held only the last companion, and the
+    body for an item both companions formalise was overwritten.  The printed
+    ``gh issue create`` for the first one then pointed at the second one's
+    evidence, which files the wrong claim on someone else's public tracker.
+    """
+    dest = (os.path.join(args.out, route_mod.issue_slug(rep["companion"]))
+            if args.out else route_mod.issues_dir(rep["routed_dir"], rep["companion"]))
     index = route_mod.write_github_issues(
         rep["routed"], dest,
         companion=rep["companion"],
         repo=_repo_slug(args, rep["companion"]),
         destination=args.destination or route_mod.GITHUB_DESTINATION,
         quotes=args.quotes,
+        policy=rep.get("policy"),
         workspace=rep["workspace"],
         routed_file=rep["file"],
     )

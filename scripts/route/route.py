@@ -78,7 +78,8 @@ class PolicyRefused(ValueError):
 def challenge_command(workspace: str, companion: str) -> str:
     """The exact command that turns UNCHALLENGED into CHALLENGED.
 
-    ONE spelling (``cf``, the ``bin/cf`` shim README.md puts on PATH) with the
+    ONE spelling (``cf``, the ``bin/cf`` shim -- symlink it onto PATH with
+    ``ln -s <skill>/bin/cf ~/.local/bin/cf``) with the
     workspace RESOLVED.  This string is not only printed: it is written into
     ``ledger/routed/findings.<name>.jsonl`` and into the owner-message draft, so
     the old ``python3 scripts/cf.py adjudicate --workspace <workspace> ...``
@@ -329,7 +330,6 @@ def route_repo(
                 for c in coverage["collisions"]}
     claims_at = {(str(c.get("source_id") or ""), str(c.get("finding_id") or "")): c.get("claims", 2)
                  for c in coverage["collisions"]}
-    held_back = 0
 
     routed: list[dict] = []
     for f in sorted(
@@ -382,8 +382,6 @@ def route_repo(
         if collision_key in collided:
             row["id_collision"] = True
             row["ledger_held_back"] = ID_COLLISION_HELD_BACK % claims_at[collision_key]
-            if ledger_by_id.get(f["finding_id"]) is not None:
-                held_back += 1
             row["challenged"] = False
             routed.append(row)
             continue
@@ -452,7 +450,11 @@ def route_repo(
             "challenged": len(open_rows) - len(unchallenged),
             "unchallenged": len(unchallenged),
             "id_collision_rows": sum(1 for r in open_rows if r.get("id_collision")),
-            "ledger_held_back": held_back,
+            # Counted over open_rows, exactly like id_collision_rows above: a
+            # WITHDRAWN row is not held back from anybody, and the two figures
+            # sitting side by side over different populations reads as a bug.
+            "ledger_held_back": sum(1 for r in open_rows if r.get("ledger_held_back")
+                                    and ledger_by_id.get(r["finding_id"]) is not None),
             "by_kind": by_kind,
             "by_severity": by_severity,
             "runs": sorted({r.get("run_id", "") for r in open_rows if r.get("run_id")}),
@@ -507,8 +509,11 @@ QUOTE_EXCERPT = "excerpt"
 QUOTE_HASH = "hash"
 QUOTE_POLICIES = (QUOTE_FULL, QUOTE_EXCERPT, QUOTE_HASH)
 
-#: gate/verify_findings.py's LONG_QUOTE_CHARS: no artifact quotes more than this
-MAX_QUOTE_CHARS = 600
+#: gate/verify_findings.py's LONG_QUOTE_CHARS, spelled the same way on purpose:
+#: no artifact quotes more than this.  It is NOT that module's MAX_QUOTE_CHARS,
+#: which is the 3,000-character refusal; two modules disagreeing about what one
+#: name bounds is how the next reader greps the wrong number.
+LONG_QUOTE_CHARS = 600
 #: words kept at each end of an excerpted quote
 EXCERPT_WORDS = 6
 
@@ -551,7 +556,7 @@ def quote_policy(policy: Mapping | None, destination: str = DEFAULT_DESTINATION)
 def render_quote(quote: Any, policy: str, *, page: Any = None) -> str:
     """The book sentence as *policy* allows it to be written down.
 
-    ``full`` stops at :data:`MAX_QUOTE_CHARS`, the same bound the quote gate
+    ``full`` stops at :data:`LONG_QUOTE_CHARS`, the same bound the quote gate
     enforces on a finding, so no artifact this skill writes quotes more of a
     source than the gate already allowed into the corpus.
     """
@@ -561,9 +566,9 @@ def render_quote(quote: Any, policy: str, *, page: Any = None) -> str:
     where = "printed page %s" % page if page not in (None, "") else "printed page unknown"
     digest = compat.sha256_text(text.lower())
     if policy == QUOTE_FULL:
-        if len(text) > MAX_QUOTE_CHARS:
+        if len(text) > LONG_QUOTE_CHARS:
             return '"%s…" (truncated at %d characters, the quote gate\'s bound)' % (
-                text[:MAX_QUOTE_CHARS], MAX_QUOTE_CHARS)
+                text[:LONG_QUOTE_CHARS], LONG_QUOTE_CHARS)
         return '"%s"' % text
     if policy == QUOTE_EXCERPT:
         words = text.split(" ")
@@ -941,6 +946,7 @@ def github_issues(
     repo: str = "",
     destination: str = GITHUB_DESTINATION,
     quotes: str = "",
+    policy: Mapping | None = None,
     workspace: str = "",
     routed_file: str = "",
     template: str = "",
@@ -952,17 +958,24 @@ def github_issues(
     set the JSONL export uses.  Several findings on ONE item share one issue: a
     maintainer reading a tracker wants one thread per book item, not three.
 
+    ``policy`` is the workspace's ``policy`` block, and it must be passed in:
+    ``policy.destinations.public.quotes`` is the key
+    ``templates/workspace.yaml.example`` annotates as "``cf route --github``
+    issue bodies", and reading only the built-in default here made a workspace
+    that asked for ``hash`` publish the excerpt -- the permissive direction, on
+    the one artifact that can reach a tracker anyone can read.
+
     Returns ``{"index": {...}, "issues": [...]}``; the bodies are strings, and
     :func:`write_github_issues` is what puts them on disk.  Nothing here touches
     the network or invokes ``gh``: the index carries the exact command to run.
     """
     require_exportable(routed, companion, workspace=workspace,
                        what="GitHub issue bodies")
-    policy = quotes or quote_policy(None, destination)
-    if policy not in QUOTE_POLICIES:
+    policy_name = quotes or quote_policy(policy, destination)
+    if policy_name not in QUOTE_POLICIES:
         raise PolicyRefused(
             "quote policy %r is not one of %s; name one with --quotes."
-            % (policy, ", ".join(QUOTE_POLICIES)))
+            % (policy_name, ", ".join(QUOTE_POLICIES)))
     rows = [r for r in routed["rows"]
             if not r.get("withdrawn")
             and str(r.get("ledger_verdict") or "") in REPORTABLE_VERDICTS]
@@ -987,7 +1000,7 @@ def github_issues(
             "kinds": sorted({str(r.get("kind") or "") for r in group if r.get("kind")}),
             "finding_ids": [str(r.get("finding_id") or "") for r in group],
             "verdicts": sorted({str(r.get("ledger_verdict") or "") for r in group}),
-            "body": _issue_body(group, companion=companion, repo=repo, quotes=policy,
+            "body": _issue_body(group, companion=companion, repo=repo, quotes=policy_name,
                                 template=template),
         })
     index = {
@@ -995,7 +1008,7 @@ def github_issues(
         "companion": companion,
         "repo": repo,
         "destination": destination,
-        "quotes": policy,
+        "quotes": policy_name,
         "reportable_verdicts": sorted(REPORTABLE_VERDICTS),
         "routed_file": routed_file,
         "count": len(issues),
@@ -1010,11 +1023,26 @@ def github_issues(
 
 
 def write_github_issues(routed: dict, dest_dir: str, **kwargs: Any) -> dict:
-    """Write the issue bodies and ``index.json`` into *dest_dir*. Returns the index."""
+    """Write the issue bodies and ``index.json`` into *dest_dir*. Returns the index.
+
+    Two item labels can slug to ONE file name (they differ only in punctuation,
+    or both truncate at 120 characters).  Measured over the 347 baseline
+    findings that happens 0 times, but the failure is silent when it does: one
+    body overwrites the other while ``index.json`` still lists both, and the
+    printed ``gh`` command for the loser points at the winner's evidence.  A
+    repeat gets the finding id appended instead, and ``index.json`` records the
+    name actually written.
+    """
     built = github_issues(routed, **kwargs)
     index = built["index"]
     commands = []
-    for issue in built["issues"]:
+    written: set[str] = set()
+    for n, issue in enumerate(built["issues"]):
+        if issue["file"] in written:
+            suffix = (issue["finding_ids"] or [str(n)])[0][:8] or str(n)
+            issue["file"] = "%s-%s.md" % (issue["file"][:-3], suffix)
+            index["issues"][n]["file"] = issue["file"]
+        written.add(issue["file"])
         path = os.path.join(dest_dir, issue["file"])
         compat.write_text(path, issue["body"])
         commands.append(gh_create_command(path, issue["title"], issue["labels"],
@@ -1123,9 +1151,14 @@ def route_workspace(
                 }
             ),
         )
+        # ``policy`` travels with the report because ``cf route --github`` calls
+        # :func:`write_github_issues` itself, after this function has returned:
+        # without the block the issue bodies read the built-in default and a
+        # workspace that asked for ``hash`` published the excerpt instead.
         reports.append({"companion": name, "file": path, "routed": routed,
                         "workspace": resolved, "routed_dir": str(paths.routed),
-                        "quotes": policy, "destination": destination})
+                        "quotes": policy, "destination": destination,
+                        "policy": cfg.policy})
     return reports
 
 
