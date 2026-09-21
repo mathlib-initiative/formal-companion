@@ -1,6 +1,6 @@
 ---
 name: companion-faithfulness
-description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalises — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer: it reads repositories and reports on them, it never edits Lean or repairs a proof.
+description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalises — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — it reads repositories and reports on them, it never edits Lean or repairs a proof.
 ---
 
 # Companion faithfulness audits
@@ -140,7 +140,9 @@ Cheapest finders first; LLM slots spent only where mechanics cannot decide.
    `mechanical` gate, so they reach the tally, the ledger and the report like
    any other finding (`--no-emit-corpus` to keep them out).
 6. `cf plan-run --preset attack-vac` then `--preset attack-hunt` — each attack
-   run found more real defects than all three differentials combined.
+   run found more real defects than all three differentials combined (5 runs,
+   one chapter, one repo; the ratio is partly definitional, because the attack
+   gate bans PAGE_ANCHOR).
 7. `cf plan-run --preset differential-text` where two companions share a
    source — the only stage that sees specialisation and attribution deltas
    between repos.
@@ -152,8 +154,9 @@ Cheapest finders first; LLM slots spent only where mechanics cannot decide.
    gate fails. `--no-gate` is the documented escape; it records `gate: null`,
    and `cf tally` then names that run as ungated every time it counts it.
 9. `cf adjudicate` — lenses → reconciler → refute-by-default skeptics. Assume a
-   first-pass finding is wrong about 40% of the time. The model work runs in a
-   Workflow, not inside `cf`: see **Workflow stages**.
+   first-pass finding is wrong about 40% of the time (4 of 10 adjudicated rows,
+   one chapter of one book). The model work runs in a Workflow, not inside
+   `cf`: see **Workflow stages**.
 10. `cf route` — per-owner files; challenged rows only.
 11. `cf report` — every number recomputed from the corpus and re-verified.
 
