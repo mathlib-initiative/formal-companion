@@ -28,8 +28,10 @@ means it does not, and only the weaker rule (one task's pair per contribution) i
 Both gate commands in `config.yaml` are the same argv, and `batched_merge: true` means the
 pre-merge change set carries one findings/task pair **per batched task**. So the stem count refuses
 several stems only when one of the paths was already on `{{merge_target_branch}}`: a batch of new
-pairs merges, and a contribution that rewrites or empties a neighbour's landed pair is still refused
-by name.
+pairs merges, and a contribution that touches a neighbour's landed pair *beside its own* is
+refused by name. With no task id the rule cannot tell whose the one stem is, so a change set
+that touches only one neighbour's pair and nothing else passes: see
+`references/runbook-server.md` §5.
 
 Start with a **1/1 smoke test** and watch one task through worker → gate → reviewer → merge
 before raising the limits:
