@@ -191,13 +191,35 @@ def _fold(s: str) -> str:
 #: ``opminus``, so a dash written AGAINST its operand (``-1``) is a sign and
 #: must stay, while one with whitespace between it and the text is punctuation
 #: -- an em dash introducing the quotation, pdftotext debris at a line end.
-_LOOSE_DASH = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)"
-                         r"|(?<=\s)[\s\u2010-\u2015\u2212-]*$")
+_LOOSE_DASH_HEAD = re.compile(r"^[\s\u2010-\u2015\u2212-]*(?=\s)")
+_LOOSE_DASH_TAIL = re.compile(r"(?<=\s)[\s\u2010-\u2015\u2212-]*$")
+#: the operand a boundary dash must never be separated from.  The whitespace
+#: condition alone reads the spacing the QUOTE chose, and the quote is written
+#: by the agent: against a book saying ``1 <= m*(F)``, ``-1 <= m*(F)`` was
+#: refused as a sign the book lacks while ``- 1 <= m*(F)`` -- the same flip with
+#: one space in it -- was stripped back to the book's own words and certified
+#: verbatim.  So a dash is punctuation only when what follows (or precedes) it
+#: is not a number.  Measured in the pinned text of the audited source: a dash,
+#: a space and a digit occur 4 times against 128 glued spellings, and the
+#: innocent 4 are inside a passage, not at a quote's edge.
+_SIGNED_HEAD = re.compile(r"^\s*[0-9]")
+_SIGNED_TAIL = re.compile(r"[0-9]\s*$")
 
 
 def _strip_loose_dashes(s: str) -> str:
-    """The quote without the punctuation dashes at its own edges."""
-    return _LOOSE_DASH.sub("", s or "")
+    """The quote without the punctuation dashes at its own edges.
+
+    Never across a sign: a run that would leave a number bare at the edge stays,
+    operators and all, and the operator pass then judges it.
+    """
+    s = s or ""
+    head = _LOOSE_DASH_HEAD.match(s)
+    if head and not _SIGNED_HEAD.match(s[head.end():]):
+        s = s[head.end():]
+    tail = _LOOSE_DASH_TAIL.search(s)
+    if tail and not _SIGNED_TAIL.search(s[: tail.start()]):
+        s = s[: tail.start()]
+    return s
 
 
 def norm(s: str) -> str:
@@ -323,7 +345,10 @@ def _operator_problem(bk: "BookText", q: str, words: list[str], start: int,
     own boundary punctuation is stripped first (:func:`_strip_loose_dashes`):
     with the edges in scope a leading em dash or a trailing pdftotext hyphen was
     an ``opminus`` the book lacks, so a verbatim, correctly-operatored quote was
-    refused and the refusal called the punctuation mathematics.
+    refused and the refusal called the punctuation mathematics.  That strip never
+    crosses a sign -- a dash beside a NUMBER stays, whatever the spacing -- and
+    it moves none of the figures below: not one of the 3,019 baseline quotes
+    strips differently for it.
     Measured against the baseline corpus's 3,019 quotes: 5 fail this rule
     (pdftotext artifacts in the imported 2011-draft corpus -- a doubled hyphen, a
     sign the extraction dropped), against 2 under the old one, and the edges add
@@ -381,6 +406,9 @@ class BookText:
         #: label once per findings file per run directory, and the search is over
         #: every page of the source.
         self._label_pages: dict[str, list[int]] = {}
+        #: the non-empty pages joined once, with each one's span in the join;
+        #: built on the first :meth:`pages_matching` that needs it
+        self._span_index: tuple[str, list[tuple[int, int, int]]] | None = None
 
     @classmethod
     def from_text(cls, raw: str, *, operators: bool = True) -> "BookText":
@@ -401,32 +429,73 @@ class BookText:
     def coerce(cls, book: "BookText | str") -> "BookText":
         return book if isinstance(book, BookText) else cls(str(book))
 
+    def _spans(self) -> tuple[str, list[tuple[int, int, int]]]:
+        """The non-empty pages joined as ``words`` is, and where each one sits.
+
+        ``(start, end, page number)`` per page, into the joined string.  Built
+        once per source and kept, because the page list never changes after
+        ``from_text`` and every quote of a findings file searches the same text.
+        """
+        if self._span_index is None:
+            spans: list[tuple[int, int, int]] = []
+            at = 0
+            for n, page in enumerate(self.pages or [], 1):
+                if not page:
+                    continue
+                if spans:
+                    at += 1                       # the single space the join puts in
+                spans.append((at, at + len(page), n))
+                at += len(page)
+            self._span_index = (" ".join(p for p in (self.pages or []) if p), spans)
+        return self._span_index
+
     def pages_matching(self, needle: str) -> list[int]:
         """The 1-based PDF pages carrying ``needle``, or ``[]`` when unknown.
 
         A window that runs over a page break is on no single page, and an empty
         list turns the page bind OFF (:meth:`PageBind.problem` short-circuits on
         it), so a quote from the wrong section passed the gate simply by being
-        spliced onto the tail of the preceding page.  Adjacent pages are therefore
-        searched as pairs -- but only when the whole-page search found nothing,
-        or a needle wholly inside page *i* would also be reported for (i-1, i) and
-        (i, i+1) and the recurrence ceiling would count it three times.  The pairs
-        are of the NON-EMPTY pages, because ``from_text`` joins only those into
-        ``words``, so a blank page at a seam must not hide the match.  A needle
-        spanning three or more pages is still ``[]`` and still recorded as a
-        straddle by :meth:`PageBind.note`.
+        spliced onto the tail of the preceding page.  A needle that is on no whole
+        page is therefore looked for in the pages JOINED -- the same string
+        ``from_text`` builds ``words`` from, so a blank page at a seam cannot hide
+        the match -- and each occurrence is reported as the run of pages its own
+        characters touch.  The whole-page pass runs first, or a needle inside page
+        *i* would also be reported for (i-1, i) and (i, i+1) and the recurrence
+        ceiling would count it three times; and when occurrences straddle
+        differently, only the NARROWEST runs are reported, for the same reason.
+
+        Pairs alone were not enough: one short page at the seam -- a folio-only
+        page, ordinary pdftotext output -- put a three-page splice back in the
+        blind spot, and 200 characters bought a wrong-section quote a silent
+        "straddles a page break" note and a pass.  Widening a search over runs of
+        adjacent pages closed that, but it is quadratic in the page count when a
+        source's pages are mostly short: measured against the runs it replaces,
+        500 folio-only pages and one 3,000-character needle cost 1.1 s and 2,000
+        pages 58 s, with the needle's length the worker's to choose and the number
+        of quotes per findings file unbounded.  This costs one pass over the
+        source per quote and no page-count term.  Bounding the widening by a
+        constant width instead would be the wrong repair: a run past the bound
+        comes back ``[]``, which is the silent pass this search exists to close.
         """
         if self.pages is None or not needle:
             return []
         hit = [n for n, page in enumerate(self.pages, 1) if needle in page]
         if hit:
             return hit
-        live = [(n, p) for n, p in enumerate(self.pages, 1) if p]
-        out: list[int] = []
-        for (a, pa), (b, pb) in zip(live, live[1:]):
-            if needle in pa + " " + pb:
-                out.extend([a, b])
-        return sorted(set(out))
+        joined, spans = self._spans()
+        runs: list[list[int]] = []
+        at = joined.find(needle)
+        while at >= 0:
+            end = at + len(needle)
+            # the pages this occurrence really touches: a page the join's own
+            # separator space reaches but whose text it does not is not one
+            runs.append([n for start, stop, n in spans if start < end and stop > at])
+            at = joined.find(needle, at + 1)
+        runs = [run for run in runs if run]
+        if not runs:
+            return []
+        narrowest = min(len(run) for run in runs)
+        return sorted({n for run in runs if len(run) == narrowest for n in run})
 
     def pages_with_label(self, needle: str) -> list[int]:
         """The 1-based PDF pages where an item label occurs, cached.
@@ -667,7 +736,14 @@ class GateConfig:
         # short, legitimately repeated sentence needs a documented way out, and 0
         # turns the rule off.
         self.max_match_pages: int = int(data.get("max_match_pages", MAX_MATCH_PAGES))
+        # Checked here rather than where it is joined onto --root: a non-string
+        # reached `root / cfg.findings_dir` and raised a TypeError out of main,
+        # which is exit 1 with a traceback -- a broken gate wearing a rejected
+        # contribution's clothes.  Raising is what puts it through the load guard.
         self.findings_dir: str = data.get("findings_dir", "findings")
+        if not isinstance(self.findings_dir, str):
+            raise ValueError(f"gate.json findings_dir must be a string, not "
+                             f"{type(self.findings_dir).__name__}")
         self.decl_index: str | None = data.get("decl_index")
         rules = dict(DEFAULT_KIND_RULES)
         for kind, override in (data.get("kind_rules") or {}).items():
@@ -1188,8 +1264,9 @@ def binding_notes(doc: Any, name: str, cfg: GateConfig,
 #: hook, both ``git diff`` and ``git ls-files`` fired it bare and neither does
 #: with these pins.  They cover that hook, the hooks path, the external diff
 #: driver, the pager and ssh/askpass -- NOT git's content filters, which are a
-#: program too and are blanked per call by :func:`_filter_pins`.  Keep in step
-#: with gitsafe; ``tests/test_rf_gate.py`` asserts they are identical.
+#: program too and are blanked per call, in the environment (:func:`_filter_env`)
+#: and in ``-c`` (:func:`_filter_pin_args`).  Keep in step with gitsafe;
+#: ``tests/test_rf_gate.py`` asserts they are identical.
 _GIT_SAFE_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=/dev/null",
@@ -1205,22 +1282,26 @@ _GIT_SAFE_ENV: dict[str, str] = {
 }
 
 
-def _filter_pins(cwd: pathlib.Path) -> list[str]:
-    """``-c filter.<n>.clean=`` (and ``.process``/``.smudge``) per named driver.
+def _filter_pin_args(names: list[str]) -> list[str]:
+    """``-c <key>=`` for every driver name ``-c`` can express.
 
-    The pins above stop the index-refresh hook; they do not stop git's CONTENT
-    filters, and :func:`changed_entries` diffs the WORKING TREE against the base,
-    which has to read that tree's content to decide which paths differ.  So a
-    worker with ``Bash(git:*)`` could write ``filter.x.clean=<its script>`` into
-    ``.git/config`` and ``*.json filter=x`` into ``.git/info/attributes`` -- both
-    under ``.git/``, where the changed-files check cannot see them -- and the gate
-    ran its program and then reported the contribution clean.  Diffing two trees
-    instead would not run them either, but it cannot see an UNSTAGED rewrite of a
-    neighbour's landed findings file, which is the case the ownership rule exists
-    for; so the diff stays as it is and the drivers are blanked here.
+    The half of the blanking an OLD git still reads.  ``GIT_CONFIG_COUNT`` and its
+    pairs arrived in git 2.31; before that git ignores them in silence -- no
+    error, no exit code, the driver simply runs -- and this file is rsynced to a
+    run host whose git version nothing here checks
+    (``references/runbook-server.md`` §2), where Debian 11's 2.30.2 is an ordinary
+    answer.  ``-c`` covers every name without an ``=``; the environment pairs
+    cover the ``=`` ones.  Neither channel is the other's superset, so both go on
+    every call.
+    """
+    return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
+
+
+def _filter_names(cwd: pathlib.Path) -> list[str]:
+    """Every ``filter.<n>.clean``/``.process``/``.smudge`` key this worktree resolves.
 
     ``git config --list`` executes nothing itself and resolves ``include.path``,
-    so a driver reached through an include is blanked too, and it reads every
+    so a driver reached through an include is named too, and it reads every
     scope: ``.git/config.worktree`` is the worktree's own and is not ``--local``,
     and an attribute may name a driver defined in the user's ``~/.gitconfig``
     (git resolves a filter by NAME, not by who configured it).  An attribute
@@ -1234,22 +1315,71 @@ def _filter_pins(cwd: pathlib.Path) -> list[str]:
                              env={**os.environ, **_GIT_SAFE_ENV})
     except OSError:
         return []          # no git, no repo: the caller's own command reports it
-    pins: list[str] = []
+    names: list[str] = []
     for key in (got.stdout or "").splitlines():
         k = key.strip()
         if k.startswith("filter.") and k.rsplit(".", 1)[-1] in ("clean", "process", "smudge"):
-            if k not in pins:
-                pins.append(k)
-    return [arg for k in pins for arg in ("-c", k + "=")]
+            if k not in names:
+                names.append(k)
+    return names
+
+
+def _filter_pairs(names: list[str], have: dict[str, str]) -> dict[str, str]:
+    """:func:`_filter_env`'s pairs, from names already discovered."""
+    if not names:
+        return {}
+    try:
+        start = max(0, int(have.get("GIT_CONFIG_COUNT") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    out = {"GIT_CONFIG_COUNT": str(start + len(names))}
+    for i, key in enumerate(names, start):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = ""
+    return out
+
+
+def _filter_env(cwd: pathlib.Path) -> dict[str, str]:
+    """``GIT_CONFIG_*`` blanking every content filter this worktree names.
+
+    The pins above stop the index-refresh hook; they do not stop git's CONTENT
+    filters, and :func:`changed_entries` diffs the WORKING TREE against the base,
+    which has to read that tree's content to decide which paths differ.  So a
+    worker with ``Bash(git:*)`` could write ``filter.x.clean=<its script>`` into
+    ``.git/config`` and ``*.json filter=x`` into ``.git/info/attributes`` -- both
+    under ``.git/``, where the changed-files check cannot see them -- and the gate
+    ran its program and then reported the contribution clean.  Diffing two trees
+    instead would not run them either, but it cannot see an UNSTAGED rewrite of a
+    neighbour's landed findings file, which is the case the ownership rule exists
+    for; so the diff stays as it is and the drivers are blanked here.
+
+    These pairs are why the blanking is not ``-c`` alone: ``-c`` splits at the
+    FIRST ``=`` and the worker chooses the driver's name, so with
+    ``filter.a=b.clean`` armed and ``*.json filter=a=b`` in the attributes,
+    ``-c 'filter.a=b.clean='`` sets ``filter.a`` to ``b.clean=``, the real driver
+    keeps its payload and the diff executes it.  ``GIT_CONFIG_KEY_i`` carries the
+    whole key, so there is nothing to split; the pairs are added on top of any
+    count the caller's environment already carries.  They are not the blanking
+    either: :func:`_filter_pin_args` is the half a git older than 2.31 reads, and
+    this file runs on whatever git the run host has.
+    """
+    return _filter_pairs(_filter_names(cwd), dict(os.environ))
 
 
 def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
-    """One read-only git command in ``cwd``, with the boundary pinned."""
+    """One read-only git command in ``cwd``, with the boundary pinned.
+
+    The worktree's filter drivers are discovered ONCE and spliced into both
+    channels from that one list, so a call costs one ``git config --list``.
+    """
     import subprocess
 
-    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pins(cwd), *args], cwd=str(cwd),
-                          capture_output=True, text=True, check=False,
-                          env={**os.environ, **_GIT_SAFE_ENV})
+    names = _filter_names(cwd)
+    environ = {**os.environ, **_GIT_SAFE_ENV}
+    environ.update(_filter_pairs(names, environ))
+    proc = subprocess.run(["git", *_GIT_SAFE_CONFIG, *_filter_pin_args(names), *args],
+                          cwd=str(cwd), capture_output=True, text=True, check=False,
+                          env=environ)
     return proc.returncode, (proc.stdout or "")
 
 
@@ -1312,23 +1442,29 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     task's, which is what catches emptying a neighbour's findings file.
 
     With no ``task_id`` the SINGLE-STEM rule stands in for it: a contribution may
-    touch the pair of exactly one stem, so two stems are refused by name.  It is
-    weaker than the ownership rule — it cannot tell whose stem the one stem is —
-    but it is the half that works when nobody knows the task id, and whether tend
-    exports ``TEND_TASK_ID`` into a validation command's environment has never
-    been verified against a running orchestrator.
+    touch the pair of exactly one stem, so a second stem is refused by name once
+    some stem's findings file was already on the base — the condition the next
+    paragraph is about.  It is weaker than the ownership rule — it cannot tell
+    whose stem the one stem is — but it is the half that works when nobody knows
+    the task id, and whether tend exports ``TEND_TASK_ID`` into a validation
+    command's environment has never been verified against a running orchestrator.
 
-    The count is ADDITION-AWARE, because the tend config runs this same argv for
-    the per-contribution ``validation_commands`` and for the
+    The count is ADDITION-AWARE **per stem**, because the tend config runs this
+    same argv for the per-contribution ``validation_commands`` and for the
     ``pre_merge_validation_commands`` of a ``batched_merge: true`` root: a batched
     pre-merge change set carries one findings/task pair per batched task, so a
-    bare stem count would refuse the whole batch and no flag could relax it.  A
-    change set in which every touched path is newly ADDED is therefore allowed to
-    carry several stems; a SEVERAL-STEM change set in which any touched path was
-    already on the base branch is refused by name, which is the case the rule
-    exists for, and a deletion or a rename is refused whatever the stem count.  A
-    lone stem is never refused here -- see the paragraph above.  A caller that
-    passes a bare set of paths knows no statuses, so it keeps the strict count.
+    bare stem count would refuse the whole batch and no flag could relax it.  Per
+    PATH was not enough: ``references/runbook-server.md`` §4 commits the tasks to
+    the merge target BEFORE the run, so a real batch is findings/<id>.json added
+    and tasks/<id>.yaml modified, and requiring every path to be an addition
+    refused every merge of two or more tasks.  A several-stem change set is
+    therefore allowed when, for each stem, findings/<stem>.json is an ADDITION —
+    the only other path it may touch, tasks/<stem>.yaml, is already restricted to
+    that stem above, in any status.  A stem whose findings file was already on the
+    base branch is refused by name, which is the data-loss case the rule exists
+    for, and a deletion or a rename is refused whatever the stem count.  A lone
+    stem is never refused here -- see the paragraph above.  A caller that passes a
+    bare set of paths knows no statuses, so it keeps the strict count.
     """
     statuses = dict(paths) if isinstance(paths, dict) else {}
     problems: list[str] = []
@@ -1364,18 +1500,21 @@ def check_changed(paths: "set[str] | dict[str, str]", *, allow_empty: bool = Fal
     for stem in sorted(written - tasks):
         problems.append(f"findings/{stem}.json has no tasks/{stem}.yaml in the same change set")
     if not task_id and len(seen) > 1:
-        # Only a path that was already on the base branch makes a second stem a
-        # refusal: see the ADDITION-AWARE paragraph above — a batched pre-merge
-        # change set is many stems of pure additions, and refusing it would stop
-        # every batched merge.
-        touched = sorted(p for p in set(paths) if statuses.get(p, "") != "A")
-        if touched:
+        # Only a stem whose FINDINGS file was already on the base branch makes a
+        # second stem a refusal: see the ADDITION-AWARE paragraph above — a
+        # batched pre-merge change set is one added findings file per task beside
+        # the task file the runbook committed before the run, and refusing that
+        # would stop every batched merge.
+        landed = sorted(stem for stem in seen
+                        if statuses.get(f"findings/{stem}.json") != "A")
+        if landed:
+            names = ", ".join(f"findings/{stem}.json" for stem in landed)
             problems.append(
                 f"changed paths belong to {len(seen)} tasks ({', '.join(sorted(seen))}) and no "
                 f"task id says which stem is this worker's, and this contribution did not add "
-                f"{', '.join(touched)} — a contribution writes one findings/<id>.json and one "
-                f"tasks/<id>.yaml; pass --task-id <id> (or export TEND_TASK_ID) to check "
-                f"ownership instead of counting stems"
+                f"{names} — a batched pre-merge set adds one findings/<id>.json per task and "
+                f"touches no other worker's; pass --task-id <id> (or export TEND_TASK_ID) to "
+                f"check ownership instead of counting stems"
             )
     if not written and not allow_empty:
         problems.append("no findings file was written")
@@ -1388,7 +1527,8 @@ def ownership_line(task_id: str) -> str:
     Both gate entry points print it, and neither may imply the other's rule ran:
     with a task id every touched stem had to be that task's, and without one only
     the single-stem count did — and that count lets a batched pre-merge change set
-    of pure additions through, so it is the weaker half in two ways, not one.
+    through, one added findings file per task, so it is the weaker half in two
+    ways, not one.
     """
     if task_id:
         return f"ownership checked against task {task_id}"
@@ -1397,7 +1537,17 @@ def ownership_line(task_id: str) -> str:
 
 
 def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[str]]:
-    """Read and normalise one source's text; returns (BookText, errors)."""
+    """Read and normalise one source's text; returns (BookText, errors).
+
+    Every way the text can fail to arrive is an ERROR here, never an exception:
+    ``exists()`` is true for a directory and for a file this user may not read,
+    and a partial rsync produces the first while a wrong run-host user produces
+    the second.  Both used to come out of ``main`` as the interpreter's exit 1
+    with a traceback -- the code the prompts define as "your findings were
+    rejected: fix them" -- next to a sentence promising that an unreadable source
+    text is an infrastructure fault a worker must not answer by deleting
+    findings.
+    """
     sid = block.get("source_id") or "?"
     empty = BookText("")
     path = block.get("text")
@@ -1405,7 +1555,11 @@ def _load_one(cfg: GateConfig, block: dict[str, Any]) -> tuple[BookText, list[st
         return empty, [f"gate.json sources.{sid} has no text path"]
     if not path.exists():
         return empty, [f"{sid}: source text missing at {path} (the gate fails closed)"]
-    raw = path.read_bytes()
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        return empty, [f"{sid}: source text at {path} could not be read ({exc}) "
+                       f"(the gate fails closed)"]
     errs: list[str] = []
     want = block.get("text_sha256")
     if cfg.verify_text_sha and want:
@@ -1484,7 +1638,9 @@ def main(argv: list[str] | None = None) -> int:
         help="with --changed-files: the worker's own task id, so a contribution that "
              "touches another task's findings/<id>.json or tasks/<id>.yaml is refused "
              "(default: $TEND_TASK_ID). Without one only the single-stem rule runs: "
-             "two stems are refused, but nothing can tell whose the one stem is",
+             "two stems are refused once some stem's findings file was already on "
+             "--base (a batched pre-merge set, which adds one findings file per task, "
+             "passes), but nothing can tell whose the one stem is",
     )
     ap.add_argument(
         "--allow-empty",
@@ -1519,8 +1675,12 @@ def main(argv: list[str] | None = None) -> int:
 
     books, errs = load_sources(cfg)
     if errs:
+        # Every one of these is the source text not arriving as pinned -- missing,
+        # unreadable, unconfigured, or not the extraction gate.json names.  They
+        # read like the other infrastructure failures because they are one.
         for e in errs:
-            print(f"FAIL: {e}", file=sys.stderr)
+            print(f"FAIL: {e} — the gate could not run: "
+                  f"this is not a finding of yours", file=sys.stderr)
         return EXIT_GATE_BROKEN
 
     decl_index = None

@@ -29,10 +29,18 @@ which pins the config keys that would otherwise hand a repo an execve:
 * ``core.pager=cat``       -- no pager program, no ``less`` config games
 * ``core.sshCommand=``/``core.askPass=`` -- nothing that could dial out or prompt
 
-plus, per call and by name, every content filter the repository names
-(:func:`filter_pins`), because a command that compares working-tree content runs
-``filter.<n>.clean`` and no fixed pin can blank a driver whose name the repo
-chose.
+plus, per call and by name, every content filter the repository names, because a
+command that compares working-tree content runs ``filter.<n>.clean`` and no
+fixed pin can blank a driver whose name the repo chose.  Those blanks travel
+BOTH ways, and neither channel covers what the other does: as environment pairs
+(:func:`filter_env`), which carry a whole key, because git splits a ``-c``
+argument at the FIRST ``=`` and ``-c 'filter.a=b.clean='`` sets ``filter.a`` to
+``b.clean=`` and leaves the driver a repo called ``a=b`` armed; and as ``-c``
+blanks (:func:`filter_pin_args`) for every name without an ``=``, because
+``GIT_CONFIG_COUNT`` arrived in git 2.31 and an older git ignores it in silence
+-- no error, no exit code, the driver simply runs.  This file goes to a run host
+whose git version nothing here checks (``references/runbook-server.md`` §2), and
+Debian 11 ships 2.30.2.
 
 plus ``GIT_CONFIG_NOSYSTEM=1`` (ignore ``/etc/gitconfig``),
 ``GIT_OPTIONAL_LOCKS=0`` (never take a lock in someone else's repo) and
@@ -42,7 +50,7 @@ The user's own ``~/.gitconfig`` is deliberately still read: it is the user's
 machine.  What is neutralised is the part of the configuration the *audited
 repository* controls -- with one exception, because git resolves a CONTENT
 filter by the name an attribute in the repo gives it, not by who configured the
-driver: :func:`filter_pins` blanks every named driver in every scope, the user's
+driver: :func:`filter_env` blanks every named driver in every scope, the user's
 own included.  Its docstring says what that costs (git-lfs) and why a read-only
 audit pays it.
 """
@@ -53,12 +61,13 @@ import subprocess
 from pathlib import Path
 from typing import Sequence
 
-__all__ = ["SAFE_CONFIG", "SAFE_ENV", "argv", "env", "filter_pins", "run"]
+__all__ = ["SAFE_CONFIG", "SAFE_ENV", "argv", "env", "filter_env", "filter_names",
+           "filter_pin_args", "run"]
 
 #: ``-c key=value`` pairs, flattened; every one of these is a program git would
 #: otherwise run on behalf of the repository being read.  Fixed keys only: the
-#: content filters are named by the repo, so they are pinned per call in
-#: :func:`filter_pins`.
+#: content filters are named by the repo, so they are pinned per call, in the
+#: environment (:func:`filter_env`) and in ``-c`` (:func:`filter_pin_args`).
 SAFE_CONFIG: tuple[str, ...] = (
     "-c", "core.fsmonitor=",
     "-c", "core.hooksPath=/dev/null",
@@ -81,29 +90,12 @@ SAFE_ENV: dict[str, str] = {
 _FILTER_HOOKS = ("clean", "process", "smudge")
 
 
-def filter_pins(repo: str | Path) -> list[str]:
-    """``-c filter.<n>.clean=`` … for every content filter *repo* names.
+def filter_names(repo: str | Path) -> list[str]:
+    """Every ``filter.<n>.clean``/``.process``/``.smudge`` key *repo* resolves.
 
-    :data:`SAFE_CONFIG` stops the index-refresh hook; it does not stop git's
-    content filters, which are the other program a repository can hand a reader.
-    Any command that compares working-tree content runs ``filter.<n>.clean`` over
-    a file whose index entry is stat-stale -- ``git status --porcelain``, the call
-    ``recheck/pin.py`` makes, does -- so a companion carrying ``filter.x.clean``
-    in ``.git/config`` and ``*.lean filter=x`` in ``.git/info/attributes``
-    executed its own program on a tree this skill only ever reads.  Verified.
-
-    The exposure is the same one the fsmonitor pins were written for and no
-    wider: ``git clone`` copies neither of those two files, so it takes a tree
-    delivered with its ``.git/`` intact (a tarball, an rsync, a handover).
-
-    Blanked by NAME and in every scope, because git resolves a driver by the name
-    an attribute gives it: ``.git/config.worktree`` is the repository's own and is
-    not in ``--local``, and an attribute may name a driver the user's
-    ``~/.gitconfig`` defines (git-lfs, typically -- one consequence is that an
-    LFS file whose index entry is stat-stale may read as modified, which a
-    read-only audit prefers to an execve).  ``git config --list`` runs no filter
-    itself and resolves ``include.path``, so a driver reached through an include
-    is covered; an attribute naming a driver nothing defines was already a no-op.
+    ``git config --list`` runs no filter itself and resolves ``include.path``, so
+    a driver reached through an include is covered; an attribute naming a driver
+    nothing defines was already a no-op.
     """
     try:
         got = subprocess.run(["git", "-C", str(repo), *SAFE_CONFIG,
@@ -118,28 +110,114 @@ def filter_pins(repo: str | Path) -> list[str]:
         if key.startswith("filter.") and key.rsplit(".", 1)[-1] in _FILTER_HOOKS:
             if key not in names:
                 names.append(key)
-    return [arg for key in names for arg in ("-c", key + "=")]
+    return names
+
+
+def filter_pin_args(names: Sequence[str]) -> list[str]:
+    """``-c <key>=`` for every name in *names* that ``-c`` can express.
+
+    The second half of the blanking, and the one that survives an old git.
+    ``GIT_CONFIG_COUNT`` and its ``_KEY_i``/``_VALUE_i`` pairs (:func:`filter_env`)
+    are what reach a driver whose name carries an ``=``, which ``-c`` splits at;
+    they are also what a git before 2.31 ignores without a word, so on a run host
+    carrying Debian 11's 2.30.2 the env pairs alone leave every driver armed.
+    ``-c`` is as old as the fixed pins above and covers every name but the ``=``
+    ones, so both go on every call: each is the floor the other does not have.
+    """
+    return [arg for key in names if "=" not in key for arg in ("-c", key + "=")]
+
+
+def _filter_pairs(names: Sequence[str], have: dict[str, str]) -> dict[str, str]:
+    """:func:`filter_env`'s pairs, from names already discovered."""
+    if not names:
+        return {}
+    try:
+        start = max(0, int(have.get("GIT_CONFIG_COUNT") or 0))
+    except (TypeError, ValueError):
+        start = 0
+    out = {"GIT_CONFIG_COUNT": str(start + len(names))}
+    for i, key in enumerate(names, start):
+        out[f"GIT_CONFIG_KEY_{i}"] = key
+        out[f"GIT_CONFIG_VALUE_{i}"] = ""
+    return out
+
+
+def filter_env(repo: str | Path, base: dict[str, str] | None = None) -> dict[str, str]:
+    """``GIT_CONFIG_COUNT``/``_KEY_i``/``_VALUE_i`` blanking every filter *repo* names.
+
+    :data:`SAFE_CONFIG` stops the index-refresh hook; it does not stop git's
+    content filters, which are the other program a repository can hand a reader.
+    Any command that compares working-tree content runs ``filter.<n>.clean`` over
+    a file whose index entry is stat-stale -- ``git status --porcelain``, the call
+    ``recheck/pin.py`` makes, does -- so a companion carrying ``filter.x.clean``
+    in ``.git/config`` and ``*.lean filter=x`` in ``.git/info/attributes``
+    executed its own program on a tree this skill only ever reads.  Verified.
+
+    These pairs are why the blanking is not ``-c`` alone: ``-c`` splits at the
+    FIRST ``=`` and a repository chooses the driver's name, so against
+    ``[filter "a=b"] clean = <payload>`` plus ``*.lean filter=a=b``,
+    ``-c 'filter.a=b.clean='`` sets ``filter.a`` to ``b.clean=``, the real driver
+    keeps its payload and the read executes it.  ``GIT_CONFIG_KEY_i`` carries the
+    whole key, so there is nothing to split.  They are added ON TOP of any count
+    the caller's own environment already carries, so a ``GIT_CONFIG_*`` the user
+    set for their own reasons is extended rather than dropped.  They are not the
+    blanking either: :func:`filter_pin_args` is the half an old git still reads.
+
+    The exposure is the same one the fsmonitor pins were written for and no
+    wider: ``git clone`` copies neither of those two files, so it takes a tree
+    delivered with its ``.git/`` intact (a tarball, an rsync, a handover).
+
+    Blanked by NAME and in every scope, because git resolves a driver by the name
+    an attribute gives it: ``.git/config.worktree`` is the repository's own and is
+    not in ``--local``, and an attribute may name a driver the user's
+    ``~/.gitconfig`` defines (git-lfs, typically -- one consequence is that an
+    LFS file whose index entry is stat-stale may read as modified, which a
+    read-only audit prefers to an execve).
+    """
+    return _filter_pairs(filter_names(repo), os.environ if base is None else base)
+
+
+def _argv(repo: str | Path, args: Sequence[str], names: Sequence[str]) -> list[str]:
+    """:func:`argv`, from names already discovered."""
+    return ["git", "-C", str(repo), *SAFE_CONFIG, *filter_pin_args(names), *args]
 
 
 def argv(repo: str | Path, *args: str) -> list[str]:
     """``git -C <repo> <safe config> <args…>`` (config must precede the subcommand).
 
-    Reads *repo*'s configuration to build the filter pins, so this is one cheap
-    ``git config`` call, not a pure string join.
+    Reads *repo*'s configuration for the ``-c`` half of the filter blanks, so this
+    is one cheap ``git config`` call and not a pure string join.  It is only half:
+    a caller that builds the argv itself must run it with :func:`env` of the same
+    repo, which carries the pairs that reach an ``=``-named driver.
     """
-    return ["git", "-C", str(repo), *SAFE_CONFIG, *filter_pins(repo), *args]
+    return _argv(repo, args, filter_names(repo))
 
 
-def env() -> dict[str, str]:
-    return {**os.environ, **SAFE_ENV}
+def env(repo: str | Path | None = None) -> dict[str, str]:
+    """The environment a read of *repo* runs in: :data:`SAFE_ENV` plus its filters.
+
+    With no repo it is the fixed half alone, which is what the one ``git config``
+    call :func:`filter_names` makes needs (that call runs no filter itself).
+    """
+    out = {**os.environ, **SAFE_ENV}
+    if repo is not None:
+        out.update(filter_env(repo, out))
+    return out
 
 
 def run(repo: str | Path, args: Sequence[str], *, input: str | None = None,
         timeout: int = 60) -> subprocess.CompletedProcess:
     """Run one read-only git command inside *repo*, with the boundary pinned.
 
+    The repository's filter drivers are discovered ONCE here and spliced into both
+    channels from that one list -- the ``-c`` blanks and the environment pairs --
+    so a call costs one ``git config --list``, not two.
+
     Raises the same exceptions ``subprocess.run`` does; callers decide what a
     failure means (every caller in this skill treats it as "no information").
     """
-    return subprocess.run(argv(repo, *args), input=input, capture_output=True,
-                          text=True, timeout=timeout, env=env())
+    names = filter_names(repo)
+    environ = {**os.environ, **SAFE_ENV}
+    environ.update(_filter_pairs(names, environ))
+    return subprocess.run(_argv(repo, args, names), input=input, capture_output=True,
+                          text=True, timeout=timeout, env=environ)

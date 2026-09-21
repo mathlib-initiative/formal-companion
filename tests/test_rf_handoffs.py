@@ -253,7 +253,8 @@ class TestABatchedPreMergeSetIsNotOneContribution(WorktreeCase):
     findings/task pair PER BATCHED TASK and no task id.  A bare stem count refuses
     that whole batch, and no flag relaxes it; the 1/1 smoke test cannot show it,
     because at limits 1/1 there is nothing to batch.  So the count asks whether any
-    touched path was already on the base branch, which is the case the rule is for.
+    stem's FINDINGS file was already on the base branch, which is the data-loss
+    case the rule is for.
     """
 
     def batch(self, *stems: str) -> dict:
