@@ -19,7 +19,7 @@ import subprocess
 from datetime import date
 from pathlib import Path
 
-from cflib import log
+from cflib import gitsafe, log
 from cflib.errors import CfError
 from cflib.jsonio import atomic_write
 from cflib.paths import WorkspacePaths, skill_root
@@ -311,16 +311,28 @@ def _config(repo: Path, key: str) -> str:
 def check_ignore(repo: Path, path: Path) -> bool:
     """Would *repo* ignore *path*?  (`cf quotes hydrate --out` asks before writing.)
 
-    Plain ``git`` for the same reason as :func:`remotes`, and it lives here for the
-    same reason: this module is the one that acts on the operator's own workspace
-    repository.  ``git check-ignore`` is the only authority on the answer, because
-    the rule may come from the workspace's .gitignore, an enclosing repo's, or the
-    user's global excludes -- and because a workspace created before `cf init`
-    learned to ignore ``quotes/`` has no such rule at all.
+    NOT plain ``git``, unlike :func:`remotes` and :func:`_config`: those are only
+    ever asked about the operator's own workspace repository, while the repo this
+    one is asked about is derived from a path the operator NAMES (``--out``), and
+    that can be any tree on the machine.  ``git check-ignore`` refreshes the index,
+    an index refresh runs ``core.fsmonitor``, and ``core.fsmonitor`` is a command
+    the repository's own ``.git/config`` chooses -- so the safety check was itself
+    an execve for any repo that wanted one.  ``cflib.gitsafe`` pins that config and
+    does not change the answer: measured identical verdicts on an ignored path, an
+    unignored one, a committed .gitignore and an uncommitted one.  It still reads
+    the user's own ``~/.gitconfig``, so ``core.excludesFile`` applies; only
+    ``/etc/gitconfig`` is dropped (``GIT_CONFIG_NOSYSTEM``).
+
+    ``git check-ignore`` is the only authority on the answer, because the rule may
+    come from the workspace's .gitignore, an enclosing repo's, or the user's global
+    excludes -- and because a workspace created before `cf init` learned to ignore
+    ``quotes/`` has no such rule at all.  A git that hangs answers ``False``, which
+    makes the caller refuse the write rather than raise.
     """
-    res = subprocess.run(["git", "-C", str(repo), "check-ignore", "-q", str(path)],
-                         capture_output=True, text=True)
-    return res.returncode == 0
+    try:
+        return gitsafe.run(repo, ["check-ignore", "-q", str(path)]).returncode == 0
+    except subprocess.TimeoutExpired:
+        return False
 
 
 def no_remote_guard_set(repo: Path) -> bool:
@@ -469,7 +481,16 @@ def git_toplevel(path: Path) -> Path | None:
     Public because `cf status` needs it: a workspace created with
     ``--allow-nested`` has no ``.git`` of its own and the pre-push reminder lives
     in the ENCLOSING repo, so the repo whose remote matters is this one.
+
+    Pinned through ``cflib.gitsafe`` for the reason :func:`check_ignore` is: not
+    because ``rev-parse --show-toplevel`` runs ``core.fsmonitor`` (measured: it
+    does not), but because *path* can come from a flag the operator typed, and the
+    rule in this file is that no ``git`` reachable from an operator's path runs
+    with the answering repository's own configuration.  A hung git means "no
+    repo", which is what an unreadable one already meant.
     """
-    res = subprocess.run(["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-                         capture_output=True, text=True)
+    try:
+        res = gitsafe.run(path, ["rev-parse", "--show-toplevel"])
+    except subprocess.TimeoutExpired:
+        return None
     return Path(res.stdout.strip()) if res.returncode == 0 and res.stdout.strip() else None

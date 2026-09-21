@@ -19,22 +19,35 @@ this audit exists to find is a flipped ``≤``, so a hash that cannot tell
 ``m(E) ≤ m(F)`` from ``m(E) ≥ m(F)`` would let :mod:`share.hydrate`
 reinstate the wrong sentence and call it verified.
 
-``first_words``/``last_words`` are withheld for a short quote: six words from
-each end of a twelve-word sentence is the whole sentence, which is the one thing
-a redaction may not hand over.
+``first_words``/``last_words`` are a BUDGET, not a fixed six: at most a quarter
+of the words from each end, and never an edge at or above :data:`PROSE_SPAN_MIN`
+normalised characters, which is the floor this same module applies to a verbatim
+run inside somebody's prose.  A flat six words from each end fails both tests on
+a short sentence -- six and six of a fourteen-word sentence is twelve of its
+words -- and a redaction that hands over most of the sentence, its exact length
+and its digest is not a redaction.  A quote below :data:`MIN_WORDS_FOR_EDGES`
+words carries no edges at all.
 
-``book_quote`` is not the only field that carries the source.  A worker writing
-``reason``, ``evidence``, ``finding_summary``, ``original_concept``,
-``reasoning``, ``concept`` or ``suggested_fix`` quotes the book inside their own
-prose, and MEASURED over the baseline campaign's own ledger and routed rows
-(``accepted``/``refuted``/``findings.adam.jsonl``, 25 rows, 59 non-empty prose
-fields) 10 of those fields carry a run of :data:`PROSE_SPAN_MIN` normalised
-characters or more that occurs verbatim in the book -- the longest 113 characters
-in a ``reason``, and one ``reason`` holding a whole ``pdftotext`` page dump.  So
-:class:`SourceIndex` and :func:`redact_prose_field` do to those runs what
-:func:`redact_quote` does to ``book_quote``: the span is replaced in place by a
-marker and its record is appended to the row's ``redacted_spans``, from which
-``cf quotes hydrate`` recovers it exactly like any other redacted quote.
+``book_quote`` is not the only field that carries the source.  A worker quotes
+the book inside their own prose, and MEASURED over the baseline campaign's own
+ledger and routed rows (``accepted``/``refuted``/``findings.adam.jsonl``, 25
+rows, 59 non-empty prose fields) 10 of those fields carry a run of
+:data:`PROSE_SPAN_MIN` normalised characters or more that occurs verbatim in the
+book -- the longest 113 characters in a ``reason``, and one ``reason`` holding a
+whole ``pdftotext`` page dump.  So :class:`SourceIndex` and
+:func:`redact_prose_field` do to those runs what :func:`redact_quote` does to
+``book_quote``: the span is replaced in place by a marker and its record is
+appended to the row's ``redacted_spans``, from which ``cf quotes hydrate``
+recovers it exactly like any other redacted quote.
+
+:func:`redact_prose` walks EVERY string of a row, at any depth, and redacts by
+default.  It used to iterate :data:`PROSE_FIELDS` at depth one, and that is a
+key enumeration: of the 24 keys ``ledger/transcribe.py`` writes onto a v2 ledger
+row exactly one (``reason``) was in the tuple, so ``summary``,
+``refutation_text``, ``lens_disagreement``, ``recovery_argument`` and
+``dissent[].argument`` carried the sentence that had just been redacted out of
+``reason``, and a routed row's ``witness.why`` was never looked at.  A walk whose
+default is redact scrubs the next prose key somebody adds instead of leaking it.
 """
 from __future__ import annotations
 
@@ -45,17 +58,38 @@ from typing import Any, Callable, Iterable, Sequence
 #: the shape of the record this module writes, so a reader can tell it from
 #: ``route._redact``'s (which carries no page and no normalised length)
 REDACTION = "quote-v1"
-#: how many words of each end travel with a redacted quote
+#: the MOST words of each end that travel with a redacted quote
 EDGE_WORDS = 6
 #: below this many words the edges ARE the quote, so they are withheld
 MIN_WORDS_FOR_EDGES = 2 * EDGE_WORDS + 2
 
 #: the prose fields of a finding or a ledger row: written by a worker in their
-#: own words, and measurably carrying the source's words as well.
+#: own words, and measurably carrying the source's words as well.  This is the
+#: documented MINIMUM -- :func:`redact_prose` scans every string of a row -- and
+#: it is what the measurement in :data:`PROSE_SPAN_MIN` was taken over.
 PROSE_FIELDS = ("reason", "evidence", "finding_summary", "original_concept",
                 "reasoning", "concept", "suggested_fix")
 #: where a prose field's redacted spans are recorded, so they can be hydrated
 SPANS_KEY = "redacted_spans"
+
+#: keys whose value is a fact ABOUT the finding rather than somebody's prose: an
+#: id, an enum, a hash, a page number, a declaration name or a file:line that
+#: :func:`elide_row_paths` has already handled.  Everything else a row carries is
+#: treated as prose, so the next key a writer adds is scrubbed rather than
+#: leaked.  Keys ending ``_decls`` (``unfaithful_decls``, ``other_decls``) are
+#: skipped by the same rule.
+SKIP_KEYS = frozenset({
+    "finding_id", "run_id", "source_id", "source_sha", "item", "kind", "verdict",
+    "severity", "method", "schema", "at", "repo", "provenance", "source_file",
+    "page", "confidence", "resolution", "decl_sites", "repo_commit",
+    "decl_fingerprints",
+})
+#: subtrees :func:`redact_prose` must not descend into.  Both are redaction
+#: RECORDS this module wrote: their ``first_words``/``last_words`` are edge words
+#: by design (POLICY.md S4) and real ones measure above :data:`PROSE_SPAN_MIN`,
+#: so a blanket walk would perforate the record, nest a record inside a record
+#: and cost ``cf quotes hydrate`` the anchor it searches a page with.
+SKIP_SUBTREES = frozenset({"book_quote", SPANS_KEY})
 
 #: how long a verbatim run of the source has to be, in NORMALISED characters,
 #: before a prose field's span is redacted.
@@ -253,6 +287,39 @@ def redact_prose_field(value: Any, index: SourceIndex, *,
         text = text[:start] + span_mark(record) + text[end:]
 
 
+def edge_words(words: Sequence[str]) -> int:
+    """How many words of each end a record may disclose (0 = none).
+
+    Three bounds, in order, and the last two are what the flat six words missed:
+
+    * below :data:`MIN_WORDS_FOR_EDGES` words nothing travels, because six words
+      from each end of a twelve-word sentence is the sentence;
+    * at most a QUARTER of the words from each end, so the two edges are at most
+      half the quote whatever its length;
+    * and no edge at or above :data:`PROSE_SPAN_MIN` characters, the floor this
+      module already refuses a verbatim run of the source at.
+
+    MEASURED over the 429 ``book_quote`` strings of the baseline corpus: the flat
+    six words handed over 12 of a 14-word quote (86% of it, with its exact length
+    and its digest beside them), its longest edge ran to 67 characters, and 149
+    of the 429 carried an edge at or above the 40-character floor -- inside a
+    record the same export labels ``redacted``.  Under the budget the worst case
+    is half the words, the longest edge is 39 characters, none reaches the floor,
+    70 quotes have an edge shortened by the character bound, and the same 39
+    short quotes withhold their edges as before.  Hydration is unaffected: the
+    digest is what verifies a passage and the first words only prune where the
+    search starts (``share.hydrate._Page.windows``).
+    """
+    count = len(words)
+    if count < MIN_WORDS_FOR_EDGES:
+        return 0
+    keep = min(EDGE_WORDS, count // 4)
+    while keep and max(len(" ".join(words[:keep])),
+                       len(" ".join(words[-keep:]))) >= PROSE_SPAN_MIN:
+        keep -= 1
+    return keep
+
+
 def redact_quote(quote: Any, *, pages: Sequence[int] = ()) -> dict:
     """The shareable record for one book quote.
 
@@ -275,12 +342,18 @@ def redact_quote(quote: Any, *, pages: Sequence[int] = ()) -> dict:
         "page": page_list[0] if page_list else None,
         "pages": page_list,
     }
-    if len(words) >= MIN_WORDS_FOR_EDGES:
-        out["first_words"] = " ".join(words[:EDGE_WORDS])
-        out["last_words"] = " ".join(words[-EDGE_WORDS:])
-    else:
+    keep = edge_words(words)
+    if keep:
+        out["first_words"] = " ".join(words[:keep])
+        out["last_words"] = " ".join(words[-keep:])
+    elif len(words) < MIN_WORDS_FOR_EDGES:
         out["edges_withheld"] = (
             f"{len(words)} words: {EDGE_WORDS} from each end would be the whole quote"
+        )
+    else:
+        out["edges_withheld"] = (
+            f"{len(words)} words: one word from each end would already be a run of "
+            f"{PROSE_SPAN_MIN}+ characters of the source"
         )
     return out
 
@@ -304,36 +377,58 @@ def redact_row(row: dict, *, pages: Sequence[int] = ()) -> dict:
     return out
 
 
+def _skipped(key: str) -> bool:
+    """Is *key* structural (an id, an enum, a declaration) rather than prose?"""
+    return key in SKIP_KEYS or key in SKIP_SUBTREES or key.endswith("_decls")
+
+
 def redact_prose(row: dict, index: SourceIndex, *,
                  locate: Callable[[str], Sequence[int]] | None = None) -> dict:
-    """A copy of *row* whose prose fields carry no verbatim run of the source.
+    """A copy of *row* whose prose carries no verbatim run of the source.
 
-    The records go into :data:`SPANS_KEY` as ``{"field": ..., "quote": {...}}``, in
-    the order the fields are listed and the spans were found, so the row says what
-    was taken out of it and ``cf quotes hydrate`` can put each one back.  A row
+    EVERY string of the row is scanned, at any depth, except the structural keys
+    (:data:`SKIP_KEYS`) and the two redaction-record subtrees
+    (:data:`SKIP_SUBTREES`).  The default is to redact, because the version of
+    this function that iterated :data:`PROSE_FIELDS` at depth one scanned one of
+    a v2 ledger row's five free-text keys and none of a routed row's
+    ``witness.why`` -- and because a field that IS in the tuple goes unscanned
+    the moment a writer makes it a list, which the baseline's own ``evidence``
+    already is.
+
+    The records go into :data:`SPANS_KEY` as ``{"field": ..., "quote": {...}}``,
+    where ``field`` is the JSON path the span came from (``witness.why``,
+    ``dissent[0].argument``), so the row says what was taken out of it and
+    ``cf quotes hydrate`` can put each one back and name where it belongs.  A row
     with nothing to redact is returned with no such key at all: a bundle whose
     rows all carry an empty ``redacted_spans`` would read as though something had
     been withheld everywhere.
 
-    Raises :class:`ValueError` naming the field when one of them is a page dump
+    Raises :class:`ValueError` naming the path when one field is a page dump
     (see :func:`redact_prose_field`); the caller adds the row.
     """
     if not index:
         return dict(row)
-    out = dict(row)
     spans: list[dict] = list(row.get(SPANS_KEY) or [])
-    for field in PROSE_FIELDS:
-        value = row.get(field)
-        if not isinstance(value, str) or not value.strip():
-            continue
-        try:
-            text, records = redact_prose_field(value, index, locate=locate)
-        except ValueError as exc:
-            raise ValueError(f"{field}: {exc}") from None
-        if not records:
-            continue
-        out[field] = text
-        spans.extend({"field": field, "quote": record} for record in records)
+
+    def walk(value: Any, path: str) -> Any:
+        if isinstance(value, str):
+            if not value.strip():
+                return value
+            try:
+                text, records = redact_prose_field(value, index, locate=locate)
+            except ValueError as exc:
+                raise ValueError(f"{path}: {exc}") from None
+            spans.extend({"field": path, "quote": record} for record in records)
+            return text
+        if isinstance(value, dict):
+            return {k: (v if _skipped(str(k))
+                        else walk(v, f"{path}.{k}" if path else str(k)))
+                    for k, v in value.items()}
+        if isinstance(value, list):
+            return [walk(v, f"{path}[{n}]") for n, v in enumerate(value)]
+        return value
+
+    out = walk(dict(row), "")
     if spans:
         out[SPANS_KEY] = spans
     return out
