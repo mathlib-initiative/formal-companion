@@ -100,7 +100,7 @@ Rules:
   spans more than one source the slug is `qualified_slug` (`<source-slug>--<item-slug>`), so two
   sources with a colliding item id cannot collide as filenames.
 - The three title prefixes are load-bearing: the baseline's 382 tasks split 224 `DIFFERENTIAL:`
-  and 158 `SINGLE-SOURCE:` (recomputed from `~/Desktop/tao-diff-run/tasks`), and that split is how
+  and 158 `SINGLE-SOURCE:` (recomputed from the v1 corpus's `tasks/`), and that split is how
   the report distinguishes strong from weak evidence.
 - `make_tasks` **reconciles** its output against `items.json ∩ any-repo` and fails on a gap.
 
@@ -186,7 +186,7 @@ ONE documented override is `--allow-edition-mismatch`, and the receipt records t
 `harvest` fails when `expected_count != actual_count` or a sha differs. This gate exists because a
 harvest once held 762 files where the server had 763, and the missing file was a real `CONTENT`
 finding — every derived count was off by one, toward "cleaner"
-(`/Users/jack/Desktop/tao-measure-lean/docs/HANDOFF.md` §4).
+(the docstring-tag companion's `HANDOFF.md` §4).
 
 ---
 
@@ -343,10 +343,10 @@ this exit code.
 
 ## 8. `convert_v1.py` — importing the 2,672-file baseline
 
-Reads `~/Desktop/tao-diff-run/{findings,findings-pdf,findings-gpt,findings-vac,findings-hunt}/`
-(382 + 382 + 382 + 763 + 763 files, counted 2026-09-16) and the batch-1 artifacts under
-`~/Desktop/tao-differential/`, and writes v2 into `corpus/<run-id>/`. **It never modifies the
-baseline.**
+Reads the v1 corpus's `{findings,findings-pdf,findings-gpt,findings-vac,findings-hunt}/`
+(382 + 382 + 382 + 763 + 763 files, counted 2026-09-16) and the batch-1 artifacts of the v1
+differential — both directories named by `$CF_BASELINE_CORPUS` and `$CF_BASELINE_DIFF` — and
+writes v2 into `corpus/<run-id>/`. **It never modifies the baseline.**
 
 1. one run-id per input directory; `run.yaml` records model, source access, gate mode and that the
    run is imported;
@@ -376,4 +376,4 @@ A conversion run prints a reconciliation table (files in, findings out, rows by 
 a witness) and the regression test asserts the totals against the baseline tally: **72 rows over
 40 distinct items** naming the audited companion, partitioned 16 `CONTENT`/`VACUITY`,
 1 `SUSPECTED_ERRATA`, 1 `COVERAGE`, 22 `PAGE_ANCHOR`
-(`/Users/jack/Desktop/tao-measure-lean/docs/OPEN_FAITHFULNESS_FINDINGS.md`).
+(the docstring-tag companion's `OPEN_FAITHFULNESS_FINDINGS.md`).
