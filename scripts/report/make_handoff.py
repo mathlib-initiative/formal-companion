@@ -17,6 +17,17 @@ artifact**, never from prose.  Its inputs are
 A figure with no artifact behind it is rendered as ``TODO(<name>)`` next to the
 command that would produce it.  The real project got this count wrong three
 times and every error ran toward "cleaner", so a visible hole is the point.
+
+Every finding figure also has a DENOMINATOR.  A handoff used to say "N defects"
+with nothing saying what fraction of a book had been looked at -- and the scope is
+real and restrictive (``cf sources set <id> chapters=1`` narrows a 442-item book
+to 411 items, and a fleet examines only the items it was given tasks for).  The
+sentence a reader will quote back is "the faithfulness audit of X found N
+defects", so §0 now carries, per source and chapter: items in the source, items
+in scope, items paired, items a run actually examined, items with findings and
+items never examined -- with the unexamined ones written to
+``reports/unexamined.<source_id>.json`` and every number recomputed here from
+``items.json``, ``reconciliation.json``, the corpus documents and their receipts.
 """
 
 from __future__ import annotations
@@ -138,6 +149,133 @@ def load_receipts(paths: Any) -> dict[str, dict]:
             continue
         if isinstance(doc, dict):
             out[str(doc.get("run_id") or name)] = doc
+    return out
+
+
+def load_source_items(paths: Any, source_id: str) -> dict:
+    """``sources/<id>/items.json``: the item universe of ONE source.
+
+    This is the outer denominator -- how many items the source contains at all --
+    and the only artifact that knows which chapter an item is in, which is what
+    turns "411 items" into "411 of 442, chapter 1 only".
+    """
+    path = str(paths.source_items(source_id))
+    out = {"path": path, "present": False, "count": 0, "by_item": {}, "chapters": []}
+    if not os.path.exists(path):
+        return out
+    try:
+        doc = compat.read_json(path)
+    except Exception:  # an unreadable items.json is a hole, not a crash
+        return out
+    rows = doc.get("items") if isinstance(doc, dict) else doc
+    by_item: dict[str, dict] = {}
+    for row in rows or []:
+        if isinstance(row, dict) and row.get("item"):
+            by_item.setdefault(compat.item_join_key(row["item"]), row)
+    out.update({
+        "present": True,
+        "count": len(by_item),
+        "by_item": by_item,
+        "chapters": sorted({row.get("chapter") for row in by_item.values()
+                            if row.get("chapter") is not None}),
+    })
+    return out
+
+
+def _reconciliation_path(paths: Any, source_id: str) -> str:
+    """``pairs/<id>/reconciliation.json``, through the accessor when there is one.
+
+    ``LedgerPaths`` forwards to ``cflib.paths.WorkspacePaths``, which has
+    ``reconciliation_json``; the no-cflib fallback in ``ledger/compat.py`` does
+    not, and this stage has to keep working there.
+    """
+    accessor = getattr(paths, "reconciliation_json", None)
+    if accessor is not None:
+        return str(accessor(source_id))
+    return os.path.join(paths.pairs(source_id), "reconciliation.json")
+
+
+def load_reconciliation(paths: Any, source_id: str) -> dict:
+    """``pairs/<id>/reconciliation.json``: scope and the paired universe, as computed."""
+    path = _reconciliation_path(paths, source_id)
+    if not os.path.exists(path):
+        return {}
+    try:
+        doc = compat.read_json(path)
+    except Exception:
+        return {}
+    return doc if isinstance(doc, dict) else {}
+
+
+def _run_source(receipt: dict, cfg_run: dict) -> str:
+    """The one source a run is about, or '' when it does not say unambiguously.
+
+    A corpus document that carries its own ``source_id`` wins; this is the fallback
+    for the v1 documents that carry none.  Two sources in one run leaves the
+    attribution blank rather than guessing -- CLAUDE.md S4, "stamp the source".
+    """
+    for block in ((receipt or {}).get("sources"), (cfg_run or {}).get("sources")):
+        ids = list(block or {}) if isinstance(block, dict) else [
+            str(e.get("id") or e.get("source_id") or "") if isinstance(e, dict) else str(e)
+            for e in (block or [])
+        ]
+        ids = [i for i in ids if i]
+        if len(ids) == 1:
+            return str(ids[0])
+    return ""
+
+
+def load_examined(paths: Any, runs: dict[str, dict],
+                  receipts: dict[str, dict]) -> dict[str, dict]:
+    """Which items each run actually examined, from the corpus documents themselves.
+
+    Nothing else records this: a tally counts the items that HAVE findings, and a
+    receipt counts FILES.  "Examined" is "a task for this item completed and its
+    document landed in the corpus"; ``gated`` narrows that to runs whose
+    ``RECEIPT.json`` carries a quote gate that passed, because a document no gate
+    checked is not evidence that the item was really read.
+
+    Returns ``{source_id: {"examined": set, "gated": set, "with_findings": set,
+    "runs": {...}, "unstamped": int, "ungated_runs": [...]}}``; the ``""`` key
+    holds documents no artifact attributes to a source.
+    """
+    out: dict[str, dict] = {}
+    root = str(paths.corpus())
+    if not os.path.isdir(root):
+        return out
+    for run_id in sorted(os.listdir(root)):
+        directory = os.path.join(root, run_id)
+        if not os.path.isdir(directory):
+            continue
+        receipt = receipts.get(run_id) or {}
+        gated = bool((receipt.get("gate") or {}).get("ok"))
+        fallback = _run_source(receipt, runs.get(run_id) or {})
+        for path in compat.iter_json_files(directory):
+            try:
+                doc = compat.read_json(path)
+            except Exception:
+                continue
+            if not isinstance(doc, dict) or not doc.get("item"):
+                continue
+            sid = str(doc.get("source_id") or fallback or "")
+            block = out.setdefault(sid, {"examined": set(), "gated": set(),
+                                         "with_findings": set(), "runs": {},
+                                         "unstamped": 0, "ungated_runs": []})
+            key = compat.item_join_key(doc["item"])
+            block["examined"].add(key)
+            if gated:
+                block["gated"].add(key)
+            if doc.get("disagreements"):
+                block["with_findings"].add(key)
+            if not doc.get("source_id"):
+                block["unstamped"] += 1
+            run_block = block["runs"].setdefault(run_id, {"examined": 0, "with_findings": 0,
+                                                          "gated": gated})
+            run_block["examined"] += 1
+            if doc.get("disagreements"):
+                run_block["with_findings"] += 1
+            if not gated and run_id not in block["ungated_runs"]:
+                block["ungated_runs"].append(run_id)
     return out
 
 
@@ -572,14 +710,28 @@ def render_traps(extra: Iterable[str] = ()) -> str:
     return "\n".join("- %s" % t for t in list(DEFAULT_TRAPS) + list(extra))
 
 
-def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: list[dict]) -> str:
-    """Section 8: the commands that recompute every number above."""
+def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: list[dict],
+                        coverage: dict | None = None) -> str:
+    """Section 8: the commands that recompute every number above.
+
+    ONE spelling, ``cf`` (the ``bin/cf`` shim README.md puts on PATH), with the
+    workspace resolved: ``python3 scripts/cf.py ...`` is relative to the skill
+    checkout while the reader of this report is standing in the workspace, so it
+    could not be pasted into the shell that produced the report.
+    """
     lines = ["```bash", "# routing counts (sections 1 and 3)",
-             "python3 scripts/cf.py route --workspace %s" % paths.root,
+             "cf route --workspace %s" % paths.root,
              "# ledger counts, and that every row answers a real finding",
-             "python3 scripts/cf.py adjudicate --workspace %s --validate" % paths.root,
+             "cf adjudicate --workspace %s --validate" % paths.root,
              "# the tally every finding number comes from, grouped by (source_id, repo)",
-             "python3 scripts/cf.py tally --workspace %s" % paths.root]
+             "cf tally --workspace %s" % paths.root]
+    if coverage is not None:
+        lines += ["# the scope and coverage denominators of section 0",
+                  "cf pair --workspace %s" % paths.root]
+        for src in coverage.get("sources") or []:
+            if src.get("reconciliation"):
+                lines.append("#   -> %s" % src["reconciliation"])
+        lines.append("#   -> %s" % os.path.join(paths.reports, "coverage.json"))
     for tally in tallies:
         lines.append("#   -> %s" % tally["file"])
     if not tallies:
@@ -596,26 +748,261 @@ def render_verification(paths: Any, facts: list[dict], tallies: list[dict], gh: 
 # --------------------------------------------------------------------------
 
 
-def render_sources_table(cfg: Any, tallies: list[dict]) -> str:
-    """The handoff's sources table: one row per source, with its companions."""
+def render_sources_table(cfg: Any, tallies: list[dict], coverage: dict | None = None) -> str:
+    """The handoff's sources table: one row per source, with its companions and its scope.
+
+    The two scope columns are the denominator critic#5 asked for in the place a
+    reader looks first: without them a row said which edition was audited but not
+    whether one chapter of it or all of it.
+    """
+    by_id = {s["source_id"]: s for s in ((coverage or {}).get("sources") or [])}
     rows = []
     for source_id in cfg.source_ids():
         src = cfg.source(source_id)
         bound = [n for n in cfg.companion_names() if source_id in (cfg.sources_of(n) or [])]
         anchors = [n for n in bound if cfg.anchor_source(n) == source_id]
+        cov = by_id.get(source_id) or {}
         rows.append([
             "`%s`" % source_id,
             (src.sha256 or todo("source_sha", "cf onboard"))[:12],
             src.edition or src.title or "",
             src.offset,
+            _fraction(len(cov.get("chapters_audited") or []) or None,
+                      len(cov.get("chapters_in_source") or []) or None),
+            _fraction(cov.get("items_in_scope"), cov.get("items_in_source")),
             ", ".join("`%s`" % n for n in bound) or "(none)",
             ", ".join("`%s`" % n for n in anchors) or "—",
             "yes" if src.confirmed else "**no**",
         ])
     if not rows:
         return todo("sources", "cf onboard <repo>")
-    return _table(["source", "sha256", "edition", "offset", "companions", "anchored by",
-                   "confirmed"], rows)
+    return _table(["source", "sha256", "edition", "offset", "chapters audited",
+                   "items in scope", "companions", "anchored by", "confirmed"], rows)
+
+
+# --------------------------------------------------------------------------
+# the denominator (critic#5): what fraction of each source was audited
+# --------------------------------------------------------------------------
+
+
+def source_coverage(cfg: Any, paths: Any, source_id: str,
+                    examined: dict[str, dict]) -> dict:
+    """The denominator for ONE source, every number read off an artifact.
+
+    ``items_in_source`` is ``items.json``; ``items_in_scope`` and ``items_paired``
+    are ``reconciliation.json``'s own figures (never recomputed here, so the two
+    files cannot disagree silently); ``items_examined``/``items_gated``/
+    ``items_with_findings`` come from the corpus documents.  ``never_examined`` is
+    the difference, by NAME -- a count can say "381 of 411" but only the names say
+    which item was missed, which is the whole reason the reconciliation gate names
+    them too.
+    """
+    items = load_source_items(paths, source_id)
+    recon = load_reconciliation(paths, source_id)
+    block = examined.get(source_id) or {}
+    seen = set(block.get("examined") or ())
+    gated = set(block.get("gated") or ())
+    found = set(block.get("with_findings") or ())
+
+    declared = [int(c) for c in (cfg.source(source_id).chapters or ())]
+    chapters_audited = [int(c) for c in (recon.get("chapters") or declared or [])]
+    in_scope_names = sorted(
+        k for k, row in items["by_item"].items()
+        if not chapters_audited or row.get("chapter") in set(chapters_audited)
+    )
+    scope_known = bool(items["present"])
+    paired = set(compat.item_join_key(i) for i in (recon.get("task_universe_items") or []))
+
+    def _chapter(key: str):
+        return (items["by_item"].get(key) or {}).get("chapter")
+
+    by_chapter: dict[Any, dict] = {}
+    for key in in_scope_names:
+        ch = _chapter(key)
+        row = by_chapter.setdefault(ch, {"in_scope": 0, "paired": 0, "examined": 0,
+                                        "gated": 0, "with_findings": 0, "never_examined": []})
+        row["in_scope"] += 1
+        row["paired"] += 1 if key in paired else 0
+        row["examined"] += 1 if key in seen else 0
+        row["gated"] += 1 if key in gated else 0
+        row["with_findings"] += 1 if key in found else 0
+        if key not in seen:
+            row["never_examined"].append((items["by_item"].get(key) or {}).get("item") or key)
+    for row in by_chapter.values():
+        row["never_examined"].sort()
+
+    in_scope_set = set(in_scope_names)
+    never = sorted((items["by_item"].get(k) or {}).get("item") or k
+                   for k in in_scope_set - seen)
+    src = cfg.source(source_id)
+    return {
+        "source_id": source_id,
+        "edition": src.edition or src.title or "",
+        "items_json": items["path"],
+        "items_in_source": items["count"] if items["present"] else None,
+        "chapters_in_source": items["chapters"],
+        "chapters_audited": chapters_audited,
+        "items_in_scope": (recon.get("items_in_scope") if recon.get("items_in_scope") is not None
+                           else (len(in_scope_names) if scope_known else None)),
+        "items_in_scope_recomputed": len(in_scope_names) if scope_known else None,
+        "items_paired": (recon.get("task_universe")
+                         if recon.get("task_universe") is not None
+                         else recon.get("items_in_scope_and_any_repo")),
+        "items_examined": len(in_scope_set & seen) if scope_known else len(seen),
+        "items_gated": len(in_scope_set & gated) if scope_known else len(gated),
+        "items_with_findings": len(in_scope_set & found) if scope_known else len(found),
+        "items_never_examined": len(never) if scope_known else None,
+        "never_examined": never,
+        "examined_outside_scope": sorted(seen - in_scope_set) if scope_known else [],
+        "unstamped_documents": int(block.get("unstamped") or 0),
+        "ungated_runs": sorted(block.get("ungated_runs") or []),
+        "runs": dict(sorted((block.get("runs") or {}).items())),
+        "by_chapter": {str(k): v for k, v in sorted(
+            by_chapter.items(), key=lambda kv: (kv[0] is None, kv[0]))},
+        "reconciliation": _reconciliation_path(paths, source_id) if recon else "",
+    }
+
+
+def build_coverage(cfg: Any, paths: Any, runs: dict[str, dict],
+                   receipts: dict[str, dict]) -> dict:
+    """Every source's denominator, plus the unattributed corpus documents."""
+    examined = load_examined(paths, runs, receipts)
+    sources = [source_coverage(cfg, paths, sid, examined) for sid in cfg.source_ids()]
+    unattributed = examined.get("") or {}
+    return {
+        "created": _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sources": sources,
+        "unattributed_documents": len(unattributed.get("examined") or ()),
+        "unattributed_runs": sorted((unattributed.get("runs") or {})),
+    }
+
+
+def _fraction(part: Any, whole: Any) -> str:
+    if part is None or whole in (None, 0):
+        return todo("coverage", "cf pair && cf harvest")
+    return "%s / %s" % (part, whole)
+
+
+def render_coverage_table(coverage: dict) -> str:
+    """Section 0: the denominator, per source and per chapter."""
+    rows: list[list[Any]] = []
+    for src in coverage.get("sources") or []:
+        chapters = src.get("by_chapter") or {}
+        entries = list(chapters.items()) or [("all", None)]
+        for chapter, block in entries:
+            if block is None:
+                rows.append(["`%s`" % src["source_id"], "—",
+                             src.get("items_in_source"), src.get("items_in_scope"),
+                             src.get("items_paired"), src.get("items_examined"),
+                             src.get("items_gated"), src.get("items_with_findings"),
+                             src.get("items_never_examined")])
+                continue
+            rows.append([
+                "`%s`" % src["source_id"],
+                chapter if chapter != "None" else "unnumbered",
+                "",                      # the per-source total is on the total row below
+                block["in_scope"], block["paired"], block["examined"], block["gated"],
+                block["with_findings"], len(block["never_examined"]),
+            ])
+        if chapters:
+            rows.append([
+                "`%s`" % src["source_id"], "**all audited**",
+                src.get("items_in_source"), src.get("items_in_scope"),
+                src.get("items_paired"), src.get("items_examined"),
+                src.get("items_gated"), src.get("items_with_findings"),
+                src.get("items_never_examined"),
+            ])
+    if not rows:
+        return todo("coverage", "cf onboard <repo> && cf pair")
+    return _table(["source", "chapter", "items in source", "in scope", "paired", "examined",
+                   "gated", "with findings", "never examined"], rows)
+
+
+def coverage_note(coverage: dict) -> str:
+    """The sentence a reader would otherwise have to guess, plus the caveats."""
+    lines = []
+    for src in coverage.get("sources") or []:
+        total, scope = src.get("items_in_source"), src.get("items_in_scope")
+        if total is None:
+            lines.append("- `%s`: no `items.json` yet, so this report has no denominator for it "
+                         "— %s." % (src["source_id"], todo("items", "cf onboard <repo>")))
+            continue
+        chapters = (", ".join(str(c) for c in src["chapters_audited"])
+                    if src["chapters_audited"] else "all")
+        lines.append(
+            "- `%s`: chapters audited %s of %s; %s items in scope of %s in the source; "
+            "%s paired, %s examined (%s of them gated), %s with findings, %s never examined."
+            % (src["source_id"], chapters,
+               ", ".join(str(c) for c in src["chapters_in_source"]) or "?",
+               scope if scope is not None else "?", total,
+               src.get("items_paired") if src.get("items_paired") is not None else "?",
+               src.get("items_examined"), src.get("items_gated"),
+               src.get("items_with_findings"),
+               src.get("items_never_examined") if src.get("items_never_examined") is not None
+               else "?")
+        )
+        if src["ungated_runs"]:
+            lines.append("  - ungated run(s) %s: no quote in them was checked against the source "
+                         "text; re-harvest with `cf harvest <run-id>`."
+                         % ", ".join("`%s`" % r for r in src["ungated_runs"]))
+        if src["unstamped_documents"]:
+            lines.append("  - %d corpus document(s) carry no `source_id` and were attributed from "
+                         "their run's receipt." % src["unstamped_documents"])
+        if (src.get("items_in_scope_recomputed") is not None
+                and src.get("items_in_scope") != src.get("items_in_scope_recomputed")):
+            lines.append("  - `reconciliation.json` says %s items in scope, `items.json` and the "
+                         "audited chapters give %s — one of them is stale; re-run `cf pair`."
+                         % (src.get("items_in_scope"), src["items_in_scope_recomputed"]))
+    if coverage.get("unattributed_documents"):
+        lines.append("- %d corpus document(s) in run(s) %s name no source and their run does not "
+                     "name one either; they are counted against no denominator."
+                     % (coverage["unattributed_documents"],
+                        ", ".join("`%s`" % r for r in coverage["unattributed_runs"])))
+    return "\n".join(lines) or todo("coverage", "cf pair && cf harvest")
+
+
+def scope_sentence(coverage: dict) -> str:
+    """The first paragraph's claim about scope. An unaudited scope says so here."""
+    sources = coverage.get("sources") or []
+    if not sources:
+        return ("**Scope unknown.** No source has an `items.json` yet, so nothing below has a "
+                "denominator and this report is not an audit of any book.")
+    partial = []
+    for src in sources:
+        total, scope = src.get("items_in_source"), src.get("items_in_scope")
+        never = src.get("items_never_examined")
+        if total is None or scope is None or never is None:
+            partial.append("`%s` (no denominator computed)" % src["source_id"])
+        elif never or scope < total:
+            partial.append("`%s` (%d of %d items in scope, %d never examined)"
+                           % (src["source_id"], scope, total, never))
+    if not partial:
+        return ("**Scope.** Every item of every source in this workspace is in scope and was "
+                "examined; the per-chapter figures are in §0.")
+    return ("**This report covers PART of its sources, not all of them:** %s. It is not an audit "
+            "of the whole of any of them, and a count taken from it is a count over the audited "
+            "scope only — §0 has the figures per source and chapter." % "; ".join(partial))
+
+
+def write_coverage(paths: Any, coverage: dict) -> list[str]:
+    """``reports/coverage.json`` plus one ``unexamined.<source_id>.json`` per source."""
+    written = [os.path.join(paths.reports, "coverage.json")]
+    compat.write_json(written[0], coverage)
+    for src in coverage.get("sources") or []:
+        path = os.path.join(paths.reports, "unexamined.%s.json" % src["source_id"])
+        compat.write_json(path, {
+            "source_id": src["source_id"],
+            "items_json": src["items_json"],
+            "chapters_audited": src["chapters_audited"],
+            "items_in_scope": src["items_in_scope"],
+            "items_examined": src["items_examined"],
+            "count": len(src["never_examined"]),
+            "items": src["never_examined"],
+            "by_chapter": {ch: block["never_examined"]
+                           for ch, block in (src.get("by_chapter") or {}).items()},
+        })
+        written.append(path)
+    return written
 
 
 def build_context(
@@ -638,6 +1025,8 @@ def build_context(
     receipts = load_receipts(paths)
     gh = load_gh(gh_files)
     source_ids = cfg.source_ids()
+    coverage = build_coverage(cfg, paths, runs, receipts)
+    write_coverage(paths, coverage)
 
     unchallenged = [
         f for f in facts
@@ -650,9 +1039,20 @@ def build_context(
         else "Every routed file is CHALLENGED: each row carries a ledger verdict."
     )
     open_total = sum(len(f["open_rows"]) for f in facts)
+    # The TL;DR carries the denominator in the same sentence as the finding count:
+    # "N open rows" quoted without "over M items examined of K in scope" is the
+    # overclaim that damages the project the first time someone checks.
+    scope_tldr = "; ".join(
+        "`%s`: %s of %s item(s) in scope examined (%s in the source)"
+        % (src["source_id"],
+           src.get("items_examined"),
+           src.get("items_in_scope") if src.get("items_in_scope") is not None else "?",
+           src.get("items_in_source") if src.get("items_in_source") is not None else "?")
+        for src in coverage["sources"]
+    )
     default_tldr = (
         "%d companion(s) audited against %d source(s) (%s); %d open ledger row(s) across "
-        "%d routed file(s); %s"
+        "%d routed file(s); %s%s"
         % (
             len(facts),
             len(source_ids),
@@ -661,12 +1061,16 @@ def build_context(
             sum(1 for f in facts if f["routed_meta"]),
             "no upstream report may be produced yet." if unchallenged
             else "every routed file is challenged.",
+            (" Coverage: %s." % scope_tldr) if scope_tldr else "",
         )
     )
     return {
         "workspace": cfg.title or os.path.basename(paths.root),
         "date": date or _dt.date.today().isoformat(),
-        "sources_table": render_sources_table(cfg, tallies),
+        "sources_table": render_sources_table(cfg, tallies, coverage),
+        "scope_note": scope_sentence(coverage),
+        "coverage_table": render_coverage_table(coverage),
+        "coverage_note": coverage_note(coverage),
         "tldr": tldr or default_tldr,
         "state_table": render_state_table(facts),
         "status_note": status_note,
@@ -684,13 +1088,15 @@ def build_context(
         ),
         "paths_list": render_paths_list(paths, facts, source_ids),
         "traps_list": render_traps(traps),
-        "verification_commands": render_verification(paths, facts, tallies, gh),
+        "verification_commands": render_verification(paths, facts, tallies, gh, coverage),
         "provenance": "_Generated by `cf report` from %d tally file(s), %d run.yaml file(s), %d "
-        "corpus receipt(s) and %d saved gh output file(s). Figures with no artifact behind them "
-        "are marked TODO._"
-        % (len(tallies), len(runs), len(receipts), len(gh)),
+        "corpus receipt(s), %d saved gh output file(s) and %d source item table(s). Figures with "
+        "no artifact behind them are marked TODO._"
+        % (len(tallies), len(runs), len(receipts), len(gh),
+           sum(1 for s in coverage["sources"] if s.get("items_in_source") is not None)),
         "_facts": facts,
         "_tallies": tallies,
+        "_coverage": coverage,
         "_paths": paths,
         "_workspace": cfg,
     }

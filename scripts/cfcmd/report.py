@@ -1,7 +1,7 @@
 """``cf report`` -- render the handoff and the claims-verification args.
 
-    python3 scripts/cf.py report
-    python3 scripts/cf.py report --tally reports/tally.hunt.json --gh-json prs.json
+    cf report
+    cf report --tally reports/tally.hunt.json --gh-json prs.json
 
 Two outputs, both mechanical:
 
