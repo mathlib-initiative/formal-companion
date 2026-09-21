@@ -271,7 +271,7 @@ def _git_guard_facts(workspace) -> dict:
     never looked at the remotes of the repo that actually holds the corpus -- the
     one case (a remote added after init) this line exists to catch.
     """
-    from cfcmd.init import git_toplevel, hook_state, remotes
+    from cfcmd.init import git_toplevel, hook_state, no_remote_guard_set, remotes
 
     root = workspace.root
     guard = root if (root / ".git").exists() else git_toplevel(root)
@@ -283,6 +283,10 @@ def _git_guard_facts(workspace) -> dict:
         "nested": bool(guard and guard != root),
         "remotes": remotes(guard) if guard else [],
         "pre_push_hook": hook_state(guard) if guard else "no-repo",
+        # `cf init --no-remote-guard`: the one guard a `git push --no-verify` does
+        # not walk past.  Recorded on every run, because it is local config and
+        # `git config --unset` takes it away without passing through any cf command.
+        "no_remote_guard": bool(guard and no_remote_guard_set(guard)),
         "allow_remote": bool(policy.get("allow_remote", False)),
         # `cf init --no-git` records policy.git: false. A workspace that was MEANT
         # to have a repo either has one or is nested inside one, so the warning
@@ -305,6 +309,10 @@ def _print_git_guard(git: dict) -> None:
             "foreign": "pre-push hook is NOT the cf one",
             "absent": "NO cf pre-push reminder",
             "no-hooks-dir": "no .git/hooks directory, so no reminder"}[git["pre_push_hook"]]
+    # Stated only when it is set: a standing suggestion to pass a flag is the nag
+    # `--no-git` was fixed for, and `cf init` already names the flag once.
+    if git.get("no_remote_guard"):
+        hook += "; bare-push guard set"
     where = (f"guarding {git['guarding']} (this workspace is nested inside it) -- "
              if git["nested"] else "")
     whose = "the repo holding this workspace" if git["nested"] else "this workspace repo"
@@ -314,7 +322,8 @@ def _print_git_guard(git: dict) -> None:
                  "hold unchallenged findings, so the workspace itself stays local -- run "
                  f"`git -C {git.get('guarding') or '<workspace>'} remote remove "
                  f"{git['remotes'][0]}`, "
-                 "and share findings with `cf route --redact-quotes` instead")
+                 "and share an export instead (`cf share export --out <bundle>` for the "
+                 "campaign, `cf route --redact-quotes` for one companion's findings upstream)")
     else:
         log.info(f"git       : {where}no remote (the workspace stays local)   ({hook})")
     if git["pre_push_hook"] != "cf":
