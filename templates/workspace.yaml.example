@@ -91,9 +91,10 @@ policy:
   # Read by BOTH exports, each of which a flag can still override: `cf route
   # --redact-quotes`/`--no-redact-quotes` records (raw length, sha256), and `cf
   # share export --redact-quotes`/`--full-quotes` records (page, normalised length,
-  # sha256, first/last six words) -- and also redacts a verbatim run of 40+
-  # characters of the source inside a reason or a reasoning. `cf quotes hydrate`
-  # recovers either on a machine that already holds that edition.
+  # sha256, and at most a quarter of the quote's words from each end -- none at all
+  # below fourteen words) -- and also redacts a verbatim run of 40+ characters of
+  # the source inside ANY free-text field of a row, at any depth. `cf quotes
+  # hydrate` recovers either on a machine that already holds that edition.
   redact_quotes_on_export: true
   # How much of a quoted sentence a DRAFT carries is a property of who it is
   # addressed to, not of this workspace: the repository owner owns the book and
