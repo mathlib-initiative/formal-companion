@@ -33,6 +33,14 @@ skip cleanly without `CF_BASELINE_CORPUS`.
 """
 from __future__ import annotations
 
+# Pin HOME before anything builds a workspace: `unittest discover` loads no
+# conftest.py.  The second spelling is for `python3 -m unittest tests.<module>`.
+# See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import ast
 import contextlib
 import io
@@ -730,6 +738,17 @@ class NoBareGitIsReachableFromAnOperatorPathTest(unittest.TestCase):
     #: `subprocess.run(["git", "-C", <operator path>, ...])` in any command.
     WORKSPACE_ONLY = {"remotes", "_config", "_install_no_remote_guard", "_init_git"}
 
+    @staticmethod
+    def carries_the_pins(argv: ast.List) -> bool:
+        """Is ``*SAFE_CONFIG`` spliced into this argv literal?
+
+        ``gitsafe.filter_pins`` has to ask git which filter drivers a repo names
+        before ``gitsafe.argv`` can blank them, so it spells its one call out --
+        with the pins in it.  That is a pinned call, not a bare one.
+        """
+        return any(isinstance(e, ast.Starred) and isinstance(e.value, ast.Name)
+                   and e.value.id == "SAFE_CONFIG" for e in argv.elts)
+
     def bare_git_calls(self, path: Path) -> list[tuple[str, int]]:
         """``(enclosing function, line)`` for each ``subprocess.run(["git", ...])``."""
         tree = ast.parse(path.read_text(encoding="utf-8"))
@@ -744,7 +763,8 @@ class NoBareGitIsReachableFromAnOperatorPathTest(unittest.TestCase):
                     if (isinstance(child.func, ast.Attribute) and child.func.attr == "run"
                             and args and isinstance(args[0], ast.List) and args[0].elts
                             and isinstance(args[0].elts[0], ast.Constant)
-                            and args[0].elts[0].value == "git"):
+                            and args[0].elts[0].value == "git"
+                            and not self.carries_the_pins(args[0])):
                         found.append((where, child.lineno))
                 walk(child, name)
 

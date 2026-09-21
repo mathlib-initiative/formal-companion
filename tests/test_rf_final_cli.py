@@ -41,6 +41,14 @@ Run:  python3 -m unittest tests.test_rf_final_cli -v
 
 from __future__ import annotations
 
+# Pin HOME before anything builds a workspace: `unittest discover` loads no
+# conftest.py.  The second spelling is for `python3 -m unittest tests.<module>`.
+# See tests/_hermetic.py.
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
 import ast
 import io
 import json
