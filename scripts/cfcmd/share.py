@@ -14,12 +14,12 @@ the pipeline, and a lost laptop was a lost calibration baseline.
 ``export`` is the answer.  It writes the ledger rows, the routed findings, the
 tallies, the run receipts and source METADATA into a bundle with a
 ``MANIFEST.json`` naming every file and its sha256 -- and by default every book
-quote in it is REDACTED to ``{page, length, sha256 of the normalised quote,
-first/last six words}``.  ``book_quote`` is not the only field that quotes the
-book, so a verbatim run of 40 normalised characters or more inside a ``reason``,
-``evidence``, ``finding_summary``, ``original_concept``, ``reasoning``,
-``concept`` or ``suggested_fix`` is redacted in place the same way and recorded in
-the row's ``redacted_spans``.  Nothing in a bundle reconstructs the source: there
+quote in it is REDACTED to ``{page, length, sha256 of the normalised quote, and
+up to a quarter of its words from each end}``.  ``book_quote`` is not the only
+field that quotes the book, so EVERY free-text field of a row, at any depth, is
+scanned and a verbatim run of 40 normalised characters or more is redacted in
+place the same way and recorded in the row's ``redacted_spans`` under the path it
+came from.  Nothing in a bundle reconstructs the source: there
 is no text, no page image, no PDF, no findings document, and no statements table
 unless ``--include-statements`` asks for one; a ``_meta`` row travels through an
 allowlist, so the absolute paths and workflow ids ``cf adjudicate`` and ``cf

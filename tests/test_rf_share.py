@@ -192,6 +192,24 @@ def make_workspace(case: unittest.TestCase, *, name: str = "alice",
     return workspace
 
 
+def walk_strings(value, path: str = ""):
+    """``(json path, string)`` for every string in *value*, at any depth.
+
+    A prose check that iterates a list of field names can only find what that
+    list already knows about, which is how five free-text keys of a v2 ledger row
+    travelled verbatim past a scrubber and a test that both read `PROSE_FIELDS`.
+    """
+    if isinstance(value, str):
+        if value.strip():
+            yield path, value
+    elif isinstance(value, dict):
+        for key, inner in value.items():
+            yield from walk_strings(inner, f"{path}.{key}" if path else str(key))
+    elif isinstance(value, list):
+        for n, inner in enumerate(value):
+            yield from walk_strings(inner, f"{path}[{n}]")
+
+
 def bundle_files(bundle: Path) -> dict[str, str]:
     """Every file in a bundle directory, as text keyed by its relative path."""
     return {p.relative_to(bundle).as_posix(): p.read_text(encoding="utf-8", errors="replace")
@@ -265,8 +283,9 @@ class BundleCarriesNoBookTextTest(unittest.TestCase):
         self.assertEqual(record["page"], QUOTE_PAGE)
         self.assertEqual(record["norm_chars"], len(redact_mod.normalise_quote(QUOTE)))
         self.assertEqual(record["sha256"], redact_mod.quote_digest(QUOTE))
+        words = redact_mod.normalise_quote(QUOTE).split()
         self.assertEqual(record["first_words"],
-                         " ".join(redact_mod.normalise_quote(QUOTE).split()[:6]))
+                         " ".join(words[:redact_mod.edge_words(words)]))
 
     def test_the_digest_is_the_one_route_already_computed(self):
         """`cf route --redact-quotes` and `cf share export` must agree on a quote.
@@ -673,12 +692,14 @@ class HydrateTest(unittest.TestCase):
         self.assertNotIn("first_words", record)
         self.assertIn("would be the whole quote", record["edges_withheld"])
 
-    def test_a_long_quote_carries_six_words_from_each_end(self):
+    def test_a_long_quote_carries_its_edge_budget_from_each_end(self):
         words = redact_mod.normalise_quote(QUOTE).split()
+        keep = redact_mod.edge_words(words)
         record = redact_mod.redact_quote(QUOTE)
-        self.assertEqual(record["first_words"], " ".join(words[:redact_mod.EDGE_WORDS]))
-        self.assertEqual(record["last_words"], " ".join(words[-redact_mod.EDGE_WORDS:]))
-        self.assertLess(2 * redact_mod.EDGE_WORDS, len(words))
+        self.assertEqual(record["first_words"], " ".join(words[:keep]))
+        self.assertEqual(record["last_words"], " ".join(words[-keep:]))
+        self.assertLessEqual(keep, redact_mod.EDGE_WORDS)
+        self.assertLess(2 * keep, len(words), "the edges are never most of the quote")
 
     def test_the_window_is_the_gates_own_page_bind_window(self):
         """The behaviour, not the import: a window hard-coded in the search would
@@ -1461,13 +1482,18 @@ class RealLedgerExportsCleanTest(unittest.TestCase):
         self.assertEqual(leaking, 10)          # 3 accepted + 4 refuted + 3 routed
 
     def test_no_exported_prose_field_carries_a_run_of_the_book(self):
+        """EVERY string of every row, not the seven keys the scrubber knows.
+
+        Iterating `redact_mod.PROSE_FIELDS` here was the same enumeration the code
+        made, so the test could not see a field the tuple omits.  The only strings
+        exempt are the edge words a redaction record carries by design.
+        """
         for name, row in self._exported_rows():
-            for field in redact_mod.PROSE_FIELDS:
-                value = row.get(field)
-                if not isinstance(value, str) or not value.strip():
+            for path, value in walk_strings(row):
+                if path.startswith("book_quote") or path.startswith(redact_mod.SPANS_KEY):
                     continue
                 span = self.index.longest_span(redact_mod.normalise_quote(value))
-                self.assertIsNone(span, f"{name} {row.get('item')} {field}")
+                self.assertIsNone(span, f"{name} {row.get('item')} {path}")
         self.assertEqual(self.manifest["counts"]["prose_spans"], 13)
 
     def test_the_bundle_matches_none_of_the_greps_RULES_uses(self):
