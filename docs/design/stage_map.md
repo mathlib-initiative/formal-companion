@@ -139,7 +139,12 @@ both are pinned:
 - `corpus/<run>/RECEIPT.json`: `sources: {<id>: <sha>}`, a per-source count, a
   sha manifest, and the gate block (`gate: null` for an ungated import — `cf
   tally` then warns `ungated run(s): <id>` every time it counts that run, and
-  the handoff carries the same list).
+  the handoff carries the same list). A gate that RAN and rejected is a third
+  state, not the second: `gate.ok == false` keeps the run out of `ungated` and
+  puts it in `gate_failed` instead. The two lists are disjoint in
+  `reports/tally.<run>.json` and in `reports/coverage.json` alike, and `cf tally`
+  and the handoff each name them in separate sentences — a rejected run's rows
+  are in the corpus and are counted like any others.
 - `runs/<id>/run.yaml`: `companion_pins: {<name>: {repo_commit, dirty,
   method}}`, read through `cflib.gitsafe`.
 - `reports/pin.<run>.json`: written by `cf harvest`, never by a worker — the
