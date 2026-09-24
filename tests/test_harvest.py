@@ -25,6 +25,7 @@ import os
 import shutil
 import sys
 import tempfile
+import pathlib
 import unittest
 from pathlib import Path
 
@@ -1527,3 +1528,43 @@ class TestRunPlanner(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestRemoteTendCommandExportsPath(unittest.TestCase):
+    """`uv` is in ~/.local/bin, which a non-login ssh shell does not have on PATH.
+
+    The first real preflight against a server exited 127 with
+    "uv: command not found" because the generated command was
+    `cd ~/tend && uv run tend --version`.  references/runbook-server.md has
+    always documented the export; the code did not apply it.
+    """
+
+    def _host(self, hosts):
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+        from run import manifest
+
+        class _WS:
+            def __init__(self, hosts):
+                self.hosts = hosts
+
+            def check_host(self, host):
+                return None
+
+            def default(self, key, fallback=None):
+                return fallback
+
+        return manifest.resolve_host(_WS(hosts), "examplebox")
+
+    def test_default_tend_cmd_exports_uv_on_path(self):
+        facts = self._host({"allowlist": ["examplebox"], "remote_root": "/srv/runs"})
+        self.assertIn('export PATH="$HOME/.local/bin:$PATH"', facts["tend_cmd"])
+        self.assertIn("cd /srv/runs/tend && uv run", facts["tend_cmd"])
+
+    def test_a_host_may_override_the_tend_command(self):
+        facts = self._host({
+            "allowlist": ["examplebox"],
+            "remote_root": "/srv/runs",
+            "examplebox": {"tend_cmd": "cd /opt/tend && /opt/uv/bin/uv run"},
+        })
+        self.assertEqual(facts["tend_cmd"], "cd /opt/tend && /opt/uv/bin/uv run")
