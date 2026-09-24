@@ -442,7 +442,10 @@ def build_context(
 ) -> dict[str, Any]:
     """Build the slot dictionary the prompt templates need.
 
-    ``companions`` rows: ``{name, path, files?, conventions_md?}``.
+    ``companions`` rows: ``{name, path, files?, conventions_md?, unattributed?}``.
+    ``unattributed`` is how many declarations that companion's export claims
+    for the book but files under no item -- the rows of
+    ``<data_dir>/<name>.unattributed.jsonl``, when `cf plan-run` staged one.
 
     ``ledger_dir`` is the workspace's ``ledger/``: when it holds adjudicated rows
     the calibration sentences are rendered from THEM, and when it does not they
@@ -471,6 +474,8 @@ def build_context(
         files = str(row.get("files") or "")
         listing.append(f"- `{name}` — `{where}`" + (f", files `{files}`" if files else ""))
     primary = primary or str(rows[0]["name"])
+    unattributed = [(str(r["name"]), int(r.get("unattributed") or 0)) for r in rows
+                    if int(r.get("unattributed") or 0) > 0]
     total = per_repo.get(primary, {}).get("total_functions") or []
     local = ledger_calibration(ledger_dir)
     shapes = list(examples or ())
@@ -492,6 +497,13 @@ def build_context(
                             + ("s" if len(rows) != 1 else ""),
         "companion_list": "\n".join(listing),
         "companion_inline": ", ".join(f"`{r['name']}` = `{r.get('path','')}`" for r in rows),
+        # declarations a companion's export claims for the book but files under
+        # no item -- invisible to a corpus search, so the prompt names the file
+        "unattributed_any": bool(unattributed),
+        "unattributed_lines": "\n".join(
+            f"  - `{data_dir}/{name}.unattributed.jsonl` — {n} declaration(s) of `{name}` "
+            "that its own index attributes to no book item"
+            for name, n in unattributed),
         "conventions_per_repo": "\n".join(lines),
         "conventions_shared": shared_bullet(per_repo, conventions_shared_override),
         "total_functions_sentence": (

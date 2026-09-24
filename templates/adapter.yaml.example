@@ -62,17 +62,20 @@ tag:
 # states nothing, which is how a public, sorry-free theorem came to be reported
 # as absent from the repo that contains it. Two signals, both the repo's own:
 # a docstring that names a book item (read with the source's kind list through
-# the one item grammar), and membership of a named `section` the convention
-# files book statements under.
+# the one item grammar), and membership of a named `section` OR `namespace` the
+# convention files book statements under (`regions`; both spellings count, and
+# the repo this was measured on uses both).
 #
-# policy: union   -- publish each omission as a row stamped provenance:
-#                    lean_scan AND warn, naming every one of them
-#         report  -- warn only; the rows stay out of the table
+# policy: union   -- publish each omission that names an item as a row stamped
+#                    provenance: lean_scan, write the rest -- most of them --
+#                    to companions/<name>/unattributed.jsonl for `cf plan-run`
+#                    to stage beside the tables, AND warn, naming every one
+#         report  -- warn only; nothing is written
 #         off     -- no cross-check. A deviation stated here, never assumed.
 # There is no value that omits a declaration quietly.
 lean_scan:
   policy: union
-  sections: [Companions]
+  regions: [Companions]
   glob: "**/*.lean"
   # Excluding the Lake tree is essential, not tidy: **/*.lean over a built Lake
   # project walks ~10,000 files of Mathlib and reports its declarations as this

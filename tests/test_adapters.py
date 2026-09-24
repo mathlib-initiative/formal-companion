@@ -853,7 +853,7 @@ class AttributionTableBaselineTest(unittest.TestCase):
         """
         scan = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})["lean_scan"]
         self.assertEqual(scan["policy"], "union")
-        self.assertIn("Companions", scan["sections"])
+        self.assertIn("Companions", scan["regions"])
         self.assertGreater(scan["files"], 0)
         self.assertEqual(len(scan["omissions"]), scan["omitted"])
         self.assertFalse([p for p in self.adapter.lean_files() if ".lake" in p.parts])

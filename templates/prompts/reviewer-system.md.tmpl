@@ -17,6 +17,9 @@ For each disagreement the worker raised, independently:
 {{#if coverage_allowed}}
    For a `COVERAGE` finding, the worker owes you the search it ran. If the findings file does not say what was grepped and what came back, run the grep yourself; if the declaration is there, request changes.
 {{/if}}
+{{#if unattributed_any}}
+   The run carries a list of declarations each companion's own sources claim for the book but its index files under no item — `{{data_dir}}/<repo>.unattributed.jsonl` — and a search of the statement tables by item cannot find any of them. Any "tml-only" / "mt-only" / "no counterpart" claim has to survive that list and a grep of the Lean, and a finding that names a repository as lacking something on that list does not survive.
+{{/if}}
 {{#if witness_required}}
 6. Check the `witness` object: a disagreement without a concrete instance where the Lean and the book come apart does not survive.
 {{/if}}

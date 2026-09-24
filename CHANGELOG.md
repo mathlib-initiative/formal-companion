@@ -56,11 +56,14 @@ release has something to say.
   declarations the repository carries. The adapter now reads the Lean for the
   two signals the repo itself gives — a docstring that names a book item
   (through `cflib.items`, with the source's own kind list) and membership of a
-  named `section` the convention files book statements under — and compares
-  them by declaration name against the rows the export produced.
-  `lean_scan.policy: union` (the default) publishes each omission that names an
-  item as a row, `report` does not, `off` is a deviation written into
-  `adapter.yaml`; under all three, `cf extract` and `cf onboard` name every
+  named `section` or `namespace` the convention files book statements under
+  (`lean_scan.regions`) — and compares them by declaration name against the
+  rows the export produced. `lean_scan.policy: union` (the default) publishes
+  each omission that names an item as a row and writes the rest to a new
+  per-companion artifact, `companions/<name>/unattributed.jsonl`, which
+  `cf plan-run` stages into `runs/<id>/data/` beside the statement tables and
+  both prompts name; `report` warns only; `off` is a deviation written into
+  `adapter.yaml`. Under all three, `cf extract` and `cf onboard` name every
   omitted declaration in one warning, because the omission is a defect in the
   companion's own table. The scan excludes `.lake/**` and its content is in the
   extract key.
@@ -133,11 +136,15 @@ release has something to say.
 - a table-driven corpus was short of the repository it describes, and nothing
   said so: an audit worker searched it for a determinant image identity, found
   nothing, and filed a `COVERAGE` disagreement claiming the companion states it
-  nowhere — while a public, sorry-free theorem stated exactly it. Measured at
-  one pinned commit, eight named declarations inside `section Companions` blocks
-  were absent from the export, as were three of the four declarations whose
-  docstring names a book item. The adapter now unions and reports them (above),
-  and the prompts carry the other half: absence from the statement table is
+  nowhere — while a public, sorry-free theorem stated exactly it; a second did
+  the same for a cardinality bound stated for every dimension under a
+  `namespace Companions` header. Measured at one pinned commit, nineteen named
+  declarations inside a `Companions` region (eight by `section`, eleven by
+  `namespace`) were absent from the export, as were three of the four
+  declarations whose docstring names a book item; only three of the twenty can
+  be keyed on an item at all. The adapter now unions the three, lists the
+  seventeen for every worker, and warns about all twenty (above), and the
+  prompts carry the other half: absence from the statement table is
   never sufficient grounds for a `COVERAGE` finding, a worker must
   `grep -rn --include=*.lean` the repository for the mathematical content before
   any "no counterpart exists" claim and say what it ran, and a reviewer must

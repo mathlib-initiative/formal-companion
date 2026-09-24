@@ -813,19 +813,23 @@ class TestBlueprintTexAdapter(unittest.TestCase):
 
 #: A companion whose corpus is built from an EXPORT can be short of the
 #: repository, and nothing downstream could see it.  Against a real
-#: attribution-table repo at one pinned commit: 8 NAMED declarations sit inside
-#: `section Companions` blocks and all 8 are absent from the table, 4
-#: declarations name a book item in a docstring and 3 of the 4 are absent, and
-#: one of those three is a public, sorry-free theorem -- which an audit worker,
-#: grepping the corpus and finding nothing, reported as absent from the
-#: repository that contains it.
+#: attribution-table repo at one pinned commit: 19 NAMED declarations sit inside
+#: a `Companions` region -- 8 under `section Companions`, 11 under `namespace
+#: Companions`, and a first check that read only sections missed the larger
+#: half -- and all 19 are absent from the table; 4 declarations name a book item
+#: in a docstring and 3 of the 4 are absent; one of those three is a public,
+#: sorry-free theorem which an audit worker, grepping the corpus and finding
+#: nothing, reported as absent from the repository that contains it.  A second
+#: worker did the same for a cardinality bound stated under a `namespace
+#: Companions` header that names its item only in prose.
 #:
 #: The fixture is that shape in miniature: a table naming one declaration, and a
-#: Lean tree carrying four more that claim the book in one of the two ways this
-#: convention exposes -- plus a `.lake` copy of "Mathlib" that the scan must
-#: never walk, and an anonymous `example` inside the section that it must never
-#: claim (an export names those by curated slug, not by position, so there is no
-#: name to compare and every one of them would report as an omission).
+#: Lean tree carrying five more that claim the book in one of the ways this
+#: convention exposes -- a docstring item, a `section Companions`, a `namespace
+#: Companions` -- plus a `.lake` copy of "Mathlib" that the scan must never walk,
+#: and an anonymous `example` inside the section that it must never claim (an
+#: export names those by curated slug, not by position, so there is no name to
+#: compare and every one of them would report as an omission).
 
 TABLE_DECL = "Widget.Basic.gadget_of_bounded"
 #: omitted, docstring names its item, NOT in a section -> unioned
@@ -834,6 +838,9 @@ DOC_ONLY_DECL = "Widget.Basic.gadget_indicator_of_le"
 SECTION_AND_DOC_DECL = "Widget.Basic.gadget_linear_image"
 #: omitted, in `section Companions`, names no item -> reported, never unioned
 SECTION_ONLY_DECL = "Widget.Basic.gadgetFirstFourVertices"
+#: omitted, in `namespace Companions`, names no item -> reported, never unioned;
+#: its header names the item only in prose, exactly as the real repo does
+NAMESPACE_ONLY_DECL = "Widget.Basic.Companions.borel_card_le_continuum"
 #: what a bare `**/*.lean` would drag in
 LAKE_DECL = "Mathlib.Order.le_of_bogus"
 
@@ -892,6 +899,15 @@ def _attribution_repo(root: Path) -> Path:
         "/-- No book item here either. -/\n"
         "theorem gadget_helper : True := trivial\n"
         "\n"
+        "namespace Companions\n"
+        "\n"
+        "/-! ## Companion 5: the gadget hierarchy and cardinality -/\n"
+        "\n"
+        "/-- Every gadget family has at most continuum many members. -/\n"
+        "theorem borel_card_le_continuum (d : Nat) : True := trivial\n"
+        "\n"
+        "end Companions\n"
+        "\n"
         "end Widget.Basic\n", encoding="utf-8")
     # the compiler's copy of the library, which is not this companion
     (repo / ".lake" / "packages" / "mathlib" / "Mathlib" / "Order.lean").write_text(
@@ -931,9 +947,21 @@ class TestTheTableIsCrossCheckedAgainstTheLean(unittest.TestCase):
     # -- the scan itself ---------------------------------------------------
     def test_the_omissions_are_named_one_by_one(self):
         self.assertEqual(sorted(self.omissions()),
-                         sorted([DOC_ONLY_DECL, SECTION_AND_DOC_DECL, SECTION_ONLY_DECL]))
-        self.assertEqual(self.scan["omitted"], 3)
+                         sorted([DOC_ONLY_DECL, SECTION_AND_DOC_DECL, SECTION_ONLY_DECL,
+                                 NAMESPACE_ONLY_DECL]))
+        self.assertEqual(self.scan["omitted"], 4)
         self.assertEqual(self.scan["in_table"], 1)
+
+    def test_a_namespace_region_counts_exactly_like_a_section(self):
+        """The real repo spells the same block both ways, 8 files vs 6.
+
+        A check that read only `section Companions` missed 11 of 19 -- the whole
+        of the file whose Companions region a worker then reported as not
+        containing a cardinality bound it states for every dimension.
+        """
+        hit = self.omissions()[NAMESPACE_ONLY_DECL]
+        self.assertEqual(hit["signals"], ["namespace Companions"])
+        self.assertFalse(hit["unioned"])
 
     def test_each_omission_says_which_signal_claimed_it(self):
         hits = self.omissions()
@@ -1005,14 +1033,36 @@ class TestTheTableIsCrossCheckedAgainstTheLean(unittest.TestCase):
 
     def test_an_omission_naming_no_item_is_reported_and_never_keyed(self):
         """An unparseable/absent id must never become a key (CLAUDE.md S4)."""
-        self.assertEqual(self.scan["unattributed"], 1)
-        self.assertFalse(self.omissions()[SECTION_ONLY_DECL]["unioned"])
-        self.assertNotIn(SECTION_ONLY_DECL, {r["decl"] for r in self.rows})
+        self.assertEqual(self.scan["unattributed"], 2)
+        for decl in (SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL):
+            self.assertFalse(self.omissions()[decl]["unioned"])
+            self.assertNotIn(decl, {r["decl"] for r in self.rows})
+
+    def test_the_unattributed_go_to_their_own_file_s_rows(self):
+        """They cannot be unioned, so they are handed over as a list instead.
+
+        A corpus search by item cannot find these by construction; the only way
+        a worker meets them is by being given the file, which `cf plan-run`
+        stages beside the tables.  `repo` is on every row so a merged read stays
+        attributable.
+        """
+        from cflib.adapters_api import unattributed_rows
+
+        rows = unattributed_rows("widget", self.report)
+        self.assertEqual(sorted(r["decl"] for r in rows),
+                         sorted([SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL]))
+        for row in rows:
+            self.assertEqual(row["repo"], "widget")
+            self.assertEqual(row["file"], "Widget/Basic.lean")
+            self.assertTrue(row["signals"])
+            self.assertFalse(row["unioned"])
+        # and the unioned ones are NOT in it: they are in the table
+        self.assertNotIn(SECTION_AND_DOC_DECL, {r["decl"] for r in rows})
 
     def test_report_policy_warns_without_publishing(self):
         adapter = _attribution_adapter(self.repo, lean_scan={"policy": "report"})
         scan = adapter.dry_run(sources={"s": SHA})["lean_scan"]
-        self.assertEqual(scan["omitted"], 3)
+        self.assertEqual(scan["omitted"], 4)
         self.assertEqual(scan["unioned"], 0)
         rows = list(adapter.extract(sources={"s": SHA}))
         self.assertEqual({r["provenance"] for r in rows}, {"table"})
@@ -1028,12 +1078,16 @@ class TestTheTableIsCrossCheckedAgainstTheLean(unittest.TestCase):
             _attribution_adapter(self.repo, lean_scan={"policy": "ignore"})
         self.assertIn("union", ctx.exception.hint or "")
 
-    def test_the_sections_that_count_are_configuration(self):
+    def test_the_regions_that_count_are_configuration(self):
         """`Companions` is measure_theory's word, not a constant of the model."""
-        adapter = _attribution_adapter(self.repo, lean_scan={"sections": ["Addenda"]})
+        adapter = _attribution_adapter(self.repo, lean_scan={"regions": ["Addenda"]})
         scan = adapter.dry_run(sources={"s": SHA})["lean_scan"]
+        self.assertEqual(scan["regions"], ["Addenda"])
         self.assertEqual(sorted(h["decl"] for h in scan["omissions"]),
                          sorted([DOC_ONLY_DECL, SECTION_AND_DOC_DECL]))
+        # the spelling a file written before the namespace form was found used
+        legacy = _attribution_adapter(self.repo, lean_scan={"sections": ["Addenda"]})
+        self.assertEqual(legacy.claim_regions(), ("Addenda",))
 
     # -- what the rest of the pipeline sees --------------------------------
     def test_every_row_still_validates_against_schema_v2(self):
@@ -1043,10 +1097,12 @@ class TestTheTableIsCrossCheckedAgainstTheLean(unittest.TestCase):
         from cflib.adapters_api import cross_check_warning
 
         header, lines = cross_check_warning("widget", self.report)
-        self.assertIn("omits 3 declaration(s)", header)
+        self.assertIn("omits 4 declaration(s)", header)
         body = "\n".join(lines)
-        for decl in (DOC_ONLY_DECL, SECTION_AND_DOC_DECL, SECTION_ONLY_DECL):
+        for decl in (DOC_ONLY_DECL, SECTION_AND_DOC_DECL, SECTION_ONLY_DECL,
+                     NAMESPACE_ONLY_DECL):
             self.assertIn(decl, body)
+        self.assertIn("unattributed.jsonl", body)
         self.assertIn("Widget/Basic.lean:", body)
         # and it says what the omission MEANS, not only that there is one
         self.assertIn("defect in the companion's own attribution table", body)
@@ -1063,7 +1119,27 @@ class TestTheTableIsCrossCheckedAgainstTheLean(unittest.TestCase):
 
         recorded = {CROSS_CHECK_KEY: self.report[CROSS_CHECK_KEY]}
         header, _lines = cross_check_warning("widget", recorded)
-        self.assertIn("omits 3 declaration(s)", header)
+        self.assertIn("omits 4 declaration(s)", header)
+
+    def test_extract_writes_the_unattributed_file_and_removes_a_stale_one(self):
+        """`cf extract` and `cf onboard` leave the same file, through one function."""
+        from cfcmd.extract import write_unattributed
+
+        ws_root = tmpdir("cf-rf-adapters-unattr-") / "ws"
+        self.assertEqual(cf_main.main(["init", str(ws_root), "--no-git", "-q"]), 0)
+        ws = Workspace.load(ws_root)
+        path = ws.paths.unattributed_jsonl("widget")
+        self.assertEqual(write_unattributed(ws, "widget", self.report), 2)
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        self.assertIn('"_meta"', lines[0])
+        body = [__import__("json").loads(ln) for ln in lines[1:]]
+        self.assertEqual(sorted(r["decl"] for r in body),
+                         sorted([SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL]))
+        # a later extraction with nothing unattributed must not leave the old
+        # list behind: a stale one sends a worker to declarations that have
+        # since been attributed or deleted
+        self.assertEqual(write_unattributed(ws, "widget", {}), 0)
+        self.assertFalse(path.exists())
 
     def test_a_table_that_agrees_with_its_sources_raises_no_warning(self):
         from cflib.adapters_api import cross_check_warning
@@ -1149,6 +1225,32 @@ class TestTheWorkerIsToldAbsenceIsNotEvidence(unittest.TestCase):
             companions=[{"name": "ours", "path": "/srv/runs/repos/ours"}],
             gate_command="python3 gate.py")
         return rp.render_prompts(preset, ctx)
+
+    def test_the_unattributed_list_is_named_when_a_companion_has_one(self):
+        """Its rows cannot be found by item, so the prompt hands over the file."""
+        from plan import presets as presets_mod, render_prompts as rp
+
+        preset = presets_mod.get("differential-text")
+        ctx = rp.build_context(
+            preset=preset, run_id="r1", source_id="s", book_citation="A Book",
+            book_text="/srv/runs/sources/s/text.txt", source_sha="a" * 64, page_offset=4,
+            companions=[{"name": "ours", "path": "/srv/runs/repos/ours"},
+                        {"name": "mt", "path": "/srv/runs/repos/mt", "unattributed": 17}],
+            gate_command="python3 gate.py")
+        out = rp.render_prompts(preset, ctx)
+        self.assertTrue(ctx["unattributed_any"])
+        for name in ("worker-system.md", "reviewer-system.md"):
+            with self.subTest(prompt=name):
+                self.assertIn("unattributed.jsonl", out[name])
+        worker = out["worker-system.md"]
+        self.assertIn("`data/mt.unattributed.jsonl` — 17 declaration(s) of `mt`", worker)
+        self.assertNotIn("ours.unattributed.jsonl", worker)
+        self.assertIn("no search of `<repo>.jsonl` or `pairs.jsonl` by item can ever find them",
+                      worker)
+
+    def test_a_run_with_nothing_unattributed_does_not_mention_the_file(self):
+        worker = self._render("differential-text")["worker-system.md"]
+        self.assertNotIn("unattributed.jsonl", worker)
 
     def test_a_coverage_run_demands_a_grep_of_the_lean(self):
         worker = self._render("differential-text")["worker-system.md"]

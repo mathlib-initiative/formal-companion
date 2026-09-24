@@ -33,7 +33,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from cflib import log, state as state_mod
-from cflib.adapters_api import CROSS_CHECK_KEY, cross_check_warning, load as load_adapter
+from cflib.adapters_api import (CROSS_CHECK_KEY, cross_check_warning, load as load_adapter,
+                                unattributed_rows)
 from cflib.errors import CfError
 from cflib.jsonio import write_jsonl
 from cflib.workspace import from_args
@@ -204,6 +205,7 @@ def _extract_one(workspace, name: str, args) -> dict:
     write_jsonl(out, rows)
     log.ok(f"{name}: wrote {out} ({counts['rows']} rows, {counts['items']} items "
            f"over {', '.join(counts['source_ids'])})")
+    write_unattributed(workspace, name, report)
     with state_mod.update(workspace, name) as st:
         st["repo"] = str(repo)
         st["commit"] = counts["commit"]
@@ -222,6 +224,28 @@ def _extract_one(workspace, name: str, args) -> dict:
         state_mod.note(st, "extract", rows=counts["rows"], items=counts["items"],
                        sources=len(counts["source_ids"]))
     return {"status": "written", **counts}
+
+
+def write_unattributed(workspace, name: str, report: dict) -> int:
+    """``companions/<name>/unattributed.jsonl``: the omissions no item could key.
+
+    Written beside the table, from the same report that warned, and REMOVED
+    when there are none -- a stale list from an earlier commit would send a
+    worker to declarations that have since been attributed or deleted.  `cf
+    onboard` writes it through the same function.  Returns the row count.
+    """
+    path = workspace.paths.unattributed_jsonl(name)
+    rows = unattributed_rows(name, report)
+    if not rows:
+        if path.exists():
+            path.unlink()
+        return 0
+    write_jsonl(path, rows, meta={"companion": name, "rows": len(rows),
+                                  "what": "declarations the repo claims for the book that its "
+                                          "attribution table files under no item",
+                                  "at": state_mod.now()})
+    log.detail(f"{name}: {len(rows)} unattributed declaration(s) -> {path}")
+    return len(rows)
 
 
 def _kinds_of(workspace, shas, anchor: str) -> tuple[str, ...]:

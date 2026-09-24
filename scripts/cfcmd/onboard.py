@@ -237,7 +237,7 @@ def run(args) -> int:
     counts, problem = _dry_run(adapter_yaml, repo, workspace, audited, anchor)
     rows: list = []
     if not args.no_extract:
-        rows = _extract(workspace, name, adapter_yaml, repo, audited, anchor)
+        rows = _extract(workspace, name, adapter_yaml, repo, audited, anchor, report=counts)
 
     # The anchor decision above had only a previous run's rows to score. Now that
     # this run's rows exist, let the MECHANICAL check have the last word (S4.6):
@@ -1199,8 +1199,15 @@ def _print_discovered_sources(counts: dict) -> None:
         log.info(f"  rows attributed to {sid}: {rows}")
 
 
-def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anchor: str) -> list:
-    """statements.jsonl, every row stamped with its source_id and source_sha."""
+def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anchor: str,
+             report: dict | None = None) -> list:
+    """statements.jsonl, every row stamped with its source_id and source_sha.
+
+    ``report`` is the dry run that just printed; an export-driven adapter's
+    cross-check lives in it, and the omissions it could not key on an item are
+    written beside the table (``unattributed.jsonl``) by the same function `cf
+    extract` uses, so onboarding and re-extraction leave the same files.
+    """
     try:
         adapter, shas = _bind(workspace, adapter_yaml, sources, anchor)
         rows = [dict(row) for row in adapter.extract(repo, sources=shas)]
@@ -1237,6 +1244,8 @@ def _extract(workspace, name: str, adapter_yaml: Path, repo: Path, sources, anch
         return rows
     write_jsonl(path, rows, meta=meta)
     log.ok(f"extracted {path.relative_to(workspace.root)}   {len(rows)} rows")
+    from cfcmd.extract import write_unattributed
+    write_unattributed(workspace, name, report or {})
     with state_mod.update(workspace, name) as st:
         state_mod.set_section(st, "extract", {
             "rows": len(rows),

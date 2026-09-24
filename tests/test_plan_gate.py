@@ -1427,6 +1427,24 @@ class TestPlanRunEndToEnd(unittest.TestCase):
         self.assertNotIn("book", gate)
         self.assertNotIn("PAGE_ANCHOR", gate["kinds"])
 
+    def test_the_unattributed_list_travels_with_the_tables(self):
+        """`companions/<name>/unattributed.jsonl` -> `runs/<id>/data/`, and the
+        prompt names it; a companion without one is not mentioned."""
+        p = self.ws.paths
+        p.unattributed_jsonl("peer").write_text(
+            json.dumps({"_meta": {"companion": "peer", "rows": 1}}) + "\n"
+            + json.dumps({"repo": "peer", "decl": "Peer.Companions.card_le", "file": "Src/A.lean",
+                          "line": 9, "signals": ["namespace Companions"], "unioned": False})
+            + "\n", encoding="utf-8")
+        self.assertEqual(self.plan(preset="differential-text", companion=None), 0)
+        rd = self.root / "runs" / "r1"
+        self.assertTrue((rd / "data" / "peer.unattributed.jsonl").exists())
+        self.assertFalse((rd / "data" / "ours.unattributed.jsonl").exists())
+        self.assertIn("peer.unattributed.jsonl", self.read_run()["data"])
+        worker = (rd / "prompts" / "worker-system.md").read_text(encoding="utf-8")
+        self.assertIn("1 declaration(s) of `peer`", worker)
+        self.assertNotIn("ours.unattributed.jsonl", worker)
+
     def test_run_yaml_records_prompt_shas_and_consent(self):
         self.plan()
         doc = self.read_run()

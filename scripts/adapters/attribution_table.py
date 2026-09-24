@@ -31,20 +31,31 @@ by construction.  ``dry_run`` reports both numbers so the gap is visible.
 **The cross-check** (docs/design/stage_map.md Stage 2) is what makes that gap
 safe to publish.  This kind is the only one whose corpus is built from an
 EXPORT of a companion rather than from the companion, and the export omits
-declarations the Lean sources carry: at measure_theory 53a2643 eight named
-declarations sit inside ``section Companions`` blocks and none of the eight is
-in the table, and of the four declarations whose docstring names a book item
+declarations the Lean sources carry: at measure_theory 53a2643, nineteen named
+declarations sit inside a ``Companions`` region -- eight under ``section
+Companions``, eleven under ``namespace Companions`` -- and none of the nineteen
+is in the table; of the four declarations whose docstring names a book item,
 three are absent.  One of the three is a public, sorry-free statement of the
-determinant image formula -- and an audit worker who searched the extracted
-corpus for it filed a COVERAGE disagreement saying no named declaration of this
-companion states it anywhere.  Absence from an export is not absence from a
-repository.  :meth:`AttributionTableAdapter.lean_claims` reads the Lean sources
-for the two signals the repo itself gives (a docstring that names a book item,
-membership of a section the convention files book statements under), the
-omissions are unioned into the table stamped ``provenance: "lean_scan"``, and
-`cf extract` / `cf onboard` name every one of them in a warning: the omission is
-a defect in the companion's own attribution table and publishing it silently
-would hide that.
+determinant image formula, and an audit worker who searched the extracted corpus
+for it filed a COVERAGE disagreement saying no named declaration of this
+companion states it anywhere.  A second worker did the same for a cardinality
+bound that a whole ``Companions`` namespace states.  Absence from an export is
+not absence from a repository.
+
+:meth:`AttributionTableAdapter.lean_claims` reads the Lean sources for the two
+signals the repo itself gives -- a docstring that names a book item, and
+membership of a named ``section`` or ``namespace`` the convention files book
+statements under -- and the omissions go two ways, because most of them cannot
+be keyed on an item: only 3 of the 20 name one.  The rest are labelled
+``Companion 5: the Borel hierarchy and cardinality``, prose with no item number,
+and guessing an item for them is the failure the grammar exists to stop.  So an
+omission that names an item is unioned into the table stamped ``provenance:
+"lean_scan"``; one that names none is written to
+``companions/<name>/unattributed.jsonl``, which `cf plan-run` stages beside the
+statement tables and the prompts name as the list to read before any "no
+counterpart exists" claim.  Either way `cf extract` / `cf onboard` name every
+omission in a warning: it is a defect in the companion's own attribution table,
+and publishing the table silently would hide that.
 """
 
 from __future__ import annotations
@@ -104,10 +115,13 @@ DEFAULT_LEAN_GLOB = "**/*.lean"
 #: built Lake project walks ~10,000 files of Mathlib and would report every one
 #: of its declarations as a declaration this companion's table omits.
 DEFAULT_LEAN_EXCLUDE = (".lake/**/*.lean", "**/.lake/**/*.lean")
-#: Named ``section`` blocks the convention files book statements under, so
-#: membership is itself a claim on the book.  measure_theory writes
-#: ``section Companions``; another repo says so in its own adapter.yaml.
-DEFAULT_CLAIM_SECTIONS = ("Companions",)
+#: Named ``section`` or ``namespace`` blocks the convention files book
+#: statements under, so membership is itself a claim on the book.
+#: measure_theory writes BOTH ``section Companions`` and ``namespace
+#: Companions`` -- eight files the first way, six the second -- and a check that
+#: read only sections missed eleven of nineteen.  Another repo names its own
+#: word in adapter.yaml.
+DEFAULT_CLAIM_REGIONS = ("Companions",)
 #: union: publish the omission as a row AND warn.  report: warn only.  off: a
 #: deviation a companion states in adapter.yaml, never one the code assumes.
 #: There is no value that passes quietly (cflib.vocab.CROSS_CHECK_POLICIES).
@@ -120,10 +134,13 @@ class LeanClaim:
     """A named declaration the Lean sources claim for the book.
 
     ``item`` is the book item its docstring names, or None when the only signal
-    is :attr:`sections`.  A claim with no item is REPORTED and never unioned:
-    there is no key to file it under, and inventing one would be exactly the
-    "let an unparseable id become a key" failure the item grammar exists to
-    stop (CLAUDE.md S4).
+    is :attr:`regions`.  A claim with no item is never unioned -- there is no
+    key to file it under, and inventing one would be exactly the "let an
+    unparseable id become a key" failure the item grammar exists to stop
+    (CLAUDE.md S4) -- but it is not dropped either: it goes to the companion's
+    ``unattributed.jsonl`` so a worker can read it.  At measure_theory 53a2643
+    that is 17 of the 20 omissions, and item attribution is unrecoverable for
+    them: their sections are labelled ``Companion 5: ...`` with no number.
     """
 
     decl: str
@@ -131,7 +148,7 @@ class LeanClaim:
     line: int
     kind: str
     private: bool
-    sections: tuple[str, ...]
+    regions: tuple[str, ...]        # the named section/namespace blocks that claimed it
     item: "cf_items.Item | None"
     signals: tuple[str, ...]
     parsed: "leanparse.Decl | None" = None
@@ -395,7 +412,7 @@ class AttributionTableAdapter(Adapter):
         is missing and which therefore never reach the corpus a worker greps.
         """
         policy = self.cross_check_policy()
-        report: dict = {"policy": policy, "sections": list(self.claim_sections())}
+        report: dict = {"policy": policy, "regions": list(self.claim_regions())}
         if policy == "off":
             return report, []
         claims, counts = self.lean_claims(repo, source_id)
@@ -434,11 +451,17 @@ class AttributionTableAdapter(Adapter):
         """``union`` | ``report`` | ``off`` -- what an omission is allowed to do."""
         return str(self.get("lean_scan.policy", DEFAULT_CROSS_CHECK_POLICY)).lower()
 
-    def claim_sections(self) -> tuple[str, ...]:
-        """Named ``section`` blocks whose membership is a claim on the book."""
-        raw = self.get("lean_scan.sections", None)
+    def claim_regions(self) -> tuple[str, ...]:
+        """Names of the ``section``/``namespace`` blocks that claim the book.
+
+        ``lean_scan.regions`` in adapter.yaml; ``sections`` is read as the same
+        thing for a file written before the namespace spelling was found.
+        """
+        raw = self.get("lean_scan.regions", None)
         if raw in (None, "", [], ()):
-            return DEFAULT_CLAIM_SECTIONS
+            raw = self.get("lean_scan.sections", None)
+        if raw in (None, "", [], ()):
+            return DEFAULT_CLAIM_REGIONS
         return tuple(str(s) for s in ([raw] if isinstance(raw, str) else raw))
 
     def lean_files(self, repo: str | Path | None = None) -> list[Path]:
@@ -469,18 +492,20 @@ class AttributionTableAdapter(Adapter):
           second regex here.  The LEADING mention wins, exactly as a docstring
           tag's does: ``Exercise 1.1.21(3) ... as in Definition 1.1.1`` claims
           the exercise and cross-references the definition.
-        * membership of a named section this convention files book statements
-          under (:meth:`claim_sections`).
+        * membership of a named ``section`` OR ``namespace`` this convention
+          files book statements under (:meth:`claim_regions`).  Both spellings,
+          because measure_theory uses both and the namespace form holds the
+          larger half.
 
         Anonymous declarations are counted and never claimed.  The table's id
         for one is a curated slug (``example:BV-limits-...``), not a position,
         so there is no name to compare and every anonymous ``example`` would
-        report as an omission -- 139 of them at measure_theory 53a2643, which
-        would bury the 8 named ones this is for.
+        report as an omission -- 256 of them at measure_theory 53a2643, which
+        would bury the 19 named ones this is for.
         """
         path = self.resolve_repo(repo)
         kinds = self.numbered_kinds(source_id)
-        wanted = set(self.claim_sections())
+        wanted = set(self.claim_regions())
         claims: list[LeanClaim] = []
         counts: Counter[str] = Counter()
         for lean in self.lean_files(path):
@@ -493,10 +518,11 @@ class AttributionTableAdapter(Adapter):
             counts["files"] += 1
             for decl in decls:
                 counts["declarations"] += 1
-                in_section = bool(set(decl.sections) & wanted)
+                in_sections = [s for s in decl.sections if s in wanted]
+                in_namespaces = [s for s in decl.namespace.split(".") if s in wanted]
                 found = cf_items.find_items(decl.doc or "", kinds, limit=1)
                 item = found[0] if found else None
-                if item is None and not in_section:
+                if item is None and not (in_sections or in_namespaces):
                     continue
                 if decl.anonymous:
                     counts["anonymous_claims"] += 1
@@ -504,13 +530,14 @@ class AttributionTableAdapter(Adapter):
                 signals = []
                 if item is not None:
                     signals.append(f"docstring names {item.full}")
-                if in_section:
-                    signals.append("section " + ", ".join(
-                        s for s in decl.sections if s in wanted))
+                if in_sections:
+                    signals.append("section " + ", ".join(in_sections))
+                if in_namespaces:
+                    signals.append("namespace " + ", ".join(in_namespaces))
                 claims.append(LeanClaim(
                     decl=decl.full_name, file=rel, line=decl.line, kind=decl.kind,
-                    private=decl.private, sections=tuple(decl.sections), item=item,
-                    signals=tuple(signals), parsed=decl))
+                    private=decl.private, regions=tuple(in_sections + in_namespaces),
+                    item=item, signals=tuple(signals), parsed=decl))
         counts["claims"] = len(claims)
         return claims, counts
 

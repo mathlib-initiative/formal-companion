@@ -159,6 +159,11 @@ and they disagree:
 | `lean_scan` | the Lean sources claim it for a book item and the export **omits** it (`docs/design/stage_map.md` §4, Stage 2) |
 | null | the adapter does not distinguish — the honest value for a `custom` extractor reading something else |
 
+An omission whose docstring names no item gets no row at all — there is nothing to key it on —
+and goes to `companions/<name>/unattributed.jsonl` instead, which `cf plan-run` stages beside the
+tables. At the pinned commit that is 17 of 20: they sit under `namespace Companions` headers that
+name their item only in prose.
+
 A `COVERAGE` finding is the reason this exists. "No declaration of this companion states X" read
 off a `table`-only corpus is a claim about the export, not about the repository, and it has already
 been wrong once: a public, sorry-free theorem reported as absent from the repo that contains it.

@@ -45,14 +45,17 @@ anchor: ledger
 page_offset: 16
 
 # The table against the Lean sources it claims to describe. Measured at this
-# repo's 53a2643: 9 named declarations are absent from the table -- 8 of them
-# inside `section Companions` blocks -- and 3 of the 9 name a book item in their
-# docstring and are unioned in as `provenance: lean_scan`. The other 6 are
-# private helpers naming no item, so there is nothing to file them under and
-# they are reported and left out. `cf extract` names all 9 in a warning.
+# repo's 53a2643: 20 named declarations are absent from the table -- 19 inside
+# a `Companions` region (8 files spell it `section Companions`, 6 spell it
+# `namespace Companions`; the namespace half is the larger) -- and only 3 of
+# the 20 name a book item in their docstring, so only 3 are unioned in as
+# `provenance: lean_scan`. The other 17 sit under headers like "Companion 5:
+# the Borel hierarchy and cardinality" with no item number anywhere, so they go
+# to companions/<name>/unattributed.jsonl, which `cf plan-run` stages for every
+# worker. `cf extract` names all 20 in a warning.
 lean_scan:
   policy: union
-  sections: [Companions]
+  regions: [Companions]
   glob: "**/*.lean"
   exclude:
     - ".lake/**/*.lean"

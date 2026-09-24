@@ -69,6 +69,24 @@ CROSS_CHECK_KEY = "lean_scan"
 CROSS_CHECK_WARN_LIMIT = 25
 
 
+def unattributed_rows(name: str, report: "Mapping[str, Any] | None") -> list[dict]:
+    """The omissions a cross-check could not key on an item, as rows for
+    ``companions/<name>/unattributed.jsonl``.
+
+    These are the ones a corpus search cannot find by construction: no row was
+    unioned because no item could be honestly derived -- at measure_theory
+    53a2643 that is 17 of 20, whose sections are labelled ``Companion 5: the
+    Borel hierarchy and cardinality`` with no item number anywhere.  The only
+    way a worker meets them is by being handed the list, so `cf plan-run`
+    stages this file beside the statement tables and the prompts point at it.
+    Each row keeps the file, line and the signals that claimed it; ``repo`` is
+    the companion so a merged read stays attributable.
+    """
+    scan = dict(report or {}).get(CROSS_CHECK_KEY) or {}
+    return [{"repo": name, **hit}
+            for hit in (scan.get("omissions") or []) if not hit.get("unioned")]
+
+
 def cross_check_warning(name: str, report: "Mapping[str, Any] | None"
                         ) -> tuple[str, list[str]] | None:
     """``(header, lines)`` for :func:`cflib.log.warn_block`, or None.
@@ -104,7 +122,9 @@ def cross_check_warning(name: str, report: "Mapping[str, Any] | None"
         lines.append(f"  … and {len(omissions) - CROSS_CHECK_WARN_LIMIT} more")
     if unattributed:
         lines.append(f"  {unattributed} of these name no book item in their docstring, so there is "
-                     "no item to file them under; they stay out of the corpus entirely.")
+                     "no item to file them under; they are listed in unattributed.jsonl,")
+        lines.append("  which `cf plan-run` stages beside the statement tables for every worker "
+                     "to read.")
     lines.append("  the omission is a defect in the companion's own attribution table -- report it "
                  "upstream, and do not")
     lines.append("  read absence from this corpus as absence from the repository: a COVERAGE "
