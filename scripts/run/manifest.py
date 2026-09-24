@@ -97,8 +97,14 @@ def resolve_host(workspace, host: str) -> dict:
         "name": host,
         "ssh": str(ssh),
         "remote_root": remote_root,
+        # `uv` installs into ~/.local/bin, which a non-login ssh shell does not have
+        # on PATH: `ssh <host> 'cd ~/tend && uv run tend --version'` exits 127 with
+        # "uv: command not found".  references/runbook-server.md has always said to
+        # export it; the generated command did not, so the first real preflight
+        # against a server failed on exactly that.  Override per host with
+        # `hosts.<name>.tend_cmd` when uv is installed somewhere else.
         "tend_cmd": str(entry.get("tend_cmd") or hosts.get("tend_cmd")
-                        or f"cd {remote_root}/tend && uv run"),
+                        or f'export PATH="$HOME/.local/bin:$PATH"; cd {remote_root}/tend && uv run'),
         "agentbox_profile": str(entry.get("agentbox_profile") or entry.get("profile")
                                 or hosts.get("agentbox_profile") or ""),
         "disk_budget_bytes": int(entry.get("disk_budget_bytes")
