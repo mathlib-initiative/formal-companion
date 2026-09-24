@@ -1325,7 +1325,12 @@ class TestRunPlanner(unittest.TestCase):
         stages = [s["stage"] for s in steps]
         self.assertLess(stages.index("smoke"), stages.index("raise"))
         smoke = [s for s in steps if s["stage"] == "smoke"]
-        self.assertIn("--workers 1 --reviewers 1", smoke[0]["shell"])
+        # The caps are flags on `tend run` itself. They used to be a preceding
+        # `tend-control limits --workers 1 --reviewers 1`, which applied nothing:
+        # tend-control writes into orchestrator.sqlite and tend creates that when
+        # a run starts, so the smoke run came up at the config's concurrency.
+        self.assertIn("--max-concurrent-worker-agents 1", smoke[0]["shell"])
+        self.assertIn("--max-concurrent-reviewer-agents 1", smoke[0]["shell"])
         raise_steps = [s for s in steps if s["stage"] == "raise"]
         self.assertIn("budget", raise_steps[0]["shell"])          # ceiling before concurrency
         self.assertIn("--workers 5 --reviewers 3", raise_steps[-1]["shell"])
