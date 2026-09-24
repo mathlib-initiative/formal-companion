@@ -943,7 +943,7 @@ class RsyncChmodFallbackTest(unittest.TestCase):
     by applying the mode on the host straight after the files land.
     """
 
-    ENTRY = {"kind": "dir", "src": "/tmp/x", "dest": "/home/u/repos/mt/",
+    ENTRY = {"kind": "dir", "src": "/tmp/x", "dest": "/srv/runs/repos/mt/",
              "rsync_flags": ["--chmod=D0555,F0444", "--exclude=.git"],
              "name": "repo:mt", "exists": True}
 
