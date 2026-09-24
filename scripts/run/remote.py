@@ -228,9 +228,22 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             add("transfer", f"make {entry['name']} read-only on the host (rsync lacks --chmod)",
                 _ssh(host, f"find {shlex.quote(entry['dest'])} -type d -exec chmod {dirs_mode} {{}} + ; "
                            f"find {shlex.quote(entry['dest'])} -type f -exec chmod {files_mode} {{}} +"))
-    add("transfer", "make the entrypoint a git repo on main (tend merges into it)",
-        _ssh(host, f"cd {shlex.quote(entrypoint)} && git rev-parse --git-dir >/dev/null 2>&1 || "
-                   f"(git init -b main . && git add -A && git commit -qm 'tasks for {run_id}')"))
+    # Commit on EVERY transfer, not only when the repo is created.  The old
+    # `git rev-parse --git-dir || (git init && git add -A && git commit)` committed
+    # exactly once: a re-plan that rsynced a different task set into an existing
+    # entrypoint left those files untracked, and tend's batched merge checks the
+    # entrypoint is clean before it fast-forwards -- a dirty tree bounces the
+    # WHOLE batch back to pending.  That is what silently stopped the first
+    # server run: 383 task files on disk, 163 tracked, 220 untracked, every
+    # reviewer-approved worktree bounced, nothing ever reached main.  The final
+    # check fails the stage loudly rather than leaving a run that can never merge.
+    add("transfer", "commit the transferred tasks on the entrypoint's main (tend bounces a dirty tree)",
+        _ssh(host, f"cd {shlex.quote(entrypoint)} && "
+                   f"(git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b main .) && "
+                   f"git add -A && "
+                   f"(git diff --cached --quiet || git commit -qm {shlex.quote('tasks for ' + run_id)}) && "
+                   f"test -z \"$(git status --porcelain)\" || "
+                   f"{{ echo 'REFUSED: entrypoint still dirty after commit; tend will bounce every merge batch' >&2; exit 1; }}"))
 
     add("verify", "task files and dependency graph",
         _ssh(host, f"{tend} tend-task verify {shlex.quote(entrypoint + '/tasks')}"), safe=True)

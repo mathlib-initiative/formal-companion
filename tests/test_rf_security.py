@@ -1030,3 +1030,51 @@ class SmokeStageHoldsTheFleetAtOneTest(unittest.TestCase):
                 break
             self.assertNotIn("tend-control limits", step["shell"],
                              "limits applied before the orchestrator db exists")
+
+
+class EntrypointIsCommittedOnEveryTransferTest(unittest.TestCase):
+    """A re-planned run must leave the entrypoint clean, or nothing ever merges.
+
+    tend's batched merge fast-forwards the entrypoint and checks it is clean
+    first; a dirty tree bounces the WHOLE batch back to pending, silently. The
+    old step committed only when it CREATED the repo (`git rev-parse --git-dir
+    || (git init && git add -A && git commit)`), so a second transfer with a
+    different task set left those files untracked: on the first real server run,
+    383 tasks on disk, 163 tracked, 220 untracked, five reviewer-approved
+    worktrees, nothing on main.
+    """
+
+    def _transfer_shell(self):
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+        from run import remote
+
+        steps = remote.plan_commands(
+            host={"name": "examplebox", "ssh": "t@examplebox", "remote_root": "/srv/runs",
+                  "tend_cmd": "cd /srv/runs/tend && uv run", "agentbox_profile": "p",
+                  "disk_budget_bytes": 1 << 30, "tend_version_required": ""},
+            run_id="r", run={"remote": {}}, entries=[],
+            names={"entrypoint": "r", "tend_root": "r-tend", "gate": "r-gate",
+                   "sources": "sources", "repos": "repos"},
+            concurrency={"workers": 8, "reviewers": 5},
+            budget={"max_cost": None, "currency": "USD"})
+        return " ".join(s["shell"] for s in steps if s["stage"] == "transfer")
+
+    def test_it_adds_and_commits_rather_than_only_on_init(self):
+        shell = self._transfer_shell()
+        self.assertIn("git add -A", shell)
+        self.assertIn("git commit", shell)
+        # the old shape: commit reachable ONLY when rev-parse fails
+        self.assertNotIn("git rev-parse --git-dir >/dev/null 2>&1 || (git init -b main . && git add",
+                         shell)
+
+    def test_it_refuses_when_the_tree_is_still_dirty(self):
+        shell = self._transfer_shell()
+        self.assertIn("git status --porcelain", shell)
+        self.assertIn("REFUSED", shell)
+
+    def test_the_commit_is_not_conditional_on_creating_the_repo(self):
+        """`git init` may be skipped; the add/commit must still run."""
+        shell = self._transfer_shell()
+        head, _, tail = shell.partition("git init")
+        self.assertIn("git add -A", tail, "add/commit must follow init unconditionally")
