@@ -249,13 +249,18 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
             _tree_check(host, entry), safe=True, record_output=True,
             expected=entry["tree_sha256"])
 
-    add("smoke", "hold the fleet at 1 worker / 1 reviewer",
-        _ssh(host, f"{tend} tend-control limits --root {shlex.quote(tend_root)} "
-                   f"--workers 1 --reviewers 1"))
+    # The limits go on `tend run` ITSELF, not through tend-control first.
+    # tend-control writes into orchestrator.sqlite, which does not exist until a
+    # run has started, so the old "hold the fleet at 1/1, then start it" order
+    # applied nothing: the smoke run came up at the config's 8 workers and
+    # launched eight agents at once -- the exact thing a smoke test exists to
+    # prevent, on the first real run, at Opus prices.  `tend run` takes the caps
+    # as flags and applies them from the first scheduling pass.
+    #
     # `</dev/null` and both streams redirected: otherwise ssh waits on the detached
     # run's file descriptors and the command never returns.
-    add("smoke", "start the run (detached; watch ONE task worker -> gate -> reviewer -> merge)",
-        _ssh(host, f"nohup sh -c {shlex.quote(f'{tend} tend run --root {tend_root} --log-level INFO')} "
+    add("smoke", "start the run at 1 worker / 1 reviewer (detached; watch ONE task worker -> gate -> reviewer -> merge)",
+        _ssh(host, f"nohup sh -c {shlex.quote(f'{tend} tend run --root {tend_root} --log-level INFO --max-concurrent-worker-agents 1 --max-concurrent-reviewer-agents 1')} "
                    f"</dev/null >> {shlex.quote(tend_root + '/run.log')} 2>&1 & echo started"))
     add("smoke", "watch it",
         _ssh(host, f"{tend} tend-control status --root {shlex.quote(tend_root)}"), safe=True)

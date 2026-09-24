@@ -992,3 +992,41 @@ class RsyncChmodFallbackTest(unittest.TestCase):
             self.assertNotIn("chmod", step["shell"])
         finally:
             remote.rsync_supports_chmod = original
+
+
+class SmokeStageHoldsTheFleetAtOneTest(unittest.TestCase):
+    """The smoke stage must actually cap concurrency, not ask a database that does not exist.
+
+    `tend-control limits` writes into orchestrator.sqlite, which tend creates
+    when a run STARTS.  Ordering it before `tend run` applied nothing: the first
+    real smoke run came up at the config's 8 workers and launched eight agents
+    at once, on Opus.  The caps belong on `tend run` itself.
+    """
+
+    def _smoke_steps(self):
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+        from run import remote
+
+        host = {"name": "examplebox", "ssh": "t@examplebox", "remote_root": "/srv/runs",
+                "tend_cmd": "cd /srv/runs/tend && uv run", "agentbox_profile": "p",
+                "disk_budget_bytes": 1 << 30, "tend_version_required": ""}
+        steps = remote.plan_commands(
+            host=host, run_id="r", run={"remote": {}},
+            entries=[], concurrency={"workers": 8, "reviewers": 5},
+            names={"entrypoint": "r", "tend_root": "r-tend", "gate": "r-gate",
+                   "sources": "sources", "repos": "repos"},
+            budget={"max_cost": None, "currency": "USD"})
+        return [s for s in steps if s["stage"] == "smoke"]
+
+    def test_the_run_is_started_with_the_caps_as_flags(self):
+        shells = " ".join(s["shell"] for s in self._smoke_steps())
+        self.assertIn("--max-concurrent-worker-agents 1", shells)
+        self.assertIn("--max-concurrent-reviewer-agents 1", shells)
+
+    def test_it_does_not_try_to_set_limits_before_the_run_exists(self):
+        for step in self._smoke_steps():
+            if "tend run" in step["shell"]:
+                break
+            self.assertNotIn("tend-control limits", step["shell"],
+                             "limits applied before the orchestrator db exists")
