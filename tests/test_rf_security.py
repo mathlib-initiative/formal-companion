@@ -44,6 +44,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import pathlib
 import unittest
 from pathlib import Path
 
@@ -931,3 +932,63 @@ class TendVersionPreflightTest(unittest.TestCase):
 
 if __name__ == "__main__":                              # pragma: no cover
     unittest.main()
+
+
+class RsyncChmodFallbackTest(unittest.TestCase):
+    """The read-only companion transfer must survive an rsync without --chmod.
+
+    macOS ships rsync 2.6.9 (2006).  `--chmod` arrived in rsync 3.0, so on a
+    stock Mac the read-only transfer exits 1 with "Invalid argument passed to
+    --chmod" and takes the whole transfer stage with it.  The property is kept
+    by applying the mode on the host straight after the files land.
+    """
+
+    ENTRY = {"kind": "dir", "src": "/tmp/x", "dest": "/home/u/repos/mt/",
+             "rsync_flags": ["--chmod=D0555,F0444", "--exclude=.git"],
+             "name": "repo:mt", "exists": True}
+
+    def setUp(self):
+        import sys
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1] / "scripts"))
+
+    def test_an_old_rsync_drops_the_flag_and_gets_a_host_side_chmod(self):
+        from run import remote
+
+        original = remote.rsync_supports_chmod
+        remote.rsync_supports_chmod = lambda *a, **k: False
+        try:
+            argv = remote._rsync(self.ENTRY, {"ssh": "u@h"})["argv"]
+            self.assertNotIn("--chmod=D0555,F0444", argv)
+            self.assertEqual(remote._chmod_fallback_modes(self.ENTRY), ("0555", "0444"))
+        finally:
+            remote.rsync_supports_chmod = original
+
+    def test_a_modern_rsync_keeps_the_flag_and_needs_no_second_step(self):
+        from run import remote
+
+        original = remote.rsync_supports_chmod
+        remote.rsync_supports_chmod = lambda *a, **k: True
+        try:
+            argv = remote._rsync(self.ENTRY, {"ssh": "u@h"})["argv"]
+            self.assertIn("--chmod=D0555,F0444", argv)
+            self.assertIsNone(remote._chmod_fallback_modes(self.ENTRY))
+        finally:
+            remote.rsync_supports_chmod = original
+
+    def test_an_entry_that_never_asked_for_a_mode_gets_no_chmod_step(self):
+        from run import remote
+
+        entry = dict(self.ENTRY, rsync_flags=["--exclude=.git"])
+        self.assertIsNone(remote._chmod_fallback_modes(entry))
+
+    def test_the_fallback_is_a_real_step_not_a_shell_suffix(self):
+        """`execute` runs argv; a suffix appended to `shell` would never run."""
+        from run import remote
+
+        original = remote.rsync_supports_chmod
+        remote.rsync_supports_chmod = lambda *a, **k: False
+        try:
+            step = remote._rsync(self.ENTRY, {"ssh": "u@h"})
+            self.assertNotIn("chmod", step["shell"])
+        finally:
+            remote.rsync_supports_chmod = original
