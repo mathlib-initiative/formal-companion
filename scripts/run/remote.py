@@ -33,6 +33,7 @@ workspace's allowlist.
 from __future__ import annotations
 
 import shlex
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -94,6 +95,25 @@ def _ssh(host: dict, remote_cmd: str) -> dict:
     return {"argv": ["ssh", host["ssh"], remote_cmd], "shell": f"ssh {shlex.quote(host['ssh'])} {shlex.quote(remote_cmd)}"}
 
 
+def rsync_supports_chmod(rsync: str = "rsync") -> bool:
+    """Does this rsync accept ``--chmod``?
+
+    macOS still ships rsync 2.6.9 (2006), which does not: it exits 1 with
+    "Invalid argument passed to --chmod" and takes the transfer with it.  The
+    flag arrived in rsync 3.0, so the read-only companion transfer -- a control
+    the security review added -- cannot be expressed on a stock Mac.  Rather than
+    drop the control or demand a Homebrew rsync, the caller falls back to
+    chmod-ing on the host after the transfer (see :func:`_rsync`).
+    """
+    try:
+        out = subprocess.run([rsync, "--version"], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    first = (out.stdout or "").splitlines()[:1]
+    match = re.search(r"version\s+(\d+)\.(\d+)", first[0] if first else "")
+    return bool(match) and (int(match.group(1)), int(match.group(2))) >= (3, 0)
+
+
 def _rsync(entry: dict, host: dict) -> dict:
     from .manifest import BASE_RSYNC
 
@@ -102,9 +122,30 @@ def _rsync(entry: dict, host: dict) -> dict:
     else:
         src = entry["src"]
         sources = [src + "/" if entry["kind"] == "dir" and not src.endswith("/") else src]
-    argv = ["rsync", *BASE_RSYNC, *entry["rsync_flags"], *sources,
-            f"{host['ssh']}:{entry['dest']}"]
+    flags = [f for f in entry["rsync_flags"]
+             if not (f.startswith("--chmod=") and not rsync_supports_chmod())]
+    argv = ["rsync", *BASE_RSYNC, *flags, *sources, f"{host['ssh']}:{entry['dest']}"]
     return {"argv": argv, "shell": " ".join(shlex.quote(a) for a in argv)}
+
+
+def _chmod_fallback_modes(entry: dict) -> tuple[str, str] | None:
+    """``(dir_mode, file_mode)`` when the read-only transfer must be applied on the host.
+
+    ``None`` when this rsync can do it in flight, which is the normal path.  The
+    property is the same either way -- the copy ends up 0444 inside 0555 -- but
+    with an rsync that lacks ``--chmod`` it is applied a moment after the files
+    land rather than as they land.  That window is on the host, before any agent
+    starts, and the control was always owner-reversible defence in depth rather
+    than a barrier (manifest.tree_digest): the digest recomputed after the
+    transfer is what actually notices an edit.
+    """
+    chmod = [f for f in entry.get("rsync_flags", []) if f.startswith("--chmod=")]
+    if not chmod or rsync_supports_chmod():
+        return None
+    modes = chmod[0].split("=", 1)[1]
+    dirs = next((m[1:] for m in modes.split(",") if m.startswith("D")), "0555")
+    files = next((m[1:] for m in modes.split(",") if m.startswith("F")), "0444")
+    return dirs, files
 
 
 #: How to make a tend report its version.  NOT ``tend --version``: the CLI that
@@ -177,6 +218,16 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         if not entry["exists"]:
             continue
         add("transfer", f"rsync {entry['name']} -> {entry['dest']}", _rsync(entry, host))
+        modes = _chmod_fallback_modes(entry)
+        if modes:
+            # This rsync cannot express --chmod (macOS ships 2.6.9), so the
+            # read-only property is applied on the host instead of in flight.
+            # A separate step, not a shell suffix: `execute` runs argv, so a
+            # suffix on `shell` would print and never run.
+            dirs_mode, files_mode = modes
+            add("transfer", f"make {entry['name']} read-only on the host (rsync lacks --chmod)",
+                _ssh(host, f"find {shlex.quote(entry['dest'])} -type d -exec chmod {dirs_mode} {{}} + ; "
+                           f"find {shlex.quote(entry['dest'])} -type f -exec chmod {files_mode} {{}} +"))
     add("transfer", "make the entrypoint a git repo on main (tend merges into it)",
         _ssh(host, f"cd {shlex.quote(entrypoint)} && git rev-parse --git-dir >/dev/null 2>&1 || "
                    f"(git init -b main . && git add -A && git commit -qm 'tasks for {run_id}')"))
