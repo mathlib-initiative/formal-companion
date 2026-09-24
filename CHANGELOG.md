@@ -50,6 +50,28 @@ release has something to say.
   addresses, session and Workflow ids, and citations into a transcript
   directory this repo has never held — and for citations of files that are
   not here. The rules and their allowlist are spelled out in that file.
+- **`attribution_table` cross-checks its table against the Lean sources**
+  (`lean_scan`, `docs/design/stage_map.md` §4 Stage 2). This kind builds its
+  rows from an *export* a companion publishes, and an export can omit
+  declarations the repository carries. The adapter now reads the Lean for the
+  two signals the repo itself gives — a docstring that names a book item
+  (through `cflib.items`, with the source's own kind list) and membership of a
+  named `section` the convention files book statements under — and compares
+  them by declaration name against the rows the export produced.
+  `lean_scan.policy: union` (the default) publishes each omission that names an
+  item as a row, `report` does not, `off` is a deviation written into
+  `adapter.yaml`; under all three, `cf extract` and `cf onboard` name every
+  omitted declaration in one warning, because the omission is a defect in the
+  companion's own table. The scan excludes `.lake/**` and its content is in the
+  extract key.
+- a new optional statement-row key, `provenance`
+  (`cflib.vocab.ROW_PROVENANCE`: `table` | `lean_scan` | `docstring` |
+  `blueprint`, or null): which artifact **of the companion** a row was read
+  from. Every shipped adapter sets it; it is what lets a finding say whether it
+  searched a repository or only an export of one.
+- `cflib.items.find_items`: every numbered item named anywhere in a blob of
+  prose, through the one item grammar and the source's own kind list. The
+  cross-check needed it and must not have had a second item regex of its own.
 
 ### Changed
 - `cf harvest` and `cf import-corpus` run the findings gate **by default**;
@@ -108,6 +130,19 @@ release has something to say.
 - a differential `cf plan-run` staged every companion in the workspace,
   including companions of other sources; it now stages only the companions
   bound to the source the run audits.
+- a table-driven corpus was short of the repository it describes, and nothing
+  said so: an audit worker searched it for a determinant image identity, found
+  nothing, and filed a `COVERAGE` disagreement claiming the companion states it
+  nowhere — while a public, sorry-free theorem stated exactly it. Measured at
+  one pinned commit, eight named declarations inside `section Companions` blocks
+  were absent from the export, as were three of the four declarations whose
+  docstring names a book item. The adapter now unions and reports them (above),
+  and the prompts carry the other half: absence from the statement table is
+  never sufficient grounds for a `COVERAGE` finding, a worker must
+  `grep -rn --include=*.lean` the repository for the mathematical content before
+  any "no counterpart exists" claim and say what it ran, and a reviewer must
+  open the Lean for every finding that rests on an absence
+  (`references/traps.md` B6).
 - `cf sources add` bound the source to the companion and saved the workspace
   before preparing it, so a source it then refused with exit 2 stayed in the
   audited scope; `cf onboard <repo> --source <file>` reached the same refusals

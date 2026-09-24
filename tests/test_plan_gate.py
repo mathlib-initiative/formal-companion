@@ -1139,6 +1139,20 @@ confirmed_at: 2026-01-01
 """
 
 
+#: The citation-ban section of a rendered prompt, and nothing else.  The ban
+#: names the kinds this run's gate REJECTS, so "does the prompt mention
+#: `COVERAGE`" is the wrong question to ask of the whole text: a preset that
+#: accepts the kind also says what evidence one needs, and searching the whole
+#: prompt would forbid the instruction along with the ban.
+BAN_HEADING = "## This run does NOT accept citation findings"
+
+
+def _ban_block(text: str) -> str:
+    """Everything from the citation-ban heading on ("" when there is no ban)."""
+    at = text.find(BAN_HEADING)
+    return "" if at < 0 else text[at:]
+
+
 class TestPrompts(unittest.TestCase):
     def ctx(self, preset_name, **over):
         preset = presets_mod.get(preset_name)
@@ -1189,7 +1203,10 @@ class TestPrompts(unittest.TestCase):
         presets carried, so a differential prompt invited "a wrong page anchor"
         its own gate does not accept. It is now a function of `preset.kinds`, so
         the block appears here too — naming PAGE_ANCHOR only, because COVERAGE is
-        a kind this preset's gate does accept.
+        a kind this preset's gate does accept.  The COVERAGE assertion reads the
+        BAN BLOCK and not the whole prompt: this preset accepts the kind, so the
+        prompt says elsewhere what evidence one needs, and a whole-text search
+        would forbid the instruction along with the ban.
         """
         preset, ctx = self.ctx("differential-text")
         out = rp.render_prompts(preset, ctx)
@@ -1197,7 +1214,7 @@ class TestPrompts(unittest.TestCase):
         self.assertNotIn("must carry a concrete witness", out["worker-system.md"])
         self.assertIn("citation findings", out["worker-system.md"])
         self.assertIn("kind `PAGE_ANCHOR` are not accepted", out["worker-system.md"])
-        self.assertNotIn("`COVERAGE`", out["worker-system.md"])
+        self.assertNotIn("`COVERAGE`", _ban_block(out["worker-system.md"]))
         self.assertIn("CONVENTION vs CONTENT", out["worker-system.md"])
         self.assertIn("faithful` is a **list", out["worker-system.md"])
 

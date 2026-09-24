@@ -44,6 +44,20 @@ ledger: source-formalization-ledger.json
 anchor: ledger
 page_offset: 16
 
+# The table against the Lean sources it claims to describe. Measured at this
+# repo's 53a2643: 9 named declarations are absent from the table -- 8 of them
+# inside `section Companions` blocks -- and 3 of the 9 name a book item in their
+# docstring and are unioned in as `provenance: lean_scan`. The other 6 are
+# private helpers naming no item, so there is nothing to file them under and
+# they are reported and left out. `cf extract` names all 9 in a warning.
+lean_scan:
+  policy: union
+  sections: [Companions]
+  glob: "**/*.lean"
+  exclude:
+    - ".lake/**/*.lean"
+    - "**/.lake/**/*.lean"
+
 # Every file whose sha must force a re-extract at an unchanged commit. The
 # adapter already hashes the four exports above; list anything else here.
 # Without this, a fix that renames a theorem is invisible until the external

@@ -172,6 +172,23 @@ because 7 hits are prose.
 count.
 *Evidence:* `memory/tao-differential-audit-verified-figures.md`.
 
+**B6 — The statement table is not the repository.**
+*Presents as:* a confident `COVERAGE` finding — "no named declaration of this companion states X
+anywhere" — against a companion that states X in a public, sorry-free theorem. A reviewer caught
+one; the next one might not.
+*Cause:* a companion extracted with `adapter: attribution_table` is read out of an **export** it
+publishes, not out of its Lean. The export omits things: at one pinned commit, eight named
+declarations inside `section Companions` blocks and three of the four declarations whose docstring
+names a book item. Absence from the corpus was read as absence from the repo.
+*Fix:* two halves, and both are needed. The adapter cross-checks the export against the Lean
+sources and unions each omission that names a book item back in as `provenance: "lean_scan"`,
+warning by name about every one it found (`docs/design/stage_map.md` §4, Stage 2) — a table can
+still be short for reasons no scan sees, so the prompts also require a `grep -rn --include=*.lean`
+of the repository, for the mathematical content rather than the item label, before any "no
+counterpart exists" claim.
+*Evidence:* `references/vocabulary.md` §1.9; `tests/test_rf_adapters.py`
+`TestTheTableIsCrossCheckedAgainstTheLean`.
+
 ---
 
 ## C. The orchestrator (tend) and the bridge (agentbox)

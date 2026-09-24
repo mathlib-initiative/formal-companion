@@ -218,7 +218,7 @@ The numbers are the ones the module docstrings use.
 |---|---|---|
 | 0 | `cf init`, `cf onboard`, `cf doctor` | `workspace.yaml`, `registry.yaml`, `companions/<name>/{adapter.yaml, conventions.md}` |
 | 1 | (inside `onboard`) `cf sources refresh` | `sources/<id>/{text.txt, pages/, items.json, meta.json, errata.*}` |
-| 2 | `cf extract` | `companions/<name>/statements.jsonl` — no-op when (repo commit, adapter key) is unchanged |
+| 2 | `cf extract` | `companions/<name>/statements.jsonl` — no-op when (repo commit, adapter key) is unchanged; an export-driven adapter cross-checks its table against the Lean sources first |
 | 3 | `cf pair` | `pairs/<source_id>/*`: pairs, coverage, queue, targets, def-coverage, uncovered, and the mechanical page-anchor check |
 | 4 | `cf plan-run` | `runs/<id>/{run.yaml, tasks/, prompts/, gate.json, tend-root/}`; reconciles the task count against `items.json ∩ any-repo` |
 | 5 | `cf run` | nothing in the workspace but `run.yaml`'s records: it transfers and drives the fleet (**dry run until `--execute`**) |
@@ -235,9 +235,30 @@ in it. `fix`, `review-pr`, `camera-ready` and `publish-verdicts` (which
 `ledger/compat.py` numbers stage 13) are documented and **not implemented**:
 v1 is findings-only, and `fixes/` and `reviews/` are where they would write.
 
-Three stages carry a gate of their own, and each one is a number that was once
+Four stages carry a gate of their own, and each one is a number that was once
 wrong. The module docstrings cite these sentences, so they move with the code:
 
+- **Stage 2.** An adapter that builds its rows from an **export** of a companion
+  rather than from the companion cross-checks the two, and the disagreement is
+  never silent. `attribution_table` reads the Lean sources for the two signals
+  the repository itself gives — a docstring that names a book item (through
+  `cflib.items`, with the source's own kind list, never a second regex) and
+  membership of a named `section` the convention files book statements under
+  (`lean_scan.sections`, default `Companions`) — and compares them by
+  declaration name against the rows the export produced. `lean_scan.policy:
+  union` publishes each omission that names a book item as a row stamped
+  `provenance: "lean_scan"`; an omission that names none is reported and left
+  out, because there is no item to key it on and the item grammar never guesses
+  one. Whatever the policy, `cf extract` and `cf onboard` name every omitted
+  declaration in one warning. The scan excludes `.lake/**` — without that it
+  reads Mathlib and calls its declarations the companion's — and its content is
+  in the extract key, so a commit that adds a declaration to one of those
+  sections re-extracts. Anonymous declarations are counted and never claimed:
+  an export names them by curated slug, not by position, so there is no name to
+  compare. The rule this enforces is that **absence from an export is not
+  absence from a repository**: a table-only corpus produced a COVERAGE finding
+  saying a companion stated no determinant image formula anywhere, when a
+  public, sorry-free theorem in a `section Companions` block stated exactly it.
 - **Stage 7.** `ledger/validate_ledger.py` refuses — never warns about — a
   ledger row that does not answer a real finding by `finding_id` (a 22-char
   label prefix is how batch-1 challenge results were mislinked); that uses a

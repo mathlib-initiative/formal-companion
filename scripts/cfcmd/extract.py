@@ -33,7 +33,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from cflib import log, state as state_mod
-from cflib.adapters_api import load as load_adapter
+from cflib.adapters_api import CROSS_CHECK_KEY, cross_check_warning, load as load_adapter
 from cflib.errors import CfError
 from cflib.jsonio import write_jsonl
 from cflib.workspace import from_args
@@ -164,6 +164,13 @@ def _extract_one(workspace, name: str, args) -> dict:
     fresh = (previous.get("key") == key and out.exists() and not args.force and not args.repo)
     if fresh:
         log.detail(f"{name}: up to date ({previous.get('rows')} rows, key {key[7:19]})")
+        # An up-to-date table is still a table that is short of the repository.
+        # Replayed from what the last extraction recorded rather than re-run:
+        # the point of the no-op is not to re-read the repo, and the omissions
+        # cannot have changed while the key has not.
+        warning = cross_check_warning(name, previous)
+        if warning:
+            log.warn_block(*warning)
         return {"status": "up-to-date", "source_ids": list(shas),
                 **{k: previous.get(k) for k in ("rows", "items", "sorry", "untagged")}}
 
@@ -179,6 +186,15 @@ def _extract_one(workspace, name: str, args) -> dict:
     rows.sort(key=row_sort_key)
 
     report = adapter.dry_run(repo, sources=shas)
+    # An adapter that read an EXPORT of the companion says here what the
+    # companion's own sources say it left out.  This is printed BEFORE the table
+    # is written and whatever the policy did with the rows: a corpus that is
+    # quietly short of declarations the repo carries produces COVERAGE findings
+    # that are false, and the whole point of the check is that nobody has to
+    # notice the shortfall for themselves.
+    warning = cross_check_warning(name, report)
+    if warning:
+        log.warn_block(*warning)
     counts = _counts(rows, report, key, repo, adapter)
     if args.dry_run:
         log.info(f"{name}: {counts['rows']} rows / {counts['items']} items "
@@ -281,6 +297,14 @@ def _counts(rows: list[dict], report: dict, key: str, repo: Path, adapter) -> di
         "rejected": report.get("rejected", report.get("unnumbered_labels", 0)),
         "rejects": report.get("rejects") or [],
     }
+    # which artifact OF the companion each row came from, and -- for an adapter
+    # that reads an export -- what that export left out.  Both are kept because
+    # `cf extract` replays the warning from here on an up-to-date table.
+    origins = sorted({str(r.get("provenance") or "") for r in rows} - {""})
+    counts["provenance"] = {o: sum(1 for r in rows if r.get("provenance") == o)
+                            for o in origins} or None
+    if report.get(CROSS_CHECK_KEY):
+        counts[CROSS_CHECK_KEY] = report[CROSS_CHECK_KEY]
     for extra in ("ledger_sha", "ledger_sha_in_refinement", "ledger_stale",
                   "uncurated_items", "missing_snippet"):
         if report.get(extra) is not None:

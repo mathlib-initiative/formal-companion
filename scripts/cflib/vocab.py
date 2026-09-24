@@ -172,6 +172,22 @@ ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex
 #: ``tests/test_cflib`` asserts this equals ``adapters.api.registry()``.
 IMPLEMENTED_ADAPTER_KINDS = frozenset({"docstring_tags", "attribution_table", "blueprint_tex"})
 GRANULARITIES = frozenset({"item", "node"})
+
+#: Which artifact OF THE COMPANION a statement row was read from.  A companion
+#: whose corpus is built from an exported attribution table has two, and they
+#: do not agree: ``table`` is what the export says, ``lean_scan`` is a
+#: declaration the Lean sources claim for a book item (a docstring naming one,
+#: or a named section the convention files statements under) that the export
+#: omits.  A finding must be able to say which, because "no declaration states
+#: this" read off a ``table``-only corpus is a claim about the export and not
+#: about the repository -- the false COVERAGE the cross-check exists to stop.
+ROW_PROVENANCE = frozenset({"table", "lean_scan", "docstring", "blueprint"})
+
+#: What the cross-check may do with a declaration the table omits.  There is no
+#: value that passes quietly: ``union`` publishes the omission as a row and
+#: warns, ``report`` warns without publishing, and ``off`` is a deviation a
+#: companion states in its own adapter.yaml rather than one the code assumes.
+CROSS_CHECK_POLICIES = frozenset({"union", "report", "off"})
 WRITE_POLICIES = ("read_only", "branch_only", "branch_and_pr")
 WRITE_POLICY_SET = frozenset(WRITE_POLICIES)
 ANCHOR_CONVENTIONS = frozenset({"docstring", "ledger", "none"})

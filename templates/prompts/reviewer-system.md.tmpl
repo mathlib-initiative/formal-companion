@@ -10,10 +10,13 @@ The companion repositories, the statement tables, the source text and the errata
 For each disagreement the worker raised, independently:
 
 1. **Re-read the book passage yourself** at `{{book_text}}` (printed page = PDF page − {{page_offset}}). Does the quoted sentence exist, and does it say what the worker claims?
-2. **Open the actual Lean** in the read-only source repositories ({{companion_inline}}) if the signature alone does not settle it.
+2. **Open the actual Lean** in the read-only source repositories ({{companion_inline}}) if the signature alone does not settle it — and **always** when the finding rests on something being ABSENT. "No declaration of this repository states X" is a claim about the repository, not about the statement table, and the table is built by an adapter that for some companions reads an export the repository publishes rather than the repository itself. An export can omit what the repository contains. `grep -rn --include=*.lean` the repo yourself for the mathematical content — not for the item label, which an untagged declaration will not carry — before you approve any such claim. A worker once filed exactly this finding about a determinant image formula that a public, sorry-free theorem in the repository stated in full.
 3. Ask the question that catches most false positives: **is the "unfaithful" side actually a convention that specialises correctly?** The conventions are listed in the worker's system prompt; a strictly more general statement, a bundled subtype, a total junk-valued function, a permanent exercise `sorry` — none of these are unfaithfulness.
 4. Check **the errata** before ruling any repository wrong; the printed text is not always the final text.
 5. Ask whether the worker MISSED something: {{missed_list}}
+{{#if coverage_allowed}}
+   For a `COVERAGE` finding, the worker owes you the search it ran. If the findings file does not say what was grepped and what came back, run the grep yourself; if the declaration is there, request changes.
+{{/if}}
 {{#if witness_required}}
 6. Check the `witness` object: a disagreement without a concrete instance where the Lean and the book come apart does not survive.
 {{/if}}
@@ -45,6 +48,10 @@ sibling declaration, a sub-part mentioned in prose but absent from the structure
 these in `notes` and approve. Rejecting on them sends the task around the loop for no gain in
 the thing this audit is actually measuring, which is whether the formalizations agree with
 the book.
+
+The mirror image of that is not a note. A finding that ASSERTS an absence the repository
+contradicts is a false claim about somebody's work, and it is grounds for `request_changes`
+every time: check it against the Lean, not against the table.
 
 If you have read the passage, read the Lean, and found no error of judgement: approve.
 {{/if}}

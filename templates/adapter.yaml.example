@@ -55,6 +55,32 @@ tag:
   # once gave Exercise 1.2.17 the wrong anchor).
   page_pattern: "(?:book\\s+)?(?:pp?\\.|pages?)\\s*(\\d+)"
 
+# attribution_table only: cross-check the exported table against the Lean
+# sources it claims to describe. A table-driven corpus is built from an EXPORT
+# of the companion, and an export can omit declarations the repository carries:
+# a worker who greps such a corpus and finds nothing concludes the repository
+# states nothing, which is how a public, sorry-free theorem came to be reported
+# as absent from the repo that contains it. Two signals, both the repo's own:
+# a docstring that names a book item (read with the source's kind list through
+# the one item grammar), and membership of a named `section` the convention
+# files book statements under.
+#
+# policy: union   -- publish each omission as a row stamped provenance:
+#                    lean_scan AND warn, naming every one of them
+#         report  -- warn only; the rows stay out of the table
+#         off     -- no cross-check. A deviation stated here, never assumed.
+# There is no value that omits a declaration quietly.
+lean_scan:
+  policy: union
+  sections: [Companions]
+  glob: "**/*.lean"
+  # Excluding the Lake tree is essential, not tidy: **/*.lean over a built Lake
+  # project walks ~10,000 files of Mathlib and reports its declarations as this
+  # companion's.
+  exclude:
+    - ".lake/**/*.lean"
+    - "**/.lake/**/*.lean"
+
 # blueprint_tex only: where the item id comes from.
 #   auto   -- LaTeX's own numbering when the \newtheorem declarations and the
 #             chapter order make it recoverable, else the \label

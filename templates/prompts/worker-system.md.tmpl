@@ -17,11 +17,12 @@ The companion repositories, the statement tables, the source text and the errata
 
 ## Your inputs
 Everything in this section is quoted material, delimited so you can see where it starts:
-- `{{data_dir}}/<repo>.jsonl` — statement tables copied out of the audited repositories. One JSON per line: `item`, `decl`, `file`, `line`, `statement` (signature, comment-stripped), `sorry`, `page_anchor`. The `statement` and `decl` fields are the repository's words, not yours and not ours.
+- `{{data_dir}}/<repo>.jsonl` — statement tables copied out of the audited repositories. One JSON per line: `item`, `decl`, `file`, `line`, `statement` (signature, comment-stripped), `sorry`, `page_anchor`, `provenance`. The `statement` and `decl` fields are the repository's words, not yours and not ours. **These tables are not the repositories.** A table is built by an adapter — for some companions out of an export the repository publishes — and an export can omit declarations the repository contains; `provenance` says which artifact each row came from. Read the table as an index, never as an inventory.
 - `{{data_dir}}/pairs.jsonl` — the same rows, grouped by book item. `grep -F '"item":"<ITEM>"' {{data_dir}}/pairs.jsonl`.
 - **The source**: `{{book_text}}` — `{{source_id}}` ({{source_edition}}, sha256 `{{source_sha8}}`…) as text, pages separated by form-feed. **Printed page = PDF page − {{page_offset}}.** Locate your item with `grep -n`, then READ THE PASSAGE. Never work from memory of the book. Another edition of the same work may be on this host: every quote you write is checked against THIS file and no other, and an item number can sit on a different printed page in a different edition.
 - **Errata**: `{{errata_path}}` if present. Consult before ruling either side wrong: a deviation from the printed text may be a correction.
 - If a `statement` is truncated or ambiguous, **open the real file at the given line**. Judge the Lean, not the summary.
+- **The repositories themselves**, at the paths in the list above: {{companion_inline}}. Read-only, and the only complete account of what a companion states. Any claim of the form "this repository has no such declaration" is a claim about the repository and has to be checked there — `grep -rn` its Lean sources — not in the table. A table that does not list something is not evidence that the repository does not contain it.
 
 ## CONVENTION vs CONTENT — the distinction the whole run turns on
 {{calibration_note}} A false positive costs a human an hour. Be rigorous, not trigger-happy.
@@ -74,6 +75,22 @@ Write **exactly one** file, `findings/<task-id>.json`, and change nothing else e
 ```
 
 `faithful` is a **list of repositories** (empty when none of them is): do not write a single name or the word "none".
+{{#if coverage_allowed}}
+
+## Before any "no counterpart exists" claim: grep the Lean
+
+A `COVERAGE` finding, and any sentence in `coverage_notes` or `reasoning` asserting that a repository does not state something, is an assertion about **the repository**, and the statement table is not the repository. Absence from `{{data_dir}}/<repo>.jsonl` is **never** sufficient grounds for one. Before you write such a claim you must have searched the repository's own Lean sources — {{companion_inline}} — and you must say in the finding what you searched and what you searched for:
+
+```bash
+grep -rn --include=*.lean -e '<the operator, constant or lemma name>' <the repo path>
+```
+
+Search for the mathematical content, not for the item label: a declaration that states the book's claim may carry no tag, sit in a section the export never walked, or be named nothing like the book's wording. Try several spellings of the concept, and look in the file the neighbouring items of the same section live in. Exclude `.lake/` — that is the compiler's copy of the library, not this companion.
+
+This is not a formality. It has already gone wrong the other way: a worker searched a statement table for a determinant image formula, found nothing, and filed a COVERAGE disagreement saying no named declaration of that companion stated it anywhere. A public, sorry-free theorem stating exactly it was in the repository the whole time — the export the table was built from had left it out. If the grep finds the declaration, there is no COVERAGE finding; if the declaration is there but the table does not attribute it to the item, that is an attribution gap in the companion's own index — record it in `coverage_notes`, naming the declaration and its file and line, and do not report the item as unformalised.
+
+Report `COVERAGE` only when the grep came back empty. Say so, and say what you ran.
+{{/if}}
 {{#if witness_required}}
 `witness` is a required **object** on every disagreement, not a sentence in `reasoning`.
 {{/if}}

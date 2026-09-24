@@ -525,6 +525,7 @@ def build_context(
         "witness_required": preset.witness_required,
         "page_images": preset.page_images,
         "citation_ban": preset.citation_ban,
+        "coverage_allowed": preset.wants_coverage,
         "no_defect_verdict": preset.no_defect_verdict,
         "approve_guidance": preset.approve_guidance,
         "final_line": preset.final_line,

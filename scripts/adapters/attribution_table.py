@@ -27,6 +27,24 @@ Coverage is bounded by curation: the refinement covers the source nodes a
 curator agent has been through, so items with no curated entry are simply
 absent, and declarations that exist only as anonymous ``example``s are absent
 by construction.  ``dry_run`` reports both numbers so the gap is visible.
+
+**The cross-check** (docs/design/stage_map.md Stage 2) is what makes that gap
+safe to publish.  This kind is the only one whose corpus is built from an
+EXPORT of a companion rather than from the companion, and the export omits
+declarations the Lean sources carry: at measure_theory 53a2643 eight named
+declarations sit inside ``section Companions`` blocks and none of the eight is
+in the table, and of the four declarations whose docstring names a book item
+three are absent.  One of the three is a public, sorry-free statement of the
+determinant image formula -- and an audit worker who searched the extracted
+corpus for it filed a COVERAGE disagreement saying no named declaration of this
+companion states it anywhere.  Absence from an export is not absence from a
+repository.  :meth:`AttributionTableAdapter.lean_claims` reads the Lean sources
+for the two signals the repo itself gives (a docstring that names a book item,
+membership of a section the convention files book statements under), the
+omissions are unioned into the table stamped ``provenance: "lean_scan"``, and
+`cf extract` / `cf onboard` name every one of them in a warning: the omission is
+a defect in the companion's own attribution table and publishing it silently
+would hide that.
 """
 
 from __future__ import annotations
@@ -34,14 +52,15 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Mapping
+from typing import Iterator, Mapping, Sequence
 
 from cflib import items as cf_items
 from cflib.hashing import sha256_file
 
 from . import leanparse
-from .api import Adapter, AdapterError, register
+from .api import Adapter, AdapterError, register, sha_of_files
 from .base import make_row
 from .itemtag import kinds_from_labels
 
@@ -77,6 +96,54 @@ KIND_MAP = {
 }
 #: kinds whose body is content and is therefore captured
 BODY_KINDS = frozenset({"def", "abbrev", "instance", "structure", "inductive"})
+
+# -- the cross-check against the Lean sources (design Stage 2) ---------------
+#: Where the cross-check reads declarations from.
+DEFAULT_LEAN_GLOB = "**/*.lean"
+#: And what it must never read.  This is not tidiness: ``**/*.lean`` over a
+#: built Lake project walks ~10,000 files of Mathlib and would report every one
+#: of its declarations as a declaration this companion's table omits.
+DEFAULT_LEAN_EXCLUDE = (".lake/**/*.lean", "**/.lake/**/*.lean")
+#: Named ``section`` blocks the convention files book statements under, so
+#: membership is itself a claim on the book.  measure_theory writes
+#: ``section Companions``; another repo says so in its own adapter.yaml.
+DEFAULT_CLAIM_SECTIONS = ("Companions",)
+#: union: publish the omission as a row AND warn.  report: warn only.  off: a
+#: deviation a companion states in adapter.yaml, never one the code assumes.
+#: There is no value that passes quietly (cflib.vocab.CROSS_CHECK_POLICIES).
+CROSS_CHECK_POLICIES = ("union", "report", "off")
+DEFAULT_CROSS_CHECK_POLICY = "union"
+
+
+@dataclass(frozen=True)
+class LeanClaim:
+    """A named declaration the Lean sources claim for the book.
+
+    ``item`` is the book item its docstring names, or None when the only signal
+    is :attr:`sections`.  A claim with no item is REPORTED and never unioned:
+    there is no key to file it under, and inventing one would be exactly the
+    "let an unparseable id become a key" failure the item grammar exists to
+    stop (CLAUDE.md S4).
+    """
+
+    decl: str
+    file: str
+    line: int
+    kind: str
+    private: bool
+    sections: tuple[str, ...]
+    item: "cf_items.Item | None"
+    signals: tuple[str, ...]
+    parsed: "leanparse.Decl | None" = None
+
+    def report(self, unioned: bool = False) -> dict:
+        """The JSON shape ``dry_run`` publishes and `cf extract` warns with."""
+        return {
+            "decl": self.decl, "file": self.file, "line": self.line,
+            "kind": self.kind, "private": self.private,
+            "item": (self.item.full if self.item is not None else None),
+            "signals": list(self.signals), "unioned": bool(unioned),
+        }
 
 
 @register
@@ -134,6 +201,12 @@ class AttributionTableAdapter(Adapter):
                 raise AdapterError(
                     f"{self.source}: {field} not found at {path}",
                     hint=f"set {field}: <repo-relative path> in adapter.yaml")
+        policy = str(self.get("lean_scan.policy", DEFAULT_CROSS_CHECK_POLICY)).lower()
+        if policy not in CROSS_CHECK_POLICIES:
+            raise AdapterError(
+                f"{self.source}: lean_scan.policy is {policy!r}",
+                hint=f"one of {', '.join(CROSS_CHECK_POLICIES)}; `union` is the default and "
+                     "there is no value that omits a declaration quietly")
 
     def _path(self, repo: Path, field: str) -> Path:
         return repo / str(self.config.get(field) or DEFAULT_FILES[field])
@@ -300,12 +373,53 @@ class AttributionTableAdapter(Adapter):
                     private=False,
                     granularity=str(self.config.get("granularity") or "item"),
                     source_sha=source_sha,
+                    provenance="table",
                 ))
+        scan, scanned = self._cross_check(repo, regions, rows, source_id, source_sha,
+                                          exercise_permanent)
+        rows.extend(scanned)
         rows.sort(key=lambda r: (r["source_id"], r["item"], r["sub"], not r["key"], r["decl"]))
         counts["rows"] = len(rows)
         counts["declarations"] = len({r["decl"] for r in rows})
         counts["tagged"] = len(rows)
-        return rows, counts, missing, rejects
+        return rows, counts, missing, rejects, scan
+
+    def _cross_check(self, repo: Path, regions: Mapping[str, dict], table_rows: list[dict],
+                     source_id: str, source_sha: str | None,
+                     exercise_permanent: bool) -> tuple[dict, list[dict]]:
+        """The table against the Lean sources: what does the export leave out?
+
+        Returns ``(report, rows to union)``.  The comparison is by declaration
+        NAME against the declarations the table actually produced rows for --
+        not against the refinement's id list, which also holds ids whose snippet
+        is missing and which therefore never reach the corpus a worker greps.
+        """
+        policy = self.cross_check_policy()
+        report: dict = {"policy": policy, "sections": list(self.claim_sections())}
+        if policy == "off":
+            return report, []
+        claims, counts = self.lean_claims(repo, source_id)
+        in_table = {str(r["decl"]) for r in table_rows}
+        omitted = [c for c in claims if c.decl not in in_table]
+        unionable = [c for c in omitted if c.item is not None]
+        union = policy == "union"
+        report.update({
+            "files": counts["files"],
+            "declarations": counts["declarations"],
+            "claims": len(claims),
+            "in_table": len(claims) - len(omitted),
+            "omitted": len(omitted),
+            "unioned": len(unionable) if union else 0,
+            # omitted, but the docstring names no book item, so there is no key
+            # to file them under: reported, never guessed onto an item.
+            "unattributed": len(omitted) - len(unionable),
+            "anonymous_claims": counts["anonymous_claims"],
+            "omissions": [c.report(unioned=union and c.item is not None) for c in omitted],
+        })
+        if not union:
+            return report, []
+        return report, self._scan_rows(unionable, regions, source_id, source_sha,
+                                       exercise_permanent)
 
     def _ledger_kinds(self, repo: Path) -> dict[str, str]:
         path = self._ledger_path(repo)
@@ -315,18 +429,162 @@ class AttributionTableAdapter(Adapter):
         return {n["id"]: str(n.get("kind") or "")
                 for n in ledger.get("formalization_nodes", []) if n.get("id")}
 
+    # -- the cross-check against the Lean sources --------------------------
+    def cross_check_policy(self) -> str:
+        """``union`` | ``report`` | ``off`` -- what an omission is allowed to do."""
+        return str(self.get("lean_scan.policy", DEFAULT_CROSS_CHECK_POLICY)).lower()
+
+    def claim_sections(self) -> tuple[str, ...]:
+        """Named ``section`` blocks whose membership is a claim on the book."""
+        raw = self.get("lean_scan.sections", None)
+        if raw in (None, "", [], ()):
+            return DEFAULT_CLAIM_SECTIONS
+        return tuple(str(s) for s in ([raw] if isinstance(raw, str) else raw))
+
+    def lean_files(self, repo: str | Path | None = None) -> list[Path]:
+        """The Lean sources the cross-check reads: ``lean_scan.glob`` minus its
+        excludes, minus anything this repository's git ignores.
+
+        Not adapter.yaml's ``glob:``.  That one selects this convention's
+        EXPORT (``pdf-overlay/data/*.json``), and pointing the cross-check at it
+        would have it compare the table against itself.
+        """
+        path = self.resolve_repo(repo)
+        raw = self.get("lean_scan.glob", DEFAULT_LEAN_GLOB)
+        globs: Sequence[str] = [str(raw)] if isinstance(raw, str) else [str(g) for g in raw]
+        skip = self.get("lean_scan.exclude", None)
+        excludes: Sequence[str] = (list(DEFAULT_LEAN_EXCLUDE) if skip in (None, "", [], ())
+                                   else ([str(skip)] if isinstance(skip, str)
+                                         else [str(g) for g in skip]))
+        return self.select_files(path, globs, excludes)
+
+    def lean_claims(self, repo: str | Path | None = None, source_id: str | None = None
+                    ) -> tuple[list[LeanClaim], Counter]:
+        """Every NAMED declaration the Lean sources claim for the book.
+
+        Two signals, both the repository's own and neither of them typed in:
+
+        * a docstring that NAMES a book item, read with this source's kind list
+          through :func:`cflib.items.find_items` -- the one item grammar, not a
+          second regex here.  The LEADING mention wins, exactly as a docstring
+          tag's does: ``Exercise 1.1.21(3) ... as in Definition 1.1.1`` claims
+          the exercise and cross-references the definition.
+        * membership of a named section this convention files book statements
+          under (:meth:`claim_sections`).
+
+        Anonymous declarations are counted and never claimed.  The table's id
+        for one is a curated slug (``example:BV-limits-...``), not a position,
+        so there is no name to compare and every anonymous ``example`` would
+        report as an omission -- 139 of them at measure_theory 53a2643, which
+        would bury the 8 named ones this is for.
+        """
+        path = self.resolve_repo(repo)
+        kinds = self.numbered_kinds(source_id)
+        wanted = set(self.claim_sections())
+        claims: list[LeanClaim] = []
+        counts: Counter[str] = Counter()
+        for lean in self.lean_files(path):
+            rel = str(lean.relative_to(path))
+            try:
+                decls = leanparse.parse_file(lean, rel)
+            except (OSError, UnicodeDecodeError):   # pragma: no cover - unreadable source
+                counts["unreadable_files"] += 1
+                continue
+            counts["files"] += 1
+            for decl in decls:
+                counts["declarations"] += 1
+                in_section = bool(set(decl.sections) & wanted)
+                found = cf_items.find_items(decl.doc or "", kinds, limit=1)
+                item = found[0] if found else None
+                if item is None and not in_section:
+                    continue
+                if decl.anonymous:
+                    counts["anonymous_claims"] += 1
+                    continue
+                signals = []
+                if item is not None:
+                    signals.append(f"docstring names {item.full}")
+                if in_section:
+                    signals.append("section " + ", ".join(
+                        s for s in decl.sections if s in wanted))
+                claims.append(LeanClaim(
+                    decl=decl.full_name, file=rel, line=decl.line, kind=decl.kind,
+                    private=decl.private, sections=tuple(decl.sections), item=item,
+                    signals=tuple(signals), parsed=decl))
+        counts["claims"] = len(claims)
+        return claims, counts
+
+    def _scan_rows(self, claims: Sequence[LeanClaim], regions: Mapping[str, dict],
+                   source_id: str, source_sha: str | None,
+                   exercise_permanent: bool) -> list[dict]:
+        """One row per omitted claim that carries a book item to file it under."""
+        pages = self._item_pages(regions)
+        rows: list[dict] = []
+        for claim in claims:
+            item = claim.item
+            decl = claim.parsed
+            if item is None or decl is None:
+                continue
+            text = leanparse.strip_comments(decl.body).strip()
+            has_sorry = bool(BARE_SORRY.search(text))
+            page = pages.get(item.id)
+            rows.append(make_row(
+                # the docstring's own words for the item, whitespace collapsed
+                item_raw=item.full,
+                item=item.id,
+                sub=item.sub,
+                item_kind=item.kind,
+                source_id=source_id,
+                decl=claim.decl,
+                kind=decl.kind,
+                namespace=decl.namespace,
+                file=claim.file,
+                line=claim.line,
+                statement=leanparse.signature(decl.body) or re.sub(r"\s+", " ", text).strip(),
+                body=decl.def_body if decl.kind in BODY_KINDS else None,
+                sorry=has_sorry,
+                sorry_class=("none" if not has_sorry
+                             else ("exercise" if exercise_permanent else "gap")),
+                # the page is the OVERLAY's, for the item this declaration names:
+                # the repo's own geometry, the same provenance the table rows
+                # take theirs from.  An item the overlay never measured gets none
+                # rather than a guessed one.
+                page_anchor=page,
+                page_anchor_raw=(f"book p. {page}" if page else None),
+                anchor_source=("own" if page else "none"),
+                repo=self.name,
+                # the table decides what is KEY for an item, and the table has
+                # never seen this declaration.
+                key=False,
+                anonymous=False,
+                private=decl.private,
+                granularity=str(self.config.get("granularity") or "item"),
+                source_sha=source_sha,
+                provenance="lean_scan",
+            ))
+        return rows
+
+    @staticmethod
+    def _item_pages(regions: Mapping[str, dict]) -> dict[str, int]:
+        """item id -> the first printed page the overlay measured it on."""
+        pages: dict[str, int] = {}
+        for region in regions.values():
+            item, page = region.get("item"), region.get("page")
+            if item and isinstance(page, int) and page > 0:
+                pages[item] = min(page, pages.get(item, page))
+        return pages
+
     # -- interface ---------------------------------------------------------
     def extract(self, repo: str | Path | None = None, *,
                 sources: "Mapping[str, str] | None" = None) -> Iterator[dict]:
-        rows, _counts, _missing, _rejects = self._rows(self.resolve_repo(repo),
-                                                       self.bind(sources))
+        rows, *_rest = self._rows(self.resolve_repo(repo), self.bind(sources))
         yield from rows
 
     def dry_run(self, repo: str | Path | None = None, *,
                 sources: "Mapping[str, str] | None" = None) -> dict:
         path = self.resolve_repo(repo)
         binding = self.bind(sources)
-        rows, counts, missing, rejects = self._rows(path, binding)
+        rows, counts, missing, rejects, scan = self._rows(path, binding)
         fp = self.key_inputs()
         kinds = Counter(r["item_kind"] for r in rows)
         return {
@@ -356,6 +614,12 @@ class AttributionTableAdapter(Adapter):
             "unnumbered_labels": len(rejects),
             "rejects": rejects[:50],
             "missing": missing[:50],
+            # The table against the Lean sources it claims to describe. `cf
+            # extract` and `cf onboard` turn `omissions` into a warning naming
+            # every declaration: an export that omits a declaration the repo
+            # carries is a defect in the companion's own table, and a corpus
+            # that hides it produces COVERAGE findings that are simply false.
+            "lean_scan": scan,
             "samples": rows[:3],
             # What this repo says its sources ARE (the ledger's sha, the
             # official-source record, the README's book page), and where the
@@ -379,4 +643,10 @@ class AttributionTableAdapter(Adapter):
             declared = json.loads(refinement_path.read_text(encoding="utf-8")).get("ledger_sha256")
             fp["ledger_sha_in_refinement"] = declared
             fp["ledger_stale"] = bool(declared and declared != fp["ledger_sha"])
+        # The cross-check READS the Lean sources, so they change the result: a
+        # commit that adds a declaration to a `section Companions` block adds a
+        # row and an omission warning, and without this `cf extract` would
+        # replay the table that predates it at an unchanged export sha.
+        if self.cross_check_policy() != "off":
+            fp["lean_scan_sha"] = sha_of_files(self.lean_files(path), path)
         return fp

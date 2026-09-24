@@ -36,7 +36,7 @@ import traceback
 from pathlib import Path
 
 from cflib import discovery, gitsafe, inference, log, state as state_mod, vocab
-from cflib.adapters_api import DRY_RUN_REQUIRED_KEYS
+from cflib.adapters_api import DRY_RUN_REQUIRED_KEYS, cross_check_warning
 from cflib.errors import AdapterError, CfError, DiscoveryError, SourceError
 from cflib.jsonio import write_jsonl
 from cflib.log import format_table
@@ -1165,6 +1165,12 @@ def _dry_run(adapter_yaml: Path, repo: Path, workspace, sources, anchor: str):
     missing = [k for k in DRY_RUN_REQUIRED_KEYS if k not in counts]
     if missing:
         log.warn(f"adapter dry_run() omitted {', '.join(missing)}")
+    # Onboarding is the first and cheapest place to see that a companion's
+    # export disagrees with its own Lean sources; `cf extract` says it again on
+    # every run, because the table it writes is what a worker will grep.
+    warning = cross_check_warning(adapter_yaml.parent.name, counts)
+    if warning:
+        log.warn_block(*warning)
     _print_discovered_sources(counts)
     return counts, None
 

@@ -51,10 +51,65 @@ ROW_OPTIONAL_FIELDS: tuple[str, ...] = (
     "anonymous",       # bool: synthetic id example@<file>:<line>
     "namespace",
     "granularity",     # item | node (ledger repos before curation)
+    "provenance",      # which artifact OF the companion the row was read from
+                       # (cflib.vocab.ROW_PROVENANCE): a corpus built from an
+                       # export is not the repository, and a COVERAGE finding
+                       # has to know the difference.
 )
 
 #: Keys `dry_run` must return; extra keys are printed as-is by `cf onboard`.
 DRY_RUN_REQUIRED_KEYS: tuple[str, ...] = ("declarations", "tagged", "items")
+
+#: The optional ``dry_run`` key carrying an adapter's cross-check of the artifact
+#: it read against the sources that artifact claims to describe.
+CROSS_CHECK_KEY = "lean_scan"
+
+#: How many omissions a single warning names before it says "and N more".  All
+#: of them are in the report either way; this only bounds the terminal.
+CROSS_CHECK_WARN_LIMIT = 25
+
+
+def cross_check_warning(name: str, report: "Mapping[str, Any] | None"
+                        ) -> tuple[str, list[str]] | None:
+    """``(header, lines)`` for :func:`cflib.log.warn_block`, or None.
+
+    An adapter whose corpus is built from an EXPORT of a companion rather than
+    from the companion can be wrong in a way no schema check sees: the export
+    omits a declaration the repository carries, the corpus has no row for it,
+    and a worker who greps the corpus concludes the repository does not state
+    it.  That happened -- a public, sorry-free statement of a determinant image
+    formula, reported as absent from the repo that contains it.  So the
+    disagreement is never silent: whatever the policy does with the row, the
+    command that ran the adapter names every omitted declaration.
+    """
+    scan = dict(report or {}).get(CROSS_CHECK_KEY) or {}
+    omissions = list(scan.get("omissions") or [])
+    if not omissions:
+        return None
+    policy = str(scan.get("policy") or "")
+    what = {
+        "union": "unioned into the table as provenance `lean_scan`",
+        "report": "NOT added to the table (lean_scan.policy: report)",
+    }.get(policy, f"lean_scan.policy: {policy}")
+    unattributed = int(scan.get("unattributed") or 0)
+    header = (f"{name}: the attribution table omits {len(omissions)} declaration(s) that "
+              f"the Lean sources claim for the book -- {scan.get('unioned', 0)} {what}")
+    lines = []
+    for hit in omissions[:CROSS_CHECK_WARN_LIMIT]:
+        flags = "".join([" [private]" if hit.get("private") else "",
+                         "" if hit.get("unioned") else " [not in the table, not in the corpus]"])
+        lines.append(f"  {hit.get('decl')}  {hit.get('file')}:{hit.get('line')}"
+                     f"  ({'; '.join(hit.get('signals') or [])}){flags}")
+    if len(omissions) > CROSS_CHECK_WARN_LIMIT:
+        lines.append(f"  … and {len(omissions) - CROSS_CHECK_WARN_LIMIT} more")
+    if unattributed:
+        lines.append(f"  {unattributed} of these name no book item in their docstring, so there is "
+                     "no item to file them under; they stay out of the corpus entirely.")
+    lines.append("  the omission is a defect in the companion's own attribution table -- report it "
+                 "upstream, and do not")
+    lines.append("  read absence from this corpus as absence from the repository: a COVERAGE "
+                 "finding has to grep the Lean.")
+    return header, lines
 
 
 class Adapter(ABC):
