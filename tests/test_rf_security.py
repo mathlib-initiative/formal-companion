@@ -880,9 +880,26 @@ class TendVersionPreflightTest(unittest.TestCase):
 
     def test_preflight_compares_instead_of_only_printing(self):
         step = self._preflight(">=0.4,<0.6")
-        self.assertIn("tend --version", step["shell"])
+        # not the literal `m.version('tend')`: ssh-quoting rewrites the inner
+        # single quotes, so assert on the part quoting leaves alone.
+        self.assertIn("importlib.metadata", step["shell"])
+        self.assertIn("m.version(", step["shell"])
         self.assertIn(">=0.4,<0.6", step["shell"])
         self.assertTrue(step["record_output"])
+
+    def test_the_probe_does_not_call_a_flag_tend_does_not_have(self):
+        """`tend --version` is not a thing.
+
+        The CLI that shipped as tend 0.1.0 has no ``--version`` flag and its
+        top-level parser requires ``--root``, so probing with it exited 2 --
+        "the following arguments are required: --root" -- and `set -e` took the
+        whole preflight down with it, on a host where tend was installed and
+        working.  Installed package metadata is there whatever the CLI exposes.
+        """
+        for required in (">=0.4,<0.6", ""):
+            shell = self._preflight(required)["shell"]
+            self.assertNotIn("tend --version", shell)
+            self.assertIn("importlib.metadata", shell)
 
     def test_with_nothing_recorded_it_says_it_is_not_checking(self):
         step = self._preflight("")

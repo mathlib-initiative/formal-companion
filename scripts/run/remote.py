@@ -107,15 +107,27 @@ def _rsync(entry: dict, host: dict) -> dict:
     return {"argv": argv, "shell": " ".join(shlex.quote(a) for a in argv)}
 
 
+#: How to make a tend report its version.  NOT ``tend --version``: the CLI that
+#: shipped as tend 0.1.0 has no such flag and its top-level parser requires
+#: ``--root``, so the probe exited 2 ("the following arguments are required:
+#: --root") and took the whole preflight with it.  Installed package metadata is
+#: there whatever the CLI chooses to expose, and prints nothing else.
+TEND_VERSION_PROBE = (
+    "python -c \"import importlib.metadata as m;"
+    "print(m.version('tend'))\" 2>/dev/null || echo unknown"
+)
+
+
 def _tend_version_step(host: dict, tend: str) -> str:
     """The preflight fragment that checks -- or, unrecorded, only prints -- tend's version."""
     required = str(host.get("tend_version_required") or "")
+    probe = f"{tend} {TEND_VERSION_PROBE}"
     if not required:
-        return (f"{tend} tend --version; "
+        return (f"{probe}; "
                 "echo 'tend version NOT checked: record hosts."
                 f"{host.get('name', '<host>')}.tend_version (e.g. \">=0.4,<0.6\") in "
                 "workspace.yaml and cf run will refuse a mismatch'")
-    return (f"{tend} tend --version 2>&1 | tail -1 | python3 -c "
+    return (f"{probe} 2>&1 | tail -1 | python3 -c "
             + shlex.quote(TEND_VERSION_CHECK) + " " + shlex.quote(required))
 
 
