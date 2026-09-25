@@ -277,6 +277,24 @@ def in_chapters(item: str, chapters: Sequence[int] | None,
     return parsed.chapter in {int(c) for c in chapters}
 
 
+def in_sections(item: str, sections: Sequence[str] | None,
+                kinds: Sequence[str] = cfitems.DEFAULT_KINDS) -> bool:
+    """Whether a raw item label belongs to one of ``sections`` (no filter -> True).
+
+    A section is spelled ``<chapter>.<section>`` (``1.7``); an item belongs when
+    its first two number levels are that pair.  Same discipline as
+    :func:`in_chapters`: ONE definition, applied to the entries AND to the
+    reconciled universe, and a label with no section (an unanchored In-text
+    target, or a chapter-level label) is dropped by any filter.
+    """
+    if not sections:
+        return True
+    parsed, _ = cfitems.try_parse(item, kinds)
+    if parsed is None or parsed.chapter is None or parsed.section is None:
+        return False
+    return f"{parsed.chapter}.{parsed.section}" in {str(s) for s in sections}
+
+
 def _parses(item: str, kinds: Sequence[str]) -> bool:
     parsed, _ = cfitems.try_parse(item, kinds)
     return parsed is not None

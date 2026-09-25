@@ -30,6 +30,7 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 import shutil
 import sys
 
@@ -79,6 +80,9 @@ def register(subparsers):
                    help="comma-separated chapters to narrow the task universe to "
                         "(both differential and attack presets; refused for a preset or a "
                         "source that has no such chapter)")
+    p.add_argument("--sections", default=None,
+                   help="comma-separated sections (<chapter>.<section>, e.g. 1.7) to narrow "
+                        "the task universe to; applied on top of --chapters, same presets")
     p.add_argument("--max-open-tasks", type=int, default=None,
                    help="chain depends_on so tend holds at most N worktrees at once")
     p.add_argument("--max-cost", type=float, default=None, help="USD ceiling recorded in run.yaml")
@@ -399,6 +403,41 @@ def _chapters(args, camp, preset, source_id: str) -> tuple[list[int] | None, lis
     return chapters, explicit
 
 
+def _sections(args, camp, preset, source_id: str) -> list[str] | None:
+    """The explicit section filter (``--sections 1.7``), or None.
+
+    Mirrors :func:`_chapters`: refused by name for a preset that cannot narrow,
+    validated against the source's chapters, and applied by the caller to the
+    entries AND the reconciled universe.  A section list has no derived default,
+    so there is only the explicit half.
+    """
+    raw = getattr(args, "sections", None)
+    if not raw:
+        return None
+    if not preset.narrows_by_chapter:
+        raise CfError(
+            f"preset {preset.name!r} does not narrow its task universe by section",
+            hint="drop --sections; presets that consume it: "
+                 + ", ".join(n for n in presets_mod.RUNNABLE
+                             if presets_mod.get(n).narrows_by_chapter))
+    parts = [s.strip() for s in str(raw).split(",") if s.strip()]
+    if not parts:
+        raise CfError("--sections was given no section", hint="e.g. --sections 1.7")
+    bad = [s for s in parts if not re.fullmatch(r"\d+\.\d+", s)]
+    if bad:
+        raise CfError(
+            f"--sections {raw!r} is not a comma-separated list of <chapter>.<section>",
+            hint="e.g. --sections 1.7 or --sections 1.6,1.7")
+    known = [int(c) for c in camp.chapters(source_id)]
+    unknown = sorted({s for s in parts if known and int(s.split(".")[0]) not in known})
+    if unknown:
+        raise CfError(
+            f"source {source_id!r} has no chapter for section " + ", ".join(unknown),
+            hint="its chapters are " + ", ".join(str(c) for c in known)
+                 + f"; `cf sources set {source_id} chapters=…` changes the audited scope")
+    return parts
+
+
 def _local_fleet_limit(camp) -> int:
     """The ceiling `cf run --local` enforces, from this workspace's own defaults."""
     try:
@@ -561,6 +600,7 @@ def run(args) -> int:
     # ---- entries -----------------------------------------------------------
     chapters, chapters_explicit = _chapters(args, camp, preset, source_id)
     kinds = camp.kinds(source_id)
+    sections_explicit = _sections(args, camp, preset, source_id)
     if preset.is_attack:
         targets = _queue_rows(
             _read_json(p.targets_json(source_id, companion),
@@ -586,8 +626,20 @@ def run(args) -> int:
                     + ", ".join(str(c) for c in chapters_explicit),
                     hint=f"`cf pair` wrote pairs/{source_id}/targets.{companion}.json; "
                          "drop --chapters or name a chapter it covers")
+        if sections_explicit:
+            entries = [e for e in entries
+                       if mt.in_sections(e.item, sections_explicit, kinds)]
+            expected_items = [i for i in expected_items
+                              if mt.in_sections(i, sections_explicit, kinds)]
+            if not entries:
+                raise CfError(
+                    f"no target of {companion!r} is in section " + ", ".join(sections_explicit),
+                    hint=f"`cf pair` wrote pairs/{source_id}/targets.{companion}.json; "
+                         "drop --sections or name a section it covers")
         expected_n = len(expected_items)
         universe = f"pairs/{source_id}/targets.{companion}.json"
+        if sections_explicit:
+            universe += " ∩ sections " + ",".join(sections_explicit)
     else:
         queue = _queue_rows(_read_json(p.queue_json(source_id),
                                        f"pairs/{source_id}/queue.json"))
@@ -621,6 +673,26 @@ def run(args) -> int:
                     + ", ".join(str(c) for c in chapters_explicit),
                     hint=f"`cf sources show {source_id}` prints the chapters this source "
                          "covers; drop --chapters or name one of them")
+        if sections_explicit:
+            entries = [e for e in entries
+                       if mt.in_sections(e.item, sections_explicit, kinds)]
+            if expected_n is not None:
+                if expected_items is None:
+                    raise CfError(
+                        f"{p.reconciliation_json(source_id)} has no `task_universe_items`, so "
+                        "a --sections run cannot be reconciled against it",
+                        hint="re-run `cf pair` (it writes the item list), drop --sections, or "
+                             "pass --allow-unreconciled to plan a run nothing checks the size of")
+                expected_items = [i for i in expected_items
+                                  if mt.in_sections(i, sections_explicit, kinds)]
+                expected_n = len(expected_items)
+            universe += " ∩ sections " + ",".join(sections_explicit)
+            if not entries:
+                raise CfError(
+                    "the reconciled universe has no item in section "
+                    + ", ".join(sections_explicit),
+                    hint=f"`cf pair` wrote pairs/{source_id}/queue.json; drop --sections or "
+                         "name a section with paired items")
 
     # ---- prompts -----------------------------------------------------------
     gate_command = (
@@ -868,6 +940,7 @@ def run(args) -> int:
             # the narrowing this plan was asked for, so a count can be explained
             # without re-deriving it: null means "the source's whole scope"
             "chapters": chapters_explicit,
+            "sections": sections_explicit,
             "differential": sum(1 for t in tasks if t.kind == "DIFFERENTIAL"),
             "single_source": sum(1 for t in tasks if t.kind == "SINGLE-SOURCE"),
             "attack": sum(1 for t in tasks if t.kind in ("hunt", "vac")),
