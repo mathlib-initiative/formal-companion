@@ -2083,7 +2083,7 @@ class TestOnboardDecisions(unittest.TestCase):
         self.assertEqual((sdir / "errata.md").read_text(encoding="utf-8"), first)
 
     def test_an_entry_that_lost_content_is_warned_about_by_name(self):
-        """Silence is the defect: "should be , and similarly" shipped unremarked."""
+        """Silence is the defect: "should be , and the same" shipped unremarked."""
         from cflib import log
 
         self._ingested_by_an_older_converter()

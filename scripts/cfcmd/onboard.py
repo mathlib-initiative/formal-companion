@@ -833,7 +833,7 @@ def _report_errata_maths(source_id: str, meta: dict) -> None:
     """Say, loudly and on one stream, which entries may have lost content.
 
     An erratum whose symbols were dropped reads as grammatical English with the
-    substance removed ("In Lemma 3.2.4(i), should be , and similarly"), and a
+    substance removed ("In Corollary 3.2.4(b), should be , and the same"), and a
     worker handed one cannot tell.  `cf` does not refuse the page over it -- the
     other entries are real, and the raw HTML is right there -- but it never
     passes one off silently, which is what used to happen.

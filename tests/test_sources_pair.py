@@ -247,8 +247,8 @@ ERRATA_PAGE = """<html><head><style>.latex{border:0}</style></head><body>
 #: written to the shapes, not copied from any page. The guard exists because
 #: lines like these shipped to workers without a word of warning.
 EMPTIED_LINES = (
-    "- Page 57: In Lemma 3.2.4(i), should be , and similarly for the display "
-    "after (3.9).",
+    "- Page 57: In Corollary 3.2.4(b), should be , and the same in the display "
+    "preceding (3.9).",
     "- Page 58: ... replace \"and not \" with \"and is contained in (as for "
     "every )\", and should be .",
     "- Page 63: Step 2 of the covering argument (Lemma 3.2.4) uses where it "
@@ -264,7 +264,7 @@ RENDERED_DIGEST = {2: "3913a3459272107156923d318a5eef4cec05dd75113495d7241d1b60d
 class ErrataMathsTests(unittest.TestCase):
     """The symbols are the erratum; a stripped entry is worse than no entry.
 
-    ``Page 57: In Lemma 3.2.4(i), should be , and similarly`` reads as
+    ``Page 57: In Corollary 3.2.4(b), should be , and the same`` reads as
     English and says nothing.  The entry it was made from says ``[0,1)`` should
     be ``[0,1]``, which is what a reader comparing a formalisation with the
     author's correction needs.

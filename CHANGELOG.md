@@ -71,7 +71,7 @@ release has something to say.
 - the errata converter deleted every mathematical symbol. On the pages these
   come from a formula is an `<img>` (`latex.php?latex=<url-encoded TeX>`, the
   same TeX in `alt`), so stripping tags left the prose and dropped the content:
-  entries of the shape `In Lemma 3.2.4(i), should be , and similarly` — a
+  entries of the shape `In Corollary 3.2.4(b), should be , and the same` — a
   grammatical sentence that says nothing, shipped to workers as authoritative
   errata, while the symbols sat in the kept `errata.raw.html` the whole time.
   The formulas are now rendered as

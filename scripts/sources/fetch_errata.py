@@ -21,7 +21,7 @@ a WordPress page every formula is an ``<img>`` whose ``src`` is
 ``.../latex.php?latex=<url-encoded TeX>`` and whose ``alt`` carries the same
 TeX; a tag-stripping renderer therefore kept the prose and dropped the symbols,
 which is worse than dropping the entry -- an entry of the shape ``Page 57: In
-Lemma 3.2.4(i), should be , and similarly for the display after (3.9)`` (a
+Corollary 3.2.4(b), should be , and the same in the display preceding (3.9)`` (a
 synthetic example) reads as English and says nothing, and a reader deciding
 whether a formalisation follows the author's correction needs exactly the
 symbols that were deleted.  So :func:`img_tex` recovers the TeX -- ``alt``
@@ -373,7 +373,7 @@ def html_to_markdown(source: str) -> str:
 
 #: Shapes a sentence takes when its mathematics has been deleted from under it,
 #: the shapes a tag-stripping render of these pages produced (the examples are
-#: synthetic): "In Lemma 3.2.4(i), should be , and similarly", "replace
+#: synthetic): "In Corollary 3.2.4(b), should be , and the same", "replace
 #: \"and not \" with \"\"".  They catch SOME emptied sentences, not all: an
 #: entry that lost a formula mid-clause can still read cleanly, so an empty
 #: ``suspect`` list is not proof that nothing was lost.
@@ -401,7 +401,7 @@ def audit_entries(entries: list[dict]) -> list[dict]:
       :class:`_Markdown` saw in it (in practice: TeX the page carried in a
       ``<script type="math/...">``, which is never emitted).
 
-    Silently emitting "In Lemma 3.2.4(i), should be , and similarly" is the
+    Silently emitting "In Corollary 3.2.4(b), should be , and the same" is the
     failure this module exists to stop, so the result is reported by every
     caller -- `cf onboard` and `cf sources refresh` as a warning block naming
     the entries, `cf status` as a count, errata.json as a record.
