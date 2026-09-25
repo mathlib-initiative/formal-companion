@@ -729,6 +729,52 @@ class TestChangedFiles(unittest.TestCase):
         _paths, errs = vf.changed_paths(self.root, "no-such-branch")
         self.assertTrue(errs and "fails closed" in errs[0])
 
+    def test_findings_landed_on_main_after_the_branch_point_are_not_this_workers_deletions(self):
+        """The retry loop of the fleet runs: diffed against main's tip, every
+        worktree behind main read as deleting the findings merged since it
+        branched, and the gate refused nearly every first launch."""
+        self.git("checkout", "-q", "-b", "work")
+        (self.root / "findings" / "a.json").write_text("{}\n")
+        (self.root / "tasks" / "a.yaml").write_text("id: a\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "work")
+        self.git("checkout", "-q", "main")
+        (self.root / "findings").mkdir(exist_ok=True)   # empty on main, so checkout dropped it
+        (self.root / "findings" / "b.json").write_text("{}\n")
+        (self.root / "tasks" / "b.yaml").write_text("id: b\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "b landed on main after work branched")
+        self.git("checkout", "-q", "work")
+        entries, errs = vf.changed_entries(self.root, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(entries, {"findings/a.json": "A", "tasks/a.yaml": "M"})
+        self.assertEqual(vf.check_changed(set(entries)), [])
+
+    def test_deleting_a_landed_finding_is_still_a_deletion(self):
+        """What the tip diff was meant to catch survives the merge-base diff."""
+        (self.root / "findings" / "z.json").write_text("{}\n")
+        (self.root / "tasks" / "z.yaml").write_text("id: z\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "z landed")
+        self.git("checkout", "-q", "-b", "drop")
+        (self.root / "findings" / "z.json").unlink()
+        (self.root / "findings" / "a.json").write_text('{"item": "a"}\n')  # not z's bytes: no rename
+        (self.root / "tasks" / "a.yaml").write_text("id: a\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "drop z")
+        entries, errs = vf.changed_entries(self.root, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(entries.get("findings/z.json"), "D")
+        self.assertEqual(entries.get("findings/a.json"), "A")
+
+    def test_uncommitted_edits_still_count_against_the_merge_base(self):
+        self.git("checkout", "-q", "-b", "dirty2")
+        (self.root / "tasks" / "a.yaml").write_text("id: a\nstatus: complete\n")  # modified, uncommitted
+        (self.root / "findings" / "a.json").write_text("{}\n")                     # untracked
+        entries, errs = vf.changed_entries(self.root, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(entries, {"findings/a.json": "A", "tasks/a.yaml": "M"})
+
 
 # --------------------------------------------------------------------------- #
 # convert_v1
