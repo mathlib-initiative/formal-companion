@@ -40,7 +40,6 @@ release has something to say.
   discipline (applied to the entries AND the reconciled universe, refused by
   name for a preset that cannot narrow, recorded as `tasks.sections` in
   `run.yaml`). Written for the section 1.7 re-run of the Tao differential.
-### Added
 - `docs/design/stage_map.md`: the current data model, workspace layout and
   stage map, replacing the archived design record as the spec.
 - `CONTRIBUTING.md`, `POLICY.md`, this file, and `evals/` (trigger evals as

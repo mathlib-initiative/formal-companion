@@ -423,11 +423,14 @@ def _sections(args, camp, preset, source_id: str) -> list[str] | None:
     parts = [s.strip() for s in str(raw).split(",") if s.strip()]
     if not parts:
         raise CfError("--sections was given no section", hint="e.g. --sections 1.7")
-    bad = [s for s in parts if not re.fullmatch(r"\d+\.\d+", s)]
+    bad = [s for s in parts if not re.fullmatch(r"[0-9]+\.[0-9]+", s)]
     if bad:
         raise CfError(
             f"--sections {raw!r} is not a comma-separated list of <chapter>.<section>",
             hint="e.g. --sections 1.7 or --sections 1.6,1.7")
+    # The labels are compared as ints ("1.7"), so the flag is canonicalised the
+    # same way: "1.07" and "01.7" mean section 1.7, and a repeat counts once.
+    parts = list(dict.fromkeys(f"{int(c)}.{int(s)}" for c, s in (x.split(".") for x in parts)))
     known = [int(c) for c in camp.chapters(source_id)]
     unknown = sorted({s for s in parts if known and int(s.split(".")[0]) not in known})
     if unknown:
@@ -627,15 +630,19 @@ def run(args) -> int:
                     hint=f"`cf pair` wrote pairs/{source_id}/targets.{companion}.json; "
                          "drop --chapters or name a chapter it covers")
         if sections_explicit:
+            # A section that matches no target is refused BY NAME, as an unknown
+            # chapter is: a typo in a list must not plan the rest and record itself.
+            missing = [s for s in sections_explicit
+                       if not any(mt.in_sections(e.item, [s], kinds) for e in entries)]
+            if missing:
+                raise CfError(
+                    f"no target of {companion!r} is in section " + ", ".join(missing),
+                    hint=f"`cf pair` wrote pairs/{source_id}/targets.{companion}.json; "
+                         "drop --sections or name a section it covers")
             entries = [e for e in entries
                        if mt.in_sections(e.item, sections_explicit, kinds)]
             expected_items = [i for i in expected_items
                               if mt.in_sections(i, sections_explicit, kinds)]
-            if not entries:
-                raise CfError(
-                    f"no target of {companion!r} is in section " + ", ".join(sections_explicit),
-                    hint=f"`cf pair` wrote pairs/{source_id}/targets.{companion}.json; "
-                         "drop --sections or name a section it covers")
         expected_n = len(expected_items)
         universe = f"pairs/{source_id}/targets.{companion}.json"
         if sections_explicit:
@@ -674,6 +681,13 @@ def run(args) -> int:
                     hint=f"`cf sources show {source_id}` prints the chapters this source "
                          "covers; drop --chapters or name one of them")
         if sections_explicit:
+            missing = [s for s in sections_explicit
+                       if not any(mt.in_sections(e.item, [s], kinds) for e in entries)]
+            if missing:
+                raise CfError(
+                    "the paired queue has no item in section " + ", ".join(missing),
+                    hint=f"`cf pair` wrote pairs/{source_id}/queue.json; drop --sections or "
+                         "name a section with paired items")
             entries = [e for e in entries
                        if mt.in_sections(e.item, sections_explicit, kinds)]
             if expected_n is not None:
@@ -687,12 +701,6 @@ def run(args) -> int:
                                   if mt.in_sections(i, sections_explicit, kinds)]
                 expected_n = len(expected_items)
             universe += " ∩ sections " + ",".join(sections_explicit)
-            if not entries:
-                raise CfError(
-                    "the reconciled universe has no item in section "
-                    + ", ".join(sections_explicit),
-                    hint=f"`cf pair` wrote pairs/{source_id}/queue.json; drop --sections or "
-                         "name a section with paired items")
 
     # ---- prompts -----------------------------------------------------------
     gate_command = (
@@ -991,7 +999,7 @@ def run(args) -> int:
     if args.host == LOCAL and len(tasks) > local_limit:
         print(f"  note     : {len(tasks)} items is above local_fleet_max_items "
               f"({local_limit}), so `cf run {run_id} --local` will refuse. Either plan it "
-              f"for a server (--host <alias> --i-have-consent), narrow it (--chapters), "
+              f"for a server (--host <alias> --i-have-consent), narrow it (--chapters, --sections), "
               f"raise local_fleet_max_items in workspace.yaml, or accept a resume with "
               f"`cf run {run_id} --local --force`")
     if not consent_given and args.host != LOCAL:
