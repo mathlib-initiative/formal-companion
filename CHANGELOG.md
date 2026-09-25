@@ -34,15 +34,6 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
-### Fixed
-- The findings gate's changed-files check now diffs a contribution from the
-  point it branched (the merge base with the merge target), not from the
-  target's tip. Against the tip, every finding merged after a worktree was cut
-  read as that worker's deletion, so the gate refused nearly every first
-  launch and each task needed a rework to pass (903 launches for 385
-  worktrees in the first campaign). A landed finding a worker really deletes
-  is still refused, and uncommitted edits still count.
-
 ### Added
 - `cf plan-run --sections 1.7`: narrow a run's task universe to one or more
   `<chapter>.<section>` labels, one level below `--chapters` and with the same
@@ -110,6 +101,15 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- The findings gate's changed-files check now diffs a contribution from the
+  point it branched (the merge base with the merge target), not from the
+  target's tip. Against the tip, every finding merged after a worktree was cut
+  read as that worker's deletion, so the gate refused nearly every first
+  launch and each task needed a rework to pass (903 launches for 385
+  worktrees in the first campaign). A landed finding a worker really deletes
+  is still refused (and a history with several merge bases, or a rewrite
+  of a finding already on the target, is refused too), and uncommitted edits
+  still count.
 - the errata converter deleted every mathematical symbol. On the pages these
   come from a formula is an `<img>` (`latex.php?latex=<url-encoded TeX>`, the
   same TeX in `alt`), so stripping tags left the prose and dropped the content:

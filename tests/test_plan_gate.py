@@ -767,6 +767,45 @@ class TestChangedFiles(unittest.TestCase):
         self.assertEqual(entries.get("findings/z.json"), "D")
         self.assertEqual(entries.get("findings/a.json"), "A")
 
+    def test_several_merge_bases_fail_closed(self):
+        """A criss-cross history has more than one merge base; the gate refuses
+        rather than pick one and diff from it."""
+        self.git("checkout", "-q", "-b", "w1")
+        (self.root / "findings" / "x.json").write_text('{"item": "x"}\n')
+        (self.root / "tasks" / "x.yaml").write_text("id: x\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "w1")
+        self.git("checkout", "-q", "main")
+        (self.root / "findings").mkdir(exist_ok=True)
+        (self.root / "findings" / "y.json").write_text('{"item": "y"}\n')
+        (self.root / "tasks" / "y.yaml").write_text("id: y\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "y landed")
+        self.git("merge", "-q", "--no-ff", "-m", "land w1", "w1")     # main = merge(y, w1)
+        self.git("checkout", "-q", "w1")
+        self.git("merge", "-q", "--no-ff", "-m", "criss-cross", "main~1")   # w1 merges y's commit
+        entries, errs = vf.changed_entries(self.root, "main")
+        self.assertEqual(entries, {})
+        self.assertTrue(errs and "merge bases" in errs[0] and "fails closed" in errs[0], errs)
+
+    def test_rewriting_a_neighbours_finding_landed_after_the_branch_point_reads_as_modified(self):
+        self.git("checkout", "-q", "-b", "work2")
+        self.git("checkout", "-q", "main")
+        (self.root / "findings").mkdir(exist_ok=True)
+        (self.root / "findings" / "x.json").write_text('{"item": "x"}\n')
+        (self.root / "tasks" / "x.yaml").write_text("id: x\nstatus: complete\n")
+        self.git("add", "-A")
+        self.git("commit", "-qm", "x landed after work2 branched")
+        self.git("checkout", "-q", "work2")
+        (self.root / "findings").mkdir(exist_ok=True)
+        (self.root / "findings" / "x.json").write_text('{"item": "x", "rewritten": true}\n')
+        (self.root / "findings" / "a.json").write_text('{"item": "a"}\n')
+        (self.root / "tasks" / "a.yaml").write_text("id: a\nstatus: complete\n")
+        entries, errs = vf.changed_entries(self.root, "main")
+        self.assertEqual(errs, [])
+        self.assertEqual(entries.get("findings/x.json"), "M")
+        self.assertTrue(vf.check_changed(entries), "a rewrite of a landed finding must be refused")
+
     def test_uncommitted_edits_still_count_against_the_merge_base(self):
         self.git("checkout", "-q", "-b", "dirty2")
         (self.root / "tasks" / "a.yaml").write_text("id: a\nstatus: complete\n")  # modified, uncommitted
