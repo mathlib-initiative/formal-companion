@@ -228,7 +228,7 @@ ERRATA_PAGE = """<html><head><style>.latex{border:0}</style></head><body>
       alt="\\displaystyle [0,1)" title="[0,1)" class="latex" />
  should be
  <img src="https://cdn.examplebox/latex.php?latex=%5B0%2C1%5D&#038;bg=ffffff&#038;s=0"
-      alt="\\displaystyle [0,1]" class="latex" />, and similarly for the
+      alt="\\displaystyle [0,1]" class="latex" />, and the same in the
  display after (3.9).</li>
 <li>Page 90: replace
  <img src="https://cdn.examplebox/latex.php?latex=x+%5Cin+E_n&#038;s=0" class="latex" />
@@ -258,7 +258,7 @@ EMPTIED_LINES = (
 
 #: sha256 of ``render(ERRATA_PAGE)[0]`` per RENDERER_VERSION; see
 #: ErrataMathsTests.test_the_render_is_pinned_to_the_converter_version.
-RENDERED_DIGEST = {2: "3913a3459272107156923d318a5eef4cec05dd75113495d7241d1b60d85eec79"}
+RENDERED_DIGEST = {2: "2645d72c4e7fb06b302c81e518c38c51753c6b5a532b70a99c565a771da5cc06"}
 
 
 class ErrataMathsTests(unittest.TestCase):
