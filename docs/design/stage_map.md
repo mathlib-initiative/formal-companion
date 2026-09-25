@@ -95,7 +95,9 @@ lines move together or not at all.
     errata.md / .raw.html / .json    the rendered errata, the bytes curl
                               returned, and the fetch record
   companions/<name>/          committed: adapter.yaml, conventions.md,
-                              statements.jsonl, state.json
+                              statements.jsonl, state.json, and -- for an
+                              export-driven adapter with omissions it cannot
+                              key on an item -- unattributed.jsonl
   pairs/<source_id>/          committed: pairs.jsonl, coverage.md, index.json,
                               reconciliation.json, rejected.json, queue.json,
                               targets.<name>.json, def-coverage.<name>.json,
@@ -218,7 +220,7 @@ The numbers are the ones the module docstrings use.
 |---|---|---|
 | 0 | `cf init`, `cf onboard`, `cf doctor` | `workspace.yaml`, `registry.yaml`, `companions/<name>/{adapter.yaml, conventions.md}` |
 | 1 | (inside `onboard`) `cf sources refresh` | `sources/<id>/{text.txt, pages/, items.json, meta.json, errata.*}` |
-| 2 | `cf extract` | `companions/<name>/statements.jsonl` — no-op when (repo commit, adapter key) is unchanged |
+| 2 | `cf extract` | `companions/<name>/statements.jsonl` — no-op when (repo commit, adapter key) is unchanged; an export-driven adapter cross-checks its table against the Lean sources first |
 | 3 | `cf pair` | `pairs/<source_id>/*`: pairs, coverage, queue, targets, def-coverage, uncovered, and the mechanical page-anchor check |
 | 4 | `cf plan-run` | `runs/<id>/{run.yaml, tasks/, prompts/, gate.json, tend-root/}`; reconciles the task count against `items.json ∩ any-repo` |
 | 5 | `cf run` | nothing in the workspace but `run.yaml`'s records: it transfers and drives the fleet (**dry run until `--execute`**) |
@@ -235,9 +237,42 @@ in it. `fix`, `review-pr`, `camera-ready` and `publish-verdicts` (which
 `ledger/compat.py` numbers stage 13) are documented and **not implemented**:
 v1 is findings-only, and `fixes/` and `reviews/` are where they would write.
 
-Three stages carry a gate of their own, and each one is a number that was once
+Four stages carry a gate of their own, and each one is a number that was once
 wrong. The module docstrings cite these sentences, so they move with the code:
 
+- **Stage 2.** An adapter that builds its rows from an **export** of a companion
+  rather than from the companion cross-checks the two, and the disagreement is
+  never silent. `attribution_table` reads the Lean sources for the two signals
+  the repository itself gives — a docstring whose LEADING item mention names a
+  book item (through `cflib.items.find_items`, with the source's own kind list,
+  never a second regex; a leading mention the grammar refuses keys nothing and
+  is reported, and the next mention along is never used instead) and
+  membership of a named `section` **or `namespace`** the convention files book
+  statements under (`lean_scan.regions`, default `Companions`; one repo may
+  spell the same block both ways) — and compares them by declaration name
+  against the rows the export produced.
+  Omissions go two ways, because most cannot be keyed on an item: under
+  `lean_scan.policy: union` one that names a book item becomes a row stamped
+  `provenance: "lean_scan"`, and one that names none — a block headed by prose
+  such as `Companion 3: the gadget hierarchy`, with no number anywhere — is
+  written to `companions/<name>/unattributed.jsonl`, which `cf plan-run` stages
+  beside the statement tables and both prompts name as the list to read before
+  any "no counterpart exists" claim. The item grammar never guesses an item for
+  those. Under `report` nothing is unioned, and the file still holds exactly
+  the omissions that name no item. Under `union` and `report`, `cf extract` and
+  `cf onboard` name the omitted declarations in one warning (the first 25 on
+  the terminal; the dry-run report has all); under `off` no scan runs, and both
+  commands warn on every run that the table was not cross-checked. A bare
+  `policy: off` is YAML false and is read as `off`. The scan always excludes
+  `.lake/**` — without that it reads Mathlib and calls its declarations the
+  companion's; a custom `lean_scan.exclude` adds to it — and its content is in
+  the extract key, so a commit that adds a declaration to one of those regions
+  re-extracts. Anonymous declarations are counted and never claimed: an export
+  names them by curated slug, not by position, so there is no name to compare.
+  The rule this enforces is that **absence from an export is not absence from a
+  repository**: a COVERAGE finding saying a companion states some identity
+  nowhere, read off a table-only corpus, is a claim about the export, and a
+  public, sorry-free theorem the export left out makes it false.
 - **Stage 7.** `ledger/validate_ledger.py` refuses — never warns about — a
   ledger row that does not answer a real finding by `finding_id` (a 22-char
   label prefix is how batch-1 challenge results were mislinked); that uses a

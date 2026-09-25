@@ -70,10 +70,18 @@ again as a fix-PR invariant.
 
 - **Symptom:** a numbered item with no counterpart and no documented skip decision.
 - **Detect:** the coverage map (book item → declaration) per section; any row with no declaration
-  and no skip note is a hit. `cf pair` emits it as `uncovered.<name>.json`. Remarks count — they
-  often carry counterexamples and non-invariance results.
+  and no skip note is a **candidate**. `cf pair` emits it as `uncovered.<name>.json`. Remarks count
+  — they often carry counterexamples and non-invariance results.
+- **Confirm before reporting, always.** The coverage map is built from the statement table, and the
+  table is built by an adapter — for some companions out of an export the repository publishes,
+  which can omit declarations the repository contains. So `grep -rn --include=*.lean` the repo for
+  the *mathematical content* (not the item label: an untagged declaration carries none), excluding
+  `.lake/`. A declaration that states the item exists more often than the map suggests, and a
+  `COVERAGE` finding that the repository contradicts is a false claim about somebody's work.
 - **Fix:** state it (`sorry`'d if it is an exercise), or record an explicit skip note in the section
-  header. Report as kind `COVERAGE`.
+  header. Report as kind `COVERAGE` **only when the grep came back empty**, and say what you ran.
+  If the declaration is there but the index does not attribute it to the item, that is an
+  attribution gap in the companion's index — report that instead, naming file and line.
 
 ## P5 — Hand-rolled library facts / duplicate lemmas
 

@@ -307,20 +307,65 @@ def _parse_in_text(raw: str, s: str, kinds: Sequence[str], *, numbering=None):
     return None, Reject(raw, REJECT_IN_TEXT_NO_TARGET, {"body": body[:60]})
 
 
+def _mention_re(kinds: Sequence[str], numbering=None) -> "re.Pattern[str]":
+    """Where a label of this source's grammar may START inside running prose.
+
+    The pattern follows the source's own numbering, so a book numbered
+    ``Theorem 7`` is found as readily as one numbered ``Lemma 1.2.13``.  It only
+    LOCATES a candidate: :func:`try_parse` is what decides, so a run the pattern
+    finds but the grammar refuses is still a reject and never an item.
+    """
+    low, _high = numbering_range(numbering)
+    digits = r"\d+" + (r"(?:\.\d+)" * (low - 1) if low > 1 else "")
+    return re.compile(r"\b(" + "|".join(re.escape(k) for k in kinds) + r")\s+" + digits, re.I)
+
+
+def find_items(text: str, kinds: Sequence[str] = DEFAULT_KINDS, *,
+               numbering=None, limit: int = 0,
+               rejects: "list[Reject] | None" = None) -> list[Item]:
+    """Every numbered item NAMED anywhere in a blob of prose, in reading order.
+
+    This is the one way to ask "does this paragraph claim a book item?" -- the
+    docstring cross-check in ``adapters.attribution_table`` asks it of every
+    Lean docstring in a companion, and it must ask it with the grammar and the
+    kind list of the SOURCE rather than with a private regex (CLAUDE.md S4:
+    one item grammar).  ``adapters.itemtag.find_tag`` answers a narrower
+    question -- which item is this docstring's OWN tag -- and requires the tag
+    to lead or to be backticked; a docstring that names its exercise in the
+    middle of a sentence is invisible to it and visible here.
+
+    ``limit`` counts MENTIONS, not accepted items: only the first ``limit``
+    mentions are read, so ``limit=1`` asks "what does the LEADING mention
+    claim" -- which is what a caller that wants "what does this declaration
+    claim" means.  A mention the grammar refuses is a reject, exactly as in
+    :func:`_find_reference`: it is appended to ``rejects`` when the caller
+    passes a list (the caller must report it, CLAUDE.md S4), and it is never an
+    invitation to reach for the next mention along.  ``Theorem 2.3.4.5
+    generalises Lemma 1.2.3`` under a two-to-three-segment numbering claims
+    nothing; it does not claim the lemma it cross-references.
+    """
+    out: list[Item] = []
+    body = text or ""
+    for seen, m in enumerate(_mention_re(kinds, numbering).finditer(body), start=1):
+        item, reject = try_parse(body[m.start():], kinds, numbering=numbering)
+        if item is not None and item.numbered:
+            out.append(item)
+        elif reject is not None and rejects is not None:
+            rejects.append(reject)
+        if limit and seen >= limit:
+            break
+    return out
+
+
 def _find_reference(body: str, kinds: Sequence[str], *, numbering=None) -> Item | None:
     """Find a numbered item named anywhere inside an In-text qualifier.
 
     ``In-text definition, Lemma 1.2.13(iii)`` and ``In-text step in the proof
     of Lemma 1.2.13(ii)`` both point at a numbered item with no printed page.
-    The search pattern follows the source's own numbering, so a book numbered
-    ``Theorem 7`` can anchor an in-text item too; the parse that follows is the
-    one that decides, so a run the pattern finds but the grammar refuses is
-    still a reject.
+    The FIRST candidate decides: a qualifier whose leading mention the grammar
+    refuses is a reject, not an invitation to reach for the next mention along.
     """
-    low, _high = numbering_range(numbering)
-    digits = r"\d+" + (r"(?:\.\d+)" * (low - 1) if low > 1 else "")
-    pattern = r"\b(" + "|".join(re.escape(k) for k in kinds) + r")\s+" + digits
-    m = re.search(pattern, body, re.I)
+    m = _mention_re(kinds, numbering).search(body)
     if not m:
         return None
     ref, _ = try_parse(body[m.start():], kinds, numbering=numbering)

@@ -48,6 +48,7 @@ import sys
 import tempfile
 import types
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -805,6 +806,774 @@ class TestBlueprintTexAdapter(unittest.TestCase):
             self.assertNotEqual(self.adapter.key(), before)
         finally:
             path.write_text(original, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# coverage#1 -- the attribution table against the Lean sources it describes
+# ---------------------------------------------------------------------------
+
+#: A companion whose corpus is built from an EXPORT can be short of the
+#: repository, and nothing downstream could see it.  The shape: NAMED
+#: declarations inside a `Companions` region -- spelled `section Companions` in
+#: some files and `namespace Companions` in others, so a check that read only
+#: sections would miss the rest -- are absent from the table, and so are
+#: declarations whose docstring names a book item.  A worker grepping such a
+#: corpus finds nothing and reports a public, sorry-free theorem as absent from
+#: the repository that contains it.
+#:
+#: The fixture is that shape in miniature: a table naming one declaration, and a
+#: Lean tree carrying five more that claim the book in one of the ways this
+#: convention exposes -- a docstring item, a `section Companions`, a `namespace
+#: Companions` -- plus a `.lake` copy of "Mathlib" that the scan must never walk,
+#: and an anonymous `example` inside the section that it must never claim (an
+#: export names those by curated slug, not by position, so there is no name to
+#: compare and every one of them would report as an omission).
+
+TABLE_DECL = "Widget.Basic.gadget_of_bounded"
+#: omitted, docstring names its item, NOT in a section -> unioned
+DOC_ONLY_DECL = "Widget.Basic.gadget_indicator_of_le"
+#: omitted, in `section Companions` AND names its item -> unioned
+SECTION_AND_DOC_DECL = "Widget.Basic.gadget_linear_image"
+#: omitted, in `section Companions`, names no item -> reported, never unioned
+SECTION_ONLY_DECL = "Widget.Basic.gadgetFirstFourVertices"
+#: omitted, in `namespace Companions`, names no item -> reported, never unioned;
+#: its block header names the item only in prose
+NAMESPACE_ONLY_DECL = "Widget.Basic.Companions.gadget_family_card_le"
+#: what a bare `**/*.lean` would drag in
+LAKE_DECL = "Mathlib.Order.le_of_bogus"
+
+
+def _attribution_repo(root: Path) -> Path:
+    """A minimal attribution_table companion: one table row, four Lean claims."""
+    import json
+
+    repo = root / "widget"
+    (repo / "pdf-overlay" / "data").mkdir(parents=True)
+    (repo / "Widget").mkdir(parents=True)
+    (repo / ".lake" / "packages" / "mathlib" / "Mathlib").mkdir(parents=True)
+
+    (repo / "pdf-overlay" / "official-source.json").write_text(
+        json.dumps({"title": "A Book", "sha256": "b" * 64}), encoding="utf-8")
+    (repo / "pdf-overlay" / "data" / "geometry-batch-a.json").write_text(json.dumps({
+        "items": [
+            {"label": "Definition 1.1.1", "regions": [{"region_id": "r1", "page": 21}]},
+            # the page the cross-check hands a unioned row: the overlay measured
+            # this item even though the table attributes no declaration to it.
+            {"label": "Exercise 1.2.21", "regions": [{"region_id": "r2", "page": 41}]},
+        ]}), encoding="utf-8")
+    (repo / "pdf-overlay" / "data" / "target-refinement.json").write_text(json.dumps({
+        "entries": [{"region_id": "r1", "formalization_ids": [TABLE_DECL],
+                     "key_formalization_ids": [TABLE_DECL]}]}), encoding="utf-8")
+    (repo / "pdf-overlay" / "data" / "declaration-snippets.json").write_text(json.dumps({
+        "snippets": {TABLE_DECL: {"file": "Widget/Basic.lean", "line": 6,
+                                  "text": "theorem gadget_of_bounded : True := trivial"}}}),
+        encoding="utf-8")
+    (repo / "source-formalization-ledger.json").write_text(json.dumps({
+        "formalization_nodes": [{"id": TABLE_DECL, "kind": "theorem"}]}), encoding="utf-8")
+
+    (repo / "Widget" / "Basic.lean").write_text(
+        "namespace Widget.Basic\n"
+        "\n"
+        "/-- `Definition 1.1.1`, the elementary gadget. -/\n"
+        "theorem gadget_of_bounded : True := trivial\n"
+        "\n"
+        "/-- Exercise 1.1.21(3), integral half, for every interval as in\n"
+        "Definition 1.1.1: the gadget of an indicator is its measure. -/\n"
+        "theorem gadget_indicator_of_le : True := trivial\n"
+        "\n"
+        "section Companions\n"
+        "\n"
+        "/-- A sanity check with no book item at all. -/\n"
+        "example : True := trivial\n"
+        "\n"
+        "/-- Exercise 1.2.21, measure half: the gadget of a linear image. -/\n"
+        "theorem gadget_linear_image : True := trivial\n"
+        "\n"
+        "/-- The first four vertices, as a worked constant. -/\n"
+        "private def gadgetFirstFourVertices : Nat := 4\n"
+        "\n"
+        "end Companions\n"
+        "\n"
+        "/-- No book item here either. -/\n"
+        "theorem gadget_helper : True := trivial\n"
+        "\n"
+        "namespace Companions\n"
+        "\n"
+        "/-! ## Companion 3: the gadget hierarchy -/\n"
+        "\n"
+        "/-- Every gadget family has at most continuum many members. -/\n"
+        "theorem gadget_family_card_le (d : Nat) : True := trivial\n"
+        "\n"
+        "end Companions\n"
+        "\n"
+        "end Widget.Basic\n", encoding="utf-8")
+    # the compiler's copy of the library, which is not this companion
+    (repo / ".lake" / "packages" / "mathlib" / "Mathlib" / "Order.lean").write_text(
+        "namespace Mathlib.Order\n"
+        "\n"
+        "section Companions\n"
+        "\n"
+        "/-- Theorem 1.1.1 of somebody else's book. -/\n"
+        "theorem le_of_bogus : True := trivial\n"
+        "\n"
+        "end Companions\n"
+        "\n"
+        "end Mathlib.Order\n", encoding="utf-8")
+    return repo
+
+
+def _attribution_adapter(repo: Path, **config):
+    return adapters_api.from_config({
+        "adapter": "attribution_table", "name": "widget", "repo": str(repo),
+        "page_offset": 16, "sources": {"default": "s"}, **config})
+
+
+class TestTheTableIsCrossCheckedAgainstTheLean(unittest.TestCase):
+    """An export that omits a declaration the repository carries is reported."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = _attribution_repo(tmpdir("cf-rf-adapters-xcheck-"))
+        cls.adapter = _attribution_adapter(cls.repo)
+        cls.report = cls.adapter.dry_run(sources={"s": SHA})
+        cls.scan = cls.report["lean_scan"]
+        cls.rows = list(cls.adapter.extract(sources={"s": SHA}))
+
+    def omissions(self) -> dict:
+        return {hit["decl"]: hit for hit in self.scan["omissions"]}
+
+    # -- the scan itself ---------------------------------------------------
+    def test_the_omissions_are_named_one_by_one(self):
+        self.assertEqual(sorted(self.omissions()),
+                         sorted([DOC_ONLY_DECL, SECTION_AND_DOC_DECL, SECTION_ONLY_DECL,
+                                 NAMESPACE_ONLY_DECL]))
+        self.assertEqual(self.scan["omitted"], 4)
+        self.assertEqual(self.scan["in_table"], 1)
+
+    def test_a_namespace_region_counts_exactly_like_a_section(self):
+        """One repo may spell the same block both ways, file by file.
+
+        A check that read only `section Companions` would miss every
+        declaration of the files that open the region as a namespace.
+        """
+        hit = self.omissions()[NAMESPACE_ONLY_DECL]
+        self.assertEqual(hit["signals"], ["namespace Companions"])
+        self.assertFalse(hit["unioned"])
+
+    def test_each_omission_says_which_signal_claimed_it(self):
+        hits = self.omissions()
+        self.assertEqual(hits[DOC_ONLY_DECL]["signals"],
+                         ["docstring names Exercise 1.1.21(3)"])
+        self.assertEqual(hits[SECTION_AND_DOC_DECL]["signals"],
+                         ["docstring names Exercise 1.2.21", "section Companions"])
+        self.assertEqual(hits[SECTION_ONLY_DECL]["signals"], ["section Companions"])
+
+    def test_each_omission_carries_its_file_and_line(self):
+        for hit in self.scan["omissions"]:
+            self.assertEqual(hit["file"], "Widget/Basic.lean")
+            self.assertGreater(hit["line"], 0)
+
+    def test_a_declaration_the_table_has_is_not_an_omission(self):
+        self.assertNotIn(TABLE_DECL, self.omissions())
+
+    def test_a_declaration_claiming_nothing_is_not_an_omission(self):
+        """`gadget_helper` is in neither signal, so the table is right to omit it."""
+        self.assertNotIn("Widget.Basic.gadget_helper", self.omissions())
+
+    def test_the_lake_tree_is_never_walked(self):
+        """A bare `**/*.lean` over a built Lake project reads Mathlib.
+
+        Its `section Companions` would report every declaration of somebody
+        else's library as one this companion's table omits.
+        """
+        self.assertNotIn(LAKE_DECL, self.omissions())
+        read = {str(p) for p in self.adapter.lean_files(self.repo)}
+        self.assertEqual(read, {str(self.repo / "Widget" / "Basic.lean")})
+
+    def test_an_anonymous_example_in_the_section_is_counted_not_claimed(self):
+        self.assertEqual(self.scan["anonymous_claims"], 1)
+        self.assertFalse([d for d in self.omissions() if d.startswith("example@")])
+
+    # -- the policy --------------------------------------------------------
+    def test_union_publishes_the_omissions_that_name_an_item(self):
+        scanned = {r["decl"]: r for r in self.rows if r["provenance"] == "lean_scan"}
+        self.assertEqual(sorted(scanned), sorted([DOC_ONLY_DECL, SECTION_AND_DOC_DECL]))
+        self.assertEqual(self.scan["unioned"], 2)
+
+    def test_the_table_rows_are_stamped_table_and_are_not_disturbed(self):
+        table = [r for r in self.rows if r["provenance"] == "table"]
+        self.assertEqual([r["decl"] for r in table], [TABLE_DECL])
+        self.assertEqual(table[0]["item"], "Definition 1.1.1")
+        self.assertTrue(table[0]["key"])
+
+    def test_the_unioned_row_carries_the_item_its_docstring_names(self):
+        row = next(r for r in self.rows if r["decl"] == SECTION_AND_DOC_DECL)
+        self.assertEqual(row["item"], "Exercise 1.2.21")
+        self.assertEqual(row["item_kind"], "Exercise")
+        self.assertEqual((row["file"], row["line"]), ("Widget/Basic.lean", 16))
+        # the table decides what is KEY for an item, and it never saw this row
+        self.assertFalse(row["key"])
+
+    def test_the_leading_item_wins_over_a_cross_reference(self):
+        """"Exercise 1.1.21(3) ... as in Definition 1.1.1" claims the exercise."""
+        row = next(r for r in self.rows if r["decl"] == DOC_ONLY_DECL)
+        self.assertEqual((row["item"], row["sub"]), ("Exercise 1.1.21", "(3)"))
+
+    def test_a_unioned_row_takes_its_page_from_the_overlay_or_none(self):
+        """The repo's own geometry, converted with the offset -- never a guess."""
+        linear = next(r for r in self.rows if r["decl"] == SECTION_AND_DOC_DECL)
+        self.assertEqual((linear["page_anchor"], linear["anchor_source"]), (25, "own"))
+        # the overlay never measured Exercise 1.1.21, so this row has no anchor
+        indicator = next(r for r in self.rows if r["decl"] == DOC_ONLY_DECL)
+        self.assertEqual((indicator["page_anchor"], indicator["anchor_source"]),
+                         (None, "none"))
+
+    def test_an_omission_naming_no_item_is_reported_and_never_keyed(self):
+        """An unparseable/absent id must never become a key (CLAUDE.md S4)."""
+        self.assertEqual(self.scan["unattributed"], 2)
+        for decl in (SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL):
+            self.assertFalse(self.omissions()[decl]["unioned"])
+            self.assertNotIn(decl, {r["decl"] for r in self.rows})
+
+    def test_the_unattributed_go_to_their_own_file_s_rows(self):
+        """They cannot be unioned, so they are handed over as a list instead.
+
+        A corpus search by item cannot find these by construction; the only way
+        a worker meets them is by being given the file, which `cf plan-run`
+        stages beside the tables.  `repo` is on every row so a merged read stays
+        attributable.
+        """
+        from cflib.adapters_api import unattributed_rows
+
+        rows = unattributed_rows("widget", self.report)
+        self.assertEqual(sorted(r["decl"] for r in rows),
+                         sorted([SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL]))
+        for row in rows:
+            self.assertEqual(row["repo"], "widget")
+            self.assertEqual(row["file"], "Widget/Basic.lean")
+            self.assertTrue(row["signals"])
+            self.assertFalse(row["unioned"])
+        # and the unioned ones are NOT in it: they are in the table
+        self.assertNotIn(SECTION_AND_DOC_DECL, {r["decl"] for r in rows})
+
+    def test_report_policy_warns_without_publishing(self):
+        adapter = _attribution_adapter(self.repo, lean_scan={"policy": "report"})
+        scan = adapter.dry_run(sources={"s": SHA})["lean_scan"]
+        self.assertEqual(scan["omitted"], 4)
+        self.assertEqual(scan["unioned"], 0)
+        rows = list(adapter.extract(sources={"s": SHA}))
+        self.assertEqual({r["provenance"] for r in rows}, {"table"})
+
+    def test_report_policy_lists_only_the_omissions_that_name_no_item(self):
+        """Under `report` nothing is unioned, but unattributed.jsonl keeps its meaning.
+
+        Every row of that file is described to a worker as a declaration its
+        index attributes to NO book item.  Under `report` the two item-naming
+        omissions used to land there too, and the warning then printed "0 NOT
+        added" and "2 ... listed" beside a file holding 4.
+        """
+        from cflib.adapters_api import cross_check_warning, unattributed_rows
+
+        adapter = _attribution_adapter(self.repo, lean_scan={"policy": "report"})
+        report = adapter.dry_run(sources={"s": SHA})
+        rows = unattributed_rows("widget", report)
+        self.assertEqual(sorted(r["decl"] for r in rows),
+                         sorted([SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL]))
+        self.assertTrue(all(r["item"] is None for r in rows))
+        header, lines = cross_check_warning("widget", report)
+        self.assertIn("omits 4 declaration(s)", header)
+        self.assertIn("4 NOT added to the table", header)
+        self.assertIn("2 of these name no book item", "\n".join(lines))
+
+    def test_off_runs_no_scan_and_says_so(self):
+        """`off` cannot name the omissions -- no scan runs -- so it warns that none ran."""
+        from cflib.adapters_api import cross_check_warning
+
+        adapter = _attribution_adapter(self.repo, lean_scan={"policy": "off"})
+        report = adapter.dry_run(sources={"s": SHA})
+        scan = report["lean_scan"]
+        self.assertEqual(scan["policy"], "off")
+        self.assertEqual(scan.get("omissions"), None)
+        warning = cross_check_warning("widget", report)
+        self.assertIsNotNone(warning, "a policy that passes quietly is the defect itself")
+        header, lines = warning
+        self.assertIn("lean_scan.policy is off", header)
+        self.assertIn("NOT cross-checked", header)
+        self.assertIn("absence from the repository", "\n".join(lines))
+
+    def test_off_written_bare_in_adapter_yaml_loads_as_off(self):
+        """YAML reads an unquoted `off` as false; the template writes it unquoted.
+
+        Loaded from a real adapter.yaml, through both YAML readers, not passed
+        in as a dict: the dict form never met the parser that turned `off` into
+        `False`, which was then refused as the policy 'false'.
+        """
+        from cflib import yamlio
+
+        text = ("name: widget\n"
+                f"repo: {self.repo}\n"
+                "adapter: attribution_table\n"
+                "page_offset: 16\n"
+                "sources:\n"
+                "  default: s\n"
+                "lean_scan:\n"
+                "  policy: off\n")
+        path = tmpdir("cf-rf-adapters-off-") / "adapter.yaml"
+        path.write_text(text, encoding="utf-8")
+        self.assertIs(yamlio.load_yaml_minimal(text)["lean_scan"]["policy"], False)
+        adapter = adapters_api.load(path)
+        self.assertEqual(adapter.cross_check_policy(), "off")
+        self.assertEqual(adapter.dry_run(sources={"s": SHA})["lean_scan"]["policy"], "off")
+        # the fallback reader, which is what runs where PyYAML is absent
+        with unittest.mock.patch.object(yamlio, "_pyyaml", None):
+            self.assertEqual(adapters_api.load(path).cross_check_policy(), "off")
+
+    def test_a_yaml_true_policy_is_refused(self):
+        """`on` / `yes` name no policy; only false has an unambiguous meaning."""
+        with self.assertRaises(CfError):
+            _attribution_adapter(self.repo, lean_scan={"policy": True})
+
+    def test_the_policy_vocabulary_is_one_set(self):
+        from adapters import attribution_table
+
+        self.assertEqual(frozenset(attribution_table.CROSS_CHECK_POLICIES),
+                         vocab.CROSS_CHECK_POLICIES)
+
+    def test_an_unknown_policy_is_refused_at_load(self):
+        with self.assertRaises(CfError) as ctx:
+            _attribution_adapter(self.repo, lean_scan={"policy": "ignore"})
+        self.assertIn("union", ctx.exception.hint or "")
+
+    def test_the_regions_that_count_are_configuration(self):
+        """`Companions` is measure_theory's word, not a constant of the model."""
+        adapter = _attribution_adapter(self.repo, lean_scan={"regions": ["Addenda"]})
+        scan = adapter.dry_run(sources={"s": SHA})["lean_scan"]
+        self.assertEqual(scan["regions"], ["Addenda"])
+        self.assertEqual(sorted(h["decl"] for h in scan["omissions"]),
+                         sorted([DOC_ONLY_DECL, SECTION_AND_DOC_DECL]))
+        # the spelling a file written before the namespace form was found used
+        legacy = _attribution_adapter(self.repo, lean_scan={"sections": ["Addenda"]})
+        self.assertEqual(legacy.claim_regions(), ("Addenda",))
+
+    # -- what the rest of the pipeline sees --------------------------------
+    def test_every_row_still_validates_against_schema_v2(self):
+        self.assertEqual(validate_rows(self.rows, require_source_sha=False), [])
+
+    def test_the_warning_names_every_omitted_declaration(self):
+        from cflib.adapters_api import cross_check_warning
+
+        header, lines = cross_check_warning("widget", self.report)
+        self.assertIn("omits 4 declaration(s)", header)
+        body = "\n".join(lines)
+        for decl in (DOC_ONLY_DECL, SECTION_AND_DOC_DECL, SECTION_ONLY_DECL,
+                     NAMESPACE_ONLY_DECL):
+            self.assertIn(decl, body)
+        self.assertIn("unattributed.jsonl", body)
+        self.assertIn("Widget/Basic.lean:", body)
+        # and it says what the omission MEANS, not only that there is one
+        self.assertIn("absence from this corpus as absence from the repository", body)
+        # ... without telling the operator to take it upstream: an export may
+        # leave private declarations out by convention (SKILL.md hard rule 5)
+        self.assertNotIn("report it upstream", body)
+        self.assertIn("1 of the omitted declaration(s) are private", body)
+
+    def test_the_state_record_is_the_same_shape_the_warning_reads(self):
+        """`cf extract` replays it on an up-to-date table from state.json.
+
+        The no-op path does not re-read the repo -- the omissions cannot have
+        moved while the key has not -- so it warns from what the last extraction
+        recorded, and the recorded shape has to be the one the formatter reads.
+        """
+        from cflib.adapters_api import CROSS_CHECK_KEY, cross_check_warning
+
+        recorded = {CROSS_CHECK_KEY: self.report[CROSS_CHECK_KEY]}
+        header, _lines = cross_check_warning("widget", recorded)
+        self.assertIn("omits 4 declaration(s)", header)
+
+    def test_extract_writes_the_unattributed_file_and_removes_a_stale_one(self):
+        """`cf extract` and `cf onboard` leave the same file, through one function."""
+        from cfcmd.extract import write_unattributed
+
+        ws_root = tmpdir("cf-rf-adapters-unattr-") / "ws"
+        self.assertEqual(cf_main.main(["init", str(ws_root), "--no-git", "-q"]), 0)
+        ws = Workspace.load(ws_root)
+        path = ws.paths.unattributed_jsonl("widget")
+        self.assertEqual(write_unattributed(ws, "widget", self.report), 2)
+        lines = [ln for ln in path.read_text(encoding="utf-8").splitlines() if ln.strip()]
+        self.assertIn('"_meta"', lines[0])
+        body = [__import__("json").loads(ln) for ln in lines[1:]]
+        self.assertEqual(sorted(r["decl"] for r in body),
+                         sorted([SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL]))
+        # a later extraction with nothing unattributed must not leave the old
+        # list behind: a stale one sends a worker to declarations that have
+        # since been attributed or deleted
+        self.assertEqual(write_unattributed(ws, "widget", {}), 0)
+        self.assertFalse(path.exists())
+
+    def test_a_table_that_agrees_with_its_sources_raises_no_warning(self):
+        from cflib.adapters_api import cross_check_warning
+
+        self.assertIsNone(cross_check_warning("widget", {}))
+        self.assertIsNone(cross_check_warning("widget", {"lean_scan": {"omissions": []}}))
+
+    def test_the_extract_key_moves_with_the_lean_sources(self):
+        """Adding a declaration to a Companions section must re-extract.
+
+        Without the Lean sources in the key, the export's sha is unchanged and
+        `cf extract` replays the table that predates the declaration -- which is
+        the same short corpus, one commit later.
+        """
+        before = self.adapter.key()
+        path = self.repo / "Widget" / "Basic.lean"
+        original = path.read_text(encoding="utf-8")
+        try:
+            path.write_text(original.replace(
+                "end Companions",
+                "/-- Exercise 1.2.22, a later addition. -/\n"
+                "theorem gadget_later : True := trivial\n\nend Companions"), encoding="utf-8")
+            self.assertNotEqual(self.adapter.key(), before)
+        finally:
+            path.write_text(original, encoding="utf-8")
+
+
+def _copy_repo(repo: Path, prefix: str) -> Path:
+    import shutil
+
+    dest = tmpdir(prefix) / "widget"
+    shutil.copytree(repo, dest)
+    return dest
+
+
+class TestTheCrossCheckEdgeCases(unittest.TestCase):
+    """Shapes the main fixture does not carry, each on its own copy of it."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = _attribution_repo(tmpdir("cf-rf-adapters-edge-"))
+
+    def test_a_refused_leading_mention_claims_nothing(self):
+        """`Theorem 2.3.4.5 ... generalises Definition 1.1.1` does not claim the definition.
+
+        The grammar refuses the leading label (four segments under the default
+        two-to-three), and the old scan then reached for the next mention and
+        published the declaration as a `lean_scan` row of Definition 1.1.1 --
+        an item its docstring only cross-references.  The refusal is reported.
+        """
+        from cflib import items as cf_items
+        from cflib.adapters_api import cross_check_warning
+
+        refused: list = []
+        self.assertEqual(cf_items.find_items("Theorem 2.3.4.5 generalises Lemma 1.2.3.",
+                                             limit=1, rejects=refused), [])
+        self.assertEqual([r.reason for r in refused], [cf_items.REJECT_TOO_MANY_SEGMENTS])
+        # without a limit every accepted mention is still found
+        self.assertEqual([i.id for i in cf_items.find_items(
+            "Theorem 2.3.4.5 generalises Lemma 1.2.3.")], ["Lemma 1.2.3"])
+
+        repo = _copy_repo(self.base, "cf-rf-adapters-refused-")
+        (repo / "Widget" / "Appendix.lean").write_text(
+            "namespace Widget.Appendix\n\n"
+            "/-- Theorem 2.3.4.5 of the appendix; generalises Definition 1.1.1. -/\n"
+            "theorem appendix_thm : True := trivial\n\n"
+            "section Companions\n\n"
+            "/-- Lemma 9.9.9.9, restated; compare Exercise 1.2.21. -/\n"
+            "theorem appendix_lemma : True := trivial\n\n"
+            "end Companions\n\n"
+            "end Widget.Appendix\n", encoding="utf-8")
+        adapter = _attribution_adapter(repo)
+        report = adapter.dry_run(sources={"s": SHA})
+        scan = report["lean_scan"]
+        hits = {h["decl"]: h for h in scan["omissions"]}
+        self.assertNotIn("Widget.Appendix.appendix_thm", hits)
+        # in a region, so still an omission -- but keyed on NO item
+        self.assertIsNone(hits["Widget.Appendix.appendix_lemma"]["item"])
+        self.assertEqual(hits["Widget.Appendix.appendix_lemma"]["signals"],
+                         ["section Companions"])
+        rows = list(adapter.extract(sources={"s": SHA}))
+        self.assertFalse([r for r in rows if r["decl"].startswith("Widget.Appendix.")])
+        self.assertEqual(
+            sorted((r["decl"], r["label"], r["reason"]) for r in scan["refused_labels"]),
+            [("Widget.Appendix.appendix_lemma", "Lemma 9.9.9.9", "too_many_segments"),
+             ("Widget.Appendix.appendix_thm", "Theorem 2.3.4.5", "too_many_segments")])
+        _header, lines = cross_check_warning("widget", report)
+        self.assertIn("`Theorem 2.3.4.5` (too_many_segments)", "\n".join(lines))
+
+    def test_same_named_private_omissions_do_not_break_the_table(self):
+        """Two modules may each carry a `private theorem restated`; that is legal Lean.
+
+        The unioned rows used to carry the duplicate key into validate_rows,
+        and `cf extract` refused the WHOLE table.  The row is also the first
+        unioned one that is private and a sorry, so its flags are pinned here.
+        """
+        repo = _copy_repo(self.base, "cf-rf-adapters-dup-")
+        for n in (1, 2):
+            (repo / "Widget" / f"Aux{n}.lean").write_text(
+                "namespace Widget.Aux\n\n"
+                "/-- Exercise 1.2.21, restated. -/\n"
+                "private theorem restated : True := by sorry\n\n"
+                "end Widget.Aux\n", encoding="utf-8")
+        adapter = _attribution_adapter(repo)
+        rows = list(adapter.extract(sources={"s": SHA}))
+        self.assertEqual(validate_rows(rows, require_source_sha=False), [])
+        restated = [r for r in rows if r["decl"] == "Widget.Aux.restated"]
+        self.assertEqual(len(restated), 1)
+        self.assertEqual((restated[0]["private"], restated[0]["sorry"],
+                          restated[0]["sorry_class"], restated[0]["provenance"]),
+                         (True, True, "exercise", "lean_scan"))
+        report = adapter.dry_run(sources={"s": SHA})
+        # both are still NAMED as omissions
+        self.assertEqual(sum(1 for h in report["lean_scan"]["omissions"]
+                             if h["decl"] == "Widget.Aux.restated"), 2)
+        # every count from the rows written: the unioned sorry is counted
+        self.assertEqual(report["sorry"], sum(1 for r in rows if r["sorry"]))
+
+    def test_uncurated_items_counts_the_table_not_the_union(self):
+        """An item only the scan reached was still never curated; never negative."""
+        report = _attribution_adapter(self.base).dry_run(sources={"s": SHA})
+        # 2 geometry items, 1 of them curated by the table
+        self.assertEqual((report["geometry_items"], report["uncurated_items"]), (2, 1))
+
+    def test_a_custom_exclude_keeps_the_lake_exclusion(self):
+        adapter = _attribution_adapter(self.base, lean_scan={"exclude": ["Tests/**/*.lean"]})
+        self.assertFalse([p for p in adapter.lean_files(self.base) if ".lake" in p.parts])
+        omitted = {h["decl"] for h in adapter.dry_run(sources={"s": SHA})["lean_scan"]["omissions"]}
+        self.assertNotIn(LAKE_DECL, omitted)
+
+
+class TestExtractEndToEnd(unittest.TestCase):
+    """`cf extract` itself: the warning, unattributed.jsonl, state.json and the replay.
+
+    The helpers were tested directly and the command's own wiring was not:
+    deleting the file write, the warning or the up-to-date replay from
+    `cfcmd/extract.py` left the suite green.
+    """
+
+    def setUp(self):
+        from cflib import log
+
+        self._level = log.level()
+        log.set_level(1)
+        self.addCleanup(log.set_level, self._level)
+        self.repo = _attribution_repo(tmpdir("cf-rf-adapters-e2e-repo-"))
+        # `cf extract` records the commit it read, so the companion is a checkout
+        import subprocess
+
+        git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid",
+               "-c", "commit.gpgsign=false"]
+        subprocess.run(git[:3] + ["init", "-q"], check=True)
+        subprocess.run(git + ["add", "-A"], check=True)
+        subprocess.run(git + ["commit", "-q", "-m", "fixture"], check=True)
+        self.ws = tmpdir("cf-rf-adapters-e2e-ws-")
+        (self.ws / "workspace.yaml").write_text(
+            "version: 2\n"
+            "workspace:\n"
+            "  name: e2e\n"
+            "companions:\n"
+            "  widget:\n"
+            f"    repo: {self.repo}\n"
+            "    adapter: attribution_table\n"
+            "    sources: [s]\n"
+            "    anchor_source: s\n"
+            "    owner: test\n"
+            "    write_policy: read_only\n"
+            "sources:\n"
+            "  s:\n"
+            "    title: A Book\n"
+            "    edition: first\n"
+            f"    sha256: {SHA}\n"
+            "    offset: 16\n"
+            "    offset_confidence: 0.99\n"
+            "    kinds: [Definition, Lemma, Theorem, Exercise]\n"
+            "    role: audited\n"
+            "    confirmed: true\n"
+            "hosts:\n"
+            "  allowlist: []\n", encoding="utf-8")
+        self.comp = self.ws / "companions" / "widget"
+        self.comp.mkdir(parents=True)
+        self.write_adapter("union")
+
+    def write_adapter(self, policy: str) -> None:
+        (self.comp / "adapter.yaml").write_text(
+            "name: widget\n"
+            f"repo: {self.repo}\n"
+            "adapter: attribution_table\n"
+            "page_offset: 16\n"
+            "sources:\n"
+            "  default: s\n"
+            "lean_scan:\n"
+            f"  policy: {policy}\n", encoding="utf-8")
+
+    def extract(self, *extra: str) -> tuple[int, str]:
+        import contextlib
+        import io
+
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+            rc = cf_main.main(["extract", "--workspace", str(self.ws), *extra])
+        return rc, err.getvalue()
+
+    def unattributed(self) -> list[dict]:
+        import json
+
+        path = self.comp / "unattributed.jsonl"
+        if not path.exists():
+            return []
+        return [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines()
+                if ln.strip() and '"_meta"' not in ln]
+
+    def test_union_warns_writes_the_list_records_it_and_replays_it(self):
+        import json
+
+        rc, err = self.extract()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("omits 4 declaration(s)", err)
+        self.assertIn("2 unioned into the table", err)
+        self.assertEqual(sorted(r["decl"] for r in self.unattributed()),
+                         sorted([SECTION_ONLY_DECL, NAMESPACE_ONLY_DECL]))
+        state = json.loads((self.comp / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["extract"]["lean_scan"]["omitted"], 4)
+        # an up-to-date table is still short of its repository: the warning is
+        # replayed from state.json without re-reading the repo
+        rc, err = self.extract()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("omits 4 declaration(s)", err)
+
+    def test_report_writes_only_the_itemless_omissions(self):
+        self.write_adapter("report")
+        rc, err = self.extract()
+        self.assertEqual(rc, 0, err)
+        self.assertIn("4 NOT added to the table", err)
+        self.assertIn("2 of these name no book item", err)
+        rows = self.unattributed()
+        self.assertEqual(len(rows), 2)
+        self.assertTrue(all(r["item"] is None for r in rows))
+
+    def test_bare_off_loads_warns_and_removes_a_stale_list(self):
+        rc, err = self.extract()
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(self.unattributed())
+        self.write_adapter("off")                  # unquoted: YAML false
+        rc, err = self.extract("--force")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("lean_scan.policy is off", err)
+        self.assertNotIn("is 'false'", err)
+        self.assertFalse((self.comp / "unattributed.jsonl").exists())
+
+
+class TestProvenanceIsStampedByEveryShippedAdapter(unittest.TestCase):
+    """Nullable in the schema, but no adapter in this repo leaves it null.
+
+    `provenance` is what lets a finding say whether "no declaration states this"
+    searched a repository or only an export OF one, so a shipped adapter that
+    stopped setting it would give that answer back its old ambiguity without
+    failing anything.
+    """
+
+    def test_the_attribution_table_stamps_both_of_its_artifacts(self):
+        repo = _attribution_repo(tmpdir("cf-rf-adapters-prov1-"))
+        rows = list(_attribution_adapter(repo).extract(sources={"s": SHA}))
+        self.assertEqual({r["provenance"] for r in rows}, {"table", "lean_scan"})
+
+    def test_the_docstring_kind_stamps_docstring(self):
+        repo = _backticked_repo(tmpdir("cf-rf-adapters-prov2-"))
+        adapter = adapters_api.from_config({
+            "adapter": "docstring_tags", "name": "ours", "repo": str(repo),
+            "glob": "Src/*.lean", "sources": {"default": "s"}})
+        rows = list(adapter.extract(sources={"s": SHA}))
+        self.assertTrue(rows)
+        self.assertEqual({r["provenance"] for r in rows}, {"docstring"})
+
+    def test_the_blueprint_kind_stamps_blueprint(self):
+        repo = _blueprint_repo(tmpdir("cf-rf-adapters-prov3-"))
+        adapter = adapters_api.from_config({
+            "adapter": "blueprint_tex", "name": "bp", "repo": str(repo),
+            "sources": {"default": "s"}})
+        rows = list(adapter.extract(sources={"s": SHA}))
+        self.assertTrue(rows)
+        self.assertEqual({r["provenance"] for r in rows}, {"blueprint"})
+
+    def test_the_vocabulary_has_one_definition(self):
+        from adapters import base
+
+        self.assertEqual(base.PROVENANCES, vocab.ROW_PROVENANCE)
+
+
+class TestTheWorkerIsToldAbsenceIsNotEvidence(unittest.TestCase):
+    """The prompt half of the same defect.
+
+    The corpus fix makes the false COVERAGE harder to reach; it cannot make it
+    impossible, because a table can be short for reasons no scan sees.  So the
+    rule is also stated where the claim gets written -- and only in the runs
+    whose gate would accept the kind.
+    """
+
+    @staticmethod
+    def _render(name: str) -> dict:
+        from plan import presets as presets_mod, render_prompts as rp
+
+        preset = presets_mod.get(name)
+        ctx = rp.build_context(
+            preset=preset, run_id="r1", source_id="s", book_citation="A Book",
+            book_text="/srv/runs/sources/s/text.txt", source_sha="a" * 64, page_offset=4,
+            companions=[{"name": "ours", "path": "/srv/runs/repos/ours"}],
+            gate_command="python3 gate.py")
+        return rp.render_prompts(preset, ctx)
+
+    def test_the_unattributed_list_is_named_when_a_companion_has_one(self):
+        """Its rows cannot be found by item, so the prompt hands over the file."""
+        from plan import presets as presets_mod, render_prompts as rp
+
+        preset = presets_mod.get("differential-text")
+        ctx = rp.build_context(
+            preset=preset, run_id="r1", source_id="s", book_citation="A Book",
+            book_text="/srv/runs/sources/s/text.txt", source_sha="a" * 64, page_offset=4,
+            companions=[{"name": "ours", "path": "/srv/runs/repos/ours"},
+                        {"name": "mt", "path": "/srv/runs/repos/mt", "unattributed": 17}],
+            gate_command="python3 gate.py")
+        out = rp.render_prompts(preset, ctx)
+        self.assertTrue(ctx["unattributed_any"])
+        for name in ("worker-system.md", "reviewer-system.md"):
+            with self.subTest(prompt=name):
+                self.assertIn("unattributed.jsonl", out[name])
+        worker = out["worker-system.md"]
+        self.assertIn("`data/mt.unattributed.jsonl` — 17 declaration(s) of `mt`", worker)
+        self.assertNotIn("ours.unattributed.jsonl", worker)
+        self.assertIn("no search of `<repo>.jsonl` or `pairs.jsonl` by item can ever find them",
+                      worker)
+        # the reviewer gets the same per-companion line, and no campaign's labels
+        reviewer = out["reviewer-system.md"]
+        self.assertIn("`data/mt.unattributed.jsonl` — 17 declaration(s) of `mt`", reviewer)
+        self.assertNotIn("mt-only", reviewer)
+
+    def test_a_run_with_nothing_unattributed_does_not_mention_the_file(self):
+        worker = self._render("differential-text")["worker-system.md"]
+        self.assertNotIn("unattributed.jsonl", worker)
+
+    def test_a_coverage_run_demands_a_grep_of_the_lean(self):
+        worker = self._render("differential-text")["worker-system.md"]
+        self.assertIn("Absence from `data/<repo>.jsonl` is **never** sufficient", worker)
+        self.assertIn("grep -rn --include=*.lean", worker)
+        self.assertIn("/srv/runs/repos/ours", worker)
+        self.assertIn("Report `COVERAGE` only when the grep came back empty", worker)
+
+    def test_an_attack_run_is_not_taught_a_kind_its_gate_rejects(self):
+        from plan import presets as presets_mod
+
+        self.assertFalse(presets_mod.get("attack-hunt").wants_coverage)
+        worker = self._render("attack-hunt")["worker-system.md"]
+        self.assertNotIn("Report `COVERAGE` only when", worker)
+
+    def test_the_table_is_described_as_an_index_not_an_inventory(self):
+        for name in ("differential-text", "attack-hunt"):
+            worker = self._render(name)["worker-system.md"]
+            with self.subTest(preset=name):
+                self.assertIn("These tables are not the repositories", worker)
+                self.assertIn("never as an inventory", worker)
+
+    def test_the_reviewer_must_open_the_lean_for_an_absence_claim(self):
+        reviewer = self._render("differential-text")["reviewer-system.md"]
+        self.assertIn("**always** when the finding rests on something being ABSENT", reviewer)
+        self.assertIn("grep -rn --include=*.lean", reviewer)
 
 
 if __name__ == "__main__":  # pragma: no cover

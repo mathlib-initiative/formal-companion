@@ -186,6 +186,18 @@ def _stage_data(ws, rd: Path, companions: list[str], source_id: str) -> list[str
         if src.exists():
             shutil.copy2(src, ddir / f"{name}.jsonl")
             staged.append(f"{name}.jsonl")
+        # The declarations this companion's export attributes to no item: a
+        # corpus search cannot find them by construction, so the list travels
+        # with the table and the prompts name it.
+        # A replan into an existing run dir must not ship a list the workspace
+        # no longer has.
+        extra = ws.paths.unattributed_jsonl(name)
+        staged_extra = ddir / f"{name}.unattributed.jsonl"
+        if extra.exists():
+            shutil.copy2(extra, staged_extra)
+            staged.append(f"{name}.unattributed.jsonl")
+        elif staged_extra.exists():
+            staged_extra.unlink()
     pairs = ws.paths.pairs_jsonl(source_id)
     if pairs.exists():
         shutil.copy2(pairs, ddir / "pairs.jsonl")
@@ -249,9 +261,22 @@ def _companion_rows(ws, host_paths: dict, names: list[str] | None = None) -> lis
                 "path": host_paths["repos"].get(name, str(ref.repo or "")),
                 "files": "",
                 "conventions_md": ws.paths.conventions_md(name),
+                "unattributed": _count_jsonl(ws.paths.unattributed_jsonl(name)),
             }
         )
     return rows
+
+
+def _count_jsonl(path: Path) -> int:
+    """Body rows of a jsonl file (the ``_meta`` line excluded); 0 when absent."""
+    if not path.exists():
+        return 0
+    n = 0
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if line and '"_meta"' not in line:
+            n += 1
+    return n
 
 
 def _select_source(ws, companions: list[str], requested: str | None, *,

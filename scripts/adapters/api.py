@@ -180,13 +180,26 @@ class Adapter(CoreAdapter):
         a second and third time from them, which is both a false audit surface
         and a duplicate-key failure in `cf extract`.
         """
+        return self.select_files(repo, self.globs(default_globs), self.excludes())
+
+    def select_files(self, repo: Path, globs: Sequence[str],
+                     excludes: Sequence[str] = ()) -> list[Path]:
+        """:meth:`matching_files` for an EXPLICIT pattern set.
+
+        An adapter may read two different file sets out of one repo -- the
+        attribution-table kind globs an export directory to build its rows and
+        the Lean sources to cross-check them against -- and only one of the two
+        can be adapter.yaml's ``glob:``.  The ignore filter above is the same one
+        and applies to both, for the same reason: a companion is audited AT A
+        COMMIT, so a file git ignores is not part of the thing under audit.
+        """
         selected: dict[str, Path] = {}
-        for pattern in self.globs(default_globs):
-            for p in sorted(repo.glob(pattern)):
+        for pattern in globs:
+            for p in sorted(repo.glob(str(pattern))):
                 if p.is_file():
                     selected[str(p)] = p
-        for pattern in self.excludes():
-            for p in repo.glob(pattern):
+        for pattern in excludes:
+            for p in repo.glob(str(pattern)):
                 selected.pop(str(p), None)
         for path in self.ignored_files(repo, list(selected.values())):
             selected.pop(str(path), None)

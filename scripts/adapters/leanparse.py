@@ -14,6 +14,12 @@ the measurement is in the design record, not in any document here):
   measure_theory's ``extract_declaration_snippets.py``
       namespace/section tracking for fully qualified names and def bodies.
 
+Each :class:`Decl` also carries the NAMED ``section Foo`` blocks it sits inside
+(``sections``).  A named section is a claim about the declarations under it --
+measure_theory files a block of statements under ``section Companions`` -- and
+``adapters.attribution_table`` cross-checks exactly that claim against the
+repo's attribution table (docs/design/stage_map.md Stage 2).
+
 Measured on tao-measure-lean HEAD this parser sees 1,544 declarations =
 1,414 (make_verso_tables) + 130 ``private`` ones, and no others.
 
@@ -57,7 +63,7 @@ _MODIFIERS = (
 _ATTR_LINE_RE = re.compile(r"^\s*@\[[^\]]*\]\s*$")
 _OPEN_IN_RE = re.compile(r"^\s*(?:open|variable|set_option)\b.*\bin\s*$")
 _NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z_À-￿][\w'.À-￿]*)\s*$")
-_SECTION_RE = re.compile(r"^(?:noncomputable\s+)?section(?:\s+[\w'.]+)?\s*$")
+_SECTION_RE = re.compile(r"^(?:noncomputable\s+)?section(?:\s+(?P<name>[\w'.]+))?\s*$")
 _END_RE = re.compile(r"^end(?:\s+[\w'.]+)?\s*$")
 _SECTION_DOC_RE = re.compile(r"^\s*/-!")
 _TOKEN_RE = re.compile(r"/-|-/|--")
@@ -89,6 +95,7 @@ class Decl:
     name: str | None               # None for an anonymous example/instance
     full_name: str                 # fully qualified, or the synthetic id
     namespace: str = ""            # enclosing namespace at the declaration
+    sections: tuple[str, ...] = ()  # enclosing NAMED `section Foo` blocks, outermost first
     doc: str | None = None         # docstring text, /-- and -/ removed
     doc_line: int | None = None    # 1-based line of the /-- opener
     body: str = ""                 # raw source from the keyword line to the next decl
@@ -233,8 +240,10 @@ def parse_file(
 
     starts: list[tuple[int, re.Match[str]]] = []
     ns_stack: list[str] = []
-    blocks: list[tuple[str, int]] = []
+    sec_stack: list[str] = []
+    blocks: list[tuple[str, int, str]] = []
     ns_at_line: dict[int, str] = {}
+    sec_at_line: dict[int, tuple[str, ...]] = {}
 
     for i, line in enumerate(lines):
         if depths[i] != 0:
@@ -243,21 +252,28 @@ def parse_file(
         if ns:
             parts = ns.group(1).split(".")
             ns_stack.extend(parts)
-            blocks.append(("namespace", len(parts)))
+            blocks.append(("namespace", len(parts), ""))
             continue
-        if _SECTION_RE.match(line):
-            blocks.append(("section", 0))
+        sec = _SECTION_RE.match(line)
+        if sec:
+            name = sec.group("name") or ""
+            blocks.append(("section", 0, name))
+            if name:
+                sec_stack.append(name)
             continue
         if _END_RE.match(line):
             if blocks:
-                kind_popped, count = blocks.pop()
+                kind_popped, count, name = blocks.pop()
                 if kind_popped == "namespace" and count:
                     del ns_stack[len(ns_stack) - count:]
+                elif kind_popped == "section" and name and sec_stack:
+                    sec_stack.pop()
             continue
         m = decl_re.match(line)
         if m:
             starts.append((i, m))
             ns_at_line[i] = ".".join(ns_stack)
+            sec_at_line[i] = tuple(sec_stack)
 
     decls: list[Decl] = []
     for k, (i, m) in enumerate(starts):
@@ -292,7 +308,8 @@ def parse_file(
         is_def = m.group("kw") in DEFINITION_KINDS
         decls.append(Decl(
             file=rel, line=i + 1, kind=m.group("kw"), name=name, full_name=full,
-            namespace=namespace, doc=doc, doc_line=doc_line, body=body,
+            namespace=namespace, sections=sec_at_line.get(i, ()),
+            doc=doc, doc_line=doc_line, body=body,
             def_body=_body_text(body, max_body_lines) if is_def else None,
             private="private" in mods, protected="protected" in mods,
             anonymous=anonymous, modifiers=mods,

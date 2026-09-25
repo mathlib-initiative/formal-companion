@@ -175,6 +175,13 @@ class WorkspacePaths:
     def state_json(self, name: str) -> Path:
         return self.companion_dir(name) / "state.json"
 
+    def unattributed_jsonl(self, name: str) -> Path:
+        """Declarations the repo claims for the book that its table files under
+        no item -- written by `cf extract` from an export-driven adapter's
+        cross-check, staged into runs beside statements.jsonl, and absent when
+        there are none (or when the adapter reads the Lean directly)."""
+        return self.companion_dir(name) / "unattributed.jsonl"
+
     def lint_json(self, name: str) -> Path:
         return self.companion_dir(name) / "lint.json"
 

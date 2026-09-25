@@ -1843,7 +1843,8 @@ class _FakeAdapter:
              "file": "A.lean", "line": 3, "statement": "theorem foo", "body": None,
              "sorry": False, "sorry_class": "none", "page_anchor": 5,
              "page_anchor_raw": "book p. 5", "anchor_source": "own", "repo": "ours",
-             "key": True, "anonymous": False, "private": False, "granularity": "item"}]
+             "key": True, "anonymous": False, "private": False, "granularity": "item",
+             "provenance": "table"}]
 
     def __init__(self, workspace=None):
         self.workspace = workspace

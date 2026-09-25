@@ -532,6 +532,20 @@ class TestModelTable(unittest.TestCase):
 # --------------------------------------------------------------------------- #
 # prompts-workflows#6
 # --------------------------------------------------------------------------- #
+#: The citation-ban section of a rendered prompt, and nothing else.  The ban
+#: names the kinds this run's gate REJECTS, so "does the prompt mention
+#: `COVERAGE`" is the wrong question to ask of the whole text: a preset that
+#: accepts the kind also says what evidence one needs, and searching the whole
+#: prompt would forbid the instruction along with the ban.
+BAN_HEADING = "## This run does NOT accept citation findings"
+
+
+def _ban_block(text: str) -> str:
+    """Everything from the citation-ban heading on ("" when there is no ban)."""
+    at = text.find(BAN_HEADING)
+    return "" if at < 0 else text[at:]
+
+
 class TestWhatThePromptAsksForFollowsTheGate(unittest.TestCase):
     def test_no_preset_invites_a_kind_its_own_gate_rejects(self):
         for name in presets_mod.RUNNABLE:
@@ -545,9 +559,11 @@ class TestWhatThePromptAsksForFollowsTheGate(unittest.TestCase):
     def test_the_citation_ban_names_only_the_kinds_that_are_banned(self):
         diff = _render("differential-text")["worker-system.md"]
         self.assertIn("kind `PAGE_ANCHOR` are not accepted", diff)
-        self.assertNotIn("`COVERAGE`", diff)
+        # the BAN block, not the whole prompt: this preset accepts COVERAGE and
+        # says so at length elsewhere.
+        self.assertNotIn("`COVERAGE`", _ban_block(diff))
         attack = _render("attack-hunt")["worker-system.md"]
-        self.assertIn("`PAGE_ANCHOR` or `COVERAGE`", attack)
+        self.assertIn("`PAGE_ANCHOR` or `COVERAGE`", _ban_block(attack))
 
     def test_citation_ban_is_derived_from_kinds_not_hand_set(self):
         self.assertTrue(presets_mod.get("differential-text").citation_ban)

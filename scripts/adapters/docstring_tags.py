@@ -451,6 +451,9 @@ class DocstringTagsAdapter(Adapter):
                     private=decl.private,
                     granularity=granularity,
                     source_sha=source_sha,
+                    # this convention IS the Lean sources: there is no export
+                    # in between that could omit a declaration.
+                    provenance="docstring",
                 ))
         counts["rows"] = len(rows)
         counts["items"] = len({(r["source_id"], r["item"]) for r in rows})

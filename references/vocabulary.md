@@ -10,8 +10,8 @@ The enums here are the single source of truth in code: `scripts/cflib/vocab.py`.
 listed is invalid and the schema gate rejects it.
 
 **Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
-verdicts, resolutions, source roles, re-check statuses) · §2 mapping tables from the five
-legacy vocabularies · §3 `finding_id`, the frozen rule · §4 item ids.
+verdicts, resolutions, source roles, re-check statuses, statement-row provenance) · §2 mapping
+tables from the five legacy vocabularies · §3 `finding_id`, the frozen rule · §4 item ids.
 
 ---
 
@@ -143,6 +143,36 @@ and reporting it as `unchanged` would read as "still verified".
 **`cf recheck` writes no verdict and no resolution.** `validate_ledger` rejects a `recheck` block
 that carries either: stating what the code did and deciding what that means are two different jobs,
 and only the second one is an adjudication.
+
+### 1.9 Statement-row provenance (`statements.jsonl`, `provenance`)
+
+`table` | `lean_scan` | `docstring` | `blueprint`, or null. `cflib.vocab.ROW_PROVENANCE`.
+
+Which artifact **of the companion** a statement row was read from — not which source it is about,
+which is `source_id`. Most conventions have one artifact and the value is a constant per adapter
+(`docstring` for `docstring_tags`, `blueprint` for `blueprint_tex`). `attribution_table` has two
+and they disagree:
+
+| value | meaning |
+|---|---|
+| `table` | the companion's exported item → declaration attribution table said so |
+| `lean_scan` | the Lean sources claim it for a book item and the export **omits** it (`docs/design/stage_map.md` §4, Stage 2) |
+| null | the adapter does not distinguish — the honest value for a `custom` extractor reading something else |
+
+An omission whose docstring names no item gets no row at all — there is nothing to key it on —
+and goes to `companions/<name>/unattributed.jsonl` instead, which `cf plan-run` stages beside the
+tables. Typically that is most of the omissions: they sit in a `section` or `namespace` region under
+a block header that names its item only in prose.
+
+A `COVERAGE` finding is the reason this exists. "No declaration of this companion states X" read
+off a `table`-only corpus is a claim about the export, not about the repository, and a public,
+sorry-free theorem the export left out makes it false.
+`lean_scan.policy` decides what an omission does (`cflib.vocab.CROSS_CHECK_POLICIES`) — `union`
+publishes it as a row, `report` does not (under both, the omissions that name no item go to
+`unattributed.jsonl` and `cf extract` names the omitted declarations in a warning), and `off` is a
+deviation a companion states in its own `adapter.yaml`: no scan runs, so nothing is named, and
+`cf extract` warns on every run that the table was not cross-checked. A bare `off` is YAML false
+and is read as `off`.
 
 ---
 
