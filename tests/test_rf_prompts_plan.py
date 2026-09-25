@@ -978,3 +978,84 @@ class TestTheShippedNotesCarryTheDenominator(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestSectionsNarrow(PlanRunCase):
+    """`--sections 1.7`: the same narrowing as --chapters, one level down."""
+
+    def test_an_attack_plan_narrows_to_a_section(self):
+        self.assertEqual(self.plan(run_id="s1", sections="1.2"), 0)
+        names = self.task_names("s1")
+        self.assertEqual(len(names), 1)
+        self.assertTrue(names[0].endswith("exercise-1-2-4"), names)
+        doc = self.run_yaml("s1")
+        self.assertEqual(doc["tasks"]["sections"], ["1.2"])
+        self.assertEqual(doc["tasks"]["count"], 1)
+        self.assertIn("sections 1.2", doc["tasks"]["universe"])
+
+    def test_a_differential_plan_with_sections_reconciles(self):
+        self.assertEqual(self.plan(preset="differential-text", companion=None,
+                                   sections="2.1", run_id="d2"), 0)
+        names = self.task_names("d2")
+        self.assertEqual(len(names), 1)
+        self.assertTrue(names[0].endswith("lemma-2_1_1"), names)
+        doc = self.run_yaml("d2")
+        self.assertIn("sections 2.1", doc["tasks"]["universe"])
+        self.assertEqual(doc["tasks"]["sections"], ["2.1"])
+
+    def test_a_section_with_no_paired_item_is_refused(self):
+        with self.assertRaises(CfError) as cm:
+            self.plan(preset="differential-text", companion=None, sections="1.9", run_id="d3")
+        self.assertIn("no item in section 1.9", str(cm.exception))
+
+    def test_a_section_that_matches_nothing_inside_a_list_is_refused_by_name(self):
+        """A typo beside a real section must not plan the rest and record itself."""
+        with self.assertRaises(CfError) as cm:
+            self.plan(run_id="s2", sections="1.2,1.99")
+        self.assertIn("is in section 1.99", str(cm.exception))
+        self.assertNotIn("1.2,", str(cm.exception))
+
+    def test_a_padded_spelling_is_canonicalised_and_recorded_that_way(self):
+        self.assertEqual(self.plan(run_id="s3", sections="01.02,1.2"), 0)
+        names = self.task_names("s3")
+        self.assertEqual(len(names), 1)
+        self.assertTrue(names[0].endswith("exercise-1-2-4"), names)
+        doc = self.run_yaml("s3")
+        self.assertEqual(doc["tasks"]["sections"], ["1.2"])
+        self.assertEqual(doc["tasks"]["count"], 1)
+
+    def test_an_empty_list_is_refused(self):
+        with self.assertRaises(CfError) as cm:
+            self.plan(sections=",")
+        self.assertIn("was given no section", str(cm.exception))
+
+    def test_a_section_prefix_is_not_a_match(self):
+        from plan import make_tasks as mt
+
+        kinds = ["Definition", "Lemma", "Exercise"]
+        self.assertTrue(mt.in_sections("Exercise 1.1.4", ["1.1"], kinds))
+        self.assertFalse(mt.in_sections("Exercise 1.17.4", ["1.1"], kinds))
+        self.assertFalse(mt.in_sections("Exercise 1.1.4", ["1.17"], kinds))
+        self.assertFalse(mt.in_sections("In-text, book p. 18", ["1.1"], kinds))
+
+    def test_a_chapter_the_source_does_not_have_is_refused_by_name(self):
+        with self.assertRaises(CfError) as cm:
+            self.plan(sections="9.1")
+        self.assertIn("has no chapter for section 9.1", str(cm.exception))
+
+    def test_a_malformed_section_is_refused(self):
+        with self.assertRaises(CfError) as cm:
+            self.plan(sections="one.two")
+        self.assertIn("not a comma-separated list", str(cm.exception))
+
+    def test_a_preset_that_cannot_narrow_refuses_the_flag(self):
+        import dataclasses
+
+        from cfcmd import plan_run
+
+        preset = dataclasses.replace(presets_mod.get("attack-hunt"), task_style="other")
+        args = type("A", (), {"sections": "1.2"})()
+        with self.assertRaises(CfError) as cm:
+            plan_run._sections(args, self.ws, preset, SOURCE_ID)
+        self.assertIn("does not narrow its task universe by section", str(cm.exception))
+

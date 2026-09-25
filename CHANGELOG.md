@@ -35,6 +35,11 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf plan-run --sections 1.7`: narrow a run's task universe to one or more
+  `<chapter>.<section>` labels, one level below `--chapters` and with the same
+  discipline (applied to the entries AND the reconciled universe, refused by
+  name for a preset that cannot narrow, recorded as `tasks.sections` in
+  `run.yaml`). Written for the section 1.7 re-run of the Tao differential.
 - `docs/design/stage_map.md`: the current data model, workspace layout and
   stage map, replacing the archived design record as the spec.
 - `CONTRIBUTING.md`, `POLICY.md`, this file, and `evals/` (trigger evals as
