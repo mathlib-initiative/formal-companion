@@ -660,8 +660,19 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
             f"{source_id}: no source file on this machine -- text, items, the quote gate "
             f"and the anchor check cannot run",
             [f"         once you have it: cf sources add <source> --for <companion>"])
+        # the errata is derived from bytes of its own, so a stale render is
+        # still fixable here: nothing below this needs the source file.
+        _report_offline_errata(workspace, source_id,
+                               _rerender_stale_errata(workspace, source_id))
         return
     from sources import prepare_source
+
+    # BEFORE prepare() and before the network question: an errata.md this
+    # checkout's converter would not produce is re-derived from the bytes
+    # already on disk, which needs neither the source text (a refusal below
+    # must not leave it stale) nor the network (`--no-errata` means "do not go
+    # out", not "keep a render known to be stale").
+    errata_meta = _rerender_stale_errata(workspace, source_id)
 
     body = (workspace.data.get("sources") or {}).get(source_id) or {}
     payload = prepare_source.prepare(
@@ -704,7 +715,22 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
                        kinds=list(payload["kinds"]))
 
     if no_errata:
+        _report_offline_errata(workspace, source_id, errata_meta)
         return
+    fetched = _fetch_errata(workspace, source_id, out_dir, offset=payload["offset"],
+                            fetch_errata_ok=fetch_errata_ok)
+    # ONE warning block per source, about whichever render is now on disk: the
+    # fetched one, or (no URL, not fetched, fetch failed) the one it kept.
+    _report_errata_maths(source_id, fetched if fetched is not None else errata_meta)
+
+
+def _fetch_errata(workspace, source_id: str, out_dir, *, offset,
+                  fetch_errata_ok: bool) -> dict | None:
+    """The network half of :func:`_prepare_source`: errata.json after a fetch.
+
+    ``None`` when nothing was fetched -- no URL, a repo-supplied URL nobody
+    confirmed, or a failed fetch -- each of which it has already said.
+    """
     ref = workspace.source(source_id)
     entry = Registry.load(workspace).get(source_id)
     url, conf, method = inference.infer_errata_url([], entry)
@@ -712,7 +738,7 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
         url, conf, method = (ref.errata_url, ref.errata_confidence or 0.5, "workspace")
     if not url:
         log.warn(f"{source_id}: no errata page found (a real erratum has been missed before)")
-        return
+        return None
     provenance = _errata_provenance(entry, ref, method)
     if provenance == "repo" and not fetch_errata_ok:
         # The URL came out of the COMPANION's own files. Fetching it is an
@@ -727,15 +753,15 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
              f"         or onboard with --fetch-errata (workspace policy "
              f"allow_errata_fetch: true does it once and for all)"])
         workspace.upsert_source(source_id, book_page_url=url, errata_method="repo_unconfirmed")
-        return
+        return None
     from sources import fetch_errata
     try:
         meta = fetch_errata.fetch(url, str(out_dir), source_id=source_id,
-                                  source_sha=ref.sha256 or "", offset=payload["offset"],
+                                  source_sha=ref.sha256 or "", offset=offset,
                                   provenance=provenance)
     except Exception as exc:                        # noqa: BLE001 - offline is not fatal
         log.warn(f"{source_id}: errata fetch failed ({exc}); sources/{source_id}/errata.md is stale")
-        return
+        return None
     raw = workspace.paths.source_errata_raw(source_id)
     confirmed = inference.confirm_errata(raw.read_text(encoding="utf-8", errors="ignore")
                                          if raw.exists() else "")
@@ -748,6 +774,84 @@ def _prepare_source(workspace, source_id: str, *, force: bool, no_errata: bool,
     _teach_the_overlay(workspace, source_id, errata_url=url)
     log.ok(f"errata    {url}  HTTP {meta['http_status']}  "
            f"{meta['entries']} entries  ({method}, confidence {conf:.2f}, url from {provenance})")
+    return meta
+
+
+def _rerender_stale_errata(workspace, source_id: str) -> dict:
+    """Re-derive errata.md when THIS checkout's converter has moved on.
+
+    The errata file is derived data -- ``errata.raw.html`` is the fetch -- so a
+    converter fix has to reach the sources already ingested, and it cannot wait
+    for the page to change: the bug that motivated the version (every formula
+    deleted, the prose left reading as English) lives in files whose page never
+    changes again.  Offline, idempotent, and a no-op for a source whose
+    errata.md this converter already wrote.
+
+    Returns the errata record as it now stands (``{}`` when it could not be
+    read); the CALLER reports its suspect entries, once, so a run that goes on
+    to fetch does not print the same block twice.  A damaged errata.json is a
+    warning, never a traceback: it used to be a file `--no-errata` never read.
+    """
+    from sources import fetch_errata
+    out_dir = workspace.paths.source_dir(source_id)
+    try:
+        meta = fetch_errata.rerender(str(out_dir))
+    except (OSError, ValueError) as exc:          # ValueError: a damaged errata.json
+        log.warn(f"{source_id}: could not re-render errata.md ({exc}); "
+                 f"a fetch rewrites sources/{source_id}/errata.json: "
+                 f"cf sources refresh {source_id}")
+        return {}
+    if meta.get("changed"):
+        was = meta.get("previous_renderer_version")
+        log.ok(f"errata    re-rendered sources/{source_id}/errata.md from the kept HTML "
+               f"(converter v{was if was is not None else 1} -> v{fetch_errata.RENDERER_VERSION}, "
+               f"{meta.get('math_recovered') or 0} formulas recovered)")
+        if meta.get("raw_sha_drift"):
+            log.warn(f"{source_id}: errata.raw.html no longer hashes to what errata.json "
+                     f"recorded; the re-render used the BYTES on disk")
+    return meta
+
+
+def _report_offline_errata(workspace, source_id: str, meta: dict) -> None:
+    """What a run that will not fetch says about the errata it leaves in place.
+
+    Its suspect entries, and -- when the render is stale and there is no kept
+    HTML to re-derive it from -- that only a fetch can fix it, because the
+    offline re-render this run just attempted had nothing to work from.
+    """
+    from sources import fetch_errata
+    if (meta.get("reason") == "no errata.raw.html"
+            and workspace.paths.source_errata_md(source_id).exists()
+            and fetch_errata.is_stale_render(meta.get("renderer_version"))):
+        log.warn(f"{source_id}: errata.md was rendered by an older converter and no "
+                 f"errata.raw.html was kept to re-derive it from -- re-fetch it: "
+                 f"cf sources refresh {source_id}")
+    _report_errata_maths(source_id, meta)
+
+
+def _report_errata_maths(source_id: str, meta: dict) -> None:
+    """Say, loudly and on one stream, which entries may have lost content.
+
+    An erratum whose symbols were dropped reads as grammatical English with the
+    substance removed ("In Corollary 3.2.4(b), should be , and the same"), and a
+    worker handed one cannot tell.  `cf` does not refuse the page over it -- the
+    other entries are real, and the raw HTML is right there -- but it never
+    passes one off silently, which is what used to happen.
+    """
+    suspect = meta.get("suspect") or []
+    if not suspect:
+        return
+    lines = [f"         {s['entry'][:140]}  [{', '.join(s['reasons'])}]"
+             for s in suspect[:5]]
+    if len(suspect) > 5:
+        lines.append(f"         ... and {len(suspect) - 5} more (errata.json `suspect`)")
+    lines.append(f"         read sources/{source_id}/errata.raw.html for these before "
+                 f"treating them as the author's correction")
+    log.warn_block(
+        f"{source_id}: {meta.get('suspect_entries', len(suspect))} errata entries may have "
+        f"lost content in conversion "
+        f"({meta.get('math_unrecovered') or 0} formulas were not recoverable from the page)",
+        lines)
 
 
 def _teach_the_overlay(workspace, source_id: str, **learned) -> None:

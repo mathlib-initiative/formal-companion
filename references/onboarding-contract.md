@@ -422,6 +422,18 @@ fetch metadata lands in `sources/<id>/errata.json`: URL, HTTP status, both
 shas, byte count, entry count, `changed` against the previous fetch, and
 `url_provenance` — **who chose the URL**.
 
+The rendered markdown keeps the **mathematics**, which is most of what an
+erratum says. A formula on these pages is an `<img>` whose `src` is
+`…/latex.php?latex=<url-encoded TeX>` and whose `alt` repeats the TeX, so a
+tag-stripping render produced entries of the shape `In Corollary 3.2.4(b), should
+be , and the same` — English with the correction removed. `errata.json`
+records `renderer_version`, `math_recovered`, `math_unrecovered` and `suspect`
+(the entries that still read as emptied, which `cf onboard` and
+`cf sources refresh` warn about by name, and `cf status` counts). The version
+is what reaches sources already ingested: `cf sources refresh` re-derives
+their `errata.md` from the kept HTML without a fetch; a source with no kept
+HTML needs the fetch, and `cf status` says which.
+
 Who chose it decides whether it is fetched at all. A URL from a **confirmed**
 registry entry, or one a human typed with `cf sources set <id> errata_url=…`,
 is fetched without asking. A URL harvested from the companion's own files — the

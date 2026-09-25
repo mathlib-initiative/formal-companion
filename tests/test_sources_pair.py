@@ -51,13 +51,14 @@ import shutil
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 _REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _SCRIPTS = os.path.join(_REPO, "scripts")
 if _SCRIPTS not in sys.path:
     sys.path.insert(0, _SCRIPTS)
 
-from sources import prepare_source  # noqa: E402
+from sources import fetch_errata, prepare_source  # noqa: E402
 from sources.compat import finding_id, parse_item, parse_item_reject, parse_pages  # noqa: E402
 from sources.fetch_errata import html_to_markdown, stable_text  # noqa: E402
 from pair import anchor_check, compare as compare_mod  # noqa: E402
@@ -193,6 +194,454 @@ class ErrataRenderTests(unittest.TestCase):
         self.assertIn("Definition 1.5.11", md)
         self.assertIn("- p. 40: typo", md)
         self.assertNotIn("x{}", md)
+
+
+def stable_sha(page: str) -> str:
+    """errata.json's ``content_sha256`` for a page -- what `fetch` compares."""
+    return fetch_errata.sha256_text(fetch_errata.stable_text(page))
+
+
+# --------------------------------------------------------------------------
+# the maths in the errata
+# --------------------------------------------------------------------------
+
+#: One errata page in the shape the live ones have: on WordPress every formula
+#: is an ``<img>`` whose ``alt`` and whose ``latex.php?latex=…`` parameter both
+#: carry the TeX.  The host is deliberately NOT a WordPress one -- the renderer
+#: keys on the ``latex.php?latex=`` pattern and the ``class="latex"`` marker, so
+#: a site serving the same endpoint from its own domain must work too.
+#:
+#: Every entry is SYNTHETIC (no line of a real errata page belongs in this
+#: repository, POLICY.md); the three are the three shapes the tags come in:
+#:   1. alt present, plus a ``srcset`` repeating the formula at 1x and 4x, and
+#:      ``&#038;`` for every query separator;
+#:   2. no alt at all, so the ``src`` is the only place the TeX survives;
+#:   3. an image that IS a formula by class and carries the TeX nowhere, which
+#:      must be reported rather than closed over.
+ERRATA_PAGE = """<html><head><style>.latex{border:0}</style></head><body>
+<h2>Errata</h2>
+<ul>
+<li>Page 57: In Lemma 3.2.4(i),
+ <img src="https://cdn.examplebox/latex.php?latex=%5B0%2C1%29&#038;bg=ffffff&#038;fg=000000&#038;s=0"
+      srcset="https://cdn.examplebox/latex.php?latex=%5B0%2C1%29&#038;s=0 1x,
+              https://cdn.examplebox/latex.php?latex=%5B0%2C1%29&#038;s=4 4x"
+      alt="\\displaystyle [0,1)" title="[0,1)" class="latex" />
+ should be
+ <img src="https://cdn.examplebox/latex.php?latex=%5B0%2C1%5D&#038;bg=ffffff&#038;s=0"
+      alt="\\displaystyle [0,1]" class="latex" />, and the same in the
+ display after (3.9).</li>
+<li>Page 90: replace
+ <img src="https://cdn.examplebox/latex.php?latex=x+%5Cin+E_n&#038;s=0" class="latex" />
+ with
+ <img src="https://cdn.examplebox/latex.php?latex=x+%5Cnotin+E_n&#038;s=0" class="latex" />
+ throughout.</li>
+<li>Page 12: the constant
+ <img src="https://cdn.examplebox/render/8c1f2a.png" class="latex" title="C" />
+ is wrong.</li>
+</ul>
+<p>Posted by <img src="https://cdn.examplebox/avatar/9f.png" alt="A reader" class="avatar" /></p>
+</body></html>"""
+
+#: Lines in the shapes a converter that could not read an ``<img>`` produced:
+#: grammatical English with the mathematics deleted out of it. SYNTHETIC --
+#: written to the shapes, not copied from any page. The guard exists because
+#: lines like these shipped to workers without a word of warning.
+EMPTIED_LINES = (
+    "- Page 57: In Corollary 3.2.4(b), should be , and the same in the display "
+    "preceding (3.9).",
+    "- Page 58: ... replace \"and not \" with \"and is contained in (as for "
+    "every )\", and should be .",
+    "- Page 63: Step 2 of the covering argument (Lemma 3.2.4) uses where it "
+    "needs ; so \" and not \" becomes and not \", and \"\" becomes \".",
+)
+
+
+#: sha256 of ``render(ERRATA_PAGE)[0]`` per RENDERER_VERSION; see
+#: ErrataMathsTests.test_the_render_is_pinned_to_the_converter_version.
+RENDERED_DIGEST = {2: "2645d72c4e7fb06b302c81e518c38c51753c6b5a532b70a99c565a771da5cc06"}
+
+
+class ErrataMathsTests(unittest.TestCase):
+    """The symbols are the erratum; a stripped entry is worse than no entry.
+
+    ``Page 57: In Corollary 3.2.4(b), should be , and the same`` reads as
+    English and says nothing.  The entry it was made from says ``[0,1)`` should
+    be ``[0,1]``, which is what a reader comparing a formalisation with the
+    author's correction needs.
+    """
+
+    def setUp(self):
+        self.md, self.audit = fetch_errata.render(ERRATA_PAGE)
+        self.entry = next(line for line in self.md.splitlines() if "Page 57" in line)
+
+    def test_the_symbols_of_the_correction_are_kept(self):
+        self.assertIn("In Lemma 3.2.4(i), $[0,1)$ should be $[0,1]$", self.entry)
+        # the shape it used to have, and the reason the guard below exists
+        self.assertNotIn("should be ,", self.entry)
+
+    def test_the_alt_is_preferred_and_displaystyle_is_not_content(self):
+        """`\\displaystyle` is a typesetting directive; the formula is `[0,1)`."""
+        self.assertNotIn("displaystyle", self.md)
+
+    def test_a_formula_with_no_alt_is_recovered_from_the_src(self):
+        """The second entry's tags carry the TeX in the URL and nowhere else."""
+        entry = next(line for line in self.md.splitlines() if "Page 90" in line)
+        self.assertIn(r"replace $x \in E_n$ with $x \notin E_n$ throughout.", entry)
+
+    def test_a_srcset_does_not_render_the_formula_twice(self):
+        """1x and 4x are the same formula; the tag is one element, not three."""
+        self.assertEqual(self.entry.count("$[0,1)$"), 1)
+
+    def test_a_non_maths_image_is_left_alone(self):
+        """Only `class="latex"` / `latex.php?latex=` is mathematics."""
+        self.assertNotIn("A reader", self.md)
+        self.assertEqual(self.audit["math_recovered"], 4)
+
+    def test_the_latex_parameter_survives_entity_encoded_separators(self):
+        """WordPress writes `&#038;`, which is the separator no regex expects."""
+        self.assertEqual(
+            fetch_errata.latex_from_src(
+                "https://cdn.examplebox/latex.php?latex=%5B0%2C1%29&#038;bg=ffffff&#038;s=0"),
+            "[0,1)")
+        self.assertEqual(
+            fetch_errata.latex_from_src(
+                "https://cdn.examplebox/latex.php?latex=%5B0%2C1%29&amp;s=0"), "[0,1)")
+        # `+` is a space: latex.php builds the query with urlencode
+        self.assertEqual(
+            fetch_errata.latex_from_src("https://cdn.examplebox/latex.php?latex=x+%5Cin+A"),
+            r"x \in A")
+        self.assertEqual(fetch_errata.latex_from_src("https://cdn.examplebox/logo.png"), "")
+
+    def test_a_formula_the_page_does_not_carry_is_said_so(self):
+        """The TeX is in the image bytes only: report it, never close the hole."""
+        entry = next(line for line in self.md.splitlines() if "Page 12" in line)
+        self.assertIn("[math image: TeX not in the page]", entry)
+        self.assertEqual(self.audit["math_unrecovered"], 1)
+        reasons = [s["reasons"] for s in self.audit["suspect"] if "Page 12" in s["entry"]]
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("unrecovered_math", reasons[0])
+
+    def test_a_tag_with_only_a_srcset_is_recovered_from_its_first_url(self):
+        """No alt, no src: the srcset is the last place the TeX survives."""
+        md, audit = fetch_errata.render(
+            '<ul><li>Page 20: <img class="latex" srcset="'
+            'https://cdn.examplebox/latex.php?latex=%5Cmu%28A%29&#038;s=0 1x, '
+            'https://cdn.examplebox/latex.php?latex=%5Cmu%28A%29&#038;s=4 4x"/> is finite.</li></ul>')
+        self.assertIn(r"- Page 20: $\mu(A)$ is finite.", md)
+        self.assertEqual((audit["math_recovered"], audit["math_unrecovered"]), (1, 0))
+
+    def test_the_latex_endpoint_alone_marks_a_formula(self):
+        """No ``class="latex"``: the ``latex.php?latex=`` URL is enough."""
+        md = fetch_errata.render(
+            '<ul><li>Page 21: <img src="https://maths.examplebox/latex.php?latex=f%5E%7B-1%7D'
+            '&#038;s=0"/> is measurable.</li></ul>')[0]
+        self.assertIn("- Page 21: $f^{-1}$ is measurable.", md)
+
+    def test_an_escaped_dollar_in_the_tex_is_kept(self):
+        """Only the delimiting ``$`` go; ``5\\$`` is what the author wrote."""
+        self.assertEqual(fetch_errata._normalise_tex(r"\$"), r"\$")
+        self.assertEqual(fetch_errata._normalise_tex(r"5\$"), r"5\$")
+        self.assertEqual(fetch_errata._normalise_tex("$x+1$"), "x+1")
+        self.assertEqual(fetch_errata._normalise_tex("$$x$$"), "x")
+
+    def test_the_render_is_pinned_to_the_converter_version(self):
+        """Changing the output without bumping RENDERER_VERSION leaves every
+        workspace holding the old render, silently -- the stale-render check
+        keys on the version and nothing else.  So the output is pinned to it:
+        a change here means bump the version (and add its digest), or undo it.
+        """
+        digest = fetch_errata.sha256_text(self.md)
+        self.assertEqual(
+            digest, RENDERED_DIGEST.get(fetch_errata.RENDERER_VERSION),
+            "render(ERRATA_PAGE) changed: bump fetch_errata.RENDERER_VERSION and pin "
+            "the new digest here (a fixture change re-pins the current one)")
+
+    def test_a_recovered_page_reports_no_suspect_entries(self):
+        """Only the one hole -- the two recovered entries are not flagged."""
+        flagged = [s["entry"] for s in self.audit["suspect"]]
+        self.assertEqual([e for e in flagged if "Page 57" in e or "Page 90" in e], [])
+
+
+class ErrataGuardTests(unittest.TestCase):
+    """Emitting an emptied entry silently is the failure, not the emptying."""
+
+    def _block(self, text: str, seen: int | None = None, kept: int | None = None) -> dict:
+        size = len(re.sub(r"\s+", "", text))
+        return {"text": text, "seen": size if seen is None else seen,
+                "kept": size if kept is None else kept, "math": 0, "unrecovered": 0}
+
+    def test_every_emptied_line_is_caught_by_its_shape(self):
+        """The three synthetic examples, each by the shape a reader can see."""
+        for line in EMPTIED_LINES:
+            with self.subTest(line=line[:40]):
+                suspect = fetch_errata.audit_entries([self._block(line)])
+                self.assertEqual(len(suspect), 1, line)
+                self.assertTrue(suspect[0]["reasons"])
+
+    def test_the_shapes_are_named_one_by_one(self):
+        named = {name for name, _, _ in fetch_errata.SUSPECT_SHAPES}
+        self.assertEqual(named, {"comma_gap", "dangling_should_be", "empty_quotes"})
+        for text, rule in ((", ,", "comma_gap"),
+                           ("Lemma 1.2.3 should be .", "dangling_should_be"),
+                           ('and "" should be', "empty_quotes")):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, fetch_errata.audit_entries([self._block(text)])[0]["reasons"])
+
+    def test_an_ordinary_entry_is_not_flagged(self):
+        """The guard must not cry wolf on prose that says something."""
+        for text in ("- Page 23: Definition 1.5.11 should read $X$, not $Y$.",
+                     '- Page 40: "measurable" should be "Lebesgue measurable".',
+                     "- Page 71: the displayed equation is off by a factor of $2$."):
+            with self.subTest(text=text[:40]):
+                self.assertEqual(fetch_errata.audit_entries([self._block(text)]), [])
+
+    def test_tex_in_a_math_script_is_counted_as_lost_through_the_renderer(self):
+        """The count, not the wording, and measured by render() itself.
+
+        MathJax pages carry the TeX in ``<script type="math/tex">``, which this
+        renderer does not emit.  The sentence left behind has no suspect shape,
+        so only the character account can object -- and it used to see nothing,
+        because a skipped tag was never counted as content at all.
+        """
+        page = ('<ul><li>Page 6: replace <script type="math/tex">x \\in A</script> by '
+                '<script type="math/tex; mode=display">x \\notin A</script> everywhere.</li>'
+                '<li>Page 7: the bound holds for all n.</li></ul>')
+        md, audit = fetch_errata.render(page)
+        self.assertIn("- Page 6: replace by everywhere.", md)
+        self.assertNotIn("notin", md)                  # skipped, as before
+        flagged = {s["entry"]: s for s in audit["suspect"]}
+        self.assertEqual(list(flagged), ["- Page 6: replace by everywhere."])
+        lost = flagged["- Page 6: replace by everywhere."]
+        self.assertEqual(lost["reasons"], ["lost_characters"])
+        self.assertLess(lost["density"], fetch_errata.MIN_ENTRY_DENSITY)
+
+    def test_a_script_that_is_not_maths_is_not_content(self):
+        page = ('<ul><li>Page 8: the bound is sharp.'
+                '<script type="text/javascript">var tracker = "a long string of code";</script>'
+                '</li></ul>')
+        self.assertEqual(fetch_errata.render(page)[1]["suspect"], [])
+
+    def test_an_image_the_page_does_not_mark_as_maths_is_not_counted(self):
+        """Commenters' avatars carry alt text; counting it would flag every comment."""
+        page = ('<ul><li>Page 9: fixed. <img class="avatar" src="https://cdn.examplebox/a.png" '
+                'alt="A long description of somebody\'s avatar"/></li></ul>')
+        self.assertEqual(fetch_errata.render(page)[1]["suspect"], [])
+        audit = fetch_errata.render(ERRATA_PAGE)[1]
+        self.assertEqual([s for s in audit["suspect"] if "Posted by" in s["entry"]], [])
+
+    def test_the_old_renderer_would_have_been_caught(self):
+        """The whole point: run the v1 behaviour and the guard must object."""
+        stripped = re.sub(r"<img[^>]*>", "", ERRATA_PAGE)     # v1: tags stripped
+        md, audit = fetch_errata.render(stripped)
+        entry = next(line for line in md.splitlines() if "Page 57" in line)
+        self.assertIn("should be ,", entry)
+        self.assertTrue(any("Page 57" in s["entry"] for s in audit["suspect"]))
+
+
+class ErrataRerenderTests(unittest.TestCase):
+    """A converter fix has to reach the sources already ingested."""
+
+    def setUp(self):
+        self.dir = pathlib.Path(tmp_dir("cf-errata-"))
+        self.raw = self.dir / "errata.raw.html"
+        self.md = self.dir / "errata.md"
+        self.json = self.dir / "errata.json"
+
+    def _ingested_by_v1(self) -> None:
+        """What a workspace ingested before this fix looks like on disk."""
+        self.raw.write_text(ERRATA_PAGE, encoding="utf-8")
+        self.md.write_text("# Errata\n\n" + EMPTIED_LINES[0] + "\n", encoding="utf-8")
+        self.json.write_text(json.dumps({
+            "url": "https://errata.examplebox/measure-theory",
+            "source_id": SOURCE_ID, "source_sha": SOURCE_SHA,
+            "content_sha256": stable_sha(ERRATA_PAGE),
+            "renderer": "sources/fetch_errata.py html_to_markdown (stdlib)",
+            "entries": 3}), encoding="utf-8")
+
+    def _meta(self) -> dict:
+        return json.loads(self.json.read_text(encoding="utf-8"))
+
+    def _rendered(self) -> str:
+        return self.md.read_text(encoding="utf-8")
+
+    def test_a_source_ingested_by_v1_is_rederived_from_the_kept_bytes(self):
+        self._ingested_by_v1()
+        meta = fetch_errata.rerender(str(self.dir))
+        self.assertTrue(meta["changed"])
+        self.assertIsNone(meta["previous_renderer_version"])
+        self.assertEqual(meta["renderer_version"], fetch_errata.RENDERER_VERSION)
+        body = self._rendered()
+        self.assertIn("In Lemma 3.2.4(i), $[0,1)$ should be $[0,1]$", body)
+        # and it did not go back out to the network to do it
+        self.assertEqual(self._meta()["sha256"],
+                         fetch_errata.sha256_text(ERRATA_PAGE))
+
+    def test_rerendering_twice_changes_nothing(self):
+        self._ingested_by_v1()
+        fetch_errata.rerender(str(self.dir))
+        before = self._rendered()
+        again = fetch_errata.rerender(str(self.dir))
+        self.assertFalse(again["changed"])
+        self.assertEqual(self._rendered(), before)
+
+    def test_the_header_and_errata_json_both_carry_the_warning(self):
+        self._ingested_by_v1()
+        meta = fetch_errata.rerender(str(self.dir))
+        self.assertEqual(meta["suspect_entries"], 1)
+        self.assertIn("WARNING", self._rendered())
+        self.assertEqual(self._meta()["suspect"][0]["reasons"],
+                         meta["suspect"][0]["reasons"])
+
+    def test_nothing_to_rerender_is_not_an_error(self):
+        meta = fetch_errata.rerender(str(self.dir))
+        self.assertFalse(meta["changed"])
+        self.assertEqual(meta["reason"], "no errata.raw.html")
+
+    def test_a_fetch_rerenders_when_only_the_converter_moved(self):
+        """The page is byte-identical; the renderer is not, so the file changes."""
+        self._ingested_by_v1()
+        with mock.patch.object(fetch_errata, "curl",
+                               return_value=(ERRATA_PAGE.encode("utf-8"), 200, "")):
+            meta = fetch_errata.fetch("https://errata.examplebox/measure-theory", str(self.dir),
+                                      source_id=SOURCE_ID, source_sha=SOURCE_SHA,
+                                      provenance="registry")
+        self.assertEqual(meta["content_sha256"], stable_sha(ERRATA_PAGE))
+        self.assertTrue(meta["changed"], "an unchanged page still needs the new converter")
+        self.assertIn("$[0,1]$", self._rendered())
+
+    def test_a_second_fetch_of_the_same_page_is_a_no_op(self):
+        """Idempotence survives the version: only the FIRST fetch re-renders."""
+        self._ingested_by_v1()
+        with mock.patch.object(fetch_errata, "curl",
+                               return_value=(ERRATA_PAGE.encode("utf-8"), 200, "")):
+            fetch_errata.fetch("https://errata.examplebox/measure-theory", str(self.dir),
+                               source_id=SOURCE_ID, provenance="registry")
+            before = self._rendered()
+            meta = fetch_errata.fetch("https://errata.examplebox/measure-theory", str(self.dir),
+                                      source_id=SOURCE_ID, provenance="registry")
+        self.assertFalse(meta["changed"])
+        self.assertEqual(self._rendered(), before)
+        self.assertEqual(meta["entries"], 3)
+        # the no-op still carries the audit, or `cf status` goes quiet about it
+        self.assertEqual((meta["math_recovered"], meta["math_unrecovered"]), (4, 1))
+        self.assertEqual(meta["suspect_entries"], 1)
+        self.assertEqual(len(meta["suspect"]), 1)
+        self.assertEqual(self._meta()["suspect_entries"], 1)
+
+    #: A page served as iso-8859-1, which says so in its own meta tag. Synthetic.
+    LATIN1_PAGE = ('<html><head><meta charset="iso-8859-1"></head><body><ul>'
+                   '<li>Page 3: the H\u00f6lder exponent should be '
+                   '<img class="latex" alt="p/2"/>.</li></ul></body></html>')
+
+    def test_a_page_not_served_as_utf8_survives_the_rerender(self):
+        """fetch decodes by the page's charset and keeps the page as UTF-8.
+
+        Reading it back by that same charset tag decoded it twice: every
+        non-ASCII character garbled, the recorded sha overwritten with the
+        digest of the garbage, and a false raw-sha drift warning.
+        """
+        with mock.patch.object(fetch_errata, "curl",
+                               return_value=(self.LATIN1_PAGE.encode("iso-8859-1"), 200, "")):
+            fetched = fetch_errata.fetch("https://errata.examplebox/latin1", str(self.dir),
+                                         source_id=SOURCE_ID, provenance="registry")
+        self.assertIn("H\u00f6lder exponent should be $p/2$", self._rendered())
+        # the state a workspace ingested before the version existed is in
+        record = self._meta()
+        record.pop("renderer_version")
+        self.json.write_text(json.dumps(record), encoding="utf-8")
+        meta = fetch_errata.rerender(str(self.dir))
+        self.assertTrue(meta["changed"])
+        self.assertFalse(meta["raw_sha_drift"])
+        self.assertEqual(meta["sha256"], fetched["sha256"])
+        self.assertEqual(meta["content_sha256"], fetched["content_sha256"])
+        body = self._rendered()
+        self.assertIn("H\u00f6lder exponent should be $p/2$", body)
+        self.assertNotIn("\u00c3", body)
+        with mock.patch.object(fetch_errata, "curl",
+                               return_value=(self.LATIN1_PAGE.encode("iso-8859-1"), 200, "")):
+            again = fetch_errata.fetch("https://errata.examplebox/latin1", str(self.dir),
+                                       source_id=SOURCE_ID, provenance="registry")
+        self.assertFalse(again["changed"], "a byte-identical page is not a change")
+
+    def test_a_render_by_a_newer_converter_is_left_alone(self):
+        """Two checkouts sharing a workspace must not rewrite each other's file."""
+        self._ingested_by_v1()
+        newer = fetch_errata.RENDERER_VERSION + 1
+        record = self._meta()
+        record.update(renderer_version=newer, renderer="a newer converter")
+        self.json.write_text(json.dumps(record), encoding="utf-8")
+        before = self._rendered()
+        self.assertFalse(fetch_errata.rerender(str(self.dir))["changed"])
+        self.assertEqual(self._rendered(), before)
+        with mock.patch.object(fetch_errata, "curl",
+                               return_value=(ERRATA_PAGE.encode("utf-8"), 200, "")):
+            meta = fetch_errata.fetch("https://errata.examplebox/measure-theory", str(self.dir),
+                                      source_id=SOURCE_ID, provenance="registry")
+        self.assertFalse(meta["changed"])
+        self.assertEqual(self._rendered(), before)
+        # and the record still names who wrote the file on disk
+        self.assertEqual(self._meta()["renderer_version"], newer)
+        self.assertEqual(self._meta()["renderer"], "a newer converter")
+
+    def test_a_damaged_record_is_repaired_by_a_fetch(self):
+        """The fetch is the fix `cf` points at for one, so it must not die on it."""
+        self._ingested_by_v1()
+        self.json.write_text('{"url": "https://e/x", ', encoding="utf-8")
+        with self.assertRaises(ValueError):
+            fetch_errata.rerender(str(self.dir))      # the caller turns this into a warning
+        with mock.patch.object(fetch_errata, "curl",
+                               return_value=(ERRATA_PAGE.encode("utf-8"), 200, "")):
+            meta = fetch_errata.fetch("https://errata.examplebox/measure-theory", str(self.dir),
+                                      source_id=SOURCE_ID, provenance="registry")
+        self.assertTrue(meta["changed"])
+        self.assertEqual(self._meta()["renderer_version"], fetch_errata.RENDERER_VERSION)
+
+
+class ErrataIsNotAnExtractKeyTest(unittest.TestCase):
+    """Re-rendering errata.md must not re-key an extraction, and does not.
+
+    An adapter's ``key_files`` names files inside the COMPANION repo; errata.md
+    is workspace data, and no adapter reads it.  So bumping the converter
+    deliberately invalidates nothing but errata.md itself -- re-extracting every
+    companion because a sentence in an errata file gained two dollar signs would
+    be a day of fleet time for no change in a single row.  This pins the
+    decision in both directions, because "it happens not to" is not one.
+    """
+
+    def _adapter(self, repo, **config):
+        from adapters.api import from_config
+        (repo / "Src").mkdir(parents=True, exist_ok=True)
+        (repo / "Src" / "Sample.lean").write_text(
+            "/-- Exercise 1.1.1 -/\ntheorem t : True := trivial\n", encoding="utf-8")
+        return from_config({"adapter": "docstring_tags", "name": "demo", "repo": str(repo),
+                            "glob": "Src/*.lean", "item_kinds": list(KINDS), **config},
+                           source="<errata-key>")
+
+    def test_no_errata_input_is_named_in_the_extract_key(self):
+        repo = pathlib.Path(tmp_dir("cf-extractkey-")) / "repo"
+        blob = json.dumps(self._adapter(repo).key_inputs(), sort_keys=True, default=str)
+        self.assertNotIn("errata", blob)
+        self.assertNotIn("renderer", blob)
+
+    def test_the_extract_key_does_not_move_when_the_errata_is_rerendered(self):
+        root = pathlib.Path(tmp_dir("cf-extractkey2-"))
+        adapter = self._adapter(root / "repo")
+        before = adapter.key()
+        sources = root / "ws" / "sources" / SOURCE_ID      # where errata.md really lives
+        sources.mkdir(parents=True)
+        (sources / "errata.raw.html").write_text(ERRATA_PAGE, encoding="utf-8")
+        self.assertTrue(fetch_errata.rerender(str(sources))["changed"])
+        self.assertIn("$[0,1]$", (sources / "errata.md").read_text(encoding="utf-8"))
+        self.assertEqual(adapter.key(), before)
+
+    def test_a_key_file_inside_the_repo_does_move_it(self):
+        """The other direction: `key_files` is not broken, it is just not this."""
+        repo = pathlib.Path(tmp_dir("cf-extractkey3-")) / "repo"
+        adapter = self._adapter(repo, key_files=["ledger.json"])
+        (repo / "ledger.json").write_text('{"rows": 1}', encoding="utf-8")
+        before = adapter.key()
+        (repo / "ledger.json").write_text('{"rows": 2}', encoding="utf-8")
+        self.assertNotEqual(adapter.key(), before)
 
 
 # --------------------------------------------------------------------------
