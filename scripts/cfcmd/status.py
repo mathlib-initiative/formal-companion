@@ -122,6 +122,10 @@ def run(args) -> int:
              _yn(s["errata"]), ",".join(s["companions"]) or "-", s["role"],
              "yes" if s["confirmed"] else "NO"]
             for s in sources]))
+        # the converter that WOULD render errata.md now, so a file an older one
+        # wrote is visible without running anything
+        from sources.fetch_errata import RENDERER_VERSION as ERRATA_RENDERER_VERSION
+        from sources.fetch_errata import is_stale_render
         for s in sources:
             if not s["prepared"]:
                 log.warn(f"{s['id']}: not prepared (no text.txt) -- the quote gate cannot run. "
@@ -132,6 +136,21 @@ def run(args) -> int:
                 log.warn(f"{s['id']}: the prepared text no longer hashes to meta.json's "
                          "text_sha256 (poppler changed?) -- "
                          f"cf sources refresh {s['id']} --force")
+            if s["errata"] and s["errata_unreadable"]:
+                log.warn(f"{s['id']}: sources/{s['id']}/errata.json is not valid JSON -- "
+                         f"a fetch rewrites it: cf sources refresh {s['id']}")
+            elif s["errata"] and is_stale_render(s["errata_renderer_version"]):
+                # the offline re-derivation needs the kept page; without it only
+                # a fetch can fix the file, and advising --no-errata would loop
+                fix = (f"cf sources refresh {s['id']} --no-errata re-derives it offline"
+                       if s["errata_raw"] else
+                       f"no errata.raw.html was kept, so re-fetch it: cf sources refresh {s['id']}")
+                log.warn(f"{s['id']}: errata.md was rendered by converter "
+                         f"v{s['errata_renderer_version'] or 1}, this one is "
+                         f"v{ERRATA_RENDERER_VERSION} (v1 dropped every formula) -- {fix}")
+            elif s["errata_suspect_entries"]:
+                log.warn(f"{s['id']}: {s['errata_suspect_entries']} errata entries may have "
+                         f"lost content in conversion -- sources/{s['id']}/errata.json `suspect`")
         shared = workspace.shared_sources()
         log.info("")
         for sid, companions in shared.items():
@@ -360,6 +379,13 @@ def _source_facts(workspace) -> list[dict]:
         if text.exists() and meta.get("text_sha256"):
             from cflib.hashing import sha256_text
             drift = sha256_text(text.read_text(encoding="utf-8", errors="ignore")) != meta["text_sha256"]
+        # errata.json is read ONCE and tolerantly: status reports a damaged
+        # record, it does not die on one (read_json raises CfError for it)
+        try:
+            errata = read_json(paths.source_errata_json(sid), default={}) or {}
+            errata_unreadable = False
+        except CfError:
+            errata, errata_unreadable = {}, True
         out.append({
             "id": sid,
             "sha256": ref.sha256,
@@ -373,6 +399,13 @@ def _source_facts(workspace) -> list[dict]:
             "chapters": list(ref.chapters),
             "errata": paths.source_errata_md(sid).exists(),
             "errata_url": ref.errata_url,
+            # which converter wrote errata.md. An older one dropped every
+            # formula, so this is the difference between an erratum and a
+            # grammatical sentence with the substance removed.
+            "errata_renderer_version": errata.get("renderer_version"),
+            "errata_suspect_entries": errata.get("suspect_entries") or 0,
+            "errata_unreadable": errata_unreadable,
+            "errata_raw": paths.source_errata_raw(sid).exists(),
             "prepared": text.exists(),
             "text_drift": drift,
             "companions": workspace.companions_of(sid),

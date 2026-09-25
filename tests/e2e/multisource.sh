@@ -166,6 +166,17 @@ check "anchor edition, decided by scoring the repo's own anchors" \
 if [ -z "$OFFLINE" ]; then
   check "errata page, found and fetched raw" \
         "$(jget "sources/$PUB/errata.json" http_status)" "200"
+  # the symbols ARE the erratum: the live page serves every formula as an
+  # <img>, and a render that drops them leaves grammatical English saying
+  # nothing (the shape of "In Corollary 3.2.4(b), should be , and the same").
+  check "  with its mathematics recovered from the <img> tags" \
+        "$(py 'import json
+d = json.load(open("sources/'"$PUB"'/errata.json"))
+print("yes" if (d.get("math_recovered") or 0) > 10 else "no: %s" % d.get("math_recovered"))')" "yes"
+  check "  and no entry left reading as emptied" \
+        "$(py 'import re
+t = open("sources/'"$PUB"'/errata.md", encoding="utf-8").read()
+print("yes" if not re.search(r"should be\s*[,.;]", t) else "no")')" "yes"
 fi
 
 # ---------------------------------------------------------------------------
