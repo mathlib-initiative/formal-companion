@@ -198,7 +198,21 @@ one page is exactly the defect class this audit exists to find.
 - **The errata page**: from the registry, corroborated by the book page the
   repo cites; fetched with `curl` and the raw HTML kept. A URL the *repo*
   supplies waits for `--fetch-errata`, because the page reaches workers as
-  authoritative text.
+  authoritative text. `errata.md` is **derived** from those bytes, and the
+  mathematics is part of it: a formula served as an `<img>` (WordPress writes
+  `latex.php?latex=<url-encoded TeX>` and repeats the TeX in `alt`) is rendered
+  as `$TeX$`, keyed on that pattern and on `class="latex"`, never on a host.
+  The renderer carries a version (`fetch_errata.RENDERER_VERSION`); a bump
+  re-derives every already-ingested `errata.md` from the kept HTML, offline, on
+  the next `cf sources refresh` — and invalidates nothing else, because no
+  adapter reads `errata.md` and an extract key's `key_files` are paths inside
+  the companion repo. An entry that still reads as emptied — `, ,`,
+  `should be ,`, an empty quotation, an unrecoverable formula, or one that kept
+  under 90% of the characters the raw entry carried — is recorded in
+  `errata.json` (`suspect`) and warned about by name. `cf` does not refuse the
+  page over it: the other entries are real and the raw HTML is on disk, but a
+  stripped entry reads as grammatical English with the substance removed, so it
+  is never passed on silently.
 - **The anchor edition**: the repo's own page anchors are scored against each
   candidate edition; prose only corroborates. There are two elections, and they
   do not behave alike: the first (which edition is the anchor) **warns and

@@ -29,11 +29,13 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import io
 import json
 import os
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -2026,6 +2028,79 @@ class TestOnboardDecisions(unittest.TestCase):
                                         kind_warnings=["kinds_not_in_text: Definition"]))
         self.assertIn("0 numbered items", str(ctx.exception))
         self.assertIn("cf sources add", getattr(ctx.exception, "hint", ""))
+
+    # -- the errata: the maths in it ------------------------------------
+    #: One entry in the shape the live pages have -- every formula an ``<img>``
+    #: carrying its TeX in ``alt`` or in ``latex.php?latex=`` -- and one whose
+    #: TeX is in the image bytes only. Not a WordPress host: the renderer keys
+    #: on the pattern, not on who serves it.
+    ERRATA_PAGE = (
+        '<html><body><ul>'
+        '<li>Page 118: In Lemma 1.6.17(ii), '
+        '<img class="latex" alt="[a,b]" '
+        'src="https://cdn.examplebox/latex.php?latex=%5Ba%2Cb%5D&#038;s=0"/>'
+        ' should be <img class="latex" '
+        'src="https://cdn.examplebox/latex.php?latex=%28a%2Cb%5D&#038;s=0"/>.</li>'
+        '<li>Page 12: the constant '
+        '<img class="latex" src="https://cdn.examplebox/render/8c1f.png"/> is wrong.</li>'
+        '</ul></body></html>')
+
+    def _ingested_by_an_older_converter(self) -> Path:
+        """A source directory as a workspace prepared before the maths fix."""
+        sdir = self.ws.paths.source_dir("a-book-1e")
+        sdir.mkdir(parents=True, exist_ok=True)
+        (sdir / "errata.raw.html").write_text(self.ERRATA_PAGE, encoding="utf-8")
+        (sdir / "errata.md").write_text(
+            "# Errata\n\n- Page 118: In Lemma 1.6.17(ii), should be .\n", encoding="utf-8")
+        (sdir / "errata.json").write_text(
+            json.dumps({"url": "https://errata.examplebox/a-book", "entries": 2,
+                        "renderer": "sources/fetch_errata.py html_to_markdown (stdlib)"}),
+            encoding="utf-8")
+        return sdir
+
+    def test_a_stale_errata_is_rederived_with_no_network(self):
+        """`--no-errata` means "do not go out", not "keep a stale render".
+
+        The errata file is DERIVED from bytes already on disk, so a converter
+        fix has to reach the sources ingested before it -- the page they came
+        from may never change again.
+        """
+        from sources.fetch_errata import RENDERER_VERSION
+
+        sdir = self._ingested_by_an_older_converter()
+        self._prepare(self._payload())                 # no_errata=True throughout
+        body = (sdir / "errata.md").read_text(encoding="utf-8")
+        self.assertIn("In Lemma 1.6.17(ii), $[a,b]$ should be $(a,b]$", body)
+        meta = json.loads((sdir / "errata.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["renderer_version"], RENDERER_VERSION)
+        self.assertEqual(meta["math_recovered"], 2)
+
+    def test_rerendering_the_errata_is_idempotent(self):
+        sdir = self._ingested_by_an_older_converter()
+        self._prepare(self._payload())
+        first = (sdir / "errata.md").read_text(encoding="utf-8")
+        self._prepare(self._payload())
+        self.assertEqual((sdir / "errata.md").read_text(encoding="utf-8"), first)
+
+    def test_an_entry_that_lost_content_is_warned_about_by_name(self):
+        """Silence is the defect: "should be , and similarly" shipped unremarked."""
+        from cflib import log
+
+        self._ingested_by_an_older_converter()
+        # another module may have left the logger quiet; this test is about
+        # what the operator is told, so it says which level it is asking about
+        previous = log.level()
+        self.addCleanup(log.set_level, previous)
+        log.set_level(1)
+        err = io.StringIO()
+        with redirect_stderr(err):
+            self._prepare(self._payload())
+        text = err.getvalue()
+        self.assertIn("may have lost content in conversion", text)
+        self.assertIn("Page 12", text)
+        self.assertIn("unrecovered_math", text)
+        # and it is one block on one stream, evidence included (first-run#4)
+        self.assertIn("errata.raw.html", text)
 
     # -- the errata URL ------------------------------------------------
     def test_only_a_confirmed_url_is_fetched_without_being_asked(self):

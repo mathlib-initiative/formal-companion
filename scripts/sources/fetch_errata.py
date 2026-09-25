@@ -16,8 +16,32 @@ So this module:
 * stamps the fetch date, the http status, the raw sha256 and the workspace's
   ``source_sha`` into ``errata.json`` so a stale errata file is visible.
 
-Idempotent: an unchanged page leaves the files alone and reports ``changed:
-false``; a changed page rewrites them and records ``previous_sha256``.
+**The mathematics is content, and stripping tags used to delete all of it.** On
+a WordPress page every formula is an ``<img>`` whose ``src`` is
+``.../latex.php?latex=<url-encoded TeX>`` and whose ``alt`` carries the same
+TeX; a tag-stripping renderer therefore kept the prose and dropped the symbols,
+which is worse than dropping the entry -- ``Page 118: In Lemma 1.6.17(ii),
+should be , and similarly for the second display`` reads as English and says
+nothing.  One live audit turned on exactly that erratum (``[a,b]`` should be
+``(a,b]``, which decides which of two companions repaired Lemma 1.6.17(ii) the
+way the author did) and the entry had already been emptied at ingestion.  So
+:func:`img_tex` recovers the TeX -- ``alt`` first, else the ``latex=`` parameter
+of the ``src`` -- and :func:`audit_entries` REPORTS an entry that still looks
+emptied, because a silent one is the whole defect.
+
+The render is versioned (:data:`RENDERER_VERSION`).  A bump re-derives
+``errata.md`` from the kept bytes on the next `cf sources refresh`, with no
+network (:func:`rerender`), and it invalidates nothing else: no adapter reads
+``errata.md``, so the extract key an adapter builds from ``key_files`` -- which
+are paths inside the COMPANION repo -- cannot move when this converter changes
+(``tests/test_sources_pair.py`` pins that).
+
+Idempotent: an unchanged page rendered by this same converter leaves the files
+alone and reports ``changed: false``; a changed page -- or a converter this
+errata.json has not seen -- rewrites them and records ``previous_sha256``.
+
+Sections: ``docs/design/stage_map.md`` S3 ("The errata page") and its stage-1
+row.
 """
 
 from __future__ import annotations
@@ -28,6 +52,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import urllib.parse
 from html.parser import HTMLParser
 
 from .compat import read_json, sha256_text, utcnow, write_json, write_text
@@ -38,27 +63,178 @@ _BLOCK_TAGS = {
     "h1", "h2", "h3", "h4", "h5", "h6", "li", "br",
 }
 
+#: Bumped whenever this renderer would produce a DIFFERENT errata.md from the
+#: same bytes.  It is stamped into errata.json, and `cf sources refresh`
+#: re-derives (offline) every errata.md rendered by an older one -- see
+#: :func:`rerender`.  v1: tags stripped, every formula deleted with them.
+#: v2: maths recovered from ``<img>`` and suspect entries reported.
+RENDERER_VERSION = 2
+RENDERER = ("sources/fetch_errata.py html_to_markdown v%d "
+            "(stdlib; maths recovered from img; never a summarising fetch)" % RENDERER_VERSION)
+
+#: ``&`` as an HTML attribute may be written four ways, and WordPress picks the
+#: one that survives no regex written for the others: ``&#038;``.
+_AMP = re.compile(r"&(?:amp;|#0*38;|#x0*26;)", re.I)
+
+#: The substring that says "this img IS a formula", whoever is serving it. The
+#: host is not part of the rule: the pattern and ``class="latex"`` are.
+_LATEX_ENDPOINT = "latex.php"
+
+#: A rendering directive, not content: an alt of ``\displaystyle [a,b]`` is the
+#: formula ``[a,b]`` told to typeset big.  Everything else in the alt is kept
+#: exactly as the author wrote it.
+_DISPLAYSTYLE = re.compile(r"^\\(?:display|text)style\s+")
+
+#: An entry that kept less than this fraction of the non-whitespace characters
+#: the raw entry carried (its text plus the TeX of its formulas) lost content in
+#: conversion -- which is the defect this module was rewritten for.
+MIN_ENTRY_DENSITY = 0.9
+
+#: How many suspect entries errata.json quotes; the count is always exact.
+MAX_SUSPECT_REPORTED = 20
+
+
+def latex_from_src(url: str) -> str:
+    r"""The TeX carried by a ``latex.php?latex=<url-encoded TeX>`` URL.
+
+    The separators may be ``&``, ``&amp;`` or ``&#038;`` (WordPress writes the
+    last one, and it reaches here verbatim whenever the URL is read as a string
+    rather than through the parser's attribute unescaping).  ``+`` is a space:
+    ``latex.php`` builds the query with ``urlencode``, so ``x+%5Cin+A`` is
+    ``x \in A``, not ``x+\in+A``.  Empty when this is not a formula URL.
+    """
+    if not url or _LATEX_ENDPOINT not in url:
+        return ""
+    query = url.partition("?")[2]
+    for part in _AMP.sub("&", html.unescape(query)).split("&"):
+        name, sep, value = part.partition("=")
+        if sep and name.strip() == "latex":
+            return urllib.parse.unquote_plus(value)
+    return ""
+
+
+def is_math_img(attrs: dict) -> bool:
+    """Is this ``<img>`` a formula? Two independent markers, neither a host.
+
+    ``class="latex"`` is what the page says it is, and ``latex.php?latex=`` is
+    what the URL is: either one is enough, so a site that serves the same
+    endpoint from its own domain, or marks the class without the endpoint, is
+    still read as mathematics.
+    """
+    classes = (attrs.get("class") or "").split()
+    if "latex" in classes:
+        return True
+    for key in ("src", "data-src", "data-lazy-src", "srcset", "data-srcset"):
+        if _LATEX_ENDPOINT in (attrs.get(key) or "") and "latex=" in (attrs.get(key) or ""):
+            return True
+    return False
+
+
+def img_tex(attrs: dict) -> str:
+    """The TeX of a formula ``<img>``: ``alt`` first, then the ``src``.
+
+    ``alt`` is preferred because it is the TeX the author typed, stored by the
+    page itself; the ``latex=`` parameter is the same string url-encoded and is
+    the fallback for the tags that carry no alt.  ``srcset`` is consulted LAST
+    and only for its first URL -- it repeats the same formula at 1x and 4x, and
+    rendering a tag once per copy is its own kind of corruption.
+
+    Empty when neither carries it, which :func:`audit_entries` then reports
+    rather than passing off a hole as prose.
+    """
+    alt = _normalise_tex(attrs.get("alt") or "")
+    if alt:
+        return alt
+    for key in ("src", "data-src", "data-lazy-src"):
+        tex = _normalise_tex(latex_from_src(attrs.get(key) or ""))
+        if tex:
+            return tex
+    for key in ("srcset", "data-srcset"):
+        for candidate in (attrs.get(key) or "").split(","):
+            tex = _normalise_tex(latex_from_src(candidate.strip().split(" ")[0]))
+            if tex:
+                return tex
+    return ""
+
+
+def _normalise_tex(tex: str) -> str:
+    r"""Collapse the whitespace and drop a leading ``\displaystyle``."""
+    tex = re.sub(r"\s+", " ", (tex or "").replace("\r", " ").replace("\n", " ")).strip()
+    tex = _DISPLAYSTYLE.sub("", tex).strip()
+    return tex.strip("$").strip()
+
+
+def _dense(text: str) -> int:
+    """Non-whitespace characters: the unit both halves of the audit count in."""
+    return len(re.sub(r"\s+", "", text or ""))
+
 
 class _Markdown(HTMLParser):
-    """A small, deterministic HTML -> Markdown renderer (stdlib only)."""
+    """A small, deterministic HTML -> Markdown renderer (stdlib only).
+
+    It keeps a running account per block -- ``seen`` is every non-whitespace
+    character of content the block carried (its text, plus the TeX of each
+    formula whether or not that TeX could be recovered), ``kept`` is what was
+    emitted -- so :func:`audit_entries` can say an entry lost content without
+    re-parsing the page or guessing which bullet matches which ``<li>``.
+    Markdown punctuation this renderer ADDS (``- ``, ``**``, the link target)
+    is counted in neither: the account is about the page's content.
+    """
 
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
-        self.out: list[str] = []
+        self.blocks: list[dict] = []
         self._skip = 0
         self._list: list[str] = []
         self._href: str | None = None
         self._line: list[str] = []
+        self._seen = 0
+        self._kept = 0
+        self._math = 0
+        self._unrecovered = 0
 
     # -- helpers ---------------------------------------------------------
     def _flush(self) -> None:
         text = re.sub(r"[ \t]+", " ", "".join(self._line)).strip()
+        block = {"text": text, "seen": self._seen, "kept": self._kept,
+                 "math": self._math, "unrecovered": self._unrecovered}
         self._line = []
+        self._seen = self._kept = self._math = self._unrecovered = 0
         if text:
-            self.out.append(text)
+            self.blocks.append(block)
 
     def _emit(self, text: str) -> None:
         self._line.append(text)
+
+    def _content(self, text: str, *, kept: bool = True) -> None:
+        """Account for content the page carried, emitted or not."""
+        size = _dense(text)
+        self._seen += size
+        if kept:
+            self._kept += size
+
+    def _image(self, attrs) -> None:
+        """A formula ``<img>`` becomes its TeX; anything else is still dropped.
+
+        The tag is rendered ONCE, from the tag's own attributes, which is why a
+        ``srcset`` repeating the formula at 1x and 4x cannot double it: the
+        parser sees one element, not one per URL.
+        """
+        attrs = {name: (value or "") for name, value in attrs}
+        if not is_math_img(attrs):
+            return
+        self._math += 1
+        tex = img_tex(attrs)
+        if tex:
+            self._content(tex)
+            self._emit("$%s$" % tex)
+            return
+        # class="latex" with neither an alt nor a latex= parameter: the formula
+        # is in the image bytes and nowhere else. Say so where it stood rather
+        # than close the sentence over the hole.
+        self._unrecovered += 1
+        self._content(attrs.get("title") or "?", kept=False)
+        self._emit("[math image: TeX not in the page]")
 
     # -- parser hooks ----------------------------------------------------
     def handle_starttag(self, tag, attrs):
@@ -82,8 +258,11 @@ class _Markdown(HTMLParser):
             self._emit("**")
         elif tag in ("em", "i"):
             self._emit("*")
+        elif tag == "img":
+            self._image(attrs)
         elif tag == "hr":
-            self.out.append("---")
+            self.blocks.append({"text": "---", "seen": 0, "kept": 0,
+                                "math": 0, "unrecovered": 0})
 
     def handle_endtag(self, tag):
         if tag in _SKIP_TAGS:
@@ -106,27 +285,100 @@ class _Markdown(HTMLParser):
 
     def handle_data(self, data):
         if not self._skip:
+            self._content(data)
             self._emit(data.replace("\r", " ").replace("\n", " "))
 
     def close(self):  # type: ignore[override]
         super().close()
         self._flush()
 
-    def markdown(self) -> str:
-        body: list[str] = []
-        for block in self.out:
-            if body and body[-1] == block:
+    def entries(self) -> list[dict]:
+        """The blocks, with a repeated block collapsed as the markdown does."""
+        body: list[dict] = []
+        for block in self.blocks:
+            if body and body[-1]["text"] == block["text"]:
                 continue
             body.append(block)
-        return "\n\n".join(body).strip() + "\n"
+        return body
+
+    def markdown(self) -> str:
+        return "\n\n".join(b["text"] for b in self.entries()).strip() + "\n"
+
+
+def render(source: str) -> tuple[str, dict]:
+    """Render the page, and report what the render did to it.
+
+    Returns the Markdown and an audit: how many formulas were recovered, how
+    many were not, and every entry that still looks like content was lost.
+    """
+    parser = _Markdown()
+    parser.feed(source)
+    parser.close()
+    entries = parser.entries()
+    audit = {
+        "renderer_version": RENDERER_VERSION,
+        "entries": sum(1 for b in entries if b["text"].lstrip().startswith("- ")),
+        "math_recovered": sum(b["math"] - b["unrecovered"] for b in entries),
+        "math_unrecovered": sum(b["unrecovered"] for b in entries),
+        "suspect": audit_entries(entries),
+    }
+    audit["suspect_entries"] = len(audit["suspect"])
+    return parser.markdown(), audit
 
 
 def html_to_markdown(source: str) -> str:
     """Render HTML as Markdown deterministically (no model, nothing dropped)."""
-    parser = _Markdown()
-    parser.feed(source)
-    parser.close()
-    return parser.markdown()
+    return render(source)[0]
+
+
+#: Shapes a sentence takes when its mathematics has been deleted from under it.
+#: Each one is a REAL line from an errata.md this module produced before it
+#: could read an ``<img>``: "In Lemma 1.6.17(ii), should be , and similarly",
+#: "replace \"but not \" with \"but is disjoint from (since for all )\"".
+SUSPECT_SHAPES: tuple[tuple[str, "re.Pattern[str]", str], ...] = (
+    ("comma_gap", re.compile(r",\s*,"),
+     "a comma-space-comma: whatever stood between them is gone"),
+    ("dangling_should_be", re.compile(r"\bshould\s+(?:be|read)\s*[,.;]"),
+     "`should be` with nothing to be: the correction itself was dropped"),
+    ("empty_quotes", re.compile(r'""|\u201c\s*\u201d'),
+     "a quotation with nothing quoted"),
+)
+
+
+def audit_entries(entries: list[dict]) -> list[dict]:
+    """Every entry that reads like its mathematics was deleted from under it.
+
+    Two independent views, because they fail independently:
+
+    * the SHAPE of the sentence (:data:`SUSPECT_SHAPES`) -- what a reader sees,
+      and what would have caught this defect on a page whose formulas this
+      renderer never saw as images at all;
+    * the ACCOUNT -- an entry that kept less than :data:`MIN_ENTRY_DENSITY` of
+      the non-whitespace characters the raw entry carried, or that holds a
+      formula whose TeX is in the image bytes and nowhere else.
+
+    Silently emitting "In Lemma 1.6.17(ii), should be , and similarly" is the
+    failure this module exists to stop, so the result is reported by every
+    caller -- `cf onboard` and `cf sources refresh` as a warning block,
+    errata.json as a record.
+    """
+    suspect: list[dict] = []
+    for block in entries:
+        reasons = [name for name, pattern, _ in SUSPECT_SHAPES if pattern.search(block["text"])]
+        density = (block["kept"] / block["seen"]) if block["seen"] else 1.0
+        if block["unrecovered"]:
+            reasons.append("unrecovered_math")
+        if density < MIN_ENTRY_DENSITY:
+            reasons.append("lost_characters")
+        if reasons:
+            suspect.append({
+                "entry": block["text"][:300],
+                "reasons": reasons,
+                "kept": block["kept"],
+                "seen": block["seen"],
+                "density": round(density, 3),
+            })
+    return suspect
 
 
 _COMMENT = re.compile(r"<!--.*?-->", re.S)
@@ -260,6 +512,10 @@ def fetch(
     changed = (
         force
         or previous.get("content_sha256") != content_digest
+        # a converter this errata.json has not seen renders a DIFFERENT
+        # errata.md from the same bytes, and the whole point of the version is
+        # that nobody has to notice
+        or previous.get("renderer_version") != RENDERER_VERSION
         or not os.path.exists(md_path)
         or not os.path.exists(raw_path)
     )
@@ -283,39 +539,121 @@ def fetch(
         "previous_sha256": previous.get("sha256", ""),
         "previous_content_sha256": previous.get("content_sha256", ""),
         "entries": None,
-        "renderer": "sources/fetch_errata.py html_to_markdown (stdlib; never a summarising fetch)",
+        "renderer": RENDERER,
+        "renderer_version": RENDERER_VERSION,
         "first_fetched_at": previous.get("first_fetched_at") or utcnow(),
     }
     if changed:
         write_text(raw_path, source)
-        body_md = html_to_markdown(source)
-        header = [
-            "# Errata (fetched verbatim, not summarised)",
-            "",
-            "- source: %s" % url,
-        ]
-        if meta["url_redirected"]:
-            header.append("- REDIRECTED to: %s" % meta["url_effective"])
-        header += [
-            "- fetched: %s" % meta["fetched_at"],
-            "- raw sha256: %s" % digest,
-            "- content sha256 (comments stripped): %s" % content_digest,
-            "- url chosen by: %s" % provenance,
-            "- source: %s" % (source_id or "(unnamed)"),
-            "- source sha256: %s" % (source_sha or "(unpinned)"),
-        ]
-        if offset is not None:
-            header.append("- page numbers below are PRINTED pages; pdf page = printed + %d" % offset)
-        header += [
-            "- the whole page is rendered, navigation and all: an erratum has been lost before "
-            "(Definition 1.5.11) by keeping only what looked relevant",
-            "",
-            "---",
-            "",
-        ]
-        write_text(md_path, "\n".join(header) + body_md)
-        meta["entries"] = sum(1 for line in body_md.splitlines() if line.startswith("- "))
+        write_text(md_path, _document(source, meta))
     else:
-        meta["entries"] = previous.get("entries")
+        for key in ("entries", "math_recovered", "math_unrecovered",
+                    "suspect_entries", "suspect"):
+            meta[key] = previous.get(key)
     write_json(meta_path, meta)
     return meta
+
+
+def _header(meta: dict) -> list[str]:
+    """The lines above the page itself; identical whoever rendered it.
+
+    `fetch` and `rerender` both build the file from here, so a re-derived
+    errata.md differs from a re-fetched one only where the facts differ.
+    """
+    header = [
+        "# Errata (fetched verbatim, not summarised)",
+        "",
+        "- source: %s" % meta.get("url", ""),
+    ]
+    if meta.get("url_redirected"):
+        header.append("- REDIRECTED to: %s" % meta.get("url_effective", ""))
+    header += [
+        "- fetched: %s" % meta.get("fetched_at", ""),
+        "- raw sha256: %s" % meta.get("sha256", ""),
+        "- content sha256 (comments stripped): %s" % meta.get("content_sha256", ""),
+        "- url chosen by: %s" % meta.get("url_provenance", "unknown"),
+        "- source: %s" % (meta.get("source_id") or "(unnamed)"),
+        "- source sha256: %s" % (meta.get("source_sha") or "(unpinned)"),
+    ]
+    offset = meta.get("printed_page_offset")
+    if offset is not None:
+        header.append("- page numbers below are PRINTED pages; pdf page = printed + %d" % offset)
+    if meta.get("rerendered_at"):
+        header.append("- re-rendered (no re-fetch): %s" % meta["rerendered_at"])
+    header += [
+        "- renderer: %s" % meta.get("renderer", RENDERER),
+        "- maths: %d formulas recovered from <img> tags, %d not recoverable from the page"
+        % (meta.get("math_recovered") or 0, meta.get("math_unrecovered") or 0),
+    ]
+    if meta.get("suspect_entries"):
+        header.append(
+            "- WARNING: %d entries may have lost content in conversion; errata.json `suspect` "
+            "lists them. READ THE RAW HTML for those before trusting them."
+            % meta["suspect_entries"])
+    header += [
+        "- the whole page is rendered, navigation and all: an erratum has been lost before "
+        "(Definition 1.5.11) by keeping only what looked relevant",
+        "",
+        "---",
+        "",
+    ]
+    return header
+
+
+def _document(source: str, meta: dict) -> str:
+    """Render the page and fill ``meta`` with what the render did to it."""
+    body_md, audit = render(source)
+    meta.update(audit)
+    meta["suspect"] = audit["suspect"][:MAX_SUSPECT_REPORTED]
+    return "\n".join(_header(meta)) + body_md
+
+
+def rerender(out_dir: str, *, force: bool = False) -> dict:
+    """Re-derive ``errata.md`` from the kept bytes. No network, ever.
+
+    This is what makes :data:`RENDERER_VERSION` more than a label: a source
+    ingested by an older converter has an errata.md that this checkout would
+    not produce, and the page it was made from is already on disk.  `cf onboard`
+    and `cf sources refresh` call it for every source before they consider
+    fetching anything -- including under ``--no-errata``, which means "do not
+    go out to the network", not "keep a render this repo knows is stale".
+
+    Returns the (updated) errata.json with ``changed`` saying whether the file
+    on disk moved; ``{"changed": False, "reason": ...}`` when there is nothing
+    to re-derive.
+    """
+    raw_path = os.path.join(out_dir, "errata.raw.html")
+    md_path = os.path.join(out_dir, "errata.md")
+    meta_path = os.path.join(out_dir, "errata.json")
+    meta = read_json(meta_path, default={}) or {}
+    if not os.path.exists(raw_path):
+        # Nothing was kept to re-render from: a source with no errata, or one
+        # fetched before the raw HTML was stored. Not an error, and not a fix
+        # either -- the next `cf onboard --fetch-errata` is.
+        return {"changed": False, "reason": "no errata.raw.html", "renderer_version": None}
+    if (not force and meta.get("renderer_version") == RENDERER_VERSION
+            and os.path.exists(md_path)):
+        return {**meta, "changed": False, "reason": "already rendered by this converter"}
+    source = _read_text(raw_path)
+    meta = dict(meta)
+    meta["previous_renderer_version"] = meta.get("renderer_version")
+    meta["renderer"] = RENDERER
+    meta["renderer_version"] = RENDERER_VERSION
+    meta["rerendered_at"] = utcnow()
+    # The shas are recomputed from the bytes being rendered, not copied from the
+    # record: this file's header states what it was made from, and an errata.json
+    # written before the raw HTML was kept has no sha at all. A record that
+    # disagrees with the bytes is reported, never quietly overwritten.
+    digest = sha256_text(source)
+    meta["raw_sha_drift"] = bool(meta.get("sha256") and meta["sha256"] != digest)
+    meta["sha256"] = digest
+    meta["content_sha256"] = sha256_text(stable_text(source))
+    write_text(md_path, _document(source, meta))
+    meta["changed"] = True
+    write_json(meta_path, meta)
+    return meta
+
+
+def _read_text(path: str) -> str:
+    with open(path, "rb") as fh:
+        return _decode(fh.read())

@@ -122,6 +122,9 @@ def run(args) -> int:
              _yn(s["errata"]), ",".join(s["companions"]) or "-", s["role"],
              "yes" if s["confirmed"] else "NO"]
             for s in sources]))
+        # the converter that WOULD render errata.md now, so a file an older one
+        # wrote is visible without running anything
+        from sources.fetch_errata import RENDERER_VERSION as ERRATA_RENDERER_VERSION
         for s in sources:
             if not s["prepared"]:
                 log.warn(f"{s['id']}: not prepared (no text.txt) -- the quote gate cannot run. "
@@ -132,6 +135,14 @@ def run(args) -> int:
                 log.warn(f"{s['id']}: the prepared text no longer hashes to meta.json's "
                          "text_sha256 (poppler changed?) -- "
                          f"cf sources refresh {s['id']} --force")
+            if s["errata"] and s["errata_renderer_version"] != ERRATA_RENDERER_VERSION:
+                log.warn(f"{s['id']}: errata.md was rendered by converter "
+                         f"v{s['errata_renderer_version'] or 1}, this one is "
+                         f"v{ERRATA_RENDERER_VERSION} (v1 dropped every formula) -- "
+                         f"cf sources refresh {s['id']} --no-errata re-derives it offline")
+            elif s["errata_suspect_entries"]:
+                log.warn(f"{s['id']}: {s['errata_suspect_entries']} errata entries may have "
+                         f"lost content in conversion -- sources/{s['id']}/errata.json `suspect`")
         shared = workspace.shared_sources()
         log.info("")
         for sid, companions in shared.items():
@@ -373,6 +384,13 @@ def _source_facts(workspace) -> list[dict]:
             "chapters": list(ref.chapters),
             "errata": paths.source_errata_md(sid).exists(),
             "errata_url": ref.errata_url,
+            # which converter wrote errata.md. An older one dropped every
+            # formula, so this is the difference between an erratum and a
+            # grammatical sentence with the substance removed.
+            "errata_renderer_version": (read_json(paths.source_errata_json(sid),
+                                                  default={}) or {}).get("renderer_version"),
+            "errata_suspect_entries": (read_json(paths.source_errata_json(sid),
+                                                 default={}) or {}).get("suspect_entries") or 0,
             "prepared": text.exists(),
             "text_drift": drift,
             "companions": workspace.companions_of(sid),

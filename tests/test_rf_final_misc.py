@@ -593,6 +593,73 @@ class TestAHintSurvivesASpaceInTheWorkspacePath(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# `cf status` names a source whose errata was rendered by an older converter
+# ---------------------------------------------------------------------------
+class TestStatusNamesAStaleErrataRender(unittest.TestCase):
+    """errata.md is derived, so the converter that wrote it is part of its state.
+
+    Converter v1 dropped every formula on the page, leaving entries that read
+    as grammatical English with the correction removed. A workspace ingested
+    before the fix keeps those files until something re-derives them, and
+    nothing would have told the operator they were there.
+    """
+
+    def setUp(self):
+        from cflib import log
+
+        # what the operator is TOLD, so the level this asks about is stated:
+        # another module in the same run may have left the logger quiet.
+        previous = log.level()
+        self.addCleanup(log.set_level, previous)
+        log.set_level(1)
+        self.workspace = share_workspace(self, scratch(self) / "ws")
+        self.dir = self.workspace.paths.source_dir(SOURCE_ID)
+
+    def _errata(self, meta: dict) -> None:
+        (self.dir / "errata.md").write_text(
+            "# Errata\n\n- Page 118: In Lemma 1.6.17(ii), should be .\n", encoding="utf-8")
+        (self.dir / "errata.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    def status(self) -> str:
+        from cfcmd import status as status_cmd
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            status_cmd.run(argparse.Namespace(
+                workspace=str(self.workspace.root), companion=None, source=None,
+                as_json=False, runs=False, verbose=False))
+        return buf.getvalue()
+
+    def test_an_older_render_is_named_with_the_command_that_fixes_it(self):
+        self._errata({"url": "https://errata.examplebox/a-book", "entries": 1})
+        said = self.status()
+        self.assertIn("rendered by converter v1", said)
+        self.assertIn(f"cf sources refresh {SOURCE_ID}", said)
+
+    def test_a_current_render_with_suspect_entries_is_still_named(self):
+        from sources.fetch_errata import RENDERER_VERSION
+
+        self._errata({"url": "https://errata.examplebox/a-book", "entries": 1,
+                      "renderer_version": RENDERER_VERSION, "suspect_entries": 3})
+        said = self.status()
+        self.assertNotIn("rendered by converter", said)
+        self.assertIn("3 errata entries may have lost content", said)
+
+    def test_a_current_clean_render_says_nothing(self):
+        from sources.fetch_errata import RENDERER_VERSION
+
+        self._errata({"url": "https://errata.examplebox/a-book", "entries": 1,
+                      "renderer_version": RENDERER_VERSION, "suspect_entries": 0})
+        said = self.status()
+        self.assertNotIn("errata entries may have lost content", said)
+        self.assertNotIn("rendered by converter", said)
+
+    def test_a_source_with_no_errata_is_not_nagged_about_one(self):
+        said = self.status()
+        self.assertNotIn("rendered by converter", said)
+
+
+# ---------------------------------------------------------------------------
 # NEW#g-misc-6 -- `cf status` on a companion directory workspace.yaml has no row for
 # ---------------------------------------------------------------------------
 class TestStatusSurvivesADirectoryOnlyCompanion(unittest.TestCase):
