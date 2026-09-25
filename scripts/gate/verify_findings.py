@@ -1502,7 +1502,7 @@ def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
 
 
 def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list[str]]:
-    """``{path: status}`` for this contribution against ``base``, plus untracked work.
+    """``{path: status}`` for this contribution since it branched from ``base``, plus untracked work.
 
     The statuses are git's own: ``A`` added, ``M`` modified, ``D`` deleted, ``R``
     renamed (recorded against the old path, with the new one as an addition).
@@ -1522,9 +1522,28 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
         code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
         if code != 0:
             return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
-        code, out = _git(["diff", "--name-status", base], root)
+        # Diff from the point this contribution BRANCHED, not from the base's tip.
+        # Against the tip, every finding that landed on the merge target after the
+        # worktree was cut read as this worker's deletion ("D"), so the check
+        # refused every worktree that was behind main -- at four workers, nearly
+        # all of them on their first launch (903 launches for 385 worktrees in the
+        # first campaign, 20 of the first 26 in the section 1.7 re-run).  The merge
+        # base is still diffed against the WORKING TREE, so uncommitted edits count
+        # as before, and a landed finding this worker really deleted is still a "D".
+        code, merge_bases = _git(["merge-base", "--all", base, "HEAD"], root)
+        bases = [b for b in merge_bases.split() if b]
+        if code != 0 or not bases:
+            return {}, [f"no merge base between {base!r} and HEAD in {root} (the check fails closed)"]
+        if len(bases) > 1:
+            # A criss-cross history (the worker merged another worker's branch that
+            # main has since merged too) has several merge bases, and diffing from
+            # any one of them can hide a deletion.  Honest workers never build one.
+            return {}, [f"{len(bases)} merge bases between {base!r} and HEAD in {root}: a "
+                        "criss-cross history hides what this contribution changed "
+                        "(the check fails closed)"]
+        code, out = _git(["diff", "--name-status", bases[0]], root)
         if code != 0:
-            errs.append(f"git diff against {base} failed")
+            errs.append(f"git diff against the merge base of {base} failed")
         for line in out.splitlines():
             if not line.strip():
                 continue
@@ -1539,11 +1558,19 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
                 errs.append(f"could not parse `git diff --name-status` line {line!r} "
                             f"(the check fails closed)")
         _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
+        for path in out.splitlines():
+            if path.strip():
+                entries.setdefault(path, "A")
+        # A findings file that already exists on the target's tip was landed by
+        # someone; relative to the merge base it looks "A", so it is re-stamped
+        # "M" and the stem rule treats it as a rewrite of a landed finding.
+        for path, status in list(entries.items()):
+            if status == "A" and path.startswith("findings/"):
+                code, _ = _git(["cat-file", "-e", f"{base}:{path}"], root)
+                if code == 0:
+                    entries[path] = "M"
     except _GateBroken as exc:
         return {}, [str(exc)]
-    for path in out.splitlines():
-        if path.strip():
-            entries.setdefault(path, "A")
     return entries, errs
 
 
