@@ -1530,10 +1530,18 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
         # first campaign, 20 of the first 26 in the section 1.7 re-run).  The merge
         # base is still diffed against the WORKING TREE, so uncommitted edits count
         # as before, and a landed finding this worker really deleted is still a "D".
-        code, merge_base = _git(["merge-base", base, "HEAD"], root)
-        if code != 0 or not merge_base.strip():
+        code, merge_bases = _git(["merge-base", "--all", base, "HEAD"], root)
+        bases = [b for b in merge_bases.split() if b]
+        if code != 0 or not bases:
             return {}, [f"no merge base between {base!r} and HEAD in {root} (the check fails closed)"]
-        code, out = _git(["diff", "--name-status", merge_base.strip()], root)
+        if len(bases) > 1:
+            # A criss-cross history (the worker merged another worker's branch that
+            # main has since merged too) has several merge bases, and diffing from
+            # any one of them can hide a deletion.  Honest workers never build one.
+            return {}, [f"{len(bases)} merge bases between {base!r} and HEAD in {root}: a "
+                        "criss-cross history hides what this contribution changed "
+                        "(the check fails closed)"]
+        code, out = _git(["diff", "--name-status", bases[0]], root)
         if code != 0:
             errs.append(f"git diff against the merge base of {base} failed")
         for line in out.splitlines():
@@ -1550,11 +1558,19 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
                 errs.append(f"could not parse `git diff --name-status` line {line!r} "
                             f"(the check fails closed)")
         _code, out = _git(["ls-files", "--others", "--exclude-standard"], root)
+        for path in out.splitlines():
+            if path.strip():
+                entries.setdefault(path, "A")
+        # A findings file that already exists on the target's tip was landed by
+        # someone; relative to the merge base it looks "A", so it is re-stamped
+        # "M" and the stem rule treats it as a rewrite of a landed finding.
+        for path, status in list(entries.items()):
+            if status == "A" and path.startswith("findings/"):
+                code, _ = _git(["cat-file", "-e", f"{base}:{path}"], root)
+                if code == 0:
+                    entries[path] = "M"
     except _GateBroken as exc:
         return {}, [str(exc)]
-    for path in out.splitlines():
-        if path.strip():
-            entries.setdefault(path, "A")
     return entries, errs
 
 
