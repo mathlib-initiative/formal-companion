@@ -20,14 +20,14 @@ So this module:
 a WordPress page every formula is an ``<img>`` whose ``src`` is
 ``.../latex.php?latex=<url-encoded TeX>`` and whose ``alt`` carries the same
 TeX; a tag-stripping renderer therefore kept the prose and dropped the symbols,
-which is worse than dropping the entry -- ``Page 118: In Lemma 1.6.17(ii),
-should be , and similarly for the second display`` reads as English and says
-nothing.  One live audit turned on exactly that erratum (``[a,b]`` should be
-``(a,b]``, which decides which of two companions repaired Lemma 1.6.17(ii) the
-way the author did) and the entry had already been emptied at ingestion.  So
-:func:`img_tex` recovers the TeX -- ``alt`` first, else the ``latex=`` parameter
-of the ``src`` -- and :func:`audit_entries` REPORTS an entry that still looks
-emptied, because a silent one is the whole defect.
+which is worse than dropping the entry -- an entry of the shape ``Page 57: In
+Lemma 3.2.4(i), should be , and similarly for the display after (3.9)`` (a
+synthetic example) reads as English and says nothing, and a reader deciding
+whether a formalisation follows the author's correction needs exactly the
+symbols that were deleted.  So :func:`img_tex` recovers the TeX -- ``alt``
+first, else the ``latex=`` parameter of the ``src`` -- and :func:`audit_entries`
+REPORTS an entry that still looks emptied, because a silent one is the whole
+defect.
 
 The render is versioned (:data:`RENDERER_VERSION`).  A bump re-derives
 ``errata.md`` from the kept bytes on the next `cf sources refresh`, with no
@@ -37,8 +37,8 @@ are paths inside the COMPANION repo -- cannot move when this converter changes
 (``tests/test_sources_pair.py`` pins that).
 
 Idempotent: an unchanged page rendered by this same converter leaves the files
-alone and reports ``changed: false``; a changed page -- or a converter this
-errata.json has not seen -- rewrites them and records ``previous_sha256``.
+alone and reports ``changed: false``; a changed page -- or a render by an OLDER
+converter than this one -- rewrites them and records ``previous_sha256``.
 
 Sections: ``docs/design/stage_map.md`` S3 ("The errata page") and its stage-1
 row.
@@ -80,18 +80,33 @@ _AMP = re.compile(r"&(?:amp;|#0*38;|#x0*26;)", re.I)
 #: host is not part of the rule: the pattern and ``class="latex"`` are.
 _LATEX_ENDPOINT = "latex.php"
 
-#: A rendering directive, not content: an alt of ``\displaystyle [a,b]`` is the
-#: formula ``[a,b]`` told to typeset big.  Everything else in the alt is kept
-#: exactly as the author wrote it.
+#: A rendering directive, not content: an alt of ``\displaystyle [0,1)`` is the
+#: formula ``[0,1)`` told to typeset big.  Everything else in the alt is kept
+#: exactly as the author wrote it -- an escaped ``\$`` included.
 _DISPLAYSTYLE = re.compile(r"^\\(?:display|text)style\s+")
 
 #: An entry that kept less than this fraction of the non-whitespace characters
-#: the raw entry carried (its text plus the TeX of its formulas) lost content in
-#: conversion -- which is the defect this module was rewritten for.
+#: it carried lost content in conversion -- which is the defect this module was
+#: rewritten for.  What counts as "carried" is exactly what :class:`_Markdown`
+#: can see: the entry's text, the TeX of every formula the page MARKS as one,
+#: and the body of every ``<script type="math/...">``.  An image the page does
+#: not mark as a formula is not counted (on the live pages those are commenters'
+#: avatars, and counting their alt text would flag every comment), nor is an
+#: ``<svg>``, so maths served that way is caught only by :data:`SUSPECT_SHAPES`.
 MIN_ENTRY_DENSITY = 0.9
 
 #: How many suspect entries errata.json quotes; the count is always exact.
 MAX_SUSPECT_REPORTED = 20
+
+
+def is_stale_render(version) -> bool:
+    """Was errata.md rendered by an OLDER converter than this one?
+
+    ``None`` is v1, which recorded no version.  A NEWER version is not stale:
+    two checkouts sharing a workspace must not keep re-rendering each other's
+    file, and the older one would be the one getting it wrong.
+    """
+    return (version or 1) < RENDERER_VERSION
 
 
 def latex_from_src(url: str) -> str:
@@ -158,10 +173,21 @@ def img_tex(attrs: dict) -> str:
 
 
 def _normalise_tex(tex: str) -> str:
-    r"""Collapse the whitespace and drop a leading ``\displaystyle``."""
+    r"""Collapse the whitespace and drop a leading ``\displaystyle``.
+
+    Delimiting ``$`` signs are dropped (they are added back around the formula);
+    an ESCAPED dollar at the end, ``5\$``, is the author's text and is kept.
+    """
     tex = re.sub(r"\s+", " ", (tex or "").replace("\r", " ").replace("\n", " ")).strip()
     tex = _DISPLAYSTYLE.sub("", tex).strip()
-    return tex.strip("$").strip()
+    tex = re.sub(r"(?<!\\)\$+$", "", re.sub(r"^\$+", "", tex))
+    return tex.strip()
+
+
+def _is_math_script(attrs) -> bool:
+    """``<script type="math/tex">`` (and ``; mode=display``, ``math/mml``...)."""
+    kind = (dict(attrs).get("type") or "").strip().lower()
+    return kind.startswith("math/")
 
 
 def _dense(text: str) -> int:
@@ -173,10 +199,14 @@ class _Markdown(HTMLParser):
     """A small, deterministic HTML -> Markdown renderer (stdlib only).
 
     It keeps a running account per block -- ``seen`` is every non-whitespace
-    character of content the block carried (its text, plus the TeX of each
-    formula whether or not that TeX could be recovered), ``kept`` is what was
-    emitted -- so :func:`audit_entries` can say an entry lost content without
-    re-parsing the page or guessing which bullet matches which ``<li>``.
+    character of content the block carried that this parser can recognise as
+    content, ``kept`` is what was emitted -- so :func:`audit_entries` can say an
+    entry lost content without re-parsing the page or guessing which bullet
+    matches which ``<li>``.  ``seen`` counts the block's text, the TeX of each
+    formula image (its title, or ``?``, when the TeX cannot be recovered), and
+    the body of each ``<script type="math/...">`` -- MathJax's in-page TeX,
+    which this renderer does not emit, so it is seen and never kept.  See
+    :data:`MIN_ENTRY_DENSITY` for what is deliberately NOT counted.
     Markdown punctuation this renderer ADDS (``- ``, ``**``, the link target)
     is counted in neither: the account is about the page's content.
     """
@@ -185,6 +215,9 @@ class _Markdown(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.blocks: list[dict] = []
         self._skip = 0
+        # inside a <script type="math/...">: skipped like any script, but its
+        # body is content the page carried, so it is SEEN (and not kept)
+        self._math_script = False
         self._list: list[str] = []
         self._href: str | None = None
         self._line: list[str] = []
@@ -239,6 +272,8 @@ class _Markdown(HTMLParser):
     # -- parser hooks ----------------------------------------------------
     def handle_starttag(self, tag, attrs):
         if tag in _SKIP_TAGS:
+            if tag == "script" and not self._skip and _is_math_script(attrs):
+                self._math_script = True
             self._skip += 1
             return
         if self._skip:
@@ -267,6 +302,8 @@ class _Markdown(HTMLParser):
     def handle_endtag(self, tag):
         if tag in _SKIP_TAGS:
             self._skip = max(0, self._skip - 1)
+            if not self._skip:
+                self._math_script = False
             return
         if self._skip:
             return
@@ -284,9 +321,12 @@ class _Markdown(HTMLParser):
             self._flush()
 
     def handle_data(self, data):
-        if not self._skip:
-            self._content(data)
-            self._emit(data.replace("\r", " ").replace("\n", " "))
+        if self._skip:
+            if self._math_script:
+                self._content(data, kept=False)
+            return
+        self._content(data)
+        self._emit(data.replace("\r", " ").replace("\n", " "))
 
     def close(self):  # type: ignore[override]
         super().close()
@@ -331,10 +371,12 @@ def html_to_markdown(source: str) -> str:
     return render(source)[0]
 
 
-#: Shapes a sentence takes when its mathematics has been deleted from under it.
-#: Each one is a REAL line from an errata.md this module produced before it
-#: could read an ``<img>``: "In Lemma 1.6.17(ii), should be , and similarly",
-#: "replace \"but not \" with \"but is disjoint from (since for all )\"".
+#: Shapes a sentence takes when its mathematics has been deleted from under it,
+#: the shapes a tag-stripping render of these pages produced (the examples are
+#: synthetic): "In Lemma 3.2.4(i), should be , and similarly", "replace
+#: \"and not \" with \"\"".  They catch SOME emptied sentences, not all: an
+#: entry that lost a formula mid-clause can still read cleanly, so an empty
+#: ``suspect`` list is not proof that nothing was lost.
 SUSPECT_SHAPES: tuple[tuple[str, "re.Pattern[str]", str], ...] = (
     ("comma_gap", re.compile(r",\s*,"),
      "a comma-space-comma: whatever stood between them is gone"),
@@ -348,19 +390,21 @@ SUSPECT_SHAPES: tuple[tuple[str, "re.Pattern[str]", str], ...] = (
 def audit_entries(entries: list[dict]) -> list[dict]:
     """Every entry that reads like its mathematics was deleted from under it.
 
-    Two independent views, because they fail independently:
+    Two views, because they fail differently:
 
     * the SHAPE of the sentence (:data:`SUSPECT_SHAPES`) -- what a reader sees,
-      and what would have caught this defect on a page whose formulas this
-      renderer never saw as images at all;
-    * the ACCOUNT -- an entry that kept less than :data:`MIN_ENTRY_DENSITY` of
-      the non-whitespace characters the raw entry carried, or that holds a
-      formula whose TeX is in the image bytes and nowhere else.
+      and the only view that can catch maths this renderer does not recognise
+      at all (an image the page does not mark as a formula, an ``<svg>``);
+    * the ACCOUNT -- ``unrecovered_math`` for a formula image whose TeX is in
+      the image bytes and nowhere else, and ``lost_characters`` for an entry
+      that kept less than :data:`MIN_ENTRY_DENSITY` of the characters
+      :class:`_Markdown` saw in it (in practice: TeX the page carried in a
+      ``<script type="math/...">``, which is never emitted).
 
-    Silently emitting "In Lemma 1.6.17(ii), should be , and similarly" is the
+    Silently emitting "In Lemma 3.2.4(i), should be , and similarly" is the
     failure this module exists to stop, so the result is reported by every
-    caller -- `cf onboard` and `cf sources refresh` as a warning block,
-    errata.json as a record.
+    caller -- `cf onboard` and `cf sources refresh` as a warning block naming
+    the entries, `cf status` as a count, errata.json as a record.
     """
     suspect: list[dict] = []
     for block in entries:
@@ -501,7 +545,12 @@ def fetch(
     raw_path = os.path.join(out_dir, "errata.raw.html")
     md_path = os.path.join(out_dir, "errata.md")
     meta_path = os.path.join(out_dir, "errata.json")
-    previous = read_json(meta_path, default={}) or {}
+    try:
+        previous = read_json(meta_path, default={}) or {}
+    except ValueError:
+        # a damaged record is replaced, not fatal: a fetch is the repair
+        # `cf onboard` / `cf sources refresh` point at for one
+        previous = {}
 
     body, status, effective = curl(url, timeout=timeout)
     if status >= 400 or not body:
@@ -512,10 +561,10 @@ def fetch(
     changed = (
         force
         or previous.get("content_sha256") != content_digest
-        # a converter this errata.json has not seen renders a DIFFERENT
-        # errata.md from the same bytes, and the whole point of the version is
-        # that nobody has to notice
-        or previous.get("renderer_version") != RENDERER_VERSION
+        # an older converter rendered a DIFFERENT errata.md from the same
+        # bytes, and the whole point of the version is that nobody has to
+        # notice (a NEWER one's render is left alone: is_stale_render)
+        or is_stale_render(previous.get("renderer_version"))
         or not os.path.exists(md_path)
         or not os.path.exists(raw_path)
     )
@@ -550,6 +599,10 @@ def fetch(
         for key in ("entries", "math_recovered", "math_unrecovered",
                     "suspect_entries", "suspect"):
             meta[key] = previous.get(key)
+        # the files on disk are the previous converter's, which may be NEWER
+        # than this one (is_stale_render); record who really wrote them
+        for key in ("renderer", "renderer_version"):
+            meta[key] = previous.get(key, meta[key])
     write_json(meta_path, meta)
     return meta
 
@@ -619,8 +672,9 @@ def rerender(out_dir: str, *, force: bool = False) -> dict:
     go out to the network", not "keep a render this repo knows is stale".
 
     Returns the (updated) errata.json with ``changed`` saying whether the file
-    on disk moved; ``{"changed": False, "reason": ...}`` when there is nothing
-    to re-derive.
+    on disk moved; when there is nothing to re-derive, the record as it stands
+    with ``changed: False`` and a ``reason``.  Only a render by an OLDER
+    converter is re-derived (:func:`is_stale_render`).
     """
     raw_path = os.path.join(out_dir, "errata.raw.html")
     md_path = os.path.join(out_dir, "errata.md")
@@ -630,8 +684,8 @@ def rerender(out_dir: str, *, force: bool = False) -> dict:
         # Nothing was kept to re-render from: a source with no errata, or one
         # fetched before the raw HTML was stored. Not an error, and not a fix
         # either -- the next `cf onboard --fetch-errata` is.
-        return {"changed": False, "reason": "no errata.raw.html", "renderer_version": None}
-    if (not force and meta.get("renderer_version") == RENDERER_VERSION
+        return {**meta, "changed": False, "reason": "no errata.raw.html"}
+    if (not force and not is_stale_render(meta.get("renderer_version"))
             and os.path.exists(md_path)):
         return {**meta, "changed": False, "reason": "already rendered by this converter"}
     source = _read_text(raw_path)
@@ -655,5 +709,11 @@ def rerender(out_dir: str, *, force: bool = False) -> dict:
 
 
 def _read_text(path: str) -> str:
+    """The kept page, as :func:`fetch` wrote it: UTF-8, whatever it was served as.
+
+    NOT :func:`_decode`: that trusts the page's own ``charset=`` tag, which is
+    still in the file after fetch decoded the body, so an ``iso-8859-1`` page
+    would be decoded twice and every non-ASCII character garbled.
+    """
     with open(path, "rb") as fh:
-        return _decode(fh.read())
+        return fh.read().decode("utf-8", errors="replace")

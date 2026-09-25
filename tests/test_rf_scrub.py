@@ -507,5 +507,67 @@ class TestNoTrackedFileQuotesThePinnedBook(unittest.TestCase):
                 text = text[:span[0]] + blank * (span[1] - span[0]) + text[span[1]:]
         self.assertEqual(offenders, [], "verbatim runs of the pinned source text")
 
+
+# ---------------------------------------------------------------------------
+# no tracked file quotes a fetched errata page either
+# ---------------------------------------------------------------------------
+
+#: one or more rendered errata files (``sources/<id>/errata.md`` of a real
+#: workspace, any converter version), separated by the platform's path separator
+ERRATA_MDS = [p for p in os.environ.get("CF_ERRATA_MD", "").split(os.pathsep)
+              if p and os.path.isfile(p)]
+
+
+_A_URL = re.compile(r"^\S*://\S*$")
+
+
+def errata_page_body(path: str) -> str:
+    """The rendered PAGE, without the header this skill writes above it.
+
+    The header (``fetch_errata._header``) is the skill's own text and lives in
+    the tree legitimately; everything after its ``---`` rule is the page.
+    """
+    with open(path, encoding="utf-8", errors="replace") as handle:
+        body = handle.read()
+    head, rule, page = body.partition("\n---\n")
+    return page if rule else body
+
+
+@unittest.skipUnless(ERRATA_MDS, "set CF_ERRATA_MD to a workspace's rendered errata.md "
+                                 "to run the errata passage scan")
+class TestNoTrackedFileQuotesAFetchedErrataPage(unittest.TestCase):
+    """POLICY.md S3: nothing this skill fetches is committed, errata included.
+
+    A fixture, three docstrings, the CHANGELOG and an e2e comment once quoted
+    real errata entries, labelled as real, to show the shape a converter bug
+    left them in.  The shapes are what the tests need, and synthetic lines
+    carry them; this scan is what notices the next real one.  Same redactor,
+    same floor as the book scan above.
+    """
+
+    def test_no_file_carries_a_passage_of_it(self):
+        from share import redact
+        index = redact.SourceIndex([errata_page_body(p) for p in ERRATA_MDS],
+                                   minimum=BOOK_RUN_MIN)
+        blank = chr(7)
+        offenders = []
+        for name in tracked_files():
+            try:
+                body = (SKILL / name).read_text(encoding="utf-8")
+            except (UnicodeDecodeError, OSError):
+                continue
+            text = redact.normalise_with_offsets(body)[0]
+            for _ in range(50):
+                span = index.longest_span(text)
+                if not span:
+                    break
+                run = text[span[0]:span[1]]
+                # the page links the book's own URLs, which are source METADATA
+                # (registry/sources.yaml), not a line of the page
+                if not _A_URL.match(run.strip()):
+                    offenders.append("%s: %d characters" % (name, len(run)))
+                text = text[:span[0]] + blank * (span[1] - span[0]) + text[span[1]:]
+        self.assertEqual(offenders, [], "verbatim runs of a fetched errata page")
+
 if __name__ == "__main__":                                   # pragma: no cover
     unittest.main()

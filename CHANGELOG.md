@@ -71,23 +71,29 @@ release has something to say.
 - the errata converter deleted every mathematical symbol. On the pages these
   come from a formula is an `<img>` (`latex.php?latex=<url-encoded TeX>`, the
   same TeX in `alt`), so stripping tags left the prose and dropped the content:
-  `Page 118: In Lemma 1.6.17(ii), should be , and similarly` — a grammatical
-  sentence that says nothing, shipped to workers as authoritative errata. One
-  audit could not decide which of two companions had made the author's own
-  repair of that lemma, and the answer (`[a,b]` should be `(a,b]`) was in the
-  kept `errata.raw.html` the whole time. The formulas are now rendered as
+  entries of the shape `In Lemma 3.2.4(i), should be , and similarly` — a
+  grammatical sentence that says nothing, shipped to workers as authoritative
+  errata, while the symbols sat in the kept `errata.raw.html` the whole time.
+  The formulas are now rendered as
   `$TeX$`, keyed on the `latex.php?latex=` pattern and `class="latex"` rather
   than on a host; `errata.json` records how many were recovered and how many
   were not. The renderer carries a version, so `cf sources refresh` re-derives
-  an already-ingested `errata.md` from the bytes on disk with no network, and
-  `cf status` names a source still holding an older render. No extract key
+  an already-ingested `errata.md` from the bytes on disk with no network (read
+  back as the UTF-8 the fetch wrote, whatever charset the page declared), and
+  `cf status` names a source still holding an older render. A render by a
+  NEWER converter is left alone. No extract key
   moves: `key_files` are paths inside the companion repo, and no adapter reads
   `errata.md` (`tests/test_sources_pair.py` pins both directions).
 - an errata entry that still looks emptied — `, ,`, `should be ,`, an empty
-  quotation, a formula the page carries only as image bytes, or one that kept
-  under 90% of the characters the raw entry carried — is now listed in
-  `errata.json` and warned about as one block, naming the entries. It used to
-  be emitted silently, which is the whole of the defect above.
+  quotation, a formula the page carries only as image bytes, or TeX the page
+  carries in a `<script type="math/…">` that the render does not emit (the
+  entry keeps under 90% of the characters the renderer saw) — is now listed
+  in `errata.json` and warned about once per source by `cf onboard` and
+  `cf sources refresh`, naming the entries; `cf status` gives the count. It
+  used to be emitted silently, which is the whole of the defect above. The
+  guard is not exhaustive: maths in an image the page does not mark as a
+  formula, or in an `<svg>`, is caught only when the sentence's shape gives it
+  away.
 - 44 docstring citations pointed at four design documents that were never
   written, and the reference docs sent a stuck reader to `cf ingest`, a command
   that never existed; `book/fetch_errata.py` and several other stale paths went

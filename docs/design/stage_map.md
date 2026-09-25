@@ -206,13 +206,20 @@ one page is exactly the defect class this audit exists to find.
   re-derives every already-ingested `errata.md` from the kept HTML, offline, on
   the next `cf sources refresh` — and invalidates nothing else, because no
   adapter reads `errata.md` and an extract key's `key_files` are paths inside
-  the companion repo. An entry that still reads as emptied — `, ,`,
-  `should be ,`, an empty quotation, an unrecoverable formula, or one that kept
-  under 90% of the characters the raw entry carried — is recorded in
-  `errata.json` (`suspect`) and warned about by name. `cf` does not refuse the
-  page over it: the other entries are real and the raw HTML is on disk, but a
-  stripped entry reads as grammatical English with the substance removed, so it
-  is never passed on silently.
+  the companion repo. The re-render reads `errata.raw.html` as the UTF-8 the
+  fetch wrote, and re-derives only a render by an OLDER converter. An entry
+  that still reads as emptied — `, ,`, `should be ,`, an empty quotation, an
+  unrecoverable formula image, or one that kept under 90% of the characters
+  the renderer saw in it (its text, the TeX of every formula the page marks as
+  one, and the body of every `<script type="math/…">`, which is never
+  emitted) — is recorded in `errata.json` (`suspect`) and warned about by name,
+  once per source. `cf` does not refuse the page over it: the other entries
+  are real and the raw HTML is on disk, but a stripped entry reads as
+  grammatical English with the substance removed, so it is never passed on
+  silently. The guard is not exhaustive: an image the page does not mark as a
+  formula is not counted (on the live pages those are commenters' avatars),
+  nor is an `<svg>`, so maths served that way is caught only by the sentence
+  shapes, and an empty `suspect` list is not proof nothing was lost.
 - **The anchor edition**: the repo's own page anchors are scored against each
   candidate edition; prose only corroborates. There are two elections, and they
   do not behave alike: the first (which edition is the anchor) **warns and

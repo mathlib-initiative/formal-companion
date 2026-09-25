@@ -617,7 +617,7 @@ class TestStatusNamesAStaleErrataRender(unittest.TestCase):
 
     def _errata(self, meta: dict) -> None:
         (self.dir / "errata.md").write_text(
-            "# Errata\n\n- Page 118: In Lemma 1.6.17(ii), should be .\n", encoding="utf-8")
+            "# Errata\n\n- Page 57: In Lemma 3.2.4(i), should be .\n", encoding="utf-8")
         (self.dir / "errata.json").write_text(json.dumps(meta), encoding="utf-8")
 
     def status(self) -> str:
@@ -631,10 +631,45 @@ class TestStatusNamesAStaleErrataRender(unittest.TestCase):
         return buf.getvalue()
 
     def test_an_older_render_is_named_with_the_command_that_fixes_it(self):
+        """With the page kept, the offline re-derivation is the fix -- and it works."""
+        from cfcmd import sources as sources_cmd
+
+        self._errata({"url": "https://errata.examplebox/a-book", "entries": 1})
+        (self.dir / "errata.raw.html").write_text(
+            "<ul><li>Page 57: <img class=\"latex\" alt=\"[0,1)\"/> should be "
+            "<img class=\"latex\" alt=\"[0,1]\"/>.</li></ul>", encoding="utf-8")
+        said = self.status()
+        self.assertIn("rendered by converter v1", said)
+        self.assertIn(f"cf sources refresh {SOURCE_ID} --no-errata re-derives it offline", said)
+        # run the advice, and the warning is gone
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(buf):
+            rc = sources_cmd._refresh(self.workspace, argparse.Namespace(
+                source_id=SOURCE_ID, force=False, no_errata=True, images=False))
+        self.assertEqual(rc, 0)
+        self.assertNotIn("rendered by converter", self.status())
+
+    def test_with_no_kept_page_the_advice_is_a_fetch(self):
+        """`--no-errata` cannot re-derive without errata.raw.html; do not loop on it."""
         self._errata({"url": "https://errata.examplebox/a-book", "entries": 1})
         said = self.status()
         self.assertIn("rendered by converter v1", said)
+        self.assertIn("no errata.raw.html was kept", said)
         self.assertIn(f"cf sources refresh {SOURCE_ID}", said)
+        self.assertNotIn("--no-errata", said)
+
+    def test_a_render_by_a_newer_converter_is_not_called_stale(self):
+        from sources.fetch_errata import RENDERER_VERSION
+
+        self._errata({"url": "https://errata.examplebox/a-book", "entries": 1,
+                      "renderer_version": RENDERER_VERSION + 1})
+        self.assertNotIn("rendered by converter", self.status())
+
+    def test_a_damaged_errata_record_is_reported_not_fatal(self):
+        (self.dir / "errata.md").write_text("# Errata\n", encoding="utf-8")
+        (self.dir / "errata.json").write_text('{"url": ', encoding="utf-8")
+        said = self.status()
+        self.assertIn("errata.json is not valid JSON", said)
 
     def test_a_current_render_with_suspect_entries_is_still_named(self):
         from sources.fetch_errata import RENDERER_VERSION

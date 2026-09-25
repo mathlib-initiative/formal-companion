@@ -35,7 +35,7 @@ import os
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -2030,17 +2030,17 @@ class TestOnboardDecisions(unittest.TestCase):
         self.assertIn("cf sources add", getattr(ctx.exception, "hint", ""))
 
     # -- the errata: the maths in it ------------------------------------
-    #: One entry in the shape the live pages have -- every formula an ``<img>``
-    #: carrying its TeX in ``alt`` or in ``latex.php?latex=`` -- and one whose
-    #: TeX is in the image bytes only. Not a WordPress host: the renderer keys
-    #: on the pattern, not on who serves it.
+    #: One SYNTHETIC entry in the shape the live pages have -- every formula an
+    #: ``<img>`` carrying its TeX in ``alt`` or in ``latex.php?latex=`` -- and
+    #: one whose TeX is in the image bytes only. Not a WordPress host: the
+    #: renderer keys on the pattern, not on who serves it.
     ERRATA_PAGE = (
         '<html><body><ul>'
-        '<li>Page 118: In Lemma 1.6.17(ii), '
-        '<img class="latex" alt="[a,b]" '
-        'src="https://cdn.examplebox/latex.php?latex=%5Ba%2Cb%5D&#038;s=0"/>'
+        '<li>Page 57: In Lemma 3.2.4(i), '
+        '<img class="latex" alt="[0,1)" '
+        'src="https://cdn.examplebox/latex.php?latex=%5B0%2C1%29&#038;s=0"/>'
         ' should be <img class="latex" '
-        'src="https://cdn.examplebox/latex.php?latex=%28a%2Cb%5D&#038;s=0"/>.</li>'
+        'src="https://cdn.examplebox/latex.php?latex=%5B0%2C1%5D&#038;s=0"/>.</li>'
         '<li>Page 12: the constant '
         '<img class="latex" src="https://cdn.examplebox/render/8c1f.png"/> is wrong.</li>'
         '</ul></body></html>')
@@ -2051,7 +2051,7 @@ class TestOnboardDecisions(unittest.TestCase):
         sdir.mkdir(parents=True, exist_ok=True)
         (sdir / "errata.raw.html").write_text(self.ERRATA_PAGE, encoding="utf-8")
         (sdir / "errata.md").write_text(
-            "# Errata\n\n- Page 118: In Lemma 1.6.17(ii), should be .\n", encoding="utf-8")
+            "# Errata\n\n- Page 57: In Lemma 3.2.4(i), should be .\n", encoding="utf-8")
         (sdir / "errata.json").write_text(
             json.dumps({"url": "https://errata.examplebox/a-book", "entries": 2,
                         "renderer": "sources/fetch_errata.py html_to_markdown (stdlib)"}),
@@ -2070,7 +2070,7 @@ class TestOnboardDecisions(unittest.TestCase):
         sdir = self._ingested_by_an_older_converter()
         self._prepare(self._payload())                 # no_errata=True throughout
         body = (sdir / "errata.md").read_text(encoding="utf-8")
-        self.assertIn("In Lemma 1.6.17(ii), $[a,b]$ should be $(a,b]$", body)
+        self.assertIn("In Lemma 3.2.4(i), $[0,1)$ should be $[0,1]$", body)
         meta = json.loads((sdir / "errata.json").read_text(encoding="utf-8"))
         self.assertEqual(meta["renderer_version"], RENDERER_VERSION)
         self.assertEqual(meta["math_recovered"], 2)
@@ -2101,6 +2101,67 @@ class TestOnboardDecisions(unittest.TestCase):
         self.assertIn("unrecovered_math", text)
         # and it is one block on one stream, evidence included (first-run#4)
         self.assertIn("errata.raw.html", text)
+
+    def _told(self, fn, *args, **kwargs) -> str:
+        """What the operator is told (both streams), at a stated log level."""
+        from cflib import log
+
+        previous = log.level()
+        self.addCleanup(log.set_level, previous)
+        log.set_level(1)
+        out = io.StringIO()
+        with redirect_stderr(out), redirect_stdout(out):
+            fn(*args, **kwargs)
+        return out.getvalue()
+
+    def test_a_run_that_fetches_warns_about_the_suspect_entries_once(self):
+        """The re-render and the fetch both know the suspects; one block is said."""
+        from unittest import mock
+
+        from cfcmd import onboard as onboard_cmd
+        from sources import fetch_errata, prepare_source
+
+        self._ingested_by_an_older_converter()
+        self._prepare(self._payload())                 # re-rendered once, offline
+        self.ws.upsert_source("a-book-1e", errata_url="https://errata.examplebox/a-book",
+                              errata_method="manual")
+        page = self.ERRATA_PAGE.encode("utf-8")
+
+        def run():
+            with mock.patch.object(prepare_source, "prepare", lambda *a, **k: self._payload()), \
+                 mock.patch.object(fetch_errata, "curl", return_value=(page, 200, "")), \
+                 mock.patch.object(Registry, "load",
+                                   classmethod(lambda cls, ws=None: Registry({}))):
+                onboard_cmd._prepare_source(self.ws, "a-book-1e", force=False, no_errata=False)
+
+        text = self._told(run)
+        self.assertIn("HTTP 200", text, "the fetch really ran")
+        self.assertEqual(text.count("may have lost content in conversion"), 1, text)
+
+    def test_a_damaged_errata_record_is_a_warning_not_a_traceback(self):
+        """`--no-errata` never read errata.json before; it must not die on one now."""
+        sdir = self._ingested_by_an_older_converter()
+        (sdir / "errata.json").write_text('{"url": "https://e/x", ', encoding="utf-8")
+        text = self._told(self._prepare, self._payload())
+        self.assertIn("could not re-render errata.md", text)
+        self.assertIn("cf sources refresh a-book-1e", text)
+
+    def test_a_refused_source_still_has_its_errata_rederived(self):
+        """The re-render needs only the kept HTML, so a refusal must not strand it."""
+        sdir = self._ingested_by_an_older_converter()
+        with self.assertRaises(SourceError):
+            self._prepare(self._payload(offset_confidence=0.5))
+        self.assertIn("$[0,1)$ should be $[0,1]$",
+                      (sdir / "errata.md").read_text(encoding="utf-8"))
+
+    def test_a_stale_render_with_no_kept_page_says_a_fetch_is_needed(self):
+        """The offline fix cannot run without errata.raw.html; say what can."""
+        sdir = self._ingested_by_an_older_converter()
+        (sdir / "errata.raw.html").unlink()
+        text = self._told(self._prepare, self._payload())
+        self.assertIn("no errata.raw.html was kept", text)
+        self.assertIn("cf sources refresh a-book-1e", text)
+        self.assertNotIn("--no-errata", text)
 
     # -- the errata URL ------------------------------------------------
     def test_only_a_confirmed_url_is_fetched_without_being_asked(self):

@@ -168,7 +168,7 @@ if [ -z "$OFFLINE" ]; then
         "$(jget "sources/$PUB/errata.json" http_status)" "200"
   # the symbols ARE the erratum: the live page serves every formula as an
   # <img>, and a render that drops them leaves grammatical English saying
-  # nothing ("In Lemma 1.6.17(ii), should be , and similarly").
+  # nothing (the shape of "In Lemma 3.2.4(i), should be , and similarly").
   check "  with its mathematics recovered from the <img> tags" \
         "$(py 'import json
 d = json.load(open("sources/'"$PUB"'/errata.json"))
