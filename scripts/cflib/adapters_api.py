@@ -51,10 +51,117 @@ ROW_OPTIONAL_FIELDS: tuple[str, ...] = (
     "anonymous",       # bool: synthetic id example@<file>:<line>
     "namespace",
     "granularity",     # item | node (ledger repos before curation)
+    "provenance",      # which artifact OF the companion the row was read from
+                       # (cflib.vocab.ROW_PROVENANCE): a corpus built from an
+                       # export is not the repository, and a COVERAGE finding
+                       # has to know the difference.
 )
 
 #: Keys `dry_run` must return; extra keys are printed as-is by `cf onboard`.
 DRY_RUN_REQUIRED_KEYS: tuple[str, ...] = ("declarations", "tagged", "items")
+
+#: The optional ``dry_run`` key carrying an adapter's cross-check of the artifact
+#: it read against the sources that artifact claims to describe.
+CROSS_CHECK_KEY = "lean_scan"
+
+#: How many omissions a single warning names before it says "and N more".  All
+#: of them are in the report either way; this only bounds the terminal.
+CROSS_CHECK_WARN_LIMIT = 25
+
+
+def unattributed_rows(name: str, report: "Mapping[str, Any] | None") -> list[dict]:
+    """The omissions a cross-check could not key on an item, as rows for
+    ``companions/<name>/unattributed.jsonl``.
+
+    These are the ones a corpus search cannot find by construction: their
+    docstring names no book item (typically they sit under a block header that
+    names its item only in prose), so no row can be keyed on one.  The only way
+    a worker meets them is by being handed the list, so `cf plan-run` stages
+    this file beside the statement tables and the prompts point at it.  Each
+    row keeps the file, line and the signals that claimed it; ``repo`` is the
+    companion so a merged read stays attributable.
+
+    The file means the same thing under every policy: omissions that name NO
+    item.  An omission that does name one is unioned into the table under
+    ``union`` and only named in the warning under ``report``; it is never
+    written here, because the prompts describe every row of this file as a
+    declaration its index attributes to no book item.
+    """
+    scan = dict(report or {}).get(CROSS_CHECK_KEY) or {}
+    return [{"repo": name, **hit}
+            for hit in (scan.get("omissions") or [])
+            if not hit.get("unioned") and hit.get("item") is None]
+
+
+def cross_check_warning(name: str, report: "Mapping[str, Any] | None"
+                        ) -> tuple[str, list[str]] | None:
+    """``(header, lines)`` for :func:`cflib.log.warn_block`, or None.
+
+    An adapter whose corpus is built from an EXPORT of a companion rather than
+    from the companion can be wrong in a way no schema check sees: the export
+    omits a declaration the repository carries, the corpus has no row for it,
+    and a worker who greps the corpus concludes the repository does not state
+    it.  So the disagreement is never silent.  Under ``union`` and ``report``
+    the command that ran the adapter names the omitted declarations (the first
+    :data:`CROSS_CHECK_WARN_LIMIT` on the terminal, all of them in the report);
+    under ``off`` no scan runs, so there is nothing to name, and the warning
+    says instead that the table was not cross-checked at all.  None only when a
+    check ran and found nothing, or when the adapter has no cross-check.
+    """
+    scan = dict(report or {}).get(CROSS_CHECK_KEY) or {}
+    policy = str(scan.get("policy") or "")
+    if policy == "off":
+        return (f"{name}: lean_scan.policy is off -- the attribution table was NOT "
+                "cross-checked against the Lean sources",
+                ["  declarations the export omits are neither unioned, listed nor named; do not "
+                 "read absence",
+                 "  from this corpus as absence from the repository: a COVERAGE finding has to "
+                 "grep the Lean."])
+    omissions = list(scan.get("omissions") or [])
+    refused = list(scan.get("refused_labels") or [])
+    if not omissions and not refused:
+        return None
+    unioned = sum(1 for hit in omissions if hit.get("unioned"))
+    if policy == "union":
+        what = f"{unioned} unioned into the table as provenance `lean_scan`"
+    elif policy == "report":
+        what = f"{len(omissions) - unioned} NOT added to the table (lean_scan.policy: report)"
+    else:
+        what = f"lean_scan.policy: {policy}"
+    listed = sum(1 for hit in omissions if not hit.get("unioned") and hit.get("item") is None)
+    private = sum(1 for hit in omissions if hit.get("private"))
+    header = (f"{name}: the attribution table omits {len(omissions)} declaration(s) that "
+              f"the Lean sources claim for the book -- {what}" if omissions else
+              f"{name}: the attribution table omits nothing the Lean sources claim, but the "
+              f"item grammar refused {len(refused)} leading docstring label(s)")
+    lines = []
+    for hit in omissions[:CROSS_CHECK_WARN_LIMIT]:
+        flags = "".join([" [private]" if hit.get("private") else "",
+                         "" if hit.get("unioned") else " [not in the table, not in the corpus]"])
+        lines.append(f"  {hit.get('decl')}  {hit.get('file')}:{hit.get('line')}"
+                     f"  ({'; '.join(hit.get('signals') or [])}){flags}")
+    if len(omissions) > CROSS_CHECK_WARN_LIMIT:
+        lines.append(f"  … and {len(omissions) - CROSS_CHECK_WARN_LIMIT} more (all of them are in "
+                     "the dry-run report)")
+    if listed:
+        lines.append(f"  {listed} of these name no book item in their docstring, so there is "
+                     "no item to file them under; they are listed in unattributed.jsonl,")
+        lines.append("  which `cf plan-run` stages beside the statement tables for every worker "
+                     "to read.")
+    if refused:
+        lines.append(f"  {len(refused)} leading docstring label(s) the item grammar refused, so "
+                     "no item was keyed from them:")
+        for hit in refused[:5]:
+            lines.append(f"    {hit.get('decl')}  {hit.get('file')}:{hit.get('line')}  "
+                         f"`{hit.get('label')}` ({hit.get('reason')})")
+    if private:
+        lines.append(f"  {private} of the omitted declaration(s) are private: an export may leave "
+                     "those out by convention,")
+        lines.append("  so an omission is not by itself a defect to report upstream (SKILL.md hard "
+                     "rule 5).")
+    lines.append("  do not read absence from this corpus as absence from the repository: a "
+                 "COVERAGE finding has to grep the Lean.")
+    return header, lines
 
 
 class Adapter(ABC):

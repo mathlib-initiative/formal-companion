@@ -44,6 +44,21 @@ ledger: source-formalization-ledger.json
 anchor: ledger
 page_offset: 16
 
+# The table against the Lean sources it claims to describe. This repo spells
+# its statement region both ways -- `section Companions` in some files,
+# `namespace Companions` in others -- so both count. An omission whose docstring
+# names a book item is unioned in as `provenance: lean_scan`; one under a block
+# header that names its item only in prose goes to
+# companions/<name>/unattributed.jsonl, which `cf plan-run` stages for every
+# worker. `cf extract` names the omissions in a warning.
+lean_scan:
+  policy: union
+  regions: [Companions]
+  glob: "**/*.lean"
+  exclude:
+    - ".lake/**/*.lean"
+    - "**/.lake/**/*.lean"
+
 # Every file whose sha must force a re-extract at an unchanged commit. The
 # adapter already hashes the four exports above; list anything else here.
 # Without this, a fix that renames a theorem is invisible until the external

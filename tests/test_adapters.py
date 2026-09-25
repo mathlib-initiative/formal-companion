@@ -243,7 +243,7 @@ def valid_row(**overrides) -> dict:
         statement="theorem foo : True", body=None, sorry=True, sorry_class="exercise",
         page_anchor=66, page_anchor_raw="book p. 66", anchor_source="own",
         repo="ours", key=True, anonymous=False, private=False, granularity="item",
-        source_sha=SOURCE_SHA)
+        source_sha=SOURCE_SHA, provenance="docstring")
     row.update(overrides)
     return row
 
@@ -833,7 +833,41 @@ class AttributionTableBaselineTest(unittest.TestCase):
         cls.rows = list(cls.adapter.extract(sources={SOURCE_ID: SOURCE_SHA}))
 
     def test_row_count(self):
-        self.assertEqual(len(self.rows), 562)
+        """562 TABLE rows -- the frozen figure, now stated as the table's.
+
+        The cross-check may union declarations the export omits, and how many
+        there are is a property of the commit CF_MT points at, not of this
+        adapter.  Pinning the total would make the baseline fail on a companion
+        that had simply grown a `section Companions` block.
+        """
+        self.assertEqual(len([r for r in self.rows if r["provenance"] == "table"]), 562)
+        self.assertGreaterEqual(len(self.rows), 562)
+
+    def test_the_cross_check_ran_and_reported(self):
+        """The table against the Lean sources it claims to describe.
+
+        Not a count: what this pins is that the check RAN over this repo's own
+        sources, that it never walked the Lake tree (a bare `**/*.lean` there
+        reads Mathlib), and that whatever it found reached the report rather
+        than being swallowed.
+        """
+        scan = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})["lean_scan"]
+        self.assertEqual(scan["policy"], "union")
+        self.assertIn("Companions", scan["regions"])
+        self.assertGreater(scan["files"], 0)
+        self.assertEqual(len(scan["omissions"]), scan["omitted"])
+        self.assertFalse([p for p in self.adapter.lean_files() if ".lake" in p.parts])
+        for hit in scan["omissions"]:
+            self.assertTrue(hit["signals"])
+            self.assertFalse(hit["decl"].startswith("example@"),
+                             "an export names anonymous examples by slug, not by position")
+
+    def test_every_unioned_row_says_where_it_came_from(self):
+        for row in self.rows:
+            self.assertIn(row["provenance"], ("table", "lean_scan"))
+        for row in [r for r in self.rows if r["provenance"] == "lean_scan"]:
+            self.assertFalse(row["key"], "the table decides what is key for an item")
+            self.assertFalse(row["anonymous"])
 
     def test_every_row_names_the_edition_the_ledger_pins(self):
         self.assertEqual({r["source_id"] for r in self.rows}, {SOURCE_ID})
@@ -874,7 +908,7 @@ class AttributionTableBaselineTest(unittest.TestCase):
         report = self.adapter.dry_run(sources={SOURCE_ID: SOURCE_SHA})
         signals = {claim["signal"] for claim in report["sources"]}
         self.assertLessEqual({"ledger_source", "official_source_json"}, signals)
-        self.assertEqual(report["rows_by_source"], {SOURCE_ID: 562})
+        self.assertEqual(report["rows_by_source"], {SOURCE_ID: len(self.rows)})
 
     def test_every_row_validates(self):
         self.assertEqual(base.validate_rows(self.rows, kinds=KINDS), [])
@@ -887,16 +921,28 @@ class AttributionTableBaselineTest(unittest.TestCase):
                          "target-refinement.json was curated against another ledger")
 
     def test_page_anchors_are_printed_pages(self):
-        pages = [r["page_anchor"] for r in self.rows]
+        table = [r for r in self.rows if r["provenance"] == "table"]
+        pages = [r["page_anchor"] for r in table]
         self.assertTrue(all(isinstance(p, int) and 0 < p < 400 for p in pages))
-        self.assertTrue(all(r["anchor_source"] == "own" for r in self.rows))
+        self.assertTrue(all(r["anchor_source"] == "own" for r in table))
+        # A unioned row takes the overlay's page for the item its docstring
+        # names, or no page at all when the overlay never measured that item.
+        for row in [r for r in self.rows if r["provenance"] == "lean_scan"]:
+            if row["anchor_source"] == "own":
+                self.assertTrue(0 < row["page_anchor"] < 400)
+            else:
+                self.assertEqual((row["anchor_source"], row["page_anchor"]), ("none", None))
 
     @unittest.skipUnless(env_path("CF_BASELINE_DIFF"), "set CF_BASELINE_DIFF for adam.jsonl")
     def test_item_decl_pairs_match_the_baseline(self):
         path = env_path("CF_BASELINE_DIFF") / "adam.jsonl"
         old = {(json.loads(l)["item"], json.loads(l)["decl"])
                for l in path.read_text().splitlines() if l.strip()}
-        new = {(r["item"] + r["sub"], r["decl"]) for r in self.rows}
+        # the TABLE rows: adam.jsonl is what the export produced, and the
+        # cross-check adds rows the export never had.  Unioning must not move a
+        # single one of the old keys.
+        new = {(r["item"] + r["sub"], r["decl"])
+               for r in self.rows if r["provenance"] == "table"}
         self.assertEqual(new, old)
 
 

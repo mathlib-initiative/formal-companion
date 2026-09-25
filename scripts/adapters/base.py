@@ -15,6 +15,14 @@ keyword, definition bodies, the sorry classification, the printed page as an
 int with the provenance of the anchor, and the pair ``source_id`` /
 ``source_sha`` so a row says WHICH source it is about and which bytes of it.
 
+``provenance`` says which artifact OF THE COMPANION the row was read from.  It
+exists because a companion may expose two and they may disagree: an
+``attribution_table`` companion is extracted from an exported table, the table
+can omit declarations the Lean sources carry, and a worker who searches the
+resulting corpus and finds nothing may conclude the repository states nothing.
+A row that names the artifact it came from lets a finding say what it actually
+searched.
+
 ``source_id`` is not decoration.  An item is the pair ``(source_id, item)``
 (docs/design/archive/multi-source-model.md S6.1): ``Exercise 1.3.19`` of one source is
 not the same item as ``Exercise 1.3.19`` of another, and a row that does not
@@ -70,11 +78,18 @@ ROW_FIELDS: tuple[str, ...] = (
     "private",         # declared `private`
     "granularity",     # item | node (ledger repos before curation)
     "source_sha",      # sha256 of that source's PDF bytes
+    "provenance",      # which artifact OF THE COMPANION the row was read from
 )
 
 ANCHOR_SOURCES = frozenset({"own", "crossref", "none"})
 SORRY_CLASSES = frozenset({"exercise", "gap", "none"})
 GRANULARITIES = frozenset({"item", "node"})
+#: cflib.vocab.ROW_PROVENANCE, restated here because this module is the schema
+#: and imports nothing (SORRY_CLASSES and GRANULARITIES are restated the same
+#: way).  A row says which artifact of the companion it came from, so a finding
+#: built on "no declaration states this" can say whether it searched the
+#: repository or only an export OF the repository.
+PROVENANCES = frozenset({"table", "lean_scan", "docstring", "blueprint"})
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$")
 _DECL_RE = re.compile(r"^[^\s]+$")
@@ -130,6 +145,13 @@ def validate_row(
     need("kind", isinstance(row.get("kind"), str) and bool(row.get("kind")), "a non-empty string")
     need("namespace", isinstance(row.get("namespace"), str), "a string ('' when none)")
     need("granularity", row.get("granularity") in GRANULARITIES, f"one of {sorted(GRANULARITIES)}")
+    # Nullable on purpose, unlike `granularity`: the enum names the artifacts the
+    # SHIPPED conventions read, and a `custom` extractor reading something else
+    # has no honest value to put here.  Null means "this adapter does not
+    # distinguish", which is a true statement; a wrong one would not be.  Every
+    # adapter in this repo sets it, and tests/test_rf_adapters.py pins that.
+    need("provenance", row.get("provenance") is None or row.get("provenance") in PROVENANCES,
+         f"one of {sorted(PROVENANCES)}, or null when the adapter does not distinguish")
     need("file", isinstance(row.get("file"), str) and bool(row.get("file")), "a non-empty string")
     need("line", isinstance(row.get("line"), int) and not isinstance(row.get("line"), bool)
          and row.get("line", 0) > 0, "a positive integer")

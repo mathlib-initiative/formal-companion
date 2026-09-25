@@ -117,6 +117,18 @@ class Preset:
         return vocab.PAGE_ANCHOR in self.kinds
 
     @property
+    def wants_coverage(self) -> bool:
+        """Whether a worker may report a COVERAGE finding at all.
+
+        Derived like :attr:`wants_page_anchors`, for the same reason: the prompt
+        block that says what evidence a COVERAGE claim needs must appear exactly
+        when the gate would accept one.  An attack run's gate rejects the kind
+        outright, and asking for its evidence there would invite a finding the
+        gate then throws away.
+        """
+        return vocab.COVERAGE in self.kinds
+
+    @property
     def no_defect_verdict(self) -> bool:
         """Whether NO_DEFECT_FOUND is a verdict this run's gate accepts."""
         return vocab.NO_DEFECT_FOUND in self.verdicts

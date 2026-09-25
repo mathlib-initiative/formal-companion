@@ -506,7 +506,8 @@ class BlueprintTexAdapter(Adapter):
                     body=None, sorry=not done, sorry_class="none" if done else "gap",
                     page_anchor=None, page_anchor_raw=None, anchor_source="none",
                     repo=self.name, key=True, anonymous=False, private=False,
-                    granularity=granularity, source_sha=source_sha))
+                    granularity=granularity, source_sha=source_sha,
+                    provenance="blueprint"))
         counts["rows"] = len(rows)
         counts["declarations"] = len({r["decl"] for r in rows})
         counts["items"] = len({(r["source_id"], r["item"]) for r in rows})

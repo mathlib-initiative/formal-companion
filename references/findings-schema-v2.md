@@ -32,7 +32,7 @@ every later line is one declaration.
  "body":null,"sorry":false,"sorry_class":"none",
  "page_anchor":57,"page_anchor_raw":"57","anchor_source":"own",
  "repo":"alpha","key":true,"anonymous":false,"private":false,"granularity":"item",
- "source_id":"widget-theory-2e","source_sha":"<64 hex>"}
+ "source_id":"widget-theory-2e","source_sha":"<64 hex>","provenance":"docstring"}
 ```
 
 | field | type | rule |
@@ -54,6 +54,7 @@ every later line is one declaration.
 | `anonymous` | bool | true for `example@<file>:<line>` synthetic ids |
 | `source_id` | string | which source this row is attributed to (`adapter.yaml` `sources.default`/`map`) |
 | `source_sha` | string | sha256 of that source's PDF: the edition the row was built against |
+| `provenance` | enum\|null | which artifact **of the companion** the row was read from (`references/vocabulary.md` §1.9): `table` \| `lean_scan` \| `docstring` \| `blueprint`, or null when the adapter does not distinguish |
 
 **Validation** (`adapters/base.py`): every field of `ROW_REQUIRED_FIELDS` present and non-empty
 (`source_id` and `source_sha` among them); unique `decl` per repo; item matches the grammar for
@@ -64,6 +65,15 @@ reported, never dropped. Rows sort by `(source_id, …)`. Counts go to `state.js
 A row whose `source_id` is not in the companion's `sources` list, or whose `source_sha` is not
 that source's sha in `workspace.yaml`, is refused — this is the source gate at the extraction
 boundary.
+
+`provenance` is the field that keeps a COVERAGE finding honest. A corpus built from an **export**
+of a companion (`attribution_table`) is not the companion: the export can omit declarations the
+repository carries, and a worker who greps such a corpus and finds nothing concludes the
+repository states nothing — which a public, sorry-free theorem the export left out makes false.
+The adapter cross-checks the two (`docs/design/stage_map.md` §4, Stage 2), unions each omission
+that names a book item back in as `provenance: "lean_scan"`, and names the omitted declarations
+in a warning. A row that says which artifact it came from is what lets a
+finding say what it actually searched.
 
 A second file, `declindex.jsonl`, lists **every** declaration in the glob whether or not it is
 tagged. The schema gate validates `repo:decl` against that index (see §7).
