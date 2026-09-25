@@ -62,11 +62,14 @@ release has something to say.
   each omission that names an item as a row and writes the rest to a new
   per-companion artifact, `companions/<name>/unattributed.jsonl`, which
   `cf plan-run` stages into `runs/<id>/data/` beside the statement tables and
-  both prompts name; `report` warns only; `off` is a deviation written into
-  `adapter.yaml`. Under all three, `cf extract` and `cf onboard` name every
-  omitted declaration in one warning, because the omission is a defect in the
-  companion's own table. The scan excludes `.lake/**` and its content is in the
-  extract key.
+  both prompts name; `report` adds nothing to the table but still writes the
+  omissions that name no item to that file; `off` is a deviation written into
+  `adapter.yaml` (a bare `off`, which YAML reads as false, means `off`). Under
+  `union` and `report`, `cf extract` and `cf onboard` name the omitted
+  declarations in one warning (the first 25 on the terminal, all of them in the
+  dry-run report); under `off` no scan runs and the same commands warn that the
+  table was not cross-checked. The scan always excludes `.lake/**` (a custom
+  `lean_scan.exclude` adds to that) and its content is in the extract key.
 - a new optional statement-row key, `provenance`
   (`cflib.vocab.ROW_PROVENANCE`: `table` | `lean_scan` | `docstring` |
   `blueprint`, or null): which artifact **of the companion** a row was read
@@ -134,16 +137,14 @@ release has something to say.
   including companions of other sources; it now stages only the companions
   bound to the source the run audits.
 - a table-driven corpus was short of the repository it describes, and nothing
-  said so: an audit worker searched it for a determinant image identity, found
-  nothing, and filed a `COVERAGE` disagreement claiming the companion states it
-  nowhere — while a public, sorry-free theorem stated exactly it; a second did
-  the same for a cardinality bound stated for every dimension under a
-  `namespace Companions` header. Measured at one pinned commit, nineteen named
-  declarations inside a `Companions` region (eight by `section`, eleven by
-  `namespace`) were absent from the export, as were three of the four
-  declarations whose docstring names a book item; only three of the twenty can
-  be keyed on an item at all. The adapter now unions the three, lists the
-  seventeen for every worker, and warns about all twenty (above), and the
+  said so: a worker who searches such a corpus for an identity, finds nothing
+  and files a `COVERAGE` disagreement ("the companion states it nowhere") is
+  making a claim about the export, and a public, sorry-free theorem in the
+  repository can prove it false. Declarations inside a `Companions` region,
+  spelled `section` or `namespace`, and declarations whose docstring names a
+  book item can both be absent from the export, and most such omissions cannot
+  be keyed on an item at all. The adapter now unions the ones that can, lists
+  the rest for every worker, and warns about all of them (above), and the
   prompts carry the other half: absence from the statement table is
   never sufficient grounds for a `COVERAGE` finding, a worker must
   `grep -rn --include=*.lean` the repository for the mathematical content before

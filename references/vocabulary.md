@@ -161,15 +161,18 @@ and they disagree:
 
 An omission whose docstring names no item gets no row at all — there is nothing to key it on —
 and goes to `companions/<name>/unattributed.jsonl` instead, which `cf plan-run` stages beside the
-tables. At the pinned commit that is 17 of 20: they sit under `namespace Companions` headers that
-name their item only in prose.
+tables. Typically that is most of the omissions: they sit in a `section` or `namespace` region under
+a block header that names its item only in prose.
 
 A `COVERAGE` finding is the reason this exists. "No declaration of this companion states X" read
-off a `table`-only corpus is a claim about the export, not about the repository, and it has already
-been wrong once: a public, sorry-free theorem reported as absent from the repo that contains it.
-`lean_scan.policy` decides what an omission does — `union` publishes it as a row, `report` does not,
-`off` is a deviation a companion states in its own `adapter.yaml` (`cflib.vocab.CROSS_CHECK_POLICIES`)
-— and under all three `cf extract` names every omitted declaration in a warning.
+off a `table`-only corpus is a claim about the export, not about the repository, and a public,
+sorry-free theorem the export left out makes it false.
+`lean_scan.policy` decides what an omission does (`cflib.vocab.CROSS_CHECK_POLICIES`) — `union`
+publishes it as a row, `report` does not (under both, the omissions that name no item go to
+`unattributed.jsonl` and `cf extract` names the omitted declarations in a warning), and `off` is a
+deviation a companion states in its own `adapter.yaml`: no scan runs, so nothing is named, and
+`cf extract` warns on every run that the table was not cross-checked. A bare `off` is YAML false
+and is read as `off`.
 
 ---
 

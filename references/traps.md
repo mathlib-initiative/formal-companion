@@ -174,22 +174,22 @@ count.
 
 **B6 — The statement table is not the repository.**
 *Presents as:* a confident `COVERAGE` finding — "no named declaration of this companion states X
-anywhere" — against a companion that states X in a public, sorry-free theorem. A reviewer caught
-one; the next one might not.
+anywhere" — against a companion that states X in a public, sorry-free theorem.
 *Cause:* a companion extracted with `adapter: attribution_table` is read out of an **export** it
-publishes, not out of its Lean. The export omits things: at one pinned commit, nineteen named
-declarations inside a `Companions` region — eight under `section Companions`, eleven under
-`namespace Companions`, and a first check that read only sections missed the larger half — and
-three of the four declarations whose docstring names a book item. Absence from the corpus was
-read as absence from the repo, twice: once for a determinant image formula, once for a
-cardinality bound a whole `namespace Companions` states under a header that names its item only
-in prose ("Companion 5: the Borel hierarchy and cardinality").
+publishes, not out of its Lean. The export can omit things: named declarations inside a
+`Companions` region — which one repo may spell `section Companions` in some files and
+`namespace Companions` in others, so a check that reads only sections misses the rest — and
+declarations whose docstring names a book item. Absence from the corpus is then read as absence
+from the repo, and a block whose header names its item only in prose (`Companion 3: the gadget
+hierarchy`) is exactly where a search by item comes back empty.
 *Fix:* three parts, and all are needed. The adapter cross-checks the export against the Lean
 sources (`docs/design/stage_map.md` §4, Stage 2) and unions each omission that names a book item
-back in as `provenance: "lean_scan"` — but that is 3 of 20, because item attribution is not
-recoverable for a prose header; the other 17 go to `companions/<name>/unattributed.jsonl`, which
-`cf plan-run` stages beside the tables and both prompts name as the list to read first. Every
-omission is warned about by name. And a table can still be short for reasons no scan sees, so the
+back in as `provenance: "lean_scan"` — but that is typically the minority, because item
+attribution is not recoverable for a prose header; the rest go to
+`companions/<name>/unattributed.jsonl`, which `cf plan-run` stages beside the tables and both
+prompts name as the list to read first. The omissions are warned about by name. And a table can
+still be short for reasons no scan sees — an anonymous `example` is never on the list, and a
+declaration outside every region whose docstring names no item is invisible to the scan — so the
 prompts also require a `grep -rn --include=*.lean` of the repository, for the mathematical content
 rather than the item label, before any "no counterpart exists" claim.
 *Evidence:* `references/vocabulary.md` §1.9; `tests/test_rf_adapters.py`

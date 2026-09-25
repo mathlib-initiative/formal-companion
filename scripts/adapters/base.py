@@ -16,12 +16,12 @@ int with the provenance of the anchor, and the pair ``source_id`` /
 ``source_sha`` so a row says WHICH source it is about and which bytes of it.
 
 ``provenance`` says which artifact OF THE COMPANION the row was read from.  It
-exists because a companion may expose two and they may disagree: measure_theory
-is extracted from its pdf-overlay attribution table, that table omits
-declarations the Lean sources carry, and a worker who searched the resulting
-corpus for a determinant-image identity filed a COVERAGE finding saying no such
-declaration existed anywhere in the repo.  It did.  A row that names the
-artifact it came from lets a finding say what it actually searched.
+exists because a companion may expose two and they may disagree: an
+``attribution_table`` companion is extracted from an exported table, the table
+can omit declarations the Lean sources carry, and a worker who searches the
+resulting corpus and finds nothing may conclude the repository states nothing.
+A row that names the artifact it came from lets a finding say what it actually
+searched.
 
 ``source_id`` is not decoration.  An item is the pair ``(source_id, item)``
 (docs/design/archive/multi-source-model.md S6.1): ``Exercise 1.3.19`` of one source is

@@ -243,33 +243,36 @@ wrong. The module docstrings cite these sentences, so they move with the code:
 - **Stage 2.** An adapter that builds its rows from an **export** of a companion
   rather than from the companion cross-checks the two, and the disagreement is
   never silent. `attribution_table` reads the Lean sources for the two signals
-  the repository itself gives — a docstring that names a book item (through
-  `cflib.items`, with the source's own kind list, never a second regex) and
+  the repository itself gives — a docstring whose LEADING item mention names a
+  book item (through `cflib.items.find_items`, with the source's own kind list,
+  never a second regex; a leading mention the grammar refuses keys nothing and
+  is reported, and the next mention along is never used instead) and
   membership of a named `section` **or `namespace`** the convention files book
-  statements under (`lean_scan.regions`, default `Companions`; the repo this
-  was measured on spells it both ways, and the namespace half is the larger) —
-  and compares them by declaration name against the rows the export produced.
+  statements under (`lean_scan.regions`, default `Companions`; one repo may
+  spell the same block both ways) — and compares them by declaration name
+  against the rows the export produced.
   Omissions go two ways, because most cannot be keyed on an item: under
   `lean_scan.policy: union` one that names a book item becomes a row stamped
-  `provenance: "lean_scan"`, and one that names none — a block headed
-  `Companion 5: the Borel hierarchy and cardinality`, with no number anywhere —
-  is written to `companions/<name>/unattributed.jsonl`, which `cf plan-run`
-  stages beside the statement tables and both prompts name as the list to read
-  before any "no counterpart exists" claim. The item grammar never guesses an
-  item for those. Whatever the policy, `cf extract` and `cf onboard` name every
-  omitted declaration in one warning. The scan excludes `.lake/**` — without
-  that it reads Mathlib and calls its declarations the companion's — and its
-  content is in the extract key, so a commit that adds a declaration to one of
-  those regions re-extracts. Anonymous declarations are counted and never
-  claimed: an export names them by curated slug, not by position, so there is
-  no name to compare. The rule this enforces is that **absence from an export is
-  not absence from a repository**: a table-only corpus produced a COVERAGE
-  finding saying a companion stated no determinant image formula anywhere, when
-  a public, sorry-free theorem in a `section Companions` block stated exactly it
-  — and a second saying a cardinality bound existed only for one dimension, when
-  a `namespace Companions` stated it for every dimension. At the pinned commit,
-  19 named declarations sit in such regions and 20 are absent from the table;
-  3 name an item, 17 do not.
+  `provenance: "lean_scan"`, and one that names none — a block headed by prose
+  such as `Companion 3: the gadget hierarchy`, with no number anywhere — is
+  written to `companions/<name>/unattributed.jsonl`, which `cf plan-run` stages
+  beside the statement tables and both prompts name as the list to read before
+  any "no counterpart exists" claim. The item grammar never guesses an item for
+  those. Under `report` nothing is unioned, and the file still holds exactly
+  the omissions that name no item. Under `union` and `report`, `cf extract` and
+  `cf onboard` name the omitted declarations in one warning (the first 25 on
+  the terminal; the dry-run report has all); under `off` no scan runs, and both
+  commands warn on every run that the table was not cross-checked. A bare
+  `policy: off` is YAML false and is read as `off`. The scan always excludes
+  `.lake/**` — without that it reads Mathlib and calls its declarations the
+  companion's; a custom `lean_scan.exclude` adds to it — and its content is in
+  the extract key, so a commit that adds a declaration to one of those regions
+  re-extracts. Anonymous declarations are counted and never claimed: an export
+  names them by curated slug, not by position, so there is no name to compare.
+  The rule this enforces is that **absence from an export is not absence from a
+  repository**: a COVERAGE finding saying a companion states some identity
+  nowhere, read off a table-only corpus, is a claim about the export, and a
+  public, sorry-free theorem the export left out makes it false.
 - **Stage 7.** `ledger/validate_ledger.py` refuses — never warns about — a
   ledger row that does not answer a real finding by `finding_id` (a 22-char
   label prefix is how batch-1 challenge results were mislinked); that uses a

@@ -186,7 +186,9 @@ ROW_PROVENANCE = frozenset({"table", "lean_scan", "docstring", "blueprint"})
 #: What the cross-check may do with a declaration the table omits.  There is no
 #: value that passes quietly: ``union`` publishes the omission as a row and
 #: warns, ``report`` warns without publishing, and ``off`` is a deviation a
-#: companion states in its own adapter.yaml rather than one the code assumes.
+#: companion states in its own adapter.yaml rather than one the code assumes --
+#: it runs no scan, and warns on every extraction that none ran.  An unquoted
+#: ``off`` is YAML false and is read as ``off``.
 CROSS_CHECK_POLICIES = frozenset({"union", "report", "off"})
 WRITE_POLICIES = ("read_only", "branch_only", "branch_and_pr")
 WRITE_POLICY_SET = frozenset(WRITE_POLICIES)

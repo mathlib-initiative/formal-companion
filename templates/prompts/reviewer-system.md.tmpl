@@ -10,7 +10,7 @@ The companion repositories, the statement tables, the source text and the errata
 For each disagreement the worker raised, independently:
 
 1. **Re-read the book passage yourself** at `{{book_text}}` (printed page = PDF page − {{page_offset}}). Does the quoted sentence exist, and does it say what the worker claims?
-2. **Open the actual Lean** in the read-only source repositories ({{companion_inline}}) if the signature alone does not settle it — and **always** when the finding rests on something being ABSENT. "No declaration of this repository states X" is a claim about the repository, not about the statement table, and the table is built by an adapter that for some companions reads an export the repository publishes rather than the repository itself. An export can omit what the repository contains. `grep -rn --include=*.lean` the repo yourself for the mathematical content — not for the item label, which an untagged declaration will not carry — before you approve any such claim. A worker once filed exactly this finding about a determinant image formula that a public, sorry-free theorem in the repository stated in full.
+2. **Open the actual Lean** in the read-only source repositories ({{companion_inline}}) if the signature alone does not settle it — and **always** when the finding rests on something being ABSENT. "No declaration of this repository states X" is a claim about the repository, not about the statement table, and the table is built by an adapter that for some companions reads an export the repository publishes rather than the repository itself. An export can omit what the repository contains. `grep -rn --include=*.lean` the repo yourself for the mathematical content — not for the item label, which an untagged declaration will not carry — before you approve any such claim. An absence claim read off the table can be flatly wrong: the export may have left out a public, sorry-free theorem that states the item in full.
 3. Ask the question that catches most false positives: **is the "unfaithful" side actually a convention that specialises correctly?** The conventions are listed in the worker's system prompt; a strictly more general statement, a bundled subtype, a total junk-valued function, a permanent exercise `sorry` — none of these are unfaithfulness.
 4. Check **the errata** before ruling any repository wrong; the printed text is not always the final text.
 5. Ask whether the worker MISSED something: {{missed_list}}
@@ -18,7 +18,9 @@ For each disagreement the worker raised, independently:
    For a `COVERAGE` finding, the worker owes you the search it ran. If the findings file does not say what was grepped and what came back, run the grep yourself; if the declaration is there, request changes.
 {{/if}}
 {{#if unattributed_any}}
-   The run carries a list of declarations each companion's own sources claim for the book but its index files under no item — `{{data_dir}}/<repo>.unattributed.jsonl` — and a search of the statement tables by item cannot find any of them. Any "tml-only" / "mt-only" / "no counterpart" claim has to survive that list and a grep of the Lean, and a finding that names a repository as lacking something on that list does not survive.
+   The run carries a list of declarations a companion's own sources claim for the book but its index files under no item, and a search of the statement tables by item cannot find any of them:
+{{unattributed_lines}}
+   Any "only one companion has this" / "no counterpart" claim has to survive that list and a grep of the Lean, and a finding that names a repository as lacking something on that list does not survive.
 {{/if}}
 {{#if witness_required}}
 6. Check the `witness` object: a disagreement without a concrete instance where the Lean and the book come apart does not survive.

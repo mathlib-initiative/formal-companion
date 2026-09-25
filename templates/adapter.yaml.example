@@ -59,19 +59,22 @@ tag:
 # sources it claims to describe. A table-driven corpus is built from an EXPORT
 # of the companion, and an export can omit declarations the repository carries:
 # a worker who greps such a corpus and finds nothing concludes the repository
-# states nothing, which is how a public, sorry-free theorem came to be reported
-# as absent from the repo that contains it. Two signals, both the repo's own:
+# states nothing, and can report a public, sorry-free theorem as absent from
+# the repo that contains it. Two signals, both the repo's own:
 # a docstring that names a book item (read with the source's kind list through
 # the one item grammar), and membership of a named `section` OR `namespace` the
 # convention files book statements under (`regions`; both spellings count, and
-# the repo this was measured on uses both).
+# one repo may use both).
 #
 # policy: union   -- publish each omission that names an item as a row stamped
 #                    provenance: lean_scan, write the rest -- most of them --
 #                    to companions/<name>/unattributed.jsonl for `cf plan-run`
-#                    to stage beside the tables, AND warn, naming every one
-#         report  -- warn only; nothing is written
-#         off     -- no cross-check. A deviation stated here, never assumed.
+#                    to stage beside the tables, AND warn, naming them
+#         report  -- nothing enters the table; the omissions that name no item
+#                    still go to unattributed.jsonl, and the warning names all
+#         off     -- no cross-check. A deviation stated here, never assumed;
+#                    every `cf extract` warns that no check ran. Written bare
+#                    (`policy: off`) YAML reads it as false, which means off.
 # There is no value that omits a declaration quietly.
 lean_scan:
   policy: union
@@ -79,7 +82,7 @@ lean_scan:
   glob: "**/*.lean"
   # Excluding the Lake tree is essential, not tidy: **/*.lean over a built Lake
   # project walks ~10,000 files of Mathlib and reports its declarations as this
-  # companion's.
+  # companion's. These two are always applied; a list here adds to them.
   exclude:
     - ".lake/**/*.lean"
     - "**/.lake/**/*.lean"

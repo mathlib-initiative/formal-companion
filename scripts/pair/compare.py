@@ -47,6 +47,10 @@ from .compat import (
 CARRY = (
     "decl", "file", "line", "statement", "body", "sorry", "sorry_class",
     "page_anchor", "anchor_source", "kind", "key", "anonymous",
+    # which artifact of the companion the row came from: the worker prompt
+    # calls pairs.jsonl "the same rows", so a unioned `lean_scan` row must not
+    # look like a table row here.  Absent on rows that predate the field.
+    "provenance",
 )
 
 

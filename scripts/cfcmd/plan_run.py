@@ -189,10 +189,15 @@ def _stage_data(ws, rd: Path, companions: list[str], source_id: str) -> list[str
         # The declarations this companion's export attributes to no item: a
         # corpus search cannot find them by construction, so the list travels
         # with the table and the prompts name it.
+        # A replan into an existing run dir must not ship a list the workspace
+        # no longer has.
         extra = ws.paths.unattributed_jsonl(name)
+        staged_extra = ddir / f"{name}.unattributed.jsonl"
         if extra.exists():
-            shutil.copy2(extra, ddir / f"{name}.unattributed.jsonl")
+            shutil.copy2(extra, staged_extra)
             staged.append(f"{name}.unattributed.jsonl")
+        elif staged_extra.exists():
+            staged_extra.unlink()
     pairs = ws.paths.pairs_jsonl(source_id)
     if pairs.exists():
         shutil.copy2(pairs, ddir / "pairs.jsonl")

@@ -30,32 +30,31 @@ by construction.  ``dry_run`` reports both numbers so the gap is visible.
 
 **The cross-check** (docs/design/stage_map.md Stage 2) is what makes that gap
 safe to publish.  This kind is the only one whose corpus is built from an
-EXPORT of a companion rather than from the companion, and the export omits
-declarations the Lean sources carry: at measure_theory 53a2643, nineteen named
-declarations sit inside a ``Companions`` region -- eight under ``section
-Companions``, eleven under ``namespace Companions`` -- and none of the nineteen
-is in the table; of the four declarations whose docstring names a book item,
-three are absent.  One of the three is a public, sorry-free statement of the
-determinant image formula, and an audit worker who searched the extracted corpus
-for it filed a COVERAGE disagreement saying no named declaration of this
-companion states it anywhere.  A second worker did the same for a cardinality
-bound that a whole ``Companions`` namespace states.  Absence from an export is
-not absence from a repository.
+EXPORT of a companion rather than from the companion, and an export can omit
+declarations the Lean sources carry -- named declarations inside a region the
+convention files book statements under, and declarations whose docstring names
+a book item.  A worker who greps a corpus built from such an export, finds
+nothing and files a COVERAGE disagreement ("no named declaration of this
+companion states X") is making a claim about the export, not the repository,
+and it can be flatly false.  Absence from an export is not absence from a
+repository.
 
 :meth:`AttributionTableAdapter.lean_claims` reads the Lean sources for the two
 signals the repo itself gives -- a docstring that names a book item, and
 membership of a named ``section`` or ``namespace`` the convention files book
 statements under -- and the omissions go two ways, because most of them cannot
-be keyed on an item: only 3 of the 20 name one.  The rest are labelled
-``Companion 5: the Borel hierarchy and cardinality``, prose with no item number,
-and guessing an item for them is the failure the grammar exists to stop.  So an
+be keyed on an item: typically only a few name one, and the rest sit under a
+block header that names its item in prose with no number (``Companion 3: the
+gadget hierarchy``), and guessing an item for them is the failure the grammar
+exists to stop.  So an
 omission that names an item is unioned into the table stamped ``provenance:
 "lean_scan"``; one that names none is written to
 ``companions/<name>/unattributed.jsonl``, which `cf plan-run` stages beside the
 statement tables and the prompts name as the list to read before any "no
-counterpart exists" claim.  Either way `cf extract` / `cf onboard` name every
-omission in a warning: it is a defect in the companion's own attribution table,
-and publishing the table silently would hide that.
+counterpart exists" claim.  Under ``union`` and ``report`` `cf extract` / `cf
+onboard` name the omissions in a warning, and under ``off`` they warn that no
+cross-check ran: publishing a table that is short of its repository silently
+would hide that.
 """
 
 from __future__ import annotations
@@ -116,17 +115,27 @@ DEFAULT_LEAN_GLOB = "**/*.lean"
 #: of its declarations as a declaration this companion's table omits.
 DEFAULT_LEAN_EXCLUDE = (".lake/**/*.lean", "**/.lake/**/*.lean")
 #: Named ``section`` or ``namespace`` blocks the convention files book
-#: statements under, so membership is itself a claim on the book.
-#: measure_theory writes BOTH ``section Companions`` and ``namespace
-#: Companions`` -- eight files the first way, six the second -- and a check that
-#: read only sections missed eleven of nineteen.  Another repo names its own
-#: word in adapter.yaml.
+#: statements under, so membership is itself a claim on the book.  One repo
+#: may spell the same block both ways -- ``section Companions`` in some files,
+#: ``namespace Companions`` in others -- so both count.  Another repo names its
+#: own word in adapter.yaml.
 DEFAULT_CLAIM_REGIONS = ("Companions",)
-#: union: publish the omission as a row AND warn.  report: warn only.  off: a
-#: deviation a companion states in adapter.yaml, never one the code assumes.
-#: There is no value that passes quietly (cflib.vocab.CROSS_CHECK_POLICIES).
+#: union: publish the omission as a row AND warn.  report: warn only (the
+#: omissions naming no item still go to unattributed.jsonl).  off: a deviation a
+#: companion states in adapter.yaml, never one the code assumes, and it warns
+#: that no check ran.  There is no value that passes quietly.  The same set as
+#: cflib.vocab.CROSS_CHECK_POLICIES, in the order the refusal's hint prints;
+#: tests/test_rf_adapters.py pins the two equal.
 CROSS_CHECK_POLICIES = ("union", "report", "off")
 DEFAULT_CROSS_CHECK_POLICY = "union"
+
+
+def _refused_label(reject: "cf_items.Reject") -> str:
+    """The refused mention itself (``Theorem 2.3.4.5``), not the prose after it."""
+    ctx = reject.context or {}
+    if ctx.get("kind") and ctx.get("number"):
+        return f"{ctx['kind']} {ctx['number']}"
+    return cf_items.clean(reject.raw)[:60]
 
 
 @dataclass(frozen=True)
@@ -138,9 +147,9 @@ class LeanClaim:
     key to file it under, and inventing one would be exactly the "let an
     unparseable id become a key" failure the item grammar exists to stop
     (CLAUDE.md S4) -- but it is not dropped either: it goes to the companion's
-    ``unattributed.jsonl`` so a worker can read it.  At measure_theory 53a2643
-    that is 17 of the 20 omissions, and item attribution is unrecoverable for
-    them: their sections are labelled ``Companion 5: ...`` with no number.
+    ``unattributed.jsonl`` so a worker can read it.  Typically that is most of
+    the omissions: item attribution is unrecoverable for a block whose header
+    names its item in prose with no number.
     """
 
     decl: str
@@ -218,7 +227,7 @@ class AttributionTableAdapter(Adapter):
                 raise AdapterError(
                     f"{self.source}: {field} not found at {path}",
                     hint=f"set {field}: <repo-relative path> in adapter.yaml")
-        policy = str(self.get("lean_scan.policy", DEFAULT_CROSS_CHECK_POLICY)).lower()
+        policy = self.cross_check_policy()
         if policy not in CROSS_CHECK_POLICIES:
             raise AdapterError(
                 f"{self.source}: lean_scan.policy is {policy!r}",
@@ -363,7 +372,6 @@ class AttributionTableAdapter(Adapter):
                 decl_kind = KIND_MAP.get(ledger_kind.lower(), "unknown") if ledger_kind else "unknown"
                 statement = leanparse.signature(text) or re.sub(r"\s+", " ", text).strip()
                 has_sorry = bool(BARE_SORRY.search(text))
-                counts["sorry"] += 1 if has_sorry else 0
                 sorry_class = ("none" if not has_sorry
                                else ("exercise" if exercise_permanent else "gap"))
                 rows.append(make_row(
@@ -394,8 +402,13 @@ class AttributionTableAdapter(Adapter):
                 ))
         scan, scanned = self._cross_check(repo, regions, rows, source_id, source_sha,
                                           exercise_permanent)
+        table_items = {r["item"] for r in rows}
         rows.extend(scanned)
         rows.sort(key=lambda r: (r["source_id"], r["item"], r["sub"], not r["key"], r["decl"]))
+        # every number from the rows actually written: a unioned row can be a
+        # sorry, and an item only the scan reached was still never curated.
+        counts["sorry"] = sum(1 for r in rows if r["sorry"])
+        counts["curated_items"] = len(table_items)
         counts["rows"] = len(rows)
         counts["declarations"] = len({r["decl"] for r in rows})
         counts["tagged"] = len(rows)
@@ -415,8 +428,12 @@ class AttributionTableAdapter(Adapter):
         report: dict = {"policy": policy, "regions": list(self.claim_regions())}
         if policy == "off":
             return report, []
-        claims, counts = self.lean_claims(repo, source_id)
+        refused: list[dict] = []
+        claims, counts = self.lean_claims(repo, source_id, refused=refused)
         in_table = {str(r["decl"]) for r in table_rows}
+        # a label the grammar refused on a declaration the table already has is
+        # the table's business; on one it lacks, it is why no item keyed it.
+        refused = [r for r in refused if r["decl"] not in in_table]
         omitted = [c for c in claims if c.decl not in in_table]
         unionable = [c for c in omitted if c.item is not None]
         union = policy == "union"
@@ -432,6 +449,9 @@ class AttributionTableAdapter(Adapter):
             "unattributed": len(omitted) - len(unionable),
             "anonymous_claims": counts["anonymous_claims"],
             "omissions": [c.report(unioned=union and c.item is not None) for c in omitted],
+            # leading docstring labels the item grammar refused (CLAUDE.md S4:
+            # a reject is reported, never guessed onto the next mention)
+            "refused_labels": refused[:50],
         })
         if not union:
             return report, []
@@ -448,8 +468,20 @@ class AttributionTableAdapter(Adapter):
 
     # -- the cross-check against the Lean sources --------------------------
     def cross_check_policy(self) -> str:
-        """``union`` | ``report`` | ``off`` -- what an omission is allowed to do."""
-        return str(self.get("lean_scan.policy", DEFAULT_CROSS_CHECK_POLICY)).lower()
+        """``union`` | ``report`` | ``off`` -- what an omission is allowed to do.
+
+        YAML 1.1 reads an unquoted ``off`` as the boolean false, and both
+        loaders (PyYAML and ``cflib.yamlio``'s fallback) do, so ``policy: off``
+        written the way the template spells it arrives here as ``False``.  That
+        is the one boolean with an unambiguous meaning, and it is read as
+        ``off``; ``True`` (``on``/``yes``) names no policy and is refused.
+        """
+        raw = self.get("lean_scan.policy", DEFAULT_CROSS_CHECK_POLICY)
+        if raw is False:
+            return "off"
+        if raw is None or raw == "":
+            return DEFAULT_CROSS_CHECK_POLICY
+        return str(raw).strip().lower()
 
     def claim_regions(self) -> tuple[str, ...]:
         """Names of the ``section``/``namespace`` blocks that claim the book.
@@ -476,13 +508,16 @@ class AttributionTableAdapter(Adapter):
         raw = self.get("lean_scan.glob", DEFAULT_LEAN_GLOB)
         globs: Sequence[str] = [str(raw)] if isinstance(raw, str) else [str(g) for g in raw]
         skip = self.get("lean_scan.exclude", None)
-        excludes: Sequence[str] = (list(DEFAULT_LEAN_EXCLUDE) if skip in (None, "", [], ())
-                                   else ([str(skip)] if isinstance(skip, str)
-                                         else [str(g) for g in skip]))
+        # A custom list ADDS to the Lake exclusion rather than replacing it: no
+        # companion wants Mathlib's declarations reported as its own omissions.
+        extra: Sequence[str] = ([] if skip in (None, "", [], ())
+                                else ([str(skip)] if isinstance(skip, str)
+                                      else [str(g) for g in skip]))
+        excludes = list(DEFAULT_LEAN_EXCLUDE) + [g for g in extra if g not in DEFAULT_LEAN_EXCLUDE]
         return self.select_files(path, globs, excludes)
 
-    def lean_claims(self, repo: str | Path | None = None, source_id: str | None = None
-                    ) -> tuple[list[LeanClaim], Counter]:
+    def lean_claims(self, repo: str | Path | None = None, source_id: str | None = None,
+                    refused: "list[dict] | None" = None) -> tuple[list[LeanClaim], Counter]:
         """Every NAMED declaration the Lean sources claim for the book.
 
         Two signals, both the repository's own and neither of them typed in:
@@ -491,17 +526,19 @@ class AttributionTableAdapter(Adapter):
           through :func:`cflib.items.find_items` -- the one item grammar, not a
           second regex here.  The LEADING mention wins, exactly as a docstring
           tag's does: ``Exercise 1.1.21(3) ... as in Definition 1.1.1`` claims
-          the exercise and cross-references the definition.
+          the exercise and cross-references the definition.  A leading mention
+          the grammar REFUSES claims nothing -- the next mention along is a
+          cross-reference, not a fallback -- and it is appended to ``refused``
+          (when the caller passes a list) so the refusal is reported rather
+          than lost.
         * membership of a named ``section`` OR ``namespace`` this convention
           files book statements under (:meth:`claim_regions`).  Both spellings,
-          because measure_theory uses both and the namespace form holds the
-          larger half.
+          because one repo may use both for the same block.
 
         Anonymous declarations are counted and never claimed.  The table's id
         for one is a curated slug (``example:BV-limits-...``), not a position,
         so there is no name to compare and every anonymous ``example`` would
-        report as an omission -- 256 of them at measure_theory 53a2643, which
-        would bury the 19 named ones this is for.
+        report as an omission, which would bury the named ones this is for.
         """
         path = self.resolve_repo(repo)
         kinds = self.numbered_kinds(source_id)
@@ -520,8 +557,13 @@ class AttributionTableAdapter(Adapter):
                 counts["declarations"] += 1
                 in_sections = [s for s in decl.sections if s in wanted]
                 in_namespaces = [s for s in decl.namespace.split(".") if s in wanted]
-                found = cf_items.find_items(decl.doc or "", kinds, limit=1)
+                rejects: list = []
+                found = cf_items.find_items(decl.doc or "", kinds, limit=1, rejects=rejects)
                 item = found[0] if found else None
+                if rejects and refused is not None and not decl.anonymous:
+                    refused.extend({"decl": decl.full_name, "file": rel, "line": decl.line,
+                                    "label": _refused_label(r), "reason": r.reason}
+                                   for r in rejects)
                 if item is None and not (in_sections or in_namespaces):
                     continue
                 if decl.anonymous:
@@ -547,11 +589,20 @@ class AttributionTableAdapter(Adapter):
         """One row per omitted claim that carries a book item to file it under."""
         pages = self._item_pages(regions)
         rows: list[dict] = []
+        seen: set[tuple[str, str, str]] = set()
         for claim in claims:
             item = claim.item
             decl = claim.parsed
             if item is None or decl is None:
                 continue
+            # Two modules may each carry a same-named `private` declaration;
+            # the table path dedupes the same way, and a duplicate key would
+            # make `cf extract` refuse the whole table.  The omission list
+            # still names both.
+            dedup = (item.id, item.sub, claim.decl)
+            if dedup in seen:
+                continue
+            seen.add(dedup)
             text = leanparse.strip_comments(decl.body).strip()
             has_sorry = bool(BARE_SORRY.search(text))
             page = pages.get(item.id)
@@ -626,7 +677,7 @@ class AttributionTableAdapter(Adapter):
             "key_rows": sum(1 for r in rows if r["key"]),
             "geometry_items": counts["items"],
             "curated_entries": counts["entries"],
-            "uncurated_items": counts["items"] - len({r["item"] for r in rows}),
+            "uncurated_items": counts["items"] - counts["curated_items"],
             "missing_snippet": counts["missing_snippet"],
             "entries_without_region": counts["entries_without_region"],
             "duplicate_attributions": counts["duplicate_attributions"],

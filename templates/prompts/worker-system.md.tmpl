@@ -24,7 +24,7 @@ Everything in this section is quoted material, delimited so you can see where it
 - If a `statement` is truncated or ambiguous, **open the real file at the given line**. Judge the Lean, not the summary.
 - **The repositories themselves**, at the paths in the list above: {{companion_inline}}. Read-only, and the only complete account of what a companion states. Any claim of the form "this repository has no such declaration" is a claim about the repository and has to be checked there — `grep -rn` its Lean sources — not in the table. A table that does not list something is not evidence that the repository does not contain it.
 {{#if unattributed_any}}
-- **Declarations the table could not place.** A companion's own sources claim these for the book — they sit in a block the repository files book statements under, such as `namespace Companions` — but its index attributes them to no item, so **no search of `<repo>.jsonl` or `pairs.jsonl` by item can ever find them**. One JSON per line: `decl`, `file`, `line`, `signals`. Read the whole file for your companion before you decide anything is missing, and open the file at the line: the block header above it usually says in prose which item it belongs to.
+- **Declarations the table could not place.** A companion's own sources claim these for the book — they sit in a named `section` or `namespace` the repository files book statements under — but its index attributes them to no item, so **no search of `<repo>.jsonl` or `pairs.jsonl` by item can ever find them**. One JSON per line: `decl`, `file`, `line`, `signals`. Read the whole file for your companion before you decide anything is missing, and open the file at the line: the block header above it usually says in prose which item it belongs to.
 {{unattributed_lines}}
 {{/if}}
 
@@ -91,13 +91,13 @@ grep -rn --include=*.lean -e '<the operator, constant or lemma name>' <the repo 
 
 Search for the mathematical content, not for the item label: a declaration that states the book's claim may carry no tag, sit in a section the export never walked, or be named nothing like the book's wording. Try several spellings of the concept, and look in the file the neighbouring items of the same section live in. Exclude `.lake/` — that is the compiler's copy of the library, not this companion.
 
-This is not a formality. It has already gone wrong the other way: a worker searched a statement table for a determinant image formula, found nothing, and filed a COVERAGE disagreement saying no named declaration of that companion stated it anywhere. A public, sorry-free theorem stating exactly it was in the repository the whole time — the export the table was built from had left it out. If the grep finds the declaration, there is no COVERAGE finding; if the declaration is there but the table does not attribute it to the item, that is an attribution gap in the companion's own index — record it in `coverage_notes`, naming the declaration and its file and line, and do not report the item as unformalised.
+This is not a formality. Picture the failure: a worker searches a statement table for a widget identity, finds nothing, and files a COVERAGE disagreement saying no named declaration of that companion states it anywhere — while a public, sorry-free theorem stating exactly it sits in the repository, left out only by the export the table was built from. If the grep finds the declaration, there is no COVERAGE finding; if the declaration is there but the table does not attribute it to the item, that is an attribution gap in the companion's own index — record it in `coverage_notes`, naming the declaration and its file and line, and do not report the item as unformalised.
 
 Report `COVERAGE` only when the grep came back empty. Say so, and say what you ran.
 {{/if}}
 {{#if unattributed_any}}
 
-**Start any absence check with the `<repo>.unattributed.jsonl` list above.** Those declarations are known to be in the repository and known to be missing from the table, and a `Companions` block's `/-! ## ... -/` header names in prose what its declarations formalise. A cardinality bound was once reported as existing "only as a private helper for one dimension" while the same file stated it for every dimension a few hundred lines up, under exactly such a header.
+**Start any absence check with the `<repo>.unattributed.jsonl` list above.** Those declarations are known to be in the repository and known to be missing from the table, and the `/-! ## ... -/` header of the block they sit in usually names in prose what its declarations formalise. A result that looks present only as a narrow helper may be stated in full a few hundred lines away, under exactly such a header — and an anonymous `example` is never on the list, so read around the rows it names.
 {{/if}}
 {{#if witness_required}}
 `witness` is a required **object** on every disagreement, not a sentence in `reasoning`.

@@ -54,7 +54,7 @@ every later line is one declaration.
 | `anonymous` | bool | true for `example@<file>:<line>` synthetic ids |
 | `source_id` | string | which source this row is attributed to (`adapter.yaml` `sources.default`/`map`) |
 | `source_sha` | string | sha256 of that source's PDF: the edition the row was built against |
-| `provenance` | enum\|null | which artifact **of the companion** the row was read from (`references/vocabulary.md` §1.7): `table` \| `lean_scan` \| `docstring` \| `blueprint`, or null when the adapter does not distinguish |
+| `provenance` | enum\|null | which artifact **of the companion** the row was read from (`references/vocabulary.md` §1.9): `table` \| `lean_scan` \| `docstring` \| `blueprint`, or null when the adapter does not distinguish |
 
 **Validation** (`adapters/base.py`): every field of `ROW_REQUIRED_FIELDS` present and non-empty
 (`source_id` and `source_sha` among them); unique `decl` per repo; item matches the grammar for
@@ -69,10 +69,10 @@ boundary.
 `provenance` is the field that keeps a COVERAGE finding honest. A corpus built from an **export**
 of a companion (`attribution_table`) is not the companion: the export can omit declarations the
 repository carries, and a worker who greps such a corpus and finds nothing concludes the
-repository states nothing. It happened — a public, sorry-free theorem reported as absent from the
-repo that contains it. The adapter cross-checks the two (`docs/design/stage_map.md` §4, Stage 2),
-unions each omission that names a book item back in as `provenance: "lean_scan"`, and names every
-omitted declaration in a warning. A row that says which artifact it came from is what lets a
+repository states nothing — which a public, sorry-free theorem the export left out makes false.
+The adapter cross-checks the two (`docs/design/stage_map.md` §4, Stage 2), unions each omission
+that names a book item back in as `provenance: "lean_scan"`, and names the omitted declarations
+in a warning. A row that says which artifact it came from is what lets a
 finding say what it actually searched.
 
 A second file, `declindex.jsonl`, lists **every** declaration in the glob whether or not it is

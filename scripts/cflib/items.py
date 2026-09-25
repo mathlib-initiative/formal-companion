@@ -321,7 +321,8 @@ def _mention_re(kinds: Sequence[str], numbering=None) -> "re.Pattern[str]":
 
 
 def find_items(text: str, kinds: Sequence[str] = DEFAULT_KINDS, *,
-               numbering=None, limit: int = 0) -> list[Item]:
+               numbering=None, limit: int = 0,
+               rejects: "list[Reject] | None" = None) -> list[Item]:
     """Every numbered item NAMED anywhere in a blob of prose, in reading order.
 
     This is the one way to ask "does this paragraph claim a book item?" -- the
@@ -333,17 +334,26 @@ def find_items(text: str, kinds: Sequence[str] = DEFAULT_KINDS, *,
     to lead or to be backticked; a docstring that names its exercise in the
     middle of a sentence is invisible to it and visible here.
 
-    ``limit`` stops after that many items; the first hit is the leading one, and
-    a caller that wants "what does this declaration claim" wants ``limit=1``.
+    ``limit`` counts MENTIONS, not accepted items: only the first ``limit``
+    mentions are read, so ``limit=1`` asks "what does the LEADING mention
+    claim" -- which is what a caller that wants "what does this declaration
+    claim" means.  A mention the grammar refuses is a reject, exactly as in
+    :func:`_find_reference`: it is appended to ``rejects`` when the caller
+    passes a list (the caller must report it, CLAUDE.md S4), and it is never an
+    invitation to reach for the next mention along.  ``Theorem 2.3.4.5
+    generalises Lemma 1.2.3`` under a two-to-three-segment numbering claims
+    nothing; it does not claim the lemma it cross-references.
     """
     out: list[Item] = []
     body = text or ""
-    for m in _mention_re(kinds, numbering).finditer(body):
-        item, _reject = try_parse(body[m.start():], kinds, numbering=numbering)
+    for seen, m in enumerate(_mention_re(kinds, numbering).finditer(body), start=1):
+        item, reject = try_parse(body[m.start():], kinds, numbering=numbering)
         if item is not None and item.numbered:
             out.append(item)
-            if limit and len(out) >= limit:
-                break
+        elif reject is not None and rejects is not None:
+            rejects.append(reject)
+        if limit and seen >= limit:
+            break
     return out
 
 
