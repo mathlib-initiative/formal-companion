@@ -1,0 +1,176 @@
+{
+  "companion": {
+    "commit": "6bbbd09243084d0527c06bac0339b0b04c200eed",
+    "generated_at": "2026-09-26T12:00:00Z",
+    "generator": "hand",
+    "name": "blueprint-companion",
+    "repo": "git.example.org/example/blueprint-companion"
+  },
+  "declarations": [
+    {
+      "anonymous": false,
+      "file": "Blueprint/Basic.lean",
+      "id": "Blueprint.finSum",
+      "id_source": "name",
+      "kind": "def",
+      "line": 9,
+      "module": "Blueprint.Basic",
+      "name": "Blueprint.finSum",
+      "private": false,
+      "sorry": "none"
+    },
+    {
+      "anchors": [
+        "lean-basic@sum_comm"
+      ],
+      "anonymous": false,
+      "doc_line": 110,
+      "file": "Blueprint/Basic.lean",
+      "id": "Blueprint.sum_comm",
+      "id_source": "name",
+      "kind": "theorem",
+      "line": 113,
+      "module": "Blueprint.Basic",
+      "name": "Blueprint.sum_comm",
+      "private": false,
+      "sorry": "gap"
+    }
+  ],
+  "items": [
+    {
+      "form": "numbered",
+      "id": "definition-1.1",
+      "id_source": "label",
+      "kind": "Definition",
+      "number": "1.1",
+      "source": "blueprint-ch1",
+      "title": "Finite sum"
+    },
+    {
+      "form": "numbered",
+      "id": "theorem-1.3",
+      "id_source": "label",
+      "kind": "Theorem",
+      "number": "1.3",
+      "source": "blueprint-ch1",
+      "title": "Sums commute"
+    }
+  ],
+  "links": [
+    {
+      "declaration": "Blueprint.finSum",
+      "id": "definition-1.1/key/Blueprint.finSum",
+      "item": "definition-1.1",
+      "provenance": "prov-blueprint",
+      "raw_label": "\\lean{Blueprint.finSum}",
+      "role": "key"
+    },
+    {
+      "declaration": "Blueprint.sum_comm",
+      "id": "theorem-1.3/key/Blueprint.sum_comm",
+      "item": "theorem-1.3",
+      "provenance": "prov-blueprint",
+      "raw_label": "\\lean{Blueprint.sum_comm}",
+      "role": "key"
+    }
+  ],
+  "locations": [
+    {
+      "id": "definition-1.1@tex",
+      "items": [
+        "definition-1.1"
+      ],
+      "target": {
+        "selector": [
+          {
+            "conformsTo": "http://tools.ietf.org/rfc/rfc5147",
+            "type": "FragmentSelector",
+            "value": "char=1204,1618;length=9120,UTF-8"
+          },
+          {
+            "end": 1618,
+            "start": 1204,
+            "type": "TextPositionSelector"
+          }
+        ],
+        "source": "blueprint-ch1"
+      }
+    },
+    {
+      "id": "lean-basic@sum_comm",
+      "items": [],
+      "target": {
+        "selector": [
+          {
+            "conformsTo": "http://tools.ietf.org/rfc/rfc5147",
+            "type": "FragmentSelector",
+            "value": "line=112,114"
+          },
+          {
+            "exact": "theorem sum_comm",
+            "suffix": " (f : Fin m → Fin n → ℕ) :",
+            "type": "TextQuoteSelector"
+          }
+        ],
+        "source": "lean-basic"
+      }
+    },
+    {
+      "id": "theorem-1.3@tex",
+      "items": [
+        "theorem-1.3"
+      ],
+      "target": {
+        "selector": [
+          {
+            "conformsTo": "http://tools.ietf.org/rfc/rfc5147",
+            "type": "FragmentSelector",
+            "value": "line=41,47"
+          },
+          {
+            "exact": "\\begin{theorem}\\label{thm:sum-comm}",
+            "type": "TextQuoteSelector"
+          }
+        ],
+        "source": "blueprint-ch1"
+      }
+    }
+  ],
+  "provenance": [
+    {
+      "actor": "tool",
+      "confirmed_by_human": false,
+      "id": "prov-blueprint",
+      "method": "blueprint_macro",
+      "tool": {
+        "name": "blueprint exporter"
+      }
+    }
+  ],
+  "schema": "lean-companion/annotations",
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "git_blob": "3cadbb64981a9ded5375be13a60a739eba24737d",
+      "id": "blueprint-ch1",
+      "kind": "tex",
+      "path": "blueprint/src/chapter1.tex",
+      "revision": "a4a20ca4d74657aa358cb7145d7d1381ac0c9240",
+      "text_layer": {
+        "case": "sensitive",
+        "unicode": "none",
+        "whitespace": "exact"
+      },
+      "title": "Example blueprint, chapter 1 (synthetic)",
+      "url": "https://git.example.org/example/blueprint"
+    },
+    {
+      "git_blob": "08e3fdb5023d19f2cbf3d5f4c5a2266e1f1a20e0",
+      "id": "lean-basic",
+      "kind": "lean",
+      "path": "Blueprint/Basic.lean",
+      "revision": "6bbbd09243084d0527c06bac0339b0b04c200eed",
+      "title": "Blueprint/Basic.lean at the pinned commit"
+    }
+  ]
+}

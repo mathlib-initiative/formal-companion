@@ -196,6 +196,115 @@ ANCHOR_CONVENTIONS = frozenset({"docstring", "ledger", "none"})
 SORRY_CLASSES = frozenset({"exercise", "gap", "none"})
 BRIDGE_KINDS = frozenset({"proved", "fiat", "none"})
 
+# --- annotation documents (schema/annotations-v1.schema.json, docs/annotations.md)
+#: The enums of the lean-companion annotation format.  The schema file repeats
+#: them because it is data a non-Python consumer reads; ``tests/
+#: test_annotations_schema.py`` fails when the two disagree, so this block stays
+#: the one definition.  ``VIEWER_VERDICTS`` / ``VIEWER_STATUS`` above are reused
+#: for a verdict record, and ``SORRY_CLASSES`` for a declaration's ``sorry``.
+ANNOTATION_SCHEMA = "lean-companion/annotations"
+#: ``"<major>.<minor>"``.  Readers match the major version; a writer declares the
+#: minor it used (docs/annotations.md, section 9).
+ANNOTATION_SCHEMA_VERSION = "1.0"
+ANNOTATION_SCHEMA_MAJOR = 1
+#: ``other`` names any other medium by its IANA ``media_type`` (markdown, EPUB,
+#: video); the four named kinds are presets for the common ones.
+ANNOTATION_SOURCE_KINDS = frozenset({"pdf", "web", "tex", "lean", "other"})
+#: ``site``: one web source for a whole rendered site, each location naming its
+#: page with a ``SitePageSelector``.  Only a ``web`` source may be a site.
+ANNOTATION_SOURCE_SCOPES = frozenset({"page", "site"})
+ANNOTATION_LINK_ROLES = frozenset({"key", "attributed", "support", "example", "helper"})
+#: The documented core of a link's ``relation``: how the declaration relates to
+#: the item's text.  The field is an open string; a value outside this set
+#: passes with a warning (WikiLean's ``match_kind`` uses these five).
+ANNOTATION_LINK_RELATIONS = frozenset({"exact", "generalization", "special_case", "invocation",
+                                       "related"})
+#: What an item's links do NOT show on their own.  An item whose links carry no
+#: ``key`` link must say which of these it is (docs/annotations.md, invariant I5).
+#: Falling back to the memberships of the item's clusters is not a coverage
+#: class: it is the separate boolean ``item.cluster_fallback``, so an item keeps
+#: the curation's class (``example_only`` ...) and the fallback together.
+ANNOTATION_COVERAGE = frozenset({"formalized", "partial", "not_formalized", "out_of_scope",
+                                 "support_only", "example_only"})
+#: The discriminator of an item record.
+ANNOTATION_ITEM_FORMS = frozenset({"numbered", "passage"})
+#: How an item id was formed (docs/annotations.md, section 5.2).
+ANNOTATION_ITEM_ID_SOURCES = frozenset({"label", "quote_hash", "page_title_hash", "declared"})
+#: Whose words an item's ``kind`` or ``title`` are.
+ANNOTATION_TEXT_ORIGINS = frozenset({"source", "producer"})
+ANNOTATION_PAGE_BASES = frozenset({"printed", "physical"})
+#: Where a page came from: the thing's own anchor, a cross-reference to it, or
+#: inferred from a neighbour (statements.jsonl ``anchor_source``, less ``none``).
+ANNOTATION_PAGE_ANCHORS = frozenset({"own", "crossref", "inferred"})
+#: ``field`` and ``projection`` belong to a ``structure`` or ``class`` named by
+#: the declaration's ``parent``.
+ANNOTATION_LEAN_KINDS = frozenset({"theorem", "lemma", "def", "abbrev", "structure", "class",
+                                   "inductive", "instance", "example", "opaque", "axiom",
+                                   "field", "projection"})
+#: How a declaration id was formed (docs/annotations.md, section 5.1).
+ANNOTATION_ID_SOURCES = frozenset({"name", "private", "statement_hash", "declared"})
+#: Formalization artifacts that are not declarations.
+ANNOTATION_ARTIFACT_KINDS = frozenset({"module_doc", "check", "figure", "other"})
+#: A cluster member's role, as a companion's graph (a ledger) records it.
+ANNOTATION_MEMBERSHIP_ROLES = frozenset({"primary", "support", "consumer"})
+ANNOTATION_UNATTRIBUTED_CLAIMS = frozenset({"unattributed", "api", "infrastructure"})
+ANNOTATION_PROVENANCE_ACTORS = frozenset({"author", "agent", "human", "tool"})
+ANNOTATION_PROVENANCE_METHODS = frozenset({"docstring_tag", "curation", "blueprint_macro",
+                                           "lean_scan", "layout_extraction", "text_match",
+                                           "manual", "agent_annotation", "pipeline",
+                                           "adjudication", "site_index"})
+VIEWER_SEVERITIES = frozenset({"none", "low", "medium", "high"})
+#: ``resolution.state`` of a verdict: the structured form of ``check_resolution``'s
+#: strings, plus ``open`` for a verdict nobody has resolved.  ``resolution`` is
+#: optional; a verdict without one is open.
+ANNOTATION_RESOLUTION_STATES = frozenset({"open", "fixed", "in_progress", "refuted",
+                                          "argued_correct", "out_of_scope"})
+ANNOTATION_DESTINATION_SITES = frozenset({"verso_literate", "doc_gen4", "blueprint", "other"})
+#: ``ordinal_assigned`` records which declaration took a ``~k`` statement-hash
+#: ordinal, by its file; without it a ``~k`` id is refused, and so is a live id
+#: whose latest record names another file (docs/annotations.md, section 5.1).
+ANNOTATION_CHANGELOG_EVENTS = frozenset({"born", "retired", "restated", "renamed",
+                                         "ordinal_assigned"})
+ANNOTATION_CHANGELOG_SUBJECTS = frozenset({"declaration", "item", "location", "artifact"})
+ANNOTATION_CHANGELOG_REASONS = frozenset({"statement_changed", "removed", "renamed", "moved",
+                                          "other"})
+#: The typed relations between items (``item.relations``).
+ANNOTATION_ITEM_RELATIONS = frozenset({"same_as", "part_of", "near"})
+#: W3C Web Annotation selector classes, plus the two lean-companion extensions
+#: (``PdfRegionSelector``, ``SitePageSelector``).
+ANNOTATION_SELECTOR_TYPES = frozenset({"FragmentSelector", "TextQuoteSelector",
+                                       "TextPositionSelector", "DataPositionSelector",
+                                       "CssSelector", "XPathSelector", "SvgSelector",
+                                       "RangeSelector", "PdfRegionSelector",
+                                       "SitePageSelector"})
+#: ``conformsTo`` IRIs with a grammar check.  The field is open: any other IRI
+#: passes with a warning.  They are identifiers, not links: nothing fetches them.
+#: RFC 8118 obsoletes RFC 3778, which the W3C Recommendation's table names, so
+#: the two are synonyms here.
+CONFORMS_TO_PDF = "http://tools.ietf.org/rfc/rfc8118"
+CONFORMS_TO_PDF_RFC3778 = "http://tools.ietf.org/rfc/rfc3778"
+CONFORMS_TO_TEXT = "http://tools.ietf.org/rfc/rfc5147"
+CONFORMS_TO_HTML = "http://tools.ietf.org/rfc/rfc3236"
+CONFORMS_TO_MEDIA = "http://www.w3.org/TR/media-frags/"
+ANNOTATION_CONFORMS_TO = frozenset({CONFORMS_TO_PDF, CONFORMS_TO_PDF_RFC3778, CONFORMS_TO_TEXT,
+                                    CONFORMS_TO_HTML, CONFORMS_TO_MEDIA})
+
+#: The id grammar for anonymous declarations, used by scripts/annotations/ids.py
+#: (which writes ids) and scripts/annotations/validate.py (which checks them).
+#: A statement-hash id is ``<keyword>:<12 hex>`` with an optional ``~k``
+#: (k >= 2).  A declared id is ``<keyword>:<slug>``: letters of either case,
+#: digits, ``.``, ``_`` and ``-``, starting with a letter or digit, and never a
+#: slug that is 12 lowercase hex digits (with or without ``~k``), which is
+#: reserved for statement-hash ids.
+ANONYMOUS_KEYWORDS = ("example", "instance")
+HASH_ID_PATTERN = r"(?P<kw>example|instance):(?P<hex>[0-9a-f]{12})(?:~(?P<k>[2-9]|[1-9][0-9]+))?"
+DECLARED_SLUG_PATTERN = r"(?![0-9a-f]{12}(?:~[0-9]+)?(?![A-Za-z0-9._~-]))[A-Za-z0-9][A-Za-z0-9._-]*"
+DECLARED_ID_PATTERN = r"(?P<kw>example|instance):(?P<slug>" + DECLARED_SLUG_PATTERN + r")"
+#: The two mechanical passage-id forms (docs/annotations.md, section 5.2); a
+#: declared item id may not take either shape.
+PASSAGE_QUOTE_ID_PATTERN = r"passage-[0-9a-f]{8}"
+PASSAGE_PAGE_ID_PATTERN = r"passage-p[1-9][0-9]*-[0-9a-f]{8}"
+
 #: Lean keywords whose declaration STATES a notion, as opposed to asserting
 #: something about one.  The definition-coverage split (stated / bridge-only /
 #: missing) turns on this and nothing else, and it is written down ONCE here

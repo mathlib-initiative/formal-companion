@@ -1,0 +1,177 @@
+{
+  "companion": {
+    "commit": "5a6de2a880bebbda9adcd28fc6d596b5c4527b48",
+    "generated_at": "2026-09-26T12:00:00Z",
+    "generator": "hand",
+    "name": "lecture-companion",
+    "repo": "git.example.org/example/lecture-companion"
+  },
+  "declarations": [
+    {
+      "anonymous": false,
+      "file": "Lecture/Three.lean",
+      "id": "Lecture.sum_sq",
+      "id_source": "name",
+      "kind": "theorem",
+      "line": 30,
+      "module": "Lecture.Three",
+      "name": "Lecture.sum_sq",
+      "private": false,
+      "sorry": "none"
+    }
+  ],
+  "items": [
+    {
+      "coverage": "support_only",
+      "form": "passage",
+      "id": "passage-video-proof-sketch",
+      "id_source": "declared",
+      "kind": "passage",
+      "source": "lecture-video",
+      "title": "Proof sketch drawn on the board",
+      "title_source": "producer"
+    },
+    {
+      "form": "numbered",
+      "id": "theorem-3",
+      "id_source": "label",
+      "kind": "Theorem",
+      "number": "3",
+      "source": "notes-md",
+      "title": "Sums of squares"
+    },
+    {
+      "coverage": "not_formalized",
+      "form": "numbered",
+      "id": "theorem-3-epub",
+      "id_source": "declared",
+      "kind": "Theorem",
+      "number": "3",
+      "relations": {
+        "same_as": [
+          "theorem-3"
+        ]
+      },
+      "source": "notes-epub",
+      "title": "Sums of squares"
+    }
+  ],
+  "links": [
+    {
+      "declaration": "Lecture.sum_sq",
+      "id": "passage-video-proof-sketch/support/Lecture.sum_sq",
+      "item": "passage-video-proof-sketch",
+      "provenance": "prov-hand",
+      "relation": "invocation",
+      "role": "support"
+    },
+    {
+      "declaration": "Lecture.sum_sq",
+      "id": "theorem-3/key/Lecture.sum_sq",
+      "item": "theorem-3",
+      "provenance": "prov-hand",
+      "relation": "exact",
+      "role": "key"
+    }
+  ],
+  "locations": [
+    {
+      "id": "passage-video-proof-sketch@t",
+      "items": [
+        "passage-video-proof-sketch"
+      ],
+      "target": {
+        "selector": [
+          {
+            "conformsTo": "http://www.w3.org/TR/media-frags/",
+            "type": "FragmentSelector",
+            "value": "t=1830,1905&xywh=percent:10,10,80,60"
+          }
+        ],
+        "source": "lecture-video"
+      }
+    },
+    {
+      "id": "theorem-3-epub@cfi",
+      "items": [
+        "theorem-3-epub"
+      ],
+      "target": {
+        "selector": [
+          {
+            "conformsTo": "http://www.idpf.org/epub/linking/cfi/epub-cfi.html",
+            "type": "FragmentSelector",
+            "value": "epubcfi(/6/8!/4/2/10)"
+          },
+          {
+            "exact": "Theorem 3 (Sums of squares).",
+            "type": "TextQuoteSelector"
+          }
+        ],
+        "source": "notes-epub"
+      }
+    },
+    {
+      "id": "theorem-3@md",
+      "items": [
+        "theorem-3"
+      ],
+      "target": {
+        "selector": [
+          {
+            "conformsTo": "http://tools.ietf.org/rfc/rfc5147",
+            "type": "FragmentSelector",
+            "value": "line=17,21"
+          },
+          {
+            "exact": "**Theorem 3** (Sums of squares).",
+            "type": "TextQuoteSelector"
+          }
+        ],
+        "source": "notes-md"
+      }
+    }
+  ],
+  "provenance": [
+    {
+      "actor": "human",
+      "confirmed_by_human": true,
+      "id": "prov-hand",
+      "method": "manual"
+    }
+  ],
+  "schema": "lean-companion/annotations",
+  "schema_version": "1.0",
+  "sources": [
+    {
+      "bytes": 91234567,
+      "id": "lecture-video",
+      "kind": "other",
+      "media_type": "video/mp4",
+      "sha256": "bca1a0d6687a8613ba5e2da901aa257de24b84bc84255784c7d942ec367ce583",
+      "title": "Lecture 3 recording (synthetic)",
+      "url": "https://media.example.org/lecture-3.mp4"
+    },
+    {
+      "id": "notes-epub",
+      "kind": "other",
+      "media_type": "application/epub+zip",
+      "sha256": "40fe4ad819e5fd6caa02a53474fef3ec21b184e155a2d2b3f0655d12c5fee855",
+      "title": "The notes as an e-book (synthetic)"
+    },
+    {
+      "git_blob": "bb76e778131fab81235419694eb7fd4b0ddf04f4",
+      "id": "notes-md",
+      "kind": "other",
+      "media_type": "text/markdown",
+      "path": "notes/lecture-3.md",
+      "revision": "a6e12a37222fb89ac033227e61518daeb92a3cce",
+      "text_layer": {
+        "case": "sensitive",
+        "unicode": "none",
+        "whitespace": "exact"
+      },
+      "title": "Lecture notes in Markdown (synthetic)"
+    }
+  ]
+}

@@ -36,6 +36,8 @@ POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
+schema/           annotations-v1.schema.json: the annotation format, schema_version 1.0 (docs/annotations.md)
+examples/         synthetic annotation documents covering every record and location kind; two are invalid on purpose
 evals/            trigger evals: prompts as data, run by hand against the skill
 bin/cf            the PATH shim; it resolves back to this checkout
 scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/

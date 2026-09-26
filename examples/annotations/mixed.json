@@ -1,0 +1,489 @@
+{
+  "changelog": [
+    {
+      "at": "2026-09-24",
+      "commit": "1503b44127e4d11f5c6e7f28b1f0e07a159848f3",
+      "event": "retired",
+      "id": "2026-09-24/retired/example:f254071ef195",
+      "note": "The unit box's volume was restated; the link waits for a human to re-attach it.",
+      "old_statement_sha256": "f254071ef195ccf8a752e0205f05ca6dda60125de6c122c9e230e79854b5a134",
+      "possible_successor": "example:boxes-are-elementary",
+      "reason": "statement_changed",
+      "subject": "example:f254071ef195",
+      "subject_kind": "declaration"
+    },
+    {
+      "at": "2026-09-25",
+      "event": "restated",
+      "id": "2026-09-25/restated/Notes.Box.ofLT",
+      "new_statement_sha256": "422753cea4d18d38bb9220bb7102f62230cfda5c098b2d593b1c929770477403",
+      "old_statement_sha256": "e913022b174e613a82b2cd41b8e79c8d194a82452558a2f1eb085d9d6051b844",
+      "subject": "Notes.Box.ofLT",
+      "subject_kind": "declaration"
+    }
+  ],
+  "clusters": [
+    {
+      "id": "section-1",
+      "items": [
+        "definition-1.1",
+        "passage-boxes-motivation",
+        "passage-remark-unions"
+      ],
+      "locator": "printed pp. 3-9",
+      "title": "Section 1: Boxes"
+    }
+  ],
+  "companion": {
+    "commit": "ed00b5dc6b11040ed2f9baf475edc9b48e1c7f4a",
+    "generated_at": "2026-09-26T12:00:00Z",
+    "generator": "notes exporter 0.1",
+    "name": "notes-companion",
+    "repo": "git.example.org/example/notes-companion"
+  },
+  "declarations": [
+    {
+      "anonymous": false,
+      "file": "Notes/Basic.lean",
+      "id": "Notes.Box",
+      "id_source": "name",
+      "kind": "structure",
+      "line": 12,
+      "module": "Notes.Basic",
+      "name": "Notes.Box",
+      "private": false,
+      "sorry": "none"
+    },
+    {
+      "anonymous": false,
+      "file": "Notes/Basic.lean",
+      "id": "Notes.Box.ofLE",
+      "id_source": "name",
+      "kind": "def",
+      "line": 20,
+      "module": "Notes.Basic",
+      "name": "Notes.Box.ofLE",
+      "private": false,
+      "sorry": "none"
+    },
+    {
+      "anonymous": false,
+      "file": "Notes/Basic.lean",
+      "id": "Notes.Box.ofLT",
+      "id_source": "name",
+      "kind": "def",
+      "line": 17,
+      "module": "Notes.Basic",
+      "name": "Notes.Box.ofLT",
+      "private": false,
+      "replaced_by": "Notes.Box.ofLE",
+      "sorry": "none"
+    },
+    {
+      "anonymous": false,
+      "file": "Notes/Basic.lean",
+      "id": "Notes.Box.union_isElementary",
+      "id_source": "name",
+      "kind": "theorem",
+      "line": 58,
+      "module": "Notes.Basic",
+      "name": "Notes.Box.union_isElementary",
+      "private": false,
+      "sorry": "none"
+    },
+    {
+      "anonymous": false,
+      "file": "Notes/Basic.lean",
+      "id": "Notes.simp_volume",
+      "id_source": "name",
+      "kind": "theorem",
+      "line": 70,
+      "module": "Notes.Basic",
+      "name": "Notes.simp_volume",
+      "private": false,
+      "sorry": "none"
+    },
+    {
+      "anonymous": true,
+      "file": "Notes/Exercises.lean",
+      "id": "example:boxes-are-elementary",
+      "id_source": "declared",
+      "kind": "example",
+      "line": 22,
+      "module": "Notes.Exercises",
+      "private": false,
+      "statement_sha256": "713e86822d4aa5359c8f96c699ee931027fda40a9f5beceede3e2b7d2ac1ec06"
+    }
+  ],
+  "destinations": [
+    {
+      "declaration": "Notes.Box",
+      "fragment": "Notes___Box",
+      "href": "Notes/Basic/index.html",
+      "id": "Notes.Box@site",
+      "resolution": "exact",
+      "site": "verso_literate"
+    },
+    {
+      "declaration": "Notes.simp_volume",
+      "fallback_label": "module page (fallback: no anchor for this declaration)",
+      "href": "Notes/Basic/index.html",
+      "id": "Notes.simp_volume@site",
+      "resolution": "fallback",
+      "site": "verso_literate"
+    }
+  ],
+  "items": [
+    {
+      "clusters": [
+        "section-1"
+      ],
+      "form": "numbered",
+      "id": "definition-1.1",
+      "id_source": "label",
+      "kind": "Definition",
+      "number": "1.1",
+      "pages": {
+        "basis": "printed",
+        "first": 3
+      },
+      "source": "notes-pdf",
+      "title": "Boxes"
+    },
+    {
+      "form": "passage",
+      "id": "passage-bcffcbba",
+      "id_source": "quote_hash",
+      "kind": "passage",
+      "quote": {
+        "exact": "Definition 1.1 should allow degenerate intervals"
+      },
+      "relations": {
+        "same_as": [
+          "definition-1.1"
+        ]
+      },
+      "source": "notes-errata",
+      "title": "Errata entry for Definition 1.1",
+      "title_source": "producer"
+    },
+    {
+      "clusters": [
+        "section-1"
+      ],
+      "coverage": "not_formalized",
+      "form": "passage",
+      "id": "passage-boxes-motivation",
+      "id_source": "declared",
+      "kind": "passage",
+      "relations": {
+        "near": [
+          "definition-1.1"
+        ]
+      },
+      "source": "notes-pdf",
+      "title": "Why boxes: the motivating paragraph before Definition 1.1",
+      "title_source": "producer"
+    },
+    {
+      "clusters": [
+        "section-1"
+      ],
+      "coverage": "support_only",
+      "form": "passage",
+      "id": "passage-remark-unions",
+      "id_source": "declared",
+      "kind": "Remark",
+      "source": "notes-pdf",
+      "title": "Unnumbered remark: finite unions of boxes",
+      "title_source": "producer"
+    }
+  ],
+  "links": [
+    {
+      "declaration": "Notes.Box.ofLT",
+      "id": "definition-1.1/attributed/Notes.Box.ofLT",
+      "item": "definition-1.1",
+      "provenance": "prov-curation",
+      "role": "attributed"
+    },
+    {
+      "declaration": "example:f254071ef195",
+      "id": "definition-1.1/example/example:f254071ef195",
+      "item": "definition-1.1",
+      "orphaned": true,
+      "provenance": "prov-curation",
+      "role": "example"
+    },
+    {
+      "declaration": "Notes.Box",
+      "id": "definition-1.1/key/Notes.Box",
+      "item": "definition-1.1",
+      "provenance": "prov-curation",
+      "role": "key"
+    },
+    {
+      "cluster": "section-1",
+      "id": "definition-1.1/support/section-1",
+      "item": "definition-1.1",
+      "provenance": "prov-curation",
+      "role": "support"
+    },
+    {
+      "declaration": "example:boxes-are-elementary",
+      "id": "passage-remark-unions/example/example:boxes-are-elementary",
+      "item": "passage-remark-unions",
+      "provenance": "prov-curation",
+      "role": "example"
+    },
+    {
+      "declaration": "Notes.Box.union_isElementary",
+      "id": "passage-remark-unions/support/Notes.Box.union_isElementary",
+      "item": "passage-remark-unions",
+      "provenance": "prov-curation",
+      "role": "support"
+    }
+  ],
+  "locations": [
+    {
+      "id": "definition-1.1@p007",
+      "items": [
+        "definition-1.1"
+      ],
+      "target": {
+        "selector": [
+          {
+            "coordinate_space": {
+              "origin": "top_left",
+              "page_box": "CropBox",
+              "units": "normalized",
+              "x_axis": "right",
+              "y_axis": "down"
+            },
+            "page": 7,
+            "rect": {
+              "x0": 0.147059,
+              "x1": 0.852941,
+              "y0": 0.176768,
+              "y1": 0.328283
+            },
+            "type": "PdfRegionSelector"
+          }
+        ],
+        "source": "notes-pdf"
+      }
+    },
+    {
+      "id": "definition-1.1@p007-endpoints",
+      "items": [
+        "definition-1.1"
+      ],
+      "target": {
+        "selector": [
+          {
+            "coordinate_space": {
+              "origin": "top_left",
+              "page_box": "CropBox",
+              "units": "normalized",
+              "x_axis": "right",
+              "y_axis": "down"
+            },
+            "page": 7,
+            "rect": {
+              "x0": 0.147059,
+              "x1": 0.653595,
+              "y0": 0.290404,
+              "y1": 0.325758
+            },
+            "type": "PdfRegionSelector"
+          }
+        ],
+        "source": "notes-pdf"
+      }
+    },
+    {
+      "id": "passage-boxes-motivation@p007",
+      "items": [
+        "passage-boxes-motivation"
+      ],
+      "target": {
+        "selector": [
+          {
+            "coordinate_space": {
+              "origin": "top_left",
+              "page_box": "CropBox",
+              "units": "normalized",
+              "x_axis": "right",
+              "y_axis": "down"
+            },
+            "page": 7,
+            "rect": {
+              "x0": 0.147059,
+              "x1": 0.852941,
+              "y0": 0.090909,
+              "y1": 0.171717
+            },
+            "type": "PdfRegionSelector"
+          }
+        ],
+        "source": "notes-pdf"
+      }
+    },
+    {
+      "id": "passage-remark-unions@p007",
+      "items": [
+        "passage-remark-unions"
+      ],
+      "target": {
+        "selector": [
+          {
+            "coordinate_space": {
+              "origin": "top_left",
+              "page_box": "CropBox",
+              "units": "normalized",
+              "x_axis": "right",
+              "y_axis": "down"
+            },
+            "page": 7,
+            "rect": {
+              "x0": 0.147059,
+              "x1": 0.852941,
+              "y0": 0.340909,
+              "y1": 0.416667
+            },
+            "type": "PdfRegionSelector"
+          },
+          {
+            "conformsTo": "http://tools.ietf.org/rfc/rfc8118",
+            "refinedBy": {
+              "exact": "a finite union of boxes",
+              "prefix": "Remark. ",
+              "suffix": " is again",
+              "type": "TextQuoteSelector"
+            },
+            "type": "FragmentSelector",
+            "value": "page=7"
+          }
+        ],
+        "source": "notes-pdf"
+      }
+    }
+  ],
+  "provenance": [
+    {
+      "actor": "agent",
+      "agents": [
+        "curator",
+        "reviewer"
+      ],
+      "at": "2026-09-25",
+      "confirmed_by_human": false,
+      "id": "prov-curation",
+      "method": "curation"
+    },
+    {
+      "actor": "human",
+      "at": "2026-09-26",
+      "confirmed_by_human": true,
+      "id": "prov-review",
+      "method": "manual",
+      "note": "Verdict confirmed by the companion's author."
+    }
+  ],
+  "schema": "lean-companion/annotations",
+  "schema_version": "1.0",
+  "snippets": [
+    {
+      "declaration": "Notes.Box",
+      "id": "Notes.Box",
+      "line": 12,
+      "text": "structure Box (d : ℕ) where\n  lower : Fin d → ℝ\n  upper : Fin d → ℝ"
+    }
+  ],
+  "sources": [
+    {
+      "id": "notes-errata",
+      "kind": "web",
+      "retrieved_at": "2026-09-02T10:00:00Z",
+      "sha256": "3a6158bf98d8e03e21564e0692999273714d96cd40632ffce4fcdfd5ce053dc1",
+      "title": "Errata page for the notes (synthetic)",
+      "url": "https://notes.example.org/errata.html"
+    },
+    {
+      "bytes": 482113,
+      "edition": "second printing",
+      "id": "notes-pdf",
+      "kind": "pdf",
+      "page_size": {
+        "height_pt": 792,
+        "width_pt": 612
+      },
+      "physical_page_count": 40,
+      "printed_page_offset": 4,
+      "role": "audited",
+      "sha256": "e45a0b99dd11778aac792ecd226d150a9d28b82c9e2897510f441235956a3b07",
+      "text_layer": {
+        "case": "sensitive",
+        "extractor": "pdftotext",
+        "unicode": "nfkc",
+        "version": "26.04.0",
+        "whitespace": "collapse"
+      },
+      "title": "Elementary Sets: Lecture Notes (synthetic)",
+      "url": "https://notes.example.org/elementary-sets.pdf"
+    }
+  ],
+  "unattributed": [
+    {
+      "claim": "api",
+      "declaration": "Notes.simp_volume",
+      "id": "Notes.simp_volume",
+      "signals": [
+        "namespace Notes"
+      ]
+    }
+  ],
+  "verdicts": [
+    {
+      "declarations": [
+        {
+          "declaration": "Notes.Box.ofLT",
+          "note": "kept for compatibility; superseded",
+          "verdict": "deviation"
+        }
+      ],
+      "evidence": [
+        "Notes.Box.ofLT takes a < b in every coordinate.",
+        "The notes' Definition 1.1 writes a <= b."
+      ],
+      "finding_ids": [
+        "a4258a7620990a47b9d149ec549e87969c586ff6cbf0a74ed43a4f0288d59c0e"
+      ],
+      "finding_kind": "CONTENT",
+      "id": "definition-1.1-strict-endpoints",
+      "item": "definition-1.1",
+      "ledger_verdict": "CONFIRMED_CONTENT",
+      "locations": [
+        "definition-1.1@p007",
+        "definition-1.1@p007-endpoints"
+      ],
+      "pinned_commit": "33469d3faaaa5d6833f75be819e4820ed8b6e120",
+      "provenance": "prov-review",
+      "resolution": {
+        "commits": [
+          "8ac319fe88cc24171f977efc916b1270f4be94a4",
+          "d7f2e2305f202e798beb519d54075d3f6f2475ba"
+        ],
+        "pr": 12,
+        "replaced_by": [
+          "Notes.Box.ofLE"
+        ],
+        "state": "fixed"
+      },
+      "severity": "low",
+      "status": "fixed",
+      "summary": "The first formal box required strict endpoints; the notes allow a = b. Replaced by Notes.Box.ofLE.",
+      "verdict": "deviation"
+    }
+  ]
+}
