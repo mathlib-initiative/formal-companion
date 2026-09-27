@@ -14,7 +14,8 @@ the rules a JSON Schema cannot state: unique and sorted ids, references that
 resolve, the anchoring and coverage rules for items, the item and declaration
 id rules, selector grammars against their ``conformsTo``, the changelog's
 rules, and the URL rule.  Some findings are warnings, not problems: an unknown
-``conformsTo`` IRI, a missing ``conformsTo``, a link ``relation`` outside the
+``conformsTo`` IRI, a missing ``conformsTo``, a Media Fragments name that is no
+dimension, a repeated Media Fragments dimension, a link ``relation`` outside the
 documented core, and a minor version newer than this checker's.
 ``--canonical`` also requires the file's bytes to be the canonical
 serialisation (section 7: RFC 8785 order and numbers, two-space indent).
@@ -385,6 +386,14 @@ def source_family(source: dict) -> str:
     return "generic"
 
 
+def page_size(source: dict, page: int) -> dict | None:
+    """The size of one physical page: its ``page_sizes`` range when one lists it, else ``page_size``."""
+    for rng in source.get("page_sizes", []):
+        if rng["first"] <= page <= rng["last"]:
+            return rng
+    return source.get("page_size")
+
+
 def printed_to_physical(page: int, basis: str, source: dict) -> int | None:
     """A page on the physical basis, or None when the offset is unknown."""
     if basis == "physical":
@@ -393,12 +402,23 @@ def printed_to_physical(page: int, basis: str, source: dict) -> int | None:
     return None if offset is None else page + offset
 
 
+#: A ``_Ctx.parent`` value: the parent is a PDF fragment that names its ``page=``.
+PAGE_FRAGMENT = "page="
+
+
 @dataclass
 class _Ctx:
-    """Where a selector sits: the page an enclosing fragment chose, what it refines."""
+    """Where a selector sits (section 4.4).
+
+    ``page`` is the page the nearest enclosing ``page=`` fragment chose, at any
+    depth.  ``parent`` is the structural parent: None for a top-level
+    alternative, :data:`PAGE_FRAGMENT` for a PDF fragment that names its page,
+    ``RangeSelector`` for either end of a range, else the parent's ``type``.
+    ``range_parent`` is, for a range end, the range's own ``parent``.
+    """
     page: int | None = None
-    refines: str | None = None
-    top: bool = True
+    parent: str | None = None
+    range_parent: str | None = None
 
 
 @dataclass
@@ -421,13 +441,15 @@ class Checker:
             for rec in doc.get(name, []) or []:
                 self.by_id[name].setdefault(rec["id"], rec)
         changes = doc.get("changelog", []) or []
-        self.retired = {c["subject"] for c in changes if c["event"] == "retired"}
+        #: declaration ids a changelog entry retires (what an orphaned link may name)
+        self.retired = {c["subject"] for c in changes
+                        if c["event"] == "retired" and c["subject_kind"] == "declaration"}
         #: every ordinal_assigned record, per subject
         self.ordinal_records: dict[str, list[dict]] = {}
         #: when each declaration id was retired or renamed (the latest such entry)
         self.gone_at: dict[str, dt.datetime] = {}
         for i, c in enumerate(changes):
-            if _parse_at(c["at"]) is None:
+            if _parse_at(c["at"]) is None:          # I9: an ``at`` is a real date or instant
                 self.fail(f"$.changelog[{i}].at", f"{c['at']!r} is not a calendar date or UTC instant")
                 continue
             if c["event"] == "ordinal_assigned":
@@ -486,6 +508,9 @@ class Checker:
 
     # -- I3 ------------------------------------------------------------------
     def check_references(self) -> None:
+        """References resolve, plus the other I3 rules: orphaned links, unique link
+        and membership keys, one snippet each, parents, and a fixed verdict's
+        resolution."""
         for path, item in self.records("items"):
             self.ref(f"{path}.source", item["source"], "sources")
             for i, c in enumerate(item.get("clusters", [])):
@@ -616,7 +641,7 @@ class Checker:
                                                          f"{count} physical pages")
                 last_end = max(last_end, rng["last"])
 
-    # -- I4, I5, I6 ------------------------------------------------------------
+    # -- I4, I5, I6 (items and pages), I12 (item ids) ----------------------------
     def check_items(self) -> None:
         located: set[str] = set()
         for _path, loc in self.records("locations"):
@@ -668,13 +693,6 @@ class Checker:
                 item = self.by_id["items"].get(link["item"])
                 source = self.by_id["sources"].get(item["source"]) if item else None
                 self.check_pages(f"{path}.pages", link["pages"], source)
-            item = self.by_id["items"].get(link["item"])
-            for i, loc_id in enumerate(link.get("locations", [])):
-                loc = self.by_id["locations"].get(loc_id)
-                if loc is not None and item is not None and loc["target"]["source"] != item["source"]:
-                    self.fail(f"{path}.locations[{i}]", f"location {loc_id!r} is on "
-                                                        f"{loc['target']['source']!r}, not on the item's "
-                                                        f"source {item['source']!r}")
 
     def check_item_id(self, path: str, item: dict, source: dict | None) -> None:
         """I12: an item id follows its id_source (section 5.2)."""
@@ -693,6 +711,9 @@ class Checker:
             if quote is None:
                 self.fail(f"{path}.id_source", "a quote_hash id needs item.quote, or a TextQuoteSelector on "
                                                "the item's first location")
+            elif not ids.normalize_text(quote):
+                self.fail(f"{path}.id_source", f"a quote_hash id hashes a quote with text in it; {where} "
+                                               f"is only whitespace")
             else:
                 want = ids.passage_quote_id(quote)
                 if rid != want:
@@ -712,6 +733,9 @@ class Checker:
             if printed is None or printed < 1:
                 self.fail(f"{path}.id_source", "page_title_hash needs a printed page: pages on the printed "
                                                "basis, or a source with printed_page_offset")
+            elif not ids.normalize_text(item["title"]):
+                self.fail(f"{path}.title", "a page_title_hash id hashes a title with text in it; this one is "
+                                           "only whitespace")
             else:
                 want = ids.passage_page_id(printed, item["title"])
                 if rid != want:
@@ -759,6 +783,14 @@ class Checker:
 
     # -- I7 --------------------------------------------------------------------
     def check_locations(self) -> None:
+        for path, link in self.records("links"):
+            item = self.by_id["items"].get(link["item"])
+            for i, loc_id in enumerate(link.get("locations", [])):
+                loc = self.by_id["locations"].get(loc_id)
+                if loc is not None and item is not None and loc["target"]["source"] != item["source"]:
+                    self.fail(f"{path}.locations[{i}]", f"location {loc_id!r} is on "
+                                                        f"{loc['target']['source']!r}, not on the item's "
+                                                        f"source {item['source']!r}")
         anchored = {a for _p, d in self.records("declarations") for a in d.get("anchors", [])}
         anchored |= {a for _p, link in self.records("links") for a in link.get("locations", [])}
         for path, decl in self.records("declarations"):
@@ -809,11 +841,11 @@ class Checker:
         if stype not in ALLOWED_SELECTORS[family]:
             self.fail(path, f"{stype} does not apply to a {source['kind']} source")
             return pages
-        child_ctx = _Ctx(page=ctx.page, refines=stype, top=False)
+        child_ctx = _Ctx(page=ctx.page, parent=stype)
         if stype == "SitePageSelector":
             if source.get("scope") != "site":
                 self.fail(path, f"a SitePageSelector names a page of a site; {source['id']!r} is one page")
-            elif not ctx.top:
+            elif ctx.parent is not None:
                 self.fail(path, "a SitePageSelector is a top-level alternative, never a refinement")
             elif "page_hashes" in source:
                 page = site_page_file(sel["path"])
@@ -824,15 +856,20 @@ class Checker:
             if page is not None:
                 pages.add(page)
                 child_ctx.page = page
+                child_ctx.parent = PAGE_FRAGMENT
         elif stype in ("TextPositionSelector", "DataPositionSelector"):
             if sel["start"] >= sel["end"]:
                 self.fail(path, f"start ({sel['start']}) must be before end ({sel['end']}); the range is half-open")
             if stype == "TextPositionSelector" and family == "pdf":
-                if "extractor" not in source.get("text_layer", {}):
-                    self.fail(path, f"offsets into a PDF need the source's text_layer.extractor "
-                                    f"({source['id']!r} declares none)")
-                if ctx.page is None:
-                    self.fail(path, "offsets into a PDF count within one page: refine a page= fragment")
+                layer = source.get("text_layer", {})
+                missing = [k for k in ("extractor", "version") if k not in layer]
+                if missing:
+                    self.fail(path, f"offsets into a PDF need the source's text_layer.extractor and version "
+                                    f"({source['id']!r} declares no {' or '.join(missing)})")
+                if not (ctx.parent == PAGE_FRAGMENT
+                        or (ctx.parent == "RangeSelector" and ctx.range_parent == PAGE_FRAGMENT)):
+                    self.fail(path, "offsets into a PDF count within one page: refine a page= fragment "
+                                    "directly, or be an end of a RangeSelector that refines one")
         elif stype == "PdfRegionSelector":
             pages.add(sel["page"])
             self.check_region(path, sel, source, ctx)
@@ -840,7 +877,7 @@ class Checker:
             a, b = sel["startSelector"], sel["endSelector"]
             if a["type"] != b["type"]:
                 self.fail(path, f"startSelector is {a['type']} and endSelector is {b['type']}; use one class")
-            end_ctx = _Ctx(page=ctx.page, refines=ctx.refines, top=ctx.top)
+            end_ctx = _Ctx(page=ctx.page, parent="RangeSelector", range_parent=ctx.parent)
             pages |= self.check_selector(f"{path}.startSelector", a, source, end_ctx)
             pages |= self.check_selector(f"{path}.endSelector", b, source, end_ctx)
         child = sel.get("refinedBy")
@@ -969,13 +1006,13 @@ class Checker:
         count = source.get("physical_page_count")
         if count is not None and sel["page"] > count:
             self.fail(f"{path}.page", f"page {sel['page']} is past the source's {count} physical pages")
-        if ctx.refines is not None:
-            if ctx.page is None:
-                self.fail(path, "a PdfRegionSelector refines only a PDF page= FragmentSelector")
-            elif ctx.page != sel["page"]:
-                self.fail(f"{path}.page", f"page {sel['page']} disagrees with the refined page={ctx.page}")
+        if ctx.parent not in (None, PAGE_FRAGMENT, "RangeSelector"):
+            self.fail(path, "a PdfRegionSelector is a top-level alternative, a RangeSelector end, or the "
+                            "refinement of a PDF page= fragment")
+        elif ctx.page is not None and ctx.page != sel["page"]:
+            self.fail(f"{path}.page", f"page {sel['page']} disagrees with the refined page={ctx.page}")
         space = sel["coordinate_space"]
-        if (space["origin"] == "top_left") != (space["y_axis"] == "down"):
+        if vocab.ANNOTATION_ORIGIN_Y_AXIS[space["origin"]] != space["y_axis"]:
             self.fail(f"{path}.coordinate_space", "top_left goes with y_axis down, bottom_left with up")
         boxes = [sel["rect"]] if "rect" in sel else []
         for i, quad in enumerate(sel.get("quads", [])):
@@ -984,7 +1021,7 @@ class Checker:
             if len(set(zip(xs, ys))) < 3:
                 self.fail(f"{path}.quads[{i}]", "a quad needs at least three distinct corners")
             boxes.append({"x0": min(xs), "y0": min(ys), "x1": max(xs), "y1": max(ys)})
-        size = source.get("page_size")
+        size = page_size(source, sel["page"])
         for box in boxes:
             values = [box["x0"], box["y0"], box["x1"], box["y1"]]
             if not all(math.isfinite(v) for v in values):
@@ -992,10 +1029,10 @@ class Checker:
                 continue
             if box["x0"] >= box["x1"] or box["y0"] >= box["y1"]:
                 self.fail(path, "a rect needs x0 < x1 and y0 < y1")
-            high = 1.0 if space["units"] == "normalized" else math.inf
-            if min(values) < 0 or max(values) > high:
-                self.fail(path, f"coordinates must lie in [0, {'1' if high == 1.0 else 'inf'}) "
-                                f"for units {space['units']}")
+            normalized = space["units"] == "normalized"
+            if min(values) < 0 or (normalized and max(values) > 1):
+                self.fail(path, "coordinates must lie in [0, 1] for units normalized" if normalized
+                          else f"coordinates must be >= 0 for units {space['units']}")
             elif space["units"] == "pt" and size is not None and (
                     box["x1"] > size["width_pt"] or box["y1"] > size["height_pt"]):
                 self.fail(path, f"the rect leaves the {jcs_number(size['width_pt'])} x "
@@ -1007,7 +1044,7 @@ class Checker:
             rid, source, kind = d["id"], d["id_source"], d["kind"]
             if "signature" in d:
                 sig = d["signature"]
-                if ids.normalize_statement(sig) != sig:
+                if ids.normalize_statement(sig) != sig or ids.strip_comments(sig)[1]:
                     self.fail(f"{path}.signature", "must be normalised: comments removed, each run of "
                                                    "whitespace one space")
                 elif "statement_sha256" in d and ids.statement_sha256(sig) != d["statement_sha256"]:
@@ -1017,8 +1054,8 @@ class Checker:
             parent = self.by_id["declarations"].get(d.get("parent"))
             parent_name = _full_name(parent) if parent is not None else None
             if "namespace" in d and parent_name is not None and d["namespace"] != parent_name:
-                self.fail(f"{path}.namespace", f"a {kind}'s namespace is its parent's namespace plus the "
-                                               f"parent's name, {parent_name!r}")
+                self.fail(f"{path}.namespace", f"a {kind}'s namespace is its parent's full name (its "
+                                               f"name), {parent_name!r}")
             if "namespace" in d and "name" in d and kind in ("field", "projection") and \
                     not d["name"].startswith(d["namespace"] + "." if d["namespace"] else ""):
                 self.fail(f"{path}.name", f"a {kind}'s full name is its namespace, a dot and its own name")
@@ -1089,6 +1126,8 @@ class Checker:
                     self.fail(f"{path}.{name}", f"the {name} differs from the subject")
                 elif change[name] not in pool:
                     self.fail(f"{path}.{name}", f"{change[name]!r} is not a live {change['subject_kind']} id")
+            if event == "restated":
+                self.check_restated(path, change, pool)
             if event == "ordinal_assigned":
                 decl = pool.get(subject)
                 m = _HASH_ID.match(subject)
@@ -1100,6 +1139,22 @@ class Checker:
                     if when is not None and (gone is None or gone < when):
                         self.fail(f"{path}.subject", f"{subject!r} is not a live declaration id, and no later "
                                                      f"changelog entry retires or renames it")
+
+    def check_restated(self, path: str, change: dict, pool: dict[str, dict]) -> None:
+        """``restated`` names a declared or named declaration id: live, or retired or
+        renamed by a later entry (then the record is history)."""
+        subject = change["subject"]
+        decl = pool.get(subject)
+        if change["subject_kind"] != "declaration":
+            self.fail(f"{path}.subject_kind", "restated records a declaration whose statement changed")
+        elif _HASH_ID.match(subject) or (decl is not None and decl["id_source"] == "statement_hash"):
+            self.fail(f"{path}.subject", f"{subject!r} is a statement-hash id, which changes with its "
+                                         f"statement: record retired (and the new id), not restated")
+        elif decl is None:
+            gone, when = self.gone_at.get(subject), _parse_at(change["at"])
+            if when is not None and (gone is None or gone < when):
+                self.fail(f"{path}.subject", f"{subject!r} is not a live declaration id, and no later "
+                                             f"changelog entry retires or renames it")
 
     # -- I13 -------------------------------------------------------------------
     def check_attribution(self) -> None:
@@ -1122,14 +1177,14 @@ class Checker:
             elif isinstance(value, dict):
                 quote = value.get("type") == "TextQuoteSelector"
                 for k, v in value.items():
-                    if k in ("conformsTo", "$schema"):
-                        continue          # identifiers, never fetched
+                    if k == "conformsTo":
+                        continue          # an identifier, never fetched
                     if quote and k in ("exact", "prefix", "suffix"):
                         continue          # source text, an anchor and not a link
                     walk(v, f"{path}.{k}")
         for key, value in self.doc.items():
-            if key in ("sources", "destinations"):
-                continue
+            if key in ("sources", "destinations", "$schema"):
+                continue          # the two URL arrays, and the root $schema, an identifier
             if key == "items" and isinstance(value, list):
                 for i, item in enumerate(value):
                     walk({k: v for k, v in item.items() if k != "quote"}, f"$.items[{i}]")
@@ -1201,7 +1256,7 @@ def check(doc: Any, *, text: str | None = None, canonical: bool = False,
     semantic = Checker(doc)
     report.problems += semantic.run()
     report.warnings += semantic.warnings
-    if canonical and text is not None and not report.problems:
+    if canonical and text is not None and not report.problems:           # I11
         if text != canonical_dumps(canonicalize(doc)):
             report.problems.append("$: the file is not in canonical form (RFC 8785 key order and numbers, "
                                    "2-space indent, LF, arrays sorted by id); --print-canonical writes it")

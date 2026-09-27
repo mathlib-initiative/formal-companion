@@ -39,7 +39,11 @@
     "generated_at": "2026-09-26T12:00:00Z",
     "generator": "notes exporter 0.1",
     "name": "notes-companion",
-    "repo": "git.example.org/example/notes-companion"
+    "repo": "git.example.org/example/notes-companion",
+    "x_build": {
+      "lake_toolchain": "leanprover/lean4:v4.34.0",
+      "warm_cache": true
+    }
   },
   "declarations": [
     {
@@ -387,7 +391,8 @@
       "confirmed_by_human": true,
       "id": "prov-review",
       "method": "manual",
-      "note": "Verdict confirmed by the companion's author."
+      "note": "Verdict confirmed by the companion's author.",
+      "x_review_round": 2
     }
   ],
   "schema": "lean-companion/annotations",
@@ -485,5 +490,9 @@
       "summary": "The first formal box required strict endpoints; the notes allow a = b. Replaced by Notes.Box.ofLE.",
       "verdict": "deviation"
     }
-  ]
+  ],
+  "x_producer": {
+    "note": "Extension keys: a producer's own data, which the checker does not read.",
+    "run": 7
+  }
 }

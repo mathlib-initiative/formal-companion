@@ -49,10 +49,11 @@ release has something to say.
   refused unless the changelog records which file took it. A rendered site is
   one source pinned by the sha256 of its page manifest. The canonical form
   follows RFC 8785 for order (UTF-16 code units, for keys and arrays alike) and
-  numbers. `scripts/annotations/validate.py` checks the
-  schema, selected by major version through an in-repo evaluator because the
-  skill is stdlib only, plus the invariants a schema cannot state. Nothing reads
-  or writes the format yet. The ids use the planned name lean-companion; the
+  numbers. `scripts/annotations/validate.py` checks the schema, selected by
+  major version through an in-repo evaluator because the skill is stdlib only,
+  plus the invariants a schema cannot state, and `--print-canonical` writes
+  the canonical form. The adapters, the viewer and WikiLean do not read or
+  write the format yet. The ids use the planned name lean-companion; the
   rename is pending.
 - `cf plan-run --sections 1.7`: narrow a run's task universe to one or more
   `<chapter>.<section>` labels, one level below `--chapters` and with the same

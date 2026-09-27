@@ -11,8 +11,8 @@ listed is invalid and the schema gate rejects it.
 
 **Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
 verdicts, resolutions, source roles, re-check statuses, statement-row provenance, annotation
-documents) · §2 mapping
-tables from the five legacy vocabularies · §3 `finding_id`, the frozen rule · §4 item ids.
+documents) · §2 mapping tables from the five legacy vocabularies · §3 `finding_id`, the frozen
+rule · §4 item ids.
 
 ---
 
@@ -178,11 +178,15 @@ and is read as `off`.
 ### 1.10 Annotation documents (`lean-companion/annotations`, schema_version `1.0`)
 
 The enums of `schema/annotations-v1.schema.json`, specified in `docs/annotations.md`.
-`cflib.vocab.ANNOTATION_*`; `tests/test_annotations_schema.py` fails when the schema and the
-module disagree. A verdict record reuses §1.7's `verdict` and `status`, and its `severity` is §1.7's
-set (`cflib.vocab.VIEWER_SEVERITIES`); a declaration's `sorry` is `exercise` | `gap` | `none`.
-Two fields are open strings with a documented core rather than enums: a link's `relation` and a
-FragmentSelector's `conformsTo`. A value outside the core passes with a warning.
+`cflib.vocab.ANNOTATION_*`; `tests/test_annotations_schema.py` walks every `enum` in the schema
+and fails when one has no set in the module or the two disagree. Sets from other sections are
+reused rather than repeated: a verdict record's `verdict` and each `declarations[].verdict` are
+§1.7's `VIEWER_VERDICTS`, its `severity` and `status` are §1.7's `VIEWER_SEVERITIES` and
+`VIEWER_STATUS`, its `ledger_verdict` is §1.4's `LEDGER_VERDICTS` and its `finding_kind` §1.2's
+`FINDING_KINDS`; a source's `role` is §1.6's `SOURCE_ROLES`; a declaration's `sorry` is
+`SORRY_CLASSES` (`exercise` | `gap` | `none`). Two fields are open rather than enums, each with a
+documented core: a link's `relation`, a lower-case snake_case token, and a FragmentSelector's
+`conformsTo`, an IRI. A value outside the core passes with a warning.
 
 | field | values |
 |---|---|
@@ -196,7 +200,7 @@ FragmentSelector's `conformsTo`. A value outside the core passes with a warning.
 | `pages.basis` | `printed` \| `physical` |
 | `pages.anchor` | `own` \| `crossref` \| `inferred` |
 | link `role` | `key` \| `attributed` \| `support` \| `example` \| `helper` |
-| link `relation` (open; the core) | `exact` \| `generalization` \| `special_case` \| `invocation` \| `related` |
+| link `relation` (an open lower-case snake_case token; the core) | `exact` \| `generalization` \| `special_case` \| `invocation` \| `related` |
 | declaration `kind` | `theorem` \| `lemma` \| `def` \| `abbrev` \| `structure` \| `class` \| `inductive` \| `instance` \| `example` \| `opaque` \| `axiom` \| `field` \| `projection` |
 | declaration `id_source` | `name` \| `private` \| `statement_hash` \| `declared` |
 | artifact `kind` | `module_doc` \| `check` \| `figure` \| `other` |
@@ -210,6 +214,15 @@ FragmentSelector's `conformsTo`. A value outside the core passes with a warning.
 | changelog `subject_kind` | `declaration` \| `item` \| `location` \| `artifact` |
 | changelog `reason` | `statement_changed` \| `removed` \| `renamed` \| `moved` \| `other` |
 | selector `type` | `FragmentSelector` \| `TextQuoteSelector` \| `TextPositionSelector` \| `DataPositionSelector` \| `CssSelector` \| `XPathSelector` \| `SvgSelector` \| `RangeSelector`, plus the extensions `PdfRegionSelector` and `SitePageSelector` |
+| `coordinate_space.origin` | `top_left` \| `bottom_left` (`top_left` goes with `y_axis` `down`, `bottom_left` with `up`) |
+| `coordinate_space.units` | `normalized` (fractions of the page box) \| `pt` (points) |
+| `coordinate_space.x_axis` | `right` |
+| `coordinate_space.y_axis` | `down` \| `up` |
+| `coordinate_space.page_box` | `MediaBox` \| `CropBox` \| `BleedBox` \| `TrimBox` \| `ArtBox` |
+| `text_layer.unicode` | `none` \| `nfc` \| `nfkc` |
+| `text_layer.whitespace` | `exact` \| `collapse` \| `ignore` |
+| `text_layer.case` | `sensitive` \| `insensitive` |
+| destination `resolution` | `exact` (needs a `fragment`) \| `fallback` (needs a `fallback_label`) |
 | `conformsTo` with a grammar check (open) | `http://tools.ietf.org/rfc/rfc8118` and its synonym `http://tools.ietf.org/rfc/rfc3778` (PDF), `http://tools.ietf.org/rfc/rfc5147` (text), `http://tools.ietf.org/rfc/rfc3236` (HTML id), `http://www.w3.org/TR/media-frags/` (Media Fragments) |
 
 ---

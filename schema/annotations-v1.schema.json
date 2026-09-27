@@ -141,10 +141,7 @@
       "description": "lean-companion extension: one page of a site source. An exporter composes the page IRI from the source and the path and drops this selector.",
       "properties": {
         "path": {
-          "description": "The page's path relative to the site root: no leading slash, no .., no fragment.",
-          "minLength": 1,
-          "pattern": "^(?![/#])(?!.*(^|/)\\.\\.(/|$))[^\\s#]+$",
-          "type": "string"
+          "$ref": "#/$defs/site_path"
         },
         "refinedBy": {
           "$ref": "#/$defs/selector"
@@ -830,7 +827,7 @@
           "type": "string"
         },
         "namespace": {
-          "description": "The enclosing namespace at the declaration; the empty string for the root. For a field or projection, the parent's namespace plus the parent's name, so namespace + \".\" + the field's own name is its full name.",
+          "description": "The enclosing namespace at the declaration; the empty string for the root. For a field or projection, the parent's full name (its name), so namespace + \".\" + the field's own name is its full name.",
           "pattern": "^(|[^\\s.]+(\\.[^\\s.]+)*)$",
           "type": "string"
         },
@@ -954,10 +951,16 @@
           "type": "string"
         },
         "href": {
-          "description": "Site-relative path (no leading slash, no fragment) or an https URL.",
-          "minLength": 1,
-          "pattern": "^(https://[^\\s#]+|(?![/#])(?!.*(^|/)\\.\\.(/|$))[^\\s#:]+)$",
-          "type": "string"
+          "anyOf": [
+            {
+              "$ref": "#/$defs/site_path"
+            },
+            {
+              "pattern": "^https://[^\\s#]+$",
+              "type": "string"
+            }
+          ],
+          "description": "A site-relative path (the site_path grammar that SitePageSelector.path uses) or an https URL."
         },
         "id": {
           "$ref": "#/$defs/id"
@@ -1405,7 +1408,7 @@
           "type": "string"
         },
         "relation": {
-          "description": "How the declaration relates to the item's text. Open; the documented core is exact, generalization, special_case, invocation, related.",
+          "description": "How the declaration relates to the item's text. An open lower-case snake_case token; the documented core is exact, generalization, special_case, invocation, related, and another token passes with a warning.",
           "minLength": 1,
           "pattern": "^[a-z][a-z0-9_]*$",
           "type": "string"
@@ -1849,7 +1852,7 @@
           ]
         }
       ],
-      "description": "Typed links between items: same_as (the same content, e.g. another edition), part_of (contained in), near (placed by its neighbour).",
+      "description": "Typed links between items: same_as (the same content, e.g. another edition), part_of (contained in), near (the numbered neighbour a passage sits beside, as its tag names it; the passage's page may be inferred from it).",
       "properties": {
         "near": {
           "$ref": "#/$defs/ref_list"
@@ -2194,6 +2197,12 @@
         "verifier"
       ],
       "type": "object"
+    },
+    "site_path": {
+      "description": "A page's path relative to the site root: no leading slash, no .. segment, no fragment and no colon (so it never reads as a URL scheme).",
+      "minLength": 1,
+      "pattern": "^(?![/#])(?!.*(^|/)\\.\\.(/|$))[^\\s#:]+$",
+      "type": "string"
     },
     "snippet": {
       "additionalProperties": false,
@@ -2613,7 +2622,33 @@
     },
     "text_layer": {
       "additionalProperties": false,
-      "description": "How quotes and offsets on this source are matched.",
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "extractor"
+            ]
+          },
+          "then": {
+            "required": [
+              "version"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "version"
+            ]
+          },
+          "then": {
+            "required": [
+              "extractor"
+            ]
+          }
+        }
+      ],
+      "description": "How quotes and offsets on this source are matched. extractor and version come together: offsets into a PDF count in one version of one extractor (I7).",
       "properties": {
         "case": {
           "enum": [
@@ -2636,6 +2671,7 @@
           "type": "string"
         },
         "version": {
+          "description": "The extractor's version, e.g. 26.04.0.",
           "minLength": 1,
           "type": "string"
         },
@@ -2843,6 +2879,7 @@
   },
   "properties": {
     "$schema": {
+      "description": "The JSON Schema the document follows. An identifier, never fetched, so the URL rule (I10) exempts it.",
       "type": "string"
     },
     "artifacts": {
