@@ -120,6 +120,7 @@ DOCS = _existing("SKILL.md", "README.md", "CLAUDE.md", "CONTRIBUTING.md",
 DOCS += [f"references/{p.name}" for p in sorted((SKILL / "references").glob("*.md"))]
 DOCS += [f"docs/{p.name}" for p in sorted((SKILL / "docs").glob("*.md"))]
 DOCS += [f"docs/design/{p.name}" for p in sorted((SKILL / "docs" / "design").glob("*.md"))]
+DOCS += [f"docs/proposals/{p.name}" for p in sorted((SKILL / "docs" / "proposals").glob("*.md"))]
 
 #: `docs/design/archive/` is deliberately NOT in DOCS.  An archived design record
 #: describes the CLI and the tree of the day it was written -- that is what

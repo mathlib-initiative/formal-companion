@@ -60,6 +60,7 @@ def documents() -> list[str]:
     names += [f"references/{p.name}" for p in sorted((SKILL / "references").glob("*.md"))]
     names += [f"docs/{p.name}" for p in sorted((SKILL / "docs").glob("*.md"))]
     names += [f"docs/design/{p.name}" for p in sorted((SKILL / "docs" / "design").glob("*.md"))]
+    names += [f"docs/proposals/{p.name}" for p in sorted((SKILL / "docs" / "proposals").glob("*.md"))]
     return names
 
 

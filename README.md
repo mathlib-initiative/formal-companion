@@ -34,6 +34,7 @@ SKILL.md          when to use it, the default program, the command index, the ha
 CONTRIBUTING.md   how to send a change; CLAUDE.md is the same ground for an agent
 POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
+docs/proposals/   designs not yet built: pdf-to-companion.md, the PDF-to-companion pipeline
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
 schema/           annotations-v1.schema.json: the annotation format, schema_version
