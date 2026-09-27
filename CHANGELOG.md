@@ -35,6 +35,26 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
+  `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
+  companion linking source items (numbered items, and unnumbered passages with
+  mechanical quote- or page-and-title-hash ids) to Lean declarations, with W3C
+  Web Annotation targets for locations (PDF regions and page ranges, web
+  passages, pages of an unhosted rendered site, LaTeX, Lean and Markdown line
+  ranges, PDF text offsets, media time ranges). `conformsTo` is open (known
+  IRIs get grammar checks, others a warning). Clusters carry their members
+  (`memberships`, including `artifacts` that are not declarations), links carry
+  a `relation` and a `note`, and `example` / anonymous `instance` get
+  statement-hash ids from one grammar in `cflib.vocab`, with a `~k` ordinal
+  refused unless the changelog records which file took it. A rendered site is
+  one source pinned by the sha256 of its page manifest. The canonical form
+  follows RFC 8785 for order (UTF-16 code units, for keys and arrays alike) and
+  numbers. `scripts/annotations/validate.py` checks the schema, selected by
+  major version through an in-repo evaluator because the skill is stdlib only,
+  plus the invariants a schema cannot state, and `--print-canonical` writes
+  the canonical form. The adapters, the viewer and WikiLean do not read or
+  write the format yet. The ids use the planned name lean-companion; the
+  rename is pending.
 - `cf plan-run --sections 1.7`: narrow a run's task universe to one or more
   `<chapter>.<section>` labels, one level below `--chapters` and with the same
   discipline (applied to the entries AND the reconciled universe, refused by
