@@ -36,6 +36,9 @@ docs/design/stage_map.md   the current spec; change it in the same commit as the
 docs/design/archive/       the design record it came from (historical)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
+schema/              annotations-v1.schema.json, the annotation format
+                     (docs/annotations.md)
+examples/            synthetic annotation documents; two are invalid on purpose
 evals/               trigger evals: prompts as data, run by hand
 bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
@@ -45,6 +48,8 @@ scripts/cflib/       shared library (no stage logic, no network):
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
                      route, detect, report, recheck, score, share
+scripts/annotations/ the annotation format's checker (validate.py, schemacheck.py)
+                     and mechanical ids (ids.py); run by path, not a stage
 templates/  workflows/  tests/  .github/workflows/
 ```
 

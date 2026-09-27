@@ -236,7 +236,7 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
 #: `bin/worker-agent.sh` token names the generated tend root far more often than
 #: it names this repo's shim.
 REPO_ROOTS = ("scripts/", "references/", "docs/", "templates/", "tests/",
-              "registry/", "workflows/", "evals/", ".github/")
+              "registry/", "workflows/", "evals/", ".github/", "schema/", "examples/")
 
 _PATHISH = re.compile(
     r"[A-Za-z0-9_./*<>{}-]+"

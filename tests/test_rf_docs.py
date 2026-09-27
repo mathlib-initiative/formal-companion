@@ -393,7 +393,7 @@ class TestTheCommandIndexIsComplete(unittest.TestCase):
 #: Anything else -- `~/Downloads`, `tao-measure-lean/docs/HANDOFF.md`,
 #: `<workspace>/registry.yaml` -- is another tree's and is not checked.
 REPO_ROOTS = ("scripts/", "references/", "docs/", "templates/", "tests/",
-              "registry/", "workflows/", "evals/", ".github/")
+              "registry/", "workflows/", "evals/", ".github/", "schema/", "examples/")
 REPO_FILES = ("SKILL.md", "README.md", "CLAUDE.md", "CONTRIBUTING.md",
               "CHANGELOG.md", "POLICY.md", "LICENSE", "pyproject.toml", ".gitignore")
 
