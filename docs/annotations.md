@@ -53,6 +53,7 @@ left out of v1
 |---|---|---|
 | `schema` | yes | always `"lean-companion/annotations"` |
 | `schema_version` | yes | `"<major>.<minor>"`, `"1.0"` for this schema (section 9) |
+| `$schema` | no | the JSON Schema the document follows, an identifier that is never fetched, so the URL rule (I10) exempts it |
 | `companion` | yes | `{name, repo, commit, generated_at, generator, graph?}`: which repo and commit the declarations describe, and what wrote the file. `repo` has no scheme (`host/org/name`), see I10. `commit` is a full 40- or 64-hex git id. `graph` pins the companion's own graph authority (a ledger), section 3.3 |
 | `sources` | yes, at least 1 | the editions annotated |
 | `items` | yes | numbered items and unnumbered passages |
@@ -87,9 +88,11 @@ candidate for the next minor version, not a permanent `x_` key.
 
 ## 3. Records
 
-Enums are defined once, in `scripts/cflib/vocab.py`, and listed in
-`references/vocabulary.md` section 1.10; a test fails when the schema and that
-module disagree.
+Every enum in the schema is a set in `scripts/cflib/vocab.py`, and a few reuse
+sets from other sections (the verdict vocabulary, source roles, ledger
+verdicts, finding kinds, sorry classes). All are listed in
+`references/vocabulary.md` section 1.10. A test walks every `enum` in the
+schema and fails when one has no set in that module or the two disagree.
 
 ### 3.1 Sources
 
@@ -123,12 +126,14 @@ page_sizes?, text_layer?, role?}`.
 - Physical page = printed page + `printed_page_offset`. `page_size`
   `{width_pt, height_pt}` is the page box in points, and `page_sizes` lists the
   physical page ranges `{first, last, width_pt, height_pt}` that differ from
-  it (sorted, not overlapping). The page fields apply to a PDF only: kind `pdf`,
-  or `other` with `application/pdf`.
+  it (sorted, not overlapping). A page's size is its `page_sizes` range when
+  one lists it, else `page_size`. The page fields apply to a PDF only: kind
+  `pdf`, or `other` with `application/pdf`.
 - `alternate_urls` lists other addresses of the same bytes (a canonical page,
   a mirror); `bytes` is the file's size.
 - `text_layer` `{extractor?, version?, unicode, whitespace, case}` says how
-  quotes and offsets on this source are matched (section 4.6).
+  quotes and offsets on this source are matched (section 4.6). `extractor` and
+  its `version` come together: both or neither.
 
 ### 3.2 Items
 
@@ -172,8 +177,9 @@ discriminator.
 - `relations` `{same_as?, part_of?, near?}` holds typed, sorted lists of other
   item ids: `same_as` is the same content (an entry in another edition or in an
   errata list), `part_of` is containment (a proof step inside a lemma), `near`
-  is placement by a neighbour (a passage whose page was inferred from the item
-  next to it).
+  is placement by a neighbour: the numbered item a passage sits beside, as its
+  tag names it. The passage's page may then be inferred from that item
+  (`pages.anchor: inferred`), or be the passage's own.
 
 ### 3.3 Declarations, artifacts, clusters and memberships
 
@@ -187,9 +193,8 @@ unlocated?, sorry?, statement_sha256?, anchors?, replaced_by?, legacy_ids?}`.
 - `namespace` is the enclosing namespace at the declaration (the empty string
   for the root). For an anonymous declaration it cannot be read off the id, so
   a producer that knows it writes it here. For a `field` or `projection` it is
-  the parent's namespace plus the parent's name, so `namespace` + `.` + the
-  field's own name is its full name (the checker compares it with the
-  parent's `name`).
+  the parent's `name` (its full name), so `namespace` + `.` + the field's own
+  name is its full name; the checker compares both.
 - `signature` is the normalised header text that `statement_sha256` hashes
   (section 5.1), when the producer has it; the checker verifies the hash. A
   named declaration's signature uses the same section 5.1 cut, and it is
@@ -205,8 +210,10 @@ unlocated?, sorry?, statement_sha256?, anchors?, replaced_by?, legacy_ids?}`.
   text/html source (kind `other` with a `text/*` media type or
   `application/xhtml+xml`; never `tex`, a PDF or another medium).
 - `unlocated: true` marks a declared id (section 5.1) that the companion's
-  graph names but that is not yet tagged in the Lean at `companion.commit`: it
-  has no statement, line or anchors, only `module` and `file`.
+  graph names but that is not yet tagged in the Lean at `companion.commit`. It
+  is an anonymous `example` or `instance` with `id_source: declared`, and it
+  has no `statement_sha256`, `signature`, `line`, `doc_line` or `anchors`; its
+  `module` and `file` are the ones the graph gives.
 - `legacy_ids` keeps ids the declaration had in older formats (a ledger's
   positional private id, a comment tag) so consumers can join old files.
 - `sorry` is `none`, `exercise` or `gap`.
@@ -233,9 +240,11 @@ pages?, locations?, provenance, confidence?, raw_label?, orphaned?}`.
 - `role` is `key` (states the item), `attributed` (shown for the item, not
   key), `support`, `example` or `helper`.
 - `relation` says how the declaration relates to the item's text. It is an
-  open string with a documented core: `exact`, `generalization`,
-  `special_case`, `invocation`, `related` (WikiLean's `match_kind`). Another
-  value passes with a warning. `note` is a short free-text note.
+  open lower-case snake_case token (`^[a-z][a-z0-9_]*$`) with a documented
+  core: `exact`, `generalization`, `special_case`, `invocation`, `related`
+  (WikiLean's `match_kind`). Another token passes with a warning; a value that
+  is not such a token (`Generalisation`, `match-kind`) fails the schema.
+  `note` is a short free-text note.
 - `sub` is the part of the item the link covers.
 - `pages` is the page anchor the link's own tag gives (it may differ from the
   item's), and `locations` lists locations for this link alone, on the item's
@@ -278,8 +287,9 @@ no second copy of it. Every item a location shows is on that source.
 checked the location against the source.
 
 **Destination** `{id, declaration | artifact, site, href, fragment?,
-resolution, fallback_label?}`. `href` is site-relative (no leading slash, no
-`..`, no `#`) or an `https` URL. `exact` needs a `fragment`, `fallback` a
+resolution, fallback_label?}`. `href` is an `https` URL or a site-relative
+path in the one grammar `SitePageSelector.path` also uses (no leading slash,
+no `..` segment, no `#`, no `:`). `exact` needs a `fragment`, `fallback` a
 `fallback_label`. A destination is the navigation form of "where is this
 rendered"; an anchor location on a site source is the W3C form of the same
 place and, when both exist, is derivable from it (`SitePageSelector.path` is
@@ -370,14 +380,17 @@ model says it SHOULD have one). The IRIs are identifiers, never fetched.
 PDF pages. `page` is the 1-based physical page. `coordinate_space` is
 `{origin, units, x_axis, y_axis, page_box}`: `top_left` with `y_axis: down`
 (or `bottom_left` with `up`), `units` `normalized` ([0, 1] of the page box) or
-`pt` (within the source's `page_size` when it is given). `rect` is `{x0, y0,
+`pt` (within the page's size when the source gives one: its `page_sizes` range,
+else `page_size`). `rect` is `{x0, y0,
 x1, y1}` with `x0 < x1` and `y0 < y1`; `quads` is a list of `{x0, y0, ..., x3,
 y3}` corners in drawing order. Coordinates are objects, not nested arrays,
-because JSON-LD flattens nested arrays into an unordered set. When it refines
-a `page=N` fragment, its `page` must be `N`.
+because JSON-LD flattens nested arrays into an unordered set. Inside a
+`page=N` fragment, its `page` must be `N` (section 4.4).
 
 `SitePageSelector` exists because one rendered site is one source, not one
-source per page. `path` is the page relative to the site root. On a
+source per page. `path` is the page relative to the site root, in the grammar
+of a destination's relative `href` (no leading slash, no `..` segment, no `#`,
+no `:`). On a
 `scope: site` source every top-level alternative is a `SitePageSelector`, and
 it is never a refinement; its `refinedBy` then picks the place on the page.
 
@@ -497,10 +510,21 @@ Fragments:
 
 ### 4.4 Where selectors may sit
 
-- A `PdfRegionSelector` is a top-level alternative, a `RangeSelector` end, or
-  the refinement of a PDF `page=` fragment on the same page.
-- A `TextPositionSelector` on a PDF must sit inside a `page=` fragment
-  (directly, or as an end of a `RangeSelector` that refines one).
+The rules name a selector's structural parent: the selector it refines, or
+the `RangeSelector` it ends. The checker tracks that parent.
+
+- A `PdfRegionSelector` is a top-level alternative, an end of a
+  `RangeSelector`, or the direct refinement of a PDF `page=` fragment. It
+  never refines a quote or any other selector. Inside a `page=N` fragment, at
+  any depth, its `page` is `N`.
+- A `TextPositionSelector` on a PDF refines a `page=` fragment directly, or is
+  an end of a `RangeSelector` that refines one directly, because its offsets
+  count within one page. Its direct parent must be the `page=` fragment or a
+  `RangeSelector` under one: `page=7` > quote > `TextPositionSelector` is
+  refused, and so is `page=7` > quote > `RangeSelector` of two offsets, while
+  `page=7` > quote > `page=7` > `TextPositionSelector` is accepted, because the
+  inner fragment is the direct parent. The rule is asymmetric by design: a
+  region may end a `RangeSelector` under a quote, an offset may not.
 - A `RangeSelector` may refine any selector, including a `page=` fragment; its
   two ends are of one class and inherit the page.
 - A `page=` fragment inside another names the same page.
@@ -536,7 +560,8 @@ writing. Half-open ranges: `[start, end)`.
 
 A PDF has no single text layer: two extractors give different offsets for the
 same passage. So a `TextPositionSelector` on a PDF needs
-`text_layer.extractor`, and a quote is the better primary anchor: quote prose,
+`text_layer.extractor` and its `version`, and a quote is the better primary
+anchor: quote prose,
 not formulas, which extraction garbles. `text_layer.unicode` (`none`, `nfc`,
 `nfkc`), `whitespace` (`exact`, `collapse`, `ignore`) and `case` (`sensitive`,
 `insensitive`) record the matcher, so re-anchoring after a new revision is
@@ -638,7 +663,8 @@ moves. For a statement that has, or may get, a textual twin, declare an id
 leaves no constant and no entry in the `.ilean` declaration tables. A line
 number moves whenever anything above it changes. In the design survey
 (2026-09-26), over the first-parent history of the two worked companions,
-positional ids were retired 72 times (22 commits) and 361 times (92 commits),
+positional ids were retired 72 times over the 22 first-parent commits that
+touch tao-measure-lean's Lean and 361 times over measure_theory's 92 such commits,
 while statement-hash ids were retired 0 and 8 times, and all 8 were real
 restatements or removals. The reference implementation finds the survey
 prototype's anonymous declarations at the same files and lines on both
@@ -713,33 +739,49 @@ The schema checks shape; `scripts/annotations/validate.py` checks these.
 |---|---|
 | I1 | ids are unique within each array |
 | I2 | every root array is sorted by `id`; id lists (`items`, `anchors`, `clusters`, `relations.*`, `related_to`, `legacy_ids`, `agents`, `signals`, `finding_ids`, `locations`, `alternate_urls`, `resolution.commits`, `resolution.replaced_by`) are sorted; a verdict's `declarations` are sorted by `declaration`, `provenance.inputs` by `path` and then by `source`, a source's `page_hashes` by `path` and `page_sizes` by `first`, one entry each. Strings compare by UTF-16 code units, the order of object keys (section 7) |
-| I3 | every reference resolves (an input's `source` included); a link names a live declaration, or is `orphaned: true` and names an id the changelog retired; a verdict's `locations` show its item; a declaration has at most one snippet; `(item, target, role, sub)` is unique among links and `(cluster, target, role)` among memberships; a `parent` is a structure or class; an item is not related to itself |
+| I3 | every reference resolves (an input's `source` included); a link names a live declaration, or is `orphaned: true` and names a declaration id the changelog retired; only a link to a declaration may be orphaned; a verdict's `locations` show its item; a verdict with `status: fixed` has a `fixed` resolution (a verdict without one is open); a declaration has at most one snippet; `(item, target, role, sub)` is unique among links and `(cluster, target, role)` among memberships; a `parent` is a structure or class; an item is not related to itself |
 | I4 | every item has a location, a `quote` or `pages` |
 | I5 | an item with (non-orphaned) links but no `key` link carries `coverage`; an item with an `attributed` link has a `key` link; `not_formalized` and `out_of_scope` exclude a `key` link; `cluster_fallback: true` needs a cluster, no `key` link and, when the document has `memberships[]`, a membership in one of the item's clusters |
 | I6 | `(source, kind, number, sub)` is unique among numbered items; `pages` stay within the source's page count and only apply to a PDF; a source's page fields describe a PDF, and its `page_sizes` ranges are ordered, disjoint and within the page count; a site's `sha256` is the sha256 of the manifest its `page_hashes` give (section 3.1) |
-| I7 | selectors: allowed for the source's family (section 4.2), a known `conformsTo` right for the family, value grammar (section 4.5), placement (section 4.4), `start < end`, rect ordering and bounds (and within `page_size` for `pt`), `RangeSelector` ends of one class, a text offset into a PDF has an extractor; a location's items are on its source; a location's `pages` contain every page its selectors name; a location with no items anchors a declaration or is named by a link; a link's `locations` are on its item's source; an anchor is on a `lean`, `web`, or other text/html source (section 3.3); on a source with `page_hashes`, a `SitePageSelector` names a listed page |
-| I8 | declaration ids follow section 5.1 for their `id_source` (name ids are names, private ids are `private:<module>:<name>`, hash ids match `statement_sha256` and `kind`, a `~k` id has an `ordinal_assigned` record and the latest one names the declaration's `file`, declared ids follow the grammar); a `signature` is normalised and hashes to `statement_sha256`; a field's or projection's `namespace` is its parent's `name` |
-| I9 | a retired or renamed id is not live; a `successor` or `possible_successor` is live and differs from the subject; `ordinal_assigned` names a `~k` statement-hash id that is live, or that a later entry (an `at` no earlier) retires or renames |
-| I10 | no `http://` or `https://` outside `sources[]` and `destinations[]`. `conformsTo` is exempt, and so are quoted source text (`exact`, `prefix`, `suffix` of a `TextQuoteSelector`, and `item.quote`), which is an anchor, not a link. A viewer can then ship everything else without an external-URL scan failing |
+| I7 | selectors: allowed for the source's family (section 4.2), a known `conformsTo` right for the family, a fragment value without a leading `#`, value grammar (section 4.5), placement by structural parent (section 4.4), `start < end`, `RangeSelector` ends of one class, a text offset into a PDF has a `text_layer.extractor` and `version`; a region: `top_left` goes with `y_axis: down` and `bottom_left` with `up`, finite coordinates, `x0 < x1` and `y0 < y1`, a quad has at least three distinct corners, `normalized` coordinates lie in [0, 1] and `pt` ones are at least 0 and within the page's size (its `page_sizes` range, else `page_size`); a location's items are on its source; a location's `pages` contain every page its selectors name; a location with no items anchors a declaration or is named by a link; a link's `locations` are on its item's source; an anchor is on a `lean`, `web`, or other text/html source (section 3.3); on a source with `page_hashes`, a `SitePageSelector` names a listed page |
+| I8 | declaration ids follow section 5.1 for their `id_source` (name ids are names, private ids are `private:<module>:<name>`, hash ids match `statement_sha256` and `kind`, a `~k` id has an `ordinal_assigned` record and the latest one names the declaration's `file`, declared ids follow the grammar); the flags agree with `id_source` (`name` is neither private nor anonymous, `private` is private and not anonymous, `statement_hash` and `declared` are anonymous) and an anonymous declaration has no `name`; a `signature` is normalised (no comments, each run of whitespace one space) and hashes to `statement_sha256`; a declaration is not its own parent; a field's or projection's `namespace` is its parent's `name`, and its `name` is that namespace, a dot and its own name |
+| I9 | every `at` is a real calendar date or UTC instant; a retired or renamed id is not live; a `successor` or `possible_successor` is live and differs from the subject; `restated` names a declaration whose id is declared or named (not a statement hash, which a restatement retires), live or retired or renamed by a later entry; `ordinal_assigned` names a `~k` statement-hash id that is live, or that a later entry (an `at` no earlier) retires or renames |
+| I10 | no `http://` or `https://` outside `sources[]` and `destinations[]`, `x_` values included. `conformsTo` and the root `$schema` are exempt (identifiers, never fetched), and so is quoted source text (`exact`, `prefix`, `suffix` of a `TextQuoteSelector`, and `item.quote`), which is an anchor, not a link. A viewer can then ship everything else without an external-URL scan failing |
 | I11 | with `--canonical`, the bytes are the canonical form (section 7) |
-| I12 | item ids follow section 5.2 for their `id_source`; a declared item id does not take a mechanical passage shape |
+| I12 | item ids follow section 5.2 for their `id_source`, and the quote or title a mechanical id hashes is not only whitespace; a declared item id does not take a mechanical passage shape |
 | I13 | an `unattributed` declaration has no non-orphaned link |
 
-The schema adds: `form` discriminates items (a numbered item has a `number`, a
-passage has a `title` and no `number` or `sub`, `kind: passage` is a passage);
-`label` ids are numbered, `quote_hash` and `page_title_hash` ids are passages
-and `page_title_hash` ids need `pages` (I12 finds the quote); source identity
-(section 3.1); `scope: site` is web only and `page_hashes` is on a site only;
-an input is `{path, sha256, ...}` or `{source}`, never both; the
-page fields are on a `pdf` or `other` source only (I6 narrows `other` to
-`application/pdf`); `field` and `projection` need a
-`parent` and nothing else has one; an `unlocated` declaration is a declared
-anonymous one with no line, anchors, signature or `statement_sha256`; other
-anonymous declarations are `example` or `instance` and carry
-`statement_sha256`; a `fixed` resolution names a `pr` or `commits`;
-`ordinal_assigned` names a `commit` and a `file`; `companion.commit`,
-`pinned_commit`, `snapshot_commit` and changelog commits are full 40- or
-64-hex ids.
+Beyond shapes and patterns, the schema states these rules. The list is a
+summary; the schema is the full statement.
+
+- Items: `form` discriminates them (a numbered item has a `number`, a passage
+  has a `title` and no `number` or `sub`, `kind: passage` is a passage);
+  `label` ids are numbered, `quote_hash` and `page_title_hash` ids are
+  passages, and `page_title_hash` ids need `pages` (I12 finds the quote);
+  `relations` has at least one key.
+- Sources: identity (section 3.1); `scope: site` is web only and
+  `page_hashes` is on a site only; the page fields are on a `pdf` or `other`
+  source only (I6 narrows `other` to `application/pdf`); `page_hashes` and
+  `page_sizes` have at least one entry; `text_layer.extractor` and `version`
+  come together.
+- Declarations: `field` and `projection` need a `parent` and nothing else has
+  one; a `private` declaration has a `name`; a `statement_hash` declaration
+  carries `statement_sha256`; an `unlocated` declaration is a declared
+  anonymous `example` or `instance` with no `line`, `doc_line`, `anchors`,
+  `signature` or `statement_sha256`; other anonymous declarations are
+  `example` or `instance` and carry `statement_sha256`.
+- References: an input is `{path, sha256, ...}` or `{source}`, never both; a
+  membership and a destination name a `declaration` or an `artifact`, not both;
+  an `exact` destination has a `fragment` and a `fallback` one a
+  `fallback_label`.
+- Verdicts: a `fixed` resolution names a `pr` or `commits`, an `in_progress`
+  one a `pr` or `branch`.
+- Changelog: `retired` has a `reason`, `renamed` a `successor`, `restated`
+  both `old_statement_sha256` and `new_statement_sha256`, and
+  `ordinal_assigned` a `commit`, a `file` and `subject_kind: declaration`.
+- Commits: `companion.commit`, `pinned_commit`, `snapshot_commit`, an input's
+  `commit` and changelog commits are full 40- or 64-hex ids; only
+  `resolution.commits` may be abbreviated.
 
 **Warnings** do not make a document invalid; the CLI prints them as
 `<file>: warning: <path>: <message>`: an unknown `conformsTo` IRI, a
@@ -797,7 +839,8 @@ schema for is a problem. The schema runs first, through the in-repo evaluator
 `scripts/annotations/schemacheck.py`, because the skill is standard library
 only; the invariants run only on a document the schema accepts. When the
 `jsonschema` package is installed, the test suite checks that it agrees with
-the in-repo evaluator on every example and on random mutations of them.
+the in-repo evaluator on every example and on random mutations of them; one CI
+job (Python 3.13) installs it for that.
 
 ## 9. Versions and the changelog
 
@@ -865,24 +908,31 @@ numbered items sharing its location. target-refinement gives 420 `key` and 159
 `#check` and figure nodes are 61 `artifacts`, and a support edge also becomes
 an `example` link where its node has one item (48). The 418 ledger
 `example:<slug>` ids that name no Lean declaration at HEAD are `unlocated`
-declared declarations; the 64 comment tags in the Lean are refused as declared
-ids (section 5.1), so their examples keep hash ids and the tag goes to
-`legacy_ids`. The ledger's positional private ids go to `legacy_ids` beside
+declared declarations (490 memberships point at them). Each is the ledger's
+name for an anonymous example in a named file, which the export cannot match
+to one example because the ledger gives no line or tag, so most of them
+probably name a hash-id declaration a second time: in 29 of the 50 files that
+hold them the file has exactly as many hash-id examples, and in 49 at least as
+many. The 64 comment tags in the Lean are refused as declared ids (section
+5.1), so their examples keep hash ids and the tag goes to `legacy_ids`. The
+ledger's positional private ids go to `legacy_ids` beside
 `private:<module>:<name>`. Its 70 structure members are `field` (22) and
 `projection` (48) declarations whose `namespace` is the parent's full name.
 Signatures: all 802 anonymous declarations and 2237 named ones. The 238 items
 with no item-level link have `cluster_fallback: true`; the 33 of them in
-section 1.7 also carry the curation's class as `coverage` (29
-`example_only`, 3 `support_only`, 1 `not_formalized`). All 2884 rows of
-destinations.json map (488 exact, 2396 fallback, 61 of them to artifacts). The
-11 verdicts keep their evidence and regions (Exercise 1.2.24's two regions are
-one verdict with two locations); 8 have a `fixed` resolution with the PR, the
-full fix and merge commits and any replacing declarations, 1 is open with
-issue #16, and 2 unconfirmed ones have no resolution, so they are open. The 3
-`~2` ids have `ordinal_assigned` records with file and line. Still in `x_`
-keys: the ledger's scope and snapshot tree (root), its source nodes' plan
-item ids and statuses (clusters), the refinement's method name and curation
-count (provenance), and the PDF's download checks (source).
+section 1.7 also carry the curation's class as `coverage` (29 `example_only`,
+3 `support_only`, 1 `not_formalized`). All 2884 rows of destinations.json map
+(488 exact, 2396 fallback, 61 of them to artifacts). The 11 verdicts keep
+their evidence and regions (Exercise 1.2.24's two regions are one verdict with
+two locations); 8 have a `fixed` resolution with the PR, the commits their
+prose names as full ids and any replacing declarations: the fix and merge
+commits for 6, and for Exercises 1.3.6 and 1.3.13, whose prose names only the
+merge, the merge commit alone. 1 is open with issue #16, and 2 unconfirmed
+ones have no resolution, so they are open. The 3 `~2` ids have
+`ordinal_assigned` records with file and line. Still in `x_` keys: the
+ledger's scope and snapshot tree (root), its source nodes' plan item ids and
+statuses (clusters), the refinement's method name and curation count
+(provenance), and the PDF's download checks (source).
 
 Lossy, per the report: the ledger's edge realisation (constant per role, so
 derivable), node class and verification-text hash, and integrity blocks
@@ -892,14 +942,16 @@ commits is the merge; the class of the 205 fallback items in sections 1.1 to
 1.6, which the curation note does not give item by item; and the kind of 6
 private structure members, guessed as `field`. The printed-page offset (16) is
 read from ledger locator prose, and the verdicts' sub-parts and replacing
-declarations from their prose. Also lossy: the 242 positional private ids
-whose ledger line is stale at HEAD (resolved by module and name, the old id
-kept in `legacy_ids`); the ledger's workspace-relative PDF path; the 20
-passages' verbatim geometry labels (`Unnumbered ...`, now titles); the bounding
-box that stands in for the one quads region in its RFC 8118 fallback; the
-region granularity of 35 refinement entries merged per item; the destinations
-file's header locks; and one `replaced_by` mention that resolves to no
-declaration. The export report lists each bucket with its count. The document is a build input for the viewer's
+declarations from their prose. Also lossy: the fix commit of the 2 verdicts
+whose prose names only the merge; the 248 positional private ids whose ledger
+line is stale at HEAD (resolved by module and name, the 6 private structure
+members by their structure, the old id kept in `legacy_ids`); the ledger's
+workspace-relative PDF path; the 20 passages' verbatim geometry labels
+(`Unnumbered ...`, now titles); the bounding box that stands in for the one
+quads region in its RFC 8118 fallback; the region granularity of 35 refinement
+entries merged per item; the destinations file's header locks; and one
+`replaced_by` mention that resolves to no declaration. The export report lists
+each bucket with its count. The document is a build input for the viewer's
 current files, not a runtime file: the viewer refuses a manifest that carries
 graph keys such as `sources` (`FORBIDDEN_MANIFEST_GRAPH_KEYS` in its
 `viewer.js`), and the membership counts above are the ones that file expects
@@ -912,28 +964,30 @@ links), never a separate item. The tag itself is `raw_label`. A `book p. N` on
 a tag is the link's `pages` (`anchor: own`, `raw` verbatim; 343 links), since
 one item's declarations can anchor different pages. Unnumbered "In-text" tags
 are 235 passages: 25 have a docstring quote verified on their page and take a
-`quote_hash` id from their location's quote (the quote stays on the
-location, since it is unique only within its page); 210 take
-`page_title_hash` ids. One passage quoted by two declarations is one item with
-two links. The tag's word ("definition", "corollary") is the passage's `kind`
-with `kind_source: producer`, and the docstring title has `title_source:
-producer`. 16 passages take their page from a numbered neighbour
-(`pages.anchor: inferred`, `relations.near`). The Verso site is one
-`scope: site` source with a `path` and no `url` or `revision`, pinned by the
-sha256 of its 38 HTML pages, listed in `page_hashes` (35 of them carry
-anchors). Its 1505 named anchors are a `SitePageSelector` plus an RFC 3236
-fragment and its 38 anonymous ones a `SitePageSelector` plus the
-`data-binding` `CssSelector`; the cross-reference index gives the 1544
-destinations (1505 exact, 39 fallback; method `site_index`). The PDF text
-match names the PDF as a `{source}` input. `(API)` and `(infrastructure)`
-markers become `unattributed` rows with that `claim` (2 and 212, and 163 plain
-`unattributed`). Signatures: 1530 declarations, omitted for 10 structures, 1
-inductive and 3 definitions by pattern matching. Still in `x_` keys: how 16
-inferred pages were found, the two heading pages of 2 locations, and a note on
-the site source. Not carried: 1 tag the item grammar refuses, 6 of the 32
-passage docstring quotes (not found, ambiguous, or found only on the next or
-previous page) and the 14 of 21 link docstring quotes that could not be
-verified.
+`quote_hash` id from their location's quote (the quote stays on the location,
+since it is unique only within its page); 210 take `page_title_hash` ids. One
+passage quoted by two declarations is one item with two links. The tag's word
+("definition", "corollary") is the passage's `kind` with `kind_source:
+producer`, and the docstring title has `title_source: producer`. 17 passages
+name the numbered neighbour their tag gives in `relations.near`; 16 of them
+take their page from it (`pages.anchor: inferred`), and one
+(`passage-p188-133da8aa`) gives its own page. The Verso site is one `scope:
+site` source with a `path` and no `url` or `revision`, pinned by the sha256 of
+its 38 HTML pages, listed in `page_hashes` (35 of them carry anchors). Its
+1505 named anchors are a `SitePageSelector` plus an RFC 3236 fragment and its
+38 anonymous ones a `SitePageSelector` plus the `data-binding` `CssSelector`;
+the cross-reference index gives the 1544 destinations (1505 exact, 39
+fallback; method `site_index`). The PDF text match names the PDF as a
+`{source}` input. `(API)` and `(infrastructure)` markers become `unattributed`
+rows with that `claim` (2 and 212, and 163 plain `unattributed`). Signatures:
+1530 declarations, omitted for 10 structures, 1 inductive and 3 definitions by
+pattern matching. Still in `x_` keys: how 16 inferred pages were found, the
+two heading pages of 2 locations, and a note on the site source. Not carried:
+the title of the second tag on the passage two declarations quote
+(`passage-75a7d8f9` keeps one declaration's title and drops the other's,
+"after Theorem 1.3.26"), 1 tag the item grammar refuses, 6 of the 32 passage
+docstring quotes (not found, ambiguous, or found only on the next or previous
+page) and the 14 of 21 link docstring quotes that could not be verified.
 
 **The skill's adapters.** `docstring_tags`, `attribution_table` and
 `blueprint_tex` read today's three conventions into `statements.jsonl` rows
@@ -974,15 +1028,29 @@ switches.
 the annotation becomes a passage item on a web source pinned by `oldid` in
 `revision` (and the URL); `section` becomes `item.section`; the snippet or
 `theorem_box` anchor becomes a `TextQuoteSelector` location, a `prose_range`
-anchor a `RangeSelector` from its `from` quote to its `to` quote, and each further entry of `anchors[]`
-another location of the same item; `kind` becomes the item's `kind` with
-`kind_source: producer`; `label` becomes `title` with `title_source:
-producer`; `status` becomes `coverage` (`rejected` is a tombstone and is not
-exported); `mathlib.decl` and `mathlib.module` become a declaration with
-`package: mathlib` and a `key` link; `match_kind` becomes `link.relation`;
-`note` becomes `link.note`; the provenance string (`ai`, `ai-agent1`,
-`ai-moderated`, `human`) becomes a provenance record (`actor` `agent` with
-`method: agent_annotation`, or `human`); the 12-hex native id can be kept in
+anchor a `RangeSelector` from its `from` quote to its `to` quote, and each
+further entry of `anchors[]` another location of the same item. A
+`math_alttext` anchor names a formula by the `alttext` attribute of its
+`<math>` element, which is how WikiLean's renderer finds it, so it becomes a
+`CssSelector` `math[alttext="<value>"]` (the value escaped as a CSS string). A
+`prose_range` that ends at a formula (`to_math` in place of `to`) has ends of
+two classes, which a `RangeSelector` cannot join, so it becomes two locations,
+the `from` quote and the formula's `CssSelector`, and the span between them is
+lost. `kind` becomes the item's `kind` with `kind_source: producer`; `label`
+becomes `title` with `title_source: producer`; `status` (`formalized`,
+`partial`, `not_formalized`) becomes `coverage`, and `rejected` is a tombstone
+and is not exported. Only the `.agent1.json` drafts, which WikiLean's own
+tools skip and which are not exported, carry the statuses `pending`,
+`in_mathlib` and `formalizable`. `mathlib.decl` and `mathlib.module` become a
+declaration with `package: mathlib` and a link: role `key` when the status is
+`formalized` or `partial`, and role `support` with relation `related` when it
+is `not_formalized` (the declaration is the nearest Mathlib statement, not a
+formalisation; I5 forbids a key link on a `not_formalized` item, and 16 tracked
+WikiLean annotations carry a declaration with that status); `match_kind` becomes
+`link.relation` when it is a lower-case snake_case token (section 3.4); `note`
+becomes `link.note`; the provenance string (`ai`, `ai-agent1`, `ai-moderated`,
+`human`) becomes a provenance record (`actor` `agent` with `method:
+agent_annotation`, or `human`); the 12-hex native id can be kept in
 `item.legacy_ids`. Its W3C export is the shape section 4.7 describes.
 
 ## 11. Left out of v1

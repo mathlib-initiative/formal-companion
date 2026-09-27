@@ -110,6 +110,24 @@ class TestTheSchemaFile(unittest.TestCase):
                 self.assertIs(d[name]["additionalProperties"], False)
                 self.assertNotIn("patternProperties", d[name])
 
+    def test_a_site_page_path_and_a_relative_href_share_one_grammar(self):
+        d = self.schema()["$defs"]
+        self.assertEqual(d["SitePageSelector"]["properties"]["path"], {"$ref": "#/$defs/site_path"})
+        self.assertIn({"$ref": "#/$defs/site_path"}, d["destination"]["properties"]["href"]["anyOf"])
+        ours = Validator(self.schema())
+        for path in ("Notes/Section_2/", "a/b.html", "a:b.html", "/abs", "../up", "a#frag", "a b"):
+            doc = load("site-pages.json")
+            loc = next(l for l in doc["locations"] if l["target"]["selector"][0]["type"] == "SitePageSelector")
+            loc["target"]["selector"][0]["path"] = path
+            dest = doc["destinations"][0]
+            dest["href"] = path
+            errors = [p for p, _m in ours.errors(doc)]
+            as_path = any(".path" in p for p in errors)
+            as_href = any(".href" in p for p in errors)
+            with self.subTest(path=path):
+                self.assertEqual(as_path, as_href, errors)
+                self.assertEqual(as_path, path not in ("Notes/Section_2/", "a/b.html"))
+
     def test_the_root_arrays_are_the_checkers(self):
         root = self.schema()["properties"]
         arrays = {k for k, v in root.items() if v.get("type") == "array"}
@@ -122,9 +140,10 @@ class TestOneVocabulary(unittest.TestCase):
     def schema(self) -> dict:
         return json.loads(SCHEMA.read_text(encoding="utf-8"))["$defs"]
 
-    def test_the_enums_are_the_vocab_sets(self):
-        d = self.schema()
-        pairs = {
+    #: Every enum in the schema, by ($defs name, property path), and its vocab set.
+    #: A property path is the chain of property names below the definition
+    #: (``declarations.verdict``: through an array's ``items``).
+    ENUMS = {
             ("source", "kind"): vocab.ANNOTATION_SOURCE_KINDS,
             ("source", "scope"): vocab.ANNOTATION_SOURCE_SCOPES,
             ("source", "role"): vocab.SOURCE_ROLES,
@@ -144,7 +163,17 @@ class TestOneVocabulary(unittest.TestCase):
             ("provenance", "actor"): vocab.ANNOTATION_PROVENANCE_ACTORS,
             ("provenance", "method"): vocab.ANNOTATION_PROVENANCE_METHODS,
             ("destination", "site"): vocab.ANNOTATION_DESTINATION_SITES,
+            ("destination", "resolution"): vocab.ANNOTATION_DESTINATION_RESOLUTIONS,
+            ("coordinate_space", "origin"): vocab.ANNOTATION_COORDINATE_ORIGINS,
+            ("coordinate_space", "units"): vocab.ANNOTATION_COORDINATE_UNITS,
+            ("coordinate_space", "x_axis"): vocab.ANNOTATION_COORDINATE_X_AXES,
+            ("coordinate_space", "y_axis"): vocab.ANNOTATION_COORDINATE_Y_AXES,
+            ("coordinate_space", "page_box"): vocab.ANNOTATION_PAGE_BOXES,
+            ("text_layer", "unicode"): vocab.ANNOTATION_TEXT_UNICODE,
+            ("text_layer", "whitespace"): vocab.ANNOTATION_TEXT_WHITESPACE,
+            ("text_layer", "case"): vocab.ANNOTATION_TEXT_CASE,
             ("verdict", "verdict"): vocab.VIEWER_VERDICTS,
+            ("verdict", "declarations.verdict"): vocab.VIEWER_VERDICTS,
             ("verdict", "severity"): vocab.VIEWER_SEVERITIES,
             ("verdict", "status"): vocab.VIEWER_STATUS,
             ("verdict", "ledger_verdict"): vocab.LEDGER_VERDICTS,
@@ -155,13 +184,67 @@ class TestOneVocabulary(unittest.TestCase):
             ("change", "subject_kind"): vocab.ANNOTATION_CHANGELOG_SUBJECTS,
             ("change", "reason"): vocab.ANNOTATION_CHANGELOG_REASONS,
             ("selector", "type"): vocab.ANNOTATION_SELECTOR_TYPES,
-        }
-        for (record, field), values in pairs.items():
-            with self.subTest(record=record, field=field):
-                self.assertEqual(set(d[record]["properties"][field]["enum"]), set(values))
+    }
+    _CONDITIONAL = frozenset({"allOf", "anyOf", "oneOf", "if", "then", "else", "not"})
+
+    def schema_enums(self):
+        """Every ``enum`` in the schema: (key, values, conditional).
+
+        ``conditional`` is true for an enum inside allOf/anyOf/oneOf/if/then/
+        else/not, which narrows a property the definition declares.
+        """
+        whole = json.loads(SCHEMA.read_text(encoding="utf-8"))
+
+        def walk(node, owner, props, conditional):
+            if isinstance(node, dict):
+                if "enum" in node:
+                    yield (owner, ".".join(props)), node["enum"], conditional
+                for key, child in node.items():
+                    if key == "properties" and isinstance(child, dict):
+                        for name, sub in child.items():
+                            yield from walk(sub, owner, props + [name], conditional)
+                    elif key == "$defs":
+                        for name, sub in child.items():
+                            yield from walk(sub, name, [], False)
+                    elif key != "enum":
+                        yield from walk(child, owner, props, conditional or key in self._CONDITIONAL)
+            elif isinstance(node, list):
+                for child in node:
+                    yield from walk(child, owner, props, conditional)
+        yield from walk(whole, "$root", [], False)
+
+    def test_every_enum_in_the_schema_is_a_vocab_set(self):
+        found = list(self.schema_enums())
+        self.assertGreater(len(found), 40)
+        declared = set()
+        for key, values, conditional in found:
+            with self.subTest(enum=key, conditional=conditional):
+                self.assertIn(key, self.ENUMS, f"schema enum {key} has no cflib.vocab set in ENUMS")
+                if conditional:
+                    self.assertLessEqual(set(values), set(self.ENUMS[key]))
+                else:
+                    declared.add(key)
+                    self.assertEqual(set(values), set(self.ENUMS[key]))
+        self.assertEqual(declared, set(self.ENUMS), "an ENUMS row names no enum in the schema")
+
+    def test_the_other_closed_sets_are_the_vocab_sets(self):
+        d = self.schema()
         self.assertEqual(set(d["relations"]["properties"]), set(vocab.ANNOTATION_ITEM_RELATIONS))
         root = json.loads(SCHEMA.read_text(encoding="utf-8"))["properties"]
         self.assertEqual(root["schema"]["const"], vocab.ANNOTATION_SCHEMA)
+        self.assertEqual(set(vocab.ANNOTATION_ORIGIN_Y_AXIS), set(vocab.ANNOTATION_COORDINATE_ORIGINS))
+        self.assertEqual(set(vocab.ANNOTATION_ORIGIN_Y_AXIS.values()), set(vocab.ANNOTATION_COORDINATE_Y_AXES))
+
+    def test_a_walker_that_misses_an_enum_would_fail(self):
+        """The walk sees a nested enum (inside ``items``) and a conditional one."""
+        keys = {(key, conditional) for key, _v, conditional in self.schema_enums()}
+        self.assertIn((("verdict", "declarations.verdict"), False), keys)
+        self.assertIn((("declaration", "kind"), True), keys)
+
+    def test_resolution_states_are_section_1_5_plus_open(self):
+        self.assertEqual(vocab.ANNOTATION_RESOLUTION_STATES,
+                         {"open"} | vocab.STATIC_RESOLUTIONS
+                         | {p.rstrip(":") for p in vocab.RESOLUTION_PREFIXES})
 
     def test_conforms_to_and_relation_are_open_strings(self):
         d = self.schema()
@@ -186,6 +269,10 @@ class TestOneVocabulary(unittest.TestCase):
             for entry in value:
                 with self.subTest(enum=name, value=entry):
                     self.assertIn(f"`{entry}`", section)
+        for reused in ("SOURCE_ROLES", "LEDGER_VERDICTS", "FINDING_KINDS", "VIEWER_VERDICTS",
+                       "VIEWER_SEVERITIES", "VIEWER_STATUS", "SORRY_CLASSES"):
+            with self.subTest(reused=reused):
+                self.assertIn(reused, section)
 
 
 class TestOneIdGrammar(unittest.TestCase):
@@ -650,7 +737,9 @@ class TestTheInvariants(unittest.TestCase):
     def test_a_region_stays_on_its_page(self):
         doc = load("pdf-region.json")
         by_id(doc["locations"], "definition-1.1@p007")["target"]["selector"][0]["refinedBy"]["rect"]["x1"] = 1.5
-        self.assertProblem(doc, "coordinates must lie in [0, 1)")
+        self.assertProblem(doc, "coordinates must lie in [0, 1] for units normalized")
+        by_id(doc["locations"], "definition-1.1@p007")["target"]["selector"][0]["refinedBy"]["rect"]["x1"] = 1.0
+        self.assertValid(doc)
         doc = load("ledger-graph.json")
         by_id(doc["locations"], "definition-1.1@p007-2")["target"]["selector"][0]["rect"]["x1"] = 700
         self.assertProblem(doc, "the rect leaves the 612 x 792 pt page")
@@ -671,7 +760,15 @@ class TestTheInvariants(unittest.TestCase):
     def test_a_pdf_offset_needs_an_extractor_and_a_page(self):
         doc = load("pdf-region.json")
         del doc["sources"][0]["text_layer"]["extractor"]
-        self.assertProblem(doc, "offsets into a PDF need the source's text_layer.extractor")
+        del doc["sources"][0]["text_layer"]["version"]
+        self.assertProblem(doc, "offsets into a PDF need the source's text_layer.extractor and version "
+                                "('notes-pdf' declares no extractor or version)")
+        doc = load("pdf-region.json")
+        del doc["sources"][0]["text_layer"]["version"]
+        self.assertProblem(doc, "$.sources[0].text_layer: is missing required key 'version'")
+        doc = load("tex-lines.json")
+        doc["sources"][0]["text_layer"]["version"] = "1.0"
+        self.assertProblem(doc, "$.sources[0].text_layer: is missing required key 'extractor'")
         doc = load("pdf-region.json")
         loc = by_id(doc["locations"], "exercise-1.4@p010")
         loc["target"]["selector"][1] = {"type": "TextPositionSelector", "start": 1, "end": 2}
@@ -948,7 +1045,7 @@ class TestTheInvariants(unittest.TestCase):
         parent = by_id(doc["declarations"], field["parent"])
         parent.pop("name", None)
         field["namespace"] = "Totally.Wrong"
-        self.assertProblem(doc, "namespace is its parent's namespace plus the parent's name")
+        self.assertProblem(doc, "namespace is its parent's full name (its name)")
 
     def test_a_passage_with_a_location_quote_may_not_take_a_page_title_hash_id(self):
         doc = load("site-pages.json")
@@ -1056,8 +1153,7 @@ class TestTheInvariants(unittest.TestCase):
         field = by_id(doc["declarations"], "Ideal.IsPrime.ne_top'")
         self.assertEqual(field["namespace"] + ".ne_top'", field["name"])
         field["namespace"] = "Ideal"
-        self.assertProblem(doc, "a projection's namespace is its parent's namespace plus the parent's name, "
-                                "'Ideal.IsPrime'")
+        self.assertProblem(doc, "a projection's namespace is its parent's full name (its name), 'Ideal.IsPrime'")
 
     def test_an_input_names_a_file_or_a_source(self):
         doc = load("site-pages.json")
@@ -1100,6 +1196,144 @@ class TestTheInvariants(unittest.TestCase):
         doc = load("mixed.json")
         doc["changelog"] = [c for c in doc["changelog"] if c["event"] != "retired"]
         self.assertProblem(doc, "is orphaned but no changelog entry retires it")
+
+    def test_an_orphaned_link_needs_a_retired_declaration_not_another_subject(self):
+        doc = load("mixed.json")
+        retired = next(c for c in doc["changelog"] if c["event"] == "retired")
+        retired["subject_kind"] = "item"
+        del retired["possible_successor"]
+        self.assertProblem(doc, "is orphaned but no changelog entry retires it")
+
+    def test_restated_names_a_declared_or_named_id(self):
+        self.assertValid(load("mixed.json"))            # a named id, restated
+        doc = load("ledger-graph.json")
+        restated = {"id": "2026-09-25/restated/example:04b2e561a56f", "at": "2026-09-25", "event": "restated",
+                    "subject": "example:04b2e561a56f", "subject_kind": "declaration",
+                    "old_statement_sha256": "0" * 64, "new_statement_sha256": "1" * 64}
+        doc["changelog"].append(restated)
+        doc = V.canonicalize(doc)
+        self.assertProblem(doc, "'example:04b2e561a56f' is a statement-hash id, which changes with its "
+                                "statement: record retired (and the new id), not restated")
+        doc = load("ledger-graph.json")
+        doc["changelog"].append(dict(restated, subject="Notes.Gone", id="2026-09-25/restated/Notes.Gone"))
+        doc = V.canonicalize(doc)
+        self.assertProblem(doc, "'Notes.Gone' is not a live declaration id, and no later changelog entry")
+        doc = load("ledger-graph.json")
+        doc["changelog"].append(dict(restated, subject="Notes.Box", subject_kind="item",
+                                     id="2026-09-25/restated/Notes.Box"))
+        doc = V.canonicalize(doc)
+        self.assertProblem(doc, "restated records a declaration whose statement changed")
+
+    # -- placement (section 4.4): one test per shape the review found -----------
+    def placed(self, selector: dict) -> list[str]:
+        doc = load("pdf-region.json")
+        by_id(doc["locations"], "definition-1.1@p007")["target"]["selector"][0] = selector
+        return problems(doc)
+
+    def region(self, page: int = 7) -> dict:
+        return {"type": "PdfRegionSelector", "page": page,
+                "coordinate_space": {"origin": "top_left", "units": "normalized", "x_axis": "right",
+                                     "y_axis": "down", "page_box": "CropBox"},
+                "rect": {"x0": 0.1, "y0": 0.1, "x1": 0.2, "y1": 0.2}}
+
+    def page7(self, child: dict) -> dict:
+        return {"type": "FragmentSelector", "conformsTo": vocab.CONFORMS_TO_PDF, "value": "page=7",
+                "refinedBy": child}
+
+    def quote(self, child: dict) -> dict:
+        return {"type": "TextQuoteSelector", "exact": "Definition 1.1 (Boxes).", "refinedBy": child}
+
+    def span(self, a: dict, b: dict) -> dict:
+        return {"type": "RangeSelector", "startSelector": a, "endSelector": b}
+
+    def offset(self) -> dict:
+        return {"type": "TextPositionSelector", "start": 1, "end": 2}
+
+    def test_a_region_does_not_refine_a_quote(self):
+        found = self.placed(self.page7(self.quote(self.region())))
+        self.assertTrue(any("a PdfRegionSelector is a top-level alternative, a RangeSelector end, or the "
+                            "refinement of a PDF page= fragment" in p for p in found), found)
+
+    def test_a_pdf_offset_does_not_refine_a_quote(self):
+        found = self.placed(self.page7(self.quote(self.offset())))
+        self.assertTrue(any("offsets into a PDF count within one page" in p for p in found), found)
+
+    def test_a_range_of_pdf_offsets_refines_the_page_itself(self):
+        found = self.placed(self.page7(self.quote(self.span(self.offset(), self.offset()))))
+        self.assertEqual(len([p for p in found if "offsets into a PDF count within one page" in p]), 2, found)
+        self.assertEqual(self.placed(self.page7(self.span(self.offset(), self.offset()))), [])
+
+    def test_regions_may_end_a_range_that_refines_a_quote(self):
+        self.assertEqual(self.placed(self.quote(self.span(self.region(), self.region()))), [])
+        found = self.placed(self.page7(self.span(self.region(8), self.region(8))))
+        self.assertTrue(any("page 8 disagrees with the refined page=7" in p for p in found), found)
+
+    # -- page sizes, whitespace ids, the root $schema, x_ keys ---------------------
+    def test_a_pt_region_uses_its_pages_size(self):
+        doc = load("ledger-graph.json")
+        rect = by_id(doc["locations"], "definition-1.1@p007-2")["target"]["selector"][0]["rect"]
+        rect["x1"] = 1000
+        self.assertProblem(doc, "the rect leaves the 612 x 792 pt page")
+        doc["sources"][0]["page_sizes"] = [{"first": 7, "last": 7, "width_pt": 1224, "height_pt": 792}]
+        self.assertValid(doc)
+        rect["x1"] = 522
+        doc["sources"][0]["page_sizes"] = [{"first": 7, "last": 7, "width_pt": 300, "height_pt": 200}]
+        self.assertProblem(doc, "the rect leaves the 300 x 200 pt page")
+        doc["sources"][0]["page_sizes"] = [{"first": 8, "last": 9, "width_pt": 300, "height_pt": 200}]
+        self.assertValid(doc)          # page 7 is not in the range: page_size applies
+
+    def test_a_whitespace_quote_or_title_is_a_problem_not_a_crash(self):
+        doc = load("web-passage.json")
+        next(i for i in doc["items"] if i["id_source"] == "quote_hash")["quote"]["exact"] = "  "
+        self.assertProblem(doc, "a quote_hash id hashes a quote with text in it; item.quote is only whitespace")
+        doc = load("pdf-region.json")
+        next(i for i in doc["items"] if i["id_source"] == "page_title_hash")["title"] = " \t "
+        self.assertProblem(doc, "a page_title_hash id hashes a title with text in it")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "blank.json"
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            out, err = io.StringIO(), io.StringIO()
+            with redirect_stdout(out), redirect_stderr(err):
+                status = V.main([str(path)])
+            self.assertEqual(status, 1)
+            self.assertIn(".title: a page_title_hash id hashes a title with text in it", out.getvalue())
+            self.assertEqual(err.getvalue(), "")
+
+    def test_the_root_schema_key_may_hold_a_url(self):
+        doc = load("pdf-region.json")
+        doc["$schema"] = "https://example.org/annotations-v1.schema.json"
+        self.assertValid(doc)
+        doc = load("pdf-region.json")
+        doc["x_meta"] = {"$schema": "https://example.org/x"}
+        self.assertProblem(doc, "$.x_meta.$schema: http(s) URLs belong in sources[] and destinations[] only")
+
+    def test_x_keys_sit_on_records_companion_and_the_root_and_obey_i10(self):
+        doc = load("mixed.json")
+        self.assertTrue(any(k.startswith("x_") for k in doc))
+        self.assertTrue(any(k.startswith("x_") for k in doc["companion"]))
+        self.assertTrue(any(k.startswith("x_") for p in doc["provenance"] for k in p))
+        self.assertValid(doc)
+        prov = next(p for p in doc["provenance"] if any(k.startswith("x_") for k in p))
+        prov["x_review_round"] = {"log": "https://example.org/run/2"}
+        self.assertProblem(doc, ".x_review_round.log: http(s) URLs belong in sources[] and destinations[] only")
+        doc = load("mixed.json")
+        doc["companion"]["x_build"]["log"] = "http://example.org/build"
+        self.assertProblem(doc, "$.companion.x_build.log: http(s) URLs belong")
+        doc = load("mixed.json")
+        doc["x_elsewhere"] = ["https://example.org/"]
+        self.assertProblem(doc, "$.x_elsewhere[0]: http(s) URLs belong")
+        doc = load("mixed.json")
+        doc["pages"] = 3
+        self.assertProblem(doc, "pages")                   # not an x_ key: the root is closed
+
+    def test_a_signature_carries_no_comment(self):
+        doc = load("pdf-region.json")
+        decl = by_id(doc["declarations"], "Notes.Box.volume_nonneg")
+        decl["signature"] += " -- a comment"
+        decl["statement_sha256"] = ids.statement_sha256(decl["signature"])
+        self.assertProblem(doc, "must be normalised: comments removed")
+        decl["signature"] = decl["signature"].replace(" -- a comment", " /- a block -/ ")
+        self.assertProblem(doc, "must be normalised: comments removed")
 
 
 LEAN = """\
@@ -1385,6 +1619,13 @@ class TestTheSpec(unittest.TestCase):
         text = self.text()
         for n in range(1, 14):
             self.assertIn(f"| I{n} |", text)
+
+    def test_the_checkers_invariant_labels_are_the_tables(self):
+        code = (SCRIPTS / "annotations" / "validate.py").read_text(encoding="utf-8")
+        labels = {int(n) for line in code.splitlines() if line.strip().startswith("# -- I")
+                  for n in re.findall(r"I(\d+)", line)}
+        self.assertEqual(labels, set(range(1, 14)) - {11})
+        self.assertIn("# I11", code)
 
     def test_the_spec_has_no_em_dash(self):
         self.assertNotIn("\u2014", self.text())

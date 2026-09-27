@@ -36,8 +36,10 @@ POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
-schema/           annotations-v1.schema.json: the annotation format, schema_version 1.0 (docs/annotations.md)
-examples/         synthetic annotation documents covering every record and location kind; two are invalid on purpose
+schema/           annotations-v1.schema.json: the annotation format, schema_version
+                  1.0 (docs/annotations.md)
+examples/         synthetic annotation documents covering every record and location
+                  kind; two are invalid on purpose
 evals/            trigger evals: prompts as data, run by hand against the skill
 bin/cf            the PATH shim; it resolves back to this checkout
 scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/
@@ -45,6 +47,8 @@ scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference
                   state.json, paths, item grammar, vocabulary
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
                   detect, report, recheck, score, share
+scripts/annotations/
+                  the annotation format's checker and mechanical ids (not a stage)
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline

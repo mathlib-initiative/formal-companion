@@ -126,6 +126,7 @@ RECHECK_STATUS_SET = frozenset(RECHECK_STATUSES)
 # --- viewer layer (publish-verdicts; measure_theory only in v1)
 VIEWER_VERDICTS = frozenset({"faithful", "convention", "attribution_gap", "proxy", "deviation"})
 VIEWER_STATUS = frozenset({"unconfirmed", "contested", "human_confirmed", "fixed"})
+VIEWER_SEVERITIES = frozenset({"none", "low", "medium", "high"})
 LEDGER_TO_VIEWER = {
     CONFIRMED_CONTENT: "deviation",
     ATTRIBUTION_GAP: "attribution_gap",
@@ -199,9 +200,14 @@ BRIDGE_KINDS = frozenset({"proved", "fiat", "none"})
 # --- annotation documents (schema/annotations-v1.schema.json, docs/annotations.md)
 #: The enums of the lean-companion annotation format.  The schema file repeats
 #: them because it is data a non-Python consumer reads; ``tests/
-#: test_annotations_schema.py`` fails when the two disagree, so this block stays
-#: the one definition.  ``VIEWER_VERDICTS`` / ``VIEWER_STATUS`` above are reused
-#: for a verdict record, and ``SORRY_CLASSES`` for a declaration's ``sorry``.
+#: test_annotations_schema.py`` walks every ``enum`` in the schema and fails when
+#: one has no set here or the two disagree, so this block stays the one
+#: definition.  Sets from other sections are reused: ``VIEWER_VERDICTS`` (a
+#: verdict's ``verdict`` and each ``declarations[].verdict``), ``VIEWER_SEVERITIES``
+#: and ``VIEWER_STATUS`` for a verdict record, ``LEDGER_VERDICTS`` and
+#: ``FINDING_KINDS`` for its ``ledger_verdict`` and ``finding_kind``,
+#: ``SOURCE_ROLES`` for a source's ``role`` and ``SORRY_CLASSES`` for a
+#: declaration's ``sorry``.
 ANNOTATION_SCHEMA = "lean-companion/annotations"
 #: ``"<major>.<minor>"``.  Readers match the major version; a writer declares the
 #: minor it used (docs/annotations.md, section 9).
@@ -215,8 +221,9 @@ ANNOTATION_SOURCE_KINDS = frozenset({"pdf", "web", "tex", "lean", "other"})
 ANNOTATION_SOURCE_SCOPES = frozenset({"page", "site"})
 ANNOTATION_LINK_ROLES = frozenset({"key", "attributed", "support", "example", "helper"})
 #: The documented core of a link's ``relation``: how the declaration relates to
-#: the item's text.  The field is an open string; a value outside this set
-#: passes with a warning (WikiLean's ``match_kind`` uses these five).
+#: the item's text.  The field is an open lower-case snake_case token (the
+#: schema's pattern); a token outside this set passes with a warning
+#: (WikiLean's ``match_kind`` uses these five).
 ANNOTATION_LINK_RELATIONS = frozenset({"exact", "generalization", "special_case", "invocation",
                                        "related"})
 #: What an item's links do NOT show on their own.  An item whose links carry no
@@ -253,13 +260,30 @@ ANNOTATION_PROVENANCE_METHODS = frozenset({"docstring_tag", "curation", "bluepri
                                            "lean_scan", "layout_extraction", "text_match",
                                            "manual", "agent_annotation", "pipeline",
                                            "adjudication", "site_index"})
-VIEWER_SEVERITIES = frozenset({"none", "low", "medium", "high"})
 #: ``resolution.state`` of a verdict: the structured form of ``check_resolution``'s
-#: strings, plus ``open`` for a verdict nobody has resolved.  ``resolution`` is
-#: optional; a verdict without one is open.
-ANNOTATION_RESOLUTION_STATES = frozenset({"open", "fixed", "in_progress", "refuted",
-                                          "argued_correct", "out_of_scope"})
+#: strings (section 1.5, derived here so a new resolution reaches the format),
+#: plus ``open`` for a verdict nobody has resolved.  ``resolution`` is optional; a
+#: verdict without one is open.
+ANNOTATION_RESOLUTION_STATES = frozenset({"open"} | STATIC_RESOLUTIONS
+                                         | {p.rstrip(":") for p in RESOLUTION_PREFIXES})
 ANNOTATION_DESTINATION_SITES = frozenset({"verso_literate", "doc_gen4", "blueprint", "other"})
+#: A destination's ``resolution``: ``exact`` needs a ``fragment``, ``fallback`` a
+#: ``fallback_label``.
+ANNOTATION_DESTINATION_RESOLUTIONS = frozenset({"exact", "fallback"})
+#: A ``PdfRegionSelector``'s ``coordinate_space``.  ``top_left`` goes with
+#: ``y_axis`` ``down`` and ``bottom_left`` with ``up`` (ANNOTATION_ORIGIN_Y_AXIS);
+#: ``normalized`` coordinates are fractions of the page box, ``pt`` are points.
+ANNOTATION_COORDINATE_ORIGINS = frozenset({"top_left", "bottom_left"})
+ANNOTATION_COORDINATE_UNITS = frozenset({"normalized", "pt"})
+ANNOTATION_COORDINATE_X_AXES = frozenset({"right"})
+ANNOTATION_COORDINATE_Y_AXES = frozenset({"down", "up"})
+ANNOTATION_ORIGIN_Y_AXIS = {"top_left": "down", "bottom_left": "up"}
+ANNOTATION_PAGE_BOXES = frozenset({"MediaBox", "CropBox", "BleedBox", "TrimBox", "ArtBox"})
+#: A source's ``text_layer``: how quotes and offsets on it are matched
+#: (docs/annotations.md, section 4.6).
+ANNOTATION_TEXT_UNICODE = frozenset({"none", "nfc", "nfkc"})
+ANNOTATION_TEXT_WHITESPACE = frozenset({"exact", "collapse", "ignore"})
+ANNOTATION_TEXT_CASE = frozenset({"sensitive", "insensitive"})
 #: ``ordinal_assigned`` records which declaration took a ``~k`` statement-hash
 #: ordinal, by its file; without it a ``~k`` id is refused, and so is a live id
 #: whose latest record names another file (docs/annotations.md, section 5.1).
