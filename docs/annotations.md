@@ -1064,3 +1064,5 @@ agent_annotation`, or `human`); the 12-hex native id can be kept in
 - Book text. A `quote` or a `TextQuoteSelector` holds a short anchor, and the
   document lives in the companion's repository or a workspace, never in this
   one (`POLICY.md`); the examples here are synthetic.
+- A producer. `docs/proposals/pdf-to-companion.md` proposes the pipeline that
+  would write this format from a PDF; none of it is built.
