@@ -57,7 +57,8 @@ release has something to say.
   rename is pending.
 - `docs/proposals/pdf-to-companion.md`: a design proposal, not built, for a
   pipeline that turns one PDF into a Lean companion through ten gated stages,
-  with the annotation document as its spine and a two-field v1.1 proposal.
+  with the annotation document as its spine and a v1.1 proposal of three
+  optional keys in two records. The docs tests now cover `docs/proposals/`.
 - `cf plan-run --sections 1.7`: narrow a run's task universe to one or more
   `<chapter>.<section>` labels, one level below `--chapters` and with the same
   discipline (applied to the entries AND the reconciled universe, refused by

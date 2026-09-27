@@ -34,6 +34,7 @@ source or their owners' details into this repo.
 SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
 docs/design/stage_map.md   the current spec; change it in the same commit as the code
 docs/design/archive/       the design record it came from (historical)
+docs/proposals/            designs not yet built (pdf-to-companion.md)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
 schema/              annotations-v1.schema.json, the annotation format
