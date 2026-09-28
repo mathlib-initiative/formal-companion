@@ -4,7 +4,10 @@ New code, testing scripts/annotations/review_tags.py and `cf review-tags`
 (docs/proposals/pdf-to-companion.md section 5.4, the "tag review reproduces
 known answers" half of M3).  The planted documents are built from one small
 valid base; the last class lists what the checker reports over the two
-shipped reference documents today, so a change to either shows up here.
+reference documents today, so a change to either shows up here.  Those
+documents are derived from the private companions and never ship in this tree:
+the class reads them from the directory named by ``CF_M3_REFERENCE_DIR``
+(tests/data/m3/README.md) and skips cleanly when it is unset.
 """
 from __future__ import annotations
 
@@ -17,7 +20,9 @@ import copy
 import gzip
 import io
 import json
+import os
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -32,7 +37,19 @@ import cf as cf_main                                               # noqa: E402
 from annotations import review_tags                                # noqa: E402
 from annotations import validate as V                              # noqa: E402
 
-DATA = SKILL / "tests" / "data" / "m3"
+
+
+def reference_file(case: type | unittest.TestCase, name: str) -> Path:
+    """``<CF_M3_REFERENCE_DIR>/<name>``, or skip ``case``: no private companion's data ships here."""
+    # raised, not ``case.skipTest``: ``setUpClass`` calls this on the class, not an instance
+    raw = os.environ.get("CF_M3_REFERENCE_DIR")
+    ref_dir = Path(raw).expanduser() if raw else None
+    if ref_dir is None or not ref_dir.is_dir():
+        raise unittest.SkipTest("set CF_M3_REFERENCE_DIR to the M3 reference directory (tests/data/m3/README.md)")
+    path = ref_dir / name
+    if not path.is_file():
+        raise unittest.SkipTest(f"CF_M3_REFERENCE_DIR holds no {name} (tests/data/m3/README.md)")
+    return path
 
 
 def base_document() -> dict:
@@ -237,10 +254,13 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
     def test_an_invalid_pattern_is_a_clean_error(self):
         # review record item 19: a bad --keep-pattern or --hide-pattern is a CfError, not a raw re.error
         from cflib.errors import CfError
-        for flag in ("--keep-pattern", "--hide-pattern"):
-            with self.subTest(flag=flag), self.assertRaises(CfError) as caught:
-                cf_main.main(["review-tags", str(DATA / "tao-measure-lean.annotations.json.gz"), flag, "("])
-            self.assertIn("not a regular expression", caught.exception.message)
+        with tempfile.TemporaryDirectory() as tmp:
+            doc_path = Path(tmp) / "demo.annotations.json"
+            doc_path.write_text(json.dumps(base_document()), encoding="utf-8")
+            for flag in ("--keep-pattern", "--hide-pattern"):
+                with self.subTest(flag=flag), self.assertRaises(CfError) as caught:
+                    cf_main.main(["review-tags", str(doc_path), flag, "("])
+                self.assertIn("not a regular expression", caught.exception.message)
 
     def test_an_adjudicated_attribution_gap_verdict_is_listed(self):
         doc = base_document()
@@ -275,13 +295,13 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
 
 
 class TestWhatTheReferencesReportToday(unittest.TestCase):
-    """The known answers over the two shipped reference documents."""
+    """The known answers over the two reference documents, read from ``CF_M3_REFERENCE_DIR``."""
 
     @classmethod
     def setUpClass(cls):
         cls.docs = {}
         for name in ("measure_theory", "tao-measure-lean"):
-            with gzip.open(DATA / f"{name}.annotations.json.gz", "rb") as fh:
+            with gzip.open(reference_file(cls, f"{name}.annotations.json.gz"), "rb") as fh:
                 cls.docs[name] = json.loads(fh.read().decode("utf-8"))
 
     def test_measure_theory(self):
