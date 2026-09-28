@@ -84,6 +84,22 @@ budget:
   billing_path: subscription   # subscription | api_gateway
   max_cost_usd: null
   require_consent: true
+  # The price table `cf harvest --transcripts <path>` and `cf cost` price a
+  # fleet's tokens with: one entry per model id, US dollars per million tokens
+  # for uncached input, output, cache writes and cache reads, and a `source`
+  # note saying where the numbers came from. The orchestrator sees no token; the
+  # agents' own transcripts carry every one, and this table is what makes the
+  # dollar figure in RECEIPT.json reproducible. A model that is not listed here
+  # is reported UNPRICED and never priced at a guess. The shipped row is the
+  # Opus 5 list price issue #11 records; add a row, with its source, per model
+  # a fleet actually runs.
+  prices:
+    claude-opus-5:
+      input: 5.0
+      output: 25.0
+      cache_write: 6.25
+      cache_read: 0.5
+      source: "Opus 5 list prices per million tokens, as recorded in issue #11 (2026-09)"
 
 policy:
   # Nothing leaves the workspace directory while _meta.status is UNCHALLENGED.

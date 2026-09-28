@@ -35,6 +35,39 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf cost <path>` and `cf harvest --transcripts <path>` (milestone M0a of the
+  pipeline proposal, after issue #11): a run's cost is read from the agents'
+  own logs, since the orchestrator sees no token. `scripts/cost/usage.py`
+  reads Claude Code transcripts (one response counted once, however many
+  lines it spans), Codex rollout logs (charged by the advance of the
+  cumulative token block, so a count reported twice is counted once, with the
+  model id taken from the nearest `turn_context`) and usage exports, and sums
+  tokens per model id; `scripts/cost/pricing.py` prices them with the table
+  at `workspace.yaml` `budget.prices` (per model id: input, output,
+  cache_write, cache_read in US dollars per million tokens, and a source
+  note). A model the table does not list is reported as unpriced and never
+  priced at a guess. The shipped table carries the Opus 5 list prices issue
+  #11 records and nothing else. Harvest writes the priced totals into the
+  receipt's new `cost` block (tokens by model, usd, priced and unpriced
+  models, price_table_sha256, transcript_count, message_count); `cf tally`
+  prints cost and cost per task per run, records them in
+  `reports/tally.<run>.json` and `state.json`, and `cf report`'s runs table
+  gained two columns. A run harvested without transcripts is unchanged
+  except for `cost: null`. `cf cost --export` writes one `{model, usage}` row
+  per response, which is how usage leaves a host without the transcripts'
+  text. `tests/data/m0a/` holds the fixtures: the section 1.7 re-run's
+  exported rows price to $358.10, the recorded total.
+- `scripts/pipeline/`: the loader and validator of `pipelines/<id>/pipeline.yaml`
+  (exercise policy, scope, consent, the fleet run ids per stage; every unknown
+  key refused) and the writer of `pipelines/<id>/stages/<stage>.stage-receipt.json`
+  with the eleven fields of proposal section 4.1, which fails closed on a
+  missing or extra field, a sha of the wrong length, a stage outside S0 to S9
+  or a fleet whose receipt carries no cost block. `cflib.paths` gained the
+  pipeline paths.
+- `registry/calibration.yaml`: calibration facts the milestones replay against,
+  starting with the tao-measure-lean revision before the camera-ready fix
+  stack (`d8cdfd5`, the first parent of the stack's first merge) and how it
+  was found.
 - Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with

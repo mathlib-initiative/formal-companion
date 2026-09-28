@@ -1,0 +1,32 @@
+version: 1
+# CALIBRATION FACTS shipped with the skill: revisions of a companion that a
+# milestone of docs/proposals/pdf-to-companion.md replays against or compares
+# with, and how each was found. Curated and committed here; no command writes it.
+#
+# METADATA ONLY -- a commit, a date, a pull request number, the reasoning. Never
+# a line of Lean, never a line of a book, never an owner's identity (CLAUDE.md
+# section 1). A companion is named by its repository name, as README.md does.
+companions:
+
+  tao-measure-lean:
+    # The revision BEFORE the camera-ready fix stack: the checkout section 5.4
+    # (M3, "attack reproducibility") re-runs attack-vac and attack-hunt on, and
+    # the baseline the M4 replay of section 5.5 is measured from.
+    pre_fix_commit: d8cdfd5
+    pre_fix_commit_date: "2026-09-14"
+    fix_stack:
+      # the first merge of the stack; pre_fix_commit is its first parent
+      first_merge_commit: 96e64a9
+      first_merge_date: "2026-09-15"
+      pull_requests: [8, 9, 10, 4, 12, 13, 14]
+    found_by: >-
+      first-parent history: the commit before the merge of pull request 8
+      (96e64a9, 2026-09-15), which opened the camera-ready fix stack of pull
+      requests 8, 9, 10, 4, 12, 13 and 14. Recorded from the M0a inputs of
+      2026-09-27 (tests/data/m0a/README.md) and checked the same day against
+      the repository's hosted commit record, which lists d8cdfd5 as the first
+      parent of 96e64a9.
+    purpose: >-
+      milestone M0a of docs/proposals/pdf-to-companion.md (section 5.1) asks
+      for it; section 5.4 re-runs the attack presets on it and section 5.5
+      replays the proving gate against the fix stack it precedes.
