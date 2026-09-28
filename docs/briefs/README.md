@@ -5,3 +5,4 @@ in Anthropic's cloud with this repository cloned). The routine's own prompt is o
 line pointing here, because the routine API truncates long prompts. A brief is
 self-contained: the branch to work on, what to read, what to build or review, the
 rules, and what to return.
+- `review-pr16-m1.md`: adversarial pre-merge review of pull request 16 (M1, the source side).
