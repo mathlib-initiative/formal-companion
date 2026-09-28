@@ -4,10 +4,10 @@
   "ordinal": 14,
   "type": "token_usage_record",
   "payload": {
-   "thread_id": "01a0c697-78d8-7f31-8020-1472cb663129",
-   "turn_id": "01a0c697-c476-7eb1-b8e7-f21738c27295",
-   "session_id": "01a0c697-78d8-7f31-8020-1472cb663129",
-   "root_turn_id": "01a0c697-c476-7eb1-b8e7-f21738c27295",
+   "thread_id": "thread-a",
+   "turn_id": "turn-1",
+   "session_id": "thread-a",
+   "root_turn_id": "turn-1",
    "response_id": "<str>",
    "usage": {
     "input_tokens": 22942,
@@ -86,10 +86,10 @@
   "ordinal": 29,
   "type": "token_usage_record",
   "payload": {
-   "thread_id": "01a0c697-78d8-7f31-8020-1472cb663129",
-   "turn_id": "01a0c698-7309-7a70-bdbe-b40c5863b740",
-   "session_id": "01a0c697-78d8-7f31-8020-1472cb663129",
-   "root_turn_id": "01a0c698-7309-7a70-bdbe-b40c5863b740",
+   "thread_id": "thread-a",
+   "turn_id": "turn-2",
+   "session_id": "thread-a",
+   "root_turn_id": "turn-2",
    "response_id": "<str>",
    "usage": {
     "input_tokens": 23391,
