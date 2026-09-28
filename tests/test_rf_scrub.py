@@ -252,6 +252,11 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "a companion repo's own validator, in an example `validators:` line"),
     ("scripts/gate.py",
      "a fixture path in a changed-file set the pre-merge check refuses"),
+    ("scripts/source_formalization_ledger.py",
+     "the overlay companion's own ledger generator, which the attribution-table exporter names as the "
+     "provenance tool of the ledger's edges when the checkout carries it"),
+    ("scripts/overlay_geometry_from_layout.py",
+     "the same companion's geometry generator, the provenance tool of a batch drawn from the text layer"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:

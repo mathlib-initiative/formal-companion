@@ -50,7 +50,9 @@ scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
                      route, detect, report, recheck, score, share, cost, pipeline
 scripts/annotations/ the annotation format's checker (validate.py, schemacheck.py)
-                     and mechanical ids (ids.py); run by path, not a stage
+                     and mechanical ids (ids.py), run by path, not a stage; export/
+                     (the companion exporters behind `cf export`) and
+                     review_tags.py (`cf review-tags`), see docs/exporters.md
 templates/  workflows/  tests/  .github/workflows/
 ```
 
@@ -218,8 +220,10 @@ reads.
 
 `python3 -m unittest discover -s tests`. Stdlib `unittest` only. Tests that
 read local baselines read their paths from `CF_BASELINE_CORPUS`,
-`CF_BASELINE_DIFF`, `CF_TML`, `CF_MT`, `CF_BOOK_TXT` and **skip cleanly** when
-those are unset — the suite must pass on a machine that has none of them.
+`CF_BASELINE_DIFF`, `CF_TML`, `CF_MT`, `CF_BOOK_TXT` (and the exporter
+reproductions from `CF_TAO_PDF`, `CF_TML_SITE`, `CF_MT_BUILD`,
+`CF_M3_REFERENCE_DIR`) and **skip cleanly** when those are unset — the suite
+must pass on a machine that has none of them.
 The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 `tests/test_m1_calibration.py`, which skips without it), `CF_M1_DOWNLOAD=1`
 (opt in to downloading that PDF; nothing is fetched by default),
