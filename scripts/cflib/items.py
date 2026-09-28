@@ -238,6 +238,16 @@ def _parse_subs(text: str) -> tuple[str, str]:
     return "".join(subs), rest
 
 
+def parse_subs(text: str) -> tuple[str, str]:
+    """The sub-part groups that open ``text``, by the grammar: ``("(i)(a)", rest)``.
+
+    Public for the annotation exporters, which render a range or a list of
+    sub-parts (``(i)-(iii)``, ``(i), (iii)``) from the groups the grammar
+    accepts rather than with a sub-part regex of their own.
+    """
+    return _parse_subs(text)
+
+
 def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS,
               *, numbering=None) -> tuple[Item | None, Reject | None]:
     """Parse a raw item string. Returns (Item, None) or (None, Reject).
