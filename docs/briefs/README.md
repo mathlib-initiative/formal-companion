@@ -1,0 +1,7 @@
+# Briefs for delegated cloud runs
+
+Each file is the full instruction set for one cloud routine (a Claude Code session
+in Anthropic's cloud with this repository cloned). The routine's own prompt is one
+line pointing here, because the routine API truncates long prompts. A brief is
+self-contained: the branch to work on, what to read, what to build or review, the
+rules, and what to return.
