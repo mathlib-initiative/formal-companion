@@ -151,7 +151,8 @@ release has something to say.
   declaration, and only `not_formalized`, `out_of_scope`, `support_only` and
   `example_only` excuse a missing key. `tests/test_review_tags.py` plants each
   defect and lists what the two reference documents report today.
-- Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
+- Annotation documents, schema v1
+  (`formal-companion-annotations/schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with
   mechanical quote- or page-and-title-hash ids) to Lean declarations, with W3C
@@ -165,12 +166,13 @@ release has something to say.
   refused unless the changelog records which file took it. A rendered site is
   one source pinned by the sha256 of its page manifest. The canonical form
   follows RFC 8785 for order (UTF-16 code units, for keys and arrays alike) and
-  numbers. `scripts/annotations/validate.py` checks the schema, selected by
-  major version through an in-repo evaluator because the skill is stdlib only,
-  plus the invariants a schema cannot state, and `--print-canonical` writes
-  the canonical form. The adapters, the viewer and WikiLean do not read or
-  write the format yet. The ids use the planned name lean-companion; the
-  rename is pending.
+  numbers.
+  `formal-companion-annotations/src/formal_companion_annotations/validate.py`
+  checks the schema, selected by major version through an in-repo evaluator
+  because the skill is stdlib only, plus the invariants a schema cannot state,
+  and `--print-canonical` writes the canonical form. The adapters, the viewer
+  and WikiLean do not read or write the format yet. The ids use the planned
+  name lean-companion; the rename is pending.
 - `docs/proposals/pdf-to-companion.md`: a design proposal, not built, for a
   pipeline that turns one PDF into a Lean companion through ten gated stages,
   with the annotation document as its spine and a v1.1 proposal of three

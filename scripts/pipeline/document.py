@@ -2,8 +2,8 @@
 
 New code for milestone M1 of docs/proposals/pdf-to-companion.md (sections 4.1,
 4.2 and 4.6).  Every stage writes ``pipelines/<id>/doc.vN.json`` once, and
-every checkpoint must pass ``scripts/annotations/validate.py --canonical`` with
-no warnings (section 3.3); :func:`write_checkpoint` is the one place that
+every checkpoint must pass ``formal_companion_annotations.validate --canonical``
+with no warnings (section 3.3); :func:`write_checkpoint` is the one place that
 serialises a checkpoint, so a stage cannot write one that fails the checker.
 
 Section 4.6 caps a selector's ``exact`` text at a fixed number of words before
@@ -16,9 +16,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Iterable, Iterator
 
-from annotations import ids
-from annotations import validate as annotations_validate
-from cflib import vocab
+from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids
+from formal_companion_annotations import validate as annotations_validate
+from formal_companion_annotations import vocab
 from cflib.errors import CfError
 from cflib.hashing import sha256_file
 from cflib.jsonio import atomic_write
@@ -147,14 +148,15 @@ def write_checkpoint(path: str | Path, doc: dict) -> str:
     """Write ``doc`` canonically and return the file's sha256.
 
     Refuses (and writes nothing) when the checker finds a problem or a warning:
-    a checkpoint that ``validate.py --canonical`` would reject is not a
-    checkpoint.
+    a checkpoint that ``formal_companion_annotations.validate --canonical``
+    would reject is not a checkpoint.
     """
     text, problems, warnings = check(doc)
     if problems or warnings:
         shown = problems + [f"warning: {w}" for w in warnings]
         raise CfError(f"refusing to write {Path(path).name}: the document does not pass "
-                      f"validate.py --canonical: " + "; ".join(shown[:10])
+                      f"formal_companion_annotations.validate --canonical: "
+                      + "; ".join(shown[:10])
                       + (f" (and {len(shown) - 10} more)" if len(shown) > 10 else ""),
                       hint="this is a defect in the stage that built it; nothing was written")
     atomic_write(path, text)

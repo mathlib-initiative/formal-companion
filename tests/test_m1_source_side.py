@@ -46,7 +46,8 @@ for _p in (SCRIPTS, E2E):
 
 import cf as cf_main                                       # noqa: E402
 import make_pdf                                            # noqa: E402  (tests/e2e)
-from annotations import ids                                # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids               # noqa: E402
 from cflib import inference                                # noqa: E402
 from cflib.errors import CfError, SourceError              # noqa: E402
 from cflib.hashing import sha256_file                      # noqa: E402
@@ -113,8 +114,9 @@ class M1Case(unittest.TestCase):
         return json.loads(self.ws.paths.pipeline_doc(PID, version).read_text(encoding="utf-8"))
 
     def validate_cli(self, path: Path) -> str:
-        proc = subprocess.run([sys.executable, str(SCRIPTS / "annotations" / "validate.py"),
-                               "--canonical", str(path)], capture_output=True, text=True)
+        proc = subprocess.run([sys.executable, "-m", "formal_companion_annotations.validate",
+                               "--canonical", str(path)], capture_output=True, text=True,
+                              env={**os.environ, "PYTHONPATH": str(vendored.VENDOR)})
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertNotIn("warning", proc.stdout + proc.stderr)
         return proc.stdout

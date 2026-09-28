@@ -1,10 +1,9 @@
-"""The lean-companion annotation format: schema checks, id rules, canonical form.
+"""The skill's tooling around the annotation format: exporters and the tag review.
 
-New code.  The format is specified in docs/annotations.md and its JSON Schema is
-schema/annotations-v1.schema.json (schema_version "1.0").  ``validate`` is the
-checker (and a CLI) and the RFC 8785 canonicaliser, ``schemacheck`` the small
-JSON Schema evaluator it runs, because this repo is standard library only
-(CLAUDE.md S3), and ``ids`` the mechanical id rules of docs/annotations.md
-section 5: statement-hash ids for anonymous declarations, and quote- or
-page-and-title-hash ids for unnumbered passages.
+``export`` holds the companion exporters behind ``cf export`` and
+``review_tags`` the tag review behind ``cf review-tags``.  The format itself
+(its schema, checker, id rules and vocabulary) is the vendored
+``formal_companion_annotations`` package under ``vendor/``, imported through
+:mod:`cflib.vendored`; its specification is formal-companion-annotations'
+docs/annotations.md.
 """
