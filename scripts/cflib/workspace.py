@@ -72,6 +72,12 @@ _SECTION_COMMENTS: dict[str, str] = {
         "# max_concurrent_sessions is a HARD account limit (references/traps.md C3): past 16\n"
         "# concurrent sessions the API returns 409s, per ACCOUNT, across workspaces.\n"
     ),
+    "budget": (
+        "# max_cost_usd is the spend ceiling `cf plan-run` records. `prices` is the table\n"
+        "# `cf harvest --transcripts` and `cf cost` price a fleet's tokens with: per model\n"
+        "# id, US dollars per million tokens for input, output, cache_write and cache_read,\n"
+        "# plus a `source` note. A model not listed here is reported UNPRICED, never guessed.\n"
+    ),
     "policy": (
         "# Nothing leaves the workspace while _meta.status is UNCHALLENGED. allow_download\n"
         "# false forbids `cf onboard --download` outright; require_confirmed_sources true\n"

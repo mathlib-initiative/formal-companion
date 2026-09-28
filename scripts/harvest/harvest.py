@@ -222,7 +222,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
                   sources: Mapping[str, str] | None = None, previous: dict | None = None,
                   source_manifest: dict[str, str] | None = None,
                   run_yaml: str | None = None, allow_edition_mismatch: bool = False,
-                  gate: dict | None = None) -> dict:
+                  gate: dict | None = None, cost: dict | None = None) -> dict:
     """Reconcile the destination against the expected set.
 
     ``expected`` is the REMOTE listing, never a number someone remembered.
@@ -237,6 +237,11 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     * no finding was judged against another edition or an unknown source (unless
       ``allow_edition_mismatch``), and
     * the schema/quote gate passed, when one was run (``gate``).
+
+    ``cost`` is the block ``cost.fleet.cost_block`` computed from the agents'
+    transcripts (issue #11), or None when the harvest was given none; it never
+    affects ``complete``, because a run's findings are whole or not regardless
+    of whether anyone priced them.
     """
     actual_paths = iter_finding_files(dest)
     actual = sorted(p.name for p in actual_paths)
@@ -279,6 +284,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "edition": edition,
         "by_source": edition.get("by_source") or {},
         "gate": gate,
+        "cost": cost,
     }
     if previous:
         receipt["previous"] = {
@@ -389,6 +395,11 @@ def describe(receipt: dict) -> str:
                      f"({gate.get('preset') or gate.get('config') or 'schema+quote'})")
         for problem in (gate.get("problems") or [])[:MAX_NAMED]:
             lines.append(f"    - {problem}")
+    cost = receipt.get("cost")
+    if isinstance(cost, dict):
+        from cost import fleet as cost_fleet  # local: cost.fleet reads receipts through this module
+
+        lines.extend(cost_fleet.describe(cost))
     prev = receipt.get("previous")
     if prev:
         lines.append(f"  previous harvest: {prev.get('actual')} files at {prev.get('harvested_at')}"
@@ -405,11 +416,12 @@ def describe(receipt: dict) -> str:
 def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str] | None = None,
             run_yaml_src: Path | None = None, verify_sha: bool = False,
             execute: bool = True, allow_edition_mismatch: bool = False,
-            gate_runner=None) -> dict:
+            gate_runner=None, cost: dict | None = None) -> dict:
     """Transfer, reconcile and write RECEIPT.json. Returns the receipt.
 
     ``execute=False`` only makes sense for a remote source: it prints the
-    commands and returns a receipt marked ``planned``.
+    commands and returns a receipt marked ``planned``.  ``cost`` is the priced
+    block of the run's transcripts, recorded on the receipt as given.
     """
     dest = Path(dest)
     if source["kind"] == "remote" and not execute:
@@ -431,7 +443,8 @@ def harvest(*, run_id: str, source: dict, dest: Path, sources: Mapping[str, str]
     receipt = build_receipt(run_id=run_id, source=source, expected=expected, dest=dest,
                             sources=sources, previous=previous, source_manifest=shas,
                             run_yaml=run_yaml_name,
-                            allow_edition_mismatch=allow_edition_mismatch, gate=gate)
+                            allow_edition_mismatch=allow_edition_mismatch, gate=gate,
+                            cost=cost)
     write_json(dest / RECEIPT_NAME, receipt, indent=1, sort_keys=True)
     return receipt
 

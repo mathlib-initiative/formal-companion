@@ -66,6 +66,12 @@ def record_run_state(workspace, run_id: str, data: dict, receipt: dict, counts: 
                     "repo_commit": block.get("repo_commit"),
                     "pinned": bool(block.get("fingerprinted")),
                 }
+                cost = receipt.get("cost")
+                if isinstance(cost, dict):
+                    # the priced dollars of the run (issue #11), so `cf status`
+                    # can print them; a lower bound while `unpriced` is non-empty
+                    values["cost_usd"] = cost.get("usd")
+                    values["cost_unpriced"] = list(cost.get("unpriced") or [])
                 cf_state.record_run(state, run_id, values)
                 if str(name) in repos:
                     cf_state.merge_section(state, "tally",
