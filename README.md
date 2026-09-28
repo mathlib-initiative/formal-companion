@@ -49,7 +49,9 @@ scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
                   detect, report, recheck, score, share
 scripts/annotations/
-                  the annotation format's checker and mechanical ids (not a stage)
+                  the annotation format's checker and mechanical ids (not a stage),
+                  the two companion exporters behind `cf export` and the tag
+                  review behind `cf review-tags` (docs/exporters.md)
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline
@@ -362,6 +364,10 @@ CF_MT=<the other companion checkout> \
 CF_BOOK_TXT=<the pinned book text> \
 python3 -m unittest discover -s "$SKILL/tests"
 ```
+
+The exporter reproductions (`tests/test_export.py`) also take `CF_TAO_PDF`
+(the published edition's PDF) and, optionally, `CF_TML_SITE` and
+`CF_MT_BUILD`; `docs/exporters.md` says what they compare.
 
 `.github/workflows/tests.yml` runs the suite on Python 3.11, 3.12 and 3.13,
 once more with PyYAML absent (its fallback reader is what parses `run.yaml` on

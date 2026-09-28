@@ -35,6 +35,33 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf export attribution-table` and `cf export docstring-tags`
+  (`scripts/annotations/export/`, `docs/exporters.md`): the two prototype
+  exporters `docs/annotations.md` section 10 was written from, as repository
+  commands. Each reads a companion checkout at a pinned commit (through
+  `cflib.gitsafe`, writing nothing under it) plus the outside inputs its
+  convention needs (the anchor edition's PDF, a literate site's `xref.json`
+  and page manifest), and writes a canonical annotation document beside a
+  report of the lossy and bent buckets. The documents reproduce
+  `tests/data/m3/*.annotations.json.gz` record for record
+  (`tests/test_export.py`: against the pinned checkouts when `CF_MT`, `CF_TML`
+  and `CF_TAO_PDF` name them, on synthetic companions everywhere). Three
+  deliberate differences from the prototype documents: `companion.generator`
+  names the command; the PDF source is named through the registry (one id per
+  edition, `tao-measure-gsm126-published`, where the prototypes wrote two ids
+  for one edition); the site's title and `retrieved_at` come from the page
+  manifest, not the build's file times. `annotations.ids` gained
+  `comment_tags` on `AnonymousDecl` and a public `token_at`;
+  `adapters.docstring_tags` gained `tagged_rows` and `classify_sorry`.
+- `cf review-tags <document>`: the tag-review half of M3, read-only over a
+  document: items keyed only to where they sit (the section 1.7 attribution
+  gap before measure_theory's PR #17), key links and primary memberships on a
+  structure field or projection (the 142 edges its PR #1 counted), a numbered
+  item whose keys are another item's (the borrowed keys its PR #19 recorded),
+  tag spellings the literate site's fold script hides (`In-text proof`,
+  respelled in tao-measure-lean's PR #12), and the document's own
+  `attribution_gap` verdicts. `tests/test_review_tags.py` plants each defect
+  and lists what the two reference documents report today.
 - Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with
