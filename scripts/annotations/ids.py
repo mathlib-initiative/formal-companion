@@ -262,7 +262,8 @@ def blank_literals(code: str) -> str:
     return "".join(out)
 
 
-def _token_at(code: str, i: int, word: str) -> bool:
+def token_at(code: str, i: int, word: str) -> bool:
+    """Is the identifier ``word`` at offset ``i`` of ``code``, as a whole token?"""
     if not code.startswith(word, i):
         return False
     before = code[i - 1] if i > 0 else " "
@@ -322,9 +323,9 @@ def statement_span(code: str, start: int, keyword: str) -> tuple[int, bool]:
                 return (i, True) if typed else (limit, False)
             if c == ":" and not typed:
                 typed = True
-            elif typed and any(_token_at(code, i, w) for w in _TYPE_BINDERS):
+            elif typed and any(token_at(code, i, w) for w in _TYPE_BINDERS):
                 pending += 1
-            elif typed and (_token_at(code, i, "where")
+            elif typed and (token_at(code, i, "where")
                             or (keyword == "instance" and code.startswith("\n  | ", i))):
                 return i, True
         i += 1
@@ -349,7 +350,7 @@ def named_signature(code: str, scan: str, start: int, keyword: str) -> str | Non
     end, typed = statement_span(scan, start, keyword)
     if not typed or end >= len(scan):
         return None
-    if not (scan.startswith(":=", end) or _token_at(scan, end, "where") or scan.startswith("\n  | ", end)):
+    if not (scan.startswith(":=", end) or token_at(scan, end, "where") or scan.startswith("\n  | ", end)):
         return None
     if re.search(r"\n[ \t]*\|[ \t]", scan[start:end]):
         return None          # a definition by pattern matching whose ``where`` is indented
@@ -363,6 +364,10 @@ class AnonymousDecl:
     ``signature`` is the normalised statement text ``statement_sha256`` hashes.
     ``rejected_tag`` explains a comment above the declaration that looked like
     a declared-id tag but was refused (``None`` when there was none).
+    ``comment_tags`` lists every backticked ``<keyword>:<slug>`` tag that opens
+    a comment directly above, declared or refused alike: a companion may use
+    that shape as a plain comment tag (measure_theory's ledger ids), and an
+    exporter joins on it as a legacy id even when it declares nothing.
     """
     file: str
     line: int
@@ -372,6 +377,7 @@ class AnonymousDecl:
     declared_id: str | None
     signature: str = ""
     rejected_tag: str | None = None
+    comment_tags: tuple[str, ...] = ()
 
 
 def _comments_above(text: str, spans, decl_start: int) -> list[tuple[int, int, str]]:
@@ -435,6 +441,25 @@ def declared_tag(text: str, spans, decl_start: int, keyword: str) -> tuple[str |
     return (found[0] if found else None), ("; ".join(rejected) or None)
 
 
+_TAG_OPENING = re.compile(r"^`((?:example|instance):[^`\s]+)`")
+
+
+def comment_tags(text: str, spans, decl_start: int) -> tuple[str, ...]:
+    """The ``<keyword>:<slug>`` tags that OPEN the comments directly above a declaration.
+
+    The same comments :func:`declared_tag` reads, but every tag-shaped opening
+    counts, whether or not the comment declares an id: a tag that is the first
+    line of a longer comment is refused as a declared id (section 5.1) and is
+    still the name a companion's own tables know the declaration by.
+    """
+    found: list[str] = []
+    for a, b, kind in _comments_above(text, spans, decl_start):
+        m = _TAG_OPENING.match(_comment_body(text, a, b, kind))
+        if m:
+            found.append(m.group(1))
+    return tuple(found)
+
+
 def scan_file(text: str, path: str) -> list[AnonymousDecl]:
     """Every ``example`` and anonymous ``instance`` in one Lean file."""
     code, spans, literals = _scan_lean(text)
@@ -464,7 +489,8 @@ def scan_file(text: str, path: str) -> list[AnonymousDecl]:
         found.append(AnonymousDecl(
             file=path, line=code.count("\n", 0, start) + 1, keyword=kw,
             statement_sha256=statement_sha256(signature), typed=typed,
-            declared_id=declared, signature=signature, rejected_tag=rejected))
+            declared_id=declared, signature=signature, rejected_tag=rejected,
+            comment_tags=comment_tags(text, spans, m.start())))
     return found
 
 

@@ -1,5 +1,12 @@
 {
   "counts": {
+    "lean_files_scanned": 69,
+    "signature_skipped": {
+      "kind_inductive": 1,
+      "kind_structure": 18,
+      "no_header_end": 22
+    },
+    "anonymous_rejected_tags": 64,
     "sources": 1,
     "items": 432,
     "declarations": 3565,
@@ -13,7 +20,6 @@
     "verdicts": 11,
     "clusters": 77,
     "changelog": 3,
-    "unattributed": 0,
     "declarations_by_id_source": {
       "declared": 418,
       "name": 556,
@@ -37,10 +43,8 @@
       "anonymous": 802,
       "named": 2237
     },
-    "declarations_with_namespace": 3147,
     "declarations_with_legacy_ids": 1853,
     "declarations_with_lean_name": 3,
-    "declarations_private_anonymous": 3,
     "declarations_added_as_replacements": [
       "MeasureTheory.Tao.Lebesgue.volume_linear_image",
       "MeasureTheory.Tao.Lebesgue.volume_unique_of_lebesgue_axioms",
@@ -136,19 +140,6 @@
     },
     "destinations_to_artifacts": 61,
     "destination_rows_in": 2884,
-    "verdict_locations": {
-      "verdict:exercise-1.1.21": 1,
-      "verdict:exercise-1.1.22": 1,
-      "verdict:exercise-1.2.21": 1,
-      "verdict:exercise-1.2.23": 1,
-      "verdict:exercise-1.2.24": 2,
-      "verdict:exercise-1.2.25": 1,
-      "verdict:exercise-1.3.12": 1,
-      "verdict:exercise-1.3.13": 1,
-      "verdict:exercise-1.3.4": 1,
-      "verdict:exercise-1.3.6": 1,
-      "verdict:exercise-1.6.39": 1
-    },
     "verdict_resolutions": {
       "verdict:exercise-1.1.21": {
         "state": "fixed",
@@ -234,16 +225,14 @@
     "snippets_line_differs_from_scan": 0,
     "snippets_truncated": 22,
     "anonymous_at_head": 802,
-    "anonymous_rejected_tags": 64,
     "comment_tags_mapped_to_ledger": 64,
     "named_scanned_at_head": 2368,
-    "lean_files_scanned": 69,
-    "namespace_crosscheck_vs_leanparse": {
-      "named_agree": 2368,
-      "anonymous_agree": 802
+    "declarations_scanned": {
+      "named": 2368,
+      "anonymous": 802
     },
     "ilean_files_read": [
-      ".lake/build/lib/lean/MeasureTheory/Tao/Integration/Egorov.ilean"
+      "MeasureTheory/Tao/Integration/Egorov.ilean"
     ],
     "ledger": {
       "formalization_nodes": 2884,
@@ -253,8 +242,6 @@
       "mapped_to_artifacts": 61
     },
     "repo_head": "00a24385c4f6ae24e80d9fc3ac05b45dbd5ea448",
-    "repo_dirty": false,
-    "bytes": 7494163,
     "x_keys": {
       "$.x_graph_scope": 1,
       "clusters[].x_plan_item_ids": 77,
@@ -262,19 +249,19 @@
       "clusters[].x_status": 77,
       "provenance[].x_method": 1,
       "provenance[].x_nodes_curated": 1,
+      "sources[].x_companion_edition": 1,
       "sources[].x_download_checks": 1
-    },
-    "x_bytes_approx": 11371
+    }
   },
   "lossy": {
     "source.printed_page_offset_from_prose": {
       "count": 1,
-      "detail": "no measure_theory file records the printed-page offset; 16 was read from ledger locator prose ({16: 66, 11: 1} over first printed/PDF page pairs; the outlier is a two-part locator)",
+      "detail": "no companion file records the printed-page offset; the ledger's locator prose gives {16: 66, 11: 1} over first printed/PDF page pairs (the outlier is a two-part locator) and the registry 16",
       "examples": []
     },
     "source.path": {
       "count": 1,
-      "detail": "ledger source.path (sources/gsm-126-tao5-measure-book.pdf) is relative to the external ff-core workspace, not the companion repo; source.path is a repo path, so it was not carried",
+      "detail": "ledger source.path (sources/gsm-126-tao5-measure-book.pdf) is relative to an external workspace, not the companion repo; source.path is a repo path, so it was not carried",
       "examples": []
     },
     "item.passage_label": {
@@ -339,7 +326,7 @@
     },
     "item.coverage_unclassified": {
       "count": 205,
-      "detail": "the same note says the other items with no entry (sections 1.1 to 1.6) are formalised only by anonymous examples, by nothing, or only by supporting declarations, without saying which; they carry cluster_fallback and no coverage",
+      "detail": "the same note says the other items with no entry are formalised only by anonymous examples, by nothing, or only by supporting declarations, without saying which; they carry cluster_fallback and no coverage",
       "examples": []
     },
     "destinations.header": {
@@ -367,12 +354,12 @@
     },
     "verdict.replaced_by_evidence_only": {
       "count": 1,
-      "detail": "Exercise 1.2.23's evidence says PR #13 added volume_completion_unique_of_translation_invariant as well as volume_unique_of_lebesgue_axioms, but only the latter is cited as stating the exercise (in the declaration note), so replaced_by names only it; the evidence text itself is carried in full",
+      "detail": "a verdict's evidence may name a declaration its resolution does not (one entry's evidence names two declarations a PR added and its declaration note cites one as stating the exercise); replaced_by follows the note, the evidence text is carried in full",
       "examples": []
     },
     "ledger.integrity_blocks": {
       "count": 1,
-      "detail": "the ledger's own integrity machinery is not carried: files[] (65 pinned file hashes), comparison_signatures, counts, provenance.canonical_inputs, authority and ledger_schema. All are recoverable from the ledger pinned in companion.graph; none is item or declaration data",
+      "detail": "the ledger's own integrity machinery is not carried: files[] (pinned file hashes), comparison_signatures, counts, provenance.canonical_inputs, authority and ledger_schema. All are recoverable from the ledger pinned in companion.graph; none is item or declaration data",
       "examples": []
     },
     "declaration.head_not_in_ledger": {
@@ -390,7 +377,12 @@
   "bent": {
     "source.x_download_checks": {
       "count": 1,
-      "detail": "official-source.json's download checks (pdf_header %PDF-1.4, pdf_eof %%EOF, an empty redirect_chain) have no source field; kept in an x_ key",
+      "detail": "official-source.json's download checks (pdf_header, pdf_eof, redirect_chain) have no source field; kept in an x_ key",
+      "examples": []
+    },
+    "source.x_companion_edition": {
+      "count": 1,
+      "detail": "the ledger's own words for the edition (source.revision) are kept in an x_ key; the source's id, title and edition are the registry's for these bytes",
       "examples": []
     },
     "item.split_merged_label": {
@@ -423,7 +415,7 @@
     },
     "item.coverage_from_prose": {
       "count": 33,
-      "detail": "target-refinement's provenance note classifies section 1.7's 33 items with no entry (29 formalised only by anonymous examples, Remark 1.7.22 by nothing, Remark 1.7.4 / Definition 1.7.7 / Definition 1.7.10 only by a supporting declaration); the 33 were matched by count (exactly the 33 fallback items numbered 1.7.x) and carry that class as coverage beside cluster_fallback",
+      "detail": "target-refinement's provenance note classifies section 1.7's 33 items with no entry (formalised only by anonymous examples, by nothing, or only by a supporting declaration); they were matched by count (exactly the fallback items numbered 1.7.x) and carry that class as coverage beside cluster_fallback",
       "examples": [
         "definition-1.7.10: support_only",
         "definition-1.7.7: support_only",
@@ -451,8 +443,9 @@
     },
     "root.x_graph_scope": {
       "count": 1,
-      "detail": "the ledger's scope name (tao-measure-chapter-1) and its snapshot tree hash have no companion.graph field; kept in a root x_ key",
+      "detail": "the ledger's scope name and its snapshot tree hash have no companion.graph field; kept in a root x_ key",
       "examples": []
     }
-  }
+  },
+  "problems": []
 }

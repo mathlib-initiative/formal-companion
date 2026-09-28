@@ -1,5 +1,9 @@
 {
- "note": "HTML pages of the tao-measure-lean literate site rendered from main f158509 on 2026-09-26; the site digest is the sha256 of the sorted manifest lines \"<sha256>  <path>\\n\" (docs/annotations.md section 3.1)",
+ "note": "HTML pages of the tao-measure-lean literate site rendered from main f158509 on 2026-09-26; the site digest is the sha256 of the sorted manifest lines \"<sha256>  <path>\\n\" (docs/annotations.md section 3.1); the pin also names the site source, its path under the checkout and the render time",
+ "source_id": "tml-site",
+ "title": "tao-measure-lean literate site (local Verso build, hosted nowhere)",
+ "path": "_site",
+ "rendered_at": "2026-09-26T08:32:53Z",
  "site_sha256": "d1896a91ab26c82e5b432ad218561108035f46499e2d6ee3bfaebf66a6db84ba",
  "pages": [
   {

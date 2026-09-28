@@ -360,15 +360,29 @@ class DocstringTagsAdapter(Adapter):
             return None, "", None, reject.reason
         return item.id, item.sub, item.kind, None
 
-    def _classify_sorry(self, body: str, gap_re: re.Pattern[str],
-                        exercise_permanent: bool = True) -> tuple[bool, str]:
-        """(has sorry, class): gap marker wins, then the repo's sorry policy."""
+    def classify_sorry(self, body: str, gap_re: re.Pattern[str],
+                       exercise_permanent: bool = True) -> tuple[bool, str]:
+        """(has sorry, class): gap marker wins, then the repo's sorry policy.
+
+        Public because the annotation exporter classifies every declaration,
+        tagged or not, by the same rule the rows use.
+        """
         stripped = leanparse.strip_comments(body)
         if gap_re.search(body):
             return True, "gap"
         if BARE_SORRY.search(stripped):
             return True, "exercise" if exercise_permanent else "gap"
         return False, "none"
+
+    def tagged_rows(self, repo: str | Path | None = None,
+                    sources: "Mapping[str, str] | None" = None) -> tuple[list[dict], Counter, list[dict]]:
+        """``(rows, counts, rejects)`` of one extraction, for a caller that needs all three.
+
+        :meth:`extract` yields the rows alone and :meth:`dry_run` summarises;
+        the annotation exporter needs the rows AND the tags the grammar refused,
+        which it reports as signals on the unattributed declarations.
+        """
+        return self._rows(self.resolve_repo(repo), self.bind(sources))
 
     def _rows(self, repo: Path, binding):
         decl_kinds = self.decl_kinds()
@@ -417,7 +431,7 @@ class DocstringTagsAdapter(Adapter):
                 anchor = find_page_anchor(decl.doc, tag, clause_window=clause_window,
                                           page_re=page_re)
                 counts[f"anchor_{anchor.source}"] += 1
-                has_sorry, sorry_class = self._classify_sorry(decl.body, gap_re,
+                has_sorry, sorry_class = self.classify_sorry(decl.body, gap_re,
                                                               exercise_permanent)
                 if has_sorry:
                     counts["sorry"] += 1
