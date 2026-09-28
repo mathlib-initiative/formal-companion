@@ -146,7 +146,13 @@ both are pinned:
   puts it in `gate_failed` instead. The two lists are disjoint in
   `reports/tally.<run>.json` and in `reports/coverage.json` alike, and `cf tally`
   and the handoff each name them in separate sentences — a rejected run's rows
-  are in the corpus and are counted like any others.
+  are in the corpus and are counted like any others. The receipt also carries
+  `cost`: null for a run harvested without `--transcripts`, otherwise the
+  priced totals of the agents' transcripts (`tokens` by model id, `usd`,
+  `priced`, `unpriced`, `price_table_sha256`, `transcript_count`,
+  `message_count`), priced with `workspace.yaml` `budget.prices`. `cost` never
+  changes `complete`; an unpriced model makes `usd` a lower bound and is named
+  wherever the figure is printed.
 - `runs/<id>/run.yaml`: `companion_pins: {<name>: {repo_commit, dirty,
   method}}`, read through `cflib.gitsafe`.
 - `reports/pin.<run>.json`: written by `cf harvest`, never by a worker — the

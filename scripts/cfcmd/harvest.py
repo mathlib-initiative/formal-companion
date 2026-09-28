@@ -23,6 +23,8 @@ from cflib.errors import CfError
 from cflib.jsonio import write_json
 from cflib.yamlio import read_yaml
 
+from cost import fleet as cost_fleet
+from cost import pricing
 from harvest import gate_corpus as gate_mod
 from harvest import harvest as harvest_mod
 from harvest import harvest_journal, record as record_mod
@@ -45,6 +47,16 @@ def register(subparsers) -> None:
                         "attaches to one (the orphans are counted in the journal summary)")
     p.add_argument("--verify-sha", action="store_true",
                    help="also compare source checksums (catches truncated transfers)")
+    # The run's cost (issue #11): the orchestrator sees no token, the agents'
+    # own transcripts carry every one.  A local path only: the transcripts hold
+    # prompts and tool output, so what crosses machines is the `cf cost --export`
+    # file, never the transcripts themselves.
+    p.add_argument("--transcripts", default=None, metavar="PATH",
+                   help="price the run from the agents' Claude Code transcripts or Codex "
+                        "rollout logs under PATH, or from a usage export written by "
+                        "`cf cost --export`; the priced totals land in RECEIPT.json")
+    p.add_argument("--transcripts-model", default=None, metavar="ID",
+                   help="with --transcripts: the model id for a log that names none")
     p.add_argument("--execute", action="store_true", help="required when the source is remote")
     p.add_argument("--i-have-consent", action="store_true",
                    help="required with a remote --from: this moves data between two machines")
@@ -75,12 +87,17 @@ def run(args) -> int:
     data = read_yaml(run_yaml_path) if run_yaml_path.exists() else {}
     data = data if isinstance(data, dict) else {}
 
+    cost = _cost_block(workspace, args)
     if args.journal:
-        receipt = _from_journal(workspace, args, dest, data)
+        receipt = _from_journal(workspace, args, dest, data, cost=cost)
     else:
-        receipt = _from_findings(workspace, args, data, dest, run_yaml_path)
+        receipt = _from_findings(workspace, args, data, dest, run_yaml_path, cost=cost)
 
     log.info(harvest_mod.describe(receipt))
+    if cost and cost.get("unpriced"):
+        log.warn(f"UNPRICED model(s) {', '.join(cost['unpriced'])}: their tokens are in the "
+                 f"receipt and priced nowhere, so {pricing.format_usd(cost['usd'])} is a lower "
+                 f"bound. Add them to workspace.yaml budget.prices and re-run the harvest.")
     if receipt["missing"] or receipt["sha_mismatched"]:
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")
@@ -105,7 +122,31 @@ def run(args) -> int:
     return 0 if receipt["complete"] else 1
 
 
-def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path) -> dict:
+def _cost_block(workspace, args) -> dict | None:
+    """The receipt's ``cost`` block from ``--transcripts``, or None without the flag.
+
+    Priced with this workspace's ``budget.prices``; a workspace written before
+    that key existed is priced with the shipped default table, and the block
+    says so in ``price_table_source``.
+    """
+    path = getattr(args, "transcripts", None)
+    if not path:
+        return None
+    try:
+        table, source = pricing.from_workspace_data(workspace.data)
+    except ValueError as exc:
+        raise CfError(str(exc),
+                      hint="one entry per model id with input, output, cache_write, cache_read "
+                           "(US dollars per million tokens) and a source note")
+    if source == pricing.SOURCE_DEFAULT:
+        log.detail("  cost: workspace.yaml has no budget.prices; priced with the shipped "
+                   "default table")
+    return cost_fleet.cost_block(path, table=table, table_source=source,
+                                 model=getattr(args, "transcripts_model", None))
+
+
+def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
+                   cost: dict | None = None) -> dict:
     if args.source:
         source = harvest_mod.parse_source(args.source)
         # `--from host:/path` used to skip the allowlist entirely -- only the
@@ -128,7 +169,7 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path)
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate_runner=gate_runner(workspace, args))
+        gate_runner=gate_runner(workspace, args), cost=cost)
 
 
 def _check_remote_source(workspace, args, source: dict) -> None:
@@ -304,7 +345,8 @@ def _default_source(workspace, args, data: dict) -> dict:
             "path": f"{host['remote_root']}/{names['entrypoint']}/findings"}
 
 
-def _from_journal(workspace, args, dest: Path, data: dict | None = None) -> dict:
+def _from_journal(workspace, args, dest: Path, data: dict | None = None,
+                  cost: dict | None = None) -> dict:
     """Recover a local Workflow run, then receipt what was recovered."""
     workflow_dir = Path(args.journal)
     sources = manifest.source_shas(workspace, data or {})
@@ -334,7 +376,7 @@ def _from_journal(workspace, args, dest: Path, data: dict | None = None) -> dict
         run_id=args.run_id, source={"kind": "journal", "path": str(workflow_dir)},
         expected=written, dest=dest, sources=sources,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate=runner(dest) if runner else None)
+        gate=runner(dest) if runner else None, cost=cost)
     # A journal harvest is complete only against ITSELF: the run died, so the
     # expected set is what survived, not what was asked for.
     receipt["expected_from"] = "workflow journal (a killed run: this is what survived)"

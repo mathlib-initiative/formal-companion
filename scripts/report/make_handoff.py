@@ -677,10 +677,36 @@ def render_runs_table(runs: dict[str, dict], tallies: list[dict],
                 _task_count(cfg) or gap("tasks", "cf plan-run"),
                 info.get("files", (receipt.get("actual") or {}).get("count")
                          or todo("finding files", "cf harvest")),
+                *_cost_cells(cfg, receipt, unplanned),
             ]
         )
     return _table(["run", "mode", "model", "source", "source access", "host", "tasks",
-                   "finding files"], rows)
+                   "finding files", "cost (USD)", "USD per task"], rows)
+
+
+def _cost_cells(cfg: dict, receipt: dict, unplanned: bool) -> list:
+    """The two cost cells of the runs table, from the receipt's ``cost`` block.
+
+    The dollars are what `cf harvest --transcripts` priced (issue #11) and the
+    per-task figure divides them by ``run.yaml``'s task count, or by the
+    finding-file count when there is no plan.  A receipt with no block reads
+    ``--`` for an unplanned run and a TODO naming the harvest flag otherwise; a
+    block with an unpriced model is marked, because its dollars are a lower
+    bound.
+    """
+    cost = receipt.get("cost") if isinstance(receipt.get("cost"), dict) else None
+    if not cost:
+        how = "cf harvest <run-id> --transcripts <path>"
+        return ["--", "--"] if unplanned else [todo("cost", how), todo("cost per task", how)]
+    usd = float(cost.get("usd") or 0.0)
+    flag = " (lower bound: unpriced %s)" % ", ".join(cost["unpriced"]) if cost.get("unpriced") else ""
+    tasks = _task_count(cfg) or (receipt.get("actual") or {}).get("count")
+    try:
+        tasks = int(tasks)
+    except (TypeError, ValueError):
+        tasks = 0
+    per_task = ("%.2f" % (usd / tasks)) if tasks > 0 else "--"
+    return ["%.2f%s" % (usd, flag), per_task]
 
 
 def _classes(entry: dict) -> str:
