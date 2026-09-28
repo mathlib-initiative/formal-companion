@@ -64,6 +64,10 @@ release has something to say.
   missing or extra field, a sha of the wrong length, a stage outside S0 to S9
   or a fleet whose receipt carries no cost block. `cflib.paths` gained the
   pipeline paths.
+- `registry/calibration.yaml`: calibration facts the milestones replay against,
+  starting with the tao-measure-lean revision before the camera-ready fix
+  stack (`d8cdfd5`, the first parent of the stack's first merge) and how it
+  was found.
 - Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with
