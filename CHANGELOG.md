@@ -57,6 +57,13 @@ release has something to say.
   per response, which is how usage leaves a host without the transcripts'
   text. `tests/data/m0a/` holds the fixtures: the section 1.7 re-run's
   exported rows price to $358.10, the recorded total.
+- `scripts/pipeline/`: the loader and validator of `pipelines/<id>/pipeline.yaml`
+  (exercise policy, scope, consent, the fleet run ids per stage; every unknown
+  key refused) and the writer of `pipelines/<id>/stages/<stage>.stage-receipt.json`
+  with the eleven fields of proposal section 4.1, which fails closed on a
+  missing or extra field, a sha of the wrong length, a stage outside S0 to S9
+  or a fleet whose receipt carries no cost block. `cflib.paths` gained the
+  pipeline paths.
 - Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with

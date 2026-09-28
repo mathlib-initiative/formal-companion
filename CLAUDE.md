@@ -48,7 +48,7 @@ scripts/cflib/       shared library (no stage logic, no network):
                      items, vocab, hashing, yamlio/jsonio, adapters_api
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
-                     route, detect, report, recheck, score, share, cost
+                     route, detect, report, recheck, score, share, cost, pipeline
 scripts/annotations/ the annotation format's checker (validate.py, schemacheck.py)
                      and mechanical ids (ids.py); run by path, not a stage
 templates/  workflows/  tests/  .github/workflows/

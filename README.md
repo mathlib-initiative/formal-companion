@@ -48,7 +48,8 @@ scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference
                   state.json, paths, item grammar, vocabulary
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
                   detect, report, recheck, score, share, cost (a fleet's tokens
-                  and dollars from the agents' transcripts)
+                  and dollars from the agents' transcripts), pipeline (the
+                  PDF-to-companion pipeline's pipeline.yaml and stage receipts)
 scripts/annotations/
                   the annotation format's checker and mechanical ids (not a stage)
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
@@ -282,6 +283,9 @@ manual`, `confirmed: false` until a human says otherwise.
   runs/<run-id>/             run.yaml, tasks/, prompts/, gate.json, tend-root/ (gitignored)
   corpus/<run-id>/           findings + RECEIPT.json  (committed: this is the baseline;
                              the receipt's cost block is the run's priced tokens)
+  pipelines/<id>/            pipeline.yaml, doc.vN.json checkpoints and
+                             stages/<stage>.stage-receipt.json: the PDF-to-companion
+                             pipeline's records (the writer exists; no stage does yet)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts
   reports/                   tally.<run>.json, union.<name>.json, coverage.json,

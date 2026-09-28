@@ -105,6 +105,9 @@ lines move together or not at all.
   runs/<run-id>/              run.yaml, tasks/, prompts/, gate.json,
                               tend-root/ (gitignored)
   corpus/<run-id>/            findings + RECEIPT.json  (committed: the baseline)
+  pipelines/<id>/             pipeline.yaml, doc.vN.json, stages/<stage>.stage-receipt.json
+                              (docs/proposals/pdf-to-companion.md section 4.1; the
+                              loader and the receipt writer exist, no stage does yet)
   ledger/                     accepted.<name>.jsonl, refuted.<name>.jsonl,
                               adjudicated.<name>.md, routed/findings.<name>.jsonl
   detect/<name>/              proxy-detection artifacts
