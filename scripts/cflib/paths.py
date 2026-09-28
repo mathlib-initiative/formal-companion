@@ -269,6 +269,28 @@ class WorkspacePaths:
     def receipt_json(self, run_id: str) -> Path:
         return self.corpus_run_dir(run_id) / "RECEIPT.json"
 
+    # -- pipelines (docs/proposals/pdf-to-companion.md section 4.1) ----
+    @property
+    def pipelines_dir(self) -> Path:
+        return self.root / "pipelines"
+
+    def pipeline_dir(self, pipeline_id: str) -> Path:
+        return self.pipelines_dir / _safe_id(pipeline_id, "pipeline id")
+
+    def pipeline_yaml(self, pipeline_id: str) -> Path:
+        return self.pipeline_dir(pipeline_id) / "pipeline.yaml"
+
+    def pipeline_doc(self, pipeline_id: str, version: int) -> Path:
+        """The checkpointed annotation document doc v<version>."""
+        return self.pipeline_dir(pipeline_id) / f"doc.v{int(version)}.json"
+
+    def stage_receipts_dir(self, pipeline_id: str) -> Path:
+        return self.pipeline_dir(pipeline_id) / "stages"
+
+    def stage_receipt_json(self, pipeline_id: str, stage: str) -> Path:
+        return self.stage_receipts_dir(pipeline_id) / (
+            f"{_safe_id(stage, 'stage')}.stage-receipt.json")
+
     # -- ledger, routing, detection ------------------------------------
     @property
     def ledger_dir(self) -> Path:
