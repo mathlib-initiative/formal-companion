@@ -1,0 +1,2998 @@
+{
+ "companion": "tao-measure-lean",
+ "format": "cf-m1-truth/1",
+ "numbered": [
+  {
+   "kind": "Definition",
+   "number": "1.1.1",
+   "page": 21
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.1",
+   "page": 21
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.1.2",
+   "page": 22
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.2",
+   "page": 23
+  },
+  {
+   "kind": "Remark",
+   "number": "1.1.3",
+   "page": 23
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.3",
+   "page": 24
+  },
+  {
+   "kind": "Definition",
+   "number": "1.1.4",
+   "page": 25
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.4",
+   "page": 25
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.5",
+   "page": 26
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.6",
+   "page": 26
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.7",
+   "page": 26
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.10",
+   "page": 27
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.11",
+   "page": 27
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.8",
+   "page": 27
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.9",
+   "page": 27
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.12",
+   "page": 28
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.13",
+   "page": 28
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.14",
+   "page": 28
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.15",
+   "page": 28
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.16",
+   "page": 29
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.17",
+   "page": 29
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.18",
+   "page": 29
+  },
+  {
+   "kind": "Definition",
+   "number": "1.1.5",
+   "page": 30
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.19",
+   "page": 30
+  },
+  {
+   "kind": "Definition",
+   "number": "1.1.6",
+   "page": 31
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.20",
+   "page": 31
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.21",
+   "page": 31
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.22",
+   "page": 32
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.23",
+   "page": 32
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.24",
+   "page": 32
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.25",
+   "page": 33
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.1.26",
+   "page": 33
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.1",
+   "page": 34
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.2",
+   "page": 34
+  },
+  {
+   "kind": "Example",
+   "number": "1.2.1",
+   "page": 35
+  },
+  {
+   "kind": "Definition",
+   "number": "1.2.2",
+   "page": 36
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.3",
+   "page": 37
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.4",
+   "page": 38
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.5",
+   "page": 39
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.4",
+   "page": 41
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.6",
+   "page": 41
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.7",
+   "page": 41
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.8",
+   "page": 43
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.9",
+   "page": 44
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.10",
+   "page": 44
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.5",
+   "page": 45
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.11",
+   "page": 45
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.12",
+   "page": 46
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.6",
+   "page": 47
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.13",
+   "page": 47
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.14",
+   "page": 49
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.7",
+   "page": 50
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.8",
+   "page": 50
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.9",
+   "page": 50
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.10",
+   "page": 51
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.2.15",
+   "page": 51
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.11",
+   "page": 53
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.12",
+   "page": 54
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.13",
+   "page": 54
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.14",
+   "page": 55
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.15",
+   "page": 55
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.16",
+   "page": 55
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.16",
+   "page": 55
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.17",
+   "page": 56
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.18",
+   "page": 56
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.19",
+   "page": 56
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.20",
+   "page": 57
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.21",
+   "page": 57
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.22",
+   "page": 57
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.23",
+   "page": 58
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.24",
+   "page": 58
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.25",
+   "page": 59
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.2.18",
+   "page": 60
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.26",
+   "page": 61
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.2.27",
+   "page": 61
+  },
+  {
+   "kind": "Remark",
+   "number": "1.2.19",
+   "page": 62
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.2",
+   "page": 66
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.3",
+   "page": 67
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.3.4",
+   "page": 67
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.5",
+   "page": 69
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.1",
+   "page": 69
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.6",
+   "page": 70
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.2",
+   "page": 71
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.8",
+   "page": 73
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.3.9",
+   "page": 73
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.3",
+   "page": 76
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.4",
+   "page": 76
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.5",
+   "page": 77
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.6",
+   "page": 77
+  },
+  {
+   "kind": "Remark",
+   "number": "1.3.10",
+   "page": 77
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.11",
+   "page": 78
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.7",
+   "page": 78
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.8",
+   "page": 78
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.12",
+   "page": 79
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.9",
+   "page": 79
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.10",
+   "page": 80
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.3.14",
+   "page": 81
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.13",
+   "page": 81
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.11",
+   "page": 81
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.12",
+   "page": 82
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.13",
+   "page": 82
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.14",
+   "page": 82
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.15",
+   "page": 82
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.16",
+   "page": 82
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.17",
+   "page": 82
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.18",
+   "page": 83
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.3.15",
+   "page": 83
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.17",
+   "page": 84
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.19",
+   "page": 86
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.20",
+   "page": 86
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.21",
+   "page": 86
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.22",
+   "page": 87
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.3.19",
+   "page": 87
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.3.20",
+   "page": 88
+  },
+  {
+   "kind": "Definition",
+   "number": "1.3.21",
+   "page": 90
+  },
+  {
+   "kind": "Example",
+   "number": "1.3.23",
+   "page": 90
+  },
+  {
+   "kind": "Example",
+   "number": "1.3.24",
+   "page": 90
+  },
+  {
+   "kind": "Remark",
+   "number": "1.3.22",
+   "page": 90
+  },
+  {
+   "kind": "Example",
+   "number": "1.3.25",
+   "page": 91
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.3.26",
+   "page": 91
+  },
+  {
+   "kind": "Remark",
+   "number": "1.3.27",
+   "page": 92
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.23",
+   "page": 93
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.24",
+   "page": 93
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.3.28",
+   "page": 93
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.3.25",
+   "page": 94
+  },
+  {
+   "kind": "Remark",
+   "number": "1.3.29",
+   "page": 94
+  },
+  {
+   "kind": "Remark",
+   "number": "1.3.30",
+   "page": 94
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.1",
+   "page": 96
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.3",
+   "page": 97
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.4",
+   "page": 97
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.5",
+   "page": 97
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.1",
+   "page": 97
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.2",
+   "page": 97
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.6",
+   "page": 98
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.7",
+   "page": 98
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.8",
+   "page": 98
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.2",
+   "page": 98
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.3",
+   "page": 99
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.4",
+   "page": 99
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.5",
+   "page": 99
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.6",
+   "page": 99
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.10",
+   "page": 100
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.11",
+   "page": 100
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.7",
+   "page": 100
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.8",
+   "page": 100
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.9",
+   "page": 100
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.12",
+   "page": 101
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.10",
+   "page": 101
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.11",
+   "page": 101
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.12",
+   "page": 101
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.14",
+   "page": 102
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.13",
+   "page": 102
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.15",
+   "page": 102
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.16",
+   "page": 103
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.14",
+   "page": 103
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.15",
+   "page": 103
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.16",
+   "page": 104
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.19",
+   "page": 105
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.17",
+   "page": 105
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.18",
+   "page": 105
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.19",
+   "page": 105
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.21",
+   "page": 106
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.22",
+   "page": 106
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.23",
+   "page": 106
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.24",
+   "page": 106
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.25",
+   "page": 106
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.26",
+   "page": 106
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.20",
+   "page": 106
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.20",
+   "page": 107
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.21",
+   "page": 107
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.27",
+   "page": 108
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.28",
+   "page": 108
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.29",
+   "page": 108
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.30",
+   "page": 108
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.22",
+   "page": 108
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.23",
+   "page": 109
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.24",
+   "page": 109
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.25",
+   "page": 109
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.31",
+   "page": 110
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.26",
+   "page": 110
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.27",
+   "page": 110
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.28",
+   "page": 110
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.32",
+   "page": 111
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.29",
+   "page": 111
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.30",
+   "page": 112
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.31",
+   "page": 112
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.33",
+   "page": 112
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.34",
+   "page": 113
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.32",
+   "page": 113
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.35",
+   "page": 114
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.33",
+   "page": 114
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.34",
+   "page": 115
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.35",
+   "page": 115
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.37",
+   "page": 116
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.36",
+   "page": 116
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.4.38",
+   "page": 117
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.37",
+   "page": 119
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.38",
+   "page": 119
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.39",
+   "page": 119
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.40",
+   "page": 119
+  },
+  {
+   "kind": "Definition",
+   "number": "1.4.39",
+   "page": 120
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.41",
+   "page": 120
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.42",
+   "page": 121
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.40",
+   "page": 122
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.41",
+   "page": 122
+  },
+  {
+   "kind": "Example",
+   "number": "1.4.42",
+   "page": 122
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.4.44",
+   "page": 123
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.45",
+   "page": 124
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.4.46",
+   "page": 125
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.43",
+   "page": 125
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.44",
+   "page": 125
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.45",
+   "page": 125
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.4.47",
+   "page": 126
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.48",
+   "page": 126
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.4.49",
+   "page": 127
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.46",
+   "page": 128
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.47",
+   "page": 128
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.48",
+   "page": 128
+  },
+  {
+   "kind": "Remark",
+   "number": "1.4.50",
+   "page": 128
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.49",
+   "page": 129
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.50",
+   "page": 129
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.4.51",
+   "page": 130
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.1",
+   "page": 133
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.2",
+   "page": 133
+  },
+  {
+   "kind": "Example",
+   "number": "1.5.2",
+   "page": 134
+  },
+  {
+   "kind": "Example",
+   "number": "1.5.3",
+   "page": 134
+  },
+  {
+   "kind": "Example",
+   "number": "1.5.4",
+   "page": 134
+  },
+  {
+   "kind": "Example",
+   "number": "1.5.5",
+   "page": 134
+  },
+  {
+   "kind": "Remark",
+   "number": "1.5.6",
+   "page": 135
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.5.7",
+   "page": 136
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.3",
+   "page": 137
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.4",
+   "page": 139
+  },
+  {
+   "kind": "Remark",
+   "number": "1.5.8",
+   "page": 139
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.5.9",
+   "page": 139
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.5.10",
+   "page": 140
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.5",
+   "page": 140
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.6",
+   "page": 140
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.7",
+   "page": 141
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.8",
+   "page": 141
+  },
+  {
+   "kind": "Definition",
+   "number": "1.5.11",
+   "page": 142
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.9",
+   "page": 142
+  },
+  {
+   "kind": "Remark",
+   "number": "1.5.12",
+   "page": 142
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.10",
+   "page": 143
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.11",
+   "page": 143
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.12",
+   "page": 143
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.13",
+   "page": 143
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.14",
+   "page": 143
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.15",
+   "page": 144
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.5.13",
+   "page": 144
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.16",
+   "page": 146
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.17",
+   "page": 146
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.18",
+   "page": 146
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.5.19",
+   "page": 146
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.1",
+   "page": 148
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.2",
+   "page": 148
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.2",
+   "page": 148
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.6.5",
+   "page": 149
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.3",
+   "page": 149
+  },
+  {
+   "kind": "Remark",
+   "number": "1.6.3",
+   "page": 149
+  },
+  {
+   "kind": "Remark",
+   "number": "1.6.4",
+   "page": 149
+  },
+  {
+   "kind": "Remark",
+   "number": "1.6.6",
+   "page": 149
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.4",
+   "page": 150
+  },
+  {
+   "kind": "Remark",
+   "number": "1.6.8",
+   "page": 150
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.7",
+   "page": 150
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.6.10",
+   "page": 151
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.9",
+   "page": 151
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.5",
+   "page": 152
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.11",
+   "page": 152
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.6",
+   "page": 153
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.12",
+   "page": 153
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.6.13",
+   "page": 154
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.7",
+   "page": 155
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.8",
+   "page": 156
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.9",
+   "page": 156
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.6.16",
+   "page": 157
+  },
+  {
+   "kind": "Remark",
+   "number": "1.6.15",
+   "page": 157
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.6.17",
+   "page": 159
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.10",
+   "page": 160
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.11",
+   "page": 161
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.12",
+   "page": 162
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.13",
+   "page": 162
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.19",
+   "page": 162
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.14",
+   "page": 163
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.15",
+   "page": 163
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.16",
+   "page": 163
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.17",
+   "page": 164
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.6.22",
+   "page": 164
+  },
+  {
+   "kind": "Remark",
+   "number": "1.6.21",
+   "page": 164
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.20",
+   "page": 164
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.19",
+   "page": 167
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.20",
+   "page": 167
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.21",
+   "page": 168
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.22",
+   "page": 168
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.23",
+   "page": 169
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.24",
+   "page": 169
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.25",
+   "page": 169
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.26",
+   "page": 170
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.27",
+   "page": 170
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.28",
+   "page": 171
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.29",
+   "page": 172
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.25",
+   "page": 172
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.30",
+   "page": 173
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.6.26",
+   "page": 173
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.31",
+   "page": 174
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.6.28",
+   "page": 175
+  },
+  {
+   "kind": "Definition",
+   "number": "1.6.30",
+   "page": 176
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.6.31",
+   "page": 177
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.32",
+   "page": 178
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.33",
+   "page": 178
+  },
+  {
+   "kind": "Definition",
+   "number": "1.6.33",
+   "page": 180
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.34",
+   "page": 180
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.35",
+   "page": 180
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.36",
+   "page": 181
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.37",
+   "page": 181
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.38",
+   "page": 181
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.6.34",
+   "page": 181
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.6.35",
+   "page": 182
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.39",
+   "page": 182
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.40",
+   "page": 182
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.41",
+   "page": 182
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.42",
+   "page": 183
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.6.37",
+   "page": 183
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.43",
+   "page": 184
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.44",
+   "page": 184
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.45",
+   "page": 185
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.46",
+   "page": 185
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.47",
+   "page": 186
+  },
+  {
+   "kind": "Definition",
+   "number": "1.6.39",
+   "page": 187
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.48",
+   "page": 187
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.49",
+   "page": 188
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.6.40",
+   "page": 188
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.50",
+   "page": 191
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.51",
+   "page": 191
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.6.41",
+   "page": 191
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.52",
+   "page": 193
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.6.53",
+   "page": 193
+  },
+  {
+   "kind": "Definition",
+   "number": "1.7.1",
+   "page": 196
+  },
+  {
+   "kind": "Definition",
+   "number": "1.7.2",
+   "page": 197
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.1",
+   "page": 197
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.2",
+   "page": 197
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.7.3",
+   "page": 197
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.3",
+   "page": 200
+  },
+  {
+   "kind": "Remark",
+   "number": "1.7.4",
+   "page": 200
+  },
+  {
+   "kind": "Remark",
+   "number": "1.7.5",
+   "page": 200
+  },
+  {
+   "kind": "Definition",
+   "number": "1.7.7",
+   "page": 201
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.4",
+   "page": 201
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.5",
+   "page": 201
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.6",
+   "page": 201
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.7.8",
+   "page": 201
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.7",
+   "page": 203
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.8",
+   "page": 204
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.9",
+   "page": 204
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.7.9",
+   "page": 204
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.10",
+   "page": 207
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.11",
+   "page": 207
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.12",
+   "page": 207
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.13",
+   "page": 208
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.14",
+   "page": 208
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.15",
+   "page": 209
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.16",
+   "page": 209
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.17",
+   "page": 210
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.18",
+   "page": 210
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.19",
+   "page": 211
+  },
+  {
+   "kind": "Definition",
+   "number": "1.7.10",
+   "page": 212
+  },
+  {
+   "kind": "Proposition",
+   "number": "1.7.11",
+   "page": 213
+  },
+  {
+   "kind": "Example",
+   "number": "1.7.13",
+   "page": 215
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.20",
+   "page": 215
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.21",
+   "page": 215
+  },
+  {
+   "kind": "Remark",
+   "number": "1.7.12",
+   "page": 215
+  },
+  {
+   "kind": "Lemma",
+   "number": "1.7.14",
+   "page": 216
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.7.15",
+   "page": 216
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.7.17",
+   "page": 217
+  },
+  {
+   "kind": "Remark",
+   "number": "1.7.16",
+   "page": 217
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.7.18",
+   "page": 218
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.7.19",
+   "page": 219
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.22",
+   "page": 219
+  },
+  {
+   "kind": "Remark",
+   "number": "1.7.20",
+   "page": 220
+  },
+  {
+   "kind": "Theorem",
+   "number": "1.7.21",
+   "page": 220
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.23",
+   "page": 221
+  },
+  {
+   "kind": "Corollary",
+   "number": "1.7.23",
+   "page": 222
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.24",
+   "page": 222
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.25",
+   "page": 223
+  },
+  {
+   "kind": "Exercise",
+   "number": "1.7.26",
+   "page": 223
+  },
+  {
+   "kind": "Definition",
+   "number": "2.2.1",
+   "page": 242
+  },
+  {
+   "kind": "Definition",
+   "number": "2.2.2",
+   "page": 242
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.2.1",
+   "page": 242
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.2.2",
+   "page": 243
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.2.3",
+   "page": 243
+  },
+  {
+   "kind": "Remark",
+   "number": "2.2.3",
+   "page": 243
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.2.4",
+   "page": 244
+  },
+  {
+   "kind": "Theorem",
+   "number": "2.2.4",
+   "page": 244
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.2.5",
+   "page": 248
+  },
+  {
+   "kind": "Example",
+   "number": "2.3.2",
+   "page": 249
+  },
+  {
+   "kind": "Example",
+   "number": "2.3.3",
+   "page": 249
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.3.1",
+   "page": 250
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.3.2",
+   "page": 250
+  },
+  {
+   "kind": "Exercise",
+   "number": "2.4.1",
+   "page": 252
+  },
+  {
+   "kind": "Definition",
+   "number": "2.4.1",
+   "page": 253
+  },
+  {
+   "kind": "Theorem",
+   "number": "2.4.3",
+   "page": 253
+  },
+  {
+   "kind": "Theorem",
+   "number": "2.4.4",
+   "page": 256
+  },
+  {
+   "kind": "Example",
+   "number": "2.4.6",
+   "page": 257
+  },
+  {
+   "kind": "Example",
+   "number": "2.4.7",
+   "page": 257
+  },
+  {
+   "kind": "Example",
+   "number": "2.4.8",
+   "page": 257
+  }
+ ],
+ "passages": [
+  {
+   "near": [],
+   "page": 21
+  },
+  {
+   "near": [],
+   "page": 21
+  },
+  {
+   "near": [],
+   "page": 23
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 24
+  },
+  {
+   "near": [],
+   "page": 26
+  },
+  {
+   "near": [],
+   "page": 29
+  },
+  {
+   "near": [],
+   "page": 30
+  },
+  {
+   "near": [],
+   "page": 30
+  },
+  {
+   "near": [],
+   "page": 30
+  },
+  {
+   "near": [],
+   "page": 30
+  },
+  {
+   "near": [],
+   "page": 30
+  },
+  {
+   "near": [],
+   "page": 30
+  },
+  {
+   "near": [],
+   "page": 32
+  },
+  {
+   "near": [],
+   "page": 32
+  },
+  {
+   "near": [],
+   "page": 34
+  },
+  {
+   "near": [],
+   "page": 34
+  },
+  {
+   "near": [],
+   "page": 34
+  },
+  {
+   "near": [],
+   "page": 34
+  },
+  {
+   "near": [],
+   "page": 35
+  },
+  {
+   "near": [],
+   "page": 35
+  },
+  {
+   "near": [],
+   "page": 35
+  },
+  {
+   "near": [],
+   "page": 38
+  },
+  {
+   "near": [],
+   "page": 38
+  },
+  {
+   "near": [],
+   "page": 40
+  },
+  {
+   "near": [],
+   "page": 40
+  },
+  {
+   "near": [],
+   "page": 40
+  },
+  {
+   "near": [],
+   "page": 41
+  },
+  {
+   "near": [],
+   "page": 42
+  },
+  {
+   "near": [],
+   "page": 43
+  },
+  {
+   "near": [],
+   "page": 43
+  },
+  {
+   "near": [],
+   "page": 44
+  },
+  {
+   "near": [],
+   "page": 44
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 45
+  },
+  {
+   "near": [],
+   "page": 46
+  },
+  {
+   "near": [],
+   "page": 46
+  },
+  {
+   "near": [],
+   "page": 46
+  },
+  {
+   "near": [],
+   "page": 46
+  },
+  {
+   "near": [],
+   "page": 46
+  },
+  {
+   "near": [],
+   "page": 46
+  },
+  {
+   "near": [
+    "lemma-1.2.13"
+   ],
+   "page": 48
+  },
+  {
+   "near": [],
+   "page": 51
+  },
+  {
+   "near": [],
+   "page": 51
+  },
+  {
+   "near": [],
+   "page": 51
+  },
+  {
+   "near": [],
+   "page": 52
+  },
+  {
+   "near": [],
+   "page": 52
+  },
+  {
+   "near": [],
+   "page": 53
+  },
+  {
+   "near": [],
+   "page": 53
+  },
+  {
+   "near": [
+    "exercise-1.2.13"
+   ],
+   "page": 54
+  },
+  {
+   "near": [],
+   "page": 56
+  },
+  {
+   "near": [],
+   "page": 56
+  },
+  {
+   "near": [
+    "exercise-1.2.25"
+   ],
+   "page": 59
+  },
+  {
+   "near": [
+    "exercise-1.2.25"
+   ],
+   "page": 59
+  },
+  {
+   "near": [],
+   "page": 62
+  },
+  {
+   "near": [],
+   "page": 63
+  },
+  {
+   "near": [],
+   "page": 63
+  },
+  {
+   "near": [],
+   "page": 63
+  },
+  {
+   "near": [],
+   "page": 66
+  },
+  {
+   "near": [],
+   "page": 66
+  },
+  {
+   "near": [],
+   "page": 66
+  },
+  {
+   "near": [],
+   "page": 66
+  },
+  {
+   "near": [],
+   "page": 66
+  },
+  {
+   "near": [],
+   "page": 67
+  },
+  {
+   "near": [],
+   "page": 67
+  },
+  {
+   "near": [],
+   "page": 69
+  },
+  {
+   "near": [],
+   "page": 69
+  },
+  {
+   "near": [],
+   "page": 69
+  },
+  {
+   "near": [],
+   "page": 70
+  },
+  {
+   "near": [],
+   "page": 71
+  },
+  {
+   "near": [],
+   "page": 71
+  },
+  {
+   "near": [],
+   "page": 78
+  },
+  {
+   "near": [],
+   "page": 79
+  },
+  {
+   "near": [],
+   "page": 79
+  },
+  {
+   "near": [],
+   "page": 79
+  },
+  {
+   "near": [],
+   "page": 84
+  },
+  {
+   "near": [],
+   "page": 84
+  },
+  {
+   "near": [],
+   "page": 84
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 85
+  },
+  {
+   "near": [],
+   "page": 86
+  },
+  {
+   "near": [],
+   "page": 86
+  },
+  {
+   "near": [],
+   "page": 87
+  },
+  {
+   "near": [],
+   "page": 87
+  },
+  {
+   "near": [],
+   "page": 87
+  },
+  {
+   "near": [],
+   "page": 88
+  },
+  {
+   "near": [],
+   "page": 90
+  },
+  {
+   "near": [],
+   "page": 90
+  },
+  {
+   "near": [],
+   "page": 91
+  },
+  {
+   "near": [],
+   "page": 93
+  },
+  {
+   "near": [],
+   "page": 94
+  },
+  {
+   "near": [],
+   "page": 96
+  },
+  {
+   "near": [],
+   "page": 101
+  },
+  {
+   "near": [],
+   "page": 101
+  },
+  {
+   "near": [],
+   "page": 102
+  },
+  {
+   "near": [],
+   "page": 102
+  },
+  {
+   "near": [],
+   "page": 103
+  },
+  {
+   "near": [],
+   "page": 103
+  },
+  {
+   "near": [
+    "example-1.4.21"
+   ],
+   "page": 106
+  },
+  {
+   "near": [],
+   "page": 108
+  },
+  {
+   "near": [
+    "example-1.4.28"
+   ],
+   "page": 108
+  },
+  {
+   "near": [
+    "exercise-1.4.24"
+   ],
+   "page": 109
+  },
+  {
+   "near": [],
+   "page": 110
+  },
+  {
+   "near": [
+    "remark-1.4.33"
+   ],
+   "page": 112
+  },
+  {
+   "near": [
+    "remark-1.4.33"
+   ],
+   "page": 112
+  },
+  {
+   "near": [
+    "remark-1.4.33"
+   ],
+   "page": 112
+  },
+  {
+   "near": [],
+   "page": 113
+  },
+  {
+   "near": [],
+   "page": 114
+  },
+  {
+   "near": [
+    "definition-1.4.35"
+   ],
+   "page": 114
+  },
+  {
+   "near": [
+    "definition-1.4.39"
+   ],
+   "page": 120
+  },
+  {
+   "near": [
+    "definition-1.4.39"
+   ],
+   "page": 120
+  },
+  {
+   "near": [
+    "remark-1.4.50"
+   ],
+   "page": 128
+  },
+  {
+   "near": [],
+   "page": 131
+  },
+  {
+   "near": [],
+   "page": 131
+  },
+  {
+   "near": [],
+   "page": 131
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 132
+  },
+  {
+   "near": [],
+   "page": 135
+  },
+  {
+   "near": [],
+   "page": 136
+  },
+  {
+   "near": [],
+   "page": 137
+  },
+  {
+   "near": [],
+   "page": 137
+  },
+  {
+   "near": [],
+   "page": 137
+  },
+  {
+   "near": [],
+   "page": 137
+  },
+  {
+   "near": [],
+   "page": 138
+  },
+  {
+   "near": [],
+   "page": 138
+  },
+  {
+   "near": [],
+   "page": 139
+  },
+  {
+   "near": [],
+   "page": 139
+  },
+  {
+   "near": [],
+   "page": 139
+  },
+  {
+   "near": [],
+   "page": 141
+  },
+  {
+   "near": [],
+   "page": 142
+  },
+  {
+   "near": [],
+   "page": 142
+  },
+  {
+   "near": [],
+   "page": 142
+  },
+  {
+   "near": [],
+   "page": 142
+  },
+  {
+   "near": [],
+   "page": 147
+  },
+  {
+   "near": [],
+   "page": 148
+  },
+  {
+   "near": [],
+   "page": 152
+  },
+  {
+   "near": [],
+   "page": 163
+  },
+  {
+   "near": [],
+   "page": 163
+  },
+  {
+   "near": [],
+   "page": 164
+  },
+  {
+   "near": [],
+   "page": 167
+  },
+  {
+   "near": [],
+   "page": 169
+  },
+  {
+   "near": [],
+   "page": 169
+  },
+  {
+   "near": [],
+   "page": 171
+  },
+  {
+   "near": [],
+   "page": 172
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 173
+  },
+  {
+   "near": [],
+   "page": 175
+  },
+  {
+   "near": [],
+   "page": 177
+  },
+  {
+   "near": [],
+   "page": 177
+  },
+  {
+   "near": [],
+   "page": 177
+  },
+  {
+   "near": [],
+   "page": 177
+  },
+  {
+   "near": [],
+   "page": 181
+  },
+  {
+   "near": [],
+   "page": 181
+  },
+  {
+   "near": [],
+   "page": 184
+  },
+  {
+   "near": [],
+   "page": 185
+  },
+  {
+   "near": [],
+   "page": 196
+  },
+  {
+   "near": [],
+   "page": 196
+  },
+  {
+   "near": [],
+   "page": 201
+  },
+  {
+   "near": [],
+   "page": 202
+  },
+  {
+   "near": [],
+   "page": 202
+  },
+  {
+   "near": [],
+   "page": 203
+  },
+  {
+   "near": [],
+   "page": 203
+  },
+  {
+   "near": [
+    "exercise-1.7.8"
+   ],
+   "page": 204
+  },
+  {
+   "near": [
+    "theorem-1.7.9"
+   ],
+   "page": 204
+  },
+  {
+   "near": [],
+   "page": 205
+  },
+  {
+   "near": [],
+   "page": 206
+  },
+  {
+   "near": [],
+   "page": 207
+  },
+  {
+   "near": [],
+   "page": 207
+  },
+  {
+   "near": [],
+   "page": 207
+  },
+  {
+   "near": [
+    "exercise-1.7.11"
+   ],
+   "page": 207
+  },
+  {
+   "near": [],
+   "page": 208
+  },
+  {
+   "near": [],
+   "page": 208
+  },
+  {
+   "near": [],
+   "page": 210
+  },
+  {
+   "near": [],
+   "page": 210
+  },
+  {
+   "near": [],
+   "page": 210
+  },
+  {
+   "near": [],
+   "page": 212
+  },
+  {
+   "near": [],
+   "page": 212
+  },
+  {
+   "near": [],
+   "page": 214
+  },
+  {
+   "near": [],
+   "page": 214
+  },
+  {
+   "near": [],
+   "page": 214
+  },
+  {
+   "near": [],
+   "page": 214
+  },
+  {
+   "near": [],
+   "page": 214
+  },
+  {
+   "near": [],
+   "page": 215
+  },
+  {
+   "near": [],
+   "page": 216
+  },
+  {
+   "near": [],
+   "page": 222
+  },
+  {
+   "near": [],
+   "page": 243
+  },
+  {
+   "near": [],
+   "page": 252
+  },
+  {
+   "near": [],
+   "page": 254
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  },
+  {
+   "near": [],
+   "page": 257
+  }
+ ],
+ "source_sha256": "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
+}
