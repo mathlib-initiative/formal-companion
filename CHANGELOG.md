@@ -35,6 +35,31 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
+  pipeline (milestone M1, `docs/pipeline.md`). S0 pins one PDF (sha256, pages,
+  page sizes, `pdftotext` version), prepares it with the onboarding code,
+  refuses an offset below 0.9 without `--offset`, refuses an edition the
+  registry marks `draft` or `superseded` without `--override-edition`, fetches
+  the errata raw, creates the generated repository with one commit and writes
+  `pipeline.yaml`, `doc.v0.json` and its receipt. S1 adds the numbered items
+  in scope with page spans and exact heading quotes, erratum items linked by
+  `relations.same_as`, passages from `--passages` and a labelled heuristic
+  finder, `relations.near`, and writes `doc.v1.json` and its receipt only when
+  the gates pass: slot completeness, slot contiguity per section and counter
+  (with `slot-reasons.yaml`), the exact selector check (verbatim on its own
+  page, NFKC and whitespace collapse), unique ids and a 12-word cap on every
+  `exact`. The two spot-check and hunter agents are deferred.
+- `edition_status` (`current`, `draft`, `superseded`) on registry entries; the
+  2011 Tao draft is `draft`.
+- `cflib.inference.infer_counters` (the counters a numbering runs, read off
+  its numbers) and `slot_filling_kinds` (a heading word too rare for
+  `infer_kinds` is a kind when every number it carries fills a slot the
+  numbering leaves open).
+- `tests/e2e/make_pdf.py --passages`: the booklet with six planted unnumbered
+  passages, five marked and one not; the default booklet is unchanged.
+- `tests/data/m1/`: the two Tao companions' exported annotation documents, the
+  ground truth of the M1 calibration test.
+- `cf init` ignores `pipelines/*/repo/`, the generated repository.
 - `cf cost <path>` and `cf harvest --transcripts <path>` (milestone M0a of the
   pipeline proposal, after issue #11): a run's cost is read from the agents'
   own logs, since the orchestrator sees no token. `scripts/cost/usage.py`
