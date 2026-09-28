@@ -24,7 +24,7 @@ number, or a ``near`` id that names no numbered item; the script prints each.
 Run by the maintainer, by path, on a document that stays outside the tree::
 
     python3 scripts/pipeline/derive_truth.py <document.json[.gz]> --companion NAME \\
-        [--source-id tao-measure-gsm126-published] [--out tests/data/m1/NAME.truth.json]
+        [--source-id tao-measure-gsm126-published] [--out tests/data/m1/ followed by the companion name and .truth.json]
 """
 from __future__ import annotations
 

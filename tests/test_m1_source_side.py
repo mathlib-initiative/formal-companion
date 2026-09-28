@@ -600,6 +600,24 @@ class TestReviewProbes(M1Case):
         self.assertEqual(unplaced[0]["item"], "Lemma 1.1.3")
         self.assertIn("heading's shape", unplaced[0]["reason"])
 
+    def test_a_wrapped_title_beats_a_closing_parenthesis_cross_reference(self):
+        # Found by the Tao calibration: the heading of Exercise 1.2.11 opens a title that
+        # wraps onto the next line, and the next page cites it at line start as
+        # "Exercise 1.2.11.)", a period that closes a parenthetical; the cross-reference
+        # must not win on shape.
+        rows = [{"item": "Exercise 1.2.11", "kind": "Exercise", "number": "1.2.11", "pdf_page": 1,
+                 "ambiguous": True, "occurrences": [{"pdf_page": 1}, {"pdf_page": 2}]}]
+        pages = ["have another important result:\n\nExercise 1.2.11 (Monotone convergence theorem "
+                 "for measurable\nsets).\n\n(i) Show that the union is measurable.\n",
+                 "measure. Show that m(En) converges to m(E). (Hint: use\nthe monotone convergence "
+                 "theorems,\nExercise 1.2.11.)\n(iii) Give a counterexample.\n"]
+        items, _locs, _anchors, unplaced = inventory.numbered_items(
+            rows, pages, {"chapters": [1]}, SID)
+        self.assertEqual(unplaced, [])
+        item = next(i for i in items if i["id"] == "exercise-1.2.11")
+        self.assertEqual(item["pages"]["first"], 1)
+        self.assertEqual(item["title"], "Monotone convergence theorem for measurable sets")
+
     def test_a_supplied_quote_is_checked_whole_before_it_is_capped(self):
         self.ingest()
         text = make_pdf.PASSAGES["1.1.4"][0][0]

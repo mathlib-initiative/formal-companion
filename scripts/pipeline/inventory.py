@@ -75,7 +75,11 @@ _MARKER = re.compile(
 _ERRATUM_PAGE = re.compile(r"\b(?:page|pg\.?|p\.)\s*(\d{1,4})\b", re.I)
 #: what follows a label that is a heading, not a cross-reference: a
 #: parenthesised title, or the period that ends the label
-_HEADING_SHAPE = re.compile(r"[ \t]*(?:\((?P<title>[^()\n]{1,120})\)|\.(?!\d))")
+# A heading's shape after the label: a parenthesised title, which may wrap onto
+# the next line (``Exercise 1.2.11 (Monotone convergence theorem for measurable\nsets).``),
+# or a period that closes the label itself. A period followed by ``)`` closes a
+# parenthetical cross-reference (``..., Exercise 1.2.11.)``), not a heading.
+_HEADING_SHAPE = re.compile(r"[ \t]*(?:\((?P<title>[^()]{1,200})\)|\.(?![\d)]))")
 #: the opening of a chapter (``Chapter 2``) or a section (``2.1 Title``, or a
 #: running head ``2.1. Title  47``); a short line, so a wrapped sentence that
 #: happens to start with a number is not one
