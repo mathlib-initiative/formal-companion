@@ -1,0 +1,731 @@
+{
+  "adapter_counts": {
+    "anchor_none": 604,
+    "anchor_own": 563,
+    "anonymous_declarations": 38,
+    "declarations": 1544,
+    "files": 35,
+    "items": 519,
+    "private": 130,
+    "rejected": 1,
+    "rows": 1167,
+    "sorry": 514,
+    "sorry_exercise": 508,
+    "sorry_gap": 6,
+    "tagged": 1168,
+    "untagged": 376
+  },
+  "adapter_rejects": [
+    {
+      "raw": "Corollary (Lemma 1.2.5 + Exercise 1.2.4)",
+      "reason": "no_number",
+      "decl": "TaoMeasure.lebesgueOuter_union_of_isCompact_isClosed",
+      "file": "TaoMeasure/Section_1_2_1.lean",
+      "line": 524,
+      "source_id": "tao-gsm126-published"
+    }
+  ],
+  "declarations_parsed": 1544,
+  "anonymous": {
+    "leanparse": 38,
+    "ids_py": 38,
+    "by_keyword": {
+      "example": 34,
+      "instance": 4
+    },
+    "by_id_source": {
+      "statement_hash": 38
+    },
+    "with_ordinal": 0,
+    "untyped": 0,
+    "rejected_tags": []
+  },
+  "declarations": {
+    "total": 1544,
+    "by_id_source": {
+      "name": 1376,
+      "statement_hash": 38,
+      "private": 130
+    },
+    "sorry": {
+      "none": 1030,
+      "exercise": 508,
+      "gap": 6
+    },
+    "with_signature": 1530,
+    "named_with_signature": 1492,
+    "signature_skipped": {
+      "kind_structure": 10,
+      "no_header_end": 3,
+      "kind_inductive": 1
+    },
+    "root_namespace": 0
+  },
+  "items": {
+    "total": 651,
+    "numbered": 416,
+    "passages": 235,
+    "by_kind": {
+      "Definition": 39,
+      "passage": 182,
+      "Exercise": 234,
+      "Lemma": 19,
+      "Remark": 35,
+      "convention": 5,
+      "Example": 33,
+      "corollary": 4,
+      "definition": 42,
+      "remark": 1,
+      "Proposition": 7,
+      "Corollary": 10,
+      "Theorem": 26,
+      "record": 1,
+      "Strategy": 13
+    },
+    "by_id_source": {
+      "label": 416,
+      "page_title_hash": 210,
+      "quote_hash": 25
+    },
+    "passage_pages_anchor": {
+      "own": 219,
+      "inferred": 16
+    },
+    "with_relations_near": 17,
+    "with_label_display": 3,
+    "kind_source_producer": 66,
+    "helper_only_items_given_coverage_support_only": [],
+    "items_without_links": [
+      "remark-1.4.50"
+    ],
+    "unanchored_items": []
+  },
+  "headings": {
+    "one_heading": 414,
+    "book_title_from_heading": 213,
+    "several_headings": 2,
+    "bare_number_heading": 13,
+    "no_heading_items": [],
+    "several_heading_items": {
+      "exercise-1.4.6@p099": [
+        99,
+        100
+      ],
+      "remark-1.4.15@p102": [
+        102,
+        105
+      ]
+    }
+  },
+  "link_pages_vs_heading": {
+    "heading_within_link_pages": 308,
+    "heading_outside_link_pages": 35
+  },
+  "link_pages_vs_heading_disagreements": [
+    {
+      "link": "lemma-1.1.2/helper/TaoMeasure.IsBox.tendsto_card_inter_scaledLattice/ii",
+      "link_pages": [
+        7,
+        7
+      ],
+      "heading_printed_page": 6
+    },
+    {
+      "link": "lemma-1.1.2/helper/TaoMeasure.tendsto_card_inter_scaledLattice_of_disjoint/ii",
+      "link_pages": [
+        7,
+        7
+      ],
+      "heading_printed_page": 6
+    },
+    {
+      "link": "exercise-1.1.26/key/TaoMeasure.exists_bound_of_boxRiemannSum_converges",
+      "link_pages": [
+        14,
+        14
+      ],
+      "heading_printed_page": 17
+    },
+    {
+      "link": "exercise-1.1.26/key/TaoMeasure.BoxRiemannIntegrableOn.exists_bound",
+      "link_pages": [
+        14,
+        14
+      ],
+      "heading_printed_page": 17
+    },
+    {
+      "link": "exercise-1.1.26/key/TaoMeasure.boxDarbouxIntegral_reflection",
+      "link_pages": [
+        16,
+        16
+      ],
+      "heading_printed_page": 17
+    },
+    {
+      "link": "exercise-1.1.26/key/TaoMeasure.boxRiemannIntegral_indicator_ambient_congr",
+      "link_pages": [
+        14,
+        14
+      ],
+      "heading_printed_page": 17
+    },
+    {
+      "link": "exercise-1.1.26/key/TaoMeasure.RiemannIntegrableOnSet",
+      "link_pages": [
+        14,
+        14
+      ],
+      "heading_printed_page": 17
+    },
+    {
+      "link": "exercise-1.1.26/key/TaoMeasure.setRiemannIntegral",
+      "link_pages": [
+        14,
+        14
+      ],
+      "heading_printed_page": 17
+    },
+    {
+      "link": "lemma-1.2.11/key/TaoMeasure.IsOpen.exists_almostDisjoint_boxes",
+      "link_pages": [
+        30,
+        30
+      ],
+      "heading_printed_page": 29
+    },
+    {
+      "link": "lemma-1.2.13/helper/TaoMeasure.IsCompact.lebesgueMeasurable/ii",
+      "link_pages": [
+        32,
+        33
+      ],
+      "heading_printed_page": 31
+    },
+    {
+      "link": "definition-1.3.6/key/TaoMeasure.complexSimpIntegral",
+      "link_pages": [
+        55,
+        55
+      ],
+      "heading_printed_page": 54
+    },
+    {
+      "link": "exercise-1.3.1/key/TaoMeasure.AEEq.simpIntegral_eq/iv",
+      "link_pages": [
+        56,
+        56
+      ],
+      "heading_printed_page": 53
+    },
+    {
+      "link": "exercise-1.3.8/key/TaoMeasure.AEEq.isMeasurableFunc/iii",
+      "link_pages": [
+        63,
+        63
+      ],
+      "heading_printed_page": 62
+    },
+    {
+      "link": "exercise-1.3.8/key/TaoMeasure.isMeasurableFunc_of_tendsto_ae/iv",
+      "link_pages": [
+        63,
+        63
+      ],
+      "heading_printed_page": 62
+    },
+    {
+      "link": "exercise-1.3.8/key/TaoMeasure.IsMeasurableFunc.continuous_comp/v",
+      "link_pages": [
+        63,
+        63
+      ],
+      "heading_printed_page": 62
+    },
+    {
+      "link": "exercise-1.3.8/key/TaoMeasure.IsMeasurableFunc.add_mul/vi",
+      "link_pages": [
+        63,
+        63
+      ],
+      "heading_printed_page": 62
+    },
+    {
+      "link": "exercise-1.4.36/key/TaoMeasure.unsignedIntegralOn_horizontal_truncation/ix",
+      "link_pages": [
+        83,
+        83
+      ],
+      "heading_printed_page": 100
+    },
+    {
+      "link": "exercise-1.5.2/key/TaoMeasure.ConvergesUniformly.convergesPointwise/i",
+      "link_pages": [
+        115,
+        115
+      ],
+      "heading_printed_page": 117
+    },
+    {
+      "link": "exercise-1.6.28/key/TaoMeasure.weierstrassFunc_grid_increment/ii",
+      "link_pages": [
+        156,
+        156
+      ],
+      "heading_printed_page": 155
+    },
+    {
+      "link": "exercise-1.6.28/key/TaoMeasure.weierstrassFunc_nowhere_differentiable/iii",
+      "link_pages": [
+        156,
+        156
+      ],
+      "heading_printed_page": 155
+    },
+    {
+      "link": "exercise-1.7.10/key/TaoMeasure.stieltjesVolume_union",
+      "link_pages": [
+        189,
+        189
+      ],
+      "heading_printed_page": 191
+    },
+    {
+      "link": "exercise-1.7.10/key/TaoMeasure.stieltjesVolume_partition",
+      "link_pages": [
+        189,
+        189
+      ],
+      "heading_printed_page": 191
+    },
+    {
+      "link": "exercise-1.7.10/key/TaoMeasure.stieltjesPremeasure_eq",
+      "link_pages": [
+        190,
+        190
+      ],
+      "heading_printed_page": 191
+    },
+    {
+      "link": "exercise-1.7.10/key/TaoMeasure.isFinitelyAdditiveMeasure_stieltjesPremeasure",
+      "link_pages": [
+        190,
+        190
+      ],
+      "heading_printed_page": 191
+    },
+    {
+      "link": "exercise-1.7.10/key/TaoMeasure.stieltjesVolume_eq_iSup_Icc",
+      "link_pages": [
+        190,
+        190
+      ],
+      "heading_printed_page": 191
+    },
+    {
+      "link": "exercise-1.7.10/key/TaoMeasure.stieltjesVolume_eq_iInf_isOpen",
+      "link_pages": [
+        190,
+        190
+      ],
+      "heading_printed_page": 191
+    },
+    {
+      "link": "strategy-2.1.2/key/TaoMeasure.exists_nested_epsilon_lt",
+      "link_pages": [
+        211,
+        211
+      ],
+      "heading_printed_page": 210
+    },
+    {
+      "link": "strategy-2.1.7/key/TaoMeasure.IsMeasureSpace.measure_eq_zero_of_forall_le_two_pow",
+      "link_pages": [
+        215,
+        215
+      ],
+      "heading_printed_page": 214
+    },
+    {
+      "link": "strategy-2.1.7/key/TaoMeasure.IsMeasureSpace.isSubNullSet_of_forall_le_two_pow",
+      "link_pages": [
+        215,
+        215
+      ],
+      "heading_printed_page": 214
+    },
+    {
+      "link": "strategy-2.1.17/key/TaoMeasure.cauchySeq_tendsto_of_subseq",
+      "link_pages": [
+        225,
+        225
+      ],
+      "heading_printed_page": 224
+    },
+    {
+      "link": "strategy-2.1.17/key/TaoMeasure.tendsto_of_forall_subseq_exists_tendsto",
+      "link_pages": [
+        225,
+        225
+      ],
+      "heading_printed_page": 224
+    },
+    {
+      "link": "definition-2.2.2/key/example:b4c6ad7f3801",
+      "link_pages": [
+        227,
+        227
+      ],
+      "heading_printed_page": 226
+    },
+    {
+      "link": "definition-2.2.2/key/TaoMeasure.hasGradientAt_iff_book",
+      "link_pages": [
+        227,
+        227
+      ],
+      "heading_printed_page": 226
+    },
+    {
+      "link": "definition-2.2.2/key/TaoMeasure.gradient_unique",
+      "link_pages": [
+        227,
+        227
+      ],
+      "heading_printed_page": 226
+    },
+    {
+      "link": "example-2.3.3/key/TaoMeasure.withDensity_restrict_volume_congr_ae",
+      "link_pages": [
+        234,
+        234
+      ],
+      "heading_printed_page": 233
+    }
+  ],
+  "passages": {
+    "pages_with_more_than_one_passage": 56,
+    "passages_on_those_pages": 193,
+    "max_passages_on_one_page": 18,
+    "quote_check": {
+      "docstring_quotes": 32,
+      "verified_on_anchor_page": 22,
+      "not_found": 3,
+      "verified_near_referenced_heading": 4,
+      "ambiguous_on_page": 1,
+      "found_only_on_adjacent_page": 2
+    },
+    "quote_misses": [
+      {
+        "decl": "TaoMeasure.dyadicCube_children",
+        "printed_page": 29,
+        "verdict": "not_found",
+        "runs": [
+          "'children' of sidelength"
+        ]
+      },
+      {
+        "decl": "TaoMeasure.AlmostEverywhere.mono",
+        "printed_page": 53,
+        "verdict": "ambiguous_on_page",
+        "runs": [
+          "almost every"
+        ]
+      },
+      {
+        "decl": "TaoMeasure.hardy_littlewood_maximal_inequality_three_pow",
+        "printed_page": 151,
+        "verdict": "found_only_on_adjacent_page",
+        "runs": [
+          "Now we can prove the Hardy-Littlewood inequality, which we will do with the constant"
+        ]
+      },
+      {
+        "decl": "TaoMeasure.lowerLeftDiniDeriv",
+        "printed_page": 157,
+        "verdict": "not_found",
+        "runs": [
+          "here — a misprint for"
+        ]
+      },
+      {
+        "decl": "TaoMeasure.eVariationOn_univ_eq_iSup_Icc",
+        "printed_page": 165,
+        "verdict": "found_only_on_adjacent_page",
+        "runs": [
+          "Thus for instance"
+        ]
+      },
+      {
+        "decl": "TaoMeasure.bernoulliCubeMeasure_map_eval",
+        "printed_page": 241,
+        "verdict": "not_found",
+        "runs": [
+          "each coordinate is fair"
+        ]
+      }
+    ],
+    "merged_by_same_id": [
+      {
+        "id": "passage-75a7d8f9",
+        "decl": "TaoMeasure.inv_nx_egorov_exceptional_not_null",
+        "kept_title": "(the parenthetical after Theorem 1.3.26); \"but not conversely\" is `inv_nx_egorov_exceptional_not_null`",
+        "dropped_title": "after Theorem 1.3.26",
+        "same_pages": true
+      }
+    ],
+    "anchored_without_page": [
+      {
+        "decl": "TaoMeasure.IsLebesgueNull",
+        "raw": "In-text definition, Lemma 1.2.13(iii)",
+        "near": "lemma-1.2.13",
+        "heading_physical_pages": [
+          47
+        ]
+      },
+      {
+        "decl": "TaoMeasure.TendstoPointwise",
+        "raw": "In-text definition, Exercise 1.2.13",
+        "near": "exercise-1.2.13",
+        "heading_physical_pages": [
+          54
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsC1Curve",
+        "raw": "In-text definition, Exercise 1.2.25",
+        "near": "exercise-1.2.25",
+        "heading_physical_pages": [
+          59
+        ]
+      },
+      {
+        "decl": "TaoMeasure.exists_continuous_curve_covering_unitCube",
+        "raw": "In-text remark, Exercise 1.2.25",
+        "near": "exercise-1.2.25",
+        "heading_physical_pages": [
+          59
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsFinitelyAdditiveMeasure.of_subalgebra",
+        "raw": "In-text, Example 1.4.21",
+        "near": "example-1.4.21",
+        "heading_physical_pages": [
+          106
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsCountablyAdditiveMeasure.of_subalgebra",
+        "raw": "In-text, Example 1.4.28",
+        "near": "example-1.4.28",
+        "heading_physical_pages": [
+          108
+        ]
+      },
+      {
+        "decl": "TaoMeasure.TendstoPointwiseSet",
+        "raw": "In-text definition, Exercise 1.4.24",
+        "near": "exercise-1.4.24",
+        "heading_physical_pages": [
+          109
+        ]
+      },
+      {
+        "decl": "TaoMeasure.isMeasurableMorphism_borel_iff",
+        "raw": "In-text, Remark 1.4.33",
+        "near": "remark-1.4.33",
+        "heading_physical_pages": [
+          112
+        ]
+      },
+      {
+        "decl": "TaoMeasure.subset_iff_isMeasurableMorphism_id",
+        "raw": "In-text, Remark 1.4.33",
+        "near": "remark-1.4.33",
+        "heading_physical_pages": [
+          112
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsMeasurableMorphism.comp",
+        "raw": "In-text, Remark 1.4.33",
+        "near": "remark-1.4.33",
+        "heading_physical_pages": [
+          112
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsSimpleUnsignedFunc.exists_finite_subalgebra",
+        "raw": "In-text, Definition 1.4.35",
+        "near": "definition-1.4.35",
+        "heading_physical_pages": [
+          114
+        ]
+      },
+      {
+        "decl": "TaoMeasure.unsignedIntegralOn_parts_lt_top",
+        "raw": "In-text, Definition 1.4.39",
+        "near": "definition-1.4.39",
+        "heading_physical_pages": [
+          120
+        ]
+      },
+      {
+        "decl": "TaoMeasure.integralOn_consistency",
+        "raw": "In-text, Definition 1.4.39",
+        "near": "definition-1.4.39",
+        "heading_physical_pages": [
+          120
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsMeasureSpace.bounded_convergence",
+        "raw": "In-text, Remark 1.4.50",
+        "near": "remark-1.4.50",
+        "heading_physical_pages": [
+          128
+        ]
+      },
+      {
+        "decl": "TaoMeasure.not_isSigmaFinite_nonemptyInfMeasure",
+        "raw": "In-text, Exercise 1.7.8",
+        "near": "exercise-1.7.8",
+        "heading_physical_pages": [
+          204
+        ]
+      },
+      {
+        "decl": "TaoMeasure.IsRadonMeasure",
+        "raw": "In-text definition, Exercise 1.7.11",
+        "near": "exercise-1.7.11",
+        "heading_physical_pages": [
+          207
+        ]
+      }
+    ]
+  },
+  "split_tags": [
+    {
+      "decl": "TaoMeasure.lebesgueMeasure",
+      "raw": "Definition 1.2.2 / In-text, book p. 35",
+      "halves": [
+        "Definition 1.2.2",
+        "In-text, book p. 35"
+      ]
+    },
+    {
+      "decl": "TaoMeasure.simpleFunc_abs_re_im_parts",
+      "raw": "In-text, book p. 51 / Definition 1.3.6",
+      "halves": [
+        "In-text, book p. 51",
+        "Definition 1.3.6"
+      ]
+    }
+  ],
+  "sub_fixes_over_adapter": [
+    {
+      "decl": "TaoMeasure.borelAlgebra_eq_generate_closed_compact",
+      "raw": "Exercise 1.4.14(i)–(iii)",
+      "adapter_sub": "(i)",
+      "sub": "i-iii"
+    },
+    {
+      "decl": "TaoMeasure.borelAlgebra_eq_generate_ball_box_elementary",
+      "raw": "Exercise 1.4.14(iv)–(vi)",
+      "adapter_sub": "(iv)",
+      "sub": "iv-vi"
+    }
+  ],
+  "helper_links": [
+    {
+      "decl": "TaoMeasure.exists_common_refinement",
+      "raw": "In-text proof of Lemma 1.1.2(i), book p. 6",
+      "item": "lemma-1.1.2"
+    },
+    {
+      "decl": "TaoMeasure.IsInterval.finite_inter_scaledLattice",
+      "raw": "In-text proof of Lemma 1.1.2(ii), book p. 6",
+      "item": "lemma-1.1.2"
+    },
+    {
+      "decl": "TaoMeasure.IsInterval.tendsto_card_inter_scaledLattice",
+      "raw": "In-text proof of Lemma 1.1.2(ii), book p. 6",
+      "item": "lemma-1.1.2"
+    },
+    {
+      "decl": "TaoMeasure.IsBox.tendsto_card_inter_scaledLattice",
+      "raw": "In-text proof of Lemma 1.1.2(ii), book p. 7",
+      "item": "lemma-1.1.2"
+    },
+    {
+      "decl": "TaoMeasure.tendsto_card_inter_scaledLattice_of_disjoint",
+      "raw": "In-text proof of Lemma 1.1.2(ii), book p. 7",
+      "item": "lemma-1.1.2"
+    },
+    {
+      "decl": "TaoMeasure.IsCompact.lebesgueMeasurable",
+      "raw": "In-text step in the proof of Lemma 1.2.13(ii)",
+      "item": "lemma-1.2.13"
+    }
+  ],
+  "links": {
+    "total": 1169,
+    "by_role": {
+      "key": 1163,
+      "helper": 6
+    },
+    "with_sub": 290,
+    "with_pages": {
+      "own": 343
+    },
+    "with_locations": 7,
+    "with_note": 479,
+    "with_relation": 0,
+    "link_quote_check": {
+      "links_with_docstring_quotes": 21,
+      "verified": 7,
+      "not_verified": 14
+    }
+  },
+  "site": {
+    "named_located_by_xref_id": 1505,
+    "xref_id_not_once_on_page": 1,
+    "anonymous_located_by_keyword_binding": 38,
+    "module_pages_selected": 35,
+    "html_pages_hashed": 38,
+    "sha256": "d1896a91ab26c82e5b432ad218561108035f46499e2d6ee3bfaebf66a6db84ba",
+    "missing_on_page": [
+      {
+        "decl": "TaoMeasure.ConvergesAlongOn.aeEqOn",
+        "xref_id": "TaoMeasure___ConvergesAlongOn___aeEqOn",
+        "count_on_page": 0
+      }
+    ]
+  },
+  "unattributed": {
+    "unattributed": 163,
+    "api": 2,
+    "infrastructure": 212
+  },
+  "problems": [],
+  "output": {
+    "path": "/private/tmp/claude-501/-Users-jack-Desktop/81fcd3d0-0dfc-4636-8ade-b8ac45168ce9/scratchpad/annot/tao-measure-lean.annotations.json",
+    "bytes": 3826146,
+    "counts": {
+      "sources": 2,
+      "items": 651,
+      "declarations": 1544,
+      "links": 1169,
+      "provenance": 3,
+      "locations": 2201,
+      "destinations": 1544,
+      "unattributed": 377
+    },
+    "x_keys": {
+      "x_heading_candidates": 2,
+      "x_note": 1,
+      "x_page_basis": 16
+    }
+  }
+}

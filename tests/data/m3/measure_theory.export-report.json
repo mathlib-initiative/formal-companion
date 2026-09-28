@@ -1,0 +1,458 @@
+{
+  "counts": {
+    "sources": 1,
+    "items": 432,
+    "declarations": 3565,
+    "artifacts": 61,
+    "memberships": 5093,
+    "links": 627,
+    "provenance": 8,
+    "locations": 509,
+    "destinations": 2884,
+    "snippets": 542,
+    "verdicts": 11,
+    "clusters": 77,
+    "changelog": 3,
+    "unattributed": 0,
+    "declarations_by_id_source": {
+      "declared": 418,
+      "name": 556,
+      "private": 1789,
+      "statement_hash": 802
+    },
+    "declarations_by_kind": {
+      "abbrev": 19,
+      "def": 481,
+      "example": 1217,
+      "field": 22,
+      "inductive": 1,
+      "instance": 7,
+      "lemma": 191,
+      "projection": 48,
+      "structure": 18,
+      "theorem": 1561
+    },
+    "declarations_unlocated": 418,
+    "declarations_with_signature": {
+      "anonymous": 802,
+      "named": 2237
+    },
+    "declarations_with_namespace": 3147,
+    "declarations_with_legacy_ids": 1853,
+    "declarations_with_lean_name": 3,
+    "declarations_private_anonymous": 3,
+    "declarations_added_as_replacements": [
+      "MeasureTheory.Tao.Lebesgue.volume_linear_image",
+      "MeasureTheory.Tao.Lebesgue.volume_unique_of_lebesgue_axioms",
+      "MeasureTheory.Tao.Riemann.piecewiseConstantIntegral_indicator_of_le",
+      "MeasureTheory.Tao.aemeasurable_bounded_iff_exists_bounded_completedSimpleFunc_tendstoUniformly"
+    ],
+    "declarations_added_as_parents": [],
+    "artifacts_by_kind": {
+      "check": 1,
+      "figure": 1,
+      "module_doc": 59
+    },
+    "memberships_by_role": {
+      "consumer": 3398,
+      "primary": 1066,
+      "support": 629
+    },
+    "memberships_to_artifacts": 75,
+    "memberships_to_unlocated": 490,
+    "links_by_role": {
+      "attributed": 159,
+      "example": 48,
+      "key": 420
+    },
+    "links_by_provenance": {
+      "prov-ledger": 48,
+      "prov-target-refinement": 579
+    },
+    "ledger_support_edges": {
+      "artifact_target": 74,
+      "itemless_node": 2,
+      "linked_example": 48,
+      "linked_to_unlocated": 39,
+      "multi_item_node": 505
+    },
+    "items_by_form": {
+      "numbered": 412,
+      "passage": 20
+    },
+    "items_by_id_source": {
+      "label": 412,
+      "page_title_hash": 20
+    },
+    "items_by_kind": {
+      "Corollary": 10,
+      "Definition": 36,
+      "Equation": 5,
+      "Example": 28,
+      "Exercise": 227,
+      "Lemma": 19,
+      "Proposition": 7,
+      "Remark": 57,
+      "Theorem": 23,
+      "passage": 20
+    },
+    "items_by_coverage": {
+      "-": 399,
+      "example_only": 29,
+      "not_formalized": 1,
+      "support_only": 3
+    },
+    "items_cluster_fallback": 238,
+    "verdicts_without_resolution": 2,
+    "passage_ids": {
+      "passage-p115-c8fcf2aa": "Uniform convergence",
+      "passage-p115-e811f31f": "Pointwise convergence",
+      "passage-p116-1240474f": "Convergence in measure",
+      "passage-p116-21a77d43": "Pointwise almost-everywhere convergence",
+      "passage-p116-3e66c9bd": "Essentially uniform convergence",
+      "passage-p116-8847093c": "Almost uniform convergence",
+      "passage-p116-befc77a2": "L1 convergence",
+      "passage-p131-f678f445": "Classical derivative",
+      "passage-p14-441df042": "Unnumbered Riemann boundedness question",
+      "passage-p147-21aab111": "Lebesgue point",
+      "passage-p156-90cc86f5": "Four Dini derivatives",
+      "passage-p17-c0fd1ba7": "Unnumbered uniqueness assertion for the Riemann integral",
+      "passage-p18-6c1885b5": "Unnumbered Jordan/Lebesgue outer-measure definitions and comparison",
+      "passage-p22-20922448": "Unnumbered finite-subadditivity consequence",
+      "passage-p37-5bad24f9": "Unnumbered finite-additivity corollary",
+      "passage-p46-cc351f2f": "Section 1.3 opening conventions",
+      "passage-p53-79bd92e7": "Unnumbered almost-everywhere logical calculus",
+      "passage-p55-aefb48d5": "Unnumbered finite-support and vector-space assertions",
+      "passage-p56-b686ceb7": "Unnumbered almost-everywhere quotient convention",
+      "passage-p7-c7bdabe9": "Unnumbered elementary-measure properties"
+    },
+    "locations_by_shape": {
+      "quads": 1,
+      "rect": 508
+    },
+    "destinations_by_resolution": {
+      "exact": 488,
+      "fallback": 2396
+    },
+    "destinations_to_artifacts": 61,
+    "destination_rows_in": 2884,
+    "verdict_locations": {
+      "verdict:exercise-1.1.21": 1,
+      "verdict:exercise-1.1.22": 1,
+      "verdict:exercise-1.2.21": 1,
+      "verdict:exercise-1.2.23": 1,
+      "verdict:exercise-1.2.24": 2,
+      "verdict:exercise-1.2.25": 1,
+      "verdict:exercise-1.3.12": 1,
+      "verdict:exercise-1.3.13": 1,
+      "verdict:exercise-1.3.4": 1,
+      "verdict:exercise-1.3.6": 1,
+      "verdict:exercise-1.6.39": 1
+    },
+    "verdict_resolutions": {
+      "verdict:exercise-1.1.21": {
+        "state": "fixed",
+        "pr": 10,
+        "commits": [
+          "53a2643e9ea6e56b9ec2e374130575874c338125",
+          "ea7d4934767d0e0ee11fe130fdf1583fd0da31d8"
+        ],
+        "replaced_by": [
+          "MeasureTheory.Tao.Riemann.piecewiseConstantIntegral_indicator_of_le"
+        ]
+      },
+      "verdict:exercise-1.1.22": "(none: open)",
+      "verdict:exercise-1.2.21": {
+        "state": "fixed",
+        "pr": 10,
+        "commits": [
+          "53a2643e9ea6e56b9ec2e374130575874c338125",
+          "ea7d4934767d0e0ee11fe130fdf1583fd0da31d8"
+        ],
+        "replaced_by": [
+          "MeasureTheory.Tao.Lebesgue.volume_linear_image"
+        ]
+      },
+      "verdict:exercise-1.2.23": {
+        "state": "fixed",
+        "pr": 13,
+        "commits": [
+          "00d8d5b05c9d20194a079bb5cafed9e5e802824d",
+          "e654ef390264484fd1808150e9da454bf539264c"
+        ],
+        "replaced_by": [
+          "MeasureTheory.Tao.Lebesgue.volume_unique_of_lebesgue_axioms"
+        ]
+      },
+      "verdict:exercise-1.2.24": "(none: open)",
+      "verdict:exercise-1.2.25": {
+        "state": "fixed",
+        "pr": 13,
+        "commits": [
+          "00d8d5b05c9d20194a079bb5cafed9e5e802824d",
+          "e654ef390264484fd1808150e9da454bf539264c"
+        ]
+      },
+      "verdict:exercise-1.3.12": {
+        "state": "fixed",
+        "pr": 13,
+        "commits": [
+          "00d8d5b05c9d20194a079bb5cafed9e5e802824d",
+          "e654ef390264484fd1808150e9da454bf539264c"
+        ]
+      },
+      "verdict:exercise-1.3.13": {
+        "state": "fixed",
+        "pr": 10,
+        "commits": [
+          "53a2643e9ea6e56b9ec2e374130575874c338125"
+        ]
+      },
+      "verdict:exercise-1.3.4": {
+        "state": "fixed",
+        "pr": 10,
+        "commits": [
+          "53a2643e9ea6e56b9ec2e374130575874c338125",
+          "ea7d4934767d0e0ee11fe130fdf1583fd0da31d8"
+        ],
+        "replaced_by": [
+          "MeasureTheory.Tao.aemeasurable_bounded_iff_exists_bounded_completedSimpleFunc_tendstoUniformly"
+        ]
+      },
+      "verdict:exercise-1.3.6": {
+        "state": "fixed",
+        "pr": 10,
+        "commits": [
+          "53a2643e9ea6e56b9ec2e374130575874c338125"
+        ]
+      },
+      "verdict:exercise-1.6.39": {
+        "state": "open",
+        "issue": 16
+      }
+    },
+    "snippets_line_differs_from_scan": 0,
+    "snippets_truncated": 22,
+    "anonymous_at_head": 802,
+    "anonymous_rejected_tags": 64,
+    "comment_tags_mapped_to_ledger": 64,
+    "named_scanned_at_head": 2368,
+    "lean_files_scanned": 69,
+    "namespace_crosscheck_vs_leanparse": {
+      "named_agree": 2368,
+      "anonymous_agree": 802
+    },
+    "ilean_files_read": [
+      ".lake/build/lib/lean/MeasureTheory/Tao/Integration/Egorov.ilean"
+    ],
+    "ledger": {
+      "formalization_nodes": 2884,
+      "edges": 5093,
+      "source_nodes": 77,
+      "mapped_to_declarations": 2823,
+      "mapped_to_artifacts": 61
+    },
+    "repo_head": "00a24385c4f6ae24e80d9fc3ac05b45dbd5ea448",
+    "repo_dirty": false,
+    "bytes": 7494163,
+    "x_keys": {
+      "$.x_graph_scope": 1,
+      "clusters[].x_plan_item_ids": 77,
+      "clusters[].x_semantic_status": 77,
+      "clusters[].x_status": 77,
+      "provenance[].x_method": 1,
+      "provenance[].x_nodes_curated": 1,
+      "sources[].x_download_checks": 1
+    },
+    "x_bytes_approx": 11371
+  },
+  "lossy": {
+    "source.printed_page_offset_from_prose": {
+      "count": 1,
+      "detail": "no measure_theory file records the printed-page offset; 16 was read from ledger locator prose ({16: 66, 11: 1} over first printed/PDF page pairs; the outlier is a two-part locator)",
+      "examples": []
+    },
+    "source.path": {
+      "count": 1,
+      "detail": "ledger source.path (sources/gsm-126-tao5-measure-book.pdf) is relative to the external ff-core workspace, not the companion repo; source.path is a repo path, so it was not carried",
+      "examples": []
+    },
+    "item.passage_label": {
+      "count": 20,
+      "detail": "a passage's geometry label ('Unnumbered almost-everywhere logical calculus') is the producer's name, not a printed label, so it became title (title_source producer) without the 'Unnumbered ' prefix and with its first letter upper-cased; the verbatim label is not carried (item.label means the label as the source prints it)",
+      "examples": [
+        "'Unnumbered elementary-measure properties' -> 'Elementary-measure properties'",
+        "'Unnumbered Riemann boundedness question' -> 'Riemann boundedness question'",
+        "'Unnumbered uniqueness assertion for the Riemann integral' -> 'Uniqueness assertion for the Riemann integral'",
+        "'Unnumbered Jordan/Lebesgue outer-measure definitions and comparison' -> 'Jordan/Lebesgue outer-measure definitions and comparison'",
+        "'Unnumbered finite-subadditivity consequence' -> 'Finite-subadditivity consequence'"
+      ]
+    },
+    "location.quads_highlight": {
+      "count": 1,
+      "detail": "the RFC 8118 highlight= fallback of a quads region is its bounding box (the PdfRegionSelector keeps the quads exactly)",
+      "examples": [
+        "region:batch-c:exercise-1.6.42:p183:r01"
+      ]
+    },
+    "geometry.batch_order": {
+      "count": 4,
+      "detail": "the in-batch ordering of items and the batch page partitions are gone; batch membership survives as each location's provenance (prov-geometry-a..d) and inside the legacy region/item ids",
+      "examples": []
+    },
+    "declaration.private_line_stale": {
+      "count": 242,
+      "detail": "the ledger's positional private id names a line that no longer holds the helper at HEAD (re-pins update file hashes, not ids); resolved by module + name, the old id kept in legacy_ids",
+      "examples": [
+        "private:MeasureTheory.Tao.Integration.UnsignedProperties:MeasureTheory/Tao/Integration/UnsignedProperties.lean:L333:volume_ennreal_verticalFiber",
+        "private:MeasureTheory.Tao.Integration.UnsignedProperties:MeasureTheory/Tao/Integration/UnsignedProperties.lean:L455:completedSimpleFunc_coe_lintegral",
+        "private:MeasureTheory.Tao.Integration.UnsignedProperties:MeasureTheory/Tao/Integration/UnsignedProperties.lean:L483:completedSimpleFuncOfBase",
+        "private:MeasureTheory.Tao.Integration.UnsignedProperties:MeasureTheory/Tao/Integration/UnsignedProperties.lean:L493:completedSimpleFuncOfBase_lintegral",
+        "private:MeasureTheory.Tao.Integration.UnsignedProperties:MeasureTheory/Tao/Integration/UnsignedProperties.lean:L501:lintegral_closedBall_truncation_tendsto"
+      ]
+    },
+    "declaration.private_field_kind_guessed": {
+      "count": 6,
+      "detail": "the ledger gives private helpers no kind; a private id that names a member of a private structure was exported as kind field (the ledger's public nodes distinguish 'structure field' from 'projection', which it cannot here)",
+      "examples": [
+        "private:MeasureTheory.Tao.Riemann.Basic:MeasureTheory/Tao/Riemann/Basic.lean:L2189:DarbouxGrid.left_eq",
+        "private:MeasureTheory.Tao.Riemann.Basic:MeasureTheory/Tao/Riemann/Basic.lean:L2189:DarbouxGrid.n",
+        "private:MeasureTheory.Tao.Riemann.Basic:MeasureTheory/Tao/Riemann/Basic.lean:L2189:DarbouxGrid.n_pos",
+        "private:MeasureTheory.Tao.Riemann.Basic:MeasureTheory/Tao/Riemann/Basic.lean:L2189:DarbouxGrid.points",
+        "private:MeasureTheory.Tao.Riemann.Basic:MeasureTheory/Tao/Riemann/Basic.lean:L2189:DarbouxGrid.right_eq"
+      ]
+    },
+    "membership.realization": {
+      "count": 1695,
+      "detail": "ledger edges carry realization ('implemented' on every primary and support edge, absent on consumer edges: consumer/None 3398, primary/implemented 1066, support/implemented 629); membership has no field for it. Constant per role in this snapshot, so derivable today",
+      "examples": []
+    },
+    "ledger.node_class_and_text_hash": {
+      "count": 2884,
+      "detail": "ledger formalization nodes' class (realized_artifact / implementation_helper) and verification_text_sha256 (a hash of external verified_with text) are not carried; class is implied by the node kind and id form, the hash is recoverable from the pinned ledger",
+      "examples": []
+    },
+    "link.region_granularity": {
+      "count": 35,
+      "detail": "target-refinement is keyed by region; 35 items have one entry per region. Entries were merged per item (0 items had differing entries across regions, so nothing is lost but the per-region keying itself)",
+      "examples": []
+    },
+    "item.coverage_unclassified": {
+      "count": 205,
+      "detail": "the same note says the other items with no entry (sections 1.1 to 1.6) are formalised only by anonymous examples, by nothing, or only by supporting declarations, without saying which; they carry cluster_fallback and no coverage",
+      "examples": []
+    },
+    "destinations.header": {
+      "count": 1,
+      "detail": "destinations.json's pdf and ledger lock blocks and support_relation.relation_id are not carried: the ledger lock equals companion.graph (checked), the pdf lock equals the source's sha256, and the relation itself became cluster.related_to",
+      "examples": []
+    },
+    "verdict.commit_roles": {
+      "count": 8,
+      "detail": "resolution.commits holds the fix and merge commits as one sorted list (expanded to full ids with git rev-parse; each merge commit's subject was checked to name the PR); which one is the merge is not recorded",
+      "examples": [
+        "exercise-1.1.21",
+        "exercise-1.2.21",
+        "exercise-1.2.23",
+        "exercise-1.2.25",
+        "exercise-1.3.12"
+      ]
+    },
+    "verdict.replaced_by_unresolved": {
+      "count": 1,
+      "detail": "a '<word> (<File>.lean:<line>)' mention in a declaration note that does not resolve to exactly one HEAD declaration in that file (prose such as 'every dimension (...)')",
+      "examples": [
+        "dimension (Lebesgue/Pathologies.lean): 0 matches"
+      ]
+    },
+    "verdict.replaced_by_evidence_only": {
+      "count": 1,
+      "detail": "Exercise 1.2.23's evidence says PR #13 added volume_completion_unique_of_translation_invariant as well as volume_unique_of_lebesgue_axioms, but only the latter is cited as stating the exercise (in the declaration note), so replaced_by names only it; the evidence text itself is carried in full",
+      "examples": []
+    },
+    "ledger.integrity_blocks": {
+      "count": 1,
+      "detail": "the ledger's own integrity machinery is not carried: files[] (65 pinned file hashes), comparison_signatures, counts, provenance.canonical_inputs, authority and ledger_schema. All are recoverable from the ledger pinned in companion.graph; none is item or declaration data",
+      "examples": []
+    },
+    "declaration.head_not_in_ledger": {
+      "count": 93,
+      "detail": "named or private declarations found at HEAD but absent from the ledger snapshot are not exported (the document's declarations are the ledger's list, every anonymous declaration at HEAD and the declarations the verdicts cite as replacements). A declaration with no membership is exactly one the ledger does not list (every ledger node has an edge)",
+      "examples": [
+        "MeasureTheory.Tao.Elementary.Ioo_subset_intervalLatticePoints",
+        "MeasureTheory.Tao.Elementary.SourceBox.sourceVolume_nonneg",
+        "MeasureTheory.Tao.Elementary.SourceInterval.Ioo_subset_carrier",
+        "MeasureTheory.Tao.Elementary.SourceInterval.carrier_subset_Icc",
+        "MeasureTheory.Tao.Elementary.SourceInterval.length_nonneg"
+      ]
+    }
+  },
+  "bent": {
+    "source.x_download_checks": {
+      "count": 1,
+      "detail": "official-source.json's download checks (pdf_header %PDF-1.4, pdf_eof %%EOF, an empty redirect_chain) have no source field; kept in an x_ key",
+      "examples": []
+    },
+    "item.split_merged_label": {
+      "count": 1,
+      "detail": "one geometry item names two book items ('Remark 1.1.3 and equation (1.1)'); exported as two numbered items that share the location. Every curated link stays on the remark (the curation never said which declarations state (1.1)); the geometry label and the old item id stay on the remark only, and no item relation fits 'shown in the same region' (relations are same_as, part_of, near)",
+      "examples": [
+        "item:batch-a:rem-1.1.3-eq-1.1 -> remark-1.1.3, equation-1.1"
+      ]
+    },
+    "declaration.comment_tag_as_legacy_id": {
+      "count": 64,
+      "detail": "the companion's `example:<slug>` comment tags are each the first line of a longer comment, so under section 5.1 none declares an id (ids.py reports every one in rejected_tag); the declaration keeps its statement-hash id and the tag, which is also the ledger's node id, goes to legacy_ids so the ledger, refinement and destinations join through it",
+      "examples": [
+        "example:L1-seminorm-ae-laws",
+        "example:absolute-difference-iff",
+        "example:addition-and-scalar",
+        "example:borel-cantelli",
+        "example:borel-cantelli-weak-hypothesis-obstruction"
+      ]
+    },
+    "cluster.x_plan_status": {
+      "count": 77,
+      "detail": "ledger source-node plan_item_ids, status and semantic_status have no cluster field; kept as x_ keys",
+      "examples": []
+    },
+    "provenance.x_refinement_fields": {
+      "count": 1,
+      "detail": "target-refinement's own method name (agent_semantic_curation) and its nodes_curated count have no provenance field; kept as x_method and x_nodes_curated",
+      "examples": []
+    },
+    "item.coverage_from_prose": {
+      "count": 33,
+      "detail": "target-refinement's provenance note classifies section 1.7's 33 items with no entry (29 formalised only by anonymous examples, Remark 1.7.22 by nothing, Remark 1.7.4 / Definition 1.7.7 / Definition 1.7.10 only by a supporting declaration); the 33 were matched by count (exactly the 33 fallback items numbered 1.7.x) and carry that class as coverage beside cluster_fallback",
+      "examples": [
+        "definition-1.7.10: support_only",
+        "definition-1.7.7: support_only",
+        "remark-1.7.22: not_formalized",
+        "remark-1.7.4: support_only"
+      ]
+    },
+    "verdict.sub_from_prose": {
+      "count": 2,
+      "detail": "the sub-part lives only in summary prose; parsed by regex",
+      "examples": [
+        "exercise-1.1.21 sub 3",
+        "exercise-1.2.24 sub iii"
+      ]
+    },
+    "verdict.replaced_by_from_prose": {
+      "count": 4,
+      "detail": "the replacing declaration is named only in note prose ('Fixed in PR #N: X (File.lean:L)'); parsed by regex",
+      "examples": [
+        "exercise-1.1.21 -> ['MeasureTheory.Tao.Riemann.piecewiseConstantIntegral_indicator_of_le']",
+        "exercise-1.2.21 -> ['MeasureTheory.Tao.Lebesgue.volume_linear_image']",
+        "exercise-1.2.23 -> ['MeasureTheory.Tao.Lebesgue.volume_unique_of_lebesgue_axioms']",
+        "exercise-1.3.4 -> ['MeasureTheory.Tao.aemeasurable_bounded_iff_exists_bounded_completedSimpleFunc_tendstoUniformly']"
+      ]
+    },
+    "root.x_graph_scope": {
+      "count": 1,
+      "detail": "the ledger's scope name (tao-measure-chapter-1) and its snapshot tree hash have no companion.graph field; kept in a root x_ key",
+      "examples": []
+    }
+  }
+}

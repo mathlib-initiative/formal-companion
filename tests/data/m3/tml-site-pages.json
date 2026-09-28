@@ -1,0 +1,196 @@
+{
+ "note": "HTML pages of the tao-measure-lean literate site rendered from main f158509 on 2026-09-26; the site digest is the sha256 of the sorted manifest lines \"<sha256>  <path>\\n\" (docs/annotations.md section 3.1)",
+ "site_sha256": "d1896a91ab26c82e5b432ad218561108035f46499e2d6ee3bfaebf66a6db84ba",
+ "pages": [
+  {
+   "path": "TaoMeasure/Section_1_1_1/index.html",
+   "sha256": "3236f2cdb654b2362601a4c867e18bb3334b0cd54e225dcd609a5ad64c90c023",
+   "bytes": 49435096
+  },
+  {
+   "path": "TaoMeasure/Section_1_1_2/index.html",
+   "sha256": "5267b2652899afd8e3223a23b170d6844c5296603d10b99daf4a744f48b6a812",
+   "bytes": 10858022
+  },
+  {
+   "path": "TaoMeasure/Section_1_1_3/index.html",
+   "sha256": "7b447bd783a553b5058bd64ce637919a51df0b6fc27555e30f8e53ce2696b130",
+   "bytes": 3432462
+  },
+  {
+   "path": "TaoMeasure/Section_1_2_0/index.html",
+   "sha256": "f34f5f2c5643b8ea6a326f20e2f8a2df53260a0f953c247a604b82fda5cb3250",
+   "bytes": 11411830
+  },
+  {
+   "path": "TaoMeasure/Section_1_2_1/index.html",
+   "sha256": "9d60da4e3fb887b263351b6391e0af510e44c1146b32b972c01c6d040677e366",
+   "bytes": 5169870
+  },
+  {
+   "path": "TaoMeasure/Section_1_2_2/index.html",
+   "sha256": "cfd41476f752c857a6e2d9b06eb2d00f48ad52143f63830ffa1bb6f8af6e4a2d",
+   "bytes": 19485115
+  },
+  {
+   "path": "TaoMeasure/Section_1_2_3/index.html",
+   "sha256": "7c16a8698aa9ef96a85be3958eb3d9bd71eb4195170f6206a1ff500e5d01d2ed",
+   "bytes": 1442299
+  },
+  {
+   "path": "TaoMeasure/Section_1_3_1/index.html",
+   "sha256": "154a85c17140248bdf4fa5b811812f28591d869aa5fe9b7a473d1485753e8ee5",
+   "bytes": 28939913
+  },
+  {
+   "path": "TaoMeasure/Section_1_3_2/index.html",
+   "sha256": "20a071970f5bd701daf947967714c1085ab80fde971709c2c78c99d35b9c62f6",
+   "bytes": 22711147
+  },
+  {
+   "path": "TaoMeasure/Section_1_3_3/index.html",
+   "sha256": "694bfc318f9a16cd58171ac24ffa23e3ac34e7d458025dc8ce9b80936f8fbcc4",
+   "bytes": 9281232
+  },
+  {
+   "path": "TaoMeasure/Section_1_3_4/index.html",
+   "sha256": "6bb248605d7d1b7a3f5f826d3dbe606008ca7302526702bf216ecb872cc8253c",
+   "bytes": 5167795
+  },
+  {
+   "path": "TaoMeasure/Section_1_3_5/index.html",
+   "sha256": "11a24298e9332ec9f6337ad90282143020382ddc19eb387837070c1889c5ba7d",
+   "bytes": 4368236
+  },
+  {
+   "path": "TaoMeasure/Section_1_4_1/index.html",
+   "sha256": "bfbb850a95320de1b3949c065fe80a80f91541d22feecbfc585b18b365c7285b",
+   "bytes": 20481177
+  },
+  {
+   "path": "TaoMeasure/Section_1_4_2/index.html",
+   "sha256": "7686a211f0a66236ed0de4a73cefeaace7727363f2c18b549b5630fe2ba1eb88",
+   "bytes": 1555253
+  },
+  {
+   "path": "TaoMeasure/Section_1_4_3/index.html",
+   "sha256": "26f95b42abd41117c877d2ffaded7ef2df47cebd3aa9f57c94dc192e92bbcda1",
+   "bytes": 34200086
+  },
+  {
+   "path": "TaoMeasure/Section_1_4_4/index.html",
+   "sha256": "f63f78276689836a4ef83b519d5f3a382817d5919130c053b66dd59e12af4c02",
+   "bytes": 31225940
+  },
+  {
+   "path": "TaoMeasure/Section_1_4_5/index.html",
+   "sha256": "f2527270e67b09c2a9ba6d06b9bd846dada1917a02d17195cfac946091ac65b9",
+   "bytes": 3521132
+  },
+  {
+   "path": "TaoMeasure/Section_1_5_0/index.html",
+   "sha256": "d9d6acf655694918e0563a4fcb7b07f9a3c22ec771391a0c8e5f683c545759a7",
+   "bytes": 44250061
+  },
+  {
+   "path": "TaoMeasure/Section_1_5_1/index.html",
+   "sha256": "4a68975fbdb8875834151f683481ec150eb33c0728a862c883b974b6314f39e1",
+   "bytes": 9437486
+  },
+  {
+   "path": "TaoMeasure/Section_1_5_2/index.html",
+   "sha256": "7238df71de5d4887181d18781f12fd403f527817b4a61e6c9c3023b768346861",
+   "bytes": 18810340
+  },
+  {
+   "path": "TaoMeasure/Section_1_5_3/index.html",
+   "sha256": "954cf7fbdb5f56edfeb678c470df3d91e4e18f86d15441ffa99af318a2536a83",
+   "bytes": 473001
+  },
+  {
+   "path": "TaoMeasure/Section_1_5_4/index.html",
+   "sha256": "dbeb0b8cb73c0f340c03479e44779188e0b9b1b0e4813fd0e02522668394df06",
+   "bytes": 48512464
+  },
+  {
+   "path": "TaoMeasure/Section_1_6_0/index.html",
+   "sha256": "fce8071364f26618ed47d0fa55b12b82f0ae045ad71b04119d3e7ac0bbe89909",
+   "bytes": 29595421
+  },
+  {
+   "path": "TaoMeasure/Section_1_6_1/index.html",
+   "sha256": "d2f8aa0d68314eb15972a2bbb6c0cf8937188a0ec8a351bcde08017b51d3dfcd",
+   "bytes": 47316471
+  },
+  {
+   "path": "TaoMeasure/Section_1_6_2/index.html",
+   "sha256": "4be512c0d935639527ea5f8f2c874533a38d273245a671d1b5cdb11edc749548",
+   "bytes": 39333672
+  },
+  {
+   "path": "TaoMeasure/Section_1_6_3/index.html",
+   "sha256": "89d249bdd3f14dcbae1efae74e81f0696f8aef2e5c815fbf8b1bc7c883c3cf47",
+   "bytes": 5262139
+  },
+  {
+   "path": "TaoMeasure/Section_1_7_0/index.html",
+   "sha256": "43f3017d14025a630714b19e44a653ac8c3030d9a4ba804cc818e0fb623976c5",
+   "bytes": 53400
+  },
+  {
+   "path": "TaoMeasure/Section_1_7_1/index.html",
+   "sha256": "93de1970031bdec162e10b63304887bc1133a6990f26065b65b0c6ac39121254",
+   "bytes": 224129
+  },
+  {
+   "path": "TaoMeasure/Section_1_7_2/index.html",
+   "sha256": "f285865fcf086287d2c0bfeb2d350986e1bea01bbad3baaf3e37c026f3d29722",
+   "bytes": 3643350
+  },
+  {
+   "path": "TaoMeasure/Section_1_7_3/index.html",
+   "sha256": "d4d1c02ebf06949f7861eff43c03812669ae77fcec9a5b3a403a962c179bc0de",
+   "bytes": 32756303
+  },
+  {
+   "path": "TaoMeasure/Section_1_7_4/index.html",
+   "sha256": "93e895e307a1f56e5a67b79c60e57a0d4112b103142eb06ce12ca94906d93f28",
+   "bytes": 4632759
+  },
+  {
+   "path": "TaoMeasure/Section_2_1/index.html",
+   "sha256": "e4a52ca25fe6e73fc27aafbbcd2f6b4136185cb116f4cf0c5629cc6883323f45",
+   "bytes": 5812933
+  },
+  {
+   "path": "TaoMeasure/Section_2_2/index.html",
+   "sha256": "be5c0b2e4fccb3e795eedf77f95fba29e8c24e5848e2ae0c09ed4f83fec5cd3a",
+   "bytes": 1184848
+  },
+  {
+   "path": "TaoMeasure/Section_2_3/index.html",
+   "sha256": "5712308662b7194bb538f3e35f5e078413119b32a79f2955d16f5f26f1d89e5a",
+   "bytes": 495251
+  },
+  {
+   "path": "TaoMeasure/Section_2_4/index.html",
+   "sha256": "a276e2a2b00252cf6f08a632f115e670f3abba51f63fc62284625fc732d45068",
+   "bytes": 10879939
+  },
+  {
+   "path": "TaoMeasure/index.html",
+   "sha256": "a3d1be3acfe1d89c954669766cb74e3be4c3d4f730fbfe463a89606bbd4e3260",
+   "bytes": 57850
+  },
+  {
+   "path": "index.html",
+   "sha256": "a993d7c1b2c03061efeb275886d234701740dbad7170e53dde11493a0894f3f2",
+   "bytes": 57783
+  },
+  {
+   "path": "search/index.html",
+   "sha256": "a2764184361528e4cf7c6f1c1d3a9d1cb4ce501a3c41e37117131251e97d51be",
+   "bytes": 1850
+  }
+ ]
+}
