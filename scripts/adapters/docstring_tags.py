@@ -329,7 +329,14 @@ class DocstringTagsAdapter(Adapter):
                     out.append(kind)
         return tuple(out)
 
-    def _tag_of(self, doc: str | None, keywords=None):
+    def tag_of(self, doc: str | None, keywords=None):
+        """The docstring's book tag as this config reads it (``tag.*``), or None.
+
+        Public because the annotation exporter re-reads the tag of a row it
+        was given, and must read it the way the rows were read: with
+        ``require_backticks``, ``pattern``, ``position`` and the keywords the
+        config sets, not ``itemtag.find_tag``'s defaults.
+        """
         if not doc:
             return None
         # position: docstring_start (the tag opens the docstring, with a
@@ -412,7 +419,7 @@ class DocstringTagsAdapter(Adapter):
                     counts["private"] += 1
                 if decl.anonymous:
                     counts["anonymous_declarations"] += 1
-                tag = self._tag_of(decl.doc, keywords)
+                tag = self.tag_of(decl.doc, keywords)
                 if tag is None:
                     counts["untagged"] += 1
                     continue

@@ -62,8 +62,6 @@ PROV_SITE = "prov-verso-site"
 SITE_NOTE = ("_site is git-ignored build output; it is not provably built from companion.commit, so it is "
              "pinned by content, not by revision")
 
-_SUB_RANGE = re.compile(r"^\(([^()]+)\)\s*[–—-]\s*\(([^()]+)\)")
-_SUB_GROUPS = re.compile(r"^((?:\([^()]+\))+)")
 _ABBREV = re.compile(r"(?:\bpp?|\be\.g|\bi\.e|\bcf|\bvs|\bresp|\bfig|\bno|\bch|\bsec|\bEx|\bDef|\bThm)$", re.I)
 
 
@@ -71,32 +69,19 @@ _ABBREV = re.compile(r"(?:\bpp?|\be\.g|\bi\.e|\bcf|\bvs|\bresp|\bfig|\bno|\bch|\
 # tags, titles and notes
 # ---------------------------------------------------------------------------
 
-def sub_from_label(rest: str) -> str:
-    """The sub-part written right after an item number, without parentheses.
-
-    ``(ii)`` -> ``ii``; ``(i)(a)`` -> ``i.a``; a range ``(iv)-(vi)`` -> ``iv-vi``
-    (the adapter keeps only the first group of a range).
-    """
-    rest = rest.strip()
-    m = _SUB_RANGE.match(rest)
-    if m:
-        return f"{m.group(1).strip()}-{m.group(2).strip()}"
-    m = _SUB_GROUPS.match(rest)
-    if not m:
-        return ""
-    return ".".join(p.strip() for p in re.findall(r"\(([^()]*)\)", m.group(1)) if p.strip())
-
-
-def after_number(raw: str, number: str) -> str:
-    i = raw.find(number)
-    return raw[i + len(number):] if i >= 0 else ""
+def _tag_span(text: str, tag: itemtag.TagHit) -> tuple[int, int]:
+    """The tag's span in the collapsed docstring, with its backticks when it has them (a bare tag has none)."""
+    s, e = tag.start, tag.end
+    if s > 0 and text[s - 1] == "`" and text[e:e + 1] == "`":
+        s, e = s - 1, e + 1
+    return s, e
 
 
 def first_sentence(doc: str, tag: itemtag.TagHit | None) -> str:
     """A passage's title: the docstring's first sentence with the tag cut out."""
     text = itemtag.collapse(doc)
     if tag is not None:
-        s, e = tag.start - 1, tag.end + 1              # the backticks around the tag
+        s, e = _tag_span(text, tag)
         text = text[:s] + text[e:]
         text = re.sub(r"\(\s*[;,:—-]?\s*\)", "", text)   # "( )" left behind
         text = re.sub(r"\(\s*[;,]\s*", "(", text)
@@ -130,7 +115,7 @@ def tag_parenthetical(doc: str, tag: itemtag.TagHit | None) -> str | None:
     if tag is None:
         return None
     text = itemtag.collapse(doc)
-    i = tag.end + 1                                    # past the closing backtick
+    i = _tag_span(text, tag)[1]                        # past the closing backtick, if any
     while i < len(text) and text[i] == " ":
         i += 1
     if i >= len(text) or text[i] != "(":
@@ -211,6 +196,7 @@ class DocstringTagsExport:
         cfg["sources"] = {"default": self.source_id, "map": []}
         self.adapter = from_config(cfg, source=str(config_path))
         self.config_name = Path(config_path).name
+        self.config_is_template = Path(config_path).resolve() == TEMPLATE.resolve()
         # the site pin
         self.pin = load_json(site_pages)
         self.xref_bytes = read_bytes(xref)
@@ -289,6 +275,8 @@ class DocstringTagsExport:
             if d.doc_line:
                 rec["doc_line"] = d.doc_line
             if d.anonymous:
+                if (d.file, d.line) not in anon_at:
+                    continue                                 # reported above as a leanparse-only declaration
                 a, rid, source = anon_at[(d.file, d.line)]
                 rec.update(id=rid, id_source=source, statement_sha256=a.statement_sha256, signature=a.signature)
             else:
@@ -343,8 +331,12 @@ class DocstringTagsExport:
 
     def add_link(self, item: str, role: str, decl: str, raw: str, sub: str = "", **extra) -> str:
         lid = f"{item}/{role}/{decl}" + (f"/{sub}" if sub else "")
-        rec = {"id": lid, "item": item, "declaration": decl, "role": role, "provenance": PROV_TAG,
-               "raw_label": raw}
+        rec = {"id": lid, "item": item, "declaration": decl, "role": role, "provenance": PROV_TAG}
+        if common.has_url(raw):
+            self.report.problem(f"{decl}: the tag {raw!r} holds a URL, which I10 keeps out of raw_label; "
+                                "the link was written without it")
+        else:
+            rec["raw_label"] = raw
         if sub:
             rec["sub"] = sub
         rec.update({k: v for k, v in extra.items() if v is not None})
@@ -360,27 +352,46 @@ class DocstringTagsExport:
         last = int(m.group(2)) if (m.lastindex or 0) >= 2 and m.group(2) else None
         return int(m.group(1)), last, m.group(0).strip()
 
+    def pages_in_range(self, did: str, raw: str, page, last) -> bool:
+        """Whether a tag's printed page (and range end) lie in the PDF; a problem naming the declaration if not."""
+        if page is None:
+            return True
+        count = self.pdf.page_count()
+        bad = page < 1 or page + self.offset > count
+        if last is not None and last != page:
+            bad = bad or last < page or last + self.offset > count
+        if bad:
+            span = f"{page}-{last}" if last is not None and last != page else f"{page}"
+            self.report.problem(f"{did}: the tag {raw!r} gives printed page {span}, outside the PDF's "
+                                f"{count} physical pages at offset {self.offset} (or reversed); the page was dropped")
+        return not bad
+
     def add_passage(self, d: leanparse.Decl, did: str, raw: str, half: str, page, last, page_raw) -> None:
         """One passage per In-text tag (or tag half), keyed by the section 5.2 rule."""
-        tag = itemtag.find_tag(d.doc, self.adapter.item_kinds())
-        title = first_sentence(d.doc, tag) or f"In-text passage formalised by {did}"
+        tag = self.adapter.tag_of(d.doc, self.adapter.item_kinds())
+        title = first_sentence(d.doc, tag)
+        if common.has_url(title):
+            self.report.problem(f"{did}: the passage title from its docstring holds a URL, which I10 keeps out "
+                                "of every non-source field; the fallback title was written instead")
+            title = ""
+        title = title or f"In-text passage formalised by {did}"
         parsed = cf_items.try_parse(half, self.all_kinds)[0]
         qualifier = (parsed.qualifier or "").strip() if parsed else ""
         near_item = None
         kind, kind_source = "passage", None
-        # the parsed id names a numbered neighbour ("In-text Exercise 1.2.13") or a page
-        # ("In-text p.27"); the qualifier is the tag's own word ("definition") or, with no
-        # word, the neighbour again ("In-text, Remark 1.4.33")
-        ref_label = re.sub(r"^In-text\s+", "", parsed.id) if parsed else ""
-        ref_parsed, _ = cf_items.try_parse(ref_label, self.numbered_kinds)
-        if ref_parsed is not None:
-            number = ".".join(str(n) for n in ref_parsed.number_levels)
-            near_item = self.numbered_item(ref_parsed.kind, number)
-        if qualifier and cf_items.try_parse(qualifier, self.numbered_kinds)[0] is None:
+        # a numbered neighbour is the tag's first item mention ("In-text, Remark 1.4.33",
+        # "In-text definition, Exercise 1.2.13", "In-text, near Exercise 1.1.3, book p. 12"),
+        # found by the grammar whether or not the tag also gives a page
+        refs = cf_items.find_items(half, self.numbered_kinds, limit=1)
+        if refs:
+            number = ".".join(str(n) for n in refs[0].number_levels)
+            near_item = self.numbered_item(refs[0].kind, number)
+        # the kind is the tag's own single word ("definition", "convention"); positional prose is not a kind
+        if re.fullmatch(r"[A-Za-z][A-Za-z-]*", qualifier):
             kind, kind_source = qualifier, "producer"
         label = None
         disp = re.search(r",\s*display\s*(\([^()]+\))", half)
-        if disp:
+        if disp and not common.has_url(disp.group(1)):
             label = disp.group(1)
         anchor_kind = "own"
         basis_note = None
@@ -396,6 +407,7 @@ class DocstringTagsExport:
                 self.report.problem(f"no heading found for the reference of {raw!r}")
                 return
             page = heads[0][0] - self.offset
+            last = None
             anchor_kind = "inferred"
             basis_note = f"heading of {it['kind']} {it['number']}"
             self.anchored_in_text.append({"decl": did, "raw": raw, "near": near_item,
@@ -405,14 +417,12 @@ class DocstringTagsExport:
                 page += 1
                 basis_note += ", moved to the next page where the docstring's quote is verified"
         physical = page + self.offset
-        candidates = [physical] if anchor_kind == "own" else [physical, physical + 1]
-        hit = pdf.first_verified(candidates, runs)
+        # an own anchor is verified over its whole page range; an inferred one was placed on its page above
+        span = range(physical, (last if last and last > page else page) + self.offset + 1)
+        hit = pdf.first_verified(list(span) if anchor_kind == "own" else [physical], runs)
         quote = None
         if hit:
-            cand, quote = hit
-            if cand != physical:
-                basis_note = (basis_note or "") + f", quote verified on the next page ({cand})"
-                physical = cand
+            physical, quote = hit
         if runs:
             self.passage_quote_stats["docstring_quotes"] += 1
             if quote:
@@ -496,9 +506,14 @@ class DocstringTagsExport:
     def build_links(self) -> None:
         for row in sorted(self.rows, key=lambda r: (r["file"], r["line"])):
             d = self.decl_by_loc[(row["file"], row["line"])]
-            did = self.decl_id_at[(row["file"], row["line"])]
+            did = self.decl_id_at.get((row["file"], row["line"]))
             raw = row["item_raw"]
-            tag = itemtag.find_tag(d.doc, self.adapter.item_kinds())
+            if did is None:
+                # a duplicate declaration id (reported by read_declarations) or an unjoined anonymous one
+                self.report.problem(f"the tag {raw!r} at {row['file']}:{row['line']} names a declaration the "
+                                    "document does not carry; no link was written")
+                continue
+            tag = self.adapter.tag_of(d.doc, self.adapter.item_kinds())
             anchor = itemtag.find_page_anchor(d.doc, tag, clause_window=self.clause_window, page_re=self.page_re)
             if (anchor.page, anchor.raw, anchor.source) != (row["page_anchor"], row["page_anchor_raw"],
                                                             row["anchor_source"]):
@@ -519,6 +534,8 @@ class DocstringTagsExport:
         last = anchor.last_page if own_page else None
         praw = anchor.raw if own_page else None
         psrc = anchor.source if own_page else None
+        if not self.pages_in_range(did, raw, page, last):
+            page = last = praw = psrc = None
         parsed, reject = cf_items.try_parse(half, self.all_kinds)
         if parsed is None:
             self.report.problem(f"tag half unparsed: {half!r} of {raw!r} ({reject.reason})")
@@ -526,7 +543,7 @@ class DocstringTagsExport:
         if parsed.kind != cf_items.IN_TEXT:
             number = ".".join(str(n) for n in parsed.number_levels)
             iid = self.numbered_item(parsed.kind, number)
-            sub = sub_from_label(after_number(half, number))
+            sub = self.sub_of(did, raw, common.after_number(half, number))
             if len(halves) == 1 and sub != itemtag.collapse(row["sub"]).strip("()").replace(")(", "."):
                 self.sub_fixes.append({"decl": did, "raw": raw, "adapter_sub": row["sub"], "sub": sub})
             pages = self.link_pages(page, last, praw, psrc) if psrc in ("own", "crossref") else None
@@ -542,7 +559,7 @@ class DocstringTagsExport:
                 return
             number = ".".join(str(n) for n in ref.number_levels)
             iid = self.numbered_item(ref.kind, number)
-            sub = sub_from_label(after_number(m.group("ref"), number))
+            sub = self.sub_of(did, raw, common.after_number(m.group("ref"), number))
             pages = self.link_pages(page, last, praw, psrc) if psrc in ("own", "crossref") else None
             lid = f"{iid}/helper/{did}" + (f"/{sub}" if sub else "")
             self.add_link(iid, "helper", did, raw, sub, pages=pages,
@@ -551,12 +568,23 @@ class DocstringTagsExport:
             return
         if page is None and len(halves) > 1:
             page, last, praw = self.page_of(half)
+            if not self.pages_in_range(did, raw, page, last):
+                page = last = praw = None
         self.add_passage(d, did, raw, half, page, last, praw)
+
+    def sub_of(self, did: str, raw: str, after: str) -> str:
+        """The link's sub-part, by the renderer both exporters share; a refused one is dropped and reported."""
+        sub, _rest, refused = common.render_sub(after)
+        if refused:
+            self.report.problem(f"{did}: the sub-part {refused!r} of the tag {raw!r} is not one the format can "
+                                "carry (docs/annotations.md section 3.2); the link was written without a sub")
+        return sub
 
     def locate_headings(self) -> None:
         """A numbered item's location: its heading line in the text layer."""
         heading_stats: collections.Counter = collections.Counter()
         no_heading: list[str] = []
+        from_links: list[str] = []
         vs: collections.Counter = collections.Counter()
         disagreements: list[dict] = []
         pdf = self.pdf
@@ -571,6 +599,7 @@ class DocstringTagsExport:
             if not heads:
                 heading_stats["no_heading"] += 1
                 no_heading.append(iid)
+                self.pages_from_key_link(iid, it, from_links)
                 continue
             if bare:
                 heading_stats["bare_number_heading"] += 1
@@ -604,11 +633,23 @@ class DocstringTagsExport:
                                           "heading_printed_page": printed})
         self.report.counts["headings"] = dict(heading_stats)
         self.report.counts["headings"]["no_heading_items"] = no_heading
+        if from_links:
+            self.report.counts["headings"]["pages_from_key_link_items"] = from_links
         self.report.counts["headings"]["several_heading_items"] = {
             loc["id"]: loc["x_heading_candidates"] for loc in self.locations.values()
             if "x_heading_candidates" in loc}
         self.report.counts["link_pages_vs_heading"] = dict(vs)
         self.report.counts["link_pages_vs_heading_disagreements"] = disagreements
+
+    def pages_from_key_link(self, iid: str, it: dict, from_links: list[str]) -> None:
+        """A numbered item the text layer shows no heading for takes its pages from its earliest paged key link."""
+        paged = sorted((ln for ln in self.links.values()
+                        if ln["item"] == iid and ln["role"] == "key" and "pages" in ln),
+                       key=lambda ln: (ln["pages"]["first"], ln["id"]))
+        if not paged:
+            return
+        it["pages"] = dict(paged[0]["pages"])
+        from_links.append(iid)
 
     def annotate_links(self) -> None:
         """Link notes from the tag's parenthetical; coverage for helper-only items; the item counts."""
@@ -619,9 +660,13 @@ class DocstringTagsExport:
             d = decl_of_id[ln["declaration"]]
             if self.items[ln["item"]]["form"] != "numbered":
                 continue
-            paren = tag_parenthetical(d.doc, itemtag.find_tag(d.doc, self.adapter.item_kinds()))
+            paren = tag_parenthetical(d.doc, self.adapter.tag_of(d.doc, self.adapter.item_kinds()))
             note = link_note(paren, self.items[ln["item"]].get("title"), ln.get("pages", {}).get("raw"),
                              self.page_re)
+            if common.has_url(note):
+                self.report.problem(f"{ln['declaration']}: the note of {ln['id']} holds a URL, which I10 keeps "
+                                    "out of every non-source field; the note was dropped")
+                note = None
             if note:
                 ln["note"] = note
                 note_count += 1
@@ -861,7 +906,7 @@ class DocstringTagsExport:
         provenance = [
             {"id": PROV_TAG, "actor": "author", "method": "docstring_tag", "confirmed_by_human": False,
              "tool": {"name": "companion-faithfulness adapters.docstring_tags",
-                      "version": f"template {self.config_name}"},
+                      "version": f"{'template' if self.config_is_template else 'config'} {self.config_name}"},
              "inputs": sorted(lean_inputs, key=lambda r: r["path"]),
              "note": f"Book tag read from the declaration's docstring at {self.head[:7]}. "
                      "Whether a human reviewed each tag is not recorded in the repository."},
@@ -893,6 +938,15 @@ class DocstringTagsExport:
                                      for r in arr if isinstance(r, dict) for k in r if k.startswith("x_"))
         self.report.counts["output"] = {"counts": {k: len(v) for k, v in doc.items() if isinstance(v, list)},
                                         "x_keys": dict(sorted(x_keys.items()))}
+        if x_keys.get("x_page_basis"):
+            self.report.bend("location.x_page_basis", x_keys["x_page_basis"],
+                             "how a passage's page was placed (the heading of the numbered neighbour it names, "
+                             "moved to the next page where its docstring quote verifies) has no location field; "
+                             "kept as x_page_basis")
+        if x_keys.get("x_heading_candidates"):
+            self.report.bend("location.x_heading_candidates", x_keys["x_heading_candidates"],
+                             "a numbered item whose heading line the text layer shows on several pages is located "
+                             "on the first; the physical pages of every candidate are kept as x_heading_candidates")
         self.report.counts["repo_head"] = self.head
         return doc
 

@@ -591,11 +591,12 @@ XREF["VersoHtml.constant"]["contents"]["Demo.lemma_125"] = [
      "data": {"module": "Demo.Section_1_2", "userName": "Demo.lemma_125", "private": False}}]
 
 
-def make_docstring_tags_repo(root: Path) -> tuple[str, Path, Path, Path, Path]:
+def make_docstring_tags_repo(root: Path, lean_1: str = DT_LEAN_1,
+                             lean_2: str = DT_LEAN_2) -> tuple[str, Path, Path, Path, Path]:
     """The fixture: ``(commit, pdf, xref, pages pin, site dir)``."""
     (root / "Demo").mkdir(parents=True)
-    (root / "Demo" / "Section_1_1.lean").write_text(DT_LEAN_1, encoding="utf-8")
-    (root / "Demo" / "Section_1_2.lean").write_text(DT_LEAN_2, encoding="utf-8")
+    (root / "Demo" / "Section_1_1.lean").write_text(lean_1, encoding="utf-8")
+    (root / "Demo" / "Section_1_2.lean").write_text(lean_2, encoding="utf-8")
     (root / ".gitignore").write_text("_site/\n", encoding="utf-8")
     commit = git_commit(root)
     pdf = root.parent / "demo.pdf"
@@ -604,7 +605,7 @@ def make_docstring_tags_repo(root: Path) -> tuple[str, Path, Path, Path, Path]:
     xref.write_text(json.dumps(XREF), encoding="utf-8")
     site = root / "_site"
     src = (root / "Demo" / "Section_1_1.lean").read_bytes()
-    kw_off = src.index(b"example :")
+    kw_off = src.find(b"example :")
     (site / "Demo" / "Section_1_1").mkdir(parents=True)
     (site / "Demo" / "Section_1_2").mkdir(parents=True)
     (site / "Demo" / "Section_1_1" / "index.html").write_text(
@@ -747,6 +748,449 @@ class TestDocstringTagsExport(unittest.TestCase):
         doc = V.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(doc["companion"]["generator"], common.generator("docstring-tags"))
         self.assertNotIn("page_size", doc["sources"][0])
+
+
+# ---------------------------------------------------------------------------
+# the review of the exporters (review record of pull request 15): one regression test per fix
+# ---------------------------------------------------------------------------
+
+def commit_all(root: Path, message: str = "variant") -> str:
+    env = dict(os.environ, GIT_AUTHOR_NAME="T", GIT_AUTHOR_EMAIL="t@e.invalid",
+               GIT_COMMITTER_NAME="T", GIT_COMMITTER_EMAIL="t@e.invalid")
+    subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, env=env)
+    subprocess.run(["git", "-C", str(root), "commit", "-qm", message], check=True, env=env)
+    return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], check=True, env=env,
+                          capture_output=True, text=True).stdout.strip()
+
+
+def edit_json(path: Path, change) -> None:
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    change(obj)
+    write_json(path, obj)
+
+
+def relock_ledger(root: Path) -> None:
+    """After an edit of the ledger: the sha256 (and bytes) the other overlay files pin it by."""
+    data = (root / "source-formalization-ledger.json").read_bytes()
+    sha = sha256(data)
+    overlay = root / "pdf-overlay" / "data"
+    for name in ("target-refinement.json", "faithfulness-verdicts.json"):
+        edit_json(overlay / name, lambda o: o.update(ledger_sha256=sha))
+    edit_json(overlay / "destinations.json", lambda o: o["ledger"].update(sha256=sha, bytes=len(data)))
+
+
+def at_variant(case: unittest.TestCase, mutate) -> tuple[Path, str]:
+    """The synthetic overlay companion with ``mutate(root)`` applied and committed."""
+    root = scratch(case) / "repo"
+    root.mkdir()
+    make_attribution_table_repo(root)
+    mutate(root)
+    return root, commit_all(root)
+
+
+def at_export(root: Path, commit: str):
+    return attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                    source_id="demo-pdf", source_title="A Demo Book")
+
+
+def geometry(root: Path, batch: str = "a") -> Path:
+    return root / "pdf-overlay" / "data" / f"geometry-batch-{batch}.json"
+
+
+def set_label(root: Path, item_id: str, label: str, batch: str = "a") -> None:
+    def change(b):
+        next(it for it in b["items"] if it["item_id"] == item_id)["label"] = label
+    edit_json(geometry(root, batch), change)
+
+
+class TestTheSubPartRenderer(unittest.TestCase):
+    """Review item 2 and 8: one renderer, ranges and lists whole, a refused sub-part reported."""
+
+    def test_the_shared_renderer(self):
+        for text, want in (("(ii)", ("ii", None)), ("(i)(a)", ("i.a", None)), ("(iv)-(vi)", ("iv-vi", None)),
+                           ("(i)–(iii)", ("i-iii", None)), ("(i),(ii)", ("i,ii", None)),
+                           ("(i), (iii)", ("i,iii", None)), ("(i) and (iii)", ("i,iii", None)),
+                           ("(i)/(ii)", ("i,ii", None)), (" (Finite additivity)", ("", None)),
+                           ("(Finite additivity)", ("", "(Finite additivity)")), ("(ii')", ("", "(ii')")),
+                           ("(i)-(ii')", ("", "(i)-(ii')")), (", book p. 6", ("", None)), ("", ("", None))):
+            with self.subTest(text=text):
+                sub, _rest, refused = common.render_sub(text)
+                self.assertEqual((sub, refused), want)
+                if sub:
+                    self.assertRegex(sub, common.SUB_PATTERN)
+
+    def test_both_exporters_render_one_label_alike(self):
+        kinds = tuple(attribution_table.cf_items.DEFAULT_KINDS)
+        for label, sub in (("Exercise 1.1.3(i)(a)", "i.a"), ("Exercise 1.1.3(i)-(iii)", "i-iii"),
+                           ("Exercise 1.1.3(i), (iii)", "i,iii")):
+            with self.subTest(label=label):
+                rec = attribution_table.item_identity(label, "item:x", kinds)[0]
+                self.assertEqual(rec["sub"], sub)
+                self.assertNotIn("_trailing", rec)
+                self.assertEqual(common.render_sub(common.after_number(label, "1.1.3"))[0], sub)
+
+    def test_a_range_keeps_the_title_after_it(self):
+        kinds = tuple(attribution_table.cf_items.DEFAULT_KINDS)
+        rec = attribution_table.item_identity("Lemma 1.2.3(i)-(iii) (Monotonicity)", "item:x", kinds)[0]
+        self.assertEqual((rec["sub"], rec["title"]), ("i-iii", "Monotonicity"))
+        self.assertNotIn("_trailing", rec)
+
+
+class TestAttributionTableReviewFixes(unittest.TestCase):
+    """The latent paths review items 2 to 7 found, each on a variant of the synthetic overlay companion."""
+
+    def test_a_sub_part_range_or_list_is_carried_whole(self):
+        for label, iid, sub in (("Remark 1.1.4(i)-(iii)", "remark-1.1.4-i-iii", "i-iii"),
+                                ("Remark 1.1.4(i), (iii)", "remark-1.1.4-i,iii", "i,iii")):
+            with self.subTest(label=label):
+                root, commit = at_variant(self, lambda r, label=label: set_label(r, "item:batch-b:rem-1.1.4",
+                                                                                 label, "b"))
+                doc, report = at_export(root, commit)
+                valid_and_quiet(self, doc)
+                self.assertEqual(report.problems, [])
+                self.assertEqual(by_id(doc, "items")[iid]["sub"], sub)
+                self.assertNotIn("item.label_trailing", report.lossy)
+
+    def test_a_sub_part_the_format_cannot_carry_is_dropped_and_reported(self):
+        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(ii')", "b"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertNotIn("sub", by_id(doc, "items")["remark-1.1.4"])
+        self.assertEqual(len(report.problems), 1)
+        self.assertIn("(ii')", report.problems[0])
+
+    def test_a_formalization_id_the_ledger_lacks_is_a_refusal_naming_the_file(self):
+        def mutate(root):
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
+                      lambda o: o["entries"][1]["formalization_ids"].append("Demo.not_in_the_ledger"))
+        root, commit = at_variant(self, mutate)
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("target-refinement.json", caught.exception.message)
+        self.assertIn("Demo.not_in_the_ledger", caught.exception.message)
+        for name, change in (("declaration-snippets.json",
+                              lambda o: o["snippets"].update({"Demo.gone": {"file": "Demo/Basic.lean", "line": 1,
+                                                                            "text": "x"}})),
+                             ("destinations.json",
+                              lambda o: o["destinations"].append({"formalization_id": "Demo.gone",
+                                                                  "resolution": "fallback",
+                                                                  "fallback_href": "Demo/Basic/",
+                                                                  "fallback_label": "module page"}))):
+            with self.subTest(file=name):
+                root, commit = at_variant(self, lambda r, n=name, c=change: edit_json(
+                    r / "pdf-overlay" / "data" / n, c))
+                with self.assertRaises(common.ExportError) as caught:
+                    at_export(root, commit)
+                self.assertIn(name, caught.exception.message)
+
+    def test_a_public_field_of_a_private_structure_names_its_parent_by_id(self):
+        private = "private structure Secret where\n  x : Nat\n\nend Demo\n"
+
+        def mutate(root):
+            lean = root / "Demo" / "Basic.lean"
+            lean.write_text(lean.read_text(encoding="utf-8").replace("end Demo\n", private), encoding="utf-8")
+
+            def change(ledger):
+                ledger["formalization_nodes"] += [
+                    {"id": "Demo.Secret.x", "kind": "structure field", "module": "Demo.Basic",
+                     "file": "Demo/Basic.lean"},
+                    {"id": "private:Demo.Basic:Demo/Basic.lean:L7:Secret", "kind": None, "module": "Demo.Basic",
+                     "file": "Demo/Basic.lean"}]
+                ledger["edges"] += [
+                    {"formalization_id": "Demo.Secret.x", "role": "consumer", "source_id": "src:1.1:boxes"},
+                    {"formalization_id": "private:Demo.Basic:Demo/Basic.lean:L7:Secret", "role": "consumer",
+                     "source_id": "src:1.1:boxes"}]
+            edit_json(root / "source-formalization-ledger.json", change)
+            relock_ledger(root)
+        root, commit = at_variant(self, mutate)
+        doc, _report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        decls = by_id(doc, "declarations")
+        pid = "private:Demo.Basic:Demo.Secret"
+        self.assertEqual(decls["Demo.Secret.x"]["parent"], pid)
+        # the private structure's own record, with the ledger's positional id, is kept, not replaced
+        self.assertEqual(decls[pid]["legacy_ids"], ["private:Demo.Basic:Demo/Basic.lean:L7:Secret"])
+
+    def test_an_item_linked_only_by_support_edges_carries_the_class_they_imply(self):
+        for target, coverage in (("example:demo-volume-nonneg", "example_only"), ("Demo.volume_add", "support_only")):
+            def mutate(root, target=target):
+                edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
+                          lambda o: o.update(entries=[e for e in o["entries"]
+                                                      if e["item_id"] != "item:batch-a:rem-volume"]))
+
+                def change(ledger):
+                    for e in ledger["edges"]:
+                        if e["role"] == "support" and e["source_id"] == "src:1.1:volume":
+                            e["formalization_id"] = target
+                edit_json(root / "source-formalization-ledger.json", change)
+                relock_ledger(root)
+            with self.subTest(coverage=coverage):
+                root, commit = at_variant(self, mutate)
+                doc, report = at_export(root, commit)
+                valid_and_quiet(self, doc)
+                passage = by_id(doc, "items")[ids.passage_page_id(6, "Remark on volume")]
+                self.assertEqual(passage["coverage"], coverage)
+                self.assertEqual(report.bent["item.coverage_from_support_edges"]["count"], 1)
+
+    def test_an_unnumbered_passage_before_printed_page_one_is_a_refusal(self):
+        def mutate(root):
+            def change(b):
+                next(it for it in b["items"] if it["item_id"] == "item:batch-a:rem-volume")["regions"][0]["page"] = 2
+            edit_json(geometry(root), change)
+        root, commit = at_variant(self, mutate)
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("before printed page 1", caught.exception.message)
+        self.assertIn("section 5.2", caught.exception.hint)
+
+    def test_a_replacement_cited_by_its_full_repo_path_resolves(self):
+        def mutate(root):
+            edit_json(root / "pdf-overlay" / "data" / "faithfulness-verdicts.json",
+                      lambda o: o["entries"][0]["declarations"][0].update(
+                          note="Fixed in PR #3: replacement_stated (Demo/Basic.lean:20) states it."))
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        self.assertEqual(by_id(doc, "verdicts")["verdict:theorem-1.1.2"]["resolution"]["replaced_by"],
+                         ["Demo.replacement_stated"])
+        self.assertNotIn("verdict.replaced_by_unresolved", report.lossy)
+
+    def test_a_key_id_outside_the_entry_s_formalization_ids_is_reported(self):
+        def mutate(root):
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
+                      lambda o: o["entries"][1]["key_formalization_ids"].append("Demo.Box"))
+        root, commit = at_variant(self, mutate)
+        _doc, report = at_export(root, commit)
+        self.assertEqual(report.lossy["link.key_outside_formalization_ids"]["examples"], ["theorem-1.1.2: Demo.Box"])
+
+    def test_one_support_edge_through_two_single_item_nodes_is_one_link(self):
+        def mutate(root):
+            def batch(b):
+                next(it for it in b["items"] if it["item_id"] == "item:batch-a:rem-volume")["source_ids"].append(
+                    "src:1.1:volume-2")
+            edit_json(geometry(root), batch)
+
+            def change(ledger):
+                ledger["source_nodes"].append({"id": "src:1.1:volume-2", "plan_item_ids": [],
+                                               "status": "implemented", "semantic_status": "verified",
+                                               "external_admissions": []})
+                ledger["edges"].append({"formalization_id": "example:demo-volume-nonneg", "role": "support",
+                                        "source_id": "src:1.1:volume-2", "realization": "implemented"})
+            edit_json(root / "source-formalization-ledger.json", change)
+            relock_ledger(root)
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.counts["ledger_support_edges"]["same_link_from_another_node"], 1)
+
+    def test_malformed_geometry_is_a_refusal_not_an_index_error(self):
+        def three_points(root):
+            def change(b):
+                reg = next(it for it in b["items"] if it["item_id"] == "item:batch-a:rem-volume")["regions"][0]
+                reg["geometry"]["quads"][0] = reg["geometry"]["quads"][0][:3]
+            edit_json(geometry(root), change)
+        for mutate, words in ((three_points, "four (x, y) points"),
+                              (lambda r: set_label(r, "item:batch-a:rem-volume", "Unnumbered "), "passage title")):
+            root, commit = at_variant(self, mutate)
+            with self.subTest(words=words), self.assertRaises(common.ExportError) as caught:
+                at_export(root, commit)
+            self.assertIn(words, caught.exception.message)
+
+    def test_the_evidence_only_bucket_is_counted_not_assumed(self):
+        self.assertNotIn("verdict.replaced_by_evidence_only", TestAttributionTableExport.report.lossy)
+
+        def mutate(root):
+            edit_json(root / "pdf-overlay" / "data" / "faithfulness-verdicts.json",
+                      lambda o: o["entries"][0]["evidence"].append(
+                          "The same PR also added Box.volume (Demo/Basic.lean:9)."))
+        root, commit = at_variant(self, mutate)
+        _doc, report = at_export(root, commit)
+        self.assertEqual(report.lossy["verdict.replaced_by_evidence_only"]["examples"],
+                         ["theorem-1.1.2: volume (Demo/Basic.lean)"])
+
+
+class TestTheExportCommandReviewFixes(unittest.TestCase):
+    """Review items 3 and 7: the backstop, and nothing written under the checkout."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp(prefix="cf-export-cmd-",
+                                         dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
+        cls.commit = make_attribution_table_repo(cls.root)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def argv(self, out: Path, *extra: str) -> list[str]:
+        return ["export", "attribution-table", str(self.root), "--commit", self.commit, "--out", str(out),
+                "--name", "demo", "--repo-id", "git.example.org/demo/demo", "--source-id", "demo-pdf",
+                "--source-title", "A Demo Book", *extra]
+
+    def test_an_unexpected_input_is_a_clean_error_not_a_traceback(self):
+        out = scratch(self) / "demo.annotations.json"
+        for exc in (KeyError("region:x"), ValueError("bad"), IndexError("list index out of range"),
+                    subprocess.CalledProcessError(1, ["pdftotext", "x.pdf"], stderr=b"broken")):
+            with self.subTest(exc=type(exc).__name__), unittest.mock.patch.object(
+                    attribution_table, "export", side_effect=exc):
+                with self.assertRaises(CfError) as caught:
+                    cf_main.main(self.argv(out))
+                self.assertTrue(caught.exception.message)
+                self.assertFalse(out.exists())
+
+    def test_out_or_report_inside_the_checkout_is_refused(self):
+        outside = scratch(self) / "demo.annotations.json"
+        for argv in (self.argv(self.root / "demo.annotations.json"),
+                     self.argv(outside, "--report", str(self.root / "sub" / "report.json"))):
+            with self.subTest(argv=argv[-1]), self.assertRaises(CfError) as caught:
+                cf_main.main(argv)
+            self.assertIn("inside the checkout", caught.exception.message)
+        self.assertEqual(subprocess.run(["git", "-C", str(self.root), "status", "--porcelain"],
+                                        capture_output=True, text=True).stdout, "")
+
+    def test_every_export_flag_is_documented(self):
+        import argparse
+        parser = argparse.ArgumentParser()
+        sub = parser.add_subparsers()
+        from cfcmd import export as export_cmd
+        export_cmd.register(sub)
+        docs = (SKILL / "docs" / "exporters.md").read_text(encoding="utf-8")
+        flags = set()
+        for action in sub.choices["export"]._subparsers._group_actions[0].choices.values():
+            for a in action._actions:
+                flags.update(o for o in a.option_strings if o.startswith("--") and o != "--help")
+        self.assertEqual(sorted(f for f in flags if f not in docs), [])
+
+
+def dt_variant(case: unittest.TestCase, lean_1: str, lean_2: str = "namespace Demo\nend Demo\n", *,
+               adapter: str = DT_ADAPTER, pages=None):
+    """A docstring-tags companion with these two files, exported without the site; ``(doc, report)``."""
+    base = scratch(case)
+    root = base / "repo"
+    commit, pdf, xref, pin, _site = make_docstring_tags_repo(root, lean_1, lean_2)
+    config = base / "adapter.yaml"
+    config.write_text(adapter, encoding="utf-8")
+    return docstring_tags.export(root, commit, pdf=pdf, xref=xref, site_pages=pin, site=None,
+                                 adapter_config=config, name="demo", repo_id="git.example.org/demo/demo",
+                                 pdf_text=PdfText(list(pages or DT_PAGES), version="0.0-test"),
+                                 source_id="demo-pdf", source_title="A Demo Book", page_offset=2)
+
+
+def dt_lean(*decls: str) -> str:
+    return "namespace Demo\n\n" + "\n\n".join(decls) + "\n\nend Demo\n"
+
+
+class TestDocstringTagsReviewFixes(unittest.TestCase):
+    """Review items 8 to 14, each on a small docstring-tagged variant."""
+
+    def test_a_tag_s_sub_part_range_or_list_is_carried_whole(self):
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `Exercise 1.1.3(i)-(iii)`. -/\ntheorem a : True := trivial",
+            "/-- `Exercise 1.1.3(i), (iii)`. -/\ntheorem b : True := trivial",
+            "/-- `Exercise 1.1.3(i) and (iii)`. -/\ntheorem c : True := trivial",
+            "/-- `Exercise 1.1.3(i)/(ii)`. -/\ntheorem d : True := trivial"))
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(sorted(ln["sub"] for ln in doc["links"]), ["i,ii", "i,iii", "i,iii", "i-iii"])
+
+    def test_a_sub_part_outside_the_grammar_is_dropped_and_reported(self):
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `Exercise 1.1.3(ii')`. -/\ntheorem a : True := trivial",
+            "/-- `Lemma 1.2.5(Finite additivity)`. -/\ntheorem b : True := trivial",
+            "/-- `Lemma 1.2.5 (Finite additivity)`. -/\ntheorem c : True := trivial"))
+        valid_and_quiet(self, doc)
+        self.assertEqual([ln.get("sub") for ln in doc["links"]], [None, None, None])
+        # the two attached parentheticals are refused sub-parts; the spaced one is a title
+        self.assertEqual(len(report.problems), 2)
+        self.assertIn("(ii')", report.problems[0])
+        self.assertIn("(Finite additivity)", report.problems[1])
+
+    def test_an_in_text_neighbour_is_kept_beside_a_page_and_prose_is_not_a_kind(self):
+        doc, report = dt_variant(self, dt_lean(
+            '/-- `In-text, near Exercise 1.1.3, book p. 12` ("every box is elementary" as the book says). -/\n'
+            "theorem a : True := trivial"))
+        valid_and_quiet(self, doc)
+        passage = next(i for i in doc["items"] if i["form"] == "passage")
+        self.assertEqual(passage["relations"], {"near": ["exercise-1.1.3"]})
+        self.assertEqual(passage["kind"], "passage")
+        self.assertNotIn("kind_source", passage)
+        self.assertEqual(passage["pages"]["anchor"], "own")
+
+    def test_the_adapter_config_decides_how_every_tag_is_re_read(self):
+        bare = DT_ADAPTER.replace("require_backticks: true", "require_backticks: false")
+        doc, report = dt_variant(self, dt_lean(
+            "/-- Exercise 1.1.3(ii), book p. 12 -/\ntheorem a : True := trivial",
+            '/-- In-text, book p. 12: "every box is elementary" as the book says. -/\n'
+            "theorem b : True := trivial"), adapter=bare)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        key = by_id(doc, "links")["exercise-1.1.3/key/Demo.a/ii"]
+        self.assertEqual(key["pages"]["first"], 12)
+        passage = next(i for i in doc["items"] if i["form"] == "passage")
+        self.assertEqual(passage["title"], '"every box is elementary" as the book says')
+
+    def test_a_page_outside_the_pdf_or_reversed_is_dropped_and_names_the_declaration(self):
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `Exercise 1.1.3`, book p. 400. -/\ntheorem far : True := trivial",
+            "/-- `Exercise 1.1.3`, book pp. 12-10. -/\ntheorem back : True := trivial"))
+        valid_and_quiet(self, doc)
+        self.assertTrue(all("pages" not in ln for ln in doc["links"]))
+        self.assertEqual(len(report.problems), 2)
+        self.assertIn("Demo.far", report.problems[0])
+        self.assertIn("Demo.back", report.problems[1])
+
+    def test_a_url_in_a_note_or_a_title_is_dropped_and_reported(self):
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `Exercise 1.1.3` (see https://example.org/errata). -/\ntheorem a : True := trivial",
+            "/-- `In-text, book p. 12`, see https://example.org/x. -/\ntheorem b : True := trivial"))
+        valid_and_quiet(self, doc)
+        self.assertNotIn("note", by_id(doc, "links")["exercise-1.1.3/key/Demo.a"])
+        passage = next(i for i in doc["items"] if i["form"] == "passage")
+        self.assertEqual(passage["title"], "In-text passage formalised by Demo.b")
+        self.assertEqual(len(report.problems), 2)
+
+    def test_an_item_the_text_layer_shows_no_heading_for_takes_its_key_link_s_pages(self):
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `Lemma 1.3.1`, book p. 12. -/\ntheorem a : True := trivial"))
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(by_id(doc, "items")["lemma-1.3.1"]["pages"],
+                         {"first": 12, "basis": "printed", "anchor": "own", "raw": "book p. 12"})
+        self.assertEqual(report.counts["headings"]["pages_from_key_link_items"], ["lemma-1.3.1"])
+
+    def test_an_anonymous_declaration_only_leanparse_sees_is_reported_not_a_key_error(self):
+        doc, report = dt_variant(self, dt_lean(
+            'def s : String := "a\nexample : True := trivial"',
+            "/-- `Exercise 1.1.3`. -/\ntheorem a : True := trivial"))
+        self.assertTrue(any(p.startswith("anonymous join") for p in report.problems))
+        self.assertIn("Demo.a", by_id(doc, "declarations"))
+
+    def test_a_tagged_duplicate_declaration_is_reported_not_a_key_error(self):
+        doc, report = dt_variant(self, dt_lean("/-- `Exercise 1.1.3`. -/\ntheorem a : True := trivial"),
+                                 dt_lean("/-- `Lemma 1.2.5`. -/\ntheorem a : True := trivial"))
+        self.assertTrue(any("duplicate declaration id Demo.a" in p for p in report.problems))
+        self.assertTrue(any("does not carry" in p for p in report.problems))
+
+    def test_a_passage_quote_is_verified_over_its_whole_page_range(self):
+        doc, report = dt_variant(self, dt_lean(
+            '/-- `In-text, book pp. 11-12` ("every box is elementary" as the book says). -/\n'
+            "theorem a : True := trivial"))
+        valid_and_quiet(self, doc)
+        passage = next(i for i in doc["items"] if i["form"] == "passage")
+        self.assertEqual(passage["id"], ids.passage_quote_id("every box is elementary"))
+        self.assertEqual(passage["pages"], {"first": 11, "last": 12, "basis": "printed", "anchor": "own",
+                                            "raw": "book pp. 11-12"})
+        self.assertIn(passage["id"] + "@p014", by_id(doc, "locations"))
+
+    def test_x_keys_are_bent_buckets_and_the_tool_names_a_user_config(self):
+        pages = list(DT_PAGES)
+        pages[14] = "Exercise 1.1.3. Again.\n"                     # a second heading line: two candidates
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `In-text definition, Exercise 1.1.3` (a passage placed by its neighbour). -/\n"
+            "def Placed : Prop := True"), pages=pages)
+        self.assertEqual(report.bent["location.x_page_basis"]["count"], 1)
+        self.assertEqual(report.bent["location.x_heading_candidates"]["count"], 1)
+        tool = by_id(doc, "provenance")["prov-docstring-tag"]["tool"]
+        self.assertEqual(tool["version"], "config adapter.yaml")
 
 
 

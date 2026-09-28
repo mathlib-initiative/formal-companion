@@ -10,11 +10,13 @@ checkout: everything it needs is in the document.
     cf review-tags <document.json> --hide-pattern '\\bIn-text proof' --keep-pattern '…'
 
 Exit 0 whatever it finds: the findings are the report.  A document that does
-not load, or that is not an annotation document, exits 2.
+not load, or that is not an annotation document, or a --keep-pattern or
+--hide-pattern that is not a regex, exits 2.
 """
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from annotations import review_tags
@@ -51,6 +53,12 @@ def load_document(path: Path) -> dict:
 
 
 def run(args) -> int:
+    for flag, pattern in (("--keep-pattern", args.keep_pattern), ("--hide-pattern", args.hide_pattern)):
+        try:
+            re.compile(pattern)
+        except re.error as exc:
+            raise CfError(f"{flag} {pattern!r} is not a regular expression: {exc}",
+                          hint="pass a Python regex; quote it for the shell") from exc
     doc = load_document(args.document)
     findings = review_tags.review(doc, keep_pattern=args.keep_pattern, hide_pattern=args.hide_pattern)
     if args.as_json:

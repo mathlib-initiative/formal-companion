@@ -63,6 +63,7 @@ ARTIFACT_KIND = {"module document": "module_doc", "module documentation": "modul
                  "check command": "check", "figure": "figure"}
 _PRIVATE_POSITIONAL = re.compile(r"^private:([^:]+):([^:]+):L(\d+):(.+)$")
 _EQUATION_LABEL = re.compile(r"^Equation \((\d+(?:\.\d+)+)\)(?::\s*(.+))?$")
+_FILE_MENTION = re.compile(r"([A-Za-z_][\w']*) \(([\w/]+\.lean):\d+\)")
 _AND_EQUATION = re.compile(r"^and equation \((\d+(?:\.\d+)+)\)$", re.I)
 
 
@@ -95,18 +96,29 @@ def item_identity(label: str, old_id: str, kinds) -> list[dict]:
     if it is not None and it.kind != cf_items.IN_TEXT:
         number = ".".join(str(n) for n in it.levels)
         rec = {"form": "numbered", "kind": it.kind, "number": number, "label": label}
-        if it.title:
-            rec["title"] = it.title
-        if it.sub:
-            rec["sub"] = ",".join(re.findall(r"\(([^)]+)\)", it.sub))
+        title, trailing = it.title, it.trailing
+        sub, rest, refused = common.render_sub(common.after_number(label, number))
+        if refused:
+            rec["_sub_refused"] = refused
+        elif sub:
+            rec["sub"] = sub
+            if "-" in sub or "," in sub:
+                # a range or a list: the grammar kept its first group and left the rest as trailing text
+                again, _ = cf_items.try_parse(f"{it.kind} {number} {rest}", kinds)
+                title, trailing = (again.title, again.trailing) if again is not None else ("", rest)
+        if title:
+            rec["title"] = title
         out = [rec]
-        tm = _AND_EQUATION.match(it.trailing or "")
+        tm = _AND_EQUATION.match(trailing or "")
         if tm:
             out.append({"form": "numbered", "kind": "Equation", "number": tm.group(1), "_split_from": old_id})
-        elif it.trailing:
-            rec["_trailing"] = it.trailing
+        elif trailing:
+            rec["_trailing"] = trailing
         return out
     title = re.sub(r"^Unnumbered\s+", "", label)
+    if not title.strip():
+        raise ExportError(f"geometry label {label!r} ({old_id}) names neither a numbered item nor a passage title",
+                          hint="an unnumbered region needs a label that says what the passage is")
     title = title[0].upper() + title[1:]
     return [{"form": "passage", "kind": "passage", "title": title, "title_source": "producer",
              "_label": label}]
@@ -342,6 +354,10 @@ class AttributionTableExport:
         for rec in recs:
             item = {"source": self.source_id, "clusters": sorted(it["source_ids"])}
             item.update({k: v for k, v in rec.items() if not k.startswith("_")})
+            if rec.get("_sub_refused"):
+                self.report.problem(f"{it['item_id']}: the sub-part {rec['_sub_refused']!r} of {it['label']!r} is "
+                                    "not one the format can carry (docs/annotations.md section 3.2); it was "
+                                    "dropped, so the item is keyed without it")
             if rec["form"] == "numbered":
                 iid = ids.item_label_id(rec["kind"], rec["number"], rec.get("sub"))
                 item["id_source"] = "label"
@@ -349,6 +365,12 @@ class AttributionTableExport:
                 item["pages"] = {"first": pages[0], "basis": "physical", "anchor": "own"}
                 if pages[-1] != pages[0]:
                     item["pages"]["last"] = pages[-1]
+                if pages[0] - self.offset < 1:
+                    raise ExportError(f"{it['item_id']} ({it['label']!r}) is an unnumbered passage on physical page "
+                                      f"{pages[0]}, before printed page 1 (offset {self.offset}), so it has no "
+                                      "printed page to key its id by",
+                                      hint="docs/annotations.md section 5.2: a passage with neither a quote nor a "
+                                           "printed page must be declared (id_source: declared)")
                 iid = ids.passage_page_id(pages[0] - self.offset, rec["title"])
                 item["id_source"] = "page_title_hash"
                 self.passage_ids[iid] = rec["_label"]
@@ -394,6 +416,9 @@ class AttributionTableExport:
             region_sel["rect"] = {"x0": x0, "y0": y0, "x1": x1, "y1": y1}
             bbox = region_sel["rect"]
         else:
+            if not geom.get("quads") or any(len(q) < 4 or any(len(pt) < 2 for pt in q[:4]) for q in geom["quads"]):
+                raise ExportError(f"{reg['region_id']}: a quads region needs four (x, y) points per quad",
+                                  hint="fix the geometry batch; the exporter does not guess a missing corner")
             quads = [{f"{a}{i}": q[i][0 if a == "x" else 1] for i in range(4) for a in "xy"}
                      for q in geom["quads"]]
             region_sel["quads"] = quads
@@ -626,15 +651,18 @@ class AttributionTableExport:
 
     def attach_parents(self, pending_fields) -> None:
         """A field's or projection's parent is a structure or class; its namespace is the parent's name."""
-        for rec, _pdecl in pending_fields:
+        for rec, pdecl in pending_fields:
             parent = self.declarations.get(rec["parent"])
             if parent is None:
-                hits = self.by_full.get(rec["parent"], [])
+                hits = [pdecl] if pdecl is not None else self.by_full.get(rec["parent"], [])
                 if len(hits) != 1:
                     raise ExportError(f"{rec['id']}: parent {rec['parent']} is not one declaration at HEAD")
                 parent = self.mk_named(hits[0])
-                self.declarations[parent["id"]] = parent
-                self.added_parents.append(parent["id"])
+                if parent["id"] not in self.declarations:
+                    self.added_parents.append(parent["id"])
+                # a private structure is already exported under its private id: keep that record
+                parent = self.declarations.setdefault(parent["id"], parent)
+            rec["parent"] = parent["id"]
             if parent["kind"] not in ("structure", "class"):
                 raise ExportError(f"{rec['id']}: parent {parent['id']} is a {parent['kind']}")
             rec["namespace"] = parent["name"]
@@ -677,7 +705,7 @@ class AttributionTableExport:
         self.provenance["prov-ledger"] = prov
         realization: collections.Counter = collections.Counter()
         for e in self.ledger["edges"]:
-            key, target = self.resolve(e["formalization_id"])
+            key, target = self.resolve(e["formalization_id"], f"{LAYOUT['ledger']} edge of {e['source_id']}")
             mid = f"{e['source_id']}/{e['role']}/{target}"
             if mid in self.memberships:
                 raise ExportError(f"membership id collision {mid}")
@@ -696,10 +724,19 @@ class AttributionTableExport:
                          "class is implied by the node kind and id form, the hash is recoverable from the "
                          "pinned ledger")
 
-    def resolve(self, fid: str) -> tuple[str, str]:
+    def decl_of(self, fid: str, where: str) -> str:
+        """The declaration id a formalization id resolves to; a refusal naming the file when the ledger lacks it."""
+        did = self.ledger_to_decl.get(fid)
+        if did is None:
+            raise ExportError(f"{where} names {fid!r}, which {LAYOUT['ledger']} does not list as a formalization "
+                              "node", hint="the overlay data and the ledger must come from the same snapshot; "
+                                           "regenerate the one that is stale")
+        return did
+
+    def resolve(self, fid: str, where: str) -> tuple[str, str]:
         if fid in self.artifacts:
             return "artifact", fid
-        return "declaration", self.ledger_to_decl[fid]
+        return "declaration", self.decl_of(fid, where)
 
     # -- links -----------------------------------------------------------------------
     def build_links(self) -> None:
@@ -722,15 +759,22 @@ class AttributionTableExport:
                 raise ExportError(f"refinement entry {e['region_id']} names an item its region does not show")
             per_item[e["item_id"]].append(e)
         differing = 0
+        where = f"{LAYOUT['data']}/{LAYOUT['refinement']}"
         for old, entries in sorted(per_item.items()):
             sets = {(tuple(sorted(e["formalization_ids"])), tuple(sorted(e["key_formalization_ids"])))
                     for e in entries}
             differing += len(sets) > 1
             iid = self.old_to_item[old]
             keys = {x for e in entries for x in e["key_formalization_ids"]}
-            for fid in sorted({x for e in entries for x in e["formalization_ids"]}):
+            listed = {x for e in entries for x in e["formalization_ids"]}
+            if keys - listed:
+                self.report.lose("link.key_outside_formalization_ids", len(keys - listed),
+                                 "a refinement entry names a key id that its own formalization_ids does not list; "
+                                 "links follow formalization_ids, so that key is not carried",
+                                 [f"{iid}: {fid}" for fid in sorted(keys - listed)])
+            for fid in sorted(listed):
                 role = "key" if fid in keys else "attributed"
-                did = self.ledger_to_decl[fid]
+                did = self.decl_of(fid, f"{where} entry for {old}")
                 lk = f"{iid}/{role}/{did}"
                 self.links[lk] = {"id": lk, "item": iid, "declaration": did, "role": role,
                                   "provenance": "prov-target-refinement"}
@@ -757,11 +801,13 @@ class AttributionTableExport:
             if len(its) > 1:
                 sup["multi_item_node"] += 1
                 continue
-            did = self.ledger_to_decl[e["formalization_id"]]
+            did = self.decl_of(e["formalization_id"], f"{LAYOUT['ledger']} support edge of {e['source_id']}")
             role = "example" if self.declarations[did]["kind"] == "example" else "support"
             lk = f"{its[0]}/{role}/{did}"
             if lk in self.links:
-                raise ExportError(f"link id collision {lk}")
+                # a second single-item node carrying the same support edge: the link already says it
+                sup["same_link_from_another_node"] += 1
+                continue
             self.links[lk] = {"id": lk, "item": its[0], "declaration": did, "role": role,
                               "provenance": "prov-ledger", "raw_label": "support"}
             sup["linked_" + role] += 1
@@ -783,7 +829,14 @@ class AttributionTableExport:
                 item["cluster_fallback"] = True
                 self.fallback_items.append(iid)
             elif "key" not in roles:
-                raise ExportError(f"{iid} has links but no key link: {sorted(roles)}")
+                if not roles <= {"example", "support"}:
+                    raise ExportError(f"{iid} has links but no key link: {sorted(roles)}")
+                # only the ledger's support edges link it: section I5's example_only or support_only
+                item["coverage"] = "example_only" if roles == {"example"} else "support_only"
+                self.report.bend("item.coverage_from_support_edges", 1,
+                                 "an item whose only links are ledger support edges (example or support links, no "
+                                 "key) carries the class those edges imply as coverage (I5)",
+                                 [f"{iid}: {item['coverage']}"])
         parsed = coverage_from_note(self.refinement["provenance"]["note"])
         classified: list[str] = []
         if parsed is not None:
@@ -815,7 +868,7 @@ class AttributionTableExport:
     # -- snippets and destinations ------------------------------------------------------
     def build_snippets(self) -> None:
         for fid, s in self.snippets_in["snippets"].items():
-            did = self.ledger_to_decl[fid]
+            did = self.decl_of(fid, f"{LAYOUT['data']}/{LAYOUT['snippets']}")
             dec = self.declarations[did]
             if s["file"] != dec["file"]:
                 raise ExportError(f"snippet {fid} is in {s['file']}, the declaration in {dec['file']}")
@@ -830,7 +883,7 @@ class AttributionTableExport:
 
     def build_destinations(self) -> None:
         for r in self.dest_in["destinations"]:
-            key, target = self.resolve(r["formalization_id"])
+            key, target = self.resolve(r["formalization_id"], f"{LAYOUT['data']}/{LAYOUT['destinations']}")
             rec = {"id": f"{self.site_name}:{target}", key: target, "site": self.site_name, "resolution": r["resolution"]}
             if r["resolution"] == "exact":
                 href, _, frag = r["exact_href"].partition("#")
@@ -867,11 +920,6 @@ class AttributionTableExport:
                 groups.setdefault(key, []).append(loc_id)
             for n_group, (key, locs) in enumerate(groups.items(), start=1):
                 self.add_verdict(iid, json.loads(key), locs, n_group, inputs)
-        self.report.lose("verdict.replaced_by_evidence_only", 1,
-                         "a verdict's evidence may name a declaration its resolution does not (one entry's "
-                         "evidence names two declarations a PR added and its declaration note cites one as "
-                         "stating the exercise); replaced_by follows the note, the evidence text is carried in "
-                         "full")
         for v in self.verdicts.values():
             for rb in v.get("resolution", {}).get("replaced_by", []):
                 if rb not in self.declarations:
@@ -882,7 +930,8 @@ class AttributionTableExport:
         v = {"id": vid, "item": iid, "locations": sorted(locs), "verdict": e["verdict"],
              "severity": e["severity"], "status": e["status"], "summary": e["summary"],
              "evidence": list(e["evidence"]),
-             "declarations": sorted(({"declaration": self.ledger_to_decl[d["id"]], "verdict": d["verdict"],
+             "declarations": sorted(({"declaration": self.decl_of(d["id"], f"{LAYOUT['data']}/{LAYOUT['verdicts']}"),
+                                      "verdict": d["verdict"],
                                       **({"note": d["note"]} if d.get("note") else {})}
                                      for d in e["declarations"]), key=lambda d: d["declaration"])}
         it = self.items[iid]
@@ -919,6 +968,11 @@ class AttributionTableExport:
             v["provenance"] = "prov-verdicts-differential"
         self.verdicts[vid] = v
 
+    def named_in(self, name: str, path: str) -> list[dict]:
+        """HEAD's named declarations called ``name`` in the file ``path`` (a repo path or a tail of one)."""
+        return [x for x in self.named if (x["file"] == path or x["file"].endswith("/" + path))
+                and (x["name"] == name or x["full"].endswith("." + name))]
+
     def fixed_resolution(self, iid: str, pr: int, evidence: str, e: dict) -> dict:
         """A ``fixed`` resolution: the PR, the commits its evidence names, the replacing declarations its notes name."""
         res: dict = {"state": "fixed", "pr": pr}
@@ -939,11 +993,10 @@ class AttributionTableExport:
         cands, unresolved = set(), set()
         own = {d["id"].rsplit(".", 1)[-1] for d in e["declarations"]}
         for d in e["declarations"]:
-            for nm, path in re.findall(r"([A-Za-z_][\w']*) \(([\w/]+\.lean):\d+\)", d.get("note", "")):
+            for nm, path in _FILE_MENTION.findall(d.get("note", "")):
                 if nm in own:
                     continue
-                hits = [x for x in self.named if x["file"].endswith("/" + path)
-                        and (x["name"] == nm or x["full"].endswith("." + nm))]
+                hits = self.named_in(nm, path)
                 if len(hits) != 1:
                     unresolved.add(f"{nm} ({path}): {len(hits)} matches")
                     continue
@@ -957,6 +1010,17 @@ class AttributionTableExport:
             self.report.bend("verdict.replaced_by_from_prose", 1,
                              "the replacing declaration is named only in note prose ('Fixed in PR #N: X "
                              "(File.lean:L)'); parsed by regex", [f"{iid} -> {sorted(cands)}"])
+        evidence_only = set()
+        for nm, path in _FILE_MENTION.findall(evidence):
+            hits = self.named_in(nm, path)
+            if nm not in own and len(hits) == 1 and cands and self.mk_named(hits[0])["id"] not in cands:
+                evidence_only.add(f"{iid}: {nm} ({path})")
+        if evidence_only:
+            self.report.lose("verdict.replaced_by_evidence_only", len(evidence_only),
+                             "a verdict's evidence names a declaration its resolution does not (the evidence names "
+                             "declarations a PR added and the declaration note cites only the one that states the "
+                             "item); replaced_by follows the note, the evidence text is carried in full",
+                             sorted(evidence_only))
         if unresolved:
             self.report.lose("verdict.replaced_by_unresolved", len(unresolved),
                              "a '<word> (<File>.lean:<line>)' mention in a declaration note that does not resolve "

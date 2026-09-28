@@ -13,12 +13,15 @@ writes the document in canonical form beside a report of what did not fit.
 The document is validated before the command returns (schema, invariants,
 canonical bytes); a problem the exporter recorded, or a document that does not
 validate, exits 1 after writing, so the file is there to inspect.  The
-checkout is read only: `cflib.gitsafe` pins every git call, and nothing is
-written under it.  docs/exporters.md says what each exporter reads and loses.
+checkout is read only: `cflib.gitsafe` pins every git call, and an --out or
+--report under it is refused.  An input shape the exporters do not check for
+(a KeyError, ValueError, IndexError or a failed tool) is a CfError, never a
+traceback.  docs/exporters.md says what each exporter reads and loses.
 """
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 from annotations import validate as V
@@ -88,6 +91,12 @@ def run(args) -> int:
     checkout = args.checkout.expanduser()
     if not checkout.is_dir():
         raise CfError(f"{checkout} is not a directory")
+    report_path = _report_path(args)
+    for flag, path in (("--out", args.out), ("--report", report_path)):
+        target = path.expanduser().resolve()
+        if target == checkout.resolve() or checkout.resolve() in target.parents:
+            raise CfError(f"{flag} {path} is inside the checkout {checkout}",
+                          hint="the exporter reads the checkout and writes nothing under it; write elsewhere")
     options = {"name": args.name, "repo_id": args.repo_id, "site_name": args.site_name,
                "source_id": args.source_id, "source_title": args.source_title,
                "source_edition": args.source_edition, "page_offset": args.page_offset}
@@ -109,8 +118,17 @@ def run(args) -> int:
         raise CfError(exc.message, hint=exc.hint) from exc
     except RuntimeError as exc:
         raise CfError(str(exc)) from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = exc.stderr.decode("utf-8", "replace") if isinstance(exc.stderr, bytes) else (exc.stderr or "")
+        raise CfError(f"{' '.join(map(str, exc.cmd))} failed ({exc.returncode}): {stderr.strip()[:200]}",
+                      hint="the export needs that tool to read its inputs") from exc
+    except (KeyError, ValueError, IndexError) as exc:
+        # a backstop: an input shape the exporter does not check for, reported instead of a traceback
+        raise CfError(f"the {args.export_command} export stopped on an input it did not expect: "
+                      f"{type(exc).__name__}: {exc}",
+                      hint="the companion's files disagree with the convention the exporter reads "
+                           "(docs/exporters.md); the value above names the record") from exc
     text = common.write_canonical(args.out, doc)
-    report_path = _report_path(args)
     common.write_report(report_path, report)
     checked = V.check(V.loads(text), text=text, canonical=True)
     counts = ", ".join(f"{len(doc.get(k, []))} {k}" for k in V.RECORD_ARRAYS if k in doc)

@@ -84,7 +84,7 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
         findings = review_tags.review(doc)
         self.assertEqual(findings["counts"], {"attribution_gap": 0,
                                               "key_on_structure_member": {"links": 0, "memberships": 0},
-                                              "borrowed_key": 0, "hidden_spelling": 0,
+                                              "borrowed_key": 0, "shared_key": 0, "hidden_spelling": 0,
                                               "adjudicated_attribution_gap": 0})
 
     def test_an_item_keyed_only_to_its_page_is_an_attribution_gap(self):
@@ -95,14 +95,39 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
         found = review_tags.check_attribution_gap(doc)
         self.assertEqual([f["item"] for f in found], ["remark-1.1.3"])
         self.assertTrue(found[0]["anchored"])
-        # a coverage class is the curation's answer, so it is not a gap
+        # a coverage class that excludes a key is the curation's answer, so it is not a gap
+        for coverage in ("not_formalized", "out_of_scope", "support_only", "example_only"):
+            doc["items"][-1]["coverage"] = coverage
+            self.assertEqual(review_tags.check_attribution_gap(doc), [], coverage)
         doc["items"][-1]["coverage"] = "not_formalized"
-        self.assertEqual(review_tags.check_attribution_gap(doc), [])
         # a passage with only a location is a gap too
         doc["items"].append({"id": "aside-p6", "id_source": "declared", "form": "passage",
                              "source": "book", "kind": "passage", "title": "An aside",
                              "pages": {"first": 6, "basis": "printed"}})
         self.assertEqual([f["item"] for f in review_tags.check_attribution_gap(doc)], ["aside-p6"])
+
+    def test_a_formalized_or_partial_item_with_no_key_is_still_a_gap(self):
+        # review record item 16: a claimed formalization that no key names is the defect the check is for
+        doc = base_document()
+        doc["items"].append({"id": "remark-1.1.3", "id_source": "label", "form": "numbered", "source": "book",
+                             "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"}})
+        for coverage in ("formalized", "partial"):
+            doc["items"][-1]["coverage"] = coverage
+            valid(self, doc)
+            found = review_tags.check_attribution_gap(doc)
+            self.assertEqual([(f["item"], f["coverage"]) for f in found], [("remark-1.1.3", coverage)])
+
+    def test_a_key_link_to_a_cluster_does_not_key_the_item(self):
+        # review record item 19: an item whose only key targets a cluster names no declaration
+        doc = base_document()
+        doc["items"].append({"id": "remark-1.1.3", "id_source": "label", "form": "numbered", "source": "book",
+                             "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"},
+                             "coverage": "formalized"})
+        doc["clusters"] = [{"id": "src:1.1"}]
+        doc["links"].append({"id": "remark-1.1.3/key/src:1.1", "item": "remark-1.1.3", "cluster": "src:1.1",
+                             "role": "key", "provenance": "prov-table"})
+        valid(self, doc)
+        self.assertEqual([f["item"] for f in review_tags.check_attribution_gap(doc)], ["remark-1.1.3"])
 
     def test_a_key_on_a_structure_field_is_reported_as_link_and_as_membership(self):
         doc = base_document()
@@ -122,19 +147,35 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
 
     def test_an_item_whose_only_key_states_its_neighbour_is_a_borrowed_key(self):
         doc = base_document()
-        # Remark 1.1.3's only key is Exercise 1.1.2's key declaration
+        # Remark 1.1.3's only key is one of Exercise 1.1.2's two key declarations: the exercise owns it
+        doc["items"].append({"id": "remark-1.1.3", "id_source": "label", "form": "numbered", "source": "book",
+                             "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"}})
+        doc["links"] += [
+            {"id": "remark-1.1.3/key/Demo.volume_add", "item": "remark-1.1.3",
+             "declaration": "Demo.volume_add", "role": "key", "provenance": "prov-table"},
+            {"id": "exercise-1.1.2/key/Demo.helper", "item": "exercise-1.1.2",
+             "declaration": "Demo.helper", "role": "key", "provenance": "prov-table"}]
+        valid(self, doc)
+        found = review_tags.check_borrowed_key(doc)
+        self.assertEqual([(f["item"], f["shared_with"]) for f in found], [("remark-1.1.3", ["exercise-1.1.2"])])
+        self.assertEqual(review_tags.check_shared_key(doc), [])
+
+    def test_two_items_keyed_only_to_one_declaration_are_a_shared_key_not_two_borrowers(self):
+        # review record item 17: a mutual group has no owner, so neither item borrows from the other
+        doc = base_document()
         doc["items"].append({"id": "remark-1.1.3", "id_source": "label", "form": "numbered", "source": "book",
                              "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"}})
         doc["links"].append({"id": "remark-1.1.3/key/Demo.volume_add", "item": "remark-1.1.3",
                              "declaration": "Demo.volume_add", "role": "key", "provenance": "prov-table"})
         valid(self, doc)
-        found = review_tags.check_borrowed_key(doc)
-        self.assertEqual(sorted(f["item"] for f in found), ["exercise-1.1.2", "remark-1.1.3"])
-        self.assertEqual(next(f for f in found if f["item"] == "remark-1.1.3")["shared_with"], ["exercise-1.1.2"])
-        # a second key of its own settles it for the exercise
+        self.assertEqual(review_tags.check_borrowed_key(doc), [])
+        self.assertEqual([(f["item"], f["shared_with"]) for f in review_tags.check_shared_key(doc)],
+                         [("exercise-1.1.2", ["remark-1.1.3"]), ("remark-1.1.3", ["exercise-1.1.2"])])
+        # one of them gaining a key of its own makes the other a borrower of it
         doc["links"].append({"id": "exercise-1.1.2/key/Demo.helper", "item": "exercise-1.1.2",
                              "declaration": "Demo.helper", "role": "key", "provenance": "prov-table"})
         self.assertEqual([f["item"] for f in review_tags.check_borrowed_key(doc)], ["remark-1.1.3"])
+        self.assertEqual(review_tags.check_shared_key(doc), [])
 
     def test_a_fallback_item_whose_cluster_shows_only_a_neighbours_keys_is_a_borrowed_key(self):
         doc = base_document()
@@ -155,8 +196,8 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
     def test_a_spelling_the_fold_script_hides_is_reported(self):
         doc = base_document()
         doc["links"] += [
-            {"id": "exercise-1.1.2/helper/Demo.helper/i", "item": "exercise-1.1.2", "declaration": "Demo.helper",
-             "role": "helper", "sub": "i", "provenance": "prov-tag",
+            {"id": "exercise-1.1.2/key/Demo.helper/i", "item": "exercise-1.1.2", "declaration": "Demo.helper",
+             "role": "key", "sub": "i", "provenance": "prov-tag",
              "raw_label": "In-text proof of Exercise 1.1.2(i), book p. 6"},
             {"id": "definition-1.1.1/key/Demo.helper", "item": "definition-1.1.1", "declaration": "Demo.helper",
              "role": "key", "provenance": "prov-tag", "raw_label": "Strategy 1.1.1"},
@@ -164,12 +205,12 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
         valid(self, doc)
         found = review_tags.check_hidden_spelling(doc)
         self.assertEqual({f["link"]: f["why"] for f in found}, {
-            "exercise-1.1.2/helper/Demo.helper/i": "matches the hide pattern (proof plumbing)",
+            "exercise-1.1.2/key/Demo.helper/i": "matches the hide pattern (proof plumbing)",
             "definition-1.1.1/key/Demo.helper": "carries no book anchor the keep pattern recognises"})
         # a page anchor beside the tag is an anchor the script keeps
         doc["links"][-1]["pages"] = {"first": 5, "basis": "printed", "anchor": "own", "raw": "book p. 5"}
         self.assertEqual([f["link"] for f in review_tags.check_hidden_spelling(doc)],
-                         ["exercise-1.1.2/helper/Demo.helper/i"])
+                         ["exercise-1.1.2/key/Demo.helper/i"])
         # only docstring tags are spellings a fold script reads; a table's raw label is not
         doc["links"][-2]["provenance"] = "prov-table"
         self.assertEqual(review_tags.check_hidden_spelling(doc), [])
@@ -178,6 +219,28 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
                          [{"link": "exercise-1.1.2/key/Demo.volume_add", "item": "exercise-1.1.2",
                            "declaration": "Demo.volume_add", "role": "key", "raw_label": "Exercise 1.1.2",
                            "why": "carries no book anchor the keep pattern recognises"}])
+
+    def test_a_helper_link_the_fold_script_hides_is_not_a_hidden_book_tag(self):
+        # review record item 18: proof plumbing is what the fold script is right to hide
+        doc = base_document()
+        doc["links"].append({"id": "exercise-1.1.2/helper/Demo.helper/i", "item": "exercise-1.1.2",
+                             "declaration": "Demo.helper", "role": "helper", "sub": "i", "provenance": "prov-tag",
+                             "raw_label": "In-text proof of Exercise 1.1.2(i), book p. 6"})
+        valid(self, doc)
+        self.assertEqual(review_tags.check_hidden_spelling(doc), [])
+        self.assertEqual([f["link"] for f in review_tags.check_hidden_spelling(doc, roles=("helper",))],
+                         ["exercise-1.1.2/helper/Demo.helper/i"])
+        # the same spelling on an attributed link is book content
+        doc["links"][-1].update(id="exercise-1.1.2/attributed/Demo.helper/i", role="attributed")
+        self.assertEqual([f["role"] for f in review_tags.check_hidden_spelling(doc)], ["attributed"])
+
+    def test_an_invalid_pattern_is_a_clean_error(self):
+        # review record item 19: a bad --keep-pattern or --hide-pattern is a CfError, not a raw re.error
+        from cflib.errors import CfError
+        for flag in ("--keep-pattern", "--hide-pattern"):
+            with self.subTest(flag=flag), self.assertRaises(CfError) as caught:
+                cf_main.main(["review-tags", str(DATA / "tao-measure-lean.annotations.json.gz"), flag, "("])
+            self.assertIn("not a regular expression", caught.exception.message)
 
     def test_an_adjudicated_attribution_gap_verdict_is_listed(self):
         doc = base_document()
@@ -191,8 +254,8 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
 
     def test_the_command_prints_a_summary_and_json(self):
         doc = base_document()
-        doc["links"].append({"id": "exercise-1.1.2/helper/Demo.helper/i", "item": "exercise-1.1.2",
-                             "declaration": "Demo.helper", "role": "helper", "sub": "i", "provenance": "prov-tag",
+        doc["links"].append({"id": "exercise-1.1.2/key/Demo.helper/i", "item": "exercise-1.1.2",
+                             "declaration": "Demo.helper", "role": "key", "sub": "i", "provenance": "prov-tag",
                              "raw_label": "In-text proof of Exercise 1.1.2(i), book p. 6"})
         import tempfile
         import os
@@ -239,8 +302,14 @@ class TestWhatTheReferencesReportToday(unittest.TestCase):
         borrowed = {b["item"]: b for b in findings["borrowed_key"]}
         self.assertEqual(borrowed["exercise-1.1.2"]["shared_with"], ["lemma-1.1.2"])
         self.assertEqual(borrowed["exercise-1.1.2"]["via"], "links")
-        self.assertEqual(sum(1 for b in borrowed.values() if b["via"] == "links"), 19)
+        self.assertEqual(sorted(i for i, b in borrowed.items() if b["via"] == "links"),
+                         ["exercise-1.1.2", "exercise-1.1.24", "exercise-1.6.31", "proposition-1.6.34"])
         self.assertEqual(sum(1 for b in borrowed.values() if b["via"] == "clusters"), 127)
+        # the other 15 of the 19 items keyed only to shared declarations are mutual groups with no owner
+        shared = {b["item"]: b["shared_with"] for b in findings["shared_key"]}
+        self.assertEqual(len(shared), 15)
+        self.assertEqual(shared["definition-1.4.34"], ["definition-1.4.35"])
+        self.assertEqual(shared["equation-1.4"], ["equation-1.5", "proposition-1.2.18"])
         self.assertEqual(findings["hidden_spelling"], [])
         self.assertEqual([a["verdict"] for a in findings["adjudicated_attribution_gap"]],
                          ["verdict:exercise-1.2.21", "verdict:exercise-1.3.4"])
@@ -251,10 +320,13 @@ class TestWhatTheReferencesReportToday(unittest.TestCase):
         self.assertEqual([g["item"] for g in findings["attribution_gap"]], ["remark-1.4.50"])
         self.assertEqual(findings["counts"]["key_on_structure_member"], {"links": 0, "memberships": 0})
         self.assertEqual(findings["borrowed_key"], [])
-        # the five helper links spelled "In-text proof of ...", which the fold script hides as proof plumbing
-        hidden = findings["hidden_spelling"]
+        self.assertEqual(findings["shared_key"], [])
+        # no book-content tag is hidden since its PR #12; the five links spelled "In-text proof of Lemma 1.1.2"
+        # are helper links, proof plumbing the fold script is right to hide
+        self.assertEqual(findings["hidden_spelling"], [])
+        hidden = review_tags.check_hidden_spelling(self.docs["tao-measure-lean"], roles=("helper",))
         self.assertEqual(len(hidden), 5)
-        self.assertTrue(all(h["role"] == "helper" and h["item"] == "lemma-1.1.2" for h in hidden))
+        self.assertTrue(all(h["item"] == "lemma-1.1.2" for h in hidden))
         self.assertTrue(all(h["raw_label"].startswith("In-text proof of Lemma 1.1.2") for h in hidden))
         self.assertEqual(findings["adjudicated_attribution_gap"], [])
 

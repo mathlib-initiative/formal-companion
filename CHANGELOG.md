@@ -85,16 +85,31 @@ release has something to say.
   for one edition); the site's title and `retrieved_at` come from the page
   manifest, not the build's file times. `annotations.ids` gained
   `comment_tags` on `AnonymousDecl` and a public `token_at`;
-  `adapters.docstring_tags` gained `tagged_rows` and `classify_sorry`.
+  `adapters.docstring_tags` gained `tagged_rows`, `classify_sorry` and a
+  public `tag_of` (the exporter re-reads every tag the way the adapter config
+  reads it); `cflib.items` gained a public `parse_subs`. Both exporters render
+  a sub-part with one renderer (`annotations.export.common.render_sub`:
+  ranges and lists whole, a refused one dropped and reported), refuse inputs
+  the convention does not describe with an `ExportError` naming the file (a
+  formalization id the ledger lacks, a front-matter passage, a malformed
+  quad) and `cf export` turns any other `KeyError`, `ValueError`, `IndexError`
+  or failed tool into one error line; an `--out` or `--report` inside the
+  checkout is refused. The pre-merge review's fixes (the record of pull
+  request 15) changed neither reference document.
 - `cf review-tags <document>`: the tag-review half of M3, read-only over a
   document: items keyed only to where they sit (the section 1.7 attribution
   gap before measure_theory's PR #17), key links and primary memberships on a
   structure field or projection (the 142 edges its PR #1 counted), a numbered
-  item whose keys are another item's (the borrowed keys its PR #19 recorded),
-  tag spellings the literate site's fold script hides (`In-text proof`,
-  respelled in tao-measure-lean's PR #12), and the document's own
-  `attribution_gap` verdicts. `tests/test_review_tags.py` plants each defect
-  and lists what the two reference documents report today.
+  item whose keys are another item's that also states more (the borrowed keys
+  its PR #19 recorded), items keyed only to declarations they share with no
+  owner (`shared_key`, reported apart so neither side is called a borrower),
+  book-content (`key`, `attributed`) tag spellings the literate site's fold
+  script hides (`In-text proof`, respelled in tao-measure-lean's PR #12;
+  `helper` links are proof plumbing and not reported), and the document's own
+  `attribution_gap` verdicts. An item is keyed only by a key link to a
+  declaration, and only `not_formalized`, `out_of_scope`, `support_only` and
+  `example_only` excuse a missing key. `tests/test_review_tags.py` plants each
+  defect and lists what the two reference documents report today.
 - Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with

@@ -20,6 +20,9 @@ docs/proposals/pdf-to-companion.md section 5.4.
   the document.
 * :class:`HeaderCutter` cuts a named declaration's section 5.1 signature with
   ``annotations.ids``, from the file and the keyword's line.
+* :func:`render_sub` is the one sub-part renderer both exporters use, so a
+  label and a tag naming the same part give the same ``sub`` (section 3.2 of
+  docs/annotations.md keys numbered items by ``(source, kind, number, sub)``).
 """
 from __future__ import annotations
 
@@ -39,10 +42,17 @@ if str(_SCRIPTS) not in sys.path:
 from annotations import ids                                          # noqa: E402
 from annotations import validate as V                                # noqa: E402
 from cflib import __version__, gitsafe                               # noqa: E402
+from cflib import items as cf_items                                  # noqa: E402
 from cflib.jsonio import atomic_write                                # noqa: E402
 
 #: Keywords whose header opens fields or constructors, not a value: no signature.
 NO_HEADER_CUT = frozenset({"structure", "class", "inductive"})
+#: A sub-part as the format writes it (the schema's ``sub`` pattern): ``ii``, ``i.a``, ``iv-vi``, ``i,iii``.
+SUB_PATTERN = re.compile(r"^[0-9A-Za-z]+(?:[.,-][0-9A-Za-z]+)*$")
+#: What joins two sub-part groups: a dash is a range, a comma, slash, ampersand or "and" a list.
+_SUB_JOIN = re.compile(r"^\s*(?:(?P<range>[-‐–—])|(?P<list>,|/|&|\band\b))\s*(?=\()")
+_PAREN = re.compile(r"^\(([^()]*)\)")
+_URL = re.compile(r"https?://", re.I)
 
 
 class ExportError(Exception):
@@ -118,6 +128,67 @@ def read_bytes(path: Path) -> bytes:
         with gzip.open(path, "rb") as fh:
             return fh.read()
     return path.read_bytes()
+
+
+def has_url(text: str | None) -> bool:
+    """Whether ``text`` holds an ``http(s)://`` URL, which I10 keeps out of every non-source field."""
+    return bool(text) and bool(_URL.search(text))
+
+
+# ---------------------------------------------------------------------------
+# sub-parts
+# ---------------------------------------------------------------------------
+
+def after_number(raw: str, number: str) -> str:
+    """The text of ``raw`` that follows the item number ``number`` (empty when it is not there)."""
+    i = raw.find(number)
+    return raw[i + len(number):] if i >= 0 else ""
+
+
+def render_sub(text: str) -> tuple[str, str, str | None]:
+    """``(sub, rest, refused)``: the sub-part written after an item's number, in the format's spelling.
+
+    One renderer for both exporters, so the two agree on the ``(source, kind,
+    number, sub)`` key of docs/annotations.md section 3.2.  The groups are the
+    item grammar's (``cflib.items.parse_subs``): consecutive groups nest
+    (``(i)(a)`` -> ``i.a``), a dash between groups is a range (``(i)-(iii)`` ->
+    ``i-iii``) and a comma, slash, ampersand or "and" a list (``(i), (iii)`` ->
+    ``i,iii``), each emitted whole rather than narrowed to its first group.
+
+    ``refused`` is the raw sub-part text when it cannot be carried: a
+    parenthetical attached to the number that the grammar does not accept as
+    a sub-part (``1.2.3(ii')``), a group after a range or list separator that
+    it does not accept, or a result outside :data:`SUB_PATTERN`.  The sub is
+    then empty, ``rest`` is ``text`` unchanged, and the caller reports it.  A
+    parenthetical set off by a space and refused by the grammar
+    (``1.2.5 (Finite additivity)``) is a title, not a sub-part: ``("", text,
+    None)``.
+    """
+    attached = _PAREN.match(text)
+    text = text.strip()
+    groups, rest = cf_items.parse_subs(text)
+    if not groups:
+        if attached:
+            return "", text, attached.group(0)
+        return "", text, None
+    parts = [".".join(re.findall(r"\(([^()]*)\)", groups))]
+    while True:
+        join = _SUB_JOIN.match(rest)
+        if not join:
+            break
+        more, after = cf_items.parse_subs(rest[join.end():])
+        if not more:
+            # the separator promises a sub-part the grammar refuses: carrying the first group alone narrows
+            nxt = _PAREN.match(rest[join.end():])
+            consumed = len(text) - len(rest) + join.end() + (len(nxt.group(0)) if nxt else 0)
+            return "", text, text[:consumed].strip()
+        parts.append("-" if join.group("range") else ",")
+        parts.append(".".join(re.findall(r"\(([^()]*)\)", more)))
+        rest = after
+    sub = "".join(parts)
+    if not SUB_PATTERN.match(sub):
+        return "", text, text[:len(text) - len(rest)].strip()
+    return sub, rest, None
 
 
 def utc(epoch: int | float) -> str:
