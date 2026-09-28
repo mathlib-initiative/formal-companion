@@ -38,6 +38,7 @@ from typing import Iterable, Mapping, Sequence
 if __package__ in (None, ""):  # `python3 scripts/harvest/tally.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from cost import fleet as cost_fleet
 from harvest import harvest as harvest_mod
 from harvest._compat import (SEVERITIES, SUBSTANTIVE_KINDS, CfError, cf_items,
                              hashing, iso_now, iter_finding_files, read_json,
@@ -521,6 +522,10 @@ def tally(runs: dict[str, str | Path], kinds=None,
         # own key so that "no gate block in RECEIPT.json" stays true of `ungated`.
         # Their rows are in the corpus and are counted above like any other.
         "gate_failed": harvest_mod.gate_failed_runs(runs),
+        # what each run cost, from the receipt's cost block (issue #11): dollars,
+        # the task count it is divided by and where that count came from.  None
+        # for a run harvested without --transcripts, and named as such.
+        "cost": cost_fleet.runs_cost(runs),
     }
 
 
@@ -559,6 +564,8 @@ def render(result: dict, repos: Sequence[str] | None = None) -> str:
     lines = [f"runs: " + ", ".join(f"{r} ({v['mode']}, {v['files']} files)"
                                    for r, v in result["runs"].items()),
              f"rows: {result['rows']}"]
+    if result.get("cost"):
+        lines.extend(cost_fleet.render_run_costs(result["cost"]))
     if result.get("unjoinable"):
         lines.append("UNJOINABLE in-text labels (reported, not dropped): "
                      + ", ".join("%s (%s)" % (u["item_raw"], u["reason"])

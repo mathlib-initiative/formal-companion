@@ -200,6 +200,18 @@ leaves three. Above the cap you get 409s.
    host had 763 and the missing file was a real `CONTENT` finding.
 3. Commit the corpus in the workspace repo (append-only per run-id).
 4. Run `tally.py`, `union.py`, `agreed.py`; write the counts into `state.json`.
+5. Price the run. `tend-control status` reports zero usage for every run, because the agents run
+   inside Claude Code and the orchestrator never sees a token; the agents' own transcripts on the
+   host carry every one (issue #11). The transcripts hold prompts, paths and tool output, so they
+   stay on the host: run the standalone reader there, from a copy of `scripts/cost/usage.py`, as
+   `python3 usage.py <the run's transcript directories> --export usage.jsonl` (one `{model,
+   usage}` row per response, no text), bring the export back, and pass it to
+   `cf harvest <run-id> --transcripts usage.jsonl`. The receipt then carries the `cost` block
+   (tokens by model, dollars at `workspace.yaml` `budget.prices`, the models the table does not
+   price, the table's sha) and `cf tally` prints the cost per task. A Codex fleet's
+   `rollout-*.jsonl` logs read the same way; a log that names no model takes
+   `--transcripts-model <id>`. A model missing from the price table is reported as UNPRICED,
+   never guessed at, and the dollar figure is then a lower bound until the table has a row for it.
 
 Everything downstream is a function of `corpus/`, never of files someone read.
 
