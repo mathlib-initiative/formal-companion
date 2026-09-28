@@ -36,6 +36,14 @@ REGISTRY_VERSION = 1
 REGISTRY_FILE = "sources.yaml"
 OVERLAY_FILE = "registry.yaml"
 
+#: ``edition_status`` values: the edition to audit against, and the two a new
+#: pipeline refuses without a recorded override (docs/proposals/pdf-to-companion.md
+#: section 2.1, the edition check)
+EDITION_CURRENT = "current"
+EDITION_DRAFT = "draft"
+EDITION_SUPERSEDED = "superseded"
+EDITION_STATUSES = (EDITION_CURRENT, EDITION_DRAFT, EDITION_SUPERSEDED)
+
 OVERLAY_HEADER = (
     "# registry.yaml -- this WORKSPACE's overlay on the skill's source registry.\n"
     "# Written by `cf onboard` / `cf sources add`, always with confirmed: false.\n"
@@ -84,6 +92,9 @@ class RegistryEntry:
     aliases: dict = field(default_factory=dict)
     confirmed: bool = False
     notes: str = ""
+    #: ``current`` (the edition to audit against), ``draft`` or ``superseded``;
+    #: `cf ingest` refuses the last two without ``--override-edition``
+    edition_status: str = "current"
     origin: str = "skill"
 
     @classmethod
@@ -118,6 +129,7 @@ class RegistryEntry:
             },
             confirmed=bool(data.get("confirmed")),
             notes=str(data.get("notes") or ""),
+            edition_status=str(data.get("edition_status") or EDITION_CURRENT),
             origin=origin,
         )
 
@@ -144,6 +156,7 @@ class RegistryEntry:
             "aliases": dict(self.aliases),
             "confirmed": self.confirmed,
             "notes": self.notes,
+            "edition_status": self.edition_status,
         }
 
     def to_source_fields(self) -> dict:
@@ -401,6 +414,9 @@ class Registry:
             fetch = str((entry.licence or {}).get("fetch") or "none")
             if fetch not in {"none", "author_site", "open"}:
                 problems.append(f"{sid}: licence.fetch must be none|author_site|open")
+            if entry.edition_status not in EDITION_STATUSES:
+                problems.append(f"{sid}: edition_status must be "
+                                f"{'|'.join(EDITION_STATUSES)}")
             if (entry.licence or {}).get("redistribute"):
                 problems.append(f"{sid}: licence.redistribute must be false (nothing is redistributed)")
             for other, body in (entry.page_map_to or {}).items():
@@ -442,7 +458,7 @@ ENTRY_KEYS = frozenset({
     "title", "authors", "edition", "isbn", "sha256", "bytes", "pages",
     "download_url", "book_page_url", "errata_url", "licence", "offset",
     "offset_confidence", "offset_method", "kinds", "same_work", "page_map_to",
-    "aliases", "confirmed", "notes", "added",
+    "aliases", "confirmed", "notes", "added", "edition_status",
 })
 LICENCE_KEYS = frozenset({"note", "fetch", "redistribute"})
 PAGE_MAP_KEYS = frozenset({"default_shift", "exception_shift", "exceptions",
