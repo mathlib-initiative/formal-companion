@@ -874,11 +874,15 @@ The `changelog` array is the id history the document carries with it:
 
 ## 10. How the existing companions map in
 
-Two prototype exporters (scratch scripts, not in this repository) read the
-worked companions read-only, at measure_theory `00a2438` and tao-measure-lean
-`f158509`, and write version 1.0 documents directly. Both validate with
-`--canonical` and no warnings. The figures below are from those documents and
-the reports the exporters write beside them.
+Two exporters, `cf export attribution-table` and `cf export docstring-tags`
+(`docs/exporters.md`), read the worked companions read-only, at measure_theory
+`00a2438` and tao-measure-lean `f158509`, and write version 1.0 documents; the
+documents and the reports written beside them are kept maintainer-side, in
+`CF_M3_REFERENCE_DIR` (`tests/data/m3/README.md`), never in this repository. Both
+validate with `--canonical` and no warnings. The figures below are from those
+documents and reports. (The paragraphs were written from the prototype
+documents the commands replaced; the source ids they mention are now the
+registry's, `docs/exporters.md` section 6.)
 
 | root array | measure_theory | tao-measure-lean |
 |---|---|---|
@@ -1055,9 +1059,11 @@ agent_annotation`, or `human`); the 12-hex native id can be kept in
 
 ## 11. Left out of v1
 
-- An exporter and an importer. The adapters, the viewer and WikiLean do not
-  read or write this format yet.
-- A `cf` command. The checker runs by path, as above.
+- An importer, and a W3C exporter. The two companion exporters exist
+  (`cf export`, `docs/exporters.md`); the adapters, the viewer and WikiLean do
+  not read or write this format yet.
+- A `cf` command for the checker, which runs by path, as above (`cf export`
+  and `cf review-tags` exist).
 - A Lean-side exporter for elaborated-type hashes, and the namespace in the
   statement hash: the normaliser is frozen, and adding context to the hash
   would re-key every anonymous declaration.
