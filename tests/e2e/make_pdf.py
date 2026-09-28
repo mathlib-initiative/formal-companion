@@ -11,8 +11,14 @@ Shape, chosen so the inference has something real to find:
     inferable from the running heads by majority, exactly as it is for Tao.
   * 28 numbered items in four sections of one chapter, in the c.s.n grammar
     the skill parses, spread over the kinds it knows.
+  * with ``--passages`` (``build(passages=True)``), six PLANTED unnumbered
+    passages after four of the items: five the text marks itself (``Proof.``,
+    ``Remark.``, ``Example (...).``, ``Claim.``, ``Proof of ...``) and one it
+    does not, so a passage finder's recall can be measured outside Tao
+    (docs/proposals/pdf-to-companion.md section 2.2).  The default booklet is
+    unchanged byte for byte: its sha is pinned.
 
-usage: python3 make_pdf.py <out.pdf>
+usage: python3 make_pdf.py <out.pdf> [--passages]
 """
 import sys
 import zlib
@@ -64,6 +70,23 @@ ITEMS = [
     ("Example", "1.4.5", "", "The Cantor set is uncountable with outer measure zero."),
 ]
 
+#: planted unnumbered passages: item number -> the passages set after that item.
+#: ``marked`` says whether the text marks the passage with a word of its own.
+PASSAGES = {
+    "1.1.4": [("Proof. Write E and F as finite unions of boxes and intersect them "
+               "pairwise; the pieces are boxes.", True)],
+    "1.2.3": [("Remark. The same argument gives additivity for any finite family of "
+               "pairwise disjoint elementary sets.", True),
+              ("In particular the empty set has elementary measure zero, since it is "
+               "disjoint from itself.", False)],
+    "1.3.3": [("Example (Unit interval). The closed unit interval is Jordan measurable "
+               "and its Jordan measure is one.", True),
+              ("Claim. Every Jordan measurable set is bounded, because its outer measure "
+               "is finite.", True)],
+    "1.4.3": [("Proof of Theorem 1.4.3. Every finite cover by boxes is also a countable "
+               "cover by boxes.", True)],
+}
+
 SECTION_TITLES = {
     "1.1": "1.1 Boxes and elementary sets",
     "1.2": "1.2 Elementary measure",
@@ -86,7 +109,7 @@ def wrap(text, width=82):
     return lines
 
 
-def body_pages():
+def body_pages(passages=False):
     """The printed pages: a list of line-lists, each ending in its page number."""
     blocks, last_section = [], None
     for kind, number, title, body in ITEMS:
@@ -99,6 +122,8 @@ def body_pages():
         block += wrap(head + " " + body)
         block.append("")
         blocks.append(block)
+        for text, _marked in (PASSAGES.get(number, []) if passages else []):
+            blocks.append(wrap(text) + [""])
 
     pages, cur = [], []
     for block in blocks:
@@ -116,12 +141,18 @@ def body_pages():
     return out
 
 
-PAGES = [
+FRONT = [
     ["Elementary Notes on Sets", "", "A short public-domain booklet.", "",
      "Anonymous", "", "This text is dedicated to the public domain."],
     ["Contents", "", "Chapter 1. Elementary and Jordan measure", ""]
     + ["    " + t for t in SECTION_TITLES.values()],
-] + body_pages()
+]
+PAGES = FRONT + body_pages()
+
+
+def pages(passages=False):
+    """Every PDF page's lines; ``passages`` adds the planted passages."""
+    return FRONT + body_pages(passages) if passages else PAGES
 
 
 def escape(s):
@@ -136,14 +167,15 @@ def content(lines):
     return "\n".join(out).encode("latin-1")
 
 
-def build():
+def build(passages=False):
+    all_pages = pages(passages)
     objs = {}
-    n_pages = len(PAGES)
+    n_pages = len(all_pages)
     kids = " ".join("%d 0 R" % (4 + 2 * i) for i in range(n_pages))
     objs[1] = b"<< /Type /Catalog /Pages 2 0 R >>"
     objs[2] = ("<< /Type /Pages /Count %d /Kids [%s] >>" % (n_pages, kids)).encode()
     objs[3] = b"<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>"
-    for i, lines in enumerate(PAGES):
+    for i, lines in enumerate(all_pages):
         page_no, stream_no = 4 + 2 * i, 5 + 2 * i
         objs[page_no] = (
             "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
@@ -169,6 +201,10 @@ def build():
 
 
 if __name__ == "__main__":
-    open(sys.argv[1], "wb").write(build())
-    print("%s: %d PDF pages, %d printed pages, %d items"
-          % (sys.argv[1], len(PAGES), len(PAGES) - 2, len(ITEMS)))
+    planted = "--passages" in sys.argv[2:]
+    open(sys.argv[1], "wb").write(build(planted))
+    n = len(pages(planted))
+    print("%s: %d PDF pages, %d printed pages, %d items%s"
+          % (sys.argv[1], n, n - 2, len(ITEMS),
+             ", %d planted passages" % sum(len(v) for v in PASSAGES.values())
+             if planted else ""))
