@@ -1,0 +1,18 @@
+{
+  "commit": "245814086a67f6a2e409af090bc4634b012d3681",
+  "files": {
+    "__init__.py": "335b640e0ce5673803880d715eac8c40bf9a4c8af47996ff045f2daa81656997",
+    "__main__.py": "db7d403ada610c95c852768cc2e4c00ad083ea587bbfe9400013986458d15cc6",
+    "ids.py": "300d526e0692bbb425a96dac065818e4e37eb902fa12310beb9bf161cd9c44aa",
+    "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "schema/annotations-v1.schema.json": "230e57b9dbfa91712685b643f854fb8a183ecdc5db6aa291a0242551d5c8dca1",
+    "schemacheck.py": "812de8e337e986932e094a124c76d56a63476a7e31d52f123b5451149392a304",
+    "validate.py": "204c85c9e56b0af7e0fb95ebd73eeaa7fd5514cc7e605b6d586bc857b84b1308",
+    "vocab.py": "51f88cce9cde8b9b36f7cc8a33452b25ad2bdcf73b03408c976f5f578601ee93"
+  },
+  "license": "Apache-2.0",
+  "source": "src/formal_companion_annotations",
+  "tag": "v1.0.0",
+  "upstream": "https://github.com/mathlib-initiative/formal-companion-annotations",
+  "version": "1.0.0"
+}
