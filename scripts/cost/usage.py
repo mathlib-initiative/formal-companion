@@ -29,8 +29,8 @@ Three input shapes are read, and a directory may mix them:
   that names none is read under the id passed as ``model``, or under
   ``UNKNOWN_MODEL`` when there is none, which the price table cannot price.
 * a **usage export** (``*.jsonl`` or ``*.jsonl.gz``, one ``{model, usage}``
-  object per line, the shape of ``tests/data/m0a/s17b-usage.jsonl.gz``): the
-  rows carry no ids, so they are summed as written.  ``export_rows`` writes
+  object per line, the shape of the s17b fixture under ``tests/data/m0a/``):
+  the rows carry no ids, so they are summed as written.  ``export_rows`` writes
   one, one row per counted response, which is how usage leaves a host without
   the transcripts' text.
 
