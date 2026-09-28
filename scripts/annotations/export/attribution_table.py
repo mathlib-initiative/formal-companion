@@ -16,9 +16,9 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
 
 Every file is read as it is; the Lean sources are scanned at the pinned commit
 with ``adapters.leanparse`` (every declaration, its namespace and privacy) and
-``annotations.ids`` (statement-hash ids and signatures), and a local build's
-``.ilean`` gives an anonymous instance its generated name when the build
-postdates the file's last commit.  What the format cannot carry is counted in
+``formal_companion_annotations.ids`` (statement-hash ids and signatures), and a
+local build's ``.ilean`` gives an anonymous instance its generated name when
+the build postdates the file's last commit.  What the format cannot carry is counted in
 the report's ``lossy`` and ``bent`` buckets rather than dropped in silence;
 docs/exporters.md lists the buckets.
 
@@ -35,9 +35,10 @@ import re
 from pathlib import Path
 
 from adapters import leanparse
-from annotations import ids
+from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids
 from cflib import items as cf_items
-from cflib import vocab
+from formal_companion_annotations import vocab
 
 from . import common
 from .common import ExportError, HeaderCutter, Report, file_lock, git_out, module_of

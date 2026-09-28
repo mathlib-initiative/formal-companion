@@ -19,7 +19,7 @@ docs/proposals/pdf-to-companion.md section 5.4.
   format did not intend), the counts and any problems.  It is written beside
   the document.
 * :class:`HeaderCutter` cuts a named declaration's section 5.1 signature with
-  ``annotations.ids``, from the file and the keyword's line.
+  ``formal_companion_annotations.ids``, from the file and the keyword's line.
 * :func:`render_sub` is the one sub-part renderer both exporters use, so a
   label and a tag naming the same part give the same ``sub`` (section 3.2 of
   docs/annotations.md keys numbered items by ``(source, kind, number, sub)``).
@@ -39,8 +39,9 @@ _SCRIPTS = Path(__file__).resolve().parent.parent.parent
 if str(_SCRIPTS) not in sys.path:
     sys.path.insert(0, str(_SCRIPTS))
 
-from annotations import ids                                          # noqa: E402
-from annotations import validate as V                                # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids                         # noqa: E402
+from formal_companion_annotations import validate as V               # noqa: E402
 from cflib import __version__, gitsafe                               # noqa: E402
 from cflib import items as cf_items                                  # noqa: E402
 from cflib.jsonio import atomic_write                                # noqa: E402
@@ -337,9 +338,10 @@ class HeaderCutter:
 
     The section 5.1 cut (the keyword up to the ``:=`` or ``where`` that ends a
     typed header, comments removed, whitespace collapsed), by
-    ``annotations.ids``' own scanner.  ``skipped`` counts why a declaration got
-    none: a ``structure``, ``class`` or ``inductive`` (their ``where`` opens
-    fields), a header nothing ends, or a line the keyword is not on.
+    ``formal_companion_annotations.ids``' own scanner.  ``skipped`` counts why a
+    declaration got none: a ``structure``, ``class`` or ``inductive`` (their
+    ``where`` opens fields), a header nothing ends, or a line the keyword is not
+    on.
     """
 
     def __init__(self, root: Path):

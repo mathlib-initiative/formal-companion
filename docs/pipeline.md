@@ -21,9 +21,9 @@ pipelines/<id>/
 
 The PDF, its text and its pages stay in `sources/<source id>/`, which the
 workspace's git ignores; `repo/` is ignored too, being a repository of its own.
-Every checkpoint is written in canonical form and passes
-`scripts/annotations/validate.py --canonical` with no warnings, or it is not
-written at all (`scripts/pipeline/document.py`).
+Every checkpoint is written in canonical form and passes the vendored checker
+(`PYTHONPATH=vendor python3 -m formal_companion_annotations.validate --canonical`)
+with no warnings, or it is not written at all (`scripts/pipeline/document.py`).
 
 ## S0: `cf ingest`
 

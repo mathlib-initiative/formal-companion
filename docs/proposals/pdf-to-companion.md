@@ -69,7 +69,7 @@ pipeline below.
 | revision pins and recheck | `scripts/recheck/` | loops, S9 |
 | planted mutations and scoring | `scripts/score/mutate.py`, `scripts/score/answer_key.py`, `scripts/score/score.py`, `tests/e2e/synthetic.sh` | calibration |
 | redacted exchange | `scripts/share/redact.py` | the release document |
-| annotation format v1.0 | `schema/annotations-v1.schema.json`, `scripts/annotations/validate.py`, `docs/annotations.md` | the spine of the pipeline |
+| annotation format v1.0 | `formal-companion-annotations/schema/annotations-v1.schema.json`, `formal-companion-annotations/src/formal_companion_annotations/validate.py`, `docs/annotations.md` | the spine of the pipeline |
 
 What this repository does not have:
 
@@ -91,8 +91,9 @@ What this repository does not have:
   an unwritten companion has none (`scripts/cflib/inference.py`).
 - There is no geometry, site, viewer or tag curation. Curate, lint and
   publish-verdicts are documented in `SKILL.md` and not implemented.
-- No producer or consumer reads or writes the annotation format yet; only the
-  checker does (`docs/annotations.md` section 11).
+- `cf export` writes annotation documents from a companion, `cf ingest` and
+  `cf inventory` write the pipeline's checkpoints, and `cf review-tags` reads a
+  document (`docs/annotations.md` section 11).
 - Cost is not recorded. tend's counters read zero under agentbox
   (`references/traps.md` C2; issue #11).
 - Issues #6, #7, #9, #10 and #11 are open. Issue #9 (a copy-status line
@@ -201,8 +202,8 @@ Output, doc v0:
   generated repository from the Lake template and commits it once, so `commit`
   is a real 40-hex id and `repo` is `local/<name>` until the repository has a
   remote; later checkpoints move `commit` to its head. The v1.0 schema requires
-  both (`schema/annotations-v1.schema.json`), so a `commit: null` companion
-  would fail S0's own gate.
+  both (`formal-companion-annotations/schema/annotations-v1.schema.json`), so
+  a `commit: null` companion would fail S0's own gate.
 - One `pdf` source with sha256, bytes, `physical_page_count`,
   `printed_page_offset`, page sizes and the text layer `{extractor: pdftotext,
   version}`.
@@ -237,7 +238,7 @@ Gate, fail-closed:
   dropped the entry for Definition 1.5.11 (the `scripts/sources/fetch_errata.py`
   module docstring; `references/traps.md` A3). An entry-count comparison is not
   a gate: both counts would come from the same parser, so it could not fail.
-- The document passes `validate.py --canonical`.
+- The document passes `formal_companion_annotations.validate --canonical`.
 - The PDF is in no git tree.
 - The spot check agrees on the 10 real pages and flags the planted one, or a
   manual override is stamped `*_method: manual`.
@@ -775,12 +776,13 @@ key declaration's snippet. Each run plants one wrong count in the README for
 the claims check and one swapped card for the smoke test, and both must be
 caught.
 
-CI gate: `validate.py --canonical`; a changelog entry for every retired,
-restated or renamed id; `lake build`; status `--check`; the schema half of the
-geometry checks and a fresh geometry receipt (section 2.3); the snippets check;
-URL hardening and I10; no PDF or symlink in the site; a page-size cap after
-slimming; a site receipt; key tags equal key links. `$MT`'s CI runs lean-action
-only (`$MT/.github/workflows/lean_action_ci.yml`).
+CI gate: `formal_companion_annotations.validate --canonical`; a changelog
+entry for every retired, restated or renamed id; `lake build`; status
+`--check`; the schema half of the geometry checks and a fresh geometry receipt
+(section 2.3); the snippets check; URL hardening and I10; no PDF or symlink in
+the site; a page-size cap after slimming; a site receipt; key tags equal key
+links. `$MT`'s CI runs lean-action only
+(`$MT/.github/workflows/lean_action_ci.yml`).
 
 The document and viewer data are regenerated on every build and never
 re-pinned by hand. One re-pin in `$MT` touched 14 files (commit 6688082).
@@ -875,7 +877,7 @@ would label a changed def body unchanged; the sampled-attack selector.
 
 | gate | stages | exists today |
 |---|---|---|
-| `validate.py --canonical` | every boundary | yes, `scripts/annotations/validate.py` |
+| `formal_companion_annotations.validate --canonical` | every boundary | yes, `formal_companion_annotations.validate` |
 | exact selector check | S1, S3 | no; `scripts/gate/verify_findings.py` is lossy and binds within ±2 pages |
 | findings quote and witness gate | S5, S7, S9 | yes, `scripts/gate/verify_findings.py` |
 | offset and edition checks | S0 | offset yes; registry edition refusal no |
@@ -996,7 +998,7 @@ Until v1.1 is approved, the fallbacks are:
 
 ### 4.4 Four gates at every boundary from S5
 
-1. `validate.py --canonical`.
+1. `formal_companion_annotations.validate --canonical`.
 2. Key tags equal key links, by re-extraction with the docstring-tag adapter.
 3. The item-declaration bijection over the items S3 parsed as statements.
 4. The frozen records of section 2.6 (full commands, signatures, context and
@@ -1179,7 +1181,8 @@ agents run inside the M0c sandbox, and the canary finds 0 hits. The run:
   passages near the right item and page;
 - fetches the errata raw, with the Definition 1.5.11 entry present and every
   entry that names an item linked to it;
-- passes `validate.py --canonical` with no warnings and writes a receipt.
+- passes `formal_companion_annotations.validate --canonical` with no warnings
+  and writes a receipt.
 
 Edition control: given the draft PDF (sha `62d95658...`), S0 refuses it by
 registry lookup. No anchor-scoring control is run: it needs a companion's page

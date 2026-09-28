@@ -35,7 +35,8 @@ if str(SCRIPTS) not in sys.path:
 
 import cf as cf_main                                               # noqa: E402
 from annotations import review_tags                                # noqa: E402
-from annotations import validate as V                              # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
+from formal_companion_annotations import validate as V             # noqa: E402
 
 
 

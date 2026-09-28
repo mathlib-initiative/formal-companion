@@ -20,7 +20,8 @@ import re
 from pathlib import Path
 
 from annotations import review_tags
-from annotations import validate as V
+from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+from formal_companion_annotations import validate as V
 from annotations.export.common import read_bytes
 from cflib import log
 from cflib.errors import CfError
