@@ -222,8 +222,14 @@ reads.
 read local baselines read their paths from `CF_BASELINE_CORPUS`,
 `CF_BASELINE_DIFF`, `CF_TML`, `CF_MT`, `CF_BOOK_TXT` (and the exporter
 reproductions from `CF_TAO_PDF`, `CF_TML_SITE`, `CF_MT_BUILD`,
-`CF_M3_REFERENCE_DIR`) and **skip
-cleanly** when those are unset — the suite must pass on a machine that has none of them.
+`CF_M3_REFERENCE_DIR`) and **skip cleanly** when those are unset — the suite
+must pass on a machine that has none of them.
+The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
+`tests/test_m1_calibration.py`, which skips without it), `CF_M1_DOWNLOAD=1`
+(opt in to downloading that PDF; nothing is fetched by default),
+`CF_M1_ENFORCE_BARS=1` (assert the proposal's recall bars instead of only
+reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
+and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
 Discovery and inference tests use fixture repos and synthetic text: no network,
 and the only PDFs read are the fixture PDFs the suite generates in a temporary
 directory. `tests/_hermetic.py` is what makes that true: importing it pins HOME
