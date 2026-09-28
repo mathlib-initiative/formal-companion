@@ -94,8 +94,14 @@ sources:
       filenames: [ … ]
       titles: [ … ]
     confirmed: true|false
+    edition_status: current|draft|superseded   # default current
     notes: …
 ```
+
+`edition_status` is what `cf ingest` reads before it starts a pipeline: a
+`draft` or `superseded` edition is refused unless `--override-edition` is
+passed, and the override is recorded in the stage receipt
+(`docs/pipeline.md`).
 
 A source need not be a paginated PDF. A manuscript that is already text (an
 arXiv `.tex`, notes in Markdown, reStructuredText or HTML, a `pdftotext` dump

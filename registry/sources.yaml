@@ -90,6 +90,7 @@ sources:
       urls: []
       filenames: ["Measure.Theory.Tao.pdf", "tao-measure-theory.pdf"]
       titles: ["An Introduction to Measure Theory (Tao)"]
+    edition_status: draft
     confirmed: true
     notes: >-
       Batch-1 anchor findings were judged against THIS edition and were wrong for

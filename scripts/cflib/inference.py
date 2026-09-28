@@ -295,6 +295,95 @@ def item_completeness(numbers: Iterable[str]) -> dict:
     }
 
 
+def infer_counters(kind_numbers: Mapping[str, Iterable[str]]) -> list[list[str]]:
+    """Partition a source's kinds into the counters its numbering implies.
+
+    New for the S1 slot-contiguity gate (docs/proposals/pdf-to-companion.md
+    section 2.2).  A book may run more than one counter in a section: Tao
+    numbers exercises apart from everything else, so ``Definition 1.1.1`` and
+    ``Exercise 1.1.1`` both exist, and pooling them (as :func:`item_completeness`
+    does, on purpose) lets one kind's slot hide another's gap.  Kinds are taken
+    largest first and each joins the first counter none of whose numbers it
+    repeats; a kind that repeats a number of every counter starts a new one.
+    """
+    groups: list[tuple[list[str], set[str]]] = []
+    for kind in sorted(kind_numbers, key=lambda k: (-len(set(kind_numbers[k])), k)):
+        numbers = {str(n) for n in kind_numbers[kind]}
+        for kinds, seen in groups:
+            if not numbers & seen:
+                kinds.append(kind)
+                seen |= numbers
+                break
+        else:
+            groups.append(([kind], set(numbers)))
+    return [sorted(kinds) for kinds, _ in groups]
+
+
+def slot_filling_kinds(text: str, kind_numbers: Mapping[str, Iterable[str]], *,
+                       min_segments: int = 2) -> dict[str, list[str]]:
+    """Heading words too rare for :func:`infer_kinds` whose numbers fill the numbering's slots.
+
+    New for the PDF-only pipeline (docs/proposals/pdf-to-companion.md section
+    2.1), where no companion's tags name the kinds.  ``infer_kinds`` keeps a
+    word seen at least three times, so a short text's two ``Corollary``
+    headings are dropped; but when every number such a word carries at the
+    start of a line is a slot the source's own counters leave open -- a hole
+    inside the range a section already runs to, or the slot right after its
+    highest number -- and no found item takes it, the numbering itself says the
+    word is an item kind.  Accepted words join the numbering and the search
+    repeats, so two rare kinds that end one section are both found.
+
+    Returns ``{word: [numbers]}``; a structural word or a known kind is never
+    returned, and one number that is taken or out of place disqualifies the
+    word, so a wrapped cross-reference cannot qualify.
+    """
+    known = {k.lower() for k in kind_numbers}
+    structural = {k.lower() for k in STRUCTURAL_KINDS}
+    seen: dict[str, set[str]] = {}
+    # a heading that begins a page follows the form feed, not a newline, and
+    # `^` does not see it; the same length keeps every offset where it was
+    for m in ANY_HEADING.finditer((text or "").replace("\f", "\n")):
+        if m.group(2).count(".") + 1 < max(1, int(min_segments)):
+            continue
+        word = canonical_kind_word(m.group(1))
+        if word.lower() in known or word.lower() in structural:
+            continue
+        seen.setdefault(word, set()).add(m.group(2))
+    numbers_of = {k: {str(n) for n in v} for k, v in kind_numbers.items()}
+    accepted: dict[str, list[str]] = {}
+    for _round in range(len(seen) + 1):
+        open_slots, taken = _open_slots(numbers_of)
+        found = {word: numbers for word, numbers in seen.items()
+                 if word not in accepted and numbers <= open_slots and not numbers & taken}
+        if not found:
+            break
+        for word, numbers in found.items():
+            accepted[word] = sorted(numbers)
+            numbers_of[word] = set(numbers)
+    return dict(sorted(accepted.items()))
+
+
+def _open_slots(kind_numbers: Mapping[str, set[str]]) -> tuple[set[str], set[str]]:
+    """``(open slots, taken numbers)``: per counter and section, the holes and the next slot."""
+    open_slots: set[str] = set()
+    taken: set[str] = set()
+    for kinds in infer_counters(kind_numbers):
+        slots: dict[tuple, set[int]] = {}
+        for kind in kinds:
+            for number in kind_numbers[kind]:
+                taken.add(number)
+                try:
+                    levels = tuple(int(p) for p in number.split("."))
+                except ValueError:
+                    continue
+                slots.setdefault(levels[:-1], set()).add(levels[-1])
+        for prefix, present in slots.items():
+            for n in range(1, max(present) + 2):
+                if n not in present:
+                    open_slots.add(".".join(str(p) for p in prefix + (n,)))
+    return open_slots, taken
+
+
 def infer_scope(rows: Iterable[Mapping], items_json: Mapping, *, source_id: str,
                 min_items: int = 5, min_ratio: float = 0.2) -> dict:
     """Which chapters the COMPANIONS actually tag -- the audited scope.
