@@ -35,6 +35,7 @@ CONTRIBUTING.md   how to send a change; CLAUDE.md is the same ground for an agen
 POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 docs/proposals/   designs not yet built: pdf-to-companion.md, the PDF-to-companion pipeline
+docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inventory)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
 schema/           annotations-v1.schema.json: the annotation format, schema_version
@@ -49,7 +50,8 @@ scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
                   detect, report, recheck, score, share, cost (a fleet's tokens
                   and dollars from the agents' transcripts), pipeline (the
-                  PDF-to-companion pipeline's pipeline.yaml and stage receipts)
+                  PDF-to-companion pipeline: pipeline.yaml, stage receipts, and
+                  stages S0 ingest and S1 inventory)
 scripts/annotations/
                   the annotation format's checker and mechanical ids (not a stage)
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
@@ -285,7 +287,9 @@ manual`, `confirmed: false` until a human says otherwise.
                              the receipt's cost block is the run's priced tokens)
   pipelines/<id>/            pipeline.yaml, doc.vN.json checkpoints and
                              stages/<stage>.stage-receipt.json: the PDF-to-companion
-                             pipeline's records (the writer exists; no stage does yet)
+                             pipeline's records, written by `cf ingest` (S0) and
+                             `cf inventory` (S1); repo/ is the generated companion,
+                             its own git repository (gitignored here)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts
   reports/                   tally.<run>.json, union.<name>.json, coverage.json,
@@ -381,7 +385,9 @@ script, and `cf sources validate-registry`.
 ## Status
 
 v1: findings only. `fix`, `review-pr`, `camera-ready` and `publish-verdicts`
-are designed and documented but not implemented. See `SKILL.md` for the hard
+are designed and documented but not implemented. Of the PDF-to-companion
+pipeline (`docs/proposals/pdf-to-companion.md`), the deterministic parts of S0
+and S1 are built (`docs/pipeline.md`); its agents and stages S2 to S9 are not. See `SKILL.md` for the hard
 rules, `docs/design/stage_map.md` for the data model, `CONTRIBUTING.md` for how
 to send a change, and `CHANGELOG.md` for what a version number promises.
 

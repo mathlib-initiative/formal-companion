@@ -239,8 +239,9 @@ A Workflow fleet on the laptop, per `references/workflow-patterns.md` §6. Two r
 - every command in `workflows/` — the Workflow tool is invoked inside a session, not from `cf`, so
   `cf adjudicate` / `report` / local `run` print the script path and the `args`, and the result is
   handed back with `cf adjudicate --transcribe <result.json> --from {adjudicate,challenge}` (a
-  local fleet's journal comes back through `cf harvest <id> --journal <wf dir>`). There is no
-  `cf ingest`: it never existed, and this line used to send a stuck reader looking for it;
+  local fleet's journal comes back through `cf harvest <id> --journal <wf dir>`). No command
+  ingests a result: `cf ingest` is pipeline stage S0, which pins a PDF (`docs/pipeline.md`), and
+  this line once sent a stuck reader to it for results;
 - opening, merging or reporting anything to a repository owner.
 
 ---
