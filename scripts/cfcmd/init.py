@@ -49,6 +49,9 @@ runs/*/logs/
 # Large derived artifacts:
 detect/*/deps.json
 
+# The companion a pipeline generates is its own git repository (cf ingest, S0):
+pipelines/*/repo/
+
 # corpus/ is deliberately NOT ignored: the findings corpus is the calibration
 # baseline and must be durable. It quotes 1-3 book sentences per finding, so the
 # workspace itself stays local (no remote; the pre-push hook is only a reminder)

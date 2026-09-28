@@ -284,6 +284,10 @@ class WorkspacePaths:
         """The checkpointed annotation document doc v<version>."""
         return self.pipeline_dir(pipeline_id) / f"doc.v{int(version)}.json"
 
+    def pipeline_repo(self, pipeline_id: str) -> Path:
+        """The generated companion repository S0 creates (its own git repo, ignored here)."""
+        return self.pipeline_dir(pipeline_id) / "repo"
+
     def stage_receipts_dir(self, pipeline_id: str) -> Path:
         return self.pipeline_dir(pipeline_id) / "stages"
 
