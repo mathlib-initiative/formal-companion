@@ -47,7 +47,9 @@ scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/
 scripts/cflib/    shared library: workspace.yaml, registry, discovery, inference,
                   state.json, paths, item grammar, vocabulary
 scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, route,
-                  detect, report, recheck, score, share
+                  detect, report, recheck, score, share, cost (a fleet's tokens
+                  and dollars from the agents' transcripts), pipeline (the
+                  PDF-to-companion pipeline's pipeline.yaml and stage receipts)
 scripts/annotations/
                   the annotation format's checker and mechanical ids (not a stage),
                   the two companion exporters behind `cf export` and the tag
@@ -171,6 +173,10 @@ cf plan-run --preset attack-vac --companion tao-measure-lean \
     --run-id attack-vac-2026-09-20 --host <alias> --i-have-consent
 cf run attack-vac-2026-09-20 --host <alias> --i-have-consent   # dry run without --execute
 cf harvest attack-vac-2026-09-20      # the findings gate runs by default
+#   add --transcripts <path> to price the run from the agents' own transcripts
+#   (or from a `cf cost --export` file made on the host): RECEIPT.json then
+#   carries the tokens by model and the dollars, and tally and report print
+#   the cost per task
 cf tally --union --agreed
 
 # 5-local. no allowlisted host? omit --host — it defaults to `local`, and
@@ -277,7 +283,11 @@ manual`, `confirmed: false` until a human says otherwise.
   pairs/<source_id>/         pairs.jsonl, coverage.md, queue.json, targets, def-coverage,
                              anchor-check.json
   runs/<run-id>/             run.yaml, tasks/, prompts/, gate.json, tend-root/ (gitignored)
-  corpus/<run-id>/           findings + RECEIPT.json  (committed: this is the baseline)
+  corpus/<run-id>/           findings + RECEIPT.json  (committed: this is the baseline;
+                             the receipt's cost block is the run's priced tokens)
+  pipelines/<id>/            pipeline.yaml, doc.vN.json checkpoints and
+                             stages/<stage>.stage-receipt.json: the PDF-to-companion
+                             pipeline's records (the writer exists; no stage does yet)
   ledger/                    accepted/refuted per companion, routed/findings.<name>.jsonl
   detect/<name>/             proxy-detection artifacts
   reports/                   tally.<run>.json, union.<name>.json, coverage.json,

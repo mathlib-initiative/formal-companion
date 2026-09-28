@@ -159,3 +159,15 @@ work reaches this tool, and it is the one file written by hand.
    which is a matching hint; it is not an identity.
 6. Run `cf sources validate-registry` in the checkout you edited before opening
    the PR. CI runs it too, but the error is easier to read locally.
+
+## Calibration facts
+
+`registry/calibration.yaml` is the second file here, and a smaller one: the
+companion revisions a milestone of `docs/proposals/pdf-to-companion.md` replays
+against or compares with, each with the date, the pull requests around it and
+the reasoning that found it. The first entry is the tao-measure-lean revision
+before the camera-ready fix stack (`d8cdfd5`, the first parent of the stack's
+first merge), which sections 5.1, 5.4 and 5.5 of the proposal need. The same
+rule as the source registry applies: a commit, a date and a sentence of
+reasoning are metadata; a line of Lean or of a book is not, and no owner is
+named. No command writes the file; `tests/test_calibration.py` checks its shape.
