@@ -1,7 +1,8 @@
-"""A small JSON Schema (draft 2020-12) evaluator for the keywords this repo uses.
+"""A small JSON Schema (draft 2020-12) evaluator for the keywords this package uses.
 
-New code.  The repo is standard library only (CLAUDE.md S3), so the
-``jsonschema`` package cannot be assumed; this module evaluates the subset of
+Extracted from the formal-companion skill (scripts/annotations/
+schemacheck.py), where it was new code.  This package is standard library
+only, so the ``jsonschema`` package cannot be assumed; this module evaluates the subset of
 draft 2020-12 that schema/annotations-v1.schema.json is written in, and it
 REFUSES a schema that uses any other keyword, so the schema cannot quietly rely
 on a rule nothing here enforces.  ``tests/test_annotations_schema.py`` checks
@@ -21,6 +22,12 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Iterator
+
+#: The stable public API of this module (README.md, "Public API"): exactly these
+#: names.  Anything else, underscored or not, is internal and may change in any release.
+__all__ = [
+    "SchemaError", "Validator",
+]
 
 ANNOTATION_KEYWORDS = frozenset({"$schema", "$id", "$defs", "title", "description"})
 ASSERTION_KEYWORDS = frozenset({
@@ -82,7 +89,7 @@ def _child(path: str, key: Any) -> str:
 class Validator:
     """Evaluate one schema.  ``errors(instance)`` yields ``(path, message)``."""
 
-    def __init__(self, schema: dict):
+    def __init__(self, schema: dict) -> None:
         self.root = schema
         self._patterns: dict[str, re.Pattern] = {}
         self._check_schema(schema, "#")

@@ -2870,10 +2870,10 @@
       "type": "object"
     }
   },
-  "$id": "https://github.com/mathlib-initiative/lean-companion/schema/annotations-v1.schema.json",
+  "$id": "https://raw.githubusercontent.com/mathlib-initiative/formal-companion-annotations/v1.0.0/schema/annotations-v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One document per companion: which Lean declarations formalise which items of which sources, and where those items sit in the sources. The locations are W3C Web Annotation targets. The prose spec is docs/annotations.md; scripts/annotations/validate.py checks this schema plus the semantic invariants no JSON Schema can state (references resolve, arrays sorted by id, selector grammars, the id rules). The $id is an identifier that is never fetched; it names the repository under its planned name, lean-companion, and the rename from companion-faithfulness is pending.",
+  "description": "One document per companion: which Lean declarations formalise which items of which sources, and where those items sit in the sources. The locations are W3C Web Annotation targets. The prose spec is docs/annotations.md; this project's checker, the formal-companion-annotations-validate command (src/formal_companion_annotations/validate.py), checks this schema plus the semantic invariants no JSON Schema can state (references resolve, arrays sorted by id, selector grammars, the id rules). The $id is the raw URL of this file at the tag of the release that introduced this minor version (v1.0.0 for 1.0); it resolves only for clients that can read the repository, validators never fetch it, and documents need not carry $schema.",
   "patternProperties": {
     "^x_[a-z0-9_]+$": {}
   },

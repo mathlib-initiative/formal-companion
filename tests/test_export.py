@@ -59,8 +59,9 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import cf as cf_main                                               # noqa: E402
-from annotations import ids                                        # noqa: E402
-from annotations import validate as V                              # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids                       # noqa: E402
+from formal_companion_annotations import validate as V             # noqa: E402
 from annotations.export import attribution_table, common, docstring_tags  # noqa: E402
 from annotations.export.pdftext import PdfText                     # noqa: E402
 from cflib.errors import CfError                                   # noqa: E402
