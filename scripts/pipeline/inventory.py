@@ -33,8 +33,9 @@ document:
 * ``relations.near`` on every passage: the numbered item it follows in reading
   order (the first one of the scope when it precedes them all).
 
-Then the gates of ``pipeline/source_gates.py``, ``validate.py --canonical``,
-the document and the S1 receipt.  Nothing here reads a companion.
+Then the gates of ``pipeline/source_gates.py``,
+``formal_companion_annotations.validate --canonical``, the document and the S1
+receipt.  Nothing here reads a companion.
 """
 from __future__ import annotations
 
@@ -44,8 +45,9 @@ from bisect import bisect_right
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from annotations import ids
-from annotations.validate import loads
+from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids
+from formal_companion_annotations.validate import loads
 from cflib import items as item_grammar
 from cflib.errors import CfError
 from cflib.hashing import sha256_file

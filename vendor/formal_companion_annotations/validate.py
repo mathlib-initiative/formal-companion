@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
-"""Validate a lean-companion annotation document: schema, then invariants.
+"""Validate a formal-companion annotation document: schema, then invariants.
 
-New code, implementing docs/annotations.md (sections 6 to 9).  Usage::
+Extracted from the formal-companion skill (scripts/annotations/
+validate.py), where it was new code, implementing docs/annotations.md
+(sections 6 to 9).  Usage::
 
-    python3 scripts/annotations/validate.py <document.json> [...] [--canonical]
-    python3 scripts/annotations/validate.py <document.json> --print-canonical
+    formal-companion-annotations-validate <document.json> [...] [--canonical]
+    formal-companion-annotations-validate <document.json> --print-canonical
+    python3 -m formal_companion_annotations.validate <document.json> [...]
 
 The document's ``schema_version`` (``"<major>.<minor>"``) selects the JSON
-Schema by its major version (schema/annotations-v<major>.schema.json).  The
-schema is evaluated first, by the in-repo ``schemacheck`` because the repo is
-standard library only.  When it passes, the semantic invariants run; they are
-the rules a JSON Schema cannot state: unique and sorted ids, references that
-resolve, the anchoring and coverage rules for items, the item and declaration
-id rules, selector grammars against their ``conformsTo``, the changelog's
-rules, and the URL rule.  Some findings are warnings, not problems: an unknown
-``conformsTo`` IRI, a missing ``conformsTo``, a Media Fragments name that is no
-dimension, a repeated Media Fragments dimension, a link ``relation`` outside the
-documented core, and a minor version newer than this checker's.
+Schema by its major version (annotations-v<major>.schema.json, shipped in this
+package's ``schema/`` directory).  The schema is evaluated first, by the
+package's own ``schemacheck`` because the package is standard library only.
+When it passes, the semantic invariants run; they are the rules a JSON Schema
+cannot state: unique and sorted ids, references that resolve, the anchoring
+and coverage rules for items, the item and declaration id rules, selector
+grammars against their ``conformsTo``, the changelog's rules, and the URL rule.
+Some findings are warnings, not problems: an unknown ``conformsTo`` IRI, a
+missing ``conformsTo``, a Media Fragments name that is no dimension, a repeated
+Media Fragments dimension, a link ``relation`` outside the documented core, and
+a minor version newer than this checker's.
 ``--canonical`` also requires the file's bytes to be the canonical
 serialisation (section 7: RFC 8785 order and numbers, two-space indent).
-Exit status: 0 valid, 1 invalid, 2 unreadable.
+``--version`` prints the package version.
+Exit status: 0 valid, 1 invalid, 2 unreadable, or the packaged schema file
+missing (a broken install).
 """
 from __future__ import annotations
 
@@ -35,15 +41,21 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
+from . import __version__, ids, vocab
+from .schemacheck import Validator
+
+#: The stable public API of this module (README.md, "Public API"): exactly these
+#: names.  Anything else, underscored or not, is internal and may change in any release.
+__all__ = [
+    "RECORD_ARRAYS", "SCHEMA_DIR", "SCHEMA_PATH", "LoadError", "Report", "canonical_dumps",
+    "canonicalize", "check", "loads", "main", "order_key", "schema_path", "site_sha256",
+    "validate",
+]
+
 HERE = Path(__file__).resolve().parent
-if str(HERE.parent) not in sys.path:
-    sys.path.insert(0, str(HERE.parent))
-
-from annotations import ids                                          # noqa: E402
-from annotations.schemacheck import Validator                       # noqa: E402
-from cflib import vocab                                              # noqa: E402
-
-SCHEMA_DIR = HERE.parent.parent / "schema"
+#: The schema files ship inside the package (package data), so an installed
+#: copy finds them without the repository's top-level ``schema/`` directory.
+SCHEMA_DIR = HERE / "schema"
 
 
 def schema_path(major: int) -> Path:
@@ -431,7 +443,7 @@ class Report:
 class Checker:
     """Collects ``path: message`` strings for one document."""
 
-    def __init__(self, doc: dict):
+    def __init__(self, doc: dict) -> None:
         self.doc = doc
         self.problems: list[str] = []
         self.warnings: list[str] = []
@@ -1271,8 +1283,9 @@ def validate(doc: Any, *, text: str | None = None, canonical: bool = False,
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="validate.py",
-        description="Validate lean-companion annotation documents (schema v1).")
+        prog="formal-companion-annotations-validate",
+        description="Validate formal-companion annotation documents (schema v1).")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("documents", nargs="+", type=Path, help="annotation JSON files")
     parser.add_argument("--canonical", action="store_true",
                         help="also require the canonical serialisation, byte for byte")
@@ -1283,6 +1296,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.print_canonical and len(args.documents) != 1:
         parser.error("--print-canonical takes exactly one document")
     schema = load_schema(args.schema) if args.schema is not None else None
+    own = schema_path(vocab.ANNOTATION_SCHEMA_MAJOR)
+    if schema is None and not args.print_canonical and not own.is_file():
+        # A broken install, not a problem with any document: the schema ships as
+        # package data, and without it every document would be refused as
+        # "no schema for major version 1".
+        print(f"{parser.prog}: schema file not found: {own} (it ships inside the package as "
+              f"package data; reinstall formal-companion-annotations)", file=sys.stderr)
+        return 2
     status = 0
     for path in args.documents:
         try:

@@ -25,7 +25,8 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping
 
-from annotations import ids
+from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids
 from cflib.inference import STRUCTURAL_KINDS
 from pipeline import document
 

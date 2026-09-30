@@ -265,6 +265,12 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
 #: for the same reason.
 ARCHIVE = "docs/design/archive/"
 
+#: `vendor/` is another repository's tree, copied byte for byte from a tagged
+#: release of formal-companion-annotations: the paths it cites are paths in
+#: THAT tree, and `tests/test_vendored_format.py` pins its bytes, so it can be
+#: neither checked against this tree nor edited to pass.
+VENDORED = "vendor/"
+
 
 def cited_repo_paths(text: str) -> set[str]:
     found = set()
@@ -292,7 +298,7 @@ class TestNoCitationOfAFileThatIsNotHere(unittest.TestCase):
     def test_every_repo_path_a_tracked_file_cites_resolves(self):
         broken: list[str] = []
         for rel in tracked_files():
-            if rel.startswith(ARCHIVE):
+            if rel.startswith((ARCHIVE, VENDORED)):
                 continue
             text = read(rel)
             if text is None:

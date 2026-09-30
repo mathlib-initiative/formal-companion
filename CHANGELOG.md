@@ -151,7 +151,8 @@ release has something to say.
   declaration, and only `not_formalized`, `out_of_scope`, `support_only` and
   `example_only` excuse a missing key. `tests/test_review_tags.py` plants each
   defect and lists what the two reference documents report today.
-- Annotation documents, schema v1 (`schema/annotations-v1.schema.json`,
+- Annotation documents, schema v1
+  (`formal-companion-annotations/schema/annotations-v1.schema.json`,
   `schema_version` "1.0"; spec `docs/annotations.md`): one JSON document per
   companion linking source items (numbered items, and unnumbered passages with
   mechanical quote- or page-and-title-hash ids) to Lean declarations, with W3C
@@ -165,12 +166,13 @@ release has something to say.
   refused unless the changelog records which file took it. A rendered site is
   one source pinned by the sha256 of its page manifest. The canonical form
   follows RFC 8785 for order (UTF-16 code units, for keys and arrays alike) and
-  numbers. `scripts/annotations/validate.py` checks the schema, selected by
-  major version through an in-repo evaluator because the skill is stdlib only,
-  plus the invariants a schema cannot state, and `--print-canonical` writes
-  the canonical form. The adapters, the viewer and WikiLean do not read or
-  write the format yet. The ids use the planned name lean-companion; the
-  rename is pending.
+  numbers.
+  `formal-companion-annotations/src/formal_companion_annotations/validate.py`
+  checks the schema, selected by major version through an in-repo evaluator
+  because the skill is stdlib only, plus the invariants a schema cannot state,
+  and `--print-canonical` writes the canonical form. The adapters, the viewer
+  and WikiLean do not read or write the format yet. The ids use the planned
+  name lean-companion; the rename is pending.
 - `docs/proposals/pdf-to-companion.md`: a design proposal, not built, for a
   pipeline that turns one PDF into a Lean companion through ten gated stages,
   with the annotation document as its spine and a v1.1 proposal of three
@@ -225,6 +227,28 @@ release has something to say.
   cross-check needed it and must not have had a second item regex of its own.
 
 ### Changed
+- The annotation format moved to its own repository,
+  formal-companion-annotations, released as 1.0.0 (tag `v1.0.0`, commit
+  `2458140`): the schema, the specification, the checker, the id rules, the
+  nine examples and their tests (the 133 of
+  `formal-companion-annotations/tests/test_annotations_schema.py`) now live
+  there. The skill vendors that release under
+  `vendor/formal_companion_annotations/`, byte for byte, sealed by
+  `vendor/formal_companion_annotations.manifest.json` (upstream, tag, commit,
+  version, license, a sha256 per file); `scripts/annotations/sync_format.py`
+  writes both from a checkout of the tag, and `tests/test_vendored_format.py`
+  fails on a vendored byte that drifts from the manifest, on an import of the
+  format without the `cflib.vendored` bootstrap, and on a shared set whose
+  copy in `cflib.vocab` is not the format's. Nothing is installed: the
+  vendored package is standard library only. The checker accepts and rejects
+  exactly what the skill's copy did, with the same messages, warnings, exit
+  statuses and canonical bytes. Only its command line differs: it runs as
+  `PYTHONPATH=vendor python3 -m formal_companion_annotations.validate`, its
+  usage lines and argument errors name `formal-companion-annotations-validate`
+  where the skill's said `validate.py`, and it has `--version`. The
+  schema's `$id` is now the package's, the raw URL of the schema at
+  `v1.0.0`. `docs/annotations.md` is a stub pointing at the specification's
+  new home; the section numbers the skill cites are unchanged.
 - `cf harvest` and `cf import-corpus` run the findings gate **by default**;
   `--no-gate` is the escape and records `gate: null`, which `cf tally` then
   names. Previously the gate was opt-in and `SKILL.md` did not mention it.

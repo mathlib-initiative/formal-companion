@@ -37,22 +37,23 @@ docs/design/archive/       the design record it came from (historical)
 docs/proposals/            designs not yet built (pdf-to-companion.md)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
-schema/              annotations-v1.schema.json, the annotation format
-                     (docs/annotations.md)
-examples/            synthetic annotation documents; two are invalid on purpose
+vendor/              formal_companion_annotations/: one release of the annotation
+                     format (formal-companion-annotations), byte for byte, sealed
+                     by its manifest; never edited here
 evals/               trigger evals: prompts as data, run by hand
 bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
 scripts/cflib/       shared library (no stage logic, no network):
                      workspace, paths, registry, discovery, inference, state,
-                     items, vocab, hashing, yamlio/jsonio, adapters_api
+                     items, vocab, hashing, yamlio/jsonio, adapters_api, vendored
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
                      route, detect, report, recheck, score, share, cost, pipeline
-scripts/annotations/ the annotation format's checker (validate.py, schemacheck.py)
-                     and mechanical ids (ids.py), run by path, not a stage; export/
-                     (the companion exporters behind `cf export`) and
-                     review_tags.py (`cf review-tags`), see docs/exporters.md
+scripts/annotations/ the skill's tooling around the format, not a stage: export/
+                     (the companion exporters behind `cf export`), review_tags.py
+                     (`cf review-tags`), see docs/exporters.md, and sync_format.py,
+                     which vendors a release; the format itself (schema, checker,
+                     id rules) is vendor/formal_companion_annotations/
 templates/  workflows/  tests/  .github/workflows/
 ```
 
@@ -70,7 +71,10 @@ Those two lines move together or not at all.
 - 3.11+, standard library only. PyYAML is used when importable; `cflib.yamlio`
   has a fallback reader for the subset the skill writes — including the nested
   `sources:` / `page_map_to:` maps and the folded scalars the registry uses. Do
-  not add a dependency without changing this paragraph.
+  not add a dependency without changing this paragraph. `vendor/` is not one:
+  it holds one release of formal-companion-annotations, itself standard library
+  only, copied into the tree (section 2), so a clone still runs with nothing
+  installed.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, and the
@@ -93,7 +97,11 @@ Those two lines move together or not at all.
 
 - **One vocabulary.** `scripts/cflib/vocab.py` is the only definition of the
   enums; `references/vocabulary.md` documents them. A new value is a change to
-  both, plus a mapping entry for the converted baseline.
+  both, plus a mapping entry for the converted baseline. The exception is the
+  annotation format: its enums, and nine sets it shares with the skill, are
+  defined by the vendored `formal_companion_annotations.vocab`; `cflib.vocab`
+  keeps copies of the nine for the skill's stages, and
+  `tests/test_vendored_format.py` checks that they equal the format's.
 - **One item grammar, one namespace rule.** `scripts/cflib/items.py`. Never
   write another item regex; never let an unparseable id become a key. Parsing
   is whitespace-tolerant and produces a *reject list* callers must report. An

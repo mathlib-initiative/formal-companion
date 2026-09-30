@@ -10,8 +10,8 @@ docs/proposals/pdf-to-companion.md section 5.4.  It reuses the skill's readers:
 * ``adapters.leanparse`` for every declaration, tagged or not, with its
   docstring, namespace, privacy and doc line;
 * ``adapters.itemtag`` and ``cflib.items`` for tag spans and the item grammar;
-* ``annotations.ids`` for statement-hash ids and signatures;
-* ``annotations.validate`` for the canonical bytes.
+* ``formal_companion_annotations.ids`` for statement-hash ids and signatures;
+* ``formal_companion_annotations.validate`` for the canonical bytes.
 
 Outside the checkout, all read-only:
 
@@ -43,10 +43,12 @@ from pathlib import Path
 
 from adapters import itemtag, leanparse
 from adapters.api import from_config
-from annotations import ids
-from annotations.validate import site_sha256
+from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
+from formal_companion_annotations import ids
+from formal_companion_annotations.validate import site_sha256
 from cflib import items as cf_items
-from cflib import vocab, yamlio
+from cflib import yamlio
+from formal_companion_annotations import vocab
 
 from . import common
 from .common import ExportError, HeaderCutter, Report, load_json, read_bytes, sha256_bytes

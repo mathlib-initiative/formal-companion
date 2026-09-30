@@ -38,10 +38,9 @@ docs/proposals/   designs not yet built: pdf-to-companion.md, the PDF-to-compani
 docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inventory)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
-schema/           annotations-v1.schema.json: the annotation format, schema_version
-                  1.0 (docs/annotations.md)
-examples/         synthetic annotation documents covering every record and location
-                  kind; two are invalid on purpose
+vendor/           formal_companion_annotations/: one release of the annotation format
+                  (formal-companion-annotations), byte for byte, sealed by its
+                  manifest; never edited here
 evals/            trigger evals: prompts as data, run by hand against the skill
 bin/cf            the PATH shim; it resolves back to this checkout
 scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/
@@ -53,9 +52,11 @@ scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, rou
                   PDF-to-companion pipeline: pipeline.yaml, stage receipts, and
                   stages S0 ingest and S1 inventory)
 scripts/annotations/
-                  the annotation format's checker and mechanical ids (not a stage),
-                  the two companion exporters behind `cf export` and the tag
-                  review behind `cf review-tags` (docs/exporters.md)
+                  the skill's tooling around the format (not a stage): the two
+                  companion exporters behind `cf export`, the tag review behind
+                  `cf review-tags` (docs/exporters.md) and sync_format.py, which
+                  vendors a release; the format itself (schema, checker, id
+                  rules) is vendor/formal_companion_annotations/
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline
