@@ -39,7 +39,7 @@ from typing import Iterator, Mapping
 
 from cflib import items as cf_items
 
-from . import leanparse
+from . import leanbuild, leanparse
 from .api import Adapter, AdapterError, register, sha_of_files
 from .base import make_row
 from .itemtag import find_page_anchor, find_tag, kinds_from_labels
@@ -409,11 +409,12 @@ class DocstringTagsAdapter(Adapter):
         rows: list[dict] = []
         seen_items: set[tuple[str, str]] = set()
 
+        build = self.lean_build(repo)
         for path in self.source_files(repo):
             rel = str(path.relative_to(repo))
             counts["files"] += 1
-            for decl in leanparse.parse_file(path, rel=rel, decl_kinds=decl_kinds,
-                                             max_body_lines=max_body):
+            for decl in leanbuild.parse_file(path, rel=rel, decl_kinds=decl_kinds,
+                                             max_body_lines=max_body, build=build):
                 counts["declarations"] += 1
                 if decl.private:
                     counts["private"] += 1
@@ -504,6 +505,7 @@ class DocstringTagsAdapter(Adapter):
             "private": counts["private"],
             "anonymous": sum(1 for r in rows if r["anonymous"]),
             "anonymous_declarations": counts["anonymous_declarations"],
+            "lean_source": leanbuild.tally(self.lean_build(path)),
             "rows": counts["rows"],
             "items": counts["items"],
             "sorry": counts["sorry"],
@@ -542,4 +544,5 @@ class DocstringTagsAdapter(Adapter):
         files = self.source_files(repo)
         inputs["sources"] = len(files)
         inputs["sources_sha"] = sha_of_files(files, repo)
+        inputs["lean_build"] = leanbuild.fingerprint(self.lean_build(repo), files, repo)
         return inputs

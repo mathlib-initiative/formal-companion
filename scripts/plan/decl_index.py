@@ -13,8 +13,8 @@ tagged rows alone would reject it. So the index is, in order of preference:
 
 1. ``detect/<name>/deps.json`` -- every constant the built environment knows
    (the DumpDeps dump), which is the closest thing to ground truth;
-2. every ``.lean`` file under the companion repo, parsed with
-   ``adapters/leanparse.py`` (no build needed, ``.lake`` excluded);
+2. every ``.lean`` file under the companion repo, read with
+   ``adapters/leanbuild.py`` (a verified Lake build, else the text parser; ``.lake`` excluded);
 ``companions/<name>/statements.jsonl`` is deliberately NOT a source: it holds the
 TAGGED rows only, so an index built from it would reject every finding that names
 an untagged lemma or a private helper -- the opposite of the defect this check
@@ -46,9 +46,9 @@ def _from_deps(path: Path) -> list[str]:
     return sorted({str(c["name"]) for c in data.get("repo_constants", []) if c.get("name")})
 
 
-def _from_lean(repo: Path, globs: Sequence[str] = ("**/*.lean",)) -> list[str]:
-    """Every declaration name in every .lean file under *repo* (no build)."""
-    from adapters.leanparse import parse_file
+def _from_lean(repo: Path, globs: Sequence[str] = ("**/*.lean",), build=None) -> list[str]:
+    """Every declaration name in every .lean file under *repo* (``build``: its adapters.leanbuild.Build)."""
+    from adapters.leanbuild import parse_file
 
     names: set[str] = set()
     for pattern in globs:
@@ -56,7 +56,7 @@ def _from_lean(repo: Path, globs: Sequence[str] = ("**/*.lean",)) -> list[str]:
             if not path.is_file() or set(path.parts) & SKIP_DIRS:
                 continue
             try:
-                decls = parse_file(path, rel=str(path.relative_to(repo)))
+                decls = parse_file(path, rel=str(path.relative_to(repo)), build=build)
             except Exception:  # noqa: BLE001 - one unparseable file must not kill the index
                 continue
             for decl in decls:
@@ -94,18 +94,25 @@ def _from_statements(path: Path, source_id: str | None = None) -> list[str]:
     return sorted(names)
 
 
-def for_companion(paths, name: str, repo: Path | None) -> tuple[list[str], str]:
+def for_companion(paths, name: str, repo: Path | None,
+                  lean_source: dict | None = None) -> tuple[list[str], str]:
     """``(declaration names, which ORIGIN produced them)`` for one companion.
 
     "Origin" here is deps.json / lean-source / none -- it is not a
     ``source_id``.  The declaration set is a fact about the Lean, not about the
-    book, so it is the same whichever source a run audits.
+    book, so it is the same whichever source a run audits.  ``lean_source``
+    receives the build-versus-text tally of a lean-source read.
     """
     deps = Path(paths.detect_companion_dir(name)) / "deps.json"
     if deps.exists():
         return _from_deps(deps), "deps.json"
     if repo is not None and Path(repo).is_dir():
-        names = _from_lean(Path(repo))
+        from adapters import leanbuild
+
+        build = leanbuild.Build.find(repo)
+        names = _from_lean(Path(repo), build=build)
+        if lean_source is not None:
+            lean_source[name] = leanbuild.tally(build)
         if names:
             return names, "lean-source"
     return [], "none (no deps.json and no readable Lean source)"
@@ -116,12 +123,13 @@ def build(workspace, repos: Iterable[str]) -> dict:
     paths = workspace.paths
     index: dict[str, list[str]] = {}
     origins: dict[str, str] = {}
+    lean_source: dict[str, dict] = {}
     for name in repos:
         try:
             repo = workspace.companion(name).repo
         except CfError:
             repo = None
-        names, origin = for_companion(paths, name, Path(repo).expanduser() if repo else None)
+        names, origin = for_companion(paths, name, Path(repo).expanduser() if repo else None, lean_source)
         index[name] = names
         origins[name] = origin
         if len(names) < MIN_DECLS:
@@ -132,6 +140,7 @@ def build(workspace, repos: Iterable[str]) -> dict:
     index["_meta"] = {  # type: ignore[assignment]
         "origins": origins,
         "counts": {k: len(v) for k, v in index.items() if k != "_meta"},
+        "lean_source": lean_source,
         "note": ("the FULL declaration set, never statements.jsonl: findings name private "
                  "helpers and untagged lemmas, and an index of tagged rows alone would "
                  "reject real findings"),

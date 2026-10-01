@@ -17,7 +17,7 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
                                                 formalization nodes, edges
 
 Every file is read as it is; the Lean sources are scanned at the pinned commit
-with ``adapters.leanparse`` (every declaration, its namespace and privacy) and
+with ``adapters.leanbuild`` (every declaration, its namespace and privacy) and
 ``formal_companion_annotations.ids`` (statement-hash ids and signatures), and a
 local build's ``.ilean`` gives an anonymous instance its generated name when
 the build postdates the file's last commit.  What the format cannot carry is counted in
@@ -36,7 +36,7 @@ import math
 import re
 from pathlib import Path
 
-from adapters import leanparse
+from adapters import leanbuild
 from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids
 from cflib import items as cf_items
@@ -455,9 +455,10 @@ class AttributionTableExport:
         cutter = HeaderCutter(self.repo)
         anon_extra: dict[tuple[str, int], dict] = {}
         files = self.lean_files()
+        build = leanbuild.Build.find(self.repo, self.lean_build)
         for rel in files:
             text = (self.repo / rel).read_text(encoding="utf-8")
-            decls = leanparse.parse_file(self.repo / rel, rel)
+            decls = leanbuild.parse_file(self.repo / rel, rel, build=build, text=text)
             by_line = {d.line: d for d in decls}
             file_anon = ids.scan_file(text, rel)
             lean_anon = {d.line for d in decls if d.anonymous}
@@ -485,6 +486,7 @@ class AttributionTableExport:
         self.anon_extra = anon_extra
         self.anon_ids = ids.assign_ids(self.anon)
         self.report.counts["lean_files_scanned"] = len(files)
+        self.report.counts["lean_source"] = leanbuild.tally(build)
         self.report.counts["signature_skipped"] = dict(sorted(cutter.skipped.items()))
 
     def ilean_names(self) -> dict[tuple[str, int], str]:
