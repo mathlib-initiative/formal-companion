@@ -1139,6 +1139,8 @@ M0a:
   s17 run's $219.55 (issue #11). It also prices one Codex session, checked
   against a hand computation from that session's token counts and the
   published rate. There is no fallback without a recorded total.
+  Not yet met: those totals were summed line by line, about 2x the per-response
+  cost; a per-response re-read of the retained transcripts is still owed.
 - A stage-receipt writer (section 4.1) passes its tests.
 - The `$TML` commit before the camera-ready fix stack is identified from git
   log.
@@ -1368,6 +1370,11 @@ adjudication-only comparisons.
 | `$TML` PR #5: 42 proofs | `$TML` merge d21dbac | local Claude Code Workflow runs on a Max subscription; no dollar figure |
 | WikiLean enumeration and matching: $1.32 to $1.54 per article | `$WIKILEAN/docs/token_budget.md` | article-sized units, not book sections |
 | adjudication of 10 findings: 225 agents, 5.9 h | `references/workflow-patterns.md` | local Workflow, limit failures included |
+
+The Claude Code figures above ($2,698.82, $358.10, $219.55, and the $7.05 and
+$7.62 rates) are line-summed, one count per content block, so probably about
+2× the per-response cost: the §1.7 re-run's lines collapse to about $168.91
+(`tests/data/m0a/README.md`).
 
 ### 6.2 The Chapter 1 envelope
 

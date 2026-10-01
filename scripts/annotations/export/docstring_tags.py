@@ -31,7 +31,8 @@ Outside the checkout, all read-only and each optional:
   sha256 (the site is git-ignored build output that cannot be rebuilt
   everywhere).  The site is one ``scope: site`` source whose ``sha256`` is the
   digest of that manifest (``page_hashes``); the manifest lists every page a
-  location names and may leave generated fragments out.  A location names its
+  location names and may leave generated fragments out (``cf export
+  site-pages --exclude``, :mod:`.site_pages`, writes it).  A location names its
   page with a ``SitePageSelector`` refined by an RFC 3236 fragment (named
   declarations) or a ``CssSelector`` on the keyword's ``data-binding``
   attribute (anonymous ones, which Verso gives no id).  With the rendered site

@@ -72,6 +72,9 @@ def price_table(args) -> tuple[dict, str]:
 def run(args) -> int:
     if args.export:
         totals = usage_mod.export_rows(args.path, args.export, model=args.model)
+        empty = usage_mod.nothing_counted(totals)
+        if empty:
+            log.warn(f"NO RESPONSES exported: {empty}.")
         log.info(f"wrote {totals.message_count} usage row(s) from {totals.transcript_count} "
                  f"file(s) -> {args.export}")
         for line in usage_mod.render_tokens(totals.tokens):
@@ -84,6 +87,9 @@ def run(args) -> int:
     else:
         for line in fleet_mod.describe(block, indent=""):
             log.info(line)
+    empty = fleet_mod.empty_warning(block)
+    if empty:
+        log.warn(f"NO RESPONSES priced: {empty}.")
     if block["unpriced"]:
         log.warn(f"UNPRICED model(s) {', '.join(block['unpriced'])}: their tokens are counted "
                  f"and priced nowhere, so {pricing.format_usd(block['usd'])} is a lower bound. "

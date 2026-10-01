@@ -204,8 +204,8 @@ leaves three. Above the cap you get 409s.
    inside Claude Code and the orchestrator never sees a token; the agents' own transcripts on the
    host carry every one (issue #11). The transcripts hold prompts, paths and tool output, so they
    stay on the host: run the standalone reader there, from a copy of `scripts/cost/usage.py`, as
-   `python3 usage.py <the run's transcript directories> --export usage.jsonl` (one `{model,
-   usage}` row per response, no text), bring the export back, and pass it to
+   `python3 usage.py <dir> [<dir> ...] --export usage.jsonl` with every transcript directory of
+   the run (one `{model, usage}` row per response, no text), bring the export back, and pass it to
    `cf harvest <run-id> --transcripts usage.jsonl`. The receipt then carries the `cost` block
    (tokens by model, dollars at `workspace.yaml` `budget.prices`, the models the table does not
    price, the table's sha) and `cf tally` prints the cost per task. A Codex fleet's

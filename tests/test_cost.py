@@ -1,10 +1,10 @@
 """The cost reader, the price table and `cf cost` / `cf harvest --transcripts`.
 
 Milestone M0a of docs/proposals/pdf-to-companion.md (section 5.1) asks the
-tool to reproduce a recorded total within 1% from retained usage, to price one
-Codex session against a hand computation, and never to price a model the table
-does not list.  The fixtures are ``tests/data/m0a/`` (their README says what
-each is); every other log here is synthetic and built in a temporary
+tool to reproduce a recorded total within 1% from retained transcripts, to
+price one Codex session against a hand computation, and never to price a model
+the table does not list.  The fixtures are ``tests/data/m0a/`` (their README
+says what each is); every other log here is synthetic and built in a temporary
 directory.  ``_hermetic`` is imported first because the harvest test builds a
 workspace.
 """
@@ -20,6 +20,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -42,7 +43,7 @@ FIXTURES = HERE / "data" / "m0a"
 S17B = FIXTURES / "s17b-usage.jsonl.gz"
 CODEX_SAMPLE = FIXTURES / "codex-usage-sample.json"
 
-#: the total tests/data/m0a/README.md records for the s17b rows
+#: the total tests/data/m0a/README.md records for the s17b rows (line-summed)
 RECORDED_S17B_USD = 358.10
 #: what the tool computes for them at the shipped prices (rounded to 6 places
 #: by ``pricing.price``); the assertion below is the 1% band, this is the figure
@@ -88,10 +89,10 @@ def codex_sample_events() -> list[dict]:
 # the recorded total
 # ---------------------------------------------------------------------------
 
-class TestTheRecordedTotalIsReproduced(unittest.TestCase):
-    """5,207 exported rows of the section 1.7 re-run price to $358.10."""
+class TestTheS17bRowsAreContentBlockLines(unittest.TestCase):
+    """The fixture's 5,207 rows are transcript lines, one per content block."""
 
-    def test_the_s17b_rows_price_to_the_recorded_total_within_one_percent(self):
+    def test_summed_line_by_line_the_rows_give_the_recorded_total(self):
         totals = usage_mod.read_path(S17B)
         self.assertEqual(totals.message_count, 5207)
         self.assertEqual(totals.transcript_count, 1)
@@ -101,6 +102,23 @@ class TestTheRecordedTotalIsReproduced(unittest.TestCase):
         self.assertAlmostEqual(priced["usd"], EXACT_S17B_USD, places=5)
         self.assertEqual(priced["unpriced"], [])
         self.assertEqual(priced["priced"], ["claude-opus-5"])
+
+    def test_one_row_per_response_prices_about_53_percent_lower(self):
+        """The README's figures, recomputed by hand without the reader."""
+        with gzip.open(S17B, "rt", encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+        collapsed = [r for i, r in enumerate(rows) if i == 0 or r != rows[i - 1]]
+        rate = {"input_tokens": 5.0, "output_tokens": 25.0,
+                "cache_creation_input_tokens": 6.25, "cache_read_input_tokens": 0.5}
+
+        def usd(selected):
+            return sum(r["usage"][k] * v for r in selected for k, v in rate.items()) / 1e6
+
+        self.assertEqual((len(rows), len(rows) - len(collapsed), len(collapsed)),
+                         (5207, 2579, 2628))
+        self.assertEqual(round(usd(rows), 2), 358.10)
+        self.assertEqual(round(usd(collapsed), 2), 168.91)
+        self.assertEqual(round(100 * (1 - usd(collapsed) / usd(rows))), 53)
 
     def test_the_rows_are_summed_as_written_because_they_carry_no_ids(self):
         """The export repeats identical consecutive rows (the transcripts write
@@ -193,7 +211,7 @@ class TestCodexRollouts(unittest.TestCase):
         self.assertEqual(totals.tokens["gpt-test"],
                          {"input": 101, "output": 14, "cache_write": 20, "cache_read": 80})
 
-    def test_a_cumulative_block_that_goes_backwards_restarts_the_baseline(self):
+    def test_the_same_event_twice_is_a_repeat(self):
         events = codex_sample_events()
         first = events[0]
         self.rollout([turn_context("gpt-test"), first, first])
@@ -201,6 +219,70 @@ class TestCodexRollouts(unittest.TestCase):
         # the second copy advances the cumulative block by nothing: a repeat
         self.assertEqual(totals.message_count, 1)
         self.assertEqual(totals.repeated_events, 1)
+
+    def test_a_cumulative_block_that_goes_backwards_restarts_the_baseline(self):
+        """A reset is charged its own usage, the next event its advance over the new base."""
+        def record(prompt, output, cum_prompt, cum_output):
+            def block(i, o):
+                return {"input_tokens": i, "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0, "output_tokens": o,
+                        "reasoning_output_tokens": 0, "total_tokens": i + o}
+            return {"type": "token_usage_record",
+                    "payload": {"thread_id": "t", "usage": block(prompt, output),
+                                "thread_token_usage": block(cum_prompt, cum_output)}}
+
+        self.rollout([turn_context("gpt-test"),
+                      record(100, 10, 100, 10),
+                      record(200, 20, 300, 30),
+                      record(40, 4, 70, 7),      # backwards: a reset
+                      record(20, 2, 90, 9)])
+        totals = usage_mod.read_path(self.root)
+        self.assertEqual(totals.message_count, 4)
+        self.assertEqual(totals.repeated_events, 0)
+        self.assertEqual(totals.tokens["gpt-test"],
+                         {"input": 100 + 200 + 40 + 20, "output": 10 + 20 + 4 + 2,
+                          "cache_write": 0, "cache_read": 0})
+
+    def test_a_reset_with_no_usage_of_its_own_is_charged_its_cumulative_block(self):
+        def count(total_prompt, last_prompt=None):
+            info = {"total_token_usage": {
+                "input_tokens": total_prompt, "cached_input_tokens": 0,
+                "cache_write_input_tokens": 0, "output_tokens": 1,
+                "reasoning_output_tokens": 0, "total_tokens": total_prompt + 1}}
+            return {"type": "event_msg", "payload": {"type": "token_count", "info": info}}
+
+        self.rollout([turn_context("gpt-test"), count(500), count(30)])
+        totals = usage_mod.read_path(self.root)
+        self.assertEqual(totals.message_count, 2)
+        self.assertEqual(totals.tokens["gpt-test"]["input"], 530)
+
+    def test_each_thread_keeps_its_own_cumulative_block(self):
+        def record(thread, prompt, output, cum_prompt, cum_output):
+            def block(i, o):
+                return {"input_tokens": i, "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0, "output_tokens": o,
+                        "reasoning_output_tokens": 0, "total_tokens": i + o}
+            return {"type": "token_usage_record",
+                    "payload": {"thread_id": thread, "usage": block(prompt, output),
+                                "thread_token_usage": block(cum_prompt, cum_output)}}
+
+        self.rollout([turn_context("gpt-test"),
+                      record("a", 100, 10, 100, 10),
+                      record("b", 300, 30, 300, 30),
+                      record("a", 50, 5, 150, 15),
+                      record("b", 50, 5, 350, 35)])
+        totals = usage_mod.read_path(self.root)
+        self.assertEqual(totals.message_count, 4)
+        self.assertEqual(totals.tokens["gpt-test"],
+                         {"input": 500, "output": 50, "cache_write": 0, "cache_read": 0})
+
+    def test_the_fixtures_carry_no_account_rate_limit_state(self):
+        for name in ("codex-usage-sample.json", "codex-usage-shapes.json"):
+            with self.subTest(fixture=name):
+                text = (FIXTURES / name).read_text(encoding="utf-8")
+                for key in ("rate_limits", "plan_type", "used_percent", "resets_at",
+                            "credits", "balance"):
+                    self.assertFalse(key in text, f"{name} still carries {key}")
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +321,69 @@ class TestClaudeTranscripts(unittest.TestCase):
         self.assertEqual(totals.duplicate_lines, 2)
         self.assertEqual(totals.tokens["claude-opus-5"]["output"], 674)
 
+    def test_a_gzipped_transcript_is_read_as_a_transcript_not_an_export(self):
+        """Read as an export, these lines would price to $0."""
+        path = self.root / "session.jsonl.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as fh:
+            for line in (claude_line("m1", "r1", self.USAGE), claude_line("m1", "r1", self.USAGE),
+                         claude_line("m2", "r2", self.USAGE)):
+                fh.write(json.dumps(line) + "\n")
+        totals = usage_mod.read_path(path)
+        self.assertEqual(totals.files["claude_transcript"], 1)
+        self.assertEqual(totals.files["usage_export"], 0)
+        self.assertEqual((totals.message_count, totals.duplicate_lines), (2, 1))
+        self.assertEqual(totals.tokens["claude-opus-5"]["output"], 674)
+        # and a gzipped Codex log that is not named rollout-*
+        events = [turn_context("gpt-test")] + codex_sample_events()
+        codex = self.root / "codex" / "session.jsonl.gz"
+        codex.parent.mkdir()
+        with gzip.open(codex, "wt", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(e) + "\n" for e in events))
+        self.assertEqual(usage_mod.classify(codex), usage_mod.KIND_CODEX)
+        self.assertEqual(usage_mod.read_path(codex).message_count, 2)
+
+    def test_several_paths_are_one_fleet_and_a_file_counts_once(self):
+        write_jsonl(self.root / "host-1" / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
+        write_jsonl(self.root / "host-2" / "b.jsonl", [claude_line("m2", "r2", self.USAGE)])
+        totals = usage_mod.read_path([self.root / "host-1", self.root / "host-2"])
+        self.assertEqual((totals.transcript_count, totals.message_count), (2, 2))
+        overlapping = usage_mod.read_path([self.root, self.root / "host-1"])
+        self.assertEqual((overlapping.transcript_count, overlapping.message_count), (2, 2))
+        with self.assertRaises(FileNotFoundError):
+            usage_mod.read_path([self.root / "host-1", self.root / "nope"])
+
+    def test_the_standalone_command_takes_several_directories(self):
+        """The runbook's host command, from a copy of the script alone."""
+        write_jsonl(self.root / "host-1" / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
+        write_jsonl(self.root / "host-2" / "b.jsonl", [
+            claude_line("m2", "r2", self.USAGE), claude_line("m2", "r2", self.USAGE)])
+        host = self.root / "host"
+        host.mkdir()
+        shutil.copy(SCRIPTS / "cost" / "usage.py", host / "usage.py")
+        out_file = self.root / "usage.jsonl"
+        done = subprocess.run(
+            [sys.executable, str(host / "usage.py"), str(self.root / "host-1"),
+             str(self.root / "host-2"), "--export", str(out_file)],
+            cwd=host, capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(len(out_file.read_text(encoding="utf-8").splitlines()), 2)
+        self.assertIn("wrote 2 row(s)", done.stdout)
+        self.assertEqual(done.stderr, "")
+        missing_out = self.root / "missing.jsonl"
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            rc = usage_mod.main([str(self.root / "host-1"), str(self.root / "nope"),
+                                 "--export", str(missing_out)])
+        self.assertEqual(rc, 2)
+        self.assertFalse(missing_out.exists())
+
+    def test_the_standalone_command_warns_when_it_counts_nothing(self):
+        (self.root / "empty").mkdir()
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc = usage_mod.main([str(self.root / "empty")])
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: no log file", err.getvalue())
+
     def test_an_empty_directory_gives_zero(self):
         totals = usage_mod.read_path(self.root)
         self.assertEqual(totals.tokens, {})
@@ -254,6 +399,23 @@ class TestClaudeTranscripts(unittest.TestCase):
         with self.assertRaises(CfError):
             fleet_mod.cost_block(self.root / "nope", table=pricing.DEFAULT_PRICE_TABLE,
                                  table_source="test")
+
+    def test_the_block_records_the_name_priced_and_no_parent_directory(self):
+        logs = self.root / "deep" / "transcripts"
+        write_jsonl(logs / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
+        for given, label in ((logs, "transcripts"), (str(logs) + "/", "transcripts"),
+                             (logs / "a.jsonl", "a.jsonl")):
+            with self.subTest(given=str(given)):
+                block = fleet_mod.cost_block(given, table=pricing.DEFAULT_PRICE_TABLE,
+                                             table_source="test")
+                self.assertEqual(block["source"]["path"], label)
+                self.assertNotIn(str(self.root), json.dumps(block))
+        cwd = os.getcwd()
+        os.chdir(logs)
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(fleet_mod.cost_block(".", table=pricing.DEFAULT_PRICE_TABLE,
+                                              table_source="test")["source"]["path"],
+                         "transcripts")
 
     def test_an_unreadable_line_is_counted_not_charged(self):
         (self.root / "a.jsonl").write_text(
@@ -392,6 +554,16 @@ class TestCfCost(unittest.TestCase):
         self.assertIn("claude-opus-5", err)
         self.assertIn("$0.00", out)
 
+    def test_an_empty_directory_is_said_out_loud(self):
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+        (self.root / "empty").mkdir()
+        rc, out, err = _run(["cost", str(self.root / "empty")])
+        self.assertEqual(rc, 0)
+        self.assertIn("NO RESPONSES", err)
+        self.assertIn("not a measurement", err)
+
     def test_export_writes_rows_only(self):
         write_jsonl(self.root / "logs" / "a.jsonl", [
             claude_line("m1", "r1", TestClaudeTranscripts.USAGE),
@@ -441,6 +613,7 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
                          pricing.table_sha256(pricing.DEFAULT_PRICE_TABLE))
         self.assertEqual((cost["transcript_count"], cost["message_count"]), (1, 5207))
         self.assertEqual(cost["tokens"]["claude-opus-5"]["cache_read"], 299747343)
+        self.assertEqual(cost["source"]["path"], "s17b-usage.jsonl.gz")
         self.assertIn("cost: $358.10", out)
         self.assertTrue(self.receipt()["complete"])
         tally = json.loads((self.root / "reports" / "tally.run-a.json").read_text(
@@ -474,6 +647,33 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
         self.assertEqual(cost["usd"], 0.0)
         self.assertIn("UNPRICED", err)
         self.assertIn("some-other-model", err)
+        self.assertEqual(cost["source"]["path"], "logs")
+        rc, out, _ = _run(["--workspace", str(self.root), "tally"])
+        line = [l for l in out.splitlines() if l.startswith("cost run-a:")][0]
+        self.assertIn("UNPRICED: some-other-model", line)
+        self.assertIn("lower bound", line)
+
+    def test_a_transcripts_path_that_counts_no_response_is_warned_about(self):
+        empty = self.root.parent / "empty"
+        empty.mkdir()
+        rc, out, err = self.harvest("--transcripts", str(empty))
+        self.assertEqual(rc, 0, err)
+        cost = self.receipt()["cost"]
+        self.assertEqual((cost["message_count"], cost["usd"]), (0, 0.0))
+        self.assertIn("NO RESPONSES priced for run run-a", err)
+        self.assertIn("no log file", err)
+
+    def test_a_gzipped_transcript_is_priced(self):
+        logs = self.root.parent / "logs"
+        logs.mkdir()
+        with gzip.open(logs / "session.jsonl.gz", "wt", encoding="utf-8") as fh:
+            fh.write(json.dumps(claude_line("m1", "r1", TestClaudeTranscripts.USAGE)) + "\n")
+        rc, out, err = self.harvest("--transcripts", str(logs))
+        self.assertEqual(rc, 0, err)
+        cost = self.receipt()["cost"]
+        self.assertEqual(cost["message_count"], 1)
+        self.assertGreater(cost["usd"], 0)
+        self.assertNotIn("NO RESPONSES", err)
 
     def test_the_task_count_comes_from_the_run_yaml_copy_when_there_is_one(self):
         run_dir = self.root / "runs" / "run-a"
@@ -485,6 +685,23 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
         entry = fleet_mod.run_cost("run-a", self.root / "corpus" / "run-a")
         self.assertEqual((entry["tasks"], entry["tasks_from"]), (47, "run.yaml tasks.count"))
         self.assertAlmostEqual(entry["usd_per_task"], EXACT_S17B_USD / 47, places=3)
+        rc, out, _ = _run(["--workspace", str(self.root), "tally"])
+        self.assertIn("cost run-a: $358.10 ($7.62 a task over 47 tasks, from run.yaml", out)
+
+    def test_the_report_divides_by_more_than_one_task(self):
+        run_dir = self.root / "runs" / "run-a"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.yaml").write_text("run_id: run-a\nmode: attack:vac\ntasks:\n  count: 47\n",
+                                          encoding="utf-8")
+        rc, _, err = self.harvest("--transcripts", str(S17B))
+        self.assertEqual(rc, 0, err)
+        rc, out, err = _run(["--workspace", str(self.root), "report", "--no-verify-args"])
+        self.assertEqual(rc, 0, err)
+        handoff = sorted((self.root / "reports").glob("handoff.*.md"))[-1].read_text(
+            encoding="utf-8")
+        row = [l for l in handoff.splitlines() if l.startswith("| `run-a`")][0]
+        self.assertIn("| 358.10 | %.2f |" % (EXACT_S17B_USD / 47), row)
+        self.assertIn("| 358.10 | 7.62 |", row)
 
     def test_the_report_runs_table_carries_the_two_cost_columns(self):
         rc, _, err = self.harvest("--transcripts", str(S17B))
