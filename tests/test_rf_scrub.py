@@ -26,6 +26,11 @@ JSON data file's `_source` key. It is deliberately a small set of literal rules
 with a short, explicit allowlist, because a rule nobody can read is a rule that
 gets broadened instead of obeyed.
 
+The same rule covers data a companion was exported to, which names no machine:
+a guard on a data file's kind, name and size catches the two exported documents
+two closed pull requests carried under tests/data, and `CF_SCRUB_RANGE` runs
+every rule here over each commit a branch adds rather than only its last tree.
+
 It also holds the two CLI findings of the same package: a warning must reach ONE
 stream as ONE block (first-run#4), and the README's onboarding transcript must
 say what it is (first-run#7).
@@ -238,9 +243,11 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
 REPO_ROOTS = ("scripts/", "references/", "docs/", "templates/", "tests/",
               "registry/", "workflows/", "evals/", ".github/", "schema/", "examples/")
 
+#: A trailing `.gz` belongs to the path: without it `<dir>/rows.jsonl.gz` was
+#: read as a citation of `<dir>/rows.jsonl`, which is not here.
 _PATHISH = re.compile(
     r"[A-Za-z0-9_./*<>{}-]+"
-    r"\.(?:py|md|sh|js|json|jsonl|yaml|yml|txt|tmpl|toml|lean|example)\b")
+    r"\.(?:py|md|sh|js|json|jsonl|yaml|yml|txt|tmpl|toml|lean|example)(?:\.gz)?\b")
 
 #: Tokens that look like this repo's paths and are not. Each one is a path in
 #: ANOTHER tree that the prose is about.
@@ -316,6 +323,285 @@ class TestNoCitationOfAFileThatIsNotHere(unittest.TestCase):
                 hits = [rel for rel in tracked_files()
                         if (read(rel) or "").find(token) >= 0]
                 self.assertTrue(hits, f"nothing cites {token} any more; drop the entry")
+
+
+# ---------------------------------------------------------------------------
+# no companion's data, by its shape: kind, name and size
+# ---------------------------------------------------------------------------
+#
+# The text rules above read what a file SAYS. Two closed pull requests carried
+# both private companions' exported annotation documents under tests/data
+# (340,632 and 591,138 bytes gzipped: thousands of Lean signatures, snippets and
+# book-text quote selectors), and nothing above could see them: a gzip is not
+# text, and an export names no machine. Their review never asked the CLAUDE.md
+# S1 question either. What gives such a file away is its shape, so these rules
+# key on that -- what kind of file it is, the name an exporter or a workspace
+# gives it, and how big it is -- and leave the judgement to the review checklist
+# in CONTRIBUTING.md, which says what counts as private.
+
+#: Kinds CLAUDE.md S1 names that no test needs committed: a companion's Lean and
+#: its build output, a book or a page of one, a rendered site page, a page image
+#: or crop. A test that needs one generates it in a temporary directory, as the
+#: suite's fixture PDFs and tests/e2e's synthetic companions already do.
+FORBIDDEN_SUFFIXES = (".lean", ".olean", ".ilean", ".pdf", ".djvu", ".epub",
+                      ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                      ".tif", ".tiff", ".ppm", ".pgm", ".pbm")
+
+#: Names an export or a workspace writes, in any directory: the M3 reference
+#: files tests/data/m3/README.md keeps maintainer-side (a document, its export
+#: report or statistics, a site index, a page manifest) and the workspace files
+#: whose names `cflib.paths` fixes (a source's text, a companion's statements,
+#: the pairs).
+FORBIDDEN_NAME = re.compile(r"""(?x)
+      \.annotations\.json(?:\.gz)?$   | \.export-(?:report|stats)\.json$
+    | xref\.json(?:\.gz)?$            | site-pages\.json$
+    | ^text\.txt$ | ^statements\.jsonl$ | ^pairs\.jsonl$""")
+
+#: Suffixes that mark a file as data rather than code or prose.
+DATA_SUFFIXES = (".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".xml",
+                 ".gz", ".bz2", ".xz", ".zst", ".zip", ".tar", ".sqlite", ".db")
+
+#: The largest data file a test reads is a derived truth table (37,521 bytes),
+#: and the smaller of the two exported documents was 340,632 bytes gzipped. A
+#: gzip is measured unpacked as well, since packing is what made the document
+#: look small. 64 KiB leaves the next truth table room and nothing else.
+DATA_BYTES_MAX = 64 * 1024
+
+#: (file, why). A data file allowed past the size cap, with what it holds. The
+#: kind and name rules have no allowlist: a synthetic fixture can be renamed.
+#: `test_every_large_data_exemption_is_needed` fails on an entry that is stale.
+DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
+    ("tests/data/m0a/s17b-usage.jsonl.gz",
+     "5,207 rows of {model, usage} token counts and nothing else -- no text, "
+     "paths, hosts or users (tests/data/m0a/README.md); small packed, over the "
+     "cap unpacked"),
+)
+
+
+def _unpacked_bytes(payload: bytes, limit: int) -> int:
+    """How many bytes a gzip holds, counted no further than just past `limit`."""
+    import gzip
+    total = 0
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as handle:
+            while total <= limit:
+                chunk = handle.read(1 << 16)
+                if not chunk:
+                    break
+                total += len(chunk)
+    except (OSError, EOFError):
+        return total          # not a gzip, or a truncated one: what was read
+    return total
+
+
+def shape_problems(rel: str, size: int, payload) -> list[str]:
+    """Why a file at `rel` of `size` bytes may not be here, if it may not.
+
+    `payload()` returns its bytes; it is called only for a gzip, so the
+    whole-tree check reads nothing else.
+    """
+    name = rel.rsplit("/", 1)[-1].lower()
+    problems = []
+    if name.endswith(FORBIDDEN_SUFFIXES):
+        problems.append(f"{rel}: a {name.rsplit('.', 1)[-1]} file (Lean, a book, a "
+                        f"rendered page or an image; generate it in a temporary "
+                        f"directory instead)")
+    if FORBIDDEN_NAME.search(name):
+        problems.append(f"{rel}: the name of an export or a workspace file")
+    if name.endswith(DATA_SUFFIXES) and not any(rel == path for path, _ in DATA_ALLOWLIST):
+        if size > DATA_BYTES_MAX:
+            problems.append(f"{rel}: {size:,} bytes of data, over {DATA_BYTES_MAX:,}")
+        elif name.endswith(".gz"):
+            unpacked = _unpacked_bytes(payload(), DATA_BYTES_MAX)
+            if unpacked > DATA_BYTES_MAX:
+                problems.append(f"{rel}: more than {DATA_BYTES_MAX:,} bytes of "
+                                f"data once unpacked")
+    return problems
+
+
+class TestNoCompanionDataByItsShape(unittest.TestCase):
+    """The data-file half of CLAUDE.md S1, over the whole tracked tree."""
+
+    def test_no_tracked_file_has_the_shape_of_companion_data(self):
+        problems: list[str] = []
+        for rel in tracked_files():
+            if rel.startswith(VENDORED):
+                continue        # another repository's release, pinned by bytes
+            path = SKILL / rel
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            problems += shape_problems(rel, size, path.read_bytes)
+        self.assertEqual(problems, [], "CLAUDE.md S1 -- " + "; ".join(problems[:10]))
+
+    def test_every_large_data_exemption_is_needed(self):
+        for rel, why in DATA_ALLOWLIST:
+            with self.subTest(file=rel):
+                path = SKILL / rel
+                self.assertTrue(path.is_file(), f"{rel} is gone; drop the entry")
+                payload = path.read_bytes()
+                big = len(payload) > DATA_BYTES_MAX or (
+                    rel.endswith(".gz")
+                    and _unpacked_bytes(payload, DATA_BYTES_MAX) > DATA_BYTES_MAX)
+                self.assertTrue(big, f"{rel} is under the cap now; drop the "
+                                     f"entry ({why})")
+
+    def test_the_rules_catch_what_they_are_written_for(self):
+        """The two exported documents, by name and size, and their near misses.
+
+        The made-up paths carry no `tests/` prefix: the citation check above
+        would read one as a claim that the file is here.
+        """
+        import gzip
+        never = lambda: self.fail("only a gzip is read")              # noqa: E731
+        self.assertTrue(shape_problems(
+            "m3/measure_theory.annotations.json.gz", 591_138, never))
+        # renamed, it is still too big to be a fixture
+        self.assertTrue(shape_problems("m3/doc.json.gz", 340_632, never))
+        # packed small: the unpacked size is what gives it away
+        packed = gzip.compress(b'{"signature": "theorem t : True"}\n' * 4000)
+        self.assertLess(len(packed), DATA_BYTES_MAX)
+        self.assertTrue(shape_problems("m9/rows.jsonl.gz", len(packed),
+                                       lambda: packed))
+        self.assertTrue(shape_problems("m9/Basic.lean", 120, never))
+        self.assertTrue(shape_problems("m9/page-012.png", 120, never))
+        self.assertTrue(shape_problems("m3/tml-site-pages.json", 900, never))
+        # what tests/data legitimately holds today
+        self.assertEqual(shape_problems("tests/data/m1/measure_theory.truth.json",
+                                        37_521, never), [])
+        self.assertEqual(shape_problems("tests/test_cflib.py", 135_311, never), [])
+        small = gzip.compress(b'{"model": "m", "usage": {}}\n' * 10)
+        self.assertEqual(shape_problems("m0a/usage.jsonl.gz", len(small),
+                                        lambda: small), [])
+
+
+# ---------------------------------------------------------------------------
+# a branch is more than its last tree
+# ---------------------------------------------------------------------------
+#
+# The checks above read the checkout, which is the tree a squash merge would
+# land. A pull request publishes every commit on it: a file added in one commit
+# and deleted in the next stays fetchable through the PR's head ref after the
+# branch is gone, and so does a commit message. So a reviewer runs the same
+# rules over every blob and message a branch adds:
+#
+#     CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q tests/test_rf_scrub.py
+
+SCRUB_RANGE = os.environ.get("CF_SCRUB_RANGE", "")
+
+#: Rules for a commit message on top of RULES. A session trailer names a session.
+MESSAGE_RULES: dict[str, tuple] = {
+    "session_trailer": (
+        lambda text: re.findall(r"(?mi)^(?:claude|codex)-session:.*$", text),
+        "a session trailer is a session id (CLAUDE.md S1); end with Co-Authored-By"),
+}
+
+
+def _git(repo: Path, *args: str, stdin: str | None = None) -> str:
+    out = subprocess.run(["git", "-C", str(repo), *args], input=stdin,
+                         capture_output=True, text=True, timeout=300)
+    if out.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {out.stderr.strip()}")
+    return out.stdout
+
+
+def scan_range(repo: Path, rev_range: str) -> list[str]:
+    """Every rule of this module, over what `rev_range` adds to `repo`.
+
+    Each blob is checked under the path it was first seen at, so an allowlist
+    entry covers whatever a branch put at that path; that is the same trust the
+    whole-tree check gives the entry.
+    """
+    paths: dict[str, str] = {}
+    for line in _git(repo, "rev-list", "--objects", rev_range).splitlines():
+        sha, _, rel = line.partition(" ")
+        if rel and not rel.startswith(VENDORED):
+            paths.setdefault(sha, rel)
+    problems: list[str] = []
+    if paths:
+        listing = _git(repo, "cat-file", "--batch-check=%(objectname) %(objecttype) "
+                                         "%(objectsize)", stdin="\n".join(paths) + "\n")
+        for row in listing.splitlines():
+            sha, kind, size = row.split()
+            if kind != "blob":
+                continue
+            rel = paths[sha]
+
+            def payload(sha=sha) -> bytes:
+                return subprocess.run(["git", "-C", str(repo), "cat-file", "blob", sha],
+                                      capture_output=True, timeout=300).stdout
+
+            problems += [f"{p} (blob {sha[:8]})" for p in shape_problems(rel, int(size), payload)]
+            try:
+                text = payload().decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            for rule, (find, _why) in sorted(RULES.items()):
+                if not allowed(rel, rule):
+                    problems += [f"{rel} (blob {sha[:8]}): {rule}: {hit}"
+                                 for hit in find(text)]
+    log_text = _git(repo, "log", "--format=%H%x00%B%x01", rev_range)
+    for entry in log_text.split("\x01"):
+        sha, _, message = entry.strip().partition("\x00")
+        if not sha:
+            continue
+        for rule, (find, _why) in sorted({**RULES, **MESSAGE_RULES}.items()):
+            problems += [f"commit {sha[:8]} message: {rule}: {hit}"
+                         for hit in find(message)]
+    return problems
+
+
+class TestABranchCarriesNothingInAnyCommit(unittest.TestCase):
+    """The rules above, over every commit of a branch rather than its last tree."""
+
+    @unittest.skipUnless(SCRUB_RANGE, "set CF_SCRUB_RANGE (e.g. origin/master..HEAD) "
+                                      "to scan every commit a branch adds")
+    def test_the_named_range_adds_nothing_private(self):
+        problems = scan_range(SKILL, SCRUB_RANGE)
+        self.assertEqual(problems, [], f"{SCRUB_RANGE}: " + "; ".join(problems[:10]))
+
+    def test_a_file_added_then_deleted_is_still_found(self):
+        """A synthetic branch whose last tree is clean and whose history is not."""
+        import gzip
+        import shutil
+        import tempfile
+
+        repo = Path(tempfile.mkdtemp(prefix="cf-scrub-range-",
+                                     dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+
+        def git(*args: str) -> str:
+            return _git(repo, "-c", "user.name=Test", "-c",
+                        "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+                        *args)
+
+        git("init", "-q")
+        (repo / "README.md").write_text("synthetic\n", encoding="utf-8")
+        git("add", "README.md")
+        git("commit", "-q", "-m", "base")
+        base = git("rev-parse", "HEAD").strip()
+
+        data = repo / "tests" / "data" / "m9"
+        data.mkdir(parents=True)
+        (data / "doc.annotations.json.gz").write_bytes(
+            gzip.compress(b'{"signature": "theorem t : True"}\n' * 4000))
+        home = "/" + "Users" + "/" + "realname"      # spelled apart on purpose
+        (data / "notes.md").write_text(f"built in {home}/companion\n", encoding="utf-8")
+        git("add", "tests")
+        git("commit", "-q", "-m", "add the reference data")
+        git("rm", "-q", "-r", "tests")
+        git("commit", "-q", "-m", "drop the reference data\n\n"
+                              "Claude-Session: synthetic-session\n")
+
+        self.assertEqual(git("ls-files").split(), ["README.md"],
+                         "the last tree is clean, as a squash merge would land it")
+        found = "\n".join(scan_range(repo, f"{base}..HEAD"))
+        self.assertIn("doc.annotations.json.gz", found)
+        self.assertIn("once unpacked", found)
+        self.assertIn("absolute_home", found)
+        self.assertIn("session_trailer", found)
+        self.assertEqual(scan_range(repo, "HEAD..HEAD"), [])
 
 
 # ---------------------------------------------------------------------------
