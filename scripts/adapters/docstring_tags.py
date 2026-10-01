@@ -544,5 +544,7 @@ class DocstringTagsAdapter(Adapter):
         files = self.source_files(repo)
         inputs["sources"] = len(files)
         inputs["sources_sha"] = sha_of_files(files, repo)
-        inputs["lean_build"] = leanbuild.fingerprint(self.lean_build(repo), files, repo)
+        build = self.lean_build(repo)
+        if build is not None:
+            inputs["lean_build"] = leanbuild.fingerprint(build, files, repo)
         return inputs
