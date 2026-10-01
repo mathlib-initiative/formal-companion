@@ -3,14 +3,10 @@
 Milestone M0a of docs/proposals/pdf-to-companion.md (section 5.1) asks the
 tool to reproduce a recorded total within 1% from retained transcripts, to
 price one Codex session against a hand computation, and never to price a model
-the table does not list.  The s17b fixture does not meet the first bar: its
-rows are transcript lines, one per content block, and the recorded $358.10 was
-summed over the same lines, so matching it shows the sum is the same sum.  One
-count per response, which the transcript reader gives, prices them at about
-$168.91 (TestTheS17bRowsAreContentBlockLines pins both figures).  The
-fixtures are ``tests/data/m0a/`` (their README says what each is); every
-other log here is synthetic and built in a temporary directory.
-``_hermetic`` is imported first because the harvest test builds a workspace.
+the table does not list.  The fixtures are ``tests/data/m0a/`` (their README
+says what each is); every other log here is synthetic and built in a temporary
+directory.  ``_hermetic`` is imported first because the harvest test builds a
+workspace.
 """
 from __future__ import annotations
 
@@ -47,8 +43,7 @@ FIXTURES = HERE / "data" / "m0a"
 S17B = FIXTURES / "s17b-usage.jsonl.gz"
 CODEX_SAMPLE = FIXTURES / "codex-usage-sample.json"
 
-#: the total tests/data/m0a/README.md records for the s17b rows, summed line
-#: by line (one row per content block, not per response)
+#: the total tests/data/m0a/README.md records for the s17b rows (line-summed)
 RECORDED_S17B_USD = 358.10
 #: what the tool computes for them at the shipped prices (rounded to 6 places
 #: by ``pricing.price``); the assertion below is the 1% band, this is the figure
@@ -95,15 +90,7 @@ def codex_sample_events() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 class TestTheS17bRowsAreContentBlockLines(unittest.TestCase):
-    """The fixture's 5,207 rows are transcript lines, not responses.
-
-    Summed as written they give the recorded $358.10, because the recorded
-    total was summed the same way; that shows the arithmetic, not a per-response
-    reproduction.  Collapsing each run of identical adjacent rows (the lines of
-    one response) leaves 2,628 rows at $168.91.  The rows carry no message id,
-    so that collapse is an estimate of the per-response figure, not a re-read
-    of the transcripts.
-    """
+    """The fixture's 5,207 rows are transcript lines, one per content block."""
 
     def test_summed_line_by_line_the_rows_give_the_recorded_total(self):
         totals = usage_mod.read_path(S17B)
@@ -117,9 +104,7 @@ class TestTheS17bRowsAreContentBlockLines(unittest.TestCase):
         self.assertEqual(priced["priced"], ["claude-opus-5"])
 
     def test_one_row_per_response_prices_about_53_percent_lower(self):
-        """The figures tests/data/m0a/README.md, the CHANGELOG and the proposal
-        quote, computed here from the rows and the issue #11 prices by hand,
-        without the reader."""
+        """The README's figures, recomputed by hand without the reader."""
         with gzip.open(S17B, "rt", encoding="utf-8") as fh:
             rows = [json.loads(line) for line in fh if line.strip()]
         collapsed = [r for i, r in enumerate(rows) if i == 0 or r != rows[i - 1]]
@@ -139,8 +124,7 @@ class TestTheS17bRowsAreContentBlockLines(unittest.TestCase):
         """The export repeats identical consecutive rows (the transcripts write
         one line per content block); with no message id to de-duplicate on, a
         usage export is summed as written, and that is what the recorded total
-        was computed from.  A `cf cost --export` file is one row per response,
-        so summing it as written is right; this fixture is not one."""
+        was computed from."""
         with gzip.open(S17B, "rt", encoding="utf-8") as fh:
             first, second = fh.readline(), fh.readline()
         self.assertEqual(first, second)
@@ -237,10 +221,7 @@ class TestCodexRollouts(unittest.TestCase):
         self.assertEqual(totals.repeated_events, 1)
 
     def test_a_cumulative_block_that_goes_backwards_restarts_the_baseline(self):
-        """Thread t's cumulative block falls from 300 prompt tokens to 70 (a
-        reset).  That event is charged its own usage (40), not the whole
-        block (70) and not nothing, and the next event is charged its advance
-        over the new baseline (70 -> 90: 20), not over the old one."""
+        """A reset is charged its own usage, the next event its advance over the new base."""
         def record(prompt, output, cum_prompt, cum_output):
             def block(i, o):
                 return {"input_tokens": i, "cached_input_tokens": 0,
@@ -263,8 +244,6 @@ class TestCodexRollouts(unittest.TestCase):
                           "cache_write": 0, "cache_read": 0})
 
     def test_a_reset_with_no_usage_of_its_own_is_charged_its_cumulative_block(self):
-        """An ``event_msg`` token_count with a total and no last usage that
-        goes backwards: the block is all there is to charge."""
         def count(total_prompt, last_prompt=None):
             info = {"total_token_usage": {
                 "input_tokens": total_prompt, "cached_input_tokens": 0,
@@ -278,8 +257,6 @@ class TestCodexRollouts(unittest.TestCase):
         self.assertEqual(totals.tokens["gpt-test"]["input"], 530)
 
     def test_each_thread_keeps_its_own_cumulative_block(self):
-        """Two threads interleaved in one log: thread b's first total (300) is
-        its own, not an advance of 200 over thread a's 100, and so on."""
         def record(thread, prompt, output, cum_prompt, cum_output):
             def block(i, o):
                 return {"input_tokens": i, "cached_input_tokens": 0,
@@ -300,7 +277,6 @@ class TestCodexRollouts(unittest.TestCase):
                          {"input": 500, "output": 50, "cache_write": 0, "cache_read": 0})
 
     def test_the_fixtures_carry_no_account_rate_limit_state(self):
-        """The source session's plan, quota use and reset time were stripped."""
         for name in ("codex-usage-sample.json", "codex-usage-shapes.json"):
             with self.subTest(fixture=name):
                 text = (FIXTURES / name).read_text(encoding="utf-8")
@@ -346,8 +322,7 @@ class TestClaudeTranscripts(unittest.TestCase):
         self.assertEqual(totals.tokens["claude-opus-5"]["output"], 674)
 
     def test_a_gzipped_transcript_is_read_as_a_transcript_not_an_export(self):
-        """``.jsonl.gz`` is not a shape: the first object decides.  Read as an
-        export, every line here would be 'without usage' and price to $0."""
+        """Read as an export, these lines would price to $0."""
         path = self.root / "session.jsonl.gz"
         with gzip.open(path, "wt", encoding="utf-8") as fh:
             for line in (claude_line("m1", "r1", self.USAGE), claude_line("m1", "r1", self.USAGE),
@@ -378,8 +353,7 @@ class TestClaudeTranscripts(unittest.TestCase):
             usage_mod.read_path([self.root / "host-1", self.root / "nope"])
 
     def test_the_standalone_command_takes_several_directories(self):
-        """references/runbook-server.md step 5, from a copy of the script
-        alone, as on a host: ``python3 usage.py <dir> [<dir> ...] --export usage.jsonl``."""
+        """The runbook's host command, from a copy of the script alone."""
         write_jsonl(self.root / "host-1" / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
         write_jsonl(self.root / "host-2" / "b.jsonl", [
             claude_line("m2", "r2", self.USAGE), claude_line("m2", "r2", self.USAGE)])
@@ -395,7 +369,6 @@ class TestClaudeTranscripts(unittest.TestCase):
         self.assertEqual(len(out_file.read_text(encoding="utf-8").splitlines()), 2)
         self.assertIn("wrote 2 row(s)", done.stdout)
         self.assertEqual(done.stderr, "")
-        # a missing directory among them is refused and nothing is written
         missing_out = self.root / "missing.jsonl"
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             rc = usage_mod.main([str(self.root / "host-1"), str(self.root / "nope"),
@@ -640,7 +613,6 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
                          pricing.table_sha256(pricing.DEFAULT_PRICE_TABLE))
         self.assertEqual((cost["transcript_count"], cost["message_count"]), (1, 5207))
         self.assertEqual(cost["tokens"]["claude-opus-5"]["cache_read"], 299747343)
-        # the receipt records the name it priced, never the machine's layout
         self.assertEqual(cost["source"]["path"], "s17b-usage.jsonl.gz")
         self.assertIn("cost: $358.10", out)
         self.assertTrue(self.receipt()["complete"])
@@ -717,7 +689,6 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
         self.assertIn("cost run-a: $358.10 ($7.62 a task over 47 tasks, from run.yaml", out)
 
     def test_the_report_divides_by_more_than_one_task(self):
-        """Per task is the dollars over run.yaml's 47 tasks, not the total."""
         run_dir = self.root / "runs" / "run-a"
         run_dir.mkdir(parents=True)
         (run_dir / "run.yaml").write_text("run_id: run-a\nmode: attack:vac\ntasks:\n  count: 47\n",

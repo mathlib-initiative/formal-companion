@@ -11,10 +11,9 @@ and says that "fleet cost follows issue #11's design: harvest writes each
 fleet's priced totals into its RECEIPT.json, with prices in workspace.yaml,
 and the stage receipt sums its fleets".  :func:`sum_fleets` is that sum: it
 reads every fleet run's ``run.yaml`` and ``RECEIPT.json``, records both shas,
-and refuses a fleet whose receipt carries no cost block, an unpriced model or
-a block that counted no response, because a stage receipt that quietly
-omitted one fleet's dollars would be the cost line every report so far
-shipped without.
+and refuses a fleet whose receipt carries no cost block or an unpriced model,
+because a stage receipt that quietly omitted one fleet's dollars would be the
+cost line every report so far shipped without.
 
 The writer fails closed: a missing field, an extra field, a sha that is not 64
 lowercase hex characters, a stage name outside S0 to S9, a negative cost or a
@@ -179,8 +178,7 @@ def sum_fleets(paths, run_ids) -> dict:
     """The stage's ``fleet_runs``, ``cost_usd``, ``tokens`` and ``model_ids`` from its fleets.
 
     Refuses a fleet whose receipt has no ``cost`` block, names an unpriced
-    model, or counted no response (an empty or wrong transcripts path prices
-    to $0): the sum would silently be a lower bound.
+    model or counted no response: the sum would silently be a lower bound.
     """
     fleet_runs = []
     tokens: dict[str, dict[str, int]] = {}

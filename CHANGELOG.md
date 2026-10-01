@@ -78,45 +78,32 @@ release has something to say.
   own logs, since the orchestrator sees no token. `scripts/cost/usage.py`
   reads Claude Code transcripts (one response counted once, however many
   lines it spans), Codex rollout logs (charged by the advance of the
-  cumulative token block, kept per thread, so a count reported twice is
-  counted once, with the model id taken from the nearest `turn_context`) and
-  usage exports, classifying each file by its first JSON object rather than
-  its suffix (a gzipped transcript is a transcript), and sums tokens per
-  model id over one path or several; `scripts/cost/pricing.py` prices them
-  with the table at `workspace.yaml` `budget.prices` (per model id: input,
-  output, cache_write, cache_read in US dollars per million tokens, and a
-  source note). A model the table does not list is reported as unpriced and never
+  cumulative token block, so a count reported twice is counted once, with the
+  model id taken from the nearest `turn_context`) and usage exports, and sums
+  tokens per model id; `scripts/cost/pricing.py` prices them with the table
+  at `workspace.yaml` `budget.prices` (per model id: input, output,
+  cache_write, cache_read in US dollars per million tokens, and a source
+  note). A model the table does not list is reported as unpriced and never
   priced at a guess. The shipped table carries the Opus 5 list prices issue
   #11 records and nothing else. Harvest writes the priced totals into the
   receipt's new `cost` block (tokens by model, usd, priced and unpriced
-  models, price_table_sha256, transcript_count, message_count, and
-  `source.path`, the last component of the path priced, never its parent
-  directories) and records the run's dollars in `state.json`; `cf tally`
-  prints cost and cost per task per run, saying the figures are a lower bound
-  when a model is unpriced, and records them in `reports/tally.<run>.json`;
-  `cf report`'s runs table gained two columns. A run harvested without
-  transcripts is unchanged except for `cost: null`. A transcripts path that
-  yields no response (an empty or wrong directory) is warned about by
-  harvest and `cf cost`, and a stage receipt refuses to sum its $0.
-  `cf cost --export`, or `python3 usage.py <dir> [<dir> ...] --export` on a
-  host, writes one `{model, usage}` row per response, which is how usage
-  leaves a host without the transcripts' text. `tests/data/m0a/` holds the
-  fixtures. The section 1.7 re-run's 5,207 exported rows are transcript lines,
-  one per content block, not responses: summed line by line they give the
-  recorded $358.10, because the recorded total was summed the same way, so
-  the match checks the arithmetic and does not reproduce the run's cost from
-  its transcripts. Collapsing identical adjacent rows leaves 2,628 rows priced
-  at $168.91, about 53% lower; a re-read of the retained transcripts with the
-  per-response reader is still owed (`tests/data/m0a/README.md`), and the
-  proposal's cost anchors are marked line-summed until it is done. The Codex
-  fixtures carry the event shapes without the account's rate-limit state.
+  models, price_table_sha256, transcript_count, message_count) and records
+  the run's dollars in `state.json`; `cf tally` prints cost and cost per task
+  per run and records them in `reports/tally.<run>.json`, and `cf report`'s
+  runs table gained two columns. A run harvested without transcripts is unchanged
+  except for `cost: null`. `cf cost --export` writes one `{model, usage}` row
+  per response, which is how usage leaves a host without the transcripts'
+  text. `tests/data/m0a/` holds the fixtures: the section 1.7 re-run's 5,207
+  exported rows are transcript lines, one per content block, so they sum to
+  the line-summed recorded total of $358.10; collapsing identical adjacent
+  rows gives $168.91.
 - `scripts/pipeline/`: the loader and validator of `pipelines/<id>/pipeline.yaml`
   (exercise policy, scope, consent, the fleet run ids per stage; every unknown
   key refused) and the writer of `pipelines/<id>/stages/<stage>.stage-receipt.json`
   with the eleven fields of proposal section 4.1, which fails closed on a
   missing or extra field, a sha of the wrong length, a stage outside S0 to S9
-  or a fleet whose receipt carries no cost block, an unpriced model or a cost
-  block that counted no response. `cflib.paths` gained the pipeline paths.
+  or a fleet whose receipt carries no cost block. `cflib.paths` gained the
+  pipeline paths.
 - `registry/calibration.yaml`: calibration facts the milestones replay against,
   starting with the tao-measure-lean revision before the camera-ready fix
   stack (`d8cdfd5`, the first parent of the stack's first merge) and how it
