@@ -210,8 +210,9 @@ leaves three. Above the cap you get 409s.
    reader that counts no response warns on stderr: do not bring that export back. Bring the
    export back and pass it to `cf harvest <run-id> --transcripts usage.jsonl`. The receipt then
    carries the `cost` block (tokens by model, dollars at `workspace.yaml` `budget.prices`, the
-   models the table does not price, the table's sha) and `cf tally` prints the cost per task.
-   A Codex fleet's `rollout-*.jsonl` logs read the same way; a log that names no model takes
+   models the table does not price, the table's sha, and `source.path`, the file or directory
+   name priced without its parents) and `cf tally` prints the cost per task. A Codex fleet's
+   `rollout-*.jsonl` logs read the same way; a log that names no model takes
    `--transcripts-model <id>`. A model missing from the price table is reported as UNPRICED,
    never guessed at, and the dollar figure is then a lower bound until the table has a row for it.
 

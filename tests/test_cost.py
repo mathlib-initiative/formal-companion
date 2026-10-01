@@ -355,6 +355,23 @@ class TestClaudeTranscripts(unittest.TestCase):
             fleet_mod.cost_block(self.root / "nope", table=pricing.DEFAULT_PRICE_TABLE,
                                  table_source="test")
 
+    def test_the_block_records_the_name_priced_and_no_parent_directory(self):
+        logs = self.root / "deep" / "transcripts"
+        write_jsonl(logs / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
+        for given, label in ((logs, "transcripts"), (str(logs) + "/", "transcripts"),
+                             (logs / "a.jsonl", "a.jsonl")):
+            with self.subTest(given=str(given)):
+                block = fleet_mod.cost_block(given, table=pricing.DEFAULT_PRICE_TABLE,
+                                             table_source="test")
+                self.assertEqual(block["source"]["path"], label)
+                self.assertNotIn(str(self.root), json.dumps(block))
+        cwd = os.getcwd()
+        os.chdir(logs)
+        self.addCleanup(os.chdir, cwd)
+        self.assertEqual(fleet_mod.cost_block(".", table=pricing.DEFAULT_PRICE_TABLE,
+                                              table_source="test")["source"]["path"],
+                         "transcripts")
+
     def test_an_unreadable_line_is_counted_not_charged(self):
         (self.root / "a.jsonl").write_text(
             json.dumps(claude_line("m1", "r1", self.USAGE)) + "\n{not json\n[1, 2]\n",
@@ -551,6 +568,8 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
                          pricing.table_sha256(pricing.DEFAULT_PRICE_TABLE))
         self.assertEqual((cost["transcript_count"], cost["message_count"]), (1, 5207))
         self.assertEqual(cost["tokens"]["claude-opus-5"]["cache_read"], 299747343)
+        # the receipt records the name it priced, never the machine's layout
+        self.assertEqual(cost["source"]["path"], "s17b-usage.jsonl.gz")
         self.assertIn("cost: $358.10", out)
         self.assertTrue(self.receipt()["complete"])
         tally = json.loads((self.root / "reports" / "tally.run-a.json").read_text(

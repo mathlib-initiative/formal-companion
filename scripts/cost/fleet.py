@@ -30,6 +30,19 @@ from harvest.harvest import read_receipt
 COST_KEY = "cost"
 
 
+def source_label(path: str | Path) -> str:
+    """What the receipt records of the path it priced: its last component only.
+
+    A receipt is committed to the workspace repository and may be shared, so
+    it never carries the machine's directory layout (a home directory names
+    the user).  ``usage.jsonl`` and ``/srv/run-a/transcripts`` record as
+    ``usage.jsonl`` and ``transcripts``; ``.`` records as the name of the
+    directory it stands for.
+    """
+    p = Path(path)
+    return p.name if p.name not in ("", ".", "..") else (p.resolve().name or ".")
+
+
 def empty_warning(block: Mapping[str, Any]) -> str | None:
     """A warning when a cost block counted no response, else None.
 
@@ -64,7 +77,7 @@ def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], tabl
         raise CfError(str(exc), hint="fix workspace.yaml budget.prices (or the --prices file)")
     read = totals.as_dict()
     return {
-        "source": {"path": str(Path(path).resolve()), "files": read["files"]},
+        "source": {"path": source_label(path), "files": read["files"]},
         "tokens": read["tokens"],
         "total_tokens": pricing.total_tokens(read["tokens"]),
         "usd": priced["usd"],
