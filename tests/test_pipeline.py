@@ -315,8 +315,6 @@ class TestSumFleets(unittest.TestCase):
         self.assertIn("unpriced", str(caught.exception))
 
     def test_a_fleet_whose_block_counted_no_response_is_refused(self):
-        """An empty or wrong --transcripts path prices to $0 with no model;
-        summing that would be the quietly omitted fleet this refuses."""
         empty = {"usd": 0.0, "priced": [], "unpriced": [], "tokens": {}, "message_count": 0,
                  "transcript_count": 0}
         self.fleet("a", self.block(1.0))
@@ -325,7 +323,7 @@ class TestSumFleets(unittest.TestCase):
             stage_receipt.sum_fleets(self.paths, ["a", "b"])
         self.assertIn("'b'", str(caught.exception))
         self.assertIn("counted no response", str(caught.exception))
-        # a block written before the count existed is not taken on trust either
+        # a block written before message_count existed is refused too
         no_count = dict(self.block(1.0))
         del no_count["message_count"]
         self.fleet("c", no_count)

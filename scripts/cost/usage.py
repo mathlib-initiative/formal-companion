@@ -29,16 +29,10 @@ Three input shapes are read, and a directory may mix them:
   that names none is read under the id passed as ``model``, or under
   ``UNKNOWN_MODEL`` when there is none, which the price table cannot price.
 * a **usage export** (``*.jsonl`` or ``*.jsonl.gz``, one ``{model, usage}``
-  object per line): the rows carry no ids, so they are summed as written.
-  ``export_rows`` writes one, one row per counted response, which is how usage
-  leaves a host without the transcripts' text.  The s17b fixture under
-  ``tests/data/m0a/`` has this shape but is NOT one row per response: it is
-  one row per transcript line, so it holds each response once per content
-  block (its README gives the figures).
-
-A file is classified by its first JSON object, not by its suffix (a gzipped
-transcript is still a transcript); only a ``rollout-*`` name is decided by the
-name alone.
+  object per line, the shape of the s17b fixture under ``tests/data/m0a/``):
+  the rows carry no ids, so they are summed as written.  ``export_rows`` writes
+  one, one row per counted response, which is how usage leaves a host without
+  the transcripts' text.
 
 Every usage is normalised to four fields, ``input`` (uncached prompt tokens),
 ``output``, ``cache_write`` and ``cache_read``, which is what the price table
@@ -231,14 +225,7 @@ def _lines(path: Path, totals: Totals) -> Iterator[dict]:
 
 
 def classify(path: Path) -> str:
-    """Which of the three shapes a file is, from its name and its first object.
-
-    A ``rollout-*`` name is a Codex log.  Every other file, gzipped or not, is
-    classified by its first JSON object: a gzipped Claude transcript is a
-    transcript, not an export, so ``.jsonl.gz`` alone decides nothing (read as
-    an export, a transcript's lines carry no top-level usage and the file
-    would price to $0 without a word).
-    """
+    """Which of the three shapes a file is, from its name and its first object."""
     if path.name.startswith("rollout-"):
         return KIND_CODEX
     try:
@@ -385,21 +372,18 @@ def list_files(path: str | Path) -> list[Path]:
                   if q.is_file() and (q.suffix == ".jsonl" or q.name.endswith(".jsonl.gz")))
 
 
-#: one path or several, as the readers below take them
 PathsArg = Union[str, Path, Sequence[Union[str, Path]]]
 
 
 def _as_paths(paths: PathsArg) -> list[Path]:
-    """One path, or several, as a list (a string is one path, not characters)."""
+    """A string is one path, not a sequence of characters."""
     if isinstance(paths, (str, Path)):
         return [Path(paths)]
     return [Path(p) for p in paths]
 
 
 def list_all_files(paths: PathsArg) -> list[Path]:
-    """:func:`list_files` of every path, in the order given, each file once
-    (two overlapping directories do not count a log twice).  A missing path
-    is refused before anything is read."""
+    """:func:`list_files` of every path, each file once even when paths overlap."""
     out: list[Path] = []
     seen: set[Path] = set()
     for p in _as_paths(paths):
@@ -412,8 +396,7 @@ def list_all_files(paths: PathsArg) -> list[Path]:
 
 
 def iter_records(paths: PathsArg, totals: Totals, model: str | None = None) -> Iterator[Record]:
-    """Every counted response under *paths* (one path or several), updating
-    *totals*' file counts."""
+    """Every counted response under *paths*, updating *totals*' file counts."""
     for file in list_all_files(paths):
         kind = classify(file)
         totals.files[kind] += 1
@@ -426,11 +409,9 @@ def iter_records(paths: PathsArg, totals: Totals, model: str | None = None) -> I
 
 
 def read_path(paths: PathsArg, model: str | None = None) -> Totals:
-    """Sum every log under *paths* (one path or several) into one :class:`Totals`.
+    """Sum every log under *paths* into one :class:`Totals`.
 
-    An empty directory gives zero tokens, zero files and zero messages; the
-    callers that price a run say so out loud (:func:`main`, `cf cost`,
-    `cf harvest`) and a stage receipt refuses it.
+    An empty directory gives zero tokens, zero files and zero messages.
     """
     totals = Totals()
     for record in iter_records(paths, totals, model=model):
@@ -442,10 +423,9 @@ def export_rows(paths: PathsArg, out: str | Path, model: str | None = None) -> T
     """Write one ``{model, usage}`` row per counted response of *paths* to *out*.
 
     The rows carry the four normalised fields and nothing else: no text, no
-    paths, no ids.  Returns the totals of what was written.  Every path is
-    checked before *out* is opened, so a typo leaves no empty export behind.
+    paths, no ids.  Returns the totals of what was written.
     """
-    list_all_files(paths)
+    list_all_files(paths)  # raise on a missing path before *out* is created
     totals = Totals()
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -460,12 +440,7 @@ def export_rows(paths: PathsArg, out: str | Path, model: str | None = None) -> T
 
 
 def nothing_counted(totals: Totals) -> str | None:
-    """A warning when *totals* counted no response, else None.
-
-    Zero responses is never a measurement of a fleet: it is an empty or wrong
-    directory, or logs in a shape the reader does not know.  The warning says
-    which files were read and how many lines had no usage.
-    """
+    """A warning when *totals* counted no response, else None."""
     if totals.message_count:
         return None
     if not totals.transcript_count:

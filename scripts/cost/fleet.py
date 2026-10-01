@@ -31,25 +31,13 @@ COST_KEY = "cost"
 
 
 def source_label(path: str | Path) -> str:
-    """What the receipt records of the path it priced: its last component only.
-
-    A receipt is committed to the workspace repository and may be shared, so
-    it never carries the machine's directory layout (a home directory names
-    the user).  ``usage.jsonl`` and ``/srv/run-a/transcripts`` record as
-    ``usage.jsonl`` and ``transcripts``; ``.`` records as the name of the
-    directory it stands for.
-    """
+    """The last component of *path*: a committed receipt must not leak the machine's layout."""
     p = Path(path)
     return p.name if p.name not in ("", ".", "..") else (p.resolve().name or ".")
 
 
 def empty_warning(block: Mapping[str, Any]) -> str | None:
-    """A warning when a cost block counted no response, else None.
-
-    A fleet that ran produced responses, so zero is an empty or wrong path or
-    logs the reader could not read, never a measured $0.  `cf harvest` and
-    `cf cost` print this; `stage_receipt.sum_fleets` refuses such a block.
-    """
+    """A warning when *block* counted no response, else None."""
     if int(block.get("message_count") or 0) > 0:
         return None
     files = int(block.get("transcript_count") or 0)
