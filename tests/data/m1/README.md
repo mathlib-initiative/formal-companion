@@ -9,7 +9,10 @@ published edition (registry id `tao-measure-gsm126-published`, sha256
 - `measure_theory.truth.json`
 - `tao-measure-lean.truth.json`
 
-A table holds only facts about the edition, like the registry's page maps:
+A table holds only item numbers, kinds and page numbers, with no text from the
+book or the companions. The `numbered` rows record where each numbered item is
+printed; the `passages` rows record where a companion chose to tag in-text
+material, which is a fact about that companion, not about the edition:
 
 - `numbered`: `{kind, number, page}` for each numbered item, `page` being the
   first physical page the companion places it on;
