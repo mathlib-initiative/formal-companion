@@ -39,6 +39,19 @@ permissions:
   contents: read
 
 jobs:
+  # The generated overlay's viewer (templates/overlay/runtime/viewer/) is plain
+  # JavaScript; its suite runs under Node's built-in runner and needs nothing
+  # installed. The files are named because Node 22+ no longer expands a directory.
+  viewer:
+    name: overlay viewer (node --test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test templates/overlay/tests/*.test.mjs
+
   pytest:
     name: pytest (python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
