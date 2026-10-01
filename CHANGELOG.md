@@ -378,6 +378,7 @@ release has something to say.
   `workspace.yaml` entry — the state a half-finished onboard or a copied
   directory leaves — one line after printing it as `not onboarded`. It prints it
   and exits 0.
+- `cf adjudicate --transcribe` rewrote the ledger from one result, so a second pass wiped the first; it now merges by `finding_id`, a new verdict replacing the old row in either file.
 - the printed `cf adjudicate` and `cd` next steps interpolated the workspace
   path unquoted, so in a workspace whose directory name contains a space they
   could not be pasted. `cf route` writes one of them into the routed ledger and

@@ -716,6 +716,94 @@ class TestTranscription(unittest.TestCase):
             companion="adam", source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA, index=self.index)
         self.assertEqual(rows[0]["verdict"], "REFUTED")
 
+    def _transcribe(self, result: dict, kind: str, at: str) -> dict:
+        path = os.path.join(self.root, "%s.%s.json" % (kind, at))
+        compat.write_json(path, result)
+        return transcribe.transcribe(path, workspace=self.root, companion="adam",
+                                     source_id=PUBLISHED_ID, source_sha=OFFICIAL_SHA,
+                                     index=self.index, kind=kind, at=at)
+
+    def _challenge(self, survives: dict) -> dict:
+        findings = []
+        for item, ok in survives.items():
+            f = self.by_item[item]
+            findings.append({"finding_id": f["finding_id"], "item": f["item"], "survives_all": ok,
+                             "verdicts": [{"ruling_survives": ok, "classification": "CONTENT",
+                                           "evidence": "the refuter's file:line"}] * 2})
+        return {"schema": "cf-challenge-v2", "companion": "adam", "source_id": PUBLISHED_ID,
+                "source_sha": OFFICIAL_SHA, "findings": findings}
+
+    def _files(self) -> list[str]:
+        paths = compat.workspace_paths(self.root)
+        out = []
+        for path in (paths.accepted("adam"), paths.refuted("adam"), paths.adjudicated_md("adam")):
+            with open(path, encoding="utf-8") as fh:
+                out.append(fh.read())
+        return out
+
+    def test_a_second_pass_over_other_findings_keeps_the_first(self):
+        first = self._result()
+        first["findings"] = first["findings"][:1]
+        self._transcribe(first, "adjudicate", "2026-09-16")
+        report = self._transcribe(self._challenge({"Exercise 1.1.22": False}), "challenge", "2026-09-20")
+        self.assertEqual(report["errors"], [], "\n".join(str(e) for e in report["errors"]))
+        paths = compat.workspace_paths(self.root)
+        accepted = compat.data_rows(compat.read_jsonl(paths.accepted("adam")))
+        refuted = compat.data_rows(compat.read_jsonl(paths.refuted("adam")))
+        self.assertEqual([(r["item"], r["method"], r["at"]) for r in accepted],
+                         [("Exercise 1.3.12", "workflow:adjudicate", "2026-09-16")])
+        self.assertEqual([(r["item"], r["method"], r["at"]) for r in refuted],
+                         [("Exercise 1.1.22", "workflow:challenge", "2026-09-20")])
+        self.assertEqual((report["accepted"], report["refuted"], report["replaced"]), (0, 1, 0))
+        self.assertEqual(report["ledger"], {"accepted": 1, "refuted": 1, "contested": 0})
+        self.assertEqual(compat.meta_row(compat.read_jsonl(paths.accepted("adam")))["counts"]["rows"], 1)
+        md = self._files()[2]
+        self.assertIn("Exercise 1.3.12", md)
+        self.assertIn("**Tally:** 2 rows over 2 items", md)
+        self.assertIn("nothing contradicts anything", md, "the adjudication's critic is kept")
+
+        before = self._files()
+        self._transcribe(self._challenge({"Exercise 1.1.22": False}), "challenge", "2026-09-20")
+        self.assertEqual(self._files(), before, "re-transcribing the same pass changes nothing")
+
+    def test_a_new_verdict_replaces_the_old_row_in_whichever_file_it_was(self):
+        paths = compat.workspace_paths(self.root)
+
+        def ledger():
+            return [[(r["item"], r["verdict"], r["method"])
+                     for r in compat.data_rows(compat.read_jsonl(p))]
+                    for p in (paths.accepted("adam"), paths.refuted("adam"))]
+
+        self._transcribe(self._result(), "adjudicate", "2026-09-16")
+        report = self._transcribe(self._challenge({"Exercise 1.3.12": False}), "challenge", "2026-09-20")
+        self.assertEqual(ledger(), [[], [("Exercise 1.1.22", "CONVENTION", "workflow:adjudicate"),
+                                         ("Exercise 1.3.12", "REFUTED", "workflow:challenge")]])
+        self.assertEqual(report["replaced"], 1)
+        self._transcribe(self._challenge({"Exercise 1.1.22": True}), "challenge", "2026-09-21")
+        self.assertEqual(ledger(), [[("Exercise 1.1.22", "CONFIRMED_CONTENT", "workflow:challenge")],
+                                    [("Exercise 1.3.12", "REFUTED", "workflow:challenge")]])
+        checked = vl.validate_ledger_dir(paths, "adam", index=self.index, sources=SOURCES)
+        self.assertEqual(checked["errors"], [], "\n".join(str(e) for e in checked["errors"]))
+
+    def test_the_cli_reports_the_pass_and_the_ledger_it_leaves(self):
+        compat.write_text(os.path.join(self.root, "workspace.yaml"), workspace_yaml(companions=(
+            "  adam:\n    repo: /repos/measure_theory\n    adapter: attribution_table\n"
+            f"    sources: [{PUBLISHED_ID}]\n    anchor_source: {PUBLISHED_ID}\n")))
+        first = self._result()
+        first["findings"] = first["findings"][:1]
+        procs = []
+        for kind, result in (("adjudicate", first), ("challenge", self._challenge({"Exercise 1.1.22": False}))):
+            path = os.path.join(self.root, "%s.json" % kind)
+            compat.write_json(path, result)
+            procs.append(subprocess.run(
+                [sys.executable, os.path.join(SCRIPTS, "cf.py"), "adjudicate", "--workspace", self.root,
+                 "--companion", "adam", "--transcribe", path, "--from", kind, "--at", "2026-09-20"],
+                capture_output=True, text=True))
+            self.assertEqual(procs[-1].returncode, 0, procs[-1].stdout + procs[-1].stderr)
+        self.assertIn("ledger now 1 accepted, 1 refuted", procs[-1].stdout)
+        state = compat.read_json(compat.workspace_paths(self.root).state("adam"))["adjudication"]
+        self.assertEqual((state["accepted"], state["refuted"]), (1, 1))
+
 
 class TestItemJoinKeyMatching(unittest.TestCase):
     """Everything that MATCHES on an item matches on the canonical key.
