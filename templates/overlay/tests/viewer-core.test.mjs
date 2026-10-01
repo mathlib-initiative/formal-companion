@@ -6,6 +6,12 @@
  * geometry combinations, link ordering, orphaned links, coverage, the cluster
  * fallback, the href and fragment rules, verdict display and sha256
  * verification. The controller tests are in viewer-controller.test.mjs.
+ *
+ * Every document here declares a synthetic format (`example/annotations`,
+ * major 7) and the fixtures ship a schema file that states it, because the
+ * viewer reads the accepted identity from that file. A suite pinned to the
+ * real identity could not tell a viewer that reads the schema from one that
+ * still carries a constant.
  */
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
@@ -17,7 +23,7 @@ import {
   COVERAGE_VALUES,
   DEFAULT_BACK_LINK,
   DEFAULT_SITE_ROOT,
-  DOCUMENT_SCHEMA,
+  DOCUMENT_SCHEMA_URL,
   LINK_ROLES,
   VERDICT_KINDS,
   VERDICT_LABELS,
@@ -27,6 +33,7 @@ import {
   coverageSummary,
   declarationVerdictDisplay,
   destinationHref,
+  documentFormat,
   encodeFragment,
   groupCards,
   normalizedPointToViewport,
@@ -50,19 +57,25 @@ import {
   OTHER_SOURCE_ID,
   PDF_BYTES,
   PDF_ROUTE,
+  SCHEMA_ID,
+  SCHEMA_VERSION,
+  SCHEMA_VERSION_PATTERN,
   SOURCE_ID,
   VIEWER_DIR,
   fakeSha256,
   makeConfig,
   makeDocument,
+  makeFormat,
+  makeFormatSchema,
 } from "./fixtures.mjs";
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
+const FORMAT = makeFormat();
 
 function fixture(documentOverrides = {}, configOverrides = {}) {
   const config = readConfig(makeConfig(configOverrides));
   const doc = makeDocument(PDF_SHA256, documentOverrides);
-  return { config, doc, index: buildIndex(doc, config) };
+  return { config, doc, index: buildIndex(doc, config, FORMAT) };
 }
 
 function cardsOf(index, itemId) {
@@ -108,31 +121,84 @@ test("config: a wrong schema, version, missing field or unsafe route is refused"
   assert.throws(() => readConfig([]), /must be a JSON object/);
 });
 
+// --- the format the shipped schema states -----------------------------------
+
+test("format: the accepted identity and versions come from the schema file", () => {
+  const format = documentFormat(makeFormatSchema());
+  assert.equal(format.schema, SCHEMA_ID);
+  assert.equal(format.version.source, SCHEMA_VERSION_PATTERN);
+  assert.equal(DOCUMENT_SCHEMA_URL, "../schema/annotations.schema.json");
+
+  // Another schema file states another format, and nothing in the viewer
+  // argues with it: that is the whole point of reading the file.
+  const other = documentFormat({
+    properties: {
+      schema: { const: "other/annotations" },
+      schema_version: { pattern: "^12\\.0$" },
+    },
+  });
+  assert.equal(other.schema, "other/annotations");
+  assert.equal(other.version.source, "^12\\.0$");
+});
+
+test("format: a schema file that states no identity is refused, not read as 'anything'", () => {
+  assert.throws(() => documentFormat(null), /must be a JSON Schema object/);
+  assert.throws(() => documentFormat({}), /states no properties\.schema\.const/);
+  assert.throws(() => documentFormat({ properties: { schema: { const: "" } } }),
+                /states no properties\.schema\.const/);
+  assert.throws(
+    () => documentFormat({ properties: { schema: { const: SCHEMA_ID } } }),
+    /states no properties\.schema_version\.pattern/,
+  );
+  assert.throws(
+    () => documentFormat(makeFormatSchema({
+      properties: { schema: { const: SCHEMA_ID }, schema_version: { pattern: "^(1\\." } },
+    })),
+    /not a regular expression/,
+  );
+});
+
 // --- the document's three refusals -----------------------------------------
 
-test("document: the configured pdf source is found, and a 1.x minor still reads", () => {
+test("document: the configured pdf source is found, and another minor still reads", () => {
   const doc = makeDocument(PDF_SHA256);
-  const source = pdfSource(doc, SOURCE_ID);
+  const source = pdfSource(doc, SOURCE_ID, FORMAT);
   assert.equal(source.physical_page_count, 12);
   assert.equal(source.sha256, PDF_SHA256);
-  assert.equal(pdfSource({ ...doc, schema_version: "1.7" }, SOURCE_ID).id, SOURCE_ID);
+  assert.equal(pdfSource({ ...doc, schema_version: "7.11" }, SOURCE_ID, FORMAT).id, SOURCE_ID);
 });
 
 test("document: a wrong schema, a wrong major version or a missing source is refused", () => {
   const doc = makeDocument(PDF_SHA256);
-  assert.equal(DOCUMENT_SCHEMA, "lean-companion/annotations");
-  assert.throws(() => pdfSource({ ...doc, schema: "notes/overlay" }, SOURCE_ID), /has schema/);
-  // The vendored format pins one schema id, so a neighbouring spelling of the
-  // same format is refused rather than translated.
+  assert.equal(doc.schema, FORMAT.schema, "the fixture is of the fixture's format");
+  assert.throws(() => pdfSource({ ...doc, schema: "notes/overlay" }, SOURCE_ID, FORMAT),
+                /has schema/);
+  // The shipped schema pins one id, so a neighbouring spelling of the same
+  // format is refused rather than translated.
   assert.throws(
-    () => pdfSource({ ...doc, schema: "formal-companion/annotations" }, SOURCE_ID),
-    /has schema "formal-companion\/annotations"/,
+    () => pdfSource({ ...doc, schema: "example/annotation" }, SOURCE_ID, FORMAT),
+    /has schema "example\/annotation"/,
   );
-  assert.throws(() => pdfSource({ ...doc, schema_version: "2.0" }, SOURCE_ID), /schema_version/);
-  assert.throws(() => pdfSource({ ...doc, schema_version: 1 }, SOURCE_ID), /schema_version/);
-  assert.throws(() => pdfSource(doc, "src:absent"), /has no source "src:absent"/);
-  assert.throws(() => pdfSource(doc, OTHER_SOURCE_ID), /needs a pdf source/);
-  assert.throws(() => pdfSource("not a document", SOURCE_ID), /must be a JSON object/);
+  assert.throws(() => pdfSource({ ...doc, schema_version: "2.0" }, SOURCE_ID, FORMAT),
+                /schema_version/);
+  assert.throws(() => pdfSource({ ...doc, schema_version: 7 }, SOURCE_ID, FORMAT),
+                /schema_version/);
+  // A version the pattern matches only in part is not a match.
+  assert.throws(() => pdfSource({ ...doc, schema_version: `${SCHEMA_VERSION}x` },
+                                SOURCE_ID, FORMAT), /schema_version/);
+  assert.throws(() => pdfSource(doc, "src:absent", FORMAT), /has no source "src:absent"/);
+  assert.throws(() => pdfSource(doc, OTHER_SOURCE_ID, FORMAT), /needs a pdf source/);
+  assert.throws(() => pdfSource("not a document", SOURCE_ID, FORMAT),
+                /must be a JSON object/);
+});
+
+test("document: with no format read from the schema file, nothing is judged at all", () => {
+  const doc = makeDocument(PDF_SHA256);
+  for (const format of [undefined, null, {}, { schema: SCHEMA_ID },
+                        { schema: SCHEMA_ID, version: SCHEMA_VERSION_PATTERN }]) {
+    assert.throws(() => pdfSource(doc, SOURCE_ID, format),
+                  /annotation format was not read from/);
+  }
 });
 
 test("document: a pdf source without sha256 or without a page count is refused", () => {
@@ -148,11 +214,11 @@ test("document: a pdf source without sha256 or without a page count is refused",
       return copy;
     }),
   });
-  assert.throws(() => pdfSource(without("sha256"), SOURCE_ID), /carries no sha256/);
-  assert.throws(() => pdfSource(without("physical_page_count"), SOURCE_ID),
+  assert.throws(() => pdfSource(without("sha256"), SOURCE_ID, FORMAT), /carries no sha256/);
+  assert.throws(() => pdfSource(without("physical_page_count"), SOURCE_ID, FORMAT),
                 /carries no physical_page_count/);
   const short = { ...doc, sources: [{ ...doc.sources[0], sha256: "abc" }, doc.sources[1]] };
-  assert.throws(() => pdfSource(short, SOURCE_ID), /carries no sha256/);
+  assert.throws(() => pdfSource(short, SOURCE_ID, FORMAT), /carries no sha256/);
 });
 
 // --- geometry ---------------------------------------------------------------
@@ -287,7 +353,7 @@ test("index: a region that cannot be placed is dropped with a warning, not guess
   delete bare.page_size;
   delete bare.page_sizes;
   const config = readConfig(makeConfig());
-  const index = buildIndex({ ...doc, sources: [bare, doc.sources[1]] }, config);
+  const index = buildIndex({ ...doc, sources: [bare, doc.sources[1]] }, config, FORMAT);
   assert.equal(index.pages.has(5), false);
   assert.equal(index.warnings.length, 1);
   assert.match(index.warnings[0], /^loc:0003: /);
@@ -297,7 +363,7 @@ test("index: a region that cannot be placed is dropped with a warning, not guess
     ...doc,
     sources: [{ ...doc.sources[0], physical_page_count: 2 }, doc.sources[1]],
   };
-  const clipped = buildIndex(offPage, config);
+  const clipped = buildIndex(offPage, config, FORMAT);
   assert.equal(clipped.warnings.length, 2);
   assert.ok(clipped.warnings.some((line) => /past the source's 2 physical pages/.test(line)));
 });
@@ -387,6 +453,7 @@ test("index: coverage and its note ride on the item", () => {
           : item2),
     }),
     readConfig(makeConfig()),
+    FORMAT,
   );
   assert.equal(plain.items.get("item:definition-2.1").coverageNote,
                "spelled without the x_ prefix");

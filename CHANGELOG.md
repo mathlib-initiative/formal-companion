@@ -246,6 +246,32 @@ release has something to say.
   cross-check needed it and must not have had a second item regex of its own.
 
 ### Changed
+- The annotation format is now pinned in **one** place, the vendored release,
+  and a generated overlay reads its format from the schema it ships. Four
+  runtime files used to carry the format's `schema` value or its major as a
+  constant, and `templates/overlay/runtime/schema/` held a fifth copy, the
+  vendored schema duplicated by hand; a format upgrade would
+  have left all five saying the old thing while the checker said the new one,
+  and the format repository's next major renames the identity. The template
+  copy is deleted. `cf overlay sync` now copies the vendored package's own
+  schema file (`formal_companion_annotations.validate.SCHEMA_PATH`) to
+  `pdf-overlay/schema/annotations.schema.json`, lists it in `GENERATED.json`
+  `files` with its sha256, and records the release in a new `GENERATED.json`
+  `format` block (`package`, `version`, `tag`, `commit` from the manifest;
+  `schema`, `schema_version` from the vendored `vocab`), which
+  `cf overlay sync --check`, `cf overlay check` and
+  `pdf-overlay/tools/check_generated.py` all verify. `viewer-core.js` (a new
+  pure `documentFormat`), `viewer.js`, `serve.py`, `build_site.py` and
+  `check_generated.py` take the accepted `schema` from that schema's
+  `properties.schema.const` and the accepted `schema_version` from a full
+  match of its `properties.schema_version.pattern`; the viewer fetches it
+  before the document and refuses to start without it, and `build_site.py`
+  publishes `schema/` into the site mount so it can. `cf review-tags` uses
+  `vocab.ANNOTATION_SCHEMA` instead of the literal. A format upgrade is now
+  `scripts/annotations/sync_format.py`, the suite, then `cf overlay export` +
+  `cf overlay sync` per companion, and nothing else: `docs/overlay.md`,
+  "Upgrading the format", and `tests/test_format_pin.py`, which fails on any
+  copy of the identity under `templates/overlay/runtime/` or `scripts/`.
 - The annotation format moved to its own repository,
   formal-companion-annotations, released as 1.0.0 (tag `v1.0.0`, commit
   `2458140`): the schema, the specification, the checker, the id rules, the

@@ -41,7 +41,19 @@ from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
+SCRIPTS = SKILL / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
+from formal_companion_annotations import validate as V                # noqa: E402
+from formal_companion_annotations import vocab as fmt                 # noqa: E402
+
 TOOLS = SKILL / "templates" / "overlay" / "runtime" / "tools"
+#: `cf overlay sync` copies the vendored format schema here; the tools read
+#: the accepted document identity out of it, so the fixture ships it too.
+#: Spelled as the tools spell it, so the fixture cannot drift from them.
+FORMAT_SCHEMA_RELATIVE = "/".join(("schema", "annotations.schema.json"))
 
 
 def load_tool(name: str):
@@ -170,8 +182,10 @@ class Companion:
         self.root = base / "companion"
         self.overlay = self.root / "pdf-overlay"
         (self.overlay / "tools").mkdir(parents=True)
+        (self.overlay / "schema").mkdir()
         (self.overlay / "viewer").mkdir()
         (self.overlay / "vendor" / "pdfjs").mkdir(parents=True)
+        shutil.copy2(V.SCHEMA_PATH, self.overlay / FORMAT_SCHEMA_RELATIVE)
         (self.overlay / "viewer" / "index.html").write_text(
             "<!doctype html><title>overlay</title>\n", encoding="utf-8")
         (self.overlay / "viewer" / "viewer.js").write_text(
@@ -227,8 +241,8 @@ class Companion:
         source.update(source_overrides)
         source = {key: value for key, value in source.items() if value is not None}
         return {
-            "schema": "lean-companion/annotations",
-            "schema_version": "1.0",
+            "schema": fmt.ANNOTATION_SCHEMA,
+            "schema_version": fmt.ANNOTATION_SCHEMA_VERSION,
             "companion": {"id": "notes-companion", "name": "notes-companion"},
             "sources": [source],
             "items": [],
@@ -425,11 +439,13 @@ class TestThePdfIdentityComesFromTheDocument(OverlayToolsTestCase):
                     self.companion.record()
 
     def test_a_document_of_another_schema_is_refused(self):
+        """The version the shipped schema's pattern refuses, in its own words."""
         path = self.companion.overlay / "annotations.json"
         value = self.companion.document_value()
         value["schema_version"] = "2.0"
         path.write_text(json.dumps(value), encoding="utf-8")
-        with self.assertRaisesRegex(SERVE.OverlayError, "expected a 1.x version"):
+        with self.assertRaisesRegex(SERVE.OverlayError,
+                                    r"schema_version: expected a version matching"):
             self.companion.record()
 
 
@@ -701,7 +717,10 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(
             sorted(published),
             ["annotations.json", "overlay.config.json", "receipt.json",
-             "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
+             FORMAT_SCHEMA_RELATIVE, "vendor/pdfjs/LICENSE", "viewer/index.html",
+             "viewer/viewer.js"],
+            "the viewer fetches the format schema from the mount, so schema/ is "
+            "published with the viewer")
         self.assertEqual(published["viewer/viewer.js"],
                          digest((self.companion.overlay / "viewer/viewer.js").read_bytes()))
         self.assertEqual(summary["mount"], "pdf-overlay")
@@ -716,8 +735,8 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(receipt["source_id"], SOURCE_ID)
         rows = {row["path"]: row["sha256"] for row in receipt["files"]}
         self.assertEqual(sorted(rows), ["annotations.json", "overlay.config.json",
-                                        "vendor/pdfjs/LICENSE", "viewer/index.html",
-                                        "viewer/viewer.js"])
+                                        FORMAT_SCHEMA_RELATIVE, "vendor/pdfjs/LICENSE",
+                                        "viewer/index.html", "viewer/viewer.js"])
         for relative, expected in rows.items():
             with self.subTest(path=relative):
                 self.assertEqual(digest((mount / relative).read_bytes()), expected)

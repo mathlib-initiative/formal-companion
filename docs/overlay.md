@@ -9,8 +9,8 @@ comes from two data files that the viewer and the tools read at run time:
 | file | written by | what it holds |
 |---|---|---|
 | `overlay.config.json` | `cf overlay init`, then edited by the companion | presentation and local-build settings (section 3) |
-| `annotations.json` | `cf overlay export` (any `cf export` convention) | the companion's annotation document, format 1.0 (`docs/annotations.md`) |
-| `GENERATED.json` | `cf overlay sync` | which formal-companion commit generated the directory, and the sha256 of every copied file |
+| `annotations.json` | `cf overlay export` (any `cf export` convention) | the companion's annotation document (`docs/annotations.md`) |
+| `GENERATED.json` | `cf overlay sync` | which formal-companion commit generated the directory, which annotation format release it was generated against, and the sha256 of every copied file |
 
 Because the copied files are byte-identical to the templates, a companion's
 CI can check the whole directory with `python3 pdf-overlay/tools/check_generated.py`,
@@ -22,18 +22,23 @@ hand-written overlay; behaviour this document lists as kept must be kept. That
 companion's own file names appear below as prose, because they are files of
 its repository and never of this one.
 
-**The annotation format is a separate specification.** Every "format section"
-reference below is a section of formal-companion-annotations 1.0.0, the release
-vendored under `vendor/formal_companion_annotations/`
+**The annotation format is a separate specification, and this repository holds
+exactly one pin on it.** Every "format section" reference below is a section of
+formal-companion-annotations, the release vendored under
+`vendor/formal_companion_annotations/` and sealed by
+`vendor/formal_companion_annotations.manifest.json`
 (`docs/annotations.md` here is only a pointer to it): records are its section
-3, locations and selectors its section 4, ids its section 5. Its `schema` value
-is `lean-companion/annotations`, and the vendored package — its
-`formal_companion_annotations.vocab` and its schema — is authoritative wherever
-this document and it could be read differently.
+3, locations and selectors its section 4, ids its section 5. The vendored
+package — its `formal_companion_annotations.vocab` and its schema — is
+authoritative wherever this document and it could be read differently, and
+**no file outside `vendor/` states the format's `schema` value or its major
+version**. The format repository moves ahead on its own, so bumping the
+vendored release is the only edit a format upgrade needs; see "Upgrading the
+format" at the end of this document.
 
 **Contents**: 1 rules · 2 layout · 3 `overlay.config.json` · 4 the viewer ·
 5 the runtime tools · 6 `cf overlay` · 7 the producers · 8 what the port
-leaves behind
+leaves behind · upgrading the format
 
 ## 1. Rules
 
@@ -81,8 +86,6 @@ templates/overlay/
     THIRD_PARTY.md             PDF.js, its version and its licence
     schema/
       overlay-config-v1.schema.json   the config, Draft 2020-12
-      annotations-v1.schema.json      a byte-identical copy of the vendored
-                                      format schema
     tools/
       serve.py             acquire + verify the PDF, optional build, loopback server
       build_site.py        integrate the viewer into a built site
@@ -109,10 +112,22 @@ pdf-overlay/
   README.md THIRD_PARTY.md schema/ tools/ viewer/ vendor/
 ```
 
-`templates/overlay/runtime/schema/annotations-v1.schema.json` is copied from
-`vendor/formal_companion_annotations/schema/annotations-v1.schema.json` so that
-a companion can validate its document with any Draft 2020-12 validator offline.
-The gate and `tests/test_overlay_cli.py` both compare the two byte for byte.
+`pdf-overlay/schema/annotations.schema.json` is **not** a template: `sync`
+copies it from the vendored release itself, through
+`formal_companion_annotations.validate.SCHEMA_PATH`, whatever that release
+names its own file, and lists it in `GENERATED.json` `files` with its sha256
+like every other synced file. A companion can therefore validate its document
+with any Draft 2020-12 validator offline, and the schema it validates against
+is the schema `cf overlay check` validates against — there is no second copy to
+drift. `tests/test_format_pin.py` compares the two byte for byte.
+
+The name carries no major version on purpose. The generated runtime reads the
+document identity it accepts out of that file — the `schema` value from its
+`properties.schema.const`, the accepted `schema_version` from a full match of
+its `properties.schema_version.pattern` — so a release that renames the
+identity changes the file's contents and nothing else. No file under
+`templates/overlay/runtime/` may carry an annotation schema identity or a
+format major as a literal, and `tests/test_format_pin.py` fails on one.
 
 ## 3. `overlay.config.json`, version 1
 
@@ -187,11 +202,16 @@ the measure_theory viewer (`default-src 'self'`, no inline script or style,
 `connect-src 'self'`).
 
 At start-up the viewer fetches `../overlay.config.json`, then
-`../annotations.json`, with the size-capped `checkedFetch` of the original,
-and refuses (an error message on the page, never a blank page) a document
-whose `schema` is not `lean-companion/annotations`, whose `schema_version`
-does not start with `1.`, or that has no `kind: pdf` source with the
-config's `source_id` carrying `sha256` and `physical_page_count`.
+`../schema/annotations.schema.json`, then `../annotations.json`, all three
+with the size-capped `checkedFetch` of the original. It refuses (an error
+message on the page, never a blank page) a schema file that is missing or
+states no `properties.schema.const` or `properties.schema_version.pattern`,
+and a document whose `schema` is not the `const` that file states, whose
+`schema_version` does not match that file's `pattern` end to end, or that has
+no `kind: pdf` source with the config's `source_id` carrying `sha256` and
+`physical_page_count`. `documentFormat(schemaJson)` in `viewer-core.js` is
+that reading, and it is a pure function the node suite drives against a
+synthetic format.
 
 It then builds, purely from the document:
 
@@ -256,9 +276,10 @@ own file, not from the working directory.
   until interrupted. `--build-only` stops before serving. A second run that
   finds the port busy says so and exits. Exit codes and one-line `STOP`
   messages as in the original.
-- **`build_site.py`** (a port of its `build_combined_site.py`): copy `viewer/`,
-  `vendor/`, `overlay.config.json` and `annotations.json` into
-  `<output_root>/<mount>/`, replace any previous copy atomically (never stop
+- **`build_site.py`** (a port of its `build_combined_site.py`): copy `schema/`,
+  `viewer/`, `vendor/`, `overlay.config.json` and `annotations.json` into
+  `<output_root>/<mount>/` — `schema/` because the viewer fetches the format
+  schema from the mount — replace any previous copy atomically (never stop
   on stale output), insert or replace one link block between
   `<!-- formal-companion-overlay-link -->` and
   `<!-- /formal-companion-overlay-link -->` in `<output_root>/<index>`, and
@@ -266,10 +287,12 @@ own file, not from the working directory.
   wrote. It does not run Lake; `serve.py --build` does that first.
 - **`check_generated.py`**: verify that every file listed in
   `GENERATED.json` exists with its sha256, that `pdf-overlay/` holds no
-  other files except `overlay.config.json` and `annotations.json`, that the
-  config satisfies section 3, and that `annotations.json` parses, has the
-  format's `schema`, and has the config's source as a `kind: pdf` source
-  with `sha256`. Exit 0 or 1 with one line per problem. It does not run the
+  other files except `overlay.config.json` and `annotations.json`, that
+  `GENERATED.json`'s `format` block is well formed and agrees with the
+  shipped schema, that the config satisfies section 3, and that
+  `annotations.json` parses, carries the `schema` and a `schema_version` that
+  schema states, and has the config's source as a `kind: pdf` source with
+  `sha256`. Exit 0 or 1 with one line per problem. It does not run the
   format's own checker — that is a package this directory deliberately does
   not depend on, and `cf overlay check` runs it instead.
 
@@ -288,8 +311,8 @@ cf overlay destinations --site DIR --doc annotations.json --out FRAGMENT
 | command | does |
 |---|---|
 | `init` | write `pdf-overlay/overlay.config.json` from the example, with `source_id`, `title`, the cache file name (default `<source-id>.pdf`) and the route filled in, refusing to overwrite without `--force` |
-| `sync` | copy every file under `templates/overlay/runtime/` into `pdf-overlay/`, delete files a previous `GENERATED.json` listed that are no longer templates, write `GENERATED.json`; refuse when `pdf-overlay/` holds a file that is neither listed nor an instance file (naming it) |
-| `sync --check` | read-only: exit 1 naming every missing, changed or extra file, and every disagreement between `GENERATED.json` and the templates |
+| `sync` | copy every file under `templates/overlay/runtime/` into `pdf-overlay/`, add the vendored format's own schema as `pdf-overlay/schema/annotations.schema.json`, delete files a previous `GENERATED.json` listed that are no longer generated, write `GENERATED.json`; refuse when `pdf-overlay/` holds a file that is neither listed nor an instance file (naming it) |
+| `sync --check` | read-only: exit 1 naming every missing, changed or extra file, every disagreement between `GENERATED.json` and what `sync` would write, and a `format` block that is not this checkout's pin |
 | `check` | `sync --check`, the config rules, `formal_companion_annotations` validation of `annotations.json` (`canonical=True`), and the overlay rules below |
 | `export` | run that `cf export` subcommand to a temporary file outside the companion and, when it succeeds and validates, write it to `pdf-overlay/annotations.json`. Everything after a bare `--` is passed to `cf export` unchanged |
 | `geometry` | item headings and regions from `pdftotext -bbox-layout` (or a saved XHTML, `--bbox-xhtml`) as annotation `items`, `locations` and `provenance` records |
@@ -311,6 +334,11 @@ the companion's own document.
   "schema": "formal-companion/overlay-generated",
   "schema_version": 1,
   "generator": {"name": "formal-companion", "version": "<cflib version>", "commit": "<this repo's HEAD>"},
+  "format": {
+    "package": "formal-companion-annotations",
+    "version": "<the vendored release>", "tag": "v<that>", "commit": "<its upstream commit>",
+    "schema": "<vocab.ANNOTATION_SCHEMA>", "schema_version": "<vocab.ANNOTATION_SCHEMA_VERSION>"
+  },
   "instance_files": ["annotations.json", "overlay.config.json"],
   "files": [{"path": "viewer/viewer.js", "sha256": "<hex>"}]
 }
@@ -320,6 +348,16 @@ the companion's own document.
 instance files. `generator.commit` is this checkout's HEAD, read read-only
 through `cflib.gitsafe`; it is absent when the skill is not a git checkout,
 which is a fact about the generator and not a problem with the directory.
+
+`format` is the annotation format release the directory was generated against:
+`version`, `tag` and `commit` are read from
+`vendor/formal_companion_annotations.manifest.json`, and `schema` and
+`schema_version` from the vendored `formal_companion_annotations.vocab`, so
+the block is a statement *about* the pin and never a second place the identity
+is typed in. All six keys are required. `cf overlay sync --check` and
+`cf overlay check` compare it with this checkout's pin;
+`tools/check_generated.py`, which has neither the manifest nor the package,
+checks its shape and the two values the shipped schema settles.
 
 ## 7. Producers
 
@@ -361,3 +399,37 @@ A companion that keeps data in its own convention (measure_theory's geometry
 batches, target refinement, verdicts, destinations and snippets) keeps it
 outside `pdf-overlay/` and turns it into `annotations.json` with
 `cf overlay export`.
+
+## Upgrading the format
+
+The annotation format's repository moves ahead on its own, and its next major
+renames the schema identity. Nothing here follows it automatically and nothing
+here keeps the old identity behind your back: the whole dependency is the
+vendored release, so the upgrade is
+
+```sh
+python3 scripts/annotations/sync_format.py <formal-companion-annotations checkout> vX.Y.Z
+python3 -m unittest discover -s tests
+node --test templates/overlay/tests/*.test.mjs
+```
+
+`sync_format.py` replaces `vendor/formal_companion_annotations/` and rewrites
+its manifest; commit the two together. The suite is where a release that
+changed something shows up — `tests/test_vendored_format.py` seals the bytes,
+`tests/test_format_pin.py` holds the pin, and the exporters' tests say whether
+the documents this skill writes still validate.
+
+Then, in each companion, in this order:
+
+```sh
+cf overlay export <companion> --convention <convention> --commit <sha>
+cf overlay sync <companion>
+```
+
+`export` rewrites `annotations.json` in the new format and `sync` replaces
+`pdf-overlay/schema/annotations.schema.json` and the `format` block that
+records it.
+Between the two the directory is inconsistent, and `cf overlay check` says so;
+that is the point of running them together. A companion that syncs without
+exporting gets a document its own `check_generated.py` refuses, naming the
+schema and the version the new schema states.

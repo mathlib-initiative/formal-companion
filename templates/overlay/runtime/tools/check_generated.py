@@ -26,6 +26,14 @@ It reports, one line per problem, and exits 1 when there is one:
   and carries the config's `source_id` as a `kind: pdf` source with a
   `sha256`.  The format's full checker is not here (it is a package this
   directory deliberately does not depend on); `cf overlay check` runs it.
+
+Which documents count as "the annotation format" is not written down here.
+`pdf-overlay/schema/annotations.schema.json` beside this directory is the
+format's own JSON Schema, copied in by `cf overlay sync`, and its
+``properties.schema.const`` and ``properties.schema_version.pattern`` are the
+only statement of the accepted identity; `GENERATED.json`'s ``format`` block
+records which release that schema came from.  A format upgrade is therefore a
+new vendored release and a re-sync, and nothing in this file to edit.
 """
 from __future__ import annotations
 
@@ -48,11 +56,14 @@ CONFIG_SCHEMA = "formal-companion/overlay-config"
 CONFIG_SCHEMA_VERSION = 1
 GENERATED_SCHEMA = "formal-companion/overlay-generated"
 GENERATED_SCHEMA_VERSION = 1
-#: The annotation format's own schema id
-#: (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`).
-DOCUMENT_SCHEMA = "lean-companion/annotations"
-#: Readers match the major version only (format section 9.1).
-DOCUMENT_SCHEMA_MAJOR = "1."
+#: The annotation format's own schema, as `cf overlay sync` copied it out of
+#: the vendored release.  Nothing here names the format's identity: it is read
+#: from this file.
+FORMAT_SCHEMA_PATH = ("schema", "annotations.schema.json")
+#: The distribution `GENERATED.json`'s `format` block must name.
+FORMAT_PACKAGE = "formal-companion-annotations"
+#: The keys of that block, and the two the shipped schema settles.
+FORMAT_KEYS = ("package", "version", "tag", "commit", "schema", "schema_version")
 
 CONFIG_KEYS = {
     "schema", "schema_version", "source_id", "title", "lede", "back_link",
@@ -142,6 +153,55 @@ def _lstat(path: Path, label: str) -> int:
         raise Unreadable(f"{label}: {path} does not exist") from error
     except OSError as error:                                 # pragma: no cover
         raise Unreadable(f"{label}: cannot inspect {path}: {error}") from error
+
+
+# ---------------------------------------------------------------------------
+# the document identity, read from the schema this directory ships
+# ---------------------------------------------------------------------------
+
+class DocumentFormat:
+    """Which documents the shipped annotation schema accepts.
+
+    `schema` is the schema's ``properties.schema.const`` and `version` is a
+    compiled ``properties.schema_version.pattern``.  A schema file that states
+    neither is a broken generated directory, not a licence to accept anything.
+    """
+
+    __slots__ = ("schema", "version")
+
+    def __init__(self, schema: str, version: "re.Pattern[str]") -> None:
+        self.schema = schema
+        self.version = version
+
+
+def format_label() -> str:
+    return "/".join(FORMAT_SCHEMA_PATH)
+
+
+def document_format(overlay: Path) -> DocumentFormat:
+    """Read `pdf-overlay/schema/annotations.schema.json`, or say why it cannot be."""
+    label = format_label()
+    value = strict_json(read_bytes(overlay.joinpath(*FORMAT_SCHEMA_PATH), label), label)
+    if not isinstance(value, dict):
+        raise Unreadable(f"{label}: expected a JSON Schema object")
+    properties = value.get("properties")
+    properties = properties if isinstance(properties, dict) else {}
+    schema = properties.get("schema")
+    const = schema.get("const") if isinstance(schema, dict) else None
+    if not isinstance(const, str) or not const:
+        raise Unreadable(f"{label}: properties.schema has no const, so the accepted "
+                         f"document identity cannot be read")
+    version = properties.get("schema_version")
+    pattern = version.get("pattern") if isinstance(version, dict) else None
+    if not isinstance(pattern, str) or not pattern:
+        raise Unreadable(f"{label}: properties.schema_version has no pattern, so the "
+                         f"accepted document versions cannot be read")
+    try:
+        compiled = re.compile(pattern)
+    except re.error as error:
+        raise Unreadable(f"{label}: properties.schema_version.pattern is not a regular "
+                         f"expression: {error}") from error
+    return DocumentFormat(const, compiled)
 
 
 # ---------------------------------------------------------------------------
@@ -289,7 +349,45 @@ def _safe_relative(relative: str) -> bool:
             and not any(part in {"", ".", ".."} for part in pure.parts))
 
 
-def generated_problems(overlay: Path, record: Any) -> tuple[list[str], list[str]]:
+def format_problems(record: Any, fmt: DocumentFormat | None) -> list[str]:
+    """`GENERATED.json`'s `format` block, against the schema this directory ships.
+
+    The block records which release of the annotation format generated this
+    directory.  Its `version`, `tag` and `commit` cannot be checked from here
+    -- there is no network and no package -- but the three that can are
+    checked: the distribution's name, and the identity and version the shipped
+    schema states.
+    """
+    out: list[str] = []
+    block = record.get("format") if isinstance(record, dict) else None
+    if not isinstance(block, dict):
+        return [f"{GENERATED_NAME}.format: expected an object naming the annotation "
+                f"format release this directory was generated against"]
+    missing = sorted(set(FORMAT_KEYS) - set(block))
+    if missing:
+        out.append(f"{GENERATED_NAME}.format: missing keys {missing}")
+    unknown = sorted(set(block) - set(FORMAT_KEYS))
+    if unknown:
+        out.append(f"{GENERATED_NAME}.format: unknown keys {unknown}")
+    for key in FORMAT_KEYS:
+        if key in block and (not isinstance(block[key], str) or not block[key]):
+            out.append(f"{GENERATED_NAME}.format.{key}: expected a nonempty string")
+    if isinstance(block.get("package"), str) and block["package"] != FORMAT_PACKAGE:
+        out.append(f"{GENERATED_NAME}.format.package: expected {FORMAT_PACKAGE}")
+    if fmt is None:
+        return out
+    if isinstance(block.get("schema"), str) and block["schema"] != fmt.schema:
+        out.append(f"{GENERATED_NAME}.format.schema: {block['schema']!r} is not the "
+                   f"identity {format_label()} states ({fmt.schema!r})")
+    version = block.get("schema_version")
+    if isinstance(version, str) and version and not fmt.version.fullmatch(version):
+        out.append(f"{GENERATED_NAME}.format.schema_version: {version!r} does not match "
+                   f"the pattern {format_label()} states ({fmt.version.pattern})")
+    return out
+
+
+def generated_problems(overlay: Path, record: Any,
+                       fmt: DocumentFormat | None = None) -> tuple[list[str], list[str]]:
     """Problems with the manifest and the files, and the instance file names."""
     out: list[str] = []
     if not isinstance(record, dict):
@@ -303,6 +401,7 @@ def generated_problems(overlay: Path, record: Any) -> tuple[list[str], list[str]
     generator = record.get("generator")
     if not isinstance(generator, dict) or not generator.get("name"):
         out.append(f"{GENERATED_NAME}.generator: expected an object naming the generator")
+    out += format_problems(record, fmt)
 
     instance = record.get("instance_files")
     if not isinstance(instance, list) or not all(isinstance(n, str) for n in instance):
@@ -367,8 +466,12 @@ def _walk(overlay: Path) -> dict[str, int]:
     return found
 
 
-def document_problems(overlay: Path, source_id: str) -> list[str]:
-    """`annotations.json` parses, is the format, and carries the config's PDF source."""
+def document_problems(overlay: Path, source_id: str, fmt: DocumentFormat) -> list[str]:
+    """`annotations.json` parses, is the format, and carries the config's PDF source.
+
+    "Is the format" means what *fmt* says, which is what the shipped schema
+    says: this tool holds no identity of its own to compare against.
+    """
     try:
         value = strict_json(read_bytes(overlay / DOCUMENT_NAME, DOCUMENT_NAME),
                             DOCUMENT_NAME)
@@ -377,12 +480,13 @@ def document_problems(overlay: Path, source_id: str) -> list[str]:
     if not isinstance(value, dict):
         return [f"{DOCUMENT_NAME}: expected an object"]
     out: list[str] = []
-    if value.get("schema") != DOCUMENT_SCHEMA:
-        out.append(f"{DOCUMENT_NAME}.schema: expected {DOCUMENT_SCHEMA}")
+    if value.get("schema") != fmt.schema:
+        out.append(f"{DOCUMENT_NAME}.schema: expected {fmt.schema}, which "
+                   f"{format_label()} states")
     version = value.get("schema_version")
-    if not isinstance(version, str) or not version.startswith(DOCUMENT_SCHEMA_MAJOR):
-        out.append(f"{DOCUMENT_NAME}.schema_version: expected a "
-                   f"{DOCUMENT_SCHEMA_MAJOR}x version")
+    if not isinstance(version, str) or not fmt.version.fullmatch(version):
+        out.append(f"{DOCUMENT_NAME}.schema_version: expected a version matching "
+                   f"{fmt.version.pattern}, which {format_label()} states")
     sources = value.get("sources")
     if not isinstance(sources, list) or not sources:
         return out + [f"{DOCUMENT_NAME}.sources: expected a nonempty array"]
@@ -419,15 +523,21 @@ def problems(overlay: Path) -> list[str]:
     except Unreadable as error:
         return [str(error), f"{GENERATED_NAME} is what `cf overlay sync <companion>` "
                             f"writes; run it from the formal-companion checkout"]
-    out, _instance = generated_problems(overlay, record)
+    schema_problem: list[str] = []
+    try:
+        fmt: DocumentFormat | None = document_format(overlay)
+    except Unreadable as error:
+        fmt, schema_problem = None, [str(error)]
+    out, _instance = generated_problems(overlay, record, fmt)
+    out += schema_problem
     try:
         config = strict_json(read_bytes(overlay / CONFIG_NAME, CONFIG_NAME), CONFIG_NAME)
     except Unreadable as error:
         return out + [str(error)]
     found = config_problems(config)
     out += found
-    if not found:
-        out += document_problems(overlay, config["source_id"])
+    if not found and fmt is not None:
+        out += document_problems(overlay, config["source_id"], fmt)
     return out
 
 

@@ -17,6 +17,11 @@ fourth reader, outside the three-way table because it is deliberately laxer in
 two documented places; what is checked of it is the direction: nothing
 `config.py` accepts may be a config `serve.py` refuses.
 
+The last class here holds a fifth retyped string: the path of the annotation
+format's own schema inside a generated directory.  `cf overlay sync` writes
+that file and four readers fetch or open it by name; a name that drifts in one
+of them is a reader that silently stops checking the format at all.
+
 Everything here is synthetic: a source id, a page title and a file name that
 belong to no edition and no companion.
 """
@@ -49,6 +54,7 @@ from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from cflib.errors import CfError                                      # noqa: E402
 from formal_companion_annotations.schemacheck import Validator        # noqa: E402
 from overlay import config as overlay_config                          # noqa: E402
+from overlay import sync as overlay_sync                              # noqa: E402
 
 RUNTIME = SKILL / "templates" / "overlay" / "runtime"
 SCHEMA_PATH = RUNTIME / "schema" / "overlay-config-v1.schema.json"
@@ -69,6 +75,7 @@ def load_tool(name: str):
 
 CHECK_GENERATED = load_tool("check_generated")
 SERVE = load_tool("serve")
+BUILD_SITE = load_tool("build_site")
 SCHEMA = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 VALIDATOR = Validator(SCHEMA)
 
@@ -304,6 +311,37 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertIn(f'DEFAULT_STORAGE_KEY = "{overlay_config.DEFAULT_STORAGE_KEY}"', viewer)
         self.assertIn(f'href: "{overlay_config.DEFAULT_BACK_LINK["href"]}"', viewer)
         self.assertIn(f'CONFIG_SCHEMA = "{overlay_config.CONFIG_SCHEMA}"', viewer)
+
+
+class TestTheFourReadersOpenTheSameFormatSchema(unittest.TestCase):
+    """The format schema's path inside a generated directory, retyped five times.
+
+    `cf overlay sync` writes `pdf-overlay/schema/annotations.schema.json`; the three
+    runtime tools open it and the viewer fetches it, each by a name of its
+    own, because none of them may import another.  A name that drifts in one
+    of them is a reader that reports a missing schema -- or, worse, stops
+    being the thing the others agree with -- so the five strings are pinned
+    together here.
+    """
+
+    def test_the_tools_name_the_path_sync_writes(self):
+        self.assertEqual(overlay_sync.FORMAT_SCHEMA_PATH,
+                         ("schema", "annotations.schema.json"))
+        written = overlay_sync.FORMAT_SCHEMA_RELATIVE
+        for tool, module in (("check_generated", CHECK_GENERATED), ("serve", SERVE),
+                             ("build_site", BUILD_SITE)):
+            with self.subTest(tool=tool):
+                self.assertEqual("/".join(module.FORMAT_SCHEMA_PATH), written)
+
+    def test_the_viewer_fetches_it_from_beside_its_own_directory(self):
+        """`viewer/index.html` sits one level under the mount, hence `../`."""
+        viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
+        self.assertIn(
+            f'DOCUMENT_SCHEMA_URL = "../{overlay_sync.FORMAT_SCHEMA_RELATIVE}"', viewer)
+
+    def test_build_site_publishes_the_directory_the_viewer_fetches_from(self):
+        root = overlay_sync.FORMAT_SCHEMA_RELATIVE.split("/")[0]
+        self.assertIn(root, BUILD_SITE.RUNTIME_ROOTS)
 
 
 class TestProblemsAreReportedWhole(unittest.TestCase):

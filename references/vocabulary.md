@@ -175,7 +175,13 @@ deviation a companion states in its own `adapter.yaml`: no scan runs, so nothing
 `cf extract` warns on every run that the table was not cross-checked. A bare `off` is YAML false
 and is read as `off`.
 
-### 1.10 Annotation documents (`lean-companion/annotations`, schema_version `1.0`)
+### 1.10 Annotation documents (the vendored format)
+
+The document's own `schema` and `schema_version` are not written down here, and not anywhere
+outside `vendor/`: they are `formal_companion_annotations.vocab.ANNOTATION_SCHEMA` and
+`ANNOTATION_SCHEMA_VERSION` of the release
+`vendor/formal_companion_annotations.manifest.json` names, and the format repository may rename
+them in a future major (`docs/overlay.md`, "Upgrading the format").
 
 The annotation enums are defined in the vendored `formal_companion_annotations.vocab`
 (`vendor/formal_companion_annotations/vocab.py`, one release of formal-companion-annotations)

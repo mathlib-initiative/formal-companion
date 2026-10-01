@@ -50,10 +50,12 @@ except ImportError:                                          # pragma: no cover
 CONFIG_NAME = "overlay.config.json"
 DOCUMENT_NAME = "annotations.json"
 CONFIG_SCHEMA = "formal-companion/overlay-config"
-#: The annotation format's own schema id
-#: (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`), which is what every
-#: `cf export` convention writes and what the viewer accepts.
-DOCUMENT_SCHEMA = "lean-companion/annotations"
+#: The annotation format's own JSON Schema, as `cf overlay sync` copied it out
+#: of the vendored release.  Which documents this tool accepts is read from
+#: that file -- its `properties.schema.const` and
+#: `properties.schema_version.pattern` -- and is written down nowhere here, so
+#: a format upgrade is a re-sync and no edit.
+FORMAT_SCHEMA_PATH = ("schema", "annotations.schema.json")
 BUILD_SITE_TOOL = "build_site.py"
 LOCK_NAME = ".overlay-serve.lock"
 USER_AGENT = "formal-companion-overlay/1"
@@ -237,6 +239,51 @@ def checked_bytes(path: Path, label: str) -> bytes:
         fail(f"{label}: cannot read {path}: {error}")
 
 
+@dataclass(frozen=True)
+class DocumentFormat:
+    """Which documents the shipped annotation schema accepts.
+
+    `schema` is the schema's ``properties.schema.const``; `version` is its
+    compiled ``properties.schema_version.pattern``.  A schema that states
+    neither stops the tool: this directory has no second copy of the identity
+    to fall back on, and guessing one would accept a document the companion's
+    own validator would refuse.
+    """
+
+    schema: str
+    version: "re.Pattern[str]"
+
+
+def format_label() -> str:
+    return "/".join(FORMAT_SCHEMA_PATH)
+
+
+def load_document_format(overlay: Path) -> DocumentFormat:
+    """Read `pdf-overlay/schema/annotations.schema.json` beside the document."""
+    label = format_label()
+    value = strict_json(checked_bytes(overlay.joinpath(*FORMAT_SCHEMA_PATH), label), label)
+    if not isinstance(value, dict):
+        fail(f"{label}: expected a JSON Schema object")
+    properties = value.get("properties")
+    properties = properties if isinstance(properties, dict) else {}
+    schema = properties.get("schema")
+    const = schema.get("const") if isinstance(schema, dict) else None
+    if not isinstance(const, str) or not const:
+        fail(f"{label}: properties.schema has no const, so the accepted document "
+             f"identity cannot be read; re-run `cf overlay sync`")
+    version = properties.get("schema_version")
+    pattern = version.get("pattern") if isinstance(version, dict) else None
+    if not isinstance(pattern, str) or not pattern:
+        fail(f"{label}: properties.schema_version has no pattern, so the accepted "
+             f"document versions cannot be read; re-run `cf overlay sync`")
+    try:
+        compiled = re.compile(pattern)
+    except re.error as error:
+        fail(f"{label}: properties.schema_version.pattern is not a regular "
+             f"expression: {error}")
+    return DocumentFormat(schema=const, version=compiled)
+
+
 def relative_subpath(value: Any, label: str) -> str:
     """A nonempty, normalised, traversal-free POSIX path inside the companion."""
     if not isinstance(value, str) or not value:
@@ -407,17 +454,21 @@ def load_config(overlay: Path) -> Config:
     )
 
 
-def load_source_record(overlay: Path, config: Config) -> SourceRecord:
+def load_source_record(overlay: Path, config: Config,
+                       fmt: DocumentFormat | None = None) -> SourceRecord:
     """The PDF identity: the document's `kind: pdf` source the config names."""
+    fmt = load_document_format(overlay) if fmt is None else fmt
     path = overlay / DOCUMENT_NAME
     value = strict_json(checked_bytes(path, DOCUMENT_NAME), DOCUMENT_NAME)
     if not isinstance(value, dict):
         fail(f"{DOCUMENT_NAME}: expected an object")
-    if value.get("schema") != DOCUMENT_SCHEMA:
-        fail(f"{DOCUMENT_NAME}.schema: expected {DOCUMENT_SCHEMA}")
+    if value.get("schema") != fmt.schema:
+        fail(f"{DOCUMENT_NAME}.schema: expected {fmt.schema}, which "
+             f"{format_label()} states")
     version = value.get("schema_version")
-    if not isinstance(version, str) or not version.startswith("1."):
-        fail(f"{DOCUMENT_NAME}.schema_version: expected a 1.x version")
+    if not isinstance(version, str) or not fmt.version.fullmatch(version):
+        fail(f"{DOCUMENT_NAME}.schema_version: expected a version matching "
+             f"{fmt.version.pattern}, which {format_label()} states")
     sources = value.get("sources")
     if not isinstance(sources, list) or not sources:
         fail(f"{DOCUMENT_NAME}.sources: expected a nonempty array")

@@ -129,13 +129,13 @@ def build_destinations(site_dir: Path | str, doc: dict, *, site: str = DEFAULT_S
     declarations = doc.get("declarations") or []
     if not isinstance(declarations, list):
         raise CfError("the document's declarations[] is not an array",
-                      hint="--doc names an annotation document, format 1.0")
+                      hint="--doc names an annotation document of the vendored format")
     cache: dict[str, str | None] = {}
     out: list[dict] = []
     for decl in declarations:
         if not isinstance(decl, dict) or "id" not in decl:
             raise CfError("a declarations[] entry has no id",
-                          hint="--doc names an annotation document, format 1.0")
+                          hint="--doc names an annotation document of the vendored format")
         page = module_page(decl.get("module", ""))
         if page not in cache:
             target = root / page
@@ -178,7 +178,7 @@ def load_document(path: Path) -> dict:
         raise CfError(f"{path} is not a readable annotation document: {exc}") from exc
     if not isinstance(doc, dict):
         raise CfError(f"{path} is not a JSON object",
-                      hint="--doc names an annotation document, format 1.0")
+                      hint="--doc names an annotation document of the vendored format")
     if doc.get("schema") != vocab.ANNOTATION_SCHEMA:
         raise CfError(f"{path} declares schema {doc.get('schema')!r}, not "
                       f"{vocab.ANNOTATION_SCHEMA!r}")

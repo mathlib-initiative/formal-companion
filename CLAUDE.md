@@ -61,6 +61,20 @@ Run everything by path: `python3 scripts/cf.py <command> …`. `cf.py` puts
 `scripts/` on `sys.path` and discovers `cfcmd` modules with pkgutil, so a new
 command is a new file — never a new entrypoint.
 
+**The pin and the bump.** `vendor/formal_companion_annotations/`, sealed by
+`vendor/formal_companion_annotations.manifest.json`, is the *whole* of this
+repository's dependency on the annotation format. Nothing outside `vendor/`
+states the format's `schema` value or its major version: code reads
+`formal_companion_annotations.vocab`, and a generated `pdf-overlay/`, which
+cannot import the package, reads the schema file `cf overlay sync` copies out
+of the release (`pdf-overlay/schema/annotations.schema.json`) and records the
+release in `GENERATED.json`'s `format` block. The format repository moves
+ahead on its own and its next major renames the identity, so a bump must be
+`scripts/annotations/sync_format.py <checkout> vX.Y.Z`, the suite, and then
+`cf overlay export` + `cf overlay sync` in each companion — and nothing else.
+`tests/test_format_pin.py` fails on a second copy of the identity;
+`docs/overlay.md`, "Upgrading the format", is the walkthrough.
+
 **`scripts/sources/` is code, `sources/` is workspace data.** The repo's own
 `.gitignore` carries the workspace patterns, so `sources/` would hide the whole
 stage-1 package from git; the `!scripts/sources/` negation is what stops it.
