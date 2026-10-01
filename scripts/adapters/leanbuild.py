@@ -30,6 +30,9 @@ _MASK = (1 << 64) - 1
 _HEADER_WORDS = frozenset(leanparse._MODIFIERS) | {"public", "meta"}
 #: commands that prefix another as ``<cmd> ... in``
 _IN_PREFIXES = frozenset({"open", "include", "omit", "set_option", "variable"})
+#: literate code parts that stand for a doc comment (its text is not kept), and how that comment opens
+_DOC_PARTS = {"verso": "/--", "markdown": "/--", "modDoc": "/-!", "markdownModDoc": "/-!"}
+_COMMENT_TOKENS = frozenset({"lineComment", "blockComment", "commentDelim"})
 
 
 def _murmur64a(data: bytes, seed: int) -> int:
@@ -62,6 +65,7 @@ def of_text(text: str) -> str:
 # -- a small Lean lexer for headers ------------------------------------------------
 
 _WORD_RE = re.compile(r"(?:«[^»]*»|[^\s()\[\]{}⟨⟩,:;\"«»@`])+")
+_SPACE_RE = re.compile(r"\s*")
 
 
 def _comment_end(s: str, i: int) -> int:
@@ -287,9 +291,9 @@ class Build:
                 return stem, trace, hashes[0]
         raise _Unusable("trace names another source" if found else "no build data")
 
-    def _verify(self, rel: str, h_text: str):
+    def _verify(self, rel: str, text: str):
         stem, trace, h_src = self._trace(rel)
-        if h_text != h_src.lower():
+        if of_text(text) != h_src.lower():
             raise _Unusable("source changed since the build")
         try:
             out_i, out_o = trace["outputs"]["i"], trace["outputs"]["o"][0]
@@ -314,12 +318,12 @@ class Build:
             raise _Unusable("unexpected .ilean format") from None
         items, lit_reason = None, None
         try:
-            items = self._literate(stem, module, out_o.split(".", 1)[0].lower())
+            items = self._literate(stem, module, out_o.split(".", 1)[0].lower(), text)
         except _Unusable as exc:
             lit_reason = str(exc)
         return module, decls, items, lit_reason
 
-    def _literate(self, stem: Path, module: str, olean_hash: str) -> list[tuple[str, tuple, tuple, list]]:
+    def _literate(self, stem: Path, module: str, olean_hash: str, source: str) -> list[tuple[str, int, int, list]]:
         if self.literate is None:
             raise _Unusable("no literate")
         base = self.literate.joinpath(*stem.relative_to(self.lib).parts)
@@ -344,26 +348,19 @@ class Build:
         if h != want:
             raise _Unusable("literate does not match its hash")
         try:
-            out = []
-            for it in json.loads(text)["items"]["items"]:
-                if it["range"] is None:      # the header of a module without imports
-                    continue
-                a, b = it["range"]
-                out.append((str(it["kind"]), (int(a["line"]) - 1, int(a["column"])),
-                            (int(b["line"]) - 1, int(b["column"])), [str(d) for d in it["defines"]]))
+            return _spans(source, json.loads(text)["items"])
         except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             raise _Unusable("unexpected literate format") from None
-        return out
 
     # -- declarations ------------------------------------------------------------
     def decls(self, path: Path, rel: str, text: str, kinds: tuple[str, ...],
               max_body_lines: int) -> list[Decl] | None:
         """The file's declarations from the build, or None (recorded with the reason) to fall back."""
         try:
-            key = (rel, of_text(text))
+            key = (rel, hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest())
             got = self._cache.get(key)
             if got is None:
-                got = self._cache[key] = self._verify(*key)
+                got = self._cache[key] = self._verify(rel, text)
             module, ilean, items, lit_reason = got
             out = _build_decls(path, rel, text, kinds, max_body_lines, module, ilean, items)
         except _Unusable as exc:
@@ -437,22 +434,70 @@ def _scope_name(src: _Src, start: int, stop: int, word: str) -> str | None:
     return "" if seen is not None else None
 
 
-def _bounds(src: _Src, items: list) -> list[tuple[int, int]]:
-    """Each literate item's ``[start, stop)`` offsets; a range end past the next item's start is cut there."""
-    out = []
-    for n, (_kind, a, b, _defines) in enumerate(items):
-        start = src.at(*a)
-        nxt = src.at(*items[n + 1][1]) if n + 1 < len(items) else len(src.text)
-        stop = src.at(*b)
-        out.append((start, min(stop, nxt) if stop > start else nxt))
+def _pieces(code: dict, tokens: dict, key):
+    """``(text, token kind or None)`` pieces of a SubVerso highlighted-code node, in source order."""
+    todo = [key]
+    while todo:
+        (kind, node), = code[str(todo.pop())].items()
+        if kind == "token":
+            tok = tokens[str(node["tok"])]
+            yield tok["content"], tok["kind"] if isinstance(tok["kind"], str) else next(iter(tok["kind"]))
+        elif kind in ("text", "unparsed"):
+            yield node["str"], None
+        elif kind == "seq":
+            todo.extend(reversed(node["highlights"]))
+        elif kind in ("span", "tactics"):
+            todo.append(node["content"])
+        elif kind != "point":
+            raise ValueError(kind)
+
+
+def _spans(text: str, lit: dict) -> list[tuple[str, int, int, list[str]]]:
+    """``(kind, start, stop, defines)`` per literate item, its code checked to spell out ``text``."""
+    # Lake checks the literate JSON against the .olean only, which edits to examples, comments and
+    # `section`/`end` leave unchanged, and verso-literate misplaces items in CRLF text.
+    src = _Src(text)
+    pos, out = 0, []
+    for it in lit["items"]:
+        first = None      # where the command's first token (not a comment) is
+        for part in it["code"]:
+            (kind, value), = part.items()
+            if kind == "highlighted":
+                for piece, tok in _pieces(lit["code"], lit["tokens"], value):
+                    if first is None and tok is not None and tok not in _COMMENT_TOKENS:
+                        first = pos
+                    if text.startswith(piece, pos):
+                        pos += len(piece)
+                        continue
+                    # an identifier token is its name's toString, which drops needless «»
+                    m = _WORD_RE.match(text, pos) if tok else None
+                    if m is None or _name_parts(m.group()) != _name_parts(piece):
+                        raise _Unusable("literate does not match the source")
+                    pos = m.end()
+            elif kind in _DOC_PARTS:      # a docstring, with any whitespace before it
+                j = _SPACE_RE.match(text, pos).end()
+                if not text.startswith(_DOC_PARTS[kind], j):
+                    raise _Unusable("literate does not match the source")
+                first = j if first is None else first
+                pos = _comment_end(text, j)
+            else:
+                raise ValueError(kind)
+        if it["range"] is None:      # the header of a module without imports
+            continue
+        line, col = int(it["range"][0]["line"]) - 1, int(it["range"][0]["column"])
+        if first is None or not 0 <= line < len(src.lines) or src.at(line, col) != first:
+            raise _Unusable("literate does not match the source")
+        out.append((str(it["kind"]), first, pos, [str(d) for d in it["defines"]]))
+    if pos != len(text):
+        raise _Unusable("literate does not match the source")
     return out
 
 
-def _scopes(src: _Src, items: list, bounds: list) -> list[tuple[str, tuple[str, ...]]]:
+def _scopes(src: _Src, items: list) -> list[tuple[str, tuple[str, ...]]]:
     """``(namespace, named sections)`` in force at each literate item."""
     stack: list[tuple[str, str | None]] = []   # (namespace component or "", section name or None)
     out = []
-    for (kind, _a, _b, _defines), (start, stop) in zip(items, bounds):
+    for kind, start, stop, _defines in items:
         out.append((".".join(c for c, _s in stack if c), tuple(s for _c, s in stack if s)))
         last = kind.rsplit(".", 1)[-1].lower()
         if last == "namespace":
@@ -516,8 +561,7 @@ def _build_decls(path: Path, rel: str, text: str, kinds: tuple[str, ...], max_bo
         entries.append(_Entry(got[0], name, full, got[1], doc, start, got[2], private))
     text_decls: list[Decl] = []
     if items is not None:
-        bounds = _bounds(src, items)
-        for (_kind, _a, _b, defines), (start, stop) in zip(items, bounds):
+        for _kind, start, stop, defines in items:
             if defines:
                 continue
             head = _example_head(src, start, stop)
@@ -526,8 +570,8 @@ def _build_decls(path: Path, rel: str, text: str, kinds: tuple[str, ...], max_bo
                 continue
             doc = head[0] if head[0][0] == "doc" else None
             entries.append(_Entry("example", None, None, got[1], doc, head[0][1], got[2], "private" in got[2]))
-        scopes = _scopes(src, items, bounds)
-        starts = [a for a, _b in bounds]
+        scopes = _scopes(src, items)
+        starts = [start for _k, start, _s, _d in items]
         for e in entries:
             k = bisect.bisect_right(starts, e.kw) - 1
             e.ns, e.secs = scopes[k] if k >= 0 else ("", ())
