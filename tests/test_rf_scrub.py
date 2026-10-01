@@ -238,9 +238,10 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
 REPO_ROOTS = ("scripts/", "references/", "docs/", "templates/", "tests/",
               "registry/", "workflows/", "evals/", ".github/", "schema/", "examples/")
 
+#: `.gz` belongs to the path, else `x.jsonl.gz` reads as a citation of `x.jsonl`.
 _PATHISH = re.compile(
     r"[A-Za-z0-9_./*<>{}-]+"
-    r"\.(?:py|md|sh|js|json|jsonl|yaml|yml|txt|tmpl|toml|lean|example)\b")
+    r"\.(?:py|md|sh|js|json|jsonl|yaml|yml|txt|tmpl|toml|lean|example)(?:\.gz)?\b")
 
 #: Tokens that look like this repo's paths and are not. Each one is a path in
 #: ANOTHER tree that the prose is about.
@@ -257,6 +258,16 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "provenance tool of the ledger's edges when the checkout carries it"),
     ("scripts/overlay_geometry_from_layout.py",
      "the same companion's geometry generator, the provenance tool of a batch drawn from the text layer"),
+    ("scripts/build_site.sh",
+     "the docstring-tagged companion's own site recipe, which tests/data/m3/README.md follows to render "
+     "the literate site the M3 page manifest pins"),
+    ("scripts/slim_large_pages.py",
+     "the same companion's earlier post-processor, which docs/proposals/pdf-to-companion.md names"),
+    ("scripts/lazy_literate.py",
+     "the same companion's post-processor that moves tactic states and proof bodies into _lazy/ fragments, "
+     "a step of that render recipe"),
+    ("scripts/check_lazy_pages.py",
+     "the same companion's check that the _lazy/ rewrite lost no text, the last step of that render recipe"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:
@@ -316,6 +327,237 @@ class TestNoCitationOfAFileThatIsNotHere(unittest.TestCase):
                 hits = [rel for rel in tracked_files()
                         if (read(rel) or "").find(token) >= 0]
                 self.assertTrue(hits, f"nothing cites {token} any more; drop the entry")
+
+
+# ---------------------------------------------------------------------------
+# no companion's data, by its shape: kind, name and size
+# ---------------------------------------------------------------------------
+# A gzipped export is not text and names no machine, so the text rules miss it.
+
+#: No test needs these committed; one that needs such a file generates it.
+FORBIDDEN_SUFFIXES = (".lean", ".olean", ".ilean", ".pdf", ".djvu", ".epub",
+                      ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp",
+                      ".tif", ".tiff", ".ppm", ".pgm", ".pbm")
+
+#: Names an exporter or a workspace (`cflib.paths`) writes.
+FORBIDDEN_NAME = re.compile(r"""(?x)
+      \.annotations\.json(?:\.gz)?$   | \.export-(?:report|stats)\.json$
+    | xref\.json(?:\.gz)?$            | site-pages\.json$
+    | ^text\.txt$ | ^statements\.jsonl$ | ^pairs\.jsonl$""")
+
+DATA_SUFFIXES = (".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".xml",
+                 ".gz", ".bz2", ".xz", ".zst", ".zip", ".tar", ".sqlite", ".db")
+
+#: Largest real fixture: 37,521 bytes; smaller leaked export: 340,632 gzipped.
+DATA_BYTES_MAX = 64 * 1024
+
+#: (file, why) exempt from the size cap only; a fixture can be renamed instead.
+DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
+    ("tests/data/m0a/s17b-usage.jsonl.gz",
+     "5,207 rows of {model, usage} token counts and nothing else -- no text, "
+     "paths, hosts or users (tests/data/m0a/README.md); small packed, over the "
+     "cap unpacked"),
+)
+
+
+def _unpacked_bytes(payload: bytes, limit: int) -> int:
+    """How many bytes a gzip holds, counted no further than just past `limit`."""
+    import gzip
+    total = 0
+    try:
+        with gzip.GzipFile(fileobj=io.BytesIO(payload)) as handle:
+            while total <= limit:
+                chunk = handle.read(1 << 16)
+                if not chunk:
+                    break
+                total += len(chunk)
+    except (OSError, EOFError):
+        return total          # not a gzip, or a truncated one: what was read
+    return total
+
+
+def shape_problems(rel: str, size: int, payload) -> list[str]:
+    """`payload()` is called only for a gzip, so the tree scan reads nothing else."""
+    name = rel.rsplit("/", 1)[-1].lower()
+    problems = []
+    if name.endswith(FORBIDDEN_SUFFIXES):
+        problems.append(f"{rel}: a {name.rsplit('.', 1)[-1]} file (Lean, a book, a "
+                        f"rendered page or an image; generate it in a temporary "
+                        f"directory instead)")
+    if FORBIDDEN_NAME.search(name):
+        problems.append(f"{rel}: the name of an export or a workspace file")
+    if name.endswith(DATA_SUFFIXES) and not any(rel == path for path, _ in DATA_ALLOWLIST):
+        if size > DATA_BYTES_MAX:
+            problems.append(f"{rel}: {size:,} bytes of data, over {DATA_BYTES_MAX:,}")
+        elif name.endswith(".gz"):
+            unpacked = _unpacked_bytes(payload(), DATA_BYTES_MAX)
+            if unpacked > DATA_BYTES_MAX:
+                problems.append(f"{rel}: more than {DATA_BYTES_MAX:,} bytes of "
+                                f"data once unpacked")
+    return problems
+
+
+class TestNoCompanionDataByItsShape(unittest.TestCase):
+    def test_no_tracked_file_has_the_shape_of_companion_data(self):
+        problems: list[str] = []
+        for rel in tracked_files():
+            if rel.startswith(VENDORED):
+                continue        # another repository's release, pinned by bytes
+            path = SKILL / rel
+            try:
+                size = path.stat().st_size
+            except OSError:
+                continue
+            problems += shape_problems(rel, size, path.read_bytes)
+        self.assertEqual(problems, [], "CLAUDE.md S1 -- " + "; ".join(problems[:10]))
+
+    def test_every_large_data_exemption_is_needed(self):
+        for rel, why in DATA_ALLOWLIST:
+            with self.subTest(file=rel):
+                path = SKILL / rel
+                self.assertTrue(path.is_file(), f"{rel} is gone; drop the entry")
+                payload = path.read_bytes()
+                big = len(payload) > DATA_BYTES_MAX or (
+                    rel.endswith(".gz")
+                    and _unpacked_bytes(payload, DATA_BYTES_MAX) > DATA_BYTES_MAX)
+                self.assertTrue(big, f"{rel} is under the cap now; drop the "
+                                     f"entry ({why})")
+
+    def test_the_rules_catch_what_they_are_written_for(self):
+        """No `tests/` prefix, or the citation check reads a path as a claim."""
+        import gzip
+        never = lambda: self.fail("only a gzip is read")              # noqa: E731
+        self.assertTrue(shape_problems(
+            "m3/measure_theory.annotations.json.gz", 591_138, never))
+        # renamed, it is still too big to be a fixture
+        self.assertTrue(shape_problems("m3/doc.json.gz", 340_632, never))
+        # packed small: the unpacked size is what gives it away
+        packed = gzip.compress(b'{"signature": "theorem t : True"}\n' * 4000)
+        self.assertLess(len(packed), DATA_BYTES_MAX)
+        self.assertTrue(shape_problems("m9/rows.jsonl.gz", len(packed),
+                                       lambda: packed))
+        self.assertTrue(shape_problems("m9/Basic.lean", 120, never))
+        self.assertTrue(shape_problems("m9/page-012.png", 120, never))
+        self.assertTrue(shape_problems("m3/tml-site-pages.json", 900, never))
+        # what tests/data legitimately holds today
+        self.assertEqual(shape_problems("tests/data/m1/measure_theory.truth.json",
+                                        37_521, never), [])
+        self.assertEqual(shape_problems("tests/test_cflib.py", 135_311, never), [])
+        small = gzip.compress(b'{"model": "m", "usage": {}}\n' * 10)
+        self.assertEqual(shape_problems("m0a/usage.jsonl.gz", len(small),
+                                        lambda: small), [])
+
+
+# ---------------------------------------------------------------------------
+# a branch is more than its last tree
+# ---------------------------------------------------------------------------
+# A PR's head ref keeps every commit and message after a later commit deletes it.
+
+SCRUB_RANGE = os.environ.get("CF_SCRUB_RANGE", "")
+
+MESSAGE_RULES: dict[str, tuple] = {
+    "session_trailer": (
+        lambda text: re.findall(r"(?mi)^(?:claude|codex)-session:.*$", text),
+        "a session trailer is a session id (CLAUDE.md S1); end with Co-Authored-By"),
+}
+
+
+def _git(repo: Path, *args: str, stdin: str | None = None) -> str:
+    out = subprocess.run(["git", "-C", str(repo), *args], input=stdin,
+                         capture_output=True, text=True, timeout=300)
+    if out.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)}: {out.stderr.strip()}")
+    return out.stdout
+
+
+def scan_range(repo: Path, rev_range: str) -> list[str]:
+    """Blobs are checked at their first-seen path, so allowlists apply as in the tree."""
+    paths: dict[str, str] = {}
+    for line in _git(repo, "rev-list", "--objects", rev_range).splitlines():
+        sha, _, rel = line.partition(" ")
+        if rel and not rel.startswith(VENDORED):
+            paths.setdefault(sha, rel)
+    problems: list[str] = []
+    if paths:
+        listing = _git(repo, "cat-file", "--batch-check=%(objectname) %(objecttype) "
+                                         "%(objectsize)", stdin="\n".join(paths) + "\n")
+        for row in listing.splitlines():
+            sha, kind, size = row.split()
+            if kind != "blob":
+                continue
+            rel = paths[sha]
+
+            def payload(sha=sha) -> bytes:
+                return subprocess.run(["git", "-C", str(repo), "cat-file", "blob", sha],
+                                      capture_output=True, timeout=300).stdout
+
+            problems += [f"{p} (blob {sha[:8]})" for p in shape_problems(rel, int(size), payload)]
+            try:
+                text = payload().decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            for rule, (find, _why) in sorted(RULES.items()):
+                if not allowed(rel, rule):
+                    problems += [f"{rel} (blob {sha[:8]}): {rule}: {hit}"
+                                 for hit in find(text)]
+    log_text = _git(repo, "log", "--format=%H%x00%B%x01", rev_range)
+    for entry in log_text.split("\x01"):
+        sha, _, message = entry.strip().partition("\x00")
+        if not sha:
+            continue
+        for rule, (find, _why) in sorted({**RULES, **MESSAGE_RULES}.items()):
+            problems += [f"commit {sha[:8]} message: {rule}: {hit}"
+                         for hit in find(message)]
+    return problems
+
+
+class TestABranchCarriesNothingInAnyCommit(unittest.TestCase):
+    @unittest.skipUnless(SCRUB_RANGE, "set CF_SCRUB_RANGE (e.g. origin/master..HEAD) "
+                                      "to scan every commit a branch adds")
+    def test_the_named_range_adds_nothing_private(self):
+        problems = scan_range(SKILL, SCRUB_RANGE)
+        self.assertEqual(problems, [], f"{SCRUB_RANGE}: " + "; ".join(problems[:10]))
+
+    def test_a_file_added_then_deleted_is_still_found(self):
+        import gzip
+        import shutil
+        import tempfile
+
+        repo = Path(tempfile.mkdtemp(prefix="cf-scrub-range-",
+                                     dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, repo, ignore_errors=True)
+
+        def git(*args: str) -> str:
+            return _git(repo, "-c", "user.name=Test", "-c",
+                        "user.email=test@example.invalid", "-c", "commit.gpgsign=false",
+                        *args)
+
+        git("init", "-q")
+        (repo / "README.md").write_text("synthetic\n", encoding="utf-8")
+        git("add", "README.md")
+        git("commit", "-q", "-m", "base")
+        base = git("rev-parse", "HEAD").strip()
+
+        data = repo / "tests" / "data" / "m9"
+        data.mkdir(parents=True)
+        (data / "doc.annotations.json.gz").write_bytes(
+            gzip.compress(b'{"signature": "theorem t : True"}\n' * 4000))
+        home = "/" + "Users" + "/" + "realname"      # spelled apart on purpose
+        (data / "notes.md").write_text(f"built in {home}/companion\n", encoding="utf-8")
+        git("add", "tests")
+        git("commit", "-q", "-m", "add the reference data")
+        git("rm", "-q", "-r", "tests")
+        git("commit", "-q", "-m", "drop the reference data\n\n"
+                              "Claude-Session: synthetic-session\n")
+
+        self.assertEqual(git("ls-files").split(), ["README.md"],
+                         "the last tree is clean, as a squash merge would land it")
+        found = "\n".join(scan_range(repo, f"{base}..HEAD"))
+        self.assertIn("doc.annotations.json.gz", found)
+        self.assertIn("once unpacked", found)
+        self.assertIn("absolute_home", found)
+        self.assertIn("session_trailer", found)
+        self.assertEqual(scan_range(repo, "HEAD..HEAD"), [])
 
 
 # ---------------------------------------------------------------------------

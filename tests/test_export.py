@@ -62,7 +62,7 @@ import cf as cf_main                                               # noqa: E402
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids                       # noqa: E402
 from formal_companion_annotations import validate as V             # noqa: E402
-from annotations.export import attribution_table, common, docstring_tags  # noqa: E402
+from annotations.export import attribution_table, common, docstring_tags, site_pages  # noqa: E402
 from annotations.export.pdftext import PdfText                     # noqa: E402
 from cflib.errors import CfError                                   # noqa: E402
 
@@ -77,6 +77,8 @@ DELIBERATE = (
     "for both companions, where the prototypes wrote tao-measure-pdf and tao-gsm126-published; the ledger's "
     "own words for the edition stay on the measure_theory source as x_companion_edition",
     "the site source's title and retrieved_at come from the page manifest, not from the build's file times",
+    "an equation's title (measure_theory: equation-1.2 and equation-1.3) carries title_source producer: a book "
+    "prints an equation by its number alone, and the prototype's missing field read as the book's words",
 )
 
 
@@ -879,6 +881,71 @@ class TestDocstringTagsExport(unittest.TestCase):
                          ["example-1.1.9"])
         self.assertNotIn("coverage", by_id(self.doc, "items")["definition-1.1.1"])
 
+    def test_site_pages_writes_the_pin_the_exporter_reads(self):
+        out = scratch(self) / "pages.json"
+        stderr = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+            status = cf_main.main(["export", "site-pages", str(self.site), "--out", str(out),
+                                   "--source-id", "demo-site", "--title", "the demo site",
+                                   "--rendered-at", "2026-09-02T00:00:00Z"])
+        self.assertEqual(status, 0, stderr.getvalue())
+        written = json.loads(out.read_text(encoding="utf-8"))
+        handmade = json.loads(self.pin.read_text(encoding="utf-8"))
+        handmade.pop("note")
+        self.assertEqual(written, handmade)          # path defaults to the directory's name, _site
+        doc, report = docstring_tags.export(self.root, self.commit, site=self.site,
+                                            **dict(self.options, site_pages=out))
+        self.assertEqual(report.problems, [])
+        self.assertEqual(record_diff(doc, self.doc), [])
+
+    def test_site_pages_defaults_and_refusals(self):
+        pin = site_pages.manifest(self.site)
+        self.assertNotIn("source_id", pin)
+        self.assertNotIn("title", pin)
+        self.assertEqual(pin["path"], "_site")
+        newest = max(p.stat().st_mtime for p in self.site.rglob("*.html"))
+        self.assertEqual(pin["rendered_at"], common.utc(newest))
+        empty = scratch(self) / "empty"
+        empty.mkdir()
+        for site, options, words in ((empty, {}, "holds no HTML page"),
+                                     (self.site, {"rendered_at": "2026-09-02 00:00"}, "RFC 3339"),
+                                     (empty / "absent", {}, "is not a directory")):
+            with self.subTest(words=words):
+                with self.assertRaises(common.ExportError) as caught:
+                    site_pages.manifest(site, **options)
+                self.assertIn(words, caught.exception.message)
+        with self.assertRaises(CfError) as caught:
+            cf_main.main(["export", "site-pages", str(self.site), "--out", str(self.site / "pages.json")])
+        self.assertIn("inside the site", caught.exception.message)
+        self.assertFalse((self.site / "pages.json").exists())
+
+    def test_site_pages_exclude_leaves_generated_pages_out_and_the_exporter_counts_them(self):
+        # a render that splits pages into fragments: the pin leaves them out, docstring-tags --site counts them
+        lazy = self.site / "Demo" / "Section_1_1" / "_lazy"
+        (lazy / "states").mkdir(parents=True)
+        (lazy / "states" / "0123.html").write_text("<html><body>a lazy state</body></html>", encoding="utf-8")
+        out = scratch(self) / "pages.json"
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                status = cf_main.main(["export", "site-pages", str(self.site), "--out", str(out),
+                                       "--exclude", "*/_lazy/*", "--source-id", "demo-site",
+                                       "--title", "the demo site", "--rendered-at", "2026-09-02T00:00:00Z"])
+            doc, report = docstring_tags.export(self.root, self.commit, site=self.site,
+                                                **dict(self.options, site_pages=out))
+            everything = [p["path"] for p in site_pages.manifest(self.site)["pages"]]
+            with self.assertRaises(common.ExportError) as caught:
+                site_pages.manifest(self.site, exclude=("*.html",))
+        finally:
+            shutil.rmtree(lazy)
+        self.assertEqual(status, 0)
+        handmade = json.loads(self.pin.read_text(encoding="utf-8"))
+        handmade.pop("note")
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8")), handmade)
+        self.assertEqual(report.counts["site"]["html_pages_on_disk_not_pinned"], 1)
+        self.assertEqual(record_diff(doc, self.doc), [])
+        self.assertIn("Demo/Section_1_1/_lazy/states/0123.html", everything)
+        self.assertIn("--exclude", caught.exception.message)
+
     def test_the_command_runs_end_to_end(self):
         out = scratch(self) / "demo.annotations.json"
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -999,6 +1066,19 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                 self.assertEqual(report.problems, [])
                 self.assertEqual(by_id(doc, "items")[iid]["sub"], sub)
                 self.assertNotIn("item.label_trailing", report.lossy)
+
+    def test_an_equation_title_is_the_producers(self):
+        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4",
+                                                            "Equation (1.1.4): a made-up name", "b"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        item = by_id(doc, "items")["equation-1.1.4"]
+        self.assertEqual((item["title"], item["title_source"]), ("a made-up name", "producer"))
+        kinds = tuple(attribution_table.cf_items.DEFAULT_KINDS)
+        bare = attribution_table.item_identity("Equation (1.1.4)", "item:x", kinds)[0]
+        self.assertNotIn("title", bare)
+        self.assertNotIn("title_source", bare)
 
     def test_a_sub_part_the_format_cannot_carry_is_dropped_and_reported(self):
         root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(ii*)", "b"))
@@ -1657,7 +1737,7 @@ class TestTheReferencesAreWhatTheyClaim(unittest.TestCase):
                                                     "unattributed")},
                          {"items": 651, "declarations": 1544, "links": 1169, "locations": 2201,
                           "destinations": 1544, "unattributed": 377})
-        self.assertEqual(len(DELIBERATE), 3)
+        self.assertEqual(len(DELIBERATE), 4)
 
 
 if __name__ == "__main__":                                       # pragma: no cover

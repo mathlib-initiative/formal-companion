@@ -43,7 +43,7 @@ The exporter reads, at the pinned commit,
 
 | input | becomes |
 |---|---|
-| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer); one `provenance` record per batch |
+| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
 | `pdf-overlay/data/target-refinement.json` (schema version 2) | `key` and `attributed` `links`, merged per item; its *coverage entries* (an entry with a `coverage` class, no key ids, a `note`) as the item's `coverage` and `coverage_note`, their declarations as the links the class admits (below) |
 | `source-formalization-ledger.json` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
 | `pdf-overlay/data/declaration-snippets.json` | `snippets` |
@@ -162,7 +162,12 @@ and the command still exits 1.
 The site pin is a small JSON file: `{"source_id", "title", "path",
 "rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`, each
 `path` a file (`TaoMeasure/Section_1_1_1/index.html`, never a directory).
-The reference companion's is `tml-site-pages.json` in the maintainer's
+`cf export site-pages <rendered site> --out <pages.json> [--source-id ID]
+[--title T] [--path P] [--rendered-at TIME] [--exclude GLOB]...` writes it:
+every HTML page under the site but those whose path matches an `--exclude`
+glob (`'*/_lazy/*'` leaves out generated fragments), `path` defaulting to the
+site directory's name and `rendered_at` to the newest pinned page's mtime. The
+reference companion's is `tml-site-pages.json` in the maintainer's
 `CF_M3_REFERENCE_DIR` (`tests/data/m3/README.md`); it is not in this tree.
 The PDF is named through the registry as in section 1.
 
@@ -235,7 +240,7 @@ not be located rather than lost: 6 of 32 passage docstring quotes not found,
 ambiguous or found only on the next or previous page, 14 of 21 link
 docstring quotes not verified, 1 tag the item grammar refused (an
 `unattributed` signal), 1 index anchor the page lacks (a `fallback`
-destination) and 29,729 lazy-state fragments on disk the manifest leaves
+destination) and 29,729 `_lazy/` fragments on disk the manifest leaves
 out. Without `--site` a further bucket, `site.anchors_unverified`, counts the
 anchors that were not checked.
 
@@ -302,7 +307,7 @@ companions still run everywhere.
 ## 6. Deliberate differences from the prototype documents
 
 The format was first written from two prototype documents. The references
-differ from them in three ways, all deliberate and recorded in
+differ from them in four ways, all deliberate and recorded in
 `tests/test_export.py` (`DELIBERATE`):
 
 1. `companion.generator` names the command and the skill's version.
@@ -313,5 +318,7 @@ differ from them in three ways, all deliberate and recorded in
    measure_theory source as `x_companion_edition`.
 3. The site source's title and `retrieved_at` come from the page manifest,
    not from the build's file times.
+4. An equation's title is marked `title_source: producer` (measure_theory:
+   `equation-1.2` and `equation-1.3`).
 
 Every other record is byte for byte what the prototypes wrote.

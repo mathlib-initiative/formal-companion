@@ -9,7 +9,7 @@ published edition (registry id `tao-measure-gsm126-published`, sha256
 - `measure_theory.truth.json`
 - `tao-measure-lean.truth.json`
 
-A table holds only facts about the edition, like the registry's page maps:
+A table holds only item numbers, kinds and page numbers, no text:
 
 - `numbered`: `{kind, number, page}` for each numbered item, `page` being the
   first physical page the companion places it on;
@@ -21,6 +21,9 @@ No quote, title, declaration, signature, snippet or verdict: the companions'
 annotation documents carry those and stay in the companions' repositories or
 a workspace, never here (CLAUDE.md section 1, docs/annotations.md section 11).
 `scripts/pipeline/derive_truth.py` refuses to write any other field.
+
+The tao-measure-lean pages come from the same `pdftotext` heading match S1
+uses, so only measure_theory is an independent check of S1's numbered items.
 
 ## Regenerating the tables
 

@@ -108,3 +108,6 @@ moving detail into `references/`.
 - End a commit message with the `Co-Authored-By:` line naming the model that
   wrote the change, if one did.
 - Green on `python3 -m unittest discover -s tests` before you open it.
+- Reviewers: no private-companion data or book text in any commit or message
+  (item 4 above); `CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q
+  tests/test_rf_scrub.py` scans every commit the branch adds.

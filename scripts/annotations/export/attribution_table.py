@@ -87,13 +87,15 @@ def item_identity(label: str, old_id: str, kinds) -> list[dict]:
 
     A numbered label goes through the item grammar; ``Equation (1.1)`` is the
     one shape the grammar has no kind for.  A label the grammar refuses is an
-    unnumbered passage whose label is the producer's title.
+    unnumbered passage whose label is the producer's title.  So are the words
+    after ``Equation (n):``, since a book prints an equation by number alone.
     """
     m = _EQUATION_LABEL.match(label)
     if m:
         rec = {"form": "numbered", "kind": "Equation", "number": m.group(1), "label": label}
         if m.group(2):
             rec["title"] = m.group(2)
+            rec["title_source"] = "producer"
         return [rec]
     it, _reject = cf_items.try_parse(label, kinds)
     if it is not None and it.kind != cf_items.IN_TEXT:

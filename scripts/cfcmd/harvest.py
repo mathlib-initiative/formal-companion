@@ -94,6 +94,10 @@ def run(args) -> int:
         receipt = _from_findings(workspace, args, data, dest, run_yaml_path, cost=cost)
 
     log.info(harvest_mod.describe(receipt))
+    empty = cost_fleet.empty_warning(cost) if cost else None
+    if empty:
+        log.warn(f"NO RESPONSES priced for run {args.run_id}: {empty}. Check --transcripts; "
+                 f"a stage receipt refuses this cost block.")
     if cost and cost.get("unpriced"):
         log.warn(f"UNPRICED model(s) {', '.join(cost['unpriced'])}: their tokens are in the "
                  f"receipt and priced nowhere, so {pricing.format_usd(cost['usd'])} is a lower "
