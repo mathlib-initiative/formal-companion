@@ -796,26 +796,44 @@ class TestTheWorktreesGitSettingsHideNoPath(WorktreeTestCase):
                 _entries, errs = vf.changed_entries(self.root, "main")
                 self.assertTrue(any("could not parse" in e for e in errs), errs)
 
-    def test_neither_replace_refs_nor_grafts_move_the_merge_base(self):
-        # both tips grafted onto a root older than alice's finding made that root
-        # the merge base, and deleting her finding vanished from the diff
+    def test_a_gitlink_stays_in_the_change_set_with_ignore_submodules_all(self):
         self.write_own_pair()
-        self.git("rm", "-q", "findings/alice.json", "tasks/alice.yaml")
-        self.commit("mine in, alice's out")
-        empty = self.git("hash-object", "-t", "tree", "-w", os.devnull)
-        older = self.git("commit-tree", empty, "-m", "a root before alice landed")
-        tips = [self.git("rev-parse", ref) for ref in ("main", "HEAD")]
-        with self.subTest("replace refs"):
-            for tip in tips:
-                self.git("replace", "--graft", tip, older)
-            got, _errs = vf.changed_entries(self.root, "main")
-            self.git("replace", "-d", *tips)
-            self.assertEqual(got.get("findings/alice.json"), "D")
-        with self.subTest("grafts"):
-            grafts = self.root / ".git" / "info" / "grafts"
-            grafts.parent.mkdir(exist_ok=True)
-            grafts.write_text("".join(f"{tip} {older}\n" for tip in tips))
-            self.assertEqual(self.entries().get("findings/alice.json"), "D")
+        self.git("add", "findings", "tasks")
+        self.git("update-index", "--add", "--cacheinfo",
+                 f"160000,{self.git('rev-parse', 'HEAD')},scripts")
+        self.git("commit", "-qm", "mine, and a gitlink")
+        (self.root / "scripts").mkdir()  # as a checkout leaves it; a missing one never shows
+        self.git("config", "diff.ignoreSubmodules", "all")
+        entries = self.entries()
+        self.assertEqual(entries.get("scripts"), "A")
+        problems = vf.check_changed(entries, task_id="carol")
+        self.assertTrue(any("'scripts' is outside" in p for p in problems), problems)
+
+    def test_replace_refs_grafts_and_a_shallow_file_fail_closed(self):
+        # ignored, `git replace --graft HEAD main` passed a branch whose merge
+        # fast-forwarded over bob's finding, landed after carol branched
+        self.git("checkout", "-q", "main")
+        (self.root / "findings" / "bob.json").write_text("{}\n")
+        (self.root / "tasks" / "bob.yaml").write_text("id: bob\n")
+        self.commit("bob lands")
+        self.git("checkout", "-q", "carol")
+        self.write_own_pair()
+        self.commit()
+        self.assertEqual(self.entries(), {"findings/carol.json": "A", "tasks/carol.yaml": "A"})
+        head, main = self.git("rev-parse", "HEAD"), self.git("rev-parse", "main")
+        grafts, shallow = self.root / ".git" / "info" / "grafts", self.root / ".git" / "shallow"
+        grafts.parent.mkdir(exist_ok=True)
+        for name, rewrite, undo in (
+                ("replace ref", lambda: self.git("replace", "--graft", head, main),
+                 lambda: self.git("replace", "-d", head)),
+                ("grafts", lambda: grafts.write_text(f"{head} {main}\n"), grafts.unlink),
+                ("shallow", lambda: shallow.write_text(head + "\n"), shallow.unlink)):
+            rewrite()
+            with self.subTest(name):
+                got, errs = vf.changed_entries(self.root, "main")
+                self.assertEqual(got, {})
+                self.assertTrue(any("grafts or a shallow history" in e for e in errs), errs)
+            undo()
 
 
 # --------------------------------------------------------------------------- #

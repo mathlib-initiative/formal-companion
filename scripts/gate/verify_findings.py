@@ -1326,10 +1326,6 @@ _GIT_SAFE_ENV: dict[str, str] = {
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_OPTIONAL_LOCKS": "0",
     "GIT_TERMINAL_PROMPT": "0",
-    # replace refs and grafts can move the merge base; the graft path cannot
-    # exist, because /dev/null opens and git then prints a hint on every read
-    "GIT_NO_REPLACE_OBJECTS": "1",
-    "GIT_GRAFT_FILE": "/dev/null/grafts",
 }
 
 
@@ -1526,6 +1522,15 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
         code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
         if code != 0:
             return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
+        # Replace refs, grafts and a shallow file move the merge base.  Refused, not
+        # ignored: the merge follows them, so a gate that ignored `git replace
+        # --graft HEAD main` passed a branch whose merge dropped later findings.
+        rcode, replaced = _git(["for-each-ref", "--format=%(refname)", "refs/replace/"], root)
+        code, out = _git(["rev-parse", "--is-shallow-repository", "--git-path", "info/grafts"], root)
+        shallow, _, grafts = out.strip().partition("\n")
+        if rcode or code or replaced.strip() or shallow != "false" or (root / grafts).exists():
+            return {}, [f"{root} has replace refs, grafts or a shallow history, which rewrite "
+                        "what this contribution branched from (the check fails closed)"]
         # Diff from the point this contribution BRANCHED, not from the base's tip.
         # Against the tip, every finding that landed on the merge target after the
         # worktree was cut read as this worker's deletion ("D"), so the check
@@ -1545,9 +1550,11 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
             return {}, [f"{len(bases)} merge bases between {base!r} and HEAD in {root}: a "
                         "criss-cross history hides what this contribution changed "
                         "(the check fails closed)"]
-        # --no-renames: diff.renames is the worktree's to set, and with "copies" a
-        # new path arrived only as the third field of a C line.
-        code, out = _git(["diff", "--no-renames", "--name-status", bases[0]], root)
+        # diff.renames and diff.ignoreSubmodules are the worktree's to set: with
+        # "copies" a new path arrived only as the third field of a C line, and with
+        # "all" a committed gitlink did not arrive at all.
+        code, out = _git(["diff", "--no-renames", "--ignore-submodules=none",
+                          "--name-status", bases[0]], root)
         if code != 0:
             errs.append(f"git diff against the merge base of {base} failed")
         for line in out.splitlines():
