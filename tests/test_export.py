@@ -494,16 +494,17 @@ class TestAttributionTableExport(unittest.TestCase):
 class TestCoverageFromNote(unittest.TestCase):
     """The refinement note's per-item classes, parsed rather than typed in."""
 
-    NOTE = ("Batch d (section 1.7, 49 items in 9 source nodes) was curated on 2026-09-25. 16 items carry "
-            "entries; 33 carry none: 29 are formalised only by anonymous examples, Remark 1.7.22 by nothing, "
-            "and Remark 1.7.4, Definition 1.7.7 and Definition 1.7.10 have one named declaration that only "
-            "supports them (the table has no support-only form). Batches a to c: the rest.")
+    # synthetic: the sentence shapes coverage_from_note reads, with made-up numbers and items
+    NOTE = ("Batch q (section 9.3, 12 items in 4 source nodes) was drafted on 2001-02-03. 5 items carry "
+            "entries; 7 carry none: 3 are formalised only by anonymous examples, Lemma 9.3.18 by nothing, "
+            "and Example 9.3.2, Corollary 9.3.5 and Theorem 9.3.11 have one named declaration that only "
+            "supports them (a made-up aside). Other batches: elsewhere.")
 
     def test_it_reads_the_section_the_count_and_the_named_classes(self):
         section, named, total = attribution_table.coverage_from_note(self.NOTE)
-        self.assertEqual((section, total), ("1.7", 33))
-        self.assertEqual(named, {"remark-1.7.22": "not_formalized", "remark-1.7.4": "support_only",
-                                 "definition-1.7.7": "support_only", "definition-1.7.10": "support_only"})
+        self.assertEqual((section, total), ("9.3", 7))
+        self.assertEqual(named, {"lemma-9.3.18": "not_formalized", "example-9.3.2": "support_only",
+                                 "corollary-9.3.5": "support_only", "theorem-9.3.11": "support_only"})
 
     def test_a_note_that_does_not_say_gives_nothing(self):
         self.assertIsNone(attribution_table.coverage_from_note("Drafted by one curator agent."))
