@@ -20,36 +20,13 @@
       ],
       "type": "object"
     },
-    "DataPositionSelector": {
-      "additionalProperties": false,
-      "description": "Half-open byte range of the file. Not allowed on a PDF.",
-      "properties": {
-        "end": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "start": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "type": {
-          "const": "DataPositionSelector"
-        }
-      },
-      "required": [
-        "type",
-        "start",
-        "end"
-      ],
-      "type": "object"
-    },
     "FragmentSelector": {
       "additionalProperties": false,
       "properties": {
         "conformsTo": {
           "description": "The IRI of the fragment grammar. Open: RFC 8118 (or its synonym RFC 3778) for PDF, RFC 5147 for text, RFC 3236 for HTML ids and Media Fragments get grammar checks; any other IRI passes with a warning.",
           "minLength": 1,
-          "pattern": "^\\S+$",
+          "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
           "type": "string"
         },
         "refinedBy": {
@@ -72,7 +49,7 @@
     },
     "PdfRegionSelector": {
       "additionalProperties": false,
-      "description": "lean-companion extension: a region of one PDF page. Exactly one of rect or quads.",
+      "description": "formal-companion extension: a region of one PDF page. Exactly one of rect or quads.",
       "oneOf": [
         {
           "required": [
@@ -115,30 +92,9 @@
       ],
       "type": "object"
     },
-    "RangeSelector": {
-      "additionalProperties": false,
-      "description": "From the start of startSelector's match to the start of endSelector's match.",
-      "properties": {
-        "endSelector": {
-          "$ref": "#/$defs/selector"
-        },
-        "startSelector": {
-          "$ref": "#/$defs/selector"
-        },
-        "type": {
-          "const": "RangeSelector"
-        }
-      },
-      "required": [
-        "type",
-        "startSelector",
-        "endSelector"
-      ],
-      "type": "object"
-    },
     "SitePageSelector": {
       "additionalProperties": false,
-      "description": "lean-companion extension: one page of a site source. An exporter composes the page IRI from the source and the path and drops this selector.",
+      "description": "formal-companion extension: one page of a site source. An exporter composes the page IRI from the source and the path and drops this selector.",
       "properties": {
         "path": {
           "$ref": "#/$defs/site_path"
@@ -153,48 +109,6 @@
       "required": [
         "type",
         "path"
-      ],
-      "type": "object"
-    },
-    "SvgSelector": {
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "const": "SvgSelector"
-        },
-        "value": {
-          "description": "An inline SVG document.",
-          "minLength": 1,
-          "pattern": "^\\s*<svg[\\s>]",
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "value"
-      ],
-      "type": "object"
-    },
-    "TextPositionSelector": {
-      "additionalProperties": false,
-      "description": "Half-open [start, end) in Unicode code points of the declared text layer.",
-      "properties": {
-        "end": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "start": {
-          "minimum": 0,
-          "type": "integer"
-        },
-        "type": {
-          "const": "TextPositionSelector"
-        }
-      },
-      "required": [
-        "type",
-        "start",
-        "end"
       ],
       "type": "object"
     },
@@ -224,29 +138,9 @@
       ],
       "type": "object"
     },
-    "XPathSelector": {
-      "additionalProperties": false,
-      "properties": {
-        "refinedBy": {
-          "$ref": "#/$defs/selector"
-        },
-        "type": {
-          "const": "XPathSelector"
-        },
-        "value": {
-          "minLength": 1,
-          "type": "string"
-        }
-      },
-      "required": [
-        "type",
-        "value"
-      ],
-      "type": "object"
-    },
     "artifact": {
       "additionalProperties": false,
-      "description": "A formalization artifact that is not a declaration: a module doc, a #check, a figure.",
+      "description": "graph profile: a formalization artifact that is not a declaration: a module doc, a #check, a figure.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -272,7 +166,7 @@
         },
         "module": {
           "minLength": 1,
-          "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$",
+          "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff.]+(\\.[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff.]+)*$",
           "type": "string"
         },
         "title": {
@@ -367,7 +261,7 @@
           }
         }
       ],
-      "description": "One id event. A retired id is never reused.",
+      "description": "history profile: one id event. A retired id is never reused.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -453,7 +347,7 @@
     },
     "cluster": {
       "additionalProperties": false,
-      "description": "A companion's own coarse node (a section, a ledger source node). Its declarations are memberships.",
+      "description": "graph profile: a companion's own coarse node (a section, a node of its dependency graph). Its declarations are memberships.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -499,7 +393,12 @@
           "type": "string"
         },
         "graph": {
-          "$ref": "#/$defs/graph_lock"
+          "allOf": [
+            {
+              "$ref": "#/$defs/graph_lock"
+            }
+          ],
+          "description": "graph profile: the companion's own dependency graph, pinned."
         },
         "name": {
           "description": "The companion's short name.",
@@ -507,8 +406,20 @@
           "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
           "type": "string"
         },
+        "packages": {
+          "description": "The companion's dependencies, sorted by name, one entry per name.",
+          "items": {
+            "$ref": "#/$defs/package"
+          },
+          "type": "array"
+        },
         "repo": {
           "$ref": "#/$defs/repo_ref"
+        },
+        "toolchain": {
+          "description": "The Lean toolchain, e.g. leanprover/lean4:v4.24.0.",
+          "minLength": 1,
+          "type": "string"
         }
       },
       "required": [
@@ -709,8 +620,10 @@
             "properties": {
               "kind": {
                 "enum": [
+                  "constructor",
                   "field",
-                  "projection"
+                  "projection",
+                  "recursor"
                 ]
               }
             },
@@ -730,8 +643,10 @@
               "properties": {
                 "kind": {
                   "enum": [
+                    "constructor",
                     "field",
-                    "projection"
+                    "projection",
+                    "recursor"
                   ]
                 }
               },
@@ -749,7 +664,7 @@
           }
         }
       ],
-      "description": "One Lean declaration. line is a location, never part of the id.",
+      "description": "One Lean declaration or structure member. line is a location, never part of the id.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -789,16 +704,20 @@
         "kind": {
           "enum": [
             "abbrev",
+            "alias",
             "axiom",
             "class",
+            "constructor",
             "def",
             "example",
             "field",
             "inductive",
             "instance",
+            "irreducible_def",
             "lemma",
             "opaque",
             "projection",
+            "recursor",
             "structure",
             "theorem"
           ],
@@ -818,17 +737,17 @@
         },
         "module": {
           "minLength": 1,
-          "pattern": "^[^\\s.]+(\\.[^\\s.]+)*$",
+          "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff.]+(\\.[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff.]+)*$",
           "type": "string"
         },
         "name": {
-          "description": "The declared, fully qualified name. Absent for example and anonymous instance.",
+          "description": "The declared, fully qualified name. Absent on an anonymous declaration (an example, an instance without a name).",
           "minLength": 1,
           "type": "string"
         },
         "namespace": {
-          "description": "The enclosing namespace at the declaration; the empty string for the root. For a field or projection, the parent's full name (its name), so namespace + \".\" + the field's own name is its full name.",
-          "pattern": "^(|[^\\s.]+(\\.[^\\s.]+)*)$",
+          "description": "The enclosing namespace at the declaration; the empty string for the root. For a member (field, projection, constructor, recursor), the parent's full name, so namespace + \".\" + the member's own name is its full name.",
+          "pattern": "^(|[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff.]+(\\.[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff.]+)*)$",
           "type": "string"
         },
         "package": {
@@ -838,16 +757,26 @@
           "type": "string"
         },
         "parent": {
-          "$ref": "#/$defs/ref"
+          "allOf": [
+            {
+              "$ref": "#/$defs/ref"
+            }
+          ],
+          "description": "Members only: the structure or class a field or projection belongs to; the inductive, structure or class a constructor or recursor belongs to."
         },
         "private": {
           "type": "boolean"
         },
         "replaced_by": {
-          "$ref": "#/$defs/ref"
+          "allOf": [
+            {
+              "$ref": "#/$defs/ref"
+            }
+          ],
+          "description": "history profile: the declaration that supersedes this one."
         },
         "signature": {
-          "description": "The normalised header text that statement_sha256 hashes: the section 5.1 cut, for a named declaration too; omitted when no := or where ends the header.",
+          "description": "The display form of the header (docs section 7.1.2): from the keyword to the end of the header, comments replaced by one space, whitespace collapsed. statement_sha256 hashes its hash form. Omitted when no := or where ends the header.",
           "minLength": 1,
           "type": "string"
         },
@@ -863,7 +792,7 @@
           "$ref": "#/$defs/sha256"
         },
         "unlocated": {
-          "description": "A declared id not yet found in the Lean at companion.commit: no statement, line or anchors yet.",
+          "description": "graph profile: a declared id not yet found in the Lean at companion.commit: no statement, line or anchors yet.",
           "type": "boolean"
         }
       },
@@ -930,7 +859,7 @@
           }
         }
       ],
-      "description": "Where a declaration or artifact is rendered on a companion site.",
+      "description": "site profile: where a declaration or artifact is rendered on a companion site. An artifact target needs the graph profile too.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -947,7 +876,7 @@
         },
         "fragment": {
           "minLength": 1,
-          "pattern": "^[^\\s#]+$",
+          "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff#]+$",
           "type": "string"
         },
         "href": {
@@ -956,7 +885,7 @@
               "$ref": "#/$defs/site_path"
             },
             {
-              "pattern": "^https://[^\\s#]+$",
+              "pattern": "^https://[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff#]+$",
               "type": "string"
             }
           ],
@@ -1002,7 +931,7 @@
     },
     "graph_lock": {
       "additionalProperties": false,
-      "description": "The companion's own graph authority (a ledger) that memberships were read from, pinned by bytes; snapshot_commit is the commit its graph describes when that is not companion.commit.",
+      "description": "graph profile: the companion's own dependency graph that memberships were read from, pinned by bytes; snapshot_commit is the commit its graph describes when that is not companion.commit.",
       "properties": {
         "bytes": {
           "minimum": 0,
@@ -1025,15 +954,58 @@
       "type": "object"
     },
     "http_url": {
-      "pattern": "^https?://\\S+$",
+      "pattern": "^https?://[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
       "type": "string"
     },
     "id": {
       "description": "A record id: unique within its array, never reused once retired, no whitespace.",
       "maxLength": 256,
       "minLength": 1,
-      "pattern": "^\\S+$",
+      "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
       "type": "string"
+    },
+    "identifiers": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "doi"
+          ]
+        },
+        {
+          "required": [
+            "isbn"
+          ]
+        },
+        {
+          "required": [
+            "arxiv"
+          ]
+        }
+      ],
+      "description": "Bibliographic identifiers of the edition: at least one of doi, isbn, arxiv. On a pdf or other source they may be its only identity (no sha256): then no PdfRegionSelector may be used on it.",
+      "properties": {
+        "arxiv": {
+          "description": "An arXiv identifier with its version, new style (2301.00001v2) or old style (math.AG/0601001v1).",
+          "pattern": "^([0-9]{4}\\.[0-9]{4,5}v[1-9][0-9]*|[a-z][a-z-]*(\\.[A-Z]{2})?/[0-9]{7}v[1-9][0-9]*)$",
+          "type": "string"
+        },
+        "doi": {
+          "pattern": "^10\\.[0-9]{4,9}/[!-~]+$",
+          "type": "string"
+        },
+        "isbn": {
+          "description": "ISBN-13s of this edition, sorted.",
+          "items": {
+            "pattern": "^97[89][0-9]{10}$",
+            "type": "string"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
+        }
+      },
+      "type": "object"
     },
     "input_lock": {
       "additionalProperties": false,
@@ -1236,23 +1208,30 @@
         "^x_[a-z0-9_]+$": {}
       },
       "properties": {
-        "cluster_fallback": {
-          "description": "true: a viewer shows the memberships of the item's clusters in place of item-level links. Needs clusters and no key link; with memberships[] present, one of those clusters has a member.",
-          "type": "boolean"
-        },
         "clusters": {
-          "$ref": "#/$defs/ref_list"
+          "allOf": [
+            {
+              "$ref": "#/$defs/ref_list"
+            }
+          ],
+          "description": "graph profile: the coarse nodes the item belongs to."
         },
         "coverage": {
-          "description": "What the item's links do not show on their own (the curation's class). Independent of cluster_fallback.",
+          "description": "The curator's class for the item: what its links state (docs section 5.2; invariant I5 ties the class to the links).",
           "enum": [
             "example_only",
             "formalized",
             "not_formalized",
             "out_of_scope",
-            "partial",
+            "partial_only",
+            "private_only",
             "support_only"
           ],
+          "type": "string"
+        },
+        "coverage_note": {
+          "description": "The curator's note on the coverage class. Only with coverage.",
+          "minLength": 1,
           "type": "string"
         },
         "form": {
@@ -1267,7 +1246,7 @@
           "$ref": "#/$defs/id"
         },
         "id_source": {
-          "description": "How the id was formed (docs section 5.2).",
+          "description": "How the id was formed (docs section 7.2).",
           "enum": [
             "declared",
             "label",
@@ -1321,9 +1300,9 @@
           "$ref": "#/$defs/ref"
         },
         "sub": {
-          "description": "A part the source numbers or locates separately, written without parentheses: ii, 3, ix,x.",
+          "description": "A part the source numbers or locates separately, written without parentheses: ii, 3, ix,x, b'. A prime stays.",
           "minLength": 1,
-          "pattern": "^[0-9A-Za-z]+([.,-][0-9A-Za-z]+)*$",
+          "pattern": "^[0-9A-Za-z]+'*([.,-][0-9A-Za-z]+'*)*$",
           "type": "string"
         },
         "title": {
@@ -1337,6 +1316,15 @@
             "source"
           ],
           "type": "string"
+        },
+        "xrefs": {
+          "description": "Cross-references to public databases, sorted by (database, tag), no duplicates.",
+          "items": {
+            "$ref": "#/$defs/xref"
+          },
+          "minItems": 1,
+          "type": "array",
+          "uniqueItems": true
         }
       },
       "required": [
@@ -1368,12 +1356,12 @@
       },
       "properties": {
         "cluster": {
-          "$ref": "#/$defs/ref"
-        },
-        "confidence": {
-          "maximum": 1,
-          "minimum": 0,
-          "type": "number"
+          "allOf": [
+            {
+              "$ref": "#/$defs/ref"
+            }
+          ],
+          "description": "graph profile: the cluster the link targets."
         },
         "declaration": {
           "$ref": "#/$defs/ref"
@@ -1393,7 +1381,7 @@
           "type": "string"
         },
         "orphaned": {
-          "description": "The declaration was retired (see changelog) and nobody has re-attached this link.",
+          "description": "history profile: the declaration was retired (see changelog) and nobody has re-attached this link.",
           "type": "boolean"
         },
         "pages": {
@@ -1408,7 +1396,7 @@
           "type": "string"
         },
         "relation": {
-          "description": "How the declaration relates to the item's text. An open lower-case snake_case token; the documented core is exact, generalization, special_case, invocation, related, and another token passes with a warning.",
+          "description": "How the declaration relates to the item's text. An open lower-case snake_case token; the documented core is exact, generalization, special_case, part, invocation, related, and another token passes with a warning.",
           "minLength": 1,
           "pattern": "^[a-z][a-z0-9_]*$",
           "type": "string"
@@ -1424,9 +1412,9 @@
           "type": "string"
         },
         "sub": {
-          "description": "The part of the item this link covers, written without parentheses.",
+          "description": "The part of the item this link covers, written without parentheses, as item.sub.",
           "minLength": 1,
-          "pattern": "^[0-9A-Za-z]+([.,-][0-9A-Za-z]+)*$",
+          "pattern": "^[0-9A-Za-z]+'*([.,-][0-9A-Za-z]+'*)*$",
           "type": "string"
         }
       },
@@ -1481,7 +1469,7 @@
     },
     "membership": {
       "additionalProperties": false,
-      "description": "A declaration or artifact that belongs to a cluster, with the role the companion's graph gives it.",
+      "description": "graph profile: a declaration or artifact that belongs to a cluster, with the role the companion's graph gives it.",
       "oneOf": [
         {
           "required": [
@@ -1530,12 +1518,30 @@
       ],
       "type": "object"
     },
+    "package": {
+      "additionalProperties": false,
+      "description": "A dependency of the companion: its Lake package name and the full git id it is pinned to.",
+      "properties": {
+        "name": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "rev": {
+          "$ref": "#/$defs/git_sha"
+        }
+      },
+      "required": [
+        "name",
+        "rev"
+      ],
+      "type": "object"
+    },
     "page_hash": {
       "additionalProperties": false,
       "description": "One page of a site source: its path relative to the site root and the sha256 of its bytes.",
       "properties": {
         "path": {
-          "$ref": "#/$defs/repo_path"
+          "$ref": "#/$defs/site_path"
         },
         "sha256": {
           "$ref": "#/$defs/sha256"
@@ -1770,7 +1776,7 @@
     },
     "quote": {
       "additionalProperties": false,
-      "description": "Shorthand for a TextQuoteSelector over the whole item source (docs section 3).",
+      "description": "Shorthand for a TextQuoteSelector over the whole item source (docs section 5.2).",
       "properties": {
         "exact": {
           "description": "The quoted text, matched under the source's text_layer rules.",
@@ -1822,7 +1828,7 @@
       "description": "The id of a record in another array. The validator checks it resolves.",
       "maxLength": 256,
       "minLength": 1,
-      "pattern": "^\\S+$",
+      "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
       "type": "string"
     },
     "ref_list": {
@@ -1870,12 +1876,12 @@
     "repo_path": {
       "description": "A repo-relative path: no leading slash, no .. segment.",
       "minLength": 1,
-      "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$))\\S+$",
+      "pattern": "^(?!/)(?!(?:[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]*/)?\\.\\.(?:/|$))[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
       "type": "string"
     },
     "repo_ref": {
       "description": "A repository named without a scheme, e.g. host/org/name. Keeps http(s) URLs out of the document body.",
-      "pattern": "^(?!https?:)[A-Za-z0-9.-]+(:[0-9]+)?/\\S+$",
+      "pattern": "^(?!https?:)[A-Za-z0-9.-]+(:[0-9]+)?/[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
       "type": "string"
     },
     "resolution": {
@@ -2009,21 +2015,6 @@
           "if": {
             "properties": {
               "type": {
-                "const": "DataPositionSelector"
-              }
-            },
-            "required": [
-              "type"
-            ]
-          },
-          "then": {
-            "$ref": "#/$defs/DataPositionSelector"
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
                 "const": "FragmentSelector"
               }
             },
@@ -2054,21 +2045,6 @@
           "if": {
             "properties": {
               "type": {
-                "const": "RangeSelector"
-              }
-            },
-            "required": [
-              "type"
-            ]
-          },
-          "then": {
-            "$ref": "#/$defs/RangeSelector"
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
                 "const": "SitePageSelector"
               }
             },
@@ -2078,36 +2054,6 @@
           },
           "then": {
             "$ref": "#/$defs/SitePageSelector"
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
-                "const": "SvgSelector"
-              }
-            },
-            "required": [
-              "type"
-            ]
-          },
-          "then": {
-            "$ref": "#/$defs/SvgSelector"
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
-                "const": "TextPositionSelector"
-              }
-            },
-            "required": [
-              "type"
-            ]
-          },
-          "then": {
-            "$ref": "#/$defs/TextPositionSelector"
           }
         },
         {
@@ -2124,37 +2070,17 @@
           "then": {
             "$ref": "#/$defs/TextQuoteSelector"
           }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
-                "const": "XPathSelector"
-              }
-            },
-            "required": [
-              "type"
-            ]
-          },
-          "then": {
-            "$ref": "#/$defs/XPathSelector"
-          }
         }
       ],
-      "description": "A W3C Web Annotation selector, discriminated by type. PdfRegionSelector and SitePageSelector are the lean-companion extensions.",
+      "description": "A selector, discriminated by type: the W3C Web Annotation classes FragmentSelector, TextQuoteSelector and CssSelector, and the two formal-companion extensions PdfRegionSelector and SitePageSelector.",
       "properties": {
         "type": {
           "enum": [
             "CssSelector",
-            "DataPositionSelector",
             "FragmentSelector",
             "PdfRegionSelector",
-            "RangeSelector",
             "SitePageSelector",
-            "SvgSelector",
-            "TextPositionSelector",
-            "TextQuoteSelector",
-            "XPathSelector"
+            "TextQuoteSelector"
           ],
           "type": "string"
         }
@@ -2201,12 +2127,12 @@
     "site_path": {
       "description": "A page's path relative to the site root: no leading slash, no .. segment, no fragment and no colon (so it never reads as a URL scheme).",
       "minLength": 1,
-      "pattern": "^(?![/#])(?!.*(^|/)\\.\\.(/|$))[^\\s#:]+$",
+      "pattern": "^(?![/#])(?!(?:[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff#:]*/)?\\.\\.(?:/|$))[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff#:]+$",
       "type": "string"
     },
     "snippet": {
       "additionalProperties": false,
-      "description": "Statement text for a declaration card.",
+      "description": "site profile: statement text for a declaration card.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -2251,8 +2177,17 @@
             ]
           },
           "then": {
-            "required": [
-              "sha256"
+            "anyOf": [
+              {
+                "required": [
+                  "sha256"
+                ]
+              },
+              {
+                "required": [
+                  "identifiers"
+                ]
+              }
             ]
           }
         },
@@ -2361,6 +2296,11 @@
                 "required": [
                   "revision"
                 ]
+              },
+              {
+                "required": [
+                  "identifiers"
+                ]
               }
             ],
             "required": [
@@ -2450,9 +2390,35 @@
               ]
             }
           }
+        },
+        {
+          "if": {
+            "allOf": [
+              {
+                "properties": {
+                  "scope": {
+                    "const": "site"
+                  }
+                },
+                "required": [
+                  "scope"
+                ]
+              },
+              {
+                "required": [
+                  "sha256"
+                ]
+              }
+            ]
+          },
+          "then": {
+            "required": [
+              "page_hashes"
+            ]
+          }
         }
       ],
-      "description": "One edition of one source, pinned by content or by an immutable revision.",
+      "description": "One edition of one source, pinned by content (sha256, git_blob, a site's page manifest), by an immutable revision, or (pdf and other) by bibliographic identifiers alone.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -2481,6 +2447,9 @@
         "id": {
           "$ref": "#/$defs/id"
         },
+        "identifiers": {
+          "$ref": "#/$defs/identifiers"
+        },
         "kind": {
           "description": "pdf, web, tex and lean are presets; other names its medium in media_type.",
           "enum": [
@@ -2496,7 +2465,7 @@
           "$ref": "#/$defs/media_type"
         },
         "page_hashes": {
-          "description": "scope site only: every HTML page of the site, {path, sha256}, sorted by path. sha256 is then the sha256 of the manifest these entries give (docs section 3.1).",
+          "description": "scope site only: the pages the producer pins, {path, sha256}, sorted by path, each path a file. Required when the site source has a sha256, which is then the sha256 of the manifest these entries give (docs section 5.1). Must list every page a SitePageSelector on the source names.",
           "items": {
             "$ref": "#/$defs/page_hash"
           },
@@ -2534,6 +2503,7 @@
           "type": "string"
         },
         "role": {
+          "description": "The source's role: audited (a companion is checked against it) or reference (kept only so a page map to a sibling edition can be checked). Core: it needs no profile.",
           "enum": [
             "audited",
             "reference"
@@ -2569,23 +2539,6 @@
       ],
       "type": "object"
     },
-    "state": {
-      "additionalProperties": false,
-      "description": "W3C TimeState: the source as it was at sourceDate.",
-      "properties": {
-        "sourceDate": {
-          "$ref": "#/$defs/timestamp"
-        },
-        "type": {
-          "const": "TimeState"
-        }
-      },
-      "required": [
-        "type",
-        "sourceDate"
-      ],
-      "type": "object"
-    },
     "string_set": {
       "description": "Sorted, duplicate-free list of strings.",
       "items": {
@@ -2609,9 +2562,6 @@
         },
         "source": {
           "$ref": "#/$defs/ref"
-        },
-        "state": {
-          "$ref": "#/$defs/state"
         }
       },
       "required": [
@@ -2648,7 +2598,7 @@
           }
         }
       ],
-      "description": "How quotes and offsets on this source are matched. extractor and version come together: offsets into a PDF count in one version of one extractor (I7).",
+      "description": "How quotes on this source are matched. extractor and version come together: both or neither.",
       "properties": {
         "case": {
           "enum": [
@@ -2730,7 +2680,7 @@
     },
     "verdict": {
       "additionalProperties": false,
-      "description": "An adjudicated faithfulness verdict on an item.",
+      "description": "audit profile: an adjudicated verdict on an item. A producer's own finding ids and kinds go in x_ keys.",
       "patternProperties": {
         "^x_[a-z0-9_]+$": {}
       },
@@ -2774,46 +2724,14 @@
           "minItems": 1,
           "type": "array"
         },
-        "finding_ids": {
-          "items": {
-            "$ref": "#/$defs/sha256"
-          },
-          "type": "array",
-          "uniqueItems": true
-        },
-        "finding_kind": {
-          "enum": [
-            "CONTENT",
-            "COVERAGE",
-            "PAGE_ANCHOR",
-            "PROXY",
-            "SUSPECTED_ERRATA",
-            "VACUITY"
-          ],
-          "type": "string"
-        },
         "id": {
           "$ref": "#/$defs/id"
         },
         "item": {
           "$ref": "#/$defs/ref"
         },
-        "ledger_verdict": {
-          "enum": [
-            "ATTRIBUTION_GAP",
-            "CONFIRMED_CONTENT",
-            "CONVENTION",
-            "ERRATA",
-            "REFUTED",
-            "UNSURE"
-          ],
-          "type": "string"
-        },
         "locations": {
           "$ref": "#/$defs/ref_list"
-        },
-        "pinned_commit": {
-          "$ref": "#/$defs/git_sha"
         },
         "provenance": {
           "$ref": "#/$defs/ref"
@@ -2841,7 +2759,7 @@
         },
         "sub": {
           "minLength": 1,
-          "pattern": "^[0-9A-Za-z]+([.,-][0-9A-Za-z]+)*$",
+          "pattern": "^[0-9A-Za-z]+'*([.,-][0-9A-Za-z]+'*)*$",
           "type": "string"
         },
         "summary": {
@@ -2868,36 +2786,56 @@
         "summary"
       ],
       "type": "object"
+    },
+    "xref": {
+      "additionalProperties": false,
+      "description": "The same statement in a public database: database is an open lower-case snake_case token (the core is stacks, kerodon, wikidata, lmfdb; another passes with a warning), tag the entry's tag.",
+      "properties": {
+        "database": {
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "type": "string"
+        },
+        "tag": {
+          "minLength": 1,
+          "pattern": "^[^\\u0000-\\u0020\\u007f\\u0085\\u00a0\\u1680\\u2000-\\u200a\\u2028-\\u2029\\u202f\\u205f\\u3000\\ufeff]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "database",
+        "tag"
+      ],
+      "type": "object"
     }
   },
-  "$id": "https://raw.githubusercontent.com/mathlib-initiative/formal-companion-annotations/v1.0.0/schema/annotations-v1.schema.json",
+  "$id": "https://w3id.org/formal-companion/annotations/v1.0/schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
-  "description": "One document per companion: which Lean declarations formalise which items of which sources, and where those items sit in the sources. The locations are W3C Web Annotation targets. The prose spec is docs/annotations.md; this project's checker, the formal-companion-annotations-validate command (src/formal_companion_annotations/validate.py), checks this schema plus the semantic invariants no JSON Schema can state (references resolve, arrays sorted by id, selector grammars, the id rules). The $id is the raw URL of this file at the tag of the release that introduced this minor version (v1.0.0 for 1.0); it resolves only for clients that can read the repository, validators never fetch it, and documents need not carry $schema.",
+  "description": "One document per companion: which Lean declarations formalise which items of which sources, and where those items sit in the sources. The locations are W3C Web Annotation targets. The prose specification is docs/annotations.md; this project's checker, the formal-companion-annotations-validate command (src/formal_companion_annotations/validate.py), checks this schema plus the semantic invariants no JSON Schema can state (references resolve, arrays sorted by id, the coverage rules, the profile gating, selector grammars, the id rules). The core is the header and the arrays sources, items, declarations, links, provenance, locations and unattributed; the other root arrays belong to the four profiles a document declares in its profiles object (audit: verdicts; graph: clusters, memberships, artifacts; history: changelog; site: destinations, snippets). The $id is one per format minor and never changes after release; it is an identifier, validators never fetch it, and documents need not carry $schema.",
   "patternProperties": {
     "^x_[a-z0-9_]+$": {}
   },
   "properties": {
     "$schema": {
-      "description": "The JSON Schema the document follows. An identifier, never fetched, so the URL rule (I10) exempts it.",
+      "description": "The JSON Schema the document follows: an identifier, never fetched. When present it should be the $id of the schema of the declared schema_version.",
       "type": "string"
     },
     "artifacts": {
-      "description": "Sorted by id.",
+      "description": "graph profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/artifact"
       },
       "type": "array"
     },
     "changelog": {
-      "description": "Sorted by id.",
+      "description": "history profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/change"
       },
       "type": "array"
     },
     "clusters": {
-      "description": "Sorted by id.",
+      "description": "graph profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/cluster"
       },
@@ -2914,7 +2852,7 @@
       "type": "array"
     },
     "destinations": {
-      "description": "Sorted by id.",
+      "description": "site profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/destination"
       },
@@ -2942,11 +2880,34 @@
       "type": "array"
     },
     "memberships": {
-      "description": "Sorted by id.",
+      "description": "graph profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/membership"
       },
       "type": "array"
+    },
+    "profiles": {
+      "additionalProperties": false,
+      "description": "The profiles the document uses, each with its own <major>.<minor>. A root array or field a profile owns appears only when that profile is declared (invariant I14). May be absent or empty.",
+      "properties": {
+        "audit": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "type": "string"
+        },
+        "graph": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "type": "string"
+        },
+        "history": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "type": "string"
+        },
+        "site": {
+          "pattern": "^1\\.(0|[1-9][0-9]*)$",
+          "type": "string"
+        }
+      },
+      "type": "object"
     },
     "provenance": {
       "description": "Sorted by id.",
@@ -2956,15 +2917,15 @@
       "type": "array"
     },
     "schema": {
-      "const": "lean-companion/annotations"
+      "const": "formal-companion/annotations"
     },
     "schema_version": {
-      "description": "<major>.<minor>. Readers match the major; a writer declares the minor it used.",
+      "description": "<major>.<minor> of the core. Readers match the major; a writer declares the lowest minor whose schema admits the document.",
       "pattern": "^1\\.(0|[1-9][0-9]*)$",
       "type": "string"
     },
     "snippets": {
-      "description": "Sorted by id.",
+      "description": "site profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/snippet"
       },
@@ -2986,7 +2947,7 @@
       "type": "array"
     },
     "verdicts": {
-      "description": "Sorted by id.",
+      "description": "audit profile. Sorted by id.",
       "items": {
         "$ref": "#/$defs/verdict"
       },
@@ -3003,6 +2964,6 @@
     "links",
     "provenance"
   ],
-  "title": "lean-companion annotations, schema v1 (major version 1, minor 0)",
+  "title": "formal-companion annotations, schema 1.0",
   "type": "object"
 }

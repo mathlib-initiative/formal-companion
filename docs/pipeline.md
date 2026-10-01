@@ -22,8 +22,11 @@ pipelines/<id>/
 The PDF, its text and its pages stay in `sources/<source id>/`, which the
 workspace's git ignores; `repo/` is ignored too, being a repository of its own.
 Every checkpoint is written in canonical form and passes the vendored checker
-(`PYTHONPATH=vendor python3 -m formal_companion_annotations.validate --canonical`)
-with no warnings, or it is not written at all (`scripts/pipeline/document.py`).
+(`PYTHONPATH=vendor python3 -m formal_companion_annotations.validate --canonical
+--lint external-urls`) with no warnings, or it is not written at all
+(`scripts/pipeline/document.py`). Its root `profiles` is derived from the
+keys it holds: the stages write no profile-owned key (a source's `role` is
+core), so a checkpoint is core only and carries no `profiles`.
 
 ## S0: `cf ingest`
 
@@ -127,7 +130,7 @@ The gates, all fail-closed (`scripts/pipeline/source_gates.py`):
 | unique ids | no id twice among items or locations |
 | selector length cap | no `exact` over 12 words |
 | headings placed | every in-scope heading is found on the page preparation gave it |
-| validate `--canonical` | no problem and no warning |
+| validate `--canonical --lint external-urls` | no problem and no warning |
 | errata quotes | every erratum quote occurs in the rendered errata page |
 
 Counters are read off the numbers (`cflib.inference.infer_counters`), greedily:

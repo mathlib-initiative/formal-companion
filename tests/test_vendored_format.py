@@ -7,9 +7,13 @@ release of the format's repository, and
 the tag, the commit, the version and the sha256 of every file.  Any vendored
 byte that differs from the manifest, a file added or removed, fails here; so
 does a module that imports the format without the ``cflib.vendored``
-bootstrap, and a shared set whose copy in ``cflib.vocab`` is not the format's.
-A change to the format starts upstream (a release), then
-``scripts/annotations/sync_format.py``, then our copy.
+bootstrap, and a value the skill writes into a document that the format's own
+vocabulary does not admit.  The format owns its vocabulary
+(``formal_companion_annotations.vocab``); ``cflib.vocab`` keeps the skill's own
+sets for its stages and maps onto the format's values where a document is
+written, so the test here is containment, not equality.  A change to the
+format starts upstream (a release, or a release candidate tagged ``vX.Y.ZrcN``),
+then ``scripts/annotations/sync_format.py``, then our copy.
 """
 from __future__ import annotations
 
@@ -34,9 +38,16 @@ PACKAGE = VENDOR / "formal_companion_annotations"
 MANIFEST = VENDOR / "formal_companion_annotations.manifest.json"
 UPSTREAM = "https://github.com/mathlib-initiative/formal-companion-annotations"
 
-SHARED = ("VIEWER_VERDICTS", "VIEWER_SEVERITIES", "VIEWER_STATUS", "LEDGER_VERDICTS",
-          "FINDING_KINDS", "SOURCE_ROLES", "SORRY_CLASSES", "STATIC_RESOLUTIONS",
-          "RESOLUTION_PREFIXES")
+#: The skill's sets whose values reach a document, and the format's set each must sit inside:
+#: a verdict's ``verdict``, ``severity`` and ``status`` (the viewer layer the exporters copy),
+#: a source's ``role`` and a declaration's ``sorry`` class.
+WRITTEN_INTO_DOCUMENTS = (
+    ("VIEWER_VERDICTS", "ANNOTATION_VERDICTS"),
+    ("VIEWER_SEVERITIES", "ANNOTATION_SEVERITIES"),
+    ("VIEWER_STATUS", "ANNOTATION_VERDICT_STATUSES"),
+    ("SOURCE_ROLES", "ANNOTATION_SOURCE_ROLES"),
+    ("SORRY_CLASSES", "ANNOTATION_SORRY_CLASSES"),
+)
 
 
 def manifest() -> dict:
@@ -58,7 +69,7 @@ class TestTheVendoredBytesAreTheRelease(unittest.TestCase):
         m = manifest()
         self.assertEqual(set(m), {"upstream", "tag", "commit", "version", "source", "license", "files"})
         self.assertEqual(m["upstream"], UPSTREAM)
-        self.assertRegex(m["tag"], r"^v[0-9]+\.[0-9]+\.[0-9]+$")
+        self.assertRegex(m["tag"], r"^v[0-9]+\.[0-9]+\.[0-9]+(?:rc[1-9][0-9]*)?$")
         self.assertEqual(m["tag"], f"v{m['version']}")
         self.assertRegex(m["commit"], r"^[0-9a-f]{40}$")
         self.assertEqual(m["source"], "src/formal_companion_annotations")
@@ -97,23 +108,31 @@ class TestEveryImportGoesThroughTheBootstrap(unittest.TestCase):
         self.assertEqual(offenders, [], "import `from cflib import vendored` first")
 
 
-class TestTheFormatAgrees(unittest.TestCase):
-    """The format owns nine sets that cflib.vocab also holds; our copies must equal its."""
+class TestEveryValueTheSkillWritesIsTheFormats(unittest.TestCase):
+    """The format owns its vocabulary; whatever the skill copies into a document must be in it."""
 
-    def test_our_copy_of_every_shared_set_is_the_formats(self):
-        for name in SHARED:
-            with self.subTest(set=name):
-                self.assertEqual(getattr(vocab, name), getattr(fmt, name))
+    def test_every_written_set_is_inside_the_formats(self):
+        for ours, theirs in WRITTEN_INTO_DOCUMENTS:
+            with self.subTest(set=ours):
+                self.assertLessEqual(set(getattr(vocab, ours)), set(getattr(fmt, theirs)),
+                                     f"cflib.vocab.{ours} writes a value {theirs} does not admit")
 
-    def test_the_formats_resolution_states_are_ours_plus_open(self):
-        self.assertEqual({"open"} | vocab.STATIC_RESOLUTIONS
-                         | {p.rstrip(":") for p in vocab.RESOLUTION_PREFIXES},
-                         fmt.ANNOTATION_RESOLUTION_STATES)
+    def test_every_resolution_state_the_skill_writes_is_the_formats(self):
+        # a verdict's resolution.state: the static resolutions, the prefixed ones and ``open``
+        written = {"open"} | vocab.STATIC_RESOLUTIONS | {p.rstrip(":") for p in vocab.RESOLUTION_PREFIXES}
+        self.assertLessEqual(written, fmt.ANNOTATION_RESOLUTION_STATES)
+
+    def test_the_ledger_vocabulary_is_not_the_formats(self):
+        """The ledger verdicts and finding kinds left the format: they go under ``x_`` keys."""
+        for name in ("LEDGER_VERDICTS", "FINDING_KINDS", "VIEWER_VERDICTS", "VIEWER_STATUS",
+                     "VIEWER_SEVERITIES", "SOURCE_ROLES", "SORRY_CLASSES"):
+            self.assertFalse(hasattr(fmt, name), f"the format grew a {name} again; map to it instead")
 
     def test_the_exporters_write_the_major_version_the_package_reads(self):
-        self.assertEqual(fmt.ANNOTATION_SCHEMA, "lean-companion/annotations")
+        self.assertEqual(fmt.ANNOTATION_SCHEMA, "formal-companion/annotations")
         self.assertEqual(fmt.ANNOTATION_SCHEMA_MAJOR, 1)
         self.assertEqual(manifest()["version"].split(".")[0], str(fmt.ANNOTATION_SCHEMA_MAJOR))
+        self.assertEqual(set(fmt.ANNOTATION_PROFILE_VERSIONS), {"audit", "graph", "history", "site"})
 
 
 if __name__ == "__main__":

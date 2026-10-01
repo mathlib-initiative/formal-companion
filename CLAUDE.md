@@ -98,10 +98,13 @@ Those two lines move together or not at all.
 - **One vocabulary.** `scripts/cflib/vocab.py` is the only definition of the
   enums; `references/vocabulary.md` documents them. A new value is a change to
   both, plus a mapping entry for the converted baseline. The exception is the
-  annotation format: its enums, and nine sets it shares with the skill, are
-  defined by the vendored `formal_companion_annotations.vocab`; `cflib.vocab`
-  keeps copies of the nine for the skill's stages, and
-  `tests/test_vendored_format.py` checks that they equal the format's.
+  annotation format: its enums are defined by the vendored
+  `formal_companion_annotations.vocab` and are the format's own; `cflib.vocab`
+  keeps the skill's sets for its stages and maps onto the format's values
+  where a document is written, and `tests/test_vendored_format.py` checks that
+  every value the skill writes is one the format admits (containment, not
+  equality). What the format does not carry (ledger verdicts, finding kinds)
+  goes under `x_` keys.
 - **One item grammar, one namespace rule.** `scripts/cflib/items.py`. Never
   write another item regex; never let an unparseable id become a key. Parsing
   is whitespace-tolerant and produces a *reject list* callers must report. An

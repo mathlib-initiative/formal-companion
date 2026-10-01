@@ -79,7 +79,9 @@ DEFAULT_NUMBERING: tuple[int, int] = (2, 3)
 
 _DASHES = {"‐": "-", "‑": "-", "‒": "-", "–": "-",
            "—": "-", "―": "-", "−": "-"}
-_SUB_RE = re.compile(r"^(?:[ivxl]{1,6}|\d{1,2}|[a-h])$", re.I)
+#: a sub-part group: a roman numeral, a number or a letter, with the primes a
+#: source writes after it (``(b')``, ``(c'')``); the prime stays in the sub
+_SUB_RE = re.compile(r"^(?:[ivxl]{1,6}|\d{1,2}|[a-h])'*$", re.I)
 _PAGE_RE = re.compile(r"(?:pp?\.|pages?\s*|p\s+)\s*(\d+)", re.I)
 _IN_TEXT_RE = re.compile(r"^in[-\s]?text\b", re.I)
 #: the whole dotted run, however deep -- the depth is judged, never truncated
