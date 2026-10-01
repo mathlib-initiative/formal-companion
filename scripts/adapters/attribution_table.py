@@ -69,7 +69,7 @@ from typing import Iterator, Mapping, Sequence
 from cflib import items as cf_items
 from cflib.hashing import sha256_file
 
-from . import leanparse
+from . import leanbuild, leanparse
 from .api import Adapter, AdapterError, register, sha_of_files
 from .base import make_row
 from .itemtag import kinds_from_labels
@@ -448,6 +448,7 @@ class AttributionTableAdapter(Adapter):
             # to file them under: reported, never guessed onto an item.
             "unattributed": len(omitted) - len(unionable),
             "anonymous_claims": counts["anonymous_claims"],
+            "lean_source": leanbuild.tally(self.lean_build(repo)),
             "omissions": [c.report(unioned=union and c.item is not None) for c in omitted],
             # leading docstring labels the item grammar refused (CLAUDE.md S4:
             # a reject is reported, never guessed onto the next mention)
@@ -545,10 +546,11 @@ class AttributionTableAdapter(Adapter):
         wanted = set(self.claim_regions())
         claims: list[LeanClaim] = []
         counts: Counter[str] = Counter()
+        build = self.lean_build(path)
         for lean in self.lean_files(path):
             rel = str(lean.relative_to(path))
             try:
-                decls = leanparse.parse_file(lean, rel)
+                decls = leanbuild.parse_file(lean, rel, build=build)
             except (OSError, UnicodeDecodeError):   # pragma: no cover - unreadable source
                 counts["unreadable_files"] += 1
                 continue
@@ -727,4 +729,5 @@ class AttributionTableAdapter(Adapter):
         # replay the table that predates it at an unchanged export sha.
         if self.cross_check_policy() != "off":
             fp["lean_scan_sha"] = sha_of_files(self.lean_files(path), path)
+            fp["lean_build"] = leanbuild.fingerprint(self.lean_build(path), self.lean_files(path), path)
         return fp

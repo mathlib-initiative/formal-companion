@@ -270,11 +270,9 @@ class Build:
 
     def _trace(self, rel: str) -> tuple[Path, dict, str]:
         """``(module path stem, trace, source hash)`` for the module built from ``rel``."""
-        parts = Path(rel).with_suffix("").parts
         suffix = "/" + Path(rel).as_posix()
         found = False
-        for k in range(len(parts)):
-            stem = self.lib.joinpath(*parts[k:])
+        for stem in _stems(self.lib, rel):
             path = stem.with_name(stem.name + ".trace")
             if not path.is_file():
                 continue
@@ -395,24 +393,30 @@ def tally(build: Build | None) -> dict:
     return {"build": f"not read ({ENV}=text)" if forced else "none"}
 
 
+def _stems(lib: Path, rel: str):
+    """Candidate module paths under ``lib`` for source ``rel`` (its source directory may be a subdirectory)."""
+    parts = Path(rel).with_suffix("").parts
+    return [lib.joinpath(*parts[k:]) for k in range(len(parts))]
+
+
 def fingerprint(build: Build | None, paths, root: Path) -> str:
     """A digest of the build records that decide each file's origin (for extraction keys)."""
     if build is None:
         return "text"
     h = hashlib.sha256()
     for p in sorted(paths):
-        rel = Path(p).relative_to(root)
-        stem = build.lib.joinpath(*rel.with_suffix("").parts)
-        parts = [stem.with_name(stem.name + ".trace")]
-        if build.literate is not None:
-            lit = build.literate.joinpath(*rel.with_suffix("").parts)
-            parts += [lit.with_name(lit.name + ".json.hash"), lit.with_name(lit.name + ".json.trace")]
-        h.update(rel.as_posix().encode() + b"\0")
-        for f in parts:
-            try:
-                h.update(hashlib.sha256(f.read_bytes()).digest())
-            except OSError:
-                h.update(b"-")
+        rel = Path(p).relative_to(root).as_posix()
+        h.update(rel.encode() + b"\0")
+        for stem in _stems(build.lib, rel):
+            files = [stem.with_name(stem.name + ".trace")]
+            if build.literate is not None:
+                lit = build.literate.joinpath(*stem.relative_to(build.lib).parts)
+                files += [lit.with_name(lit.name + ".json.hash"), lit.with_name(lit.name + ".json.trace")]
+            for f in files:
+                try:
+                    h.update(hashlib.sha256(f.read_bytes()).digest())
+                except OSError:
+                    h.update(b"-")
     return h.hexdigest()
 
 
