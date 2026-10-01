@@ -403,6 +403,7 @@ release has something to say.
   folio-only page at the seam was enough to reach it.
 - a quote whose edge carries a sign written apart from its operand (`- 1 ≤ …`
   where the source has `1 ≤ …`) was certified verbatim.
+- `cf cost` and `cf harvest --transcripts` filed Claude Code's own API-error lines (model `<synthetic>`, zero usage) as an unpriced model, so an exact cost read as a lower bound; they are skipped now.
 - `cf report` dropped a corpus document `cf tally` refuses to read, publishing
   coverage figures that were a lower bound with nothing in the report saying so;
   it also dropped every examined item outside the audited chapters from those

@@ -309,6 +309,27 @@ class TestClaudeTranscripts(unittest.TestCase):
         self.assertEqual(totals.skipped_without_usage, 3)
         self.assertEqual(totals.tokens["claude-opus-5"]["output"], 337)
 
+    def test_a_synthetic_api_error_line_is_skipped_not_filed_as_an_unpriced_model(self):
+        zero = {k: 0 for k in self.USAGE}
+        write_jsonl(self.root / "logs" / "a.jsonl", [
+            claude_line("m1", "r1", self.USAGE),
+            claude_line("e1", None, zero, model="<synthetic>"),
+            claude_line("e2", "r2", zero, model="<synthetic>"),
+        ])
+        old_export = write_jsonl(self.root / "old" / "usage.jsonl", [
+            {"model": "claude-opus-5", "usage": usage_mod.normalise_usage(self.USAGE)},
+            {"model": "<synthetic>", "usage": usage_mod.zero()},
+        ])
+        for path in (self.root / "logs", old_export):
+            with self.subTest(path=path.name):
+                block = fleet_mod.cost_block(path, table=pricing.DEFAULT_PRICE_TABLE,
+                                             table_source="test")
+                self.assertEqual(sorted(block["tokens"]), ["claude-opus-5"])
+                self.assertEqual(block["unpriced"], [])
+                self.assertEqual((block["message_count"], block["skipped_without_usage"]),
+                                 (1, 1 if path == old_export else 2))
+                self.assertGreater(block["usd"], 0)
+
     def test_the_lines_of_one_response_count_once(self):
         """Claude Code writes one line per content block, all with the same
         message id, request id and usage."""
