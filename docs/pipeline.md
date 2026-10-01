@@ -176,8 +176,11 @@ quote needs one of ours on its page whose quote overlaps it (a shared run of
 four words); a page-only match is listed apart and not counted. The derived
 tables carry no quotes, so on them the one-to-one page rule (or beside the
 same item, within a page) applies, the figure is an upper bound on recovery,
-and the report says so. The figure first quoted for this branch, 0.230, was
-measured under a many-to-one page rule: read it as at most 51 of 222 passages
-by page coincidence, not as a recall, until it is re-measured.
+and the report says so. Measured that way on Chapter 1 of the published
+edition, the figure is 19 of 222 passages (0.086), an upper bound; the test
+prints it and writes it to `CF_M1_REPORT`, and asserts the 90% bar only under
+`CF_M1_ENFORCE_BARS=1`. The figure first quoted for the M1 branch, 0.230 (51 of
+222), was measured under a many-to-one page rule and counted page
+coincidences: it is superseded, not a recall.
 `tests/test_m1_source_side.py` covers the same stages on the synthetic booklet
 of `tests/e2e/make_pdf.py`, built with its planted passages.
