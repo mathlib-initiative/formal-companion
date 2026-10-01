@@ -227,7 +227,7 @@ class TestCodexRollouts(unittest.TestCase):
         self.assertEqual(totals.tokens["gpt-test"],
                          {"input": 101, "output": 14, "cache_write": 20, "cache_read": 80})
 
-    def test_a_cumulative_block_that_goes_backwards_restarts_the_baseline(self):
+    def test_the_same_event_twice_is_a_repeat(self):
         events = codex_sample_events()
         first = events[0]
         self.rollout([turn_context("gpt-test"), first, first])
@@ -235,6 +235,69 @@ class TestCodexRollouts(unittest.TestCase):
         # the second copy advances the cumulative block by nothing: a repeat
         self.assertEqual(totals.message_count, 1)
         self.assertEqual(totals.repeated_events, 1)
+
+    def test_a_cumulative_block_that_goes_backwards_restarts_the_baseline(self):
+        """Thread t's cumulative block falls from 300 prompt tokens to 70 (a
+        reset).  That event is charged its own usage (40), not the whole
+        block (70) and not nothing, and the next event is charged its advance
+        over the new baseline (70 -> 90: 20), not over the old one."""
+        def record(prompt, output, cum_prompt, cum_output):
+            def block(i, o):
+                return {"input_tokens": i, "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0, "output_tokens": o,
+                        "reasoning_output_tokens": 0, "total_tokens": i + o}
+            return {"type": "token_usage_record",
+                    "payload": {"thread_id": "t", "usage": block(prompt, output),
+                                "thread_token_usage": block(cum_prompt, cum_output)}}
+
+        self.rollout([turn_context("gpt-test"),
+                      record(100, 10, 100, 10),
+                      record(200, 20, 300, 30),
+                      record(40, 4, 70, 7),      # backwards: a reset
+                      record(20, 2, 90, 9)])
+        totals = usage_mod.read_path(self.root)
+        self.assertEqual(totals.message_count, 4)
+        self.assertEqual(totals.repeated_events, 0)
+        self.assertEqual(totals.tokens["gpt-test"],
+                         {"input": 100 + 200 + 40 + 20, "output": 10 + 20 + 4 + 2,
+                          "cache_write": 0, "cache_read": 0})
+
+    def test_a_reset_with_no_usage_of_its_own_is_charged_its_cumulative_block(self):
+        """An ``event_msg`` token_count with a total and no last usage that
+        goes backwards: the block is all there is to charge."""
+        def count(total_prompt, last_prompt=None):
+            info = {"total_token_usage": {
+                "input_tokens": total_prompt, "cached_input_tokens": 0,
+                "cache_write_input_tokens": 0, "output_tokens": 1,
+                "reasoning_output_tokens": 0, "total_tokens": total_prompt + 1}}
+            return {"type": "event_msg", "payload": {"type": "token_count", "info": info}}
+
+        self.rollout([turn_context("gpt-test"), count(500), count(30)])
+        totals = usage_mod.read_path(self.root)
+        self.assertEqual(totals.message_count, 2)
+        self.assertEqual(totals.tokens["gpt-test"]["input"], 530)
+
+    def test_each_thread_keeps_its_own_cumulative_block(self):
+        """Two threads interleaved in one log: thread b's first total (300) is
+        its own, not an advance of 200 over thread a's 100, and so on."""
+        def record(thread, prompt, output, cum_prompt, cum_output):
+            def block(i, o):
+                return {"input_tokens": i, "cached_input_tokens": 0,
+                        "cache_write_input_tokens": 0, "output_tokens": o,
+                        "reasoning_output_tokens": 0, "total_tokens": i + o}
+            return {"type": "token_usage_record",
+                    "payload": {"thread_id": thread, "usage": block(prompt, output),
+                                "thread_token_usage": block(cum_prompt, cum_output)}}
+
+        self.rollout([turn_context("gpt-test"),
+                      record("a", 100, 10, 100, 10),
+                      record("b", 300, 30, 300, 30),
+                      record("a", 50, 5, 150, 15),
+                      record("b", 50, 5, 350, 35)])
+        totals = usage_mod.read_path(self.root)
+        self.assertEqual(totals.message_count, 4)
+        self.assertEqual(totals.tokens["gpt-test"],
+                         {"input": 500, "output": 50, "cache_write": 0, "cache_read": 0})
 
 
 # ---------------------------------------------------------------------------
@@ -636,6 +699,24 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
         entry = fleet_mod.run_cost("run-a", self.root / "corpus" / "run-a")
         self.assertEqual((entry["tasks"], entry["tasks_from"]), (47, "run.yaml tasks.count"))
         self.assertAlmostEqual(entry["usd_per_task"], EXACT_S17B_USD / 47, places=3)
+        rc, out, _ = _run(["--workspace", str(self.root), "tally"])
+        self.assertIn("cost run-a: $358.10 ($7.62 a task over 47 tasks, from run.yaml", out)
+
+    def test_the_report_divides_by_more_than_one_task(self):
+        """Per task is the dollars over run.yaml's 47 tasks, not the total."""
+        run_dir = self.root / "runs" / "run-a"
+        run_dir.mkdir(parents=True)
+        (run_dir / "run.yaml").write_text("run_id: run-a\nmode: attack:vac\ntasks:\n  count: 47\n",
+                                          encoding="utf-8")
+        rc, _, err = self.harvest("--transcripts", str(S17B))
+        self.assertEqual(rc, 0, err)
+        rc, out, err = _run(["--workspace", str(self.root), "report", "--no-verify-args"])
+        self.assertEqual(rc, 0, err)
+        handoff = sorted((self.root / "reports").glob("handoff.*.md"))[-1].read_text(
+            encoding="utf-8")
+        row = [l for l in handoff.splitlines() if l.startswith("| `run-a`")][0]
+        self.assertIn("| 358.10 | %.2f |" % (EXACT_S17B_USD / 47), row)
+        self.assertIn("| 358.10 | 7.62 |", row)
 
     def test_the_report_runs_table_carries_the_two_cost_columns(self):
         rc, _, err = self.harvest("--transcripts", str(S17B))
