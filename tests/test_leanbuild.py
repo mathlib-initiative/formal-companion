@@ -544,7 +544,10 @@ class FreshnessTest(Scratch):
         files = [self.root / self.REL]
         before = leanbuild.fingerprint(leanbuild.Build.find(self.root), files, self.root)
         self.lake.literate(self.REL, ORDINARY, ORDINARY_ITEMS, olean="1f10c24028125a44")
-        self.assertNotEqual(leanbuild.fingerprint(leanbuild.Build.find(self.root), files, self.root), before)
+        after = leanbuild.fingerprint(leanbuild.Build.find(self.root), files, self.root)
+        self.assertNotEqual(after, before)
+        self.lake.path(self.REL, ".ilean").unlink()
+        self.assertNotEqual(leanbuild.fingerprint(leanbuild.Build.find(self.root), files, self.root), after)
         self.assertEqual(leanbuild.fingerprint(None, files, self.root), "text")
 
 
@@ -663,6 +666,8 @@ class ConsumerTest(Scratch):
         text_adapter = from_config(adapter.config, source="<synthetic>")
         self.assertEqual(list(text_adapter.extract(sources={"src": "aa" * 32})), [])
         self.assertNotEqual(text_adapter.key(), key)
+        self.assertIn("lean_build", adapter.key_inputs())
+        self.assertNotIn("lean_build", text_adapter.key_inputs())   # a text-only key is the one it always was
 
     def test_the_attribution_table_adapter_and_exporter(self):
         repo = self.root / "repo"

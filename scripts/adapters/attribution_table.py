@@ -729,5 +729,7 @@ class AttributionTableAdapter(Adapter):
         # replay the table that predates it at an unchanged export sha.
         if self.cross_check_policy() != "off":
             fp["lean_scan_sha"] = sha_of_files(self.lean_files(path), path)
-            fp["lean_build"] = leanbuild.fingerprint(self.lean_build(path), self.lean_files(path), path)
+            build = self.lean_build(path)
+            if build is not None:   # without one, the key of the text parser's result is unchanged
+                fp["lean_build"] = leanbuild.fingerprint(build, self.lean_files(path), path)
         return fp

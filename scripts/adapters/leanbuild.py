@@ -410,7 +410,7 @@ def fingerprint(build: Build | None, paths, root: Path) -> str:
         rel = Path(p).relative_to(root).as_posix()
         h.update(rel.encode() + b"\0")
         for stem in _stems(build.lib, rel):
-            files = [stem.with_name(stem.name + ".trace")]
+            files = [stem.with_name(stem.name + ".trace"), stem.with_name(stem.name + ".ilean")]
             if build.literate is not None:
                 lit = build.literate.joinpath(*stem.relative_to(build.lib).parts)
                 files += [lit.with_name(lit.name + ".json.hash"), lit.with_name(lit.name + ".json.trace")]
