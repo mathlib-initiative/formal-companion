@@ -18,11 +18,20 @@ docs/proposals/pdf-to-companion.md section 5.4.
   data holds that the format cannot carry, and what was carried in a shape the
   format did not intend), the counts and any problems.  It is written beside
   the document.
-* :class:`HeaderCutter` cuts a named declaration's section 5.1 signature with
-  ``formal_companion_annotations.ids``, from the file and the keyword's line.
+* :class:`HeaderCutter` cuts a named declaration's section 7.1 signature with
+  ``formal_companion_annotations.ids.signature_at``, from the file and the
+  keyword's line.
 * :func:`render_sub` is the one sub-part renderer both exporters use, so a
-  label and a tag naming the same part give the same ``sub`` (section 3.2 of
+  label and a tag naming the same part give the same ``sub`` (section 5.2 of
   docs/annotations.md keys numbered items by ``(source, kind, number, sub)``).
+* :func:`declare_profiles` writes the root ``profiles`` object from what the
+  document holds: each of the format's four profiles exactly when one of the
+  keys it owns is present (invariant I14), at the version the vendored package
+  knows.  A source's ``role`` is core (1.0.0rc1), so a document whose only
+  profile-shaped key is ``role`` declares nothing.
+* :func:`has_url` is the exporters' own guard for the format's ``external-urls``
+  lint (``L1``): a note, a title or a raw label that holds a URL is dropped and
+  reported, so the documents pass the lint the viewer's deployment relies on.
 """
 from __future__ import annotations
 
@@ -42,14 +51,19 @@ if str(_SCRIPTS) not in sys.path:
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids                         # noqa: E402
 from formal_companion_annotations import validate as V               # noqa: E402
+from formal_companion_annotations import vocab                       # noqa: E402
 from cflib import __version__, gitsafe                               # noqa: E402
 from cflib import items as cf_items                                  # noqa: E402
 from cflib.jsonio import atomic_write                                # noqa: E402
 
-#: Keywords whose header opens fields or constructors, not a value: no signature.
+#: Keywords whose header opens fields or constructors, not a value: no signature
+#: (``ids.signature_at`` returns None for them; counted apart in the cutter's ``skipped``).
 NO_HEADER_CUT = frozenset({"structure", "class", "inductive"})
-#: A sub-part as the format writes it (the schema's ``sub`` pattern): ``ii``, ``i.a``, ``iv-vi``, ``i,iii``.
-SUB_PATTERN = re.compile(r"^[0-9A-Za-z]+(?:[.,-][0-9A-Za-z]+)*$")
+#: The lint the exporters' documents are checked with (``validate.LINTS``).
+LINTS = ("external-urls",)
+#: A sub-part as the format writes it (the schema's ``sub`` pattern): ``ii``, ``i.a``, ``iv-vi``, ``i,iii``,
+#: and a primed part ``b'`` or ``f''`` (the prime stays, in the item id too: ``exercise-1.4-b'``).
+SUB_PATTERN = re.compile(r"^[0-9A-Za-z]+'*(?:[.,-][0-9A-Za-z]+'*)*$")
 #: What joins two sub-part groups: a dash is a range, a comma, slash, ampersand or "and" a list.
 _SUB_JOIN = re.compile(r"^\s*(?:(?P<range>[-‐–—])|(?P<list>,|/|&|\band\b))\s*(?=\()")
 _PAREN = re.compile(r"^\(([^()]*)\)")
@@ -132,8 +146,44 @@ def read_bytes(path: Path) -> bytes:
 
 
 def has_url(text: str | None) -> bool:
-    """Whether ``text`` holds an ``http(s)://`` URL, which I10 keeps out of every non-source field."""
+    """Whether ``text`` holds an ``http(s)://`` URL.
+
+    The format's ``external-urls`` lint (``L1``, docs/annotations.md section
+    9.5) allows a URL only in a source's ``url`` and ``alternate_urls``, a
+    destination's ``href``, a selector's ``conformsTo`` and quoted source
+    text.  The exporters keep their documents lint-clean: a value that would
+    fail it is dropped and reported as a problem.
+    """
     return bool(text) and bool(_URL.search(text))
+
+
+def declare_profiles(doc: dict) -> dict:
+    """Set the root ``profiles`` of ``doc`` to exactly the profiles its keys need (I14).
+
+    A profile is declared when one of the root arrays or record fields it
+    owns (``validate.PROFILES``) is present, empty or not, at the version the
+    vendored package knows; an absent profile key is removed.  Returns the
+    ``profiles`` object written (empty when the document is core only).  What
+    each profile owns is the package's word, not this module's: ``audit`` owns
+    ``verdicts`` alone (a source's ``role`` is core), so a document with no
+    verdict declares no ``audit``.
+    """
+    needed: dict[str, str] = {}
+    for name, owned in V.PROFILES.items():
+        present = any(array in doc for array in owned["arrays"])
+        for dotted in owned["fields"]:
+            head, _, field_name = dotted.partition(".")
+            if head == "companion":
+                present = present or field_name in (doc.get("companion") or {})
+            else:
+                present = present or any(field_name in rec for rec in doc.get(head) or [])
+        if present:
+            needed[name] = vocab.ANNOTATION_PROFILE_VERSIONS[name]
+    if needed:
+        doc["profiles"] = dict(sorted(needed.items()))
+    else:
+        doc.pop("profiles", None)
+    return dict(needed)
 
 
 # ---------------------------------------------------------------------------
@@ -155,10 +205,12 @@ def render_sub(text: str) -> tuple[str, str, str | None]:
     (``(i)(a)`` -> ``i.a``), a dash between groups is a range (``(i)-(iii)`` ->
     ``i-iii``) and a comma, slash, ampersand or "and" a list (``(i), (iii)`` ->
     ``i,iii``), each emitted whole rather than narrowed to its first group.
+    A primed part (``(b')``, ``(f'')``) is a group like any other: the prime
+    stays (``b'``), as the format's ``sub`` admits.
 
     ``refused`` is the raw sub-part text when it cannot be carried: a
     parenthetical attached to the number that the grammar does not accept as
-    a sub-part (``1.2.3(ii')``), a group after a range or list separator that
+    a sub-part (``1.2.3(ii*)``), a group after a range or list separator that
     it does not accept, or a result outside :data:`SUB_PATTERN`.  The sub is
     then empty, ``rest`` is ``text`` unchanged, and the caller reports it.  A
     parenthetical set off by a space and refused by the grammar
@@ -330,29 +382,29 @@ def pdf_source_fields(sha256: str, *, source_id: str | None = None, title: str |
 
 
 # ---------------------------------------------------------------------------
-# the section 5.1 header cut for named declarations
+# the section 7.1 header cut for named declarations
 # ---------------------------------------------------------------------------
 
 class HeaderCutter:
     """``(signature, statement_sha256)`` of a named declaration at (file, keyword line).
 
-    The section 5.1 cut (the keyword up to the ``:=`` or ``where`` that ends a
-    typed header, comments removed, whitespace collapsed), by
-    ``formal_companion_annotations.ids``' own scanner.  ``skipped`` counts why a
-    declaration got none: a ``structure``, ``class`` or ``inductive`` (their
-    ``where`` opens fields), a header nothing ends, or a line the keyword is not
-    on.
+    The section 7.1 cut (the keyword up to the ``:=``, top-level ``where`` or
+    match alternative that ends a typed header; the display form keeps the
+    readable text, the hash is over the token-normalised form), by
+    ``formal_companion_annotations.ids.signature_at``.  ``skipped`` counts why
+    a declaration got none: a ``structure``, ``class`` or ``inductive`` (their
+    ``where`` opens fields), or a header the scanner does not cut (untyped,
+    nothing ends it, or no declaration of that keyword starts on the line).
     """
 
     def __init__(self, root: Path):
         self.root = root
-        self.cache: dict[str, tuple[str, str]] = {}
+        self.cache: dict[str, str] = {}
         self.skipped: dict[str, int] = {}
 
-    def code(self, rel: str) -> tuple[str, str]:
+    def text(self, rel: str) -> str:
         if rel not in self.cache:
-            code = ids.strip_comments((self.root / rel).read_text(encoding="utf-8"))[0]
-            self.cache[rel] = (code, ids.blank_literals(code))
+            self.cache[rel] = (self.root / rel).read_text(encoding="utf-8")
         return self.cache[rel]
 
     def _skip(self, why: str) -> None:
@@ -362,18 +414,8 @@ class HeaderCutter:
         if kind in NO_HEADER_CUT:
             self._skip(f"kind_{kind}")
             return None
-        code, scan = self.code(rel)
-        pos = 0
-        for _ in range(line - 1):
-            pos = scan.index("\n", pos) + 1
-        eol = scan.find("\n", pos)
-        eol = len(scan) if eol < 0 else eol
-        start = next((i for i in range(pos, eol) if ids.token_at(scan, i, kind)), None)
-        if start is None:
-            self._skip("keyword_not_on_line")
+        got = ids.signature_at(self.text(rel), line, kind)
+        if got is None:
+            self._skip("no_typed_header")
             return None
-        sig = ids.named_signature(code, scan, start, kind)
-        if sig is None:
-            self._skip("no_header_end")
-            return None
-        return sig, ids.statement_sha256(sig)
+        return got

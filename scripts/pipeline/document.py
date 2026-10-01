@@ -20,6 +20,7 @@ from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids
 from formal_companion_annotations import validate as annotations_validate
 from formal_companion_annotations import vocab
+from annotations.export.common import declare_profiles
 from cflib.errors import CfError
 from cflib.hashing import sha256_file
 from cflib.jsonio import atomic_write
@@ -53,7 +54,13 @@ def word_count(text: str) -> int:
 
 
 def new_document(companion: dict, sources: list[dict], provenance: list[dict]) -> dict:
-    """An empty v1.0 document with its header, sources and provenance."""
+    """An empty 1.0 document with its header, sources and provenance.
+
+    The root ``profiles`` is written by :func:`write_checkpoint`, from the keys
+    the finished document holds.  Nothing the stages write is profile-owned
+    (a source's ``role`` is core), so a checkpoint is core only and carries
+    no ``profiles``.
+    """
     return {
         "schema": vocab.ANNOTATION_SCHEMA,
         "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
@@ -136,26 +143,36 @@ def over_cap(doc: dict, cap: int = EXACT_WORD_CAP) -> list[str]:
     return problems
 
 
+#: The lints a checkpoint must pass besides the schema and invariants.
+LINTS = ("external-urls",)
+
+
 def check(doc: dict) -> tuple[str, list[str], list[str]]:
-    """``(canonical text, problems, warnings)`` for a document about to be written."""
+    """``(canonical text, problems, warnings)`` for a document about to be written.
+
+    Problems and warnings are the checker's lines, ``<path>: <message> [<code>]``.
+    The document's ``profiles`` are declared first, from the keys it holds.
+    """
+    declare_profiles(doc)
     canonical_doc = annotations_validate.canonicalize(doc)
     text = annotations_validate.canonical_dumps(canonical_doc)
-    report = annotations_validate.check(canonical_doc, text=text, canonical=True)
-    return text, list(report.problems), list(report.warnings)
+    report = annotations_validate.check(canonical_doc, text=text, canonical=True, lints=LINTS)
+    return (text, [f"{p} [{p.code}]" for p in report.problems],
+            [f"{w} [{w.code}]" for w in report.warnings])
 
 
 def write_checkpoint(path: str | Path, doc: dict) -> str:
     """Write ``doc`` canonically and return the file's sha256.
 
     Refuses (and writes nothing) when the checker finds a problem or a warning:
-    a checkpoint that ``formal_companion_annotations.validate --canonical``
-    would reject is not a checkpoint.
+    a checkpoint that ``formal_companion_annotations.validate --canonical
+    --lint external-urls`` would reject is not a checkpoint.
     """
     text, problems, warnings = check(doc)
     if problems or warnings:
         shown = problems + [f"warning: {w}" for w in warnings]
         raise CfError(f"refusing to write {Path(path).name}: the document does not pass "
-                      f"formal_companion_annotations.validate --canonical: "
+                      f"formal_companion_annotations.validate --canonical --lint external-urls: "
                       + "; ".join(shown[:10])
                       + (f" (and {len(shown) - 10} more)" if len(shown) > 10 else ""),
                       hint="this is a defect in the stage that built it; nothing was written")

@@ -35,8 +35,10 @@ if str(SCRIPTS) not in sys.path:
 
 import cf as cf_main                                               # noqa: E402
 from annotations import review_tags                                # noqa: E402
+from annotations.export.common import LINTS, declare_profiles      # noqa: E402
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import validate as V             # noqa: E402
+from formal_companion_annotations import vocab                     # noqa: E402
 
 
 
@@ -56,7 +58,7 @@ def reference_file(case: type | unittest.TestCase, name: str) -> Path:
 def base_document() -> dict:
     """A small valid document: two numbered items, a passage, four declarations, two key links."""
     return {
-        "schema": "lean-companion/annotations", "schema_version": "1.0",
+        "schema": vocab.ANNOTATION_SCHEMA, "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
         "companion": {"name": "demo", "repo": "git.example.org/demo/demo", "commit": "a" * 40,
                       "generated_at": "2026-09-01T00:00:00Z", "generator": "hand"},
         "sources": [{"id": "book", "kind": "pdf", "title": "A Demo Book", "sha256": "1" * 64,
@@ -91,7 +93,9 @@ def base_document() -> dict:
 
 
 def valid(case: unittest.TestCase, doc: dict) -> None:
-    case.assertEqual(V.validate(V.canonicalize(doc)), [])
+    """The planted document is a valid one: profiles declared for the keys it uses, no problem, lint-clean."""
+    declare_profiles(doc)
+    case.assertEqual(V.validate(V.canonicalize(doc), lints=LINTS), [])
 
 
 class TestEachPlantedDefectIsReported(unittest.TestCase):
@@ -128,12 +132,25 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
         # review record item 16: a claimed formalization that no key names is the defect the check is for
         doc = base_document()
         doc["items"].append({"id": "remark-1.1.3", "id_source": "label", "form": "numbered", "source": "book",
-                             "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"}})
-        for coverage in ("formalized", "partial"):
-            doc["items"][-1]["coverage"] = coverage
-            valid(self, doc)
-            found = review_tags.check_attribution_gap(doc)
-            self.assertEqual([(f["item"], f["coverage"]) for f in found], [("remark-1.1.3", coverage)])
+                             "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"},
+                             "coverage": "formalized"})
+        doc["links"].append({"id": "remark-1.1.3/key/Demo.helper", "item": "remark-1.1.3",
+                             "declaration": "Demo.helper", "role": "key", "provenance": "prov-table"})
+        valid(self, doc)            # formalized with a key is valid; without one the format itself refuses it (I5)
+        doc["links"].pop()
+        found = review_tags.check_attribution_gap(doc)
+        self.assertEqual([(f["item"], f["coverage"]) for f in found], [("remark-1.1.3", "formalized")])
+        # partial_only with no attributed link claims a partial statement nothing names: a gap too
+        doc["items"][-1]["coverage"] = "partial_only"
+        valid(self, doc)
+        self.assertEqual([(f["item"], f["coverage"]) for f in review_tags.check_attribution_gap(doc)],
+                         [("remark-1.1.3", "partial_only")])
+        # with the attributed links that are its partial statements, the class is the curation's answer
+        doc["links"].append({"id": "remark-1.1.3/attributed/Demo.helper", "item": "remark-1.1.3",
+                             "declaration": "Demo.helper", "role": "attributed", "relation": "part",
+                             "provenance": "prov-table"})
+        valid(self, doc)
+        self.assertEqual(review_tags.check_attribution_gap(doc), [])
 
     def test_a_key_link_to_a_cluster_does_not_key_the_item(self):
         # review record item 19: an item whose only key targets a cluster names no declaration
@@ -197,15 +214,17 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
 
     def test_a_fallback_item_whose_cluster_shows_only_a_neighbours_keys_is_a_borrowed_key(self):
         doc = base_document()
+        # the fallback is derived: an item with clusters and no live link (the format writes no flag)
         doc["items"].append({"id": "remark-1.1.3", "id_source": "label", "form": "numbered", "source": "book",
                              "kind": "Remark", "number": "1.1.3", "pages": {"first": 6, "basis": "printed"},
-                             "clusters": ["src:1.1"], "cluster_fallback": True})
+                             "clusters": ["src:1.1"]})
         doc["clusters"] = [{"id": "src:1.1"}]
         doc["memberships"] = [{"id": "src:1.1/primary/Demo.volume_add", "cluster": "src:1.1",
                                "declaration": "Demo.volume_add", "role": "primary", "provenance": "prov-table"}]
         valid(self, doc)
         found = review_tags.check_borrowed_key(doc)
         self.assertEqual([(f["item"], f["via"]) for f in found], [("remark-1.1.3", "clusters")])
+        self.assertTrue(review_tags.check_attribution_gap(doc)[0]["cluster_fallback"])
         # a primary of the cluster that is nobody's key means the fallback shows something of its own
         doc["memberships"].append({"id": "src:1.1/primary/Demo.helper", "cluster": "src:1.1",
                                    "declaration": "Demo.helper", "role": "primary", "provenance": "prov-table"})
@@ -272,6 +291,13 @@ class TestEachPlantedDefectIsReported(unittest.TestCase):
         found = review_tags.check_adjudicated_attribution_gap(doc)
         self.assertEqual(found, [{"verdict": "verdict:exercise-1.1.2", "item": "exercise-1.1.2", "status": "fixed",
                                   "resolution": "fixed", "declarations": []}])
+        # the ledger's own class travels as x_ledger_verdict (the format has no field for it)
+        doc["verdicts"][0].update(verdict="convention", x_ledger_verdict="ATTRIBUTION_GAP")
+        valid(self, doc)
+        self.assertEqual([f["verdict"] for f in review_tags.check_adjudicated_attribution_gap(doc)],
+                         ["verdict:exercise-1.1.2"])
+        doc["verdicts"][0]["x_ledger_verdict"] = "CONVENTION"
+        self.assertEqual(review_tags.check_adjudicated_attribution_gap(doc), [])
 
     def test_the_command_prints_a_summary_and_json(self):
         doc = base_document()
@@ -307,13 +333,10 @@ class TestWhatTheReferencesReportToday(unittest.TestCase):
 
     def test_measure_theory(self):
         findings = review_tags.review(self.docs["measure_theory"])
-        # 205 items with no entry and no class: the fallback items of sections 1.1 to 1.6 (section 1.7's 33
-        # carry the class its curation named), every one on a cluster fallback
+        # at 2cd263a the curation has classified every item but one: the equation split off Remark 1.1.3's
+        # label, with no entry and no link, shown through its cluster (at 00a2438 there were 205 such items)
         gap = findings["attribution_gap"]
-        self.assertEqual(len(gap), 205)
-        self.assertTrue(all(g["cluster_fallback"] for g in gap))
-        self.assertFalse(any(g["item"].split("-")[-1].startswith("1.7.") for g in gap))
-        self.assertEqual(sum(1 for g in gap if g["form"] == "passage"), 13)
+        self.assertEqual([(g["item"], g["cluster_fallback"]) for g in gap], [("equation-1.1", True)])
         # the 142 primary edges the first viewer PR counted, and 10 key links over 3 items
         member = findings["key_on_structure_member"]
         self.assertEqual(len(member["memberships"]), 142)
@@ -324,13 +347,15 @@ class TestWhatTheReferencesReportToday(unittest.TestCase):
         self.assertEqual(borrowed["exercise-1.1.2"]["shared_with"], ["lemma-1.1.2"])
         self.assertEqual(borrowed["exercise-1.1.2"]["via"], "links")
         self.assertEqual(sorted(i for i, b in borrowed.items() if b["via"] == "links"),
-                         ["exercise-1.1.2", "exercise-1.1.24", "exercise-1.6.31", "proposition-1.6.34"])
-        self.assertEqual(sum(1 for b in borrowed.values() if b["via"] == "clusters"), 127)
-        # the other 15 of the 19 items keyed only to shared declarations are mutual groups with no owner
+                         ["definition-1.3.17", "exercise-1.1.2", "exercise-1.1.24", "exercise-1.5.15",
+                          "exercise-1.6.16", "exercise-1.6.31", "exercise-1.6.5", "exercise-1.7.14",
+                          "proposition-1.6.34", "theorem-1.6.19"])
+        self.assertEqual(sum(1 for b in borrowed.values() if b["via"] == "clusters"), 13)
+        # the items keyed only to shared declarations with no owner are mutual groups
         shared = {b["item"]: b["shared_with"] for b in findings["shared_key"]}
-        self.assertEqual(len(shared), 15)
+        self.assertEqual(len(shared), 42)
         self.assertEqual(shared["definition-1.4.34"], ["definition-1.4.35"])
-        self.assertEqual(shared["equation-1.4"], ["equation-1.5", "proposition-1.2.18"])
+        self.assertEqual(shared["corollary-1.6.35"], ["exercise-1.6.40", "exercise-1.6.41"])
         self.assertEqual(findings["hidden_spelling"], [])
         self.assertEqual([a["verdict"] for a in findings["adjudicated_attribution_gap"]],
                          ["verdict:exercise-1.2.21", "verdict:exercise-1.3.4"])

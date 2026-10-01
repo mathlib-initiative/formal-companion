@@ -34,6 +34,51 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
+### Changed
+- The vendored annotation format is the release candidate
+  `formal-companion-annotations v1.0.0rc1` (identifier
+  `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).
+  `scripts/annotations/sync_format.py` accepts `vX.Y.ZrcN` tags. The
+  producers write the rc: root `profiles` declared for exactly the profile
+  keys a document uses (`annotations.export.common.declare_profiles`), no
+  `cluster_fallback` (a reader derives it: `clusters` and no links),
+  `coverage` classes `partial_only` and `private_only` with `coverage_note`,
+  the `part` relation, site sources whose `sha256` is the digest of the pages
+  `page_hashes` pins (generated fragments may be left out), the ledger's own
+  verdict class under `x_ledger_verdict`, named declarations cut with
+  `ids.signature_at`, and the checker's `Problem` records (`path: message
+  [code]`) in every message. The `external-urls` lint, formerly invariant
+  I10, is run by the exporters' self-check and the pipeline's checkpoint
+  writer, so the documents stay as the viewer's deployment needs them.
+- `cf export attribution-table` reads the refinement table's version 2
+  *coverage entries* (`coverage`, the declarations the class admits, `note`)
+  and refuses a version 1 table; the prose-note classifier is gone. At
+  measure_theory `2cd263a` the export succeeds again (it failed on an
+  `attributed`-only item) and the document validates without a warning.
+- `cf export docstring-tags` runs without a PDF (a `pdf` source pinned by
+  its identifiers from `--source-doi` and `--source-isbn`, or an `other`
+  source by `--source-media-type` and `--source-revision`, named by
+  `--source-id`, `--source-title` and `--source-revision`; numbered items
+  located by their numbers alone, bare tags' parentheticals as producer
+  titles) and without a site (`--xref` and `--site-pages` optional,
+  together); with `--site`, pages on disk the manifest leaves out are
+  counted, not refused.
+- Both exporters write what the release candidate's last changes admit: a
+  primed sub-part keeps its prime (`(b')` is `sub: b'`, item id
+  `proposition-6.2.5-b'`; `cflib.items` accepts the prime as a sub-part
+  group), a declaration tagged with two numbered items gets two `key` links
+  and the items `relations.same_as`, an item keyed to an anonymous `example`
+  carries `coverage: formalized`, and `profiles` no longer names `audit` for
+  a source's `role` (core now): a docstring-tags document with no verdict
+  declares `site` alone, or nothing.
+- `cf review-tags` derives the cluster fallback, treats `partial_only` with
+  attributed links as the curation's answer, and reads `x_ledger_verdict`.
+- `tests/test_vendored_format.py` checks that every value the skill writes
+  into a document is in the format's set, instead of equality of nine sets
+  the format no longer exports. The reference pins move to measure_theory
+  `2cd263a` and tao-measure-lean `677ada1`; references written against
+  `v1.0.0` must be regenerated.
+
 ### Added
 - `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
   pipeline (milestone M1, `docs/pipeline.md`). S0 pins one PDF (sha256, pages,
@@ -171,8 +216,9 @@ release has something to say.
   checks the schema, selected by major version through an in-repo evaluator
   because the skill is stdlib only, plus the invariants a schema cannot state,
   and `--print-canonical` writes the canonical form. The adapters, the viewer
-  and WikiLean do not read or write the format yet. The ids use the planned
-  name lean-companion; the rename is pending.
+  and WikiLean do not read or write the format yet. The ids used the planned
+  name lean-companion; the release candidate renamed the format to
+  `formal-companion/annotations` (see Changed above).
 - `docs/proposals/pdf-to-companion.md`: a design proposal, not built, for a
   pipeline that turns one PDF into a Lean companion through ten gated stages,
   with the annotation document as its spine and a v1.1 proposal of three
