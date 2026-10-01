@@ -339,6 +339,7 @@ release has something to say.
   Book text used to survive in `summary`, `recovery_argument`, a dissent's
   argument and the witness — that is, in a bundle handed to somebody else and
   in the issue body drafted for a public tracker.
+- leanparse did not see a `mutual` block, a `public`/`meta`/`@[expose]` section header or a block line with a trailing `--` comment, so the `end` closing it closed the enclosing namespace or section and later declarations got the wrong `full_name` or `sections`; each `end` now closes its own block (#24).
 - a manuscript companion (`blueprint_tex`) has no item table by design, so the
   handoff gave it a coverage denominator of zero and a `TODO(coverage)` naming
   commands that could not fill it, while the same file said the run had
