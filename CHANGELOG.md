@@ -36,12 +36,7 @@ release has something to say.
 
 ### Added
 - `cf export site-pages <site> --out <pages.json>`: writes the page manifest
-  `cf export docstring-tags --site-pages` pins a literate site by (every
-  `*.html` page with its sha256 and bytes, the site digest, and the site
-  source's id, title, path and render time). The reference manifest was
-  described as "written from that site's pages", but no tool in the tree
-  wrote it. `tests/data/m3/README.md` now names the command and gives the
-  f158509 render recipe that reproduces the pin.
+  that `cf export docstring-tags --site-pages` reads.
 - `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
   pipeline (milestone M1, `docs/pipeline.md`). S0 pins one PDF (sha256, pages,
   page sizes, `pdftotext` version), prepares it with the onboarding code,
@@ -273,15 +268,8 @@ release has something to say.
 
 ### Fixed
 - `cf export attribution-table` marks an equation's title as the producer's
-  (`title_source: producer`). A geometry label `Equation (n): <words>` gives
-  the item those words as its `title`, but a book prints an equation by its
-  number alone, and with no `title_source` the title read as the book's (the
-  format's default). In measure_theory this is `equation-1.2` and
-  `equation-1.3`, and they are the only records that change. The pre-merge
-  review of the exporters listed this as item 7, and #17 left it open. The
-  maintainer's measure_theory reference must be regenerated
-  (`tests/data/m3/README.md`), and `DELIBERATE` in `tests/test_export.py`
-  records it as the fourth deliberate difference from the prototypes.
+  (`title_source: producer`); in measure_theory `equation-1.2` and
+  `equation-1.3` change, so the measure_theory reference must be regenerated.
 - The findings gate's changed-files check now diffs a contribution from the
   point it branched (the merge base with the merge target), not from the
   target's tip. Against the tip, every finding merged after a worktree was cut
