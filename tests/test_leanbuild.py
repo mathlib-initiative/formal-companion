@@ -14,7 +14,9 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import bisect
 import dataclasses
+import itertools
 import json
 import os
 import re
@@ -54,6 +56,13 @@ def _pos(text: str, off: int, utf16: bool) -> tuple[int, int]:
     line = text.count("\n", 0, off)
     col = text[text.rfind("\n", 0, off) + 1:off]
     return line, (len(col.encode("utf-16-le")) // 2 if utf16 else len(col))
+
+
+def _crlf_pos(text: str, off: int) -> tuple[int, int]:
+    """verso-literate's position of offset ``off`` of the LF text when the file is CRLF: by the CRLF lines."""
+    starts = [0] + [m.end() + k + 1 for k, m in enumerate(re.finditer("\n", text))]
+    line = bisect.bisect_right(starts, off) - 1
+    return line, off - starts[line]
 
 
 def _code_end(text: str, a: int, b: int) -> int:
@@ -126,25 +135,67 @@ class Lake:
             self.literate(rel, text, items, olean, module)
         return module
 
-    def literate(self, rel: str, text: str, items, olean: str, module: str | None = None) -> None:
+    def literate(self, rel: str, text: str, items, olean: str, module: str | None = None,
+                 crlf: bool = False) -> None:
         module = module or ".".join(Path(rel).with_suffix("").parts)
+        pos = (lambda off: _crlf_pos(text, off)) if crlf else (lambda off: _pos(text, off, False))
         cursor, starts = 0, []
         for kind, start, defines in items:
             cursor = _span(text, start, cursor)[0]
             starts.append((kind, cursor, defines))
-        out = [{"code": [{"highlighted": 0}], "defines": [], "kind": "Lean.Parser.Module.header", "range": None}]
+        code: dict = {}
+        tokens: dict = {}
+        keys = itertools.count()
+
+        def node(table: dict, value) -> int:
+            key = next(keys)
+            table[str(key)] = value
+            return key
+
+        def token(content: str, kind: str) -> int:
+            return node(code, {"token": {"tok": node(tokens, {"content": content, "kind": kind})}})
+
+        def highlighted(lead: str, s: str) -> dict:
+            """Leading trivia as text; then comments as comment tokens and identifiers as their names."""
+            seq = [node(code, {"text": {"str": lead}})] if lead else []
+            for p in re.findall(r"\s+|--[^\n]*|/-(?!-)[\s\S]*?-/|\S+", s):
+                seq.append(node(code, {"text": {"str": p}}) if p.isspace() else
+                           token(p, "lineComment") if p.startswith("--") else
+                           token(p, "blockComment") if p.startswith("/-") and p != "/--" else
+                           token(re.sub(r"«([A-Za-z_]\w*)»", r"\1", p), "unknown"))
+            return {"highlighted": node(code, {"seq": {"highlights": seq}})}
+
+        def parts(lead: int, a: int, end: int, kind: str, defines) -> list:
+            """Item text ``[a, end)``; docstrings of declarations and of `#guard_msgs` are kept apart."""
+            out, i = [], a
+            while (defines or kind == "Lean.guardMsgsCmd") and text.find("/--", i, end) >= 0:
+                j = text.find("/--", i, end)
+                doc = ({"verso": [0, defines[0], {"subsections": [], "text": []}]} if defines else
+                       {"markdown": [0, None, {"blocks": []}]})
+                out += [highlighted(text[lead:a] if i == a else "", text[i:j]), doc]
+                i = leanbuild._comment_end(text, j)
+            return out + [highlighted(text[lead:a] if i == a else "", text[i:end])]
+
+        out = [{"code": [highlighted("", "")], "defines": [], "kind": "Lean.Parser.Module.header", "range": None}]
         last = max(n for n, (kind, _a, _d) in enumerate(starts) if kind not in (NS, SEC, END))
+        prev = 0
         for n, (kind, a, defines) in enumerate(starts):
-            b = _code_end(text, a, starts[n + 1][1] if n + 1 < len(starts) else len(text))
+            nxt = starts[n + 1][1] if n + 1 < len(starts) else len(text)
+            b = _code_end(text, a, nxt)
             # verso-literate runs the file's last declaration to the end of the file, over any `end`
-            (l0, c0), (l1, c1) = _pos(text, a, False), _pos(text, len(text) if n == last else b, False)
-            out.append({"code": [{"highlighted": n + 1}], "defines": list(defines), "kind": kind,
+            (l0, c0), (l1, c1) = pos(a), pos(len(text) if n == last else b)
+            # an item's code runs on to the end of its last line (or the next item)
+            end = min(nxt, text.find("\n", b) % (len(text) + 1))
+            out.append({"code": parts(prev, a, end, kind, defines), "defines": list(defines), "kind": kind,
                         "range": [{"column": c0, "line": l0 + 1}, {"column": c1, "line": l1 + 1}]})
-        eoi = text.count("\n") + 1
-        out.append({"code": [], "defines": [], "kind": "Lean.Parser.Command.eoi",
-                    "range": [{"column": 0, "line": eoi}, {"column": 0, "line": eoi}]})
-        doc = json.dumps({"images": [], "items": {"code": {}, "goals": {}, "items": out, "messageContents": {},
-                                                  "nextKey": len(out), "tokens": {}}, "module": module},
+            prev = end
+        line, col = pos(len(text))
+        eoi = [node(code, {"text": {"str": text[prev:]}}), token("", "unknown")]
+        out.append({"code": [{"highlighted": node(code, {"seq": {"highlights": eoi}})}], "defines": [],
+                    "kind": "Lean.Parser.Command.eoi",
+                    "range": [{"column": col, "line": line + 1}, {"column": col, "line": line + 1}]})
+        doc = json.dumps({"images": [], "items": {"code": code, "goals": {}, "items": out, "messageContents": {},
+                                                  "nextKey": next(keys), "tokens": tokens}, "module": module},
                          separators=(",", ":"), ensure_ascii=False)
         base = self.lit.joinpath(*module.split("."))
         base.parent.mkdir(parents=True, exist_ok=True)
@@ -466,7 +517,35 @@ class FreshnessTest(Scratch):
     def test_a_crlf_checkout_of_the_same_text_is_current(self):
         (self.root / self.REL).write_bytes(ORDINARY.replace("\n", "\r\n").encode("utf-8"))
         _decls, build = self.parse(self.REL)
-        self.assertEqual(build.files[self.REL][0], "lean")
+        self.assertEqual(build.files[self.REL], ("lean", None, None))
+
+    def test_a_crlf_build_reads_the_ilean_only(self):
+        self.lake.literate(self.REL, ORDINARY, ORDINARY_ITEMS, "0d960ed631dee6e6", crlf=True)
+        (self.root / self.REL).write_bytes(ORDINARY.replace("\n", "\r\n").encode("utf-8"))
+        decls = self.without_literate("literate does not match the source")
+        self.assertEqual([fields(d) for d in decls],
+                         [fields(d) for d in leanparse.parse_file(self.root / self.REL, self.REL)])
+
+    def test_a_literate_file_older_than_the_source_leaves_the_ilean(self):
+        # edits Lake's literate trace cannot see: the .olean (its only input) stays the same
+        edited = (ORDINARY.replace("\n/-- Section member.", "section Beta\n/-- Section member.")
+                  .replace("in_companions : True := trivial\n\n", "in_companions : True := trivial\nend Beta\n")
+                  + "\n/-- `Exercise 1.2.3` -/\nexample : 4 = 4 := rfl\n")
+        self.lake.module(self.REL, edited, ORDINARY_DECLS)
+        decls = self.without_literate("literate does not match the source")
+        self.assertEqual([fields(d) for d in decls],
+                         [fields(d) for d in leanparse.parse_file(self.root / self.REL, self.REL)])
+        self.assertEqual(next(d for d in decls if d.name == "in_companions").sections, ("Companions", "Beta"))
+        self.assertEqual(decls[-1].doc, "`Exercise 1.2.3`")
+
+    def test_a_literate_item_out_of_place_leaves_the_ilean(self):
+        path = self.lake.path(self.REL, ".json")
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        doc["items"]["items"][3]["range"][0]["column"] += 1
+        text = json.dumps(doc)
+        path.write_text(text, encoding="utf-8")
+        self.lake.path(self.REL, ".json.hash").write_text(leanbuild.of_text(text), encoding="utf-8")
+        self.without_literate("literate does not match the source")
 
     def test_a_tampered_ilean_falls_back(self):
         path = self.lake.path(self.REL, ".ilean")
