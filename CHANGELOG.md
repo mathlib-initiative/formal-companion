@@ -87,14 +87,16 @@ release has something to say.
   priced at a guess. The shipped table carries the Opus 5 list prices issue
   #11 records and nothing else. Harvest writes the priced totals into the
   receipt's new `cost` block (tokens by model, usd, priced and unpriced
-  models, price_table_sha256, transcript_count, message_count); `cf tally`
-  prints cost and cost per task per run, records them in
-  `reports/tally.<run>.json` and `state.json`, and `cf report`'s runs table
-  gained two columns. A run harvested without transcripts is unchanged
+  models, price_table_sha256, transcript_count, message_count) and records
+  the run's dollars in `state.json`; `cf tally` prints cost and cost per task
+  per run and records them in `reports/tally.<run>.json`, and `cf report`'s
+  runs table gained two columns. A run harvested without transcripts is unchanged
   except for `cost: null`. `cf cost --export` writes one `{model, usage}` row
   per response, which is how usage leaves a host without the transcripts'
-  text. `tests/data/m0a/` holds the fixtures: the section 1.7 re-run's
-  exported rows price to $358.10, the recorded total.
+  text. `tests/data/m0a/` holds the fixtures: the section 1.7 re-run's 5,207
+  exported rows are transcript lines, one per content block, so they sum to
+  the line-summed recorded total of $358.10; collapsing identical adjacent
+  rows gives $168.91.
 - `scripts/pipeline/`: the loader and validator of `pipelines/<id>/pipeline.yaml`
   (exercise policy, scope, consent, the fleet run ids per stage; every unknown
   key refused) and the writer of `pipelines/<id>/stages/<stage>.stage-receipt.json`

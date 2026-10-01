@@ -281,7 +281,8 @@ class TestSumFleets(unittest.TestCase):
                             encoding="utf-8")
 
     def block(self, usd: float, model: str = "claude-opus-5", unpriced=()) -> dict:
-        return {"usd": usd, "priced": [model], "unpriced": list(unpriced),
+        return {"usd": usd, "priced": [model], "unpriced": list(unpriced), "message_count": 2,
+                "transcript_count": 1,
                 "tokens": {model: {"input": 10, "output": 20, "cache_write": 30,
                                    "cache_read": 40}}}
 
@@ -312,6 +313,23 @@ class TestSumFleets(unittest.TestCase):
         with self.assertRaises(CfError) as caught:
             stage_receipt.sum_fleets(self.paths, ["a"])
         self.assertIn("unpriced", str(caught.exception))
+
+    def test_a_fleet_whose_block_counted_no_response_is_refused(self):
+        empty = {"usd": 0.0, "priced": [], "unpriced": [], "tokens": {}, "message_count": 0,
+                 "transcript_count": 0}
+        self.fleet("a", self.block(1.0))
+        self.fleet("b", empty)
+        with self.assertRaises(CfError) as caught:
+            stage_receipt.sum_fleets(self.paths, ["a", "b"])
+        self.assertIn("'b'", str(caught.exception))
+        self.assertIn("counted no response", str(caught.exception))
+        # a block written before message_count existed is refused too
+        no_count = dict(self.block(1.0))
+        del no_count["message_count"]
+        self.fleet("c", no_count)
+        with self.assertRaises(CfError) as caught:
+            stage_receipt.sum_fleets(self.paths, ["c"])
+        self.assertIn("no response count", str(caught.exception))
 
     def test_a_fleet_never_harvested_or_never_planned_is_refused(self):
         self.fleet("a", self.block(1.0), receipt=False)

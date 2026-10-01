@@ -42,8 +42,8 @@ already includes ``reasoning_output_tokens``.
 
 Deliberately stdlib-only and self-contained (no ``cflib`` import), like
 ``scripts/gate/verify_findings.py``: the transcripts live on the run host, and
-``python3 scripts/cost/usage.py <dir> --export usage.jsonl`` runs there with
-nothing installed.
+``python3 scripts/cost/usage.py <dir> [<dir> ...] --export usage.jsonl`` runs
+there with nothing installed.
 """
 from __future__ import annotations
 
@@ -54,7 +54,7 @@ import json
 import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Mapping, Sequence
+from typing import Any, Iterable, Iterator, Mapping, Sequence, Union
 
 #: the four normalised token fields, in the order the tables print them
 FIELDS: tuple[str, ...] = ("input", "output", "cache_write", "cache_read")
@@ -228,8 +228,6 @@ def classify(path: Path) -> str:
     """Which of the three shapes a file is, from its name and its first object."""
     if path.name.startswith("rollout-"):
         return KIND_CODEX
-    if path.name.endswith(".jsonl.gz"):
-        return KIND_USAGE
     try:
         with _open_text(path) as fh:
             for line in fh:
@@ -243,7 +241,7 @@ def classify(path: Path) -> str:
                 break
             else:
                 return KIND_USAGE
-    except OSError:
+    except (OSError, EOFError, UnicodeDecodeError):
         return KIND_CLAUDE
     if not isinstance(obj, dict):
         return KIND_CLAUDE
@@ -374,9 +372,32 @@ def list_files(path: str | Path) -> list[Path]:
                   if q.is_file() and (q.suffix == ".jsonl" or q.name.endswith(".jsonl.gz")))
 
 
-def iter_records(path: str | Path, totals: Totals, model: str | None = None) -> Iterator[Record]:
-    """Every counted response under *path*, updating *totals*' file counts."""
-    for file in list_files(path):
+PathsArg = Union[str, Path, Sequence[Union[str, Path]]]
+
+
+def _as_paths(paths: PathsArg) -> list[Path]:
+    """A string is one path, not a sequence of characters."""
+    if isinstance(paths, (str, Path)):
+        return [Path(paths)]
+    return [Path(p) for p in paths]
+
+
+def list_all_files(paths: PathsArg) -> list[Path]:
+    """:func:`list_files` of every path, each file once even when paths overlap."""
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for p in _as_paths(paths):
+        for file in list_files(p):
+            key = file.resolve()
+            if key not in seen:
+                seen.add(key)
+                out.append(file)
+    return out
+
+
+def iter_records(paths: PathsArg, totals: Totals, model: str | None = None) -> Iterator[Record]:
+    """Every counted response under *paths*, updating *totals*' file counts."""
+    for file in list_all_files(paths):
         kind = classify(file)
         totals.files[kind] += 1
         if kind == KIND_CLAUDE:
@@ -387,34 +408,46 @@ def iter_records(path: str | Path, totals: Totals, model: str | None = None) -> 
             yield from read_usage_export(file, totals, model=model)
 
 
-def read_path(path: str | Path, model: str | None = None) -> Totals:
-    """Sum every log under *path* into one :class:`Totals`.
+def read_path(paths: PathsArg, model: str | None = None) -> Totals:
+    """Sum every log under *paths* into one :class:`Totals`.
 
     An empty directory gives zero tokens, zero files and zero messages.
     """
     totals = Totals()
-    for record in iter_records(path, totals, model=model):
+    for record in iter_records(paths, totals, model=model):
         totals.add(record)
     return totals
 
 
-def export_rows(path: str | Path, out: str | Path, model: str | None = None) -> Totals:
-    """Write one ``{model, usage}`` row per counted response of *path* to *out*.
+def export_rows(paths: PathsArg, out: str | Path, model: str | None = None) -> Totals:
+    """Write one ``{model, usage}`` row per counted response of *paths* to *out*.
 
     The rows carry the four normalised fields and nothing else: no text, no
     paths, no ids.  Returns the totals of what was written.
     """
+    list_all_files(paths)  # raise on a missing path before *out* is created
     totals = Totals()
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     opener = (lambda: io.TextIOWrapper(gzip.open(out_path, "wb"), encoding="utf-8")) \
         if out_path.suffix == ".gz" else (lambda: open(out_path, "w", encoding="utf-8"))
     with opener() as fh:
-        for record in iter_records(path, totals, model=model):
+        for record in iter_records(paths, totals, model=model):
             totals.add(record)
             fh.write(json.dumps({"model": record.model, "usage": record.usage},
                                 sort_keys=True) + "\n")
     return totals
+
+
+def nothing_counted(totals: Totals) -> str | None:
+    """A warning when *totals* counted no response, else None."""
+    if totals.message_count:
+        return None
+    if not totals.transcript_count:
+        return "no log file (*.jsonl, *.jsonl.gz) was found: nothing was priced"
+    return (f"{totals.transcript_count} file(s) read and no response counted "
+            f"({totals.lines_read} line(s), {totals.skipped_without_usage} without usage, "
+            f"{totals.unreadable_lines} unreadable): $0 here is not a measurement")
 
 
 def render_tokens(tokens: Mapping[str, Mapping[str, int]]) -> list[str]:
@@ -425,8 +458,9 @@ def render_tokens(tokens: Mapping[str, Mapping[str, int]]) -> list[str]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("path", help="a transcript or rollout directory, one log file, "
-                                     "or a usage export")
+    parser.add_argument("paths", nargs="+", metavar="path",
+                        help="transcript or rollout directories, log files or usage "
+                             "exports; several are read as one fleet")
     parser.add_argument("--model", default=None,
                         help="the model id for a log that names none (Codex rollouts "
                              "written before turn_context carried one)")
@@ -436,11 +470,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="print the totals as JSON")
     args = parser.parse_args(argv)
     try:
-        totals = (export_rows(args.path, args.export, model=args.model) if args.export
-                  else read_path(args.path, model=args.model))
+        totals = (export_rows(args.paths, args.export, model=args.model) if args.export
+                  else read_path(args.paths, model=args.model))
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    empty = nothing_counted(totals)
+    if empty:
+        print(f"warning: {empty}", file=sys.stderr)
     if args.json:
         print(json.dumps(totals.as_dict(), indent=1, sort_keys=True))
         return 0
