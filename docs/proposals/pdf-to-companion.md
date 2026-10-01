@@ -1139,6 +1139,16 @@ M0a:
   s17 run's $219.55 (issue #11). It also prices one Codex session, checked
   against a hand computation from that session's token counts and the
   published rate. There is no fallback without a recorded total.
+- **Not yet met.** The recorded totals were summed line by line over the
+  transcripts, and Claude Code writes one line per content block, repeating
+  the response's usage on each. For the §1.7 re-run this is verified from its
+  exported lines (`tests/data/m0a/README.md`): 5,207 lines sum to $358.10;
+  collapsing identical adjacent lines leaves 2,628 at $168.91, about 53%
+  lower. The tool counts each response once, so feeding it those lines as an
+  export and matching $358.10 shows only that the same sum gives the same
+  answer. Meeting this bar needs the retained transcripts re-read with the
+  per-response reader, which has not been done; the result is then compared
+  with the recorded total knowing that the recorded total is line-summed.
 - A stage-receipt writer (section 4.1) passes its tests.
 - The `$TML` commit before the camera-ready fix stack is identified from git
   log.
@@ -1359,8 +1369,8 @@ adjudication-only comparisons.
 
 | figure | source | caveat |
 |---|---|---|
-| first full differential run: $2,698.82 for 383 tasks | issue #11 for the dollars; the cost report in the §1.7 re-run workspace for the task count | Opus 5 list prices; cache reads 85% of the bill; $7.05 a task |
-| §1.7 differential re-run: $358.10 for 47 tasks | the same two sources | same pricing; $7.62 a task; a first attempt, s17, was paused at 4 of 47 tasks after $219.55 |
+| first full differential run: $2,698.82 for 383 tasks | issue #11 for the dollars; the cost report in the §1.7 re-run workspace for the task count | Opus 5 list prices; cache reads 85% of the bill; $7.05 a task. **Line-summed**, so probably about 2× high: inferred from the §1.7 re-run, not checked |
+| §1.7 differential re-run: $358.10 for 47 tasks | the same two sources | same pricing; $7.62 a task; a first attempt, s17, was paused at 4 of 47 tasks after $219.55. **Line-summed**: verified from the exported lines, which collapse to about $168.91 at one count per response. The $219.55 is line-summed too (inferred) |
 | attack cost per task | none | unmeasured; attack-vac runs on codex, which the $7.05 to $7.62 does not price |
 | ff-core Tao campaign: $1,639.46 recorded | `$FFREPORT/orchestrator-dbs/` | the notes say about $985 or $1,050; input-token accounting was broken (about 74 input tokens and no cache per session) |
 | ff-core pilot: $528.14 | `$FFREPORT/orchestrator-dbs/` | the section count comes from another source; refined an existing draft |
@@ -1369,11 +1379,25 @@ adjudication-only comparisons.
 | WikiLean enumeration and matching: $1.32 to $1.54 per article | `$WIKILEAN/docs/token_budget.md` | article-sized units, not book sections |
 | adjudication of 10 findings: 225 agents, 5.9 h | `references/workflow-patterns.md` | local Workflow, limit failures included |
 
+The three Claude Code dollar figures above ($2,698.82, $358.10, $219.55) and
+the per-task rates derived from them ($7.05 and $7.62) are line-summed: the
+method behind them adds every transcript line, and Claude Code writes one
+line per content block with the response's usage repeated on each, so a
+response is counted once per block. For the §1.7 re-run that is verified: its exported lines sum to $358.10, and collapsing identical
+adjacent lines gives about $168.91, about 53% lower
+(`tests/data/m0a/README.md`). For the first run and s17 it is inferred from
+the same method, not checked. Read them as probably about twice the
+per-response cost. No replacement figures are given here: the retained
+transcripts have not been re-read with the per-response reader, and that
+re-read is still owed (M0a, §5.1).
+
 ### 6.2 The Chapter 1 envelope
 
 These are estimates. The S5 attack and S9 lines use $7 a task as a placeholder
 until M0b; the recorded differential rates are $7.05 and $7.62 a task, and $7
-is not a bound. Item counts are Chapter 1's: about 605 items and 226 exercise
+is not a bound. Those rates are line-summed (§6.1), probably about twice the
+per-response cost, so the $7 placeholder probably overstates these lines too
+until the transcripts are re-read. Item counts are Chapter 1's: about 605 items and 226 exercise
 items (computed over the `$TML` prototype export in
 `$NOTES/companion-annotations-2026-09-26/prototypes/` and over `$TML`'s
 Exercise tags; the 651-item total includes Chapter 2).
