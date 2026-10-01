@@ -183,7 +183,8 @@ def render_run_costs(costs: Mapping[str, dict | None]) -> list[str]:
         per_task = (f"{pricing.format_usd(entry['usd_per_task'])} a task over {entry['tasks']} "
                     f"tasks, from {entry['tasks_from']}" if entry.get("usd_per_task") is not None
                     else "no task count to divide by")
-        note = (f"; UNPRICED: {', '.join(entry['unpriced'])}" if entry.get("unpriced") else "")
+        note = (f"; UNPRICED: {', '.join(entry['unpriced'])}, so the dollar figures are a "
+                f"lower bound" if entry.get("unpriced") else "")
         lines.append(f"cost {run_id}: {pricing.format_usd(entry['usd'])} ({per_task}; "
                      f"models {', '.join(entry['models']) or 'none'}{note})")
     if missing:

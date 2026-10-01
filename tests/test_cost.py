@@ -666,6 +666,11 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
         self.assertEqual(cost["usd"], 0.0)
         self.assertIn("UNPRICED", err)
         self.assertIn("some-other-model", err)
+        self.assertEqual(cost["source"]["path"], "logs")
+        rc, out, _ = _run(["--workspace", str(self.root), "tally"])
+        line = [l for l in out.splitlines() if l.startswith("cost run-a:")][0]
+        self.assertIn("UNPRICED: some-other-model", line)
+        self.assertIn("lower bound", line)
 
     def test_a_transcripts_path_that_counts_no_response_is_warned_about(self):
         empty = self.root.parent / "empty"
