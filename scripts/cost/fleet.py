@@ -30,6 +30,26 @@ from harvest.harvest import read_receipt
 COST_KEY = "cost"
 
 
+def source_label(path: str | Path) -> str:
+    """The last component of *path*: a committed receipt must not leak the machine's layout."""
+    p = Path(path)
+    return p.name if p.name not in ("", ".", "..") else (p.resolve().name or ".")
+
+
+def empty_warning(block: Mapping[str, Any]) -> str | None:
+    """A warning when *block* counted no response, else None."""
+    if int(block.get("message_count") or 0) > 0:
+        return None
+    files = int(block.get("transcript_count") or 0)
+    if not files:
+        return ("no log file (*.jsonl, *.jsonl.gz) was found under the transcripts path, "
+                "so nothing was priced and $0.00 is not a measurement")
+    return (f"{files} log file(s) read and no response counted "
+            f"({int(block.get('skipped_without_usage') or 0)} message(s) without usage, "
+            f"{int(block.get('unreadable_lines') or 0)} unreadable line(s)), so $0.00 is not "
+            f"a measurement")
+
+
 def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], table_source: str,
                model: str | None = None) -> dict:
     """Read every log under *path*, price it, and return the receipt's ``cost`` block."""
@@ -45,7 +65,7 @@ def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], tabl
         raise CfError(str(exc), hint="fix workspace.yaml budget.prices (or the --prices file)")
     read = totals.as_dict()
     return {
-        "source": {"path": str(Path(path).resolve()), "files": read["files"]},
+        "source": {"path": source_label(path), "files": read["files"]},
         "tokens": read["tokens"],
         "total_tokens": pricing.total_tokens(read["tokens"]),
         "usd": priced["usd"],
@@ -151,7 +171,8 @@ def render_run_costs(costs: Mapping[str, dict | None]) -> list[str]:
         per_task = (f"{pricing.format_usd(entry['usd_per_task'])} a task over {entry['tasks']} "
                     f"tasks, from {entry['tasks_from']}" if entry.get("usd_per_task") is not None
                     else "no task count to divide by")
-        note = (f"; UNPRICED: {', '.join(entry['unpriced'])}" if entry.get("unpriced") else "")
+        note = (f"; UNPRICED: {', '.join(entry['unpriced'])}, so the dollar figures are a "
+                f"lower bound" if entry.get("unpriced") else "")
         lines.append(f"cost {run_id}: {pricing.format_usd(entry['usd'])} ({per_task}; "
                      f"models {', '.join(entry['models']) or 'none'}{note})")
     if missing:
