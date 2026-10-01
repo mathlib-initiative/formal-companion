@@ -56,9 +56,22 @@ def _pos(text: str, off: int, utf16: bool) -> tuple[int, int]:
     return line, (len(col.encode("utf-16-le")) // 2 if utf16 else len(col))
 
 
-def _end_before(text: str, off: int) -> int:
-    """End of the last non-blank text before ``off`` (where a command's range ends)."""
-    return len(text[:off].rstrip())
+def _code_end(text: str, a: int, b: int) -> int:
+    """End of the last code (not comment, not blank) in ``text[a:b]``: where Lean ends a command's range."""
+    depth, i, end = 0, a, a
+    while i < b:
+        two = text[i:i + 2]
+        if two == "/-":
+            depth, i = depth + 1, i + 2
+        elif two == "-/" and depth:
+            depth, i = depth - 1, i + 2
+        elif depth == 0 and two == "--":
+            i = text.find("\n", i) % (b + 1)
+        else:
+            if depth == 0 and not text[i].isspace():
+                end = i + 1
+            i += 1
+    return end
 
 
 class Lake:
@@ -81,9 +94,15 @@ class Lake:
             a = _span(text, start, cursor)[0]
             spans.append((full, a, _span(text, sel, a)))
             cursor = a
+        # a range ends at the next command: a declaration, a literate item or a bare `end` (of `mutual`)
+        cursor, bounds = 0, {a for _f, a, _s in spans} | {m.start() for m in re.finditer(r"(?m)^end$", text)}
+        for _kind, start, _defines in items or ():
+            cursor = _span(text, start, cursor)[0]
+            bounds.add(cursor)
+        bounds = sorted(bounds | {len(text)})
         table = {}
-        for n, (full, a, (s0, s1)) in enumerate(spans):
-            b = _end_before(text, spans[n + 1][1] if n + 1 < len(spans) else len(text))
+        for full, a, (s0, s1) in spans:
+            b = _code_end(text, a, next(x for x in bounds if x > a))
             table[full] = [*_pos(text, a, True), *_pos(text, b, True), *_pos(text, s0, True),
                            *_pos(text, s1, True)]
         ilean = json.dumps({"decls": table, "directImports": [], "module": module, "references": {},
@@ -113,11 +132,13 @@ class Lake:
         for kind, start, defines in items:
             cursor = _span(text, start, cursor)[0]
             starts.append((kind, cursor, defines))
-        out = []
+        out = [{"code": [{"highlighted": 0}], "defines": [], "kind": "Lean.Parser.Module.header", "range": None}]
+        last = max(n for n, (kind, _a, _d) in enumerate(starts) if kind not in (NS, SEC, END))
         for n, (kind, a, defines) in enumerate(starts):
-            b = _end_before(text, starts[n + 1][1] if n + 1 < len(starts) else len(text))
-            (l0, c0), (l1, c1) = _pos(text, a, False), _pos(text, b, False)
-            out.append({"code": [{"highlighted": n}], "defines": list(defines), "kind": kind,
+            b = _code_end(text, a, starts[n + 1][1] if n + 1 < len(starts) else len(text))
+            # verso-literate runs the file's last declaration to the end of the file, over any `end`
+            (l0, c0), (l1, c1) = _pos(text, a, False), _pos(text, len(text) if n == last else b, False)
+            out.append({"code": [{"highlighted": n + 1}], "defines": list(defines), "kind": kind,
                         "range": [{"column": c0, "line": l0 + 1}, {"column": c1, "line": l1 + 1}]})
         eoi = text.count("\n") + 1
         out.append({"code": [], "defines": [], "kind": "Lean.Parser.Command.eoi",
@@ -235,7 +256,7 @@ ORDINARY_ITEMS = [
     (DECL, "@[simp] theorem simp_inline", ["Demo.simp_inline"]),
     (DECL, "private theorem", ["_private.0.Demo.hidden"]),
     (DECL, "protected theorem", ["Demo.Prot.thm"]),
-    (DECL, "/-- A structure", ["Demo.Box", "Demo.Box.left", "Demo.Box.right", "Demo.Box.mk"]),
+    (DECL, "/-- A structure", ["Demo.Box", "Demo.Box.left", "Demo.Box.right"]),
     (DECL, "noncomputable def", ["Demo.nc"]),
     (DECL, "instance : Inhabited", []),
     (DECL, "/-- An anonymous example", []),
@@ -354,7 +375,7 @@ TRICKY_ITEMS = [
     (DECL, "/-- Before", ["Lab.before"]),
     ("Lean.Parser.Command.mutual", "mutual", ["Lab.isEven", "Lab.isOdd"]),
     (DECL, "/-- After the mutual", ["Lab.after_mutual"]),
-    (DECL, "class Widget", ["Lab.Widget", "Lab.Widget.op", "Lab.Widget.mk"]),
+    (DECL, "class Widget", ["Lab.Widget", "Lab.Widget.op"]),
     (DECL, "/-- A prioritised", ["Lab.widgetBool"]),
     (DECL, "instance : Widget Unit", []),
     (DECL, "/-- A class inductive", ["Lab.Good.zero", "Lab.Good"]),
@@ -364,7 +385,7 @@ TRICKY_ITEMS = [
     (DECL, "@[simp]\nprivate", ["_private.0.Lab.split_mods"]),
     (DECL, "/-- doc -/", ["Lab.doc_then_comment"]),
     (DECL, "/-- A documented example", []),
-    (DECL, "structure Box", ["Lab.Box", "Lab.Box.left", "Lab.Box.mk"]),
+    (DECL, "structure Box", ["Lab.Box", "Lab.Box.left"]),
     (DECL, "def withWhere", ["Lab.withWhere", "Lab.withWhere.aux"]),
     (DECL, "theorem _root_", ["Nat.lab_root"]),
     (DECL, "def a𝔸", ["Lab.a𝔸"]),
@@ -655,7 +676,7 @@ class ConsumerTest(Scratch):
             ("Demo.replacement_stated", "/-- The declaration a fix", "theorem |replacement_stated"),
         ], [
             (NS, "namespace Demo", []),
-            (DECL, "/-- Boxes", ["Demo.Box", "Demo.Box.left", "Demo.Box.right", "Demo.Box.mk"]),
+            (DECL, "/-- Boxes", ["Demo.Box", "Demo.Box.left", "Demo.Box.right"]),
             (DECL, "/-- The volume", ["Demo.Box.volume"]),
             (DECL, "/-- Finite", ["Demo.volume_add"]),
             (DECL, "/-- A helper", ["_private.0.Demo.helper_bound"]),

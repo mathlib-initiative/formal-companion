@@ -346,6 +346,8 @@ class Build:
         try:
             out = []
             for it in json.loads(text)["items"]["items"]:
+                if it["range"] is None:      # the header of a module without imports
+                    continue
                 a, b = it["range"]
                 out.append((str(it["kind"]), (int(a["line"]) - 1, int(a["column"])),
                             (int(b["line"]) - 1, int(b["column"])), [str(d) for d in it["defines"]]))
