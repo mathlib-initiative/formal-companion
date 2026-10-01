@@ -49,12 +49,12 @@ function pdfResponse(bytes = PDF_BYTES, { contentType = "application/pdf", ok = 
 async function start({
   config = makeConfig(),
   doc = makeDocument(PDF_SHA256),
+  documentRef = fakeDocument(SHELL),
   locationRef = { hash: "" },
   pdf = () => pdfResponse(),
   pdfjs = fakePdfjs(),
   storage = memoryStorage(),
 } = {}) {
-  const documentRef = fakeDocument(SHELL);
   const urls = [];
   const historyRef = { replaceState: (_state, _title, url) => urls.push(url) };
   const fetched = [];
@@ -139,28 +139,23 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
 
 test("start-up: a refused document leaves an error on the page, not a blank one", async (t) => {
   withOption(t);
+  const bare = makeDocument(PDF_SHA256);
   for (const [override, pattern] of [
     [{ schema: "notes/overlay" }, /has schema "notes\/overlay"/],
+    // The format pins one schema id; the near spelling is refused too.
+    [{ schema: "formal-companion/annotations" }, /has schema "formal-companion\/annotations"/],
     [{ schema_version: "2.0" }, /schema_version "2\.0"/],
     [{ sources: [] }, /has no source "src:notes"/],
+    [{ sources: [{ ...bare.sources[0], sha256: undefined }, bare.sources[1]] },
+     /carries no sha256/],
   ]) {
-    const doc = { ...makeDocument(PDF_SHA256), ...override };
     const documentRef = fakeDocument(SHELL);
-    await assert.rejects(() => start({ doc, documentRef }), pattern);
+    await assert.rejects(() => start({ doc: { ...bare, ...override }, documentRef }), pattern);
+    assert.equal(el(documentRef, "error").hidden, false);
+    assert.match(el(documentRef, "error").textContent, pattern);
+    assert.equal(el(documentRef, "workspace").hidden, true);
+    assert.equal(el(documentRef, "status").textContent, "The overlay data was not loaded.");
   }
-  // The same run again, this time keeping the shell so the page can be read.
-  const bare = makeDocument(PDF_SHA256);
-  const stripped = {
-    ...bare,
-    sources: [{ ...bare.sources[0], sha256: undefined }, bare.sources[1]],
-  };
-  let seen = null;
-  try {
-    await start({ doc: stripped });
-  } catch (error) {
-    seen = error;
-  }
-  assert.match(String(seen), /carries no sha256/);
 });
 
 test("start-up: a refusal is written to the error element and the workspace stays hidden", async (t) => {
@@ -489,6 +484,21 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
   for (const source of [SHELL, ...sources]) {
     assert.doesNotMatch(source.replaceAll("http://www.w3.org/2000/svg", ""), /https?:\/\//);
   }
+});
+
+test("shell: a back link the config spells as javascript: never reaches the header", async (t) => {
+  withOption(t);
+  const { documentRef } = await start({
+    config: makeConfig({ back_link: { href: "javascript:alert(1)", text: "Back" } }),
+  });
+  const link = el(documentRef, "back-link");
+  assert.equal(link.attributes.href, "../../index.html");
+  assert.equal(link.textContent, "Back");
+  // The same for a protocol-relative href, which would leave the companion.
+  const offsite = await start({
+    config: makeConfig({ back_link: { href: "//notes.example.invalid/x.html", text: "Back" } }),
+  });
+  assert.equal(el(offsite.documentRef, "back-link").attributes.href, "../../index.html");
 });
 
 test("shell: the title and heading are placeholders the configuration replaces", async (t) => {

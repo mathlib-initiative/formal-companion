@@ -15,7 +15,9 @@ import test from "node:test";
 import {
   COVERAGE_SUMMARIES,
   COVERAGE_VALUES,
+  DEFAULT_BACK_LINK,
   DEFAULT_SITE_ROOT,
+  DOCUMENT_SCHEMA,
   LINK_ROLES,
   VERDICT_KINDS,
   VERDICT_LABELS,
@@ -36,6 +38,7 @@ import {
   regionQuads,
   regionSelectors,
   resolutionText,
+  safeBackLinkHref,
   safeHttpsUrl,
   safeSitePath,
   sha256Hex,
@@ -113,15 +116,18 @@ test("document: the configured pdf source is found, and a 1.x minor still reads"
   assert.equal(source.physical_page_count, 12);
   assert.equal(source.sha256, PDF_SHA256);
   assert.equal(pdfSource({ ...doc, schema_version: "1.7" }, SOURCE_ID).id, SOURCE_ID);
-  assert.equal(
-    pdfSource({ ...doc, schema: "formal-companion/annotations" }, SOURCE_ID).id,
-    SOURCE_ID,
-  );
 });
 
 test("document: a wrong schema, a wrong major version or a missing source is refused", () => {
   const doc = makeDocument(PDF_SHA256);
+  assert.equal(DOCUMENT_SCHEMA, "lean-companion/annotations");
   assert.throws(() => pdfSource({ ...doc, schema: "notes/overlay" }, SOURCE_ID), /has schema/);
+  // The vendored format pins one schema id, so a neighbouring spelling of the
+  // same format is refused rather than translated.
+  assert.throws(
+    () => pdfSource({ ...doc, schema: "formal-companion/annotations" }, SOURCE_ID),
+    /has schema "formal-companion\/annotations"/,
+  );
   assert.throws(() => pdfSource({ ...doc, schema_version: "2.0" }, SOURCE_ID), /schema_version/);
   assert.throws(() => pdfSource({ ...doc, schema_version: 1 }, SOURCE_ID), /schema_version/);
   assert.throws(() => pdfSource(doc, "src:absent"), /has no source "src:absent"/);
@@ -512,6 +518,48 @@ test("href: a destination resolves against the back link's own directory", () =>
   assert.equal(destinationHref({ href: "/root.html", resolution: "exact" }, "../../"), null);
   assert.equal(destinationHref({ href: "//host/x.html", resolution: "exact" }, "../../"), null);
   assert.equal(destinationHref(null, "../../"), null);
+});
+
+test("href: the back link keeps its .. but never a scheme the config smuggled in", () => {
+  assert.equal(safeBackLinkHref("../../index.html"), "../../index.html");
+  assert.equal(safeBackLinkHref("index.html"), "index.html");
+  assert.equal(safeBackLinkHref("https://notes.example.invalid/"),
+               "https://notes.example.invalid/");
+  for (const bad of [
+    "javascript:alert(1)",
+    "JavaScript:alert(1)",
+    "data:text/html,<script>x</script>",
+    "http://notes.example.invalid/",
+    "//notes.example.invalid/x.html",
+    "/site/index.html",
+    "..\\..\\index.html",
+    "index.html#top",
+    "   ",
+    "",
+    null,
+  ]) {
+    assert.equal(safeBackLinkHref(bad), null, `${bad} must be refused`);
+  }
+  // readConfig is where the rule bites: a refused href becomes the default, so
+  // the page header can never carry a live javascript: link.
+  const evil = readConfig(makeConfig({
+    back_link: { href: "javascript:alert(1)", text: "Back" },
+  }));
+  assert.equal(evil.backLink.href, DEFAULT_BACK_LINK.href);
+  assert.equal(evil.backLink.text, "Back");
+  assert.equal(evil.siteRoot, DEFAULT_SITE_ROOT);
+  const absolute = readConfig(makeConfig({ back_link: { href: "/site/index.html" } }));
+  assert.equal(absolute.backLink.href, DEFAULT_BACK_LINK.href);
+  // An accepted back link one directory up moves the root destinations resolve
+  // against with it.
+  const nearer = readConfig(makeConfig({ back_link: { href: "../index.html" } }));
+  assert.equal(nearer.backLink.href, "../index.html");
+  assert.equal(nearer.siteRoot, "../");
+  const remote = readConfig(makeConfig({
+    back_link: { href: "https://notes.example.invalid/" },
+  }));
+  assert.equal(remote.backLink.href, "https://notes.example.invalid/");
+  assert.equal(remote.siteRoot, DEFAULT_SITE_ROOT, "an https back link is no site root");
 });
 
 test("href: a fragment is percent-encoded before it reaches the URL", () => {
