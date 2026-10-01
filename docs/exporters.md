@@ -32,7 +32,7 @@ The exporter reads, at the pinned commit,
 
 | input | becomes |
 |---|---|
-| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer); one `provenance` record per batch |
+| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after an `Equation (n):` label's colon are the equation's `title` with `title_source: producer`, since a book prints an equation by its number alone); one `provenance` record per batch |
 | `pdf-overlay/data/target-refinement.json` | `key` and `attributed` `links`, merged per item; the curation note's per-item classes as `coverage` |
 | `source-formalization-ledger.json` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
 | `pdf-overlay/data/declaration-snippets.json` | `snippets` |
@@ -226,7 +226,7 @@ companions still run everywhere.
 ## 6. Deliberate differences from the prototype documents
 
 Section 10 of `docs/annotations.md` was written from two prototype documents.
-The references differ from them in three ways, all deliberate and
+The references differ from them in four ways, all deliberate and
 recorded in `tests/test_export.py` (`DELIBERATE`):
 
 1. `companion.generator` names the command and the skill's version.
@@ -237,5 +237,10 @@ recorded in `tests/test_export.py` (`DELIBERATE`):
    measure_theory source as `x_companion_edition`.
 3. The site source's title and `retrieved_at` come from the page manifest,
    not from the build's file times.
+4. An equation's title is marked `title_source: producer` (in measure_theory,
+   `equation-1.2` and `equation-1.3`; the prototype left the field out, which
+   reads as the book's words). The pre-merge review of the exporters found it
+   (item 7), and its check of the published edition found both printed by
+   number only.
 
 Every other record is byte for byte what the prototypes wrote.
