@@ -90,7 +90,8 @@ templates/overlay/
     viewer/
       index.html viewer.js viewer-core.js viewer.css
     vendor/pdfjs/          PDF.js, unchanged
-  tests/                   node --test suites for the viewer (not copied)
+  tests/                   node --test suites for the viewer (not copied); run them with
+                           `node --test templates/overlay/tests/*.test.mjs`
 scripts/overlay/
   config.py                    load and check overlay.config.json
   sync.py                      init, sync, check

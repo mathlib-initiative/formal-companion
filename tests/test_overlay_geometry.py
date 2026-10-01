@@ -22,6 +22,7 @@ except ImportError:  # pragma: no cover
 import io
 import json
 import sys
+import os
 import tempfile
 import unittest
 import unittest.mock
@@ -500,7 +501,7 @@ class TestTheCommand(unittest.TestCase):
             (root / "linked-tool").symlink_to(real)
             (root / "plain-tool").write_text("not executable\n", encoding="utf-8")
             with unittest.mock.patch.dict("os.environ", {"PATH": str(root)}):
-                self.assertEqual(geometry.resolve_tool("linked-tool"), str(real))
+                self.assertEqual(geometry.resolve_tool("linked-tool"), os.path.realpath(real))
                 self.assertIsNone(geometry.resolve_tool("plain-tool"))
                 self.assertIsNone(geometry.resolve_tool("absent-tool"))
 
