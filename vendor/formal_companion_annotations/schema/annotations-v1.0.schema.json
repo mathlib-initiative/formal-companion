@@ -2808,7 +2808,7 @@
       "type": "object"
     }
   },
-  "$id": "https://w3id.org/formal-companion/annotations/v1.0/schema.json",
+  "$id": "https://raw.githubusercontent.com/mathlib-initiative/formal-companion-annotations/main/schema/annotations-v1.0.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "description": "One document per companion: which Lean declarations formalise which items of which sources, and where those items sit in the sources. The locations are W3C Web Annotation targets. The prose specification is docs/annotations.md; this project's checker, the formal-companion-annotations-validate command (src/formal_companion_annotations/validate.py), checks this schema plus the semantic invariants no JSON Schema can state (references resolve, arrays sorted by id, the coverage rules, the profile gating, selector grammars, the id rules). The core is the header and the arrays sources, items, declarations, links, provenance, locations and unattributed; the other root arrays belong to the four profiles a document declares in its profiles object (audit: verdicts; graph: clusters, memberships, artifacts; history: changelog; site: destinations, snippets). The $id is one per format minor and never changes after release; it is an identifier, validators never fetch it, and documents need not carry $schema.",
