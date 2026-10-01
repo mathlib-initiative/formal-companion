@@ -28,6 +28,8 @@ The PDF is ``CF_TAO_PDF`` when set, or a copy already cached under the system
 temporary directory.  Only with ``CF_M1_DOWNLOAD=1`` does the test download
 the file the author publishes (the registry's ``download_url``) into that
 cache, checking its sha256; otherwise, and when the network refuses, it skips.
+``TestTheDownloadIsOptIn`` checks that rule with ``urlopen`` stubbed, and runs
+everywhere.
 """
 from __future__ import annotations
 
@@ -36,6 +38,8 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import dataclasses
+import hashlib
 import json
 import os
 import shutil
@@ -44,6 +48,7 @@ import tempfile
 import unittest
 import urllib.request
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -234,6 +239,126 @@ class TestTaoChapterOne(unittest.TestCase):
         for key in ("numbered_vs_measure_theory", "numbered_vs_tao_measure_lean"):
             self.assertGreaterEqual(self.report[key]["recall"], 0.99, key)
         self.assertGreaterEqual(self.report["passages_vs_tao_measure_lean"]["recall"], 0.9)
+
+
+class TestTheDownloadIsOptIn(unittest.TestCase):
+    """``tao_pdf``'s fetch, with the network stubbed: it runs only under ``CF_M1_DOWNLOAD=1``.
+
+    ``urllib.request.urlopen`` is replaced in every test, by a stub that serves
+    synthetic bytes or by one that fails the test when called, and the cache
+    lives under a temporary directory, so nothing here reaches the network or
+    the real cache, and no line of the book is involved.
+    """
+
+    BYTES = b"%PDF-1.4 synthetic stand-in for the pinned edition, not the book\n"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="cf-m1-dl-",
+                                               dir=os.environ.get("CF_TEST_TMP") or None)
+        self.addCleanup(self.tmp.cleanup)
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("CF_TAO_PDF", "CF_M1_DOWNLOAD")}
+        for patcher in (mock.patch.dict(os.environ, env, clear=True),
+                        mock.patch.object(tempfile, "gettempdir", lambda: self.tmp.name)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        self.real = _entry()
+        self.fetches: list[tuple[str, float | None]] = []
+
+    def _use(self, **changes):
+        """Make ``tao_pdf`` see the registry entry with ``changes`` applied."""
+        entry = dataclasses.replace(self.real, **changes)
+        patcher = mock.patch(f"{__name__}._entry", lambda: entry)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return entry
+
+    def _serve(self, body: bytes):
+        """A stub ``urlopen`` that records the call and answers ``body``."""
+        def urlopen(url, timeout=None):
+            self.fetches.append((url, timeout))
+            resp = mock.MagicMock()
+            resp.__enter__.return_value.read.return_value = body
+            return resp
+        return mock.patch.object(urllib.request, "urlopen", urlopen)
+
+    def _no_network(self):
+        return mock.patch.object(urllib.request, "urlopen",
+                                 side_effect=AssertionError("tao_pdf fetched without the opt-in"))
+
+    def _cache(self, sha: str) -> Path:
+        return Path(self.tmp.name) / "cf-m1-tao" / f"{sha}.pdf"
+
+    def test_without_the_opt_in_nothing_is_fetched(self):
+        for value in (None, "", "0", "true", "yes"):
+            with self.subTest(CF_M1_DOWNLOAD=value):
+                if value is None:
+                    os.environ.pop("CF_M1_DOWNLOAD", None)
+                else:
+                    os.environ["CF_M1_DOWNLOAD"] = value
+                with self._no_network() as urlopen:
+                    path, why = tao_pdf()
+                urlopen.assert_not_called()
+                self.assertIsNone(path)
+                self.assertIn("CF_M1_DOWNLOAD=1", why)
+                self.assertFalse((Path(self.tmp.name) / "cf-m1-tao").exists())
+
+    def test_the_opt_in_fetches_the_registry_url_and_caches_a_matching_file(self):
+        entry = self._use(sha256=hashlib.sha256(self.BYTES).hexdigest())
+        os.environ["CF_M1_DOWNLOAD"] = "1"
+        with self._serve(self.BYTES):
+            path, why = tao_pdf()
+        self.assertEqual(why, "")
+        self.assertEqual(self.fetches, [(entry.download_url, 30)])
+        self.assertEqual(path, self._cache(entry.sha256))
+        self.assertEqual(path.read_bytes(), self.BYTES)
+        # The cached copy is reused afterwards, opt-in or not, without a fetch.
+        del os.environ["CF_M1_DOWNLOAD"]
+        with self._no_network() as urlopen:
+            again, why = tao_pdf()
+        urlopen.assert_not_called()
+        self.assertEqual((again, why), (path, ""))
+
+    def test_a_file_that_is_not_the_pinned_edition_is_discarded(self):
+        os.environ["CF_M1_DOWNLOAD"] = "1"
+        with self._serve(self.BYTES):
+            path, why = tao_pdf()
+        self.assertEqual(len(self.fetches), 1)
+        self.assertIsNone(path)
+        self.assertIn("not the pinned edition", why)
+        self.assertFalse(self._cache(self.real.sha256).exists())
+
+    def test_a_refused_network_skips_and_never_fails(self):
+        os.environ["CF_M1_DOWNLOAD"] = "1"
+        with mock.patch.object(urllib.request, "urlopen",
+                               side_effect=OSError("synthetic refusal")):
+            path, why = tao_pdf()
+        self.assertIsNone(path)
+        self.assertIn("download failed", why)
+        self.assertIn("synthetic refusal", why)
+
+    def test_a_registry_that_forbids_fetching_is_obeyed_under_the_opt_in(self):
+        for changes in ({"licence": {**self.real.licence, "fetch": "none"}},
+                        {"download_url": None}):
+            with self.subTest(**{k: str(v) for k, v in changes.items()}):
+                with mock.patch(f"{__name__}._entry",
+                                lambda c=changes: dataclasses.replace(self.real, **c)):
+                    os.environ["CF_M1_DOWNLOAD"] = "1"
+                    with self._no_network() as urlopen:
+                        path, why = tao_pdf()
+                urlopen.assert_not_called()
+                self.assertIsNone(path)
+                self.assertIn("does not allow fetching", why)
+
+    def test_a_given_pdf_is_used_and_nothing_is_fetched(self):
+        given = Path(self.tmp.name) / "given.pdf"
+        given.write_bytes(self.BYTES)
+        self._use(sha256=hashlib.sha256(self.BYTES).hexdigest())
+        os.environ.update({"CF_TAO_PDF": str(given), "CF_M1_DOWNLOAD": "1"})
+        with self._no_network() as urlopen:
+            path, why = tao_pdf()
+        urlopen.assert_not_called()
+        self.assertEqual((path, why), (given, ""))
 
 
 if __name__ == "__main__":
