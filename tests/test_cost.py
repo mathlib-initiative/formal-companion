@@ -299,6 +299,15 @@ class TestCodexRollouts(unittest.TestCase):
         self.assertEqual(totals.tokens["gpt-test"],
                          {"input": 500, "output": 50, "cache_write": 0, "cache_read": 0})
 
+    def test_the_fixtures_carry_no_account_rate_limit_state(self):
+        """The source session's plan, quota use and reset time were stripped."""
+        for name in ("codex-usage-sample.json", "codex-usage-shapes.json"):
+            with self.subTest(fixture=name):
+                text = (FIXTURES / name).read_text(encoding="utf-8")
+                for key in ("rate_limits", "plan_type", "used_percent", "resets_at",
+                            "credits", "balance"):
+                    self.assertFalse(key in text, f"{name} still carries {key}")
+
 
 # ---------------------------------------------------------------------------
 # Claude Code transcripts

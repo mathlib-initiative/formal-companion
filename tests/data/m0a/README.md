@@ -24,12 +24,16 @@
     all of these figures from the rows.
 - `codex-usage-shapes.json` and `codex-usage-sample.json`: the shapes of the
   token-count events in a Codex rollout log (`rollout-*.jsonl`), with every
-  free string replaced by `<str>`. The usage object has `input_tokens`,
-  `cached_input_tokens`, `cache_write_input_tokens`, `output_tokens`,
-  `reasoning_output_tokens`, `total_tokens`; the model id sits beside it.
-  Token-count events repeat the same counts several times in a row, so a reader
-  must not sum duplicates blindly; check whether the event carries cumulative
-  (`total_token_usage`) and per-turn (`last_token_usage`) blocks.
+  free string replaced by `<str>` or a placeholder id (`thread-a`, `turn-1`,
+  `turn-2`). The real `token_count` events also carry a `rate_limits` block
+  (the account's plan, quota used and reset time); it was removed from both
+  files, a test keeps it out, and the reader never looks at it. The usage
+  object has `input_tokens`, `cached_input_tokens`, `cache_write_input_tokens`,
+  `output_tokens`, `reasoning_output_tokens`, `total_tokens`; the model id
+  sits beside it. Token-count events repeat the same counts several times in a
+  row, so a reader must not sum duplicates blindly; check whether the event
+  carries cumulative (`total_token_usage`) and per-turn (`last_token_usage`)
+  blocks.
 - Pre-fix tao-measure-lean commit: `d8cdfd5` (2026-09-14, the first-parent
   commit before PR #8's merge 96e64a9 of 2026-09-15, which opened the
   camera-ready fix stack #8, #9, #10, #4, #12, #13, #14).
