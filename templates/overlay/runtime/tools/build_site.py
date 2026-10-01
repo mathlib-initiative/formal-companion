@@ -7,7 +7,10 @@ package manifest, one file inventory, one link text and one set of validators,
 and refused to run against anything else. Everything specific now comes from
 `pdf-overlay/overlay.config.json` and the annotation document beside it, both
 found from this file's own path; the inventory is whatever `cf overlay sync`
-copied under `viewer/` and `vendor/`.
+copied under `schema/`, `viewer/` and `vendor/`.  `schema/` is published with
+the rest because the viewer reads the accepted document identity out of
+`pdf-overlay/schema/annotations.schema.json` at run time and must be able to
+fetch it from the mount.
 
 `docs/overlay.md` section 5 is the contract -- copy the runtime into
 `<output_root>/<mount>/`, replace a previous copy atomically, insert or replace
@@ -38,14 +41,15 @@ from typing import Any, NoReturn
 CONFIG_NAME = "overlay.config.json"
 DOCUMENT_NAME = "annotations.json"
 CONFIG_SCHEMA = "formal-companion/overlay-config"
-#: The annotation format's own schema id
-#: (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`), which is what every
-#: `cf export` convention writes and what the viewer accepts.
-DOCUMENT_SCHEMA = "lean-companion/annotations"
+#: The annotation format's own JSON Schema, as `cf overlay sync` copied it out
+#: of the vendored release.  Which documents this tool accepts is read from
+#: that file, never from a constant here; the viewer fetches the same file from
+#: the mount, which is why `schema/` is published below.
+FORMAT_SCHEMA_PATH = ("schema", "annotations.schema.json")
 RECEIPT_SCHEMA = "formal-companion/overlay-site-receipt"
 RECEIPT_NAME = "receipt.json"
 #: The directories of the generated runtime a site needs, in copy order.
-RUNTIME_ROOTS = ("viewer", "vendor")
+RUNTIME_ROOTS = ("schema", "viewer", "vendor")
 #: The two instance files the viewer reads at run time.
 INSTANCE_FILES = (CONFIG_NAME, DOCUMENT_NAME)
 LINK_START = "<!-- formal-companion-overlay-link -->"
@@ -275,18 +279,67 @@ def load_config(overlay: Path) -> Config:
     )
 
 
-def check_document(overlay: Path, config: Config) -> bytes:
+@dataclass(frozen=True)
+class DocumentFormat:
+    """Which documents the shipped annotation schema accepts.
+
+    `schema` is the schema's ``properties.schema.const``; `version` is its
+    compiled ``properties.schema_version.pattern``.  A schema that states
+    neither stops the tool rather than letting a document of an unknown format
+    be published into a site.
+    """
+
+    schema: str
+    version: "re.Pattern[str]"
+
+
+def format_label() -> str:
+    return "/".join(FORMAT_SCHEMA_PATH)
+
+
+def load_document_format(overlay: Path) -> DocumentFormat:
+    """Read `pdf-overlay/schema/annotations.schema.json` beside the document."""
+    label = format_label()
+    path = require_regular(overlay.joinpath(*FORMAT_SCHEMA_PATH), label)
+    value = strict_json(path.read_bytes(), label)
+    if not isinstance(value, dict):
+        fail(f"{label}: expected a JSON Schema object")
+    properties = value.get("properties")
+    properties = properties if isinstance(properties, dict) else {}
+    schema = properties.get("schema")
+    const = schema.get("const") if isinstance(schema, dict) else None
+    if not isinstance(const, str) or not const:
+        fail(f"{label}: properties.schema has no const, so the accepted document "
+             f"identity cannot be read; re-run `cf overlay sync`")
+    version = properties.get("schema_version")
+    pattern = version.get("pattern") if isinstance(version, dict) else None
+    if not isinstance(pattern, str) or not pattern:
+        fail(f"{label}: properties.schema_version has no pattern, so the accepted "
+             f"document versions cannot be read; re-run `cf overlay sync`")
+    try:
+        compiled = re.compile(pattern)
+    except re.error as error:
+        fail(f"{label}: properties.schema_version.pattern is not a regular "
+             f"expression: {error}")
+    return DocumentFormat(schema=const, version=compiled)
+
+
+def check_document(overlay: Path, config: Config,
+                   fmt: DocumentFormat | None = None) -> bytes:
     """The document's bytes, once it is the one the config names."""
+    fmt = load_document_format(overlay) if fmt is None else fmt
     path = overlay / DOCUMENT_NAME
     raw = require_regular(path, DOCUMENT_NAME).read_bytes()
     value = strict_json(raw, DOCUMENT_NAME)
     if not isinstance(value, dict):
         fail(f"{DOCUMENT_NAME}: expected an object")
-    if value.get("schema") != DOCUMENT_SCHEMA:
-        fail(f"{DOCUMENT_NAME}.schema: expected {DOCUMENT_SCHEMA}")
+    if value.get("schema") != fmt.schema:
+        fail(f"{DOCUMENT_NAME}.schema: expected {fmt.schema}, which "
+             f"{format_label()} states")
     version = value.get("schema_version")
-    if not isinstance(version, str) or not version.startswith("1."):
-        fail(f"{DOCUMENT_NAME}.schema_version: expected a 1.x version")
+    if not isinstance(version, str) or not fmt.version.fullmatch(version):
+        fail(f"{DOCUMENT_NAME}.schema_version: expected a version matching "
+             f"{fmt.version.pattern}, which {format_label()} states")
     sources = value.get("sources")
     if not isinstance(sources, list) or not sources:
         fail(f"{DOCUMENT_NAME}.sources: expected a nonempty array")

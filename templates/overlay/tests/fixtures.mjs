@@ -1,16 +1,23 @@
 /**
  * Synthetic fixtures for the overlay viewer's node tests.
  *
- * Everything here is invented: a two-source annotation document of format 1.0
- * about "Elementary Sets: Lecture Notes (synthetic)", a matching
- * `overlay.config.json`, and a DOM stand-in good enough for the controller.
- * No file, hash, namespace or page count of any real book or companion appears.
+ * Everything here is invented: a two-source annotation document about
+ * "Elementary Sets: Lecture Notes (synthetic)", a matching
+ * `overlay.config.json`, a JSON Schema for a format nobody has published, and
+ * a DOM stand-in good enough for the controller. No file, hash, namespace or
+ * page count of any real book or companion appears.
  *
- * The document is written the way the format wants one: every record array is
- * sorted by id and every set field is sorted, so it passes
- * `formal_companion_annotations.validate` with no problems and no warnings.
- * (The node suite does not run that Python checker; keep the order when you add
- * a record, or the fixture stops being an example of a real document.)
+ * The format is synthetic on purpose. The viewer takes the accepted `schema`
+ * and `schema_version` from the schema file a generated directory ships, so a
+ * suite that fixed the real identity would pass whether or not the viewer
+ * actually reads that file. These fixtures use `example/annotations` and a
+ * major no release has ever carried; every assertion about a refusal is then
+ * an assertion that the schema file, not a constant, decided it.
+ *
+ * The document is otherwise written the way the format wants one: every record
+ * array is sorted by id and every set field is sorted. (The node suite does not
+ * run the Python checker; keep the order when you add a record, or the fixture
+ * stops being an example of a real document.)
  *
  * This file is not a test file (no `.test.mjs` suffix), so `node --test` on this
  * directory imports it but never runs it on its own.
@@ -19,8 +26,33 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { documentFormat } from "../runtime/viewer/viewer-core.js";
+
 export const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const VIEWER_DIR = path.resolve(HERE, "../runtime/viewer");
+
+/** The identity and version grammar of the synthetic format these fixtures use. */
+export const SCHEMA_ID = "example/annotations";
+export const SCHEMA_VERSION = "7.2";
+export const SCHEMA_VERSION_PATTERN = "^7\\.(0|[1-9][0-9]*)$";
+
+/** A JSON Schema shaped like the format's: it states the identity, and little else. */
+export function makeFormatSchema(overrides = {}) {
+  return {
+    $schema: "https://json-schema.org/draft/2020-12/schema",
+    properties: {
+      schema: { const: SCHEMA_ID },
+      schema_version: { pattern: SCHEMA_VERSION_PATTERN, type: "string" },
+    },
+    type: "object",
+    ...overrides,
+  };
+}
+
+/** What `documentFormat` reads out of `makeFormatSchema()`. */
+export function makeFormat(overrides = {}) {
+  return documentFormat(makeFormatSchema(overrides));
+}
 
 export const SOURCE_ID = "src:notes";
 export const OTHER_SOURCE_ID = "src:site";
@@ -346,8 +378,8 @@ export function makeDocument(sha256, overrides = {}) {
         method: "layout_extraction",
       },
     ],
-    schema: "lean-companion/annotations",
-    schema_version: "1.0",
+    schema: SCHEMA_ID,
+    schema_version: SCHEMA_VERSION,
     snippets: [
       {
         declaration: "Notes.Box.volume_nonneg",

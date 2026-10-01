@@ -1,12 +1,17 @@
 /**
  * The overlay viewer's DOM controller.
  *
- * It fetches exactly two data files — `../overlay.config.json` and the
- * annotation document that configuration names — and takes every per-companion
- * value from them: the page title and heading, the back link, the PDF route and
- * its sha256, the pages, the regions, the items, the cards, the verdicts. The
- * pure half (indexing, geometry, href rules, hashing) is in viewer-core.js, so
- * `node --test` reaches it without a DOM; this file keeps the injectable
+ * It fetches two data files — `../overlay.config.json` and the annotation
+ * document that configuration names — and takes every per-companion value from
+ * them: the page title and heading, the back link, the PDF route and its
+ * sha256, the pages, the regions, the items, the cards, the verdicts. Between
+ * the two it fetches `../schema/annotations.schema.json`, the annotation
+ * format's own schema as `cf overlay sync` copied it in, and takes from it the
+ * one `schema` value and the `schema_version` pattern it will accept: the
+ * viewer holds no copy of the format's identity, so a format upgrade is a
+ * re-sync. A missing or unreadable schema file is a refusal with a message.
+ * The pure half (indexing, geometry, href rules, hashing) is in viewer-core.js,
+ * so `node --test` reaches it without a DOM; this file keeps the injectable
  * `fetch` / `document` / `storage` seams the tests drive it through.
  *
  * Security (docs/overlay.md section 4): every string from either file
@@ -19,11 +24,13 @@
 import {
   CARD_PAGE_SIZE,
   CONFIG_URL,
+  DOCUMENT_SCHEMA_URL,
   MAX_JSON_BYTES,
   buildIndex,
   cardSummaryText,
   cardsMatching,
   declarationVerdictDisplay,
+  documentFormat,
   groupCards,
   paginateCards,
   quadToViewport,
@@ -71,11 +78,21 @@ export async function loadConfig(fetchImpl = globalThis.fetch, url = CONFIG_URL)
   return readConfig(parseJsonBytes(await checkedFetch(url, fetchImpl), "overlay.config.json"));
 }
 
+/**
+ * Read the annotation format's own schema, the file `cf overlay sync` copied
+ * out of the vendored release, and derive the document identity this viewer
+ * accepts. A fetch that fails says so in the same words a missing data file
+ * does; the caller shows it on the page.
+ */
+export async function loadFormat(fetchImpl = globalThis.fetch, url = DOCUMENT_SCHEMA_URL) {
+  return documentFormat(parseJsonBytes(await checkedFetch(url, fetchImpl), url));
+}
+
 /** Read the annotation document the configuration names and index it. */
-export async function loadDocument(config, fetchImpl = globalThis.fetch) {
+export async function loadDocument(config, fetchImpl = globalThis.fetch, format) {
   const bytes = await checkedFetch(config.documentUrl, fetchImpl);
   const doc = parseJsonBytes(bytes, "The annotation document");
-  return { doc, index: buildIndex(doc, config) };
+  return { doc, index: buildIndex(doc, config, format) };
 }
 
 /**
@@ -169,6 +186,7 @@ export async function bootstrapViewer({
   historyRef = globalThis.history,
   locationRef = globalThis.location,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
+  schemaUrl = DOCUMENT_SCHEMA_URL,
   storage = (() => {
     try {
       return globalThis.localStorage ?? null;
@@ -197,6 +215,7 @@ export async function bootstrapViewer({
     config: null,
     currentPage: 1,
     doc: null,
+    format: null,
     index: null,
     pdfDocument: null,
     region: null,
@@ -495,8 +514,10 @@ export async function bootstrapViewer({
     ui.status.textContent = "Loading the overlay configuration…";
     state.config = await loadConfig(fetchImpl, configUrl);
     applyConfig(state.config);
+    ui.status.textContent = "Loading the annotation format…";
+    state.format = await loadFormat(fetchImpl, schemaUrl);
     ui.status.textContent = "Loading the annotation document…";
-    const loaded = await loadDocument(state.config, fetchImpl);
+    const loaded = await loadDocument(state.config, fetchImpl, state.format);
     state.doc = loaded.doc;
     state.index = loaded.index;
   } catch (error) {

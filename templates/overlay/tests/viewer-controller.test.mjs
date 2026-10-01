@@ -3,8 +3,14 @@
  *
  * Every run here drives `bootstrapViewer` with a fake document built from the
  * real `runtime/viewer/index.html`, a fetch that serves a synthetic
- * `overlay.config.json`, a synthetic annotation document and synthetic PDF
- * bytes, and a fake PDF.js. The pure half is covered in viewer-core.test.mjs.
+ * `overlay.config.json`, a synthetic annotation format schema, a synthetic
+ * annotation document and synthetic PDF bytes, and a fake PDF.js. The pure
+ * half is covered in viewer-core.test.mjs.
+ *
+ * The format is synthetic too (`example/annotations`, major 7): the viewer
+ * takes the identity it accepts from `../schema/annotations.schema.json`, so a
+ * suite that served the real identity would pass against a viewer that had
+ * never fetched that file.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -15,6 +21,7 @@ import {
   FakeOption,
   PDF_BYTES,
   PDF_ROUTE,
+  SCHEMA_ID,
   fakeDocument,
   fakePdfjs,
   fakeSha256,
@@ -22,6 +29,7 @@ import {
   jsonResponse,
   makeConfig,
   makeDocument,
+  makeFormatSchema,
   memoryStorage,
   notFound,
   shellHtml,
@@ -30,6 +38,7 @@ import {
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
 const SHELL = await shellHtml();
+const SCHEMA_URL = "../schema/annotations.schema.json";
 
 /** Node has no `Option` constructor; `setOptions` builds its rows with one. */
 function withOption(t) {
@@ -50,6 +59,7 @@ async function start({
   config = makeConfig(),
   doc = makeDocument(PDF_SHA256),
   documentRef = fakeDocument(SHELL),
+  formatSchema = makeFormatSchema(),
   locationRef = { hash: "" },
   pdf = () => pdfResponse(),
   pdfjs = fakePdfjs(),
@@ -62,6 +72,9 @@ async function start({
     fetched.push({ options, url });
     if (url === "../overlay.config.json") {
       return config === null ? notFound() : jsonResponse(config);
+    }
+    if (url === SCHEMA_URL) {
+      return formatSchema === null ? notFound() : jsonResponse(formatSchema);
     }
     if (url === "../annotations.json") {
       return doc === null ? notFound() : jsonResponse(doc);
@@ -107,11 +120,13 @@ async function selectPageRegion(documentRef, state, predicate) {
 
 // --- start-up ---------------------------------------------------------------
 
-test("start-up: only the two data files and the configured route are fetched", async (t) => {
+test("start-up: only the data files, the shipped schema and the route are fetched", async (t) => {
   withOption(t);
   const { fetched, pdfjs } = await start();
+  // The schema comes before the document: it is what says whether the
+  // document is readable at all.
   assert.deepEqual(fetched.map((call) => call.url),
-                   ["../overlay.config.json", "../annotations.json", PDF_ROUTE]);
+                   ["../overlay.config.json", SCHEMA_URL, "../annotations.json", PDF_ROUTE]);
   for (const call of fetched) {
     assert.deepEqual(call.options, { cache: "no-store", credentials: "same-origin" });
   }
@@ -142,8 +157,8 @@ test("start-up: a refused document leaves an error on the page, not a blank one"
   const bare = makeDocument(PDF_SHA256);
   for (const [override, pattern] of [
     [{ schema: "notes/overlay" }, /has schema "notes\/overlay"/],
-    // The format pins one schema id; the near spelling is refused too.
-    [{ schema: "formal-companion/annotations" }, /has schema "formal-companion\/annotations"/],
+    // The shipped schema pins one id; the near spelling is refused too.
+    [{ schema: "example/annotation" }, /has schema "example\/annotation"/],
     [{ schema_version: "2.0" }, /schema_version "2\.0"/],
     [{ sources: [] }, /has no source "src:notes"/],
     [{ sources: [{ ...bare.sources[0], sha256: undefined }, bare.sources[1]] },
@@ -179,6 +194,49 @@ test("start-up: a refusal is written to the error element and the workspace stay
   assert.equal(el(documentRef, "workspace").hidden, true);
   assert.equal(el(documentRef, "status").textContent, "The overlay data was not loaded.");
 });
+
+test("start-up: with no schema file the viewer refuses to start and says which file", async (t) => {
+  withOption(t);
+  const documentRef = fakeDocument(SHELL);
+  await assert.rejects(() => start({ documentRef, formatSchema: null }),
+                       /Unable to load \.\.\/schema\/annotations\.schema\.json \(404\)/);
+  assert.equal(el(documentRef, "error").hidden, false);
+  assert.match(el(documentRef, "error").textContent, /annotations\.schema\.json/);
+  assert.equal(el(documentRef, "workspace").hidden, true);
+  assert.equal(el(documentRef, "status").textContent, "The overlay data was not loaded.");
+
+  // A schema file that is there but states no identity is refused too: the
+  // viewer has no second copy of the format to fall back on.
+  const second = fakeDocument(SHELL);
+  await assert.rejects(
+    () => start({ documentRef: second, formatSchema: { properties: {} } }),
+    /states no properties\.schema\.const/,
+  );
+  assert.equal(el(second, "workspace").hidden, true);
+});
+
+test("start-up: the shipped schema decides the format, so another one reads another document",
+     async (t) => {
+       withOption(t);
+       const formatSchema = makeFormatSchema({
+         properties: {
+           schema: { const: "other/annotations" },
+           schema_version: { pattern: "^3\\.0$" },
+         },
+       });
+       const doc = makeDocument(PDF_SHA256);
+       // The fixture's own format is now the wrong one...
+       await assert.rejects(() => start({ doc, formatSchema }),
+                            /has schema "example\/annotations"/);
+       // ...and a document of the format the schema states opens.
+       const { documentRef } = await start({
+         doc: { ...doc, schema: "other/annotations", schema_version: "3.0" },
+         formatSchema,
+       });
+       assert.equal(el(documentRef, "workspace").hidden, false);
+       assert.equal(el(documentRef, "error").hidden, true);
+       assert.notEqual(SCHEMA_ID, "other/annotations");
+     });
 
 test("start-up: a region that cannot be placed is reported in the page notice", async (t) => {
   withOption(t);

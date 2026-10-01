@@ -7,12 +7,13 @@ New code, implementing sections 2, 5 and 6 of the overlay contract
   `templates/overlay/overlay.config.json.example` with the source id, the
   title and the cache file name filled in, and refuses to overwrite one.
 * **sync** copies every file under `templates/overlay/runtime/` into
-  `pdf-overlay/` byte for byte, deletes what a previous `GENERATED.json`
-  listed and the templates no longer have, and writes `GENERATED.json`.  It
-  substitutes nothing: a template that needs a per-companion value reads it at
-  run time (contract rule 2), which is why a second sync is a no-op and why
-  `tools/check_generated.py` can verify the whole directory with the standard
-  library alone.
+  `pdf-overlay/` byte for byte, adds the vendored annotation format's own
+  schema as `pdf-overlay/schema/annotations.schema.json`, deletes what a previous
+  `GENERATED.json` listed and the templates no longer have, and writes
+  `GENERATED.json`.  It substitutes nothing: a template that needs a
+  per-companion value reads it at run time (contract rule 2), which is why a
+  second sync is a no-op and why `tools/check_generated.py` can verify the
+  whole directory with the standard library alone.
 * **check** is `sync --check` plus the config rules, the annotation format's
   own checker (schema, invariants, canonical bytes) and the three overlay
   rules the viewer depends on.
@@ -23,6 +24,13 @@ else, they refuse a `pdf-overlay` that is a symlink or resolves outside the
 companion, they refuse to write through a symlinked component inside it, and
 they run no git in the companion at all.  The one git call is in THIS checkout,
 read-only through `cflib.gitsafe`, to stamp the generator commit.
+
+The annotation format reaches a companion through one pin and no other route:
+`vendor/formal_companion_annotations/`, sealed by its manifest.  `sync` copies
+that release's own schema file into the generated directory and stamps the
+release in `GENERATED.json`'s `format` block, so bumping the vendored release
+is the only edit a format upgrade needs and nothing here keeps the old
+identity (`docs/overlay.md`, "Upgrading the format").
 """
 from __future__ import annotations
 
@@ -45,11 +53,14 @@ from formal_companion_annotations import vocab
 from overlay import config as overlay_config
 
 __all__ = [
-    "DOCUMENT_NAME", "GENERATED_NAME", "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION",
-    "GENERATOR_NAME", "INSTANCE_FILES", "OVERLAY_DIRNAME", "SyncResult", "check",
-    "digest", "document_problems", "generated_document", "generator_commit", "init",
-    "overlay_dir", "overlay_problems", "runtime_root", "safe_https_url",
-    "safe_site_path", "sync", "sync_problems", "template_files",
+    "DOCUMENT_NAME", "FORMAT_PACKAGE", "FORMAT_SCHEMA_PATH", "FORMAT_SCHEMA_RELATIVE",
+    "GENERATED_NAME",
+    "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES",
+    "OVERLAY_DIRNAME", "SyncResult", "check", "digest", "document_problems",
+    "format_manifest", "format_pin", "format_schema_bytes", "generated_document",
+    "generated_files", "generator_commit", "init", "overlay_dir", "overlay_problems",
+    "runtime_root", "safe_https_url", "safe_site_path", "sync", "sync_problems",
+    "template_files",
 ]
 
 #: The one directory a companion gets, and the three files that are not copied.
@@ -62,6 +73,21 @@ INSTANCE_FILES = (DOCUMENT_NAME, overlay_config.CONFIG_NAME)
 GENERATED_SCHEMA = "formal-companion/overlay-generated"
 GENERATED_SCHEMA_VERSION = 1
 GENERATOR_NAME = "formal-companion"
+
+#: The annotation format's own schema, copied out of the vendored release under
+#: a name that carries no major version: the generated runtime reads which
+#: documents it accepts from this file, so a format upgrade moves the file's
+#: contents and nothing else.  The three runtime tools spell the same path as
+#: their own `FORMAT_SCHEMA_PATH`; `tests/test_overlay_config.py` holds the
+#: four in step.
+FORMAT_SCHEMA_PATH = ("schema", "annotations.schema.json")
+FORMAT_SCHEMA_RELATIVE = "/".join(FORMAT_SCHEMA_PATH)
+#: The distribution the vendored release is one tag of.
+FORMAT_PACKAGE = "formal-companion-annotations"
+#: The seal beside `vendor/formal_companion_annotations/`.
+FORMAT_MANIFEST = "formal_companion_annotations.manifest.json"
+#: The manifest keys `GENERATED.json`'s `format` block records.
+FORMAT_MANIFEST_KEYS = ("version", "tag", "commit")
 
 #: The example `cf overlay init` fills in.
 CONFIG_EXAMPLE = "overlay/overlay.config.json.example"
@@ -109,6 +135,72 @@ def template_files() -> dict[str, bytes]:
     return out
 
 
+def format_manifest() -> dict:
+    """The seal on the vendored annotation format, as a dict."""
+    path = skill_root() / "vendor" / FORMAT_MANIFEST
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:  # pragma: no cover
+        raise CfError(f"cannot read {path}: {exc}",
+                      hint="this is not a formal-companion checkout, or vendor/ is "
+                           "incomplete; `scripts/annotations/sync_format.py` writes it"
+                      ) from exc
+    if not isinstance(value, dict):                          # pragma: no cover
+        raise CfError(f"{path}: expected an object")
+    missing = [key for key in FORMAT_MANIFEST_KEYS
+               if not isinstance(value.get(key), str) or not value[key]]
+    if missing:                                              # pragma: no cover
+        raise CfError(f"{path}: names no {', '.join(missing)}",
+                      hint="rerun scripts/annotations/sync_format.py rather than "
+                           "editing the manifest")
+    return value
+
+
+def format_schema_bytes() -> bytes:
+    """The vendored release's own schema file, whatever that release names it."""
+    path = Path(V.SCHEMA_PATH)
+    try:
+        return path.read_bytes()
+    except OSError as exc:                                   # pragma: no cover
+        raise CfError(f"cannot read the vendored format schema {path}: {exc}",
+                      hint="rerun scripts/annotations/sync_format.py") from exc
+
+
+def format_pin() -> dict:
+    """`GENERATED.json`'s `format`: the release this overlay was generated against.
+
+    Three of the six values come from the vendored manifest and two from the
+    vendored `vocab`; the sixth names the distribution.  So the block is a
+    statement about the pin and never a second place the identity is typed in.
+    """
+    manifest = format_manifest()
+    return {
+        "package": FORMAT_PACKAGE,
+        "version": manifest["version"],
+        "tag": manifest["tag"],
+        "commit": manifest["commit"],
+        "schema": vocab.ANNOTATION_SCHEMA,
+        "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
+    }
+
+
+def generated_files() -> dict[str, bytes]:
+    """Every file `sync` writes under `pdf-overlay/`, by relative path.
+
+    The runtime templates, plus the vendored format schema at
+    `pdf-overlay/schema/annotations.schema.json`: the templates no longer carry
+    a copy of it, so the schema a companion validates against and the schema
+    the skill checks with cannot drift apart.
+    """
+    files = template_files()
+    if FORMAT_SCHEMA_RELATIVE in files:                      # pragma: no cover
+        raise CfError(f"{runtime_root()} carries {FORMAT_SCHEMA_RELATIVE}",
+                      hint="the format schema is copied from vendor/, not from the "
+                           "templates; delete the template copy")
+    files[FORMAT_SCHEMA_RELATIVE] = format_schema_bytes()
+    return files
+
+
 def digest(raw: bytes) -> str:
     return hashlib.sha256(raw).hexdigest()
 
@@ -139,6 +231,7 @@ def generated_document(files: dict[str, bytes], *, commit: str | None) -> dict:
         "schema": GENERATED_SCHEMA,
         "schema_version": GENERATED_SCHEMA_VERSION,
         "generator": generator,
+        "format": format_pin(),
         "instance_files": list(INSTANCE_FILES),
         "files": [{"path": path, "sha256": digest(raw)}
                   for path, raw in sorted(files.items())],
@@ -325,14 +418,14 @@ class SyncResult:
 def sync(companion: str | Path) -> SyncResult:
     """Copy the runtime into `pdf-overlay/` and write `GENERATED.json`."""
     overlay = overlay_dir(companion)
-    templates = template_files()
+    generated = generated_files()
     previous = _previous(overlay)
     present, odd = _scan(overlay)
     if odd:
         raise CfError(f"{overlay} holds something that is not an ordinary file: {odd[0]}",
                       hint="; ".join(odd[1:]) or "remove it and re-run")
 
-    known = set(templates) | set(previous) | set(INSTANCE_FILES) | {GENERATED_NAME}
+    known = set(generated) | set(previous) | set(INSTANCE_FILES) | {GENERATED_NAME}
     unexpected = sorted(set(present) - known)
     if unexpected:
         rest = (f"the other {len(unexpected) - 1}: {', '.join(unexpected[1:])}"
@@ -342,7 +435,7 @@ def sync(companion: str | Path) -> SyncResult:
                       f"{unexpected[0]}", hint=rest)
 
     result = SyncResult(overlay=overlay)
-    for relative in sorted(set(previous) - set(templates) - set(INSTANCE_FILES)):
+    for relative in sorted(set(previous) - set(generated) - set(INSTANCE_FILES)):
         if relative == GENERATED_NAME or relative not in present:
             continue
         path = _resolve_inside(overlay, relative, f"the previous {GENERATED_NAME}")
@@ -350,7 +443,7 @@ def sync(companion: str | Path) -> SyncResult:
         _prune(overlay, path)
         result.deleted.append(relative)
 
-    for relative, raw in sorted(templates.items()):
+    for relative, raw in sorted(generated.items()):
         path = _resolve_inside(overlay, relative, "the runtime")
         if present.get(relative) == digest(raw):
             result.unchanged.append(relative)
@@ -358,7 +451,7 @@ def sync(companion: str | Path) -> SyncResult:
         _write(path, raw)
         result.written.append(relative)
 
-    document = generated_document(templates, commit=generator_commit())
+    document = generated_document(generated, commit=generator_commit())
     text = json.dumps(document, indent=2, ensure_ascii=False) + "\n"
     target = overlay / GENERATED_NAME
     if target.is_symlink():
@@ -376,8 +469,7 @@ def sync_problems(companion: str | Path) -> list[str]:
     overlay = overlay_dir(companion)
     if not overlay.is_dir():
         return [f"{OVERLAY_DIRNAME}/ does not exist; run `cf overlay sync`"]
-    templates = template_files()
-    expected = {path: digest(raw) for path, raw in templates.items()}
+    expected = {path: digest(raw) for path, raw in generated_files().items()}
     present, odd = _scan(overlay)
     out = [f"odd: {line}" for line in odd]
     for relative in sorted(set(expected) - set(present)):
@@ -393,10 +485,19 @@ def sync_problems(companion: str | Path) -> list[str]:
     if not path.is_file():
         out.append(f"missing: {GENERATED_NAME}")
         return out
+    record = _record(path)
     listed = _listed(path)
-    if listed is None:
+    if listed is None or record is None:
         out.append(f"{GENERATED_NAME} is not a readable generation record")
         return out
+
+    pin = format_pin()
+    found = record.get("format")
+    if found != pin:
+        out.append(f"{GENERATED_NAME}.format: expected the vendored pin "
+                   f"{json.dumps(pin, sort_keys=True)}, got "
+                   f"{json.dumps(found, sort_keys=True, default=str)}")
+
     for relative in sorted(set(expected) - set(listed)):
         out.append(f"{GENERATED_NAME} does not list: {relative}")
     for relative in sorted(set(listed) - set(expected)):
@@ -408,13 +509,19 @@ def sync_problems(companion: str | Path) -> list[str]:
     return out
 
 
-def _listed(path: Path) -> dict[str, object] | None:
-    """{path: sha256} from a `GENERATED.json`, or None when it cannot be read."""
+def _record(path: Path) -> dict | None:
+    """A `GENERATED.json` as a dict, or None when it cannot be read."""
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
-    files = value.get("files") if isinstance(value, dict) else None
+    return value if isinstance(value, dict) else None
+
+
+def _listed(path: Path) -> dict[str, object] | None:
+    """{path: sha256} from a `GENERATED.json`, or None when it cannot be read."""
+    value = _record(path)
+    files = value.get("files") if value is not None else None
     if not isinstance(files, list):
         return None
     return {row["path"]: row.get("sha256") for row in files

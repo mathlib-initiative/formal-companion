@@ -60,11 +60,12 @@ python3 pdf-overlay/tools/check_generated.py
 
 Exit status 0 or 1, one line per problem, standard library only. It verifies
 that every file `GENERATED.json` lists is here with its recorded sha256, that
-nothing else is here but the two instance files, that `overlay.config.json`
-follows the configuration schema in `schema/`, and that `annotations.json`
-parses and carries the source the config names. It is cheap enough to run on
-every push, and it is what notices a hand edit, a half-finished merge or a
-stale copy.
+nothing else is here but the two instance files, that `GENERATED.json`'s
+`format` block names the annotation format release `schema/` came from, that
+`overlay.config.json` follows the configuration schema in `schema/`, and that
+`annotations.json` parses and carries the source the config names. It is cheap
+enough to run on every push, and it is what notices a hand edit, a
+half-finished merge or a stale copy.
 
 ## Regenerating
 
@@ -97,6 +98,12 @@ vendor/pdfjs/         PDF.js, unmodified (see THIRD_PARTY.md)
 
 The two schemas are Draft 2020-12 and need no network: validate the document
 and the config offline with any validator you like.
+`pdf-overlay/schema/annotations.schema.json` is the format's own schema, copied
+in from the release `GENERATED.json`'s `format` block names, and it is also
+what the viewer and the tools read to decide which documents they accept: they
+take the `schema` value from its `properties.schema.const` and the accepted
+`schema_version` from `properties.schema_version.pattern`, so a new release of
+the format reaches this directory through `cf overlay sync` alone.
 
 ## Requirements
 

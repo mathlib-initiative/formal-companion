@@ -22,6 +22,7 @@ from pathlib import Path
 from annotations import review_tags
 from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import validate as V
+from formal_companion_annotations import vocab
 from annotations.export.common import read_bytes
 from cflib import log
 from cflib.errors import CfError
@@ -47,9 +48,9 @@ def load_document(path: Path) -> dict:
         doc = V.loads(read_bytes(path).decode("utf-8"))
     except (OSError, UnicodeDecodeError, V.LoadError) as exc:
         raise CfError(f"{path}: cannot read: {exc}") from exc
-    if not isinstance(doc, dict) or doc.get("schema") != "lean-companion/annotations":
-        raise CfError(f"{path} is not a lean-companion annotation document",
-                      hint="the root carries schema: lean-companion/annotations")
+    if not isinstance(doc, dict) or doc.get("schema") != vocab.ANNOTATION_SCHEMA:
+        raise CfError(f"{path} is not an annotation document",
+                      hint=f"the root carries schema: {vocab.ANNOTATION_SCHEMA}")
     return doc
 
 

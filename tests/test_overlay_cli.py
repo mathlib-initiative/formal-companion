@@ -51,13 +51,17 @@ import cf as cf_main                                                  # noqa: E4
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from cflib.errors import CfError                                      # noqa: E402
 from formal_companion_annotations import validate as V                # noqa: E402
+from formal_companion_annotations import vocab as fmt                 # noqa: E402
 from overlay import config as overlay_config                          # noqa: E402
 from overlay import export as overlay_export                          # noqa: E402
 from overlay import sync as overlay_sync                              # noqa: E402
 
 RUNTIME = SKILL / "templates" / "overlay" / "runtime"
-VENDORED_SCHEMA = (SKILL / "vendor" / "formal_companion_annotations" / "schema"
-                   / "annotations-v1.schema.json")
+MANIFEST = SKILL / "vendor" / "formal_companion_annotations.manifest.json"
+#: The format schema `sync` copies out of the vendored release; the templates
+#: carry no copy of it, so it is not one of `runtime_paths()`.
+VENDORED_SCHEMA = Path(V.SCHEMA_PATH)
+SCHEMA_RELATIVE = overlay_sync.FORMAT_SCHEMA_RELATIVE
 
 SOURCE_ID = "notes-pdf"
 SOURCE_TITLE = "Elementary Sets: Lecture Notes (synthetic)"
@@ -91,6 +95,11 @@ def runtime_paths() -> set[str]:
     return found
 
 
+def generated_paths() -> set[str]:
+    """Everything `sync` writes: the templates plus the vendored format schema."""
+    return runtime_paths() | {SCHEMA_RELATIVE}
+
+
 def document(*, page_count: int = 12, region_page: int = 7,
              href: str = "Notes/Basic/index.html",
              source_id: str = SOURCE_ID, **source_over) -> dict:
@@ -114,8 +123,8 @@ def document(*, page_count: int = 12, region_page: int = 7,
         "rect": {"x0": 0.15, "x1": 0.85, "y0": 0.2, "y1": 0.35},
     }
     return {
-        "schema": "lean-companion/annotations",
-        "schema_version": "1.0",
+        "schema": fmt.ANNOTATION_SCHEMA,
+        "schema_version": fmt.ANNOTATION_SCHEMA_VERSION,
         "companion": {
             "commit": "0" * 40,
             "generated_at": "2026-09-26T12:00:00Z",
@@ -270,8 +279,8 @@ class TestSync(OverlayCase):
         written = {p.relative_to(self.overlay).as_posix()
                    for p in self.overlay.rglob("*") if p.is_file()}
         self.assertEqual(written,
-                         runtime_paths() | {"GENERATED.json", "overlay.config.json",
-                                            "annotations.json"})
+                         generated_paths() | {"GENERATED.json", "overlay.config.json",
+                                              "annotations.json"})
 
     def test_every_copy_is_byte_identical_to_its_template(self):
         self.ready()
@@ -290,7 +299,7 @@ class TestSync(OverlayCase):
                          ["annotations.json", "overlay.config.json"])
         listed = [row["path"] for row in record["files"]]
         self.assertEqual(listed, sorted(listed), "files is sorted by path")
-        self.assertEqual(set(listed), runtime_paths())
+        self.assertEqual(set(listed), generated_paths())
         self.assertNotIn("GENERATED.json", listed)
         for row in record["files"]:
             self.assertEqual(
@@ -392,8 +401,28 @@ class TestSync(OverlayCase):
         self.assertEqual(before, after)
 
     def test_the_shipped_format_schema_is_the_vendored_one_byte_for_byte(self):
-        self.assertEqual((RUNTIME / "schema" / "annotations-v1.schema.json").read_bytes(),
+        """`sync` copies the vendored package's own schema, under a fixed name.
+
+        The templates carry no copy of it: one vendored release is the whole
+        pin, so a format bump is a bump of `vendor/` and a re-sync.
+        """
+        self.ready()
+        self.assertEqual((self.overlay / SCHEMA_RELATIVE).read_bytes(),
                          VENDORED_SCHEMA.read_bytes())
+        self.assertFalse((RUNTIME / SCHEMA_RELATIVE).exists())
+
+    def test_generated_json_records_the_format_pin(self):
+        self.ready()
+        record = json.loads((self.overlay / "GENERATED.json").read_text(encoding="utf-8"))
+        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        self.assertEqual(record["format"], {
+            "package": "formal-companion-annotations",
+            "version": manifest["version"],
+            "tag": manifest["tag"],
+            "commit": manifest["commit"],
+            "schema": fmt.ANNOTATION_SCHEMA,
+            "schema_version": fmt.ANNOTATION_SCHEMA_VERSION,
+        })
 
 
 class TestSyncCheck(OverlayCase):

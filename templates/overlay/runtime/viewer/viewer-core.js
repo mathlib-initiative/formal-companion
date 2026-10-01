@@ -5,9 +5,12 @@
  * Nothing here touches the DOM, so `node --test` exercises all of it; viewer.js
  * holds the controller. Nothing here is specific to one companion either: every
  * per-book value arrives as data, from an `overlay.config.json`
- * (docs/overlay.md section 3) and from an annotation document of
- * format 1.0 (docs/annotations.md), and a value this module cannot read is an
- * error with a message, never a guess.
+ * (docs/overlay.md section 3) and from an annotation document, and a value this
+ * module cannot read is an error with a message, never a guess.
+ *
+ * Nor is anything here specific to one release of the annotation format: the
+ * accepted `schema` and `schema_version` are read from the schema file this
+ * directory ships (`documentFormat`), never written down as a constant.
  */
 
 // --- the two documents -----------------------------------------------------
@@ -16,15 +19,12 @@ export const CONFIG_SCHEMA = "formal-companion/overlay-config";
 export const CONFIG_SCHEMA_VERSION = 1;
 
 /**
- * The one `schema` value an annotation document may carry: the format's own,
- * `formal_companion_annotations.vocab.ANNOTATION_SCHEMA`, which is what the
- * vendored schema pins with a `const` and what every `cf export` convention
- * writes. Any other spelling is refused, not translated.
+ * The annotation format's own JSON Schema, as `cf overlay sync` copied it out
+ * of the vendored release. The viewer reads which documents it accepts from
+ * that file and holds no copy of the identity itself, so a format upgrade is a
+ * re-sync and nothing to edit here.
  */
-export const DOCUMENT_SCHEMA = "lean-companion/annotations";
-
-/** Readers match the major version only (format section 9.1). */
-export const DOCUMENT_SCHEMA_MAJOR = "1.";
+export const DOCUMENT_SCHEMA_URL = "../schema/annotations.schema.json";
 
 /** The viewer never reads a JSON file larger than this. */
 export const MAX_JSON_BYTES = 64 * 1024 * 1024;
@@ -330,25 +330,76 @@ export function readConfig(raw) {
   };
 }
 
+// --- the annotation format --------------------------------------------------
+
+/**
+ * Which documents the shipped annotation schema accepts: `{schema, version}`,
+ * the schema's `properties.schema.const` and a `RegExp` anchored on its
+ * `properties.schema_version.pattern`.
+ *
+ * A schema file that states neither is refused with a message rather than read
+ * as "accept anything": the viewer has no second copy of the identity, and a
+ * guess here would open a document the companion's own validator refuses.
+ */
+export function documentFormat(schemaJson) {
+  if (!isObject(schemaJson)) {
+    fail(`${DOCUMENT_SCHEMA_URL} must be a JSON Schema object.`);
+  }
+  const properties = isObject(schemaJson.properties) ? schemaJson.properties : {};
+  const schema = isObject(properties.schema) ? properties.schema : {};
+  const identity = text(schema.const);
+  if (!identity) {
+    fail(`${DOCUMENT_SCHEMA_URL} states no properties.schema.const, so the accepted `
+         + "document identity cannot be read. Re-run `cf overlay sync`.");
+  }
+  const versions = isObject(properties.schema_version) ? properties.schema_version : {};
+  const pattern = text(versions.pattern);
+  if (!pattern) {
+    fail(`${DOCUMENT_SCHEMA_URL} states no properties.schema_version.pattern, so the `
+         + "accepted document versions cannot be read. Re-run `cf overlay sync`.");
+  }
+  let version;
+  try {
+    version = new RegExp(pattern);
+  } catch (error) {
+    fail(`${DOCUMENT_SCHEMA_URL} has a properties.schema_version.pattern that is not a `
+         + `regular expression (${error instanceof Error ? error.message : error}).`);
+  }
+  return { schema: identity, version };
+}
+
+/** Does *value* match the format's `schema_version` pattern end to end? */
+function matchesVersion(format, value) {
+  if (typeof value !== "string") {
+    return false;
+  }
+  const found = format.version.exec(value);
+  return Boolean(found) && found[0] === value;
+}
+
 // --- the annotation document ------------------------------------------------
 
 /**
  * The `kind: pdf` source the config names, after the three refusals of
- * docs/overlay.md section 4: the document's schema, its major
- * version, and a source that carries `sha256` and `physical_page_count`.
+ * docs/overlay.md section 4: the document's schema, its version, and a source
+ * that carries `sha256` and `physical_page_count`. The first two are the
+ * shipped schema's, through *format* (`documentFormat`).
  */
-export function pdfSource(doc, sourceId) {
+export function pdfSource(doc, sourceId, format) {
   if (!isObject(doc)) {
     fail("The annotation document must be a JSON object.");
   }
-  if (doc.schema !== DOCUMENT_SCHEMA) {
-    fail(`The annotation document has schema ${JSON.stringify(doc.schema)}; expected `
-         + `${JSON.stringify(DOCUMENT_SCHEMA)}.`);
+  if (!isObject(format) || typeof format.schema !== "string" || !(format.version instanceof RegExp)) {
+    fail("The annotation format was not read from "
+         + `${DOCUMENT_SCHEMA_URL}; the viewer cannot judge this document.`);
   }
-  const version = typeof doc.schema_version === "string" ? doc.schema_version : "";
-  if (!version.startsWith(DOCUMENT_SCHEMA_MAJOR)) {
+  if (doc.schema !== format.schema) {
+    fail(`The annotation document has schema ${JSON.stringify(doc.schema)}; expected `
+         + `${JSON.stringify(format.schema)}.`);
+  }
+  if (!matchesVersion(format, doc.schema_version)) {
     fail(`The annotation document is schema_version ${JSON.stringify(doc.schema_version)}; this `
-         + `viewer reads ${DOCUMENT_SCHEMA_MAJOR}x.`);
+         + `overlay ships a schema for ${format.version.source}.`);
   }
   const source = asArray(doc.sources).find((entry) => isObject(entry) && entry.id === sourceId);
   if (!source) {
@@ -767,8 +818,8 @@ function buildItem(item, context) {
  * in `pt` on a page with no declared size, coordinates off the page); such a
  * location is dropped, never guessed at.
  */
-export function buildIndex(doc, config) {
-  const source = pdfSource(doc, config.sourceId);
+export function buildIndex(doc, config, format) {
+  const source = pdfSource(doc, config.sourceId, format);
   const context = {
     clusters: byId(doc.clusters),
     declarations: byId(doc.declarations),

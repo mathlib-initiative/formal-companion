@@ -370,13 +370,6 @@ DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
      "5,207 rows of {model, usage} token counts and nothing else -- no text, "
      "paths, hosts or users (tests/data/m0a/README.md); small packed, over the "
      "cap unpacked"),
-    ("templates/overlay/runtime/schema/annotations-v1.schema.json",
-     "a JSON Schema, not data: the byte-identical copy of "
-     "vendor/formal_companion_annotations/schema/annotations-v1.schema.json "
-     "that `cf overlay sync` ships to a companion so it can validate its "
-     "document offline (docs/overlay.md section 2). The gate and "
-     "tests/test_overlay_cli.py compare the two bytes for bytes, so it cannot "
-     "be trimmed under the cap"),
 )
 
 
