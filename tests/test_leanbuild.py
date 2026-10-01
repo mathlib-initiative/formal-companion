@@ -1,12 +1,4 @@
-"""adapters.leanbuild: declarations from a verified Lake build, the text parser per file otherwise.
-
-The build artifacts are synthesised here in the shapes Lean v4.33 / Lake schema
-2025-09-10 / verso-literate write (CI has no Lean).  One test reads a real built
-companion and is skipped unless the environment names it:
-
-    CF_TML=<a docstring-tag companion checkout>
-    CF_MT=<an attribution-table companion checkout>
-"""
+"""adapters.leanbuild over Lake builds synthesised in the shapes Lean v4.33 and verso-literate write."""
 from __future__ import annotations
 
 try:
