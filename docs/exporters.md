@@ -53,6 +53,10 @@ The exporter reads, at the pinned commit,
 | every tracked `.lean` file | every declaration (`adapters.leanparse`), the statement-hash ids and signatures of anonymous ones (`formal_companion_annotations.ids`), the section 5.1 cut for named ones |
 | a Lake build's `lib/lean` (`--lean-build`, default `<checkout>/.lake/build/lib/lean`) | an anonymous instance's generated name as `lean_name`, when the `.ilean` postdates the file's last commit |
 
+When that build's trace hashes match a file's text, its declarations are read
+from the build (`.ilean`, and the literate JSON beside `lib/`) instead of
+parsed; the report's `lean_source` counts files by origin.
+
 The PDF source is named through the registry by the sha256 the overlay
 records: id, title, edition and printed-page offset come from
 `registry/sources.yaml` (`--source-id`, `--source-title`, `--source-edition`
