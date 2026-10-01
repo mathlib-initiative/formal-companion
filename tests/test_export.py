@@ -62,7 +62,7 @@ import cf as cf_main                                               # noqa: E402
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids                       # noqa: E402
 from formal_companion_annotations import validate as V             # noqa: E402
-from annotations.export import attribution_table, common, docstring_tags  # noqa: E402
+from annotations.export import attribution_table, common, docstring_tags, site_pages  # noqa: E402
 from annotations.export.pdftext import PdfText                     # noqa: E402
 from cflib.errors import CfError                                   # noqa: E402
 
@@ -77,6 +77,8 @@ DELIBERATE = (
     "for both companions, where the prototypes wrote tao-measure-pdf and tao-gsm126-published; the ledger's "
     "own words for the edition stay on the measure_theory source as x_companion_edition",
     "the site source's title and retrieved_at come from the page manifest, not from the build's file times",
+    "an equation's title (measure_theory: equation-1.2 and equation-1.3) carries title_source producer: a book "
+    "prints an equation by its number alone, and the prototype's missing field read as the book's words",
 )
 
 
@@ -494,16 +496,17 @@ class TestAttributionTableExport(unittest.TestCase):
 class TestCoverageFromNote(unittest.TestCase):
     """The refinement note's per-item classes, parsed rather than typed in."""
 
-    NOTE = ("Batch d (section 1.7, 49 items in 9 source nodes) was curated on 2026-09-25. 16 items carry "
-            "entries; 33 carry none: 29 are formalised only by anonymous examples, Remark 1.7.22 by nothing, "
-            "and Remark 1.7.4, Definition 1.7.7 and Definition 1.7.10 have one named declaration that only "
-            "supports them (the table has no support-only form). Batches a to c: the rest.")
+    # synthetic: the sentence shapes coverage_from_note reads, with made-up numbers and items
+    NOTE = ("Batch q (section 9.3, 12 items in 4 source nodes) was drafted on 2001-02-03. 5 items carry "
+            "entries; 7 carry none: 3 are formalised only by anonymous examples, Lemma 9.3.18 by nothing, "
+            "and Example 9.3.2, Corollary 9.3.5 and Theorem 9.3.11 have one named declaration that only "
+            "supports them (a made-up aside). Other batches: elsewhere.")
 
     def test_it_reads_the_section_the_count_and_the_named_classes(self):
         section, named, total = attribution_table.coverage_from_note(self.NOTE)
-        self.assertEqual((section, total), ("1.7", 33))
-        self.assertEqual(named, {"remark-1.7.22": "not_formalized", "remark-1.7.4": "support_only",
-                                 "definition-1.7.7": "support_only", "definition-1.7.10": "support_only"})
+        self.assertEqual((section, total), ("9.3", 7))
+        self.assertEqual(named, {"lemma-9.3.18": "not_formalized", "example-9.3.2": "support_only",
+                                 "corollary-9.3.5": "support_only", "theorem-9.3.11": "support_only"})
 
     def test_a_note_that_does_not_say_gives_nothing(self):
         self.assertIsNone(attribution_table.coverage_from_note("Drafted by one curator agent."))
@@ -747,6 +750,44 @@ class TestDocstringTagsExport(unittest.TestCase):
         finally:
             page.write_text(kept, encoding="utf-8")
 
+    def test_site_pages_writes_the_pin_the_exporter_reads(self):
+        out = scratch(self) / "pages.json"
+        stderr = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+            status = cf_main.main(["export", "site-pages", str(self.site), "--out", str(out),
+                                   "--source-id", "demo-site", "--title", "the demo site",
+                                   "--rendered-at", "2026-09-02T00:00:00Z"])
+        self.assertEqual(status, 0, stderr.getvalue())
+        written = json.loads(out.read_text(encoding="utf-8"))
+        handmade = json.loads(self.pin.read_text(encoding="utf-8"))
+        handmade.pop("note")
+        self.assertEqual(written, handmade)          # path defaults to the directory's name, _site
+        doc, report = docstring_tags.export(self.root, self.commit, site=self.site,
+                                            **dict(self.options, site_pages=out))
+        self.assertEqual(report.problems, [])
+        self.assertEqual(record_diff(doc, self.doc), [])
+
+    def test_site_pages_defaults_and_refusals(self):
+        pin = site_pages.manifest(self.site)
+        self.assertNotIn("source_id", pin)
+        self.assertNotIn("title", pin)
+        self.assertEqual(pin["path"], "_site")
+        newest = max(p.stat().st_mtime for p in self.site.rglob("*.html"))
+        self.assertEqual(pin["rendered_at"], common.utc(newest))
+        empty = scratch(self) / "empty"
+        empty.mkdir()
+        for site, options, words in ((empty, {}, "holds no HTML page"),
+                                     (self.site, {"rendered_at": "2026-09-02 00:00"}, "RFC 3339"),
+                                     (empty / "absent", {}, "is not a directory")):
+            with self.subTest(words=words):
+                with self.assertRaises(common.ExportError) as caught:
+                    site_pages.manifest(site, **options)
+                self.assertIn(words, caught.exception.message)
+        with self.assertRaises(CfError) as caught:
+            cf_main.main(["export", "site-pages", str(self.site), "--out", str(self.site / "pages.json")])
+        self.assertIn("inside the site", caught.exception.message)
+        self.assertFalse((self.site / "pages.json").exists())
+
     def test_the_command_runs_end_to_end(self):
         out = scratch(self) / "demo.annotations.json"
         stdout, stderr = io.StringIO(), io.StringIO()
@@ -864,6 +905,19 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                 self.assertEqual(report.problems, [])
                 self.assertEqual(by_id(doc, "items")[iid]["sub"], sub)
                 self.assertNotIn("item.label_trailing", report.lossy)
+
+    def test_an_equation_title_is_the_producers(self):
+        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4",
+                                                            "Equation (1.1.4): a made-up name", "b"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        item = by_id(doc, "items")["equation-1.1.4"]
+        self.assertEqual((item["title"], item["title_source"]), ("a made-up name", "producer"))
+        kinds = tuple(attribution_table.cf_items.DEFAULT_KINDS)
+        bare = attribution_table.item_identity("Equation (1.1.4)", "item:x", kinds)[0]
+        self.assertNotIn("title", bare)
+        self.assertNotIn("title_source", bare)
 
     def test_a_sub_part_the_format_cannot_carry_is_dropped_and_reported(self):
         root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(ii')", "b"))
@@ -1339,7 +1393,7 @@ class TestTheReferencesAreWhatTheyClaim(unittest.TestCase):
                                                     "unattributed")},
                          {"items": 651, "declarations": 1544, "links": 1169, "locations": 2201,
                           "destinations": 1544, "unattributed": 377})
-        self.assertEqual(len(DELIBERATE), 3)
+        self.assertEqual(len(DELIBERATE), 4)
 
 
 if __name__ == "__main__":                                       # pragma: no cover

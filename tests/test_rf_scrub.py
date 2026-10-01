@@ -257,6 +257,11 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "provenance tool of the ledger's edges when the checkout carries it"),
     ("scripts/overlay_geometry_from_layout.py",
      "the same companion's geometry generator, the provenance tool of a batch drawn from the text layer"),
+    ("scripts/build_site.sh",
+     "the docstring-tagged companion's own site recipe, which tests/data/m3/README.md follows to render "
+     "the literate site the M3 page manifest pins"),
+    ("scripts/slim_large_pages.py",
+     "the same companion's post-processor, the last step of that render recipe"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:
