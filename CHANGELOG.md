@@ -269,6 +269,7 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `cf run --include-sources` re-transfers a companion with `--delete`, making the earlier read-only copy writable first, so the files a later commit deleted no longer stay on the host and fail the tree digest; a refused digest now names the extra, missing and changed paths (#6).
 - `cf export attribution-table` marks an equation's title as the producer's
   (`title_source: producer`); in measure_theory `equation-1.2` and
   `equation-1.3` change, so the measure_theory reference must be regenerated.
