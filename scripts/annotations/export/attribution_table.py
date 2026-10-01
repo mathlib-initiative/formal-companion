@@ -85,10 +85,8 @@ def item_identity(label: str, old_id: str, kinds) -> list[dict]:
 
     A numbered label goes through the item grammar; ``Equation (1.1)`` is the
     one shape the grammar has no kind for.  A label the grammar refuses is an
-    unnumbered passage whose label is the producer's title.  So is the text
-    after the colon of ``Equation (1.2): <words>``: a book prints an equation
-    as its number alone, so those words are the producer's (title_source
-    producer, spec section 3.2).
+    unnumbered passage whose label is the producer's title.  So are the words
+    after ``Equation (n):``, since a book prints an equation by number alone.
     """
     m = _EQUATION_LABEL.match(label)
     if m:

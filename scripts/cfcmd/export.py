@@ -12,10 +12,6 @@ writes the document in canonical form beside a report of what did not fit.
     cf export site-pages <rendered site> --out <pages.json> [--source-id ID] [--title T] \\
         [--path P] [--rendered-at TIME]
 
-`site-pages` is not a convention: it writes the page manifest docstring-tags
-pins a site by (every HTML page with its sha256, and the digest of the lot)
-and reads no checkout.
-
 The document is validated before the command returns (schema, invariants,
 canonical bytes); a problem the exporter recorded, or a document that does not
 validate, exits 1 after writing, so the file is there to inspect.  The
@@ -172,7 +168,6 @@ def run(args) -> int:
 
 
 def _site_pages(args) -> int:
-    """``cf export site-pages``: the manifest of a rendered site, written outside it."""
     from annotations.export import site_pages
     site = args.site.expanduser()
     target = args.out.expanduser().resolve()

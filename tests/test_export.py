@@ -907,7 +907,6 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                 self.assertNotIn("item.label_trailing", report.lossy)
 
     def test_an_equation_title_is_the_producers(self):
-        # review item 7: a book prints an equation by its number, so the words after the colon are the producer's
         root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4",
                                                             "Equation (1.1.4): a made-up name", "b"))
         doc, report = at_export(root, commit)
@@ -915,7 +914,6 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
         self.assertEqual(report.problems, [])
         item = by_id(doc, "items")["equation-1.1.4"]
         self.assertEqual((item["title"], item["title_source"]), ("a made-up name", "producer"))
-        # an equation with no words after its number has neither field
         kinds = tuple(attribution_table.cf_items.DEFAULT_KINDS)
         bare = attribution_table.item_identity("Equation (1.1.4)", "item:x", kinds)[0]
         self.assertNotIn("title", bare)
