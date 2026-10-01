@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"
+    >
+    <meta name="referrer" content="no-referrer">
+    <!--
+      This shell is static and generic: it names no source, no companion and no
+      page count. The title, the heading, the lede and the back link below are
+      placeholders that viewer.js replaces at run time with the values in
+      ../overlay.config.json, and every other string on the page comes from the
+      annotation document. Nothing is substituted into this file when it is
+      copied into a companion.
+    -->
+    <title>Source and formalization overlay</title>
+    <link rel="stylesheet" href="./viewer.css">
+    <script type="module" src="./viewer.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#viewer-main">Skip to the PDF viewer</a>
+    <header class="site-header">
+      <a id="back-link" class="back-link" href="../../index.html">← Back to the site</a>
+      <div>
+        <h1 id="page-heading">Source and formalization overlay</h1>
+        <p id="page-lede" class="lede">
+          Inspect the verified source PDF and the declarations attributed to its items.
+        </p>
+      </div>
+    </header>
+
+    <main id="viewer-main">
+      <section class="file-gate" aria-labelledby="pdf-heading">
+        <div>
+          <h2 id="pdf-heading">Verified loopback PDF</h2>
+          <p>
+            The PDF is served only on loopback, out of the ignored local cache the runtime
+            tools fill. This page verifies its SHA-256 against the annotation document's
+            source record before the bundled PDF.js renders it; the PDF is never uploaded
+            and never part of the generated site.
+          </p>
+        </div>
+      </section>
+
+      <p id="error" class="message error" role="alert" hidden></p>
+      <p id="status" class="message status" role="status" aria-live="polite">
+        Loading the overlay configuration, the annotation document and the PDF.
+      </p>
+      <p id="notice" class="message notice" role="status" hidden></p>
+
+      <section id="workspace" class="workspace" aria-label="PDF inspection workspace" hidden>
+        <div class="viewer-column">
+          <nav class="toolbar" aria-label="PDF controls">
+            <div class="control-group">
+              <button id="previous-page" type="button" aria-label="Previous page">←</button>
+              <label for="page-number">Page</label>
+              <input id="page-number" type="number" inputmode="numeric" min="1" value="1">
+              <span id="page-count" aria-live="polite">of 0</span>
+              <button id="next-page" type="button" aria-label="Next page">→</button>
+            </div>
+
+            <div class="control-group">
+              <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+              <label for="zoom">Zoom</label>
+              <input id="zoom" type="range" min="50" max="250" step="10" value="100">
+              <output id="zoom-value" for="zoom">100%</output>
+              <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+            </div>
+
+            <div class="control-group">
+              <button id="rotate-left" type="button" aria-label="Rotate counterclockwise">↶</button>
+              <output id="rotation-value" aria-label="Rotation">0°</output>
+              <button id="rotate-right" type="button" aria-label="Rotate clockwise">↷</button>
+            </div>
+          </nav>
+
+          <div
+            id="page-scroller"
+            class="page-scroller"
+            tabindex="0"
+            aria-label="Rendered PDF page with selectable source regions"
+          >
+            <div id="page-stage" class="page-stage">
+              <canvas id="pdf-canvas" aria-label="Rendered PDF page"></canvas>
+              <svg
+                id="overlay"
+                class="overlay"
+                xmlns="http://www.w3.org/2000/svg"
+                role="group"
+                aria-label="Selectable source regions"
+              ></svg>
+            </div>
+          </div>
+        </div>
+
+        <aside class="details-column" aria-labelledby="details-heading">
+          <h2 id="details-heading">Source item</h2>
+          <p id="selection-empty">
+            Select a highlighted region to see the declarations attributed to its items.
+          </p>
+
+          <div id="selection" hidden>
+            <div id="item-choices" class="item-choices" hidden></div>
+            <h3 id="item-label"></h3>
+            <p id="item-locator" class="source-locator"></p>
+            <div id="verdict-notes"></div>
+            <p id="coverage-note" class="card-note" hidden></p>
+            <p id="fallback-note" class="card-note" hidden></p>
+
+            <div class="filters" aria-label="Declaration filters">
+              <label id="role-filter-wrap">
+                Role
+                <select id="role-filter">
+                  <option value="">All roles</option>
+                </select>
+              </label>
+              <label class="search-filter">
+                Find declaration
+                <input id="target-filter" type="search" autocomplete="off">
+              </label>
+            </div>
+
+            <p id="target-summary" class="target-summary" aria-live="polite"></p>
+            <div id="target-groups"></div>
+
+            <nav class="pagination" aria-label="Declaration pages">
+              <button id="previous-targets" type="button">Previous declarations</button>
+              <output id="target-page" aria-live="polite"></output>
+              <button id="next-targets" type="button">Next declarations</button>
+            </nav>
+          </div>
+        </aside>
+      </section>
+
+      <details class="keyboard-help">
+        <summary>Keyboard controls</summary>
+        <p>
+          With focus outside an input and no modifier key held: Left/Right changes page,
+          +/− changes zoom, R rotates, and Escape clears a selected region. Highlighted
+          regions are buttons: Tab to one and press Enter or Space to select it.
+        </p>
+      </details>
+    </main>
+  </body>
+</html>
