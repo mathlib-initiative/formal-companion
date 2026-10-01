@@ -217,6 +217,13 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     for entry in entries:
         if not entry["exists"]:
             continue
+        if "--delete" in entry["rsync_flags"]:
+            # An earlier copy is read-only, and rsync cannot unlink a stale file
+            # inside a directory without u+w.
+            dest = shlex.quote(entry["dest"])
+            add("transfer", f"make the earlier copy of {entry['name']} writable so --delete "
+                            f"can remove what was deleted since",
+                _ssh(host, f"test ! -e {dest} || chmod -R u+w {dest}"))
         add("transfer", f"rsync {entry['name']} -> {entry['dest']}", _rsync(entry, host))
         modes = _chmod_fallback_modes(entry)
         if modes:

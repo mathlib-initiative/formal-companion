@@ -161,7 +161,7 @@ def _excluded(rel: Path, patterns: list[str]) -> bool:
 
 
 def tree_digest(root: Path, excludes: list[str] | None = None) -> dict:
-    """``{sha256, files, bytes}`` over exactly the files rsync would send.
+    """``{sha256, files, bytes, listing}`` over exactly the files rsync would send.
 
     ``READONLY_CHMOD`` transfers a companion at mode 0444 inside 0555
     directories, which is a speed bump and not a barrier: the copy is owned by
@@ -203,10 +203,9 @@ def tree_digest(root: Path, excludes: list[str] | None = None) -> dict:
                 rows.append((rel.as_posix(), "unreadable"))
                 continue
             rows.append((rel.as_posix(), inner.hexdigest()))
-    outer = hashlib.sha256()
-    for rel_posix, digest in sorted(rows):
-        outer.update(("%s\0%s\n" % (rel_posix, digest)).encode("utf-8"))
-    return {"sha256": outer.hexdigest(), "files": len(rows), "bytes": total}
+    listing = "".join("%s\0%s\n" % row for row in sorted(rows))
+    return {"sha256": hashlib.sha256(listing.encode("utf-8")).hexdigest(), "files": len(rows),
+            "bytes": total, "listing": listing}
 
 
 #: :func:`tree_digest`, for python3 on the run host (no cflib there).  The two
@@ -257,9 +256,32 @@ print("tree %s files=%d sha256=%s" % (root, len(rows), got))
 if want and want != got:
     sys.stderr.write("REFUSED: %s is not the tree that was transferred\n" % root)
     sys.stderr.write("  expected %s\n  got      %s\n" % (want, got))
-    sys.stderr.write("  the companion copies go over read-only, but 0444 is reversible by their\n")
-    sys.stderr.write("  owner: an agent may have edited the repo the findings cite. Re-transfer\n")
-    sys.stderr.write("  and do not harvest this run.\n")
+    base = os.path.normpath(root)
+    listing = os.path.join(os.path.dirname(base), ".%s.listing" % os.path.basename(base))
+    try:
+        with open(listing, "rb") as fh:
+            body = fh.read()
+    except OSError:
+        body = b""
+    # The listing sent beside the copy is the digest's pre-image, so it is the
+    # sent tree only when it hashes to `want`; an agent cannot forge one that does.
+    if hashlib.sha256(body).hexdigest() == want:
+        sent = dict(line.partition("\0")[::2] for line in body.decode("utf-8").split("\n") if line)
+        here = dict(rows)
+        for label, paths in (("extra", [p for p in here if p not in sent]),
+                             ("missing", [p for p in sent if p not in here]),
+                             ("changed", [p for p in here if p in sent and here[p] != sent[p]])):
+            if paths:
+                sys.stderr.write("  %d %s:\n" % (len(paths), label))
+                sys.stderr.writelines("    %s\n" % p for p in sorted(paths)[:20])
+                if len(paths) > 20:
+                    sys.stderr.write("    ... and %d more\n" % (len(paths) - 20))
+    else:
+        sys.stderr.write("  (no listing of the sent tree at %s to name the paths)\n" % listing)
+    sys.stderr.write("  stale files from an earlier transfer, or an edit: the companion copies\n")
+    sys.stderr.write("  go over read-only, but 0444 is reversible by their owner, so an agent\n")
+    sys.stderr.write("  may have edited the repo the findings cite. Re-transfer and do not\n")
+    sys.stderr.write("  harvest this run.\n")
     raise SystemExit(1)
 '''
 
@@ -396,10 +418,14 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
     if include_sources:
         pinned = recorded_tree_digests(run)
         for name, repo in sorted((companions or {}).items()):
+            # --delete: the host copy is ours and never edited there, and a copy an
+            # earlier run left kept every file a later commit deleted.
             entry = _entry(f"repo:{name}", Path(repo).expanduser(),
                            f"{root}/{names['repos']}/{name}/",
-                           flags=READONLY_CHMOD + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
+                           flags=READONLY_CHMOD + ["--delete"]
+                           + [f"--exclude={p}" for p in SOURCE_EXCLUDES],
                            note="companion Lean sources, transferred read-only")
+            listing = None
             if entry["exists"]:
                 # The BEFORE hash of what leaves this machine, so the same digest
                 # can be demanded of the host after the transfer and after the run.
@@ -407,10 +433,18 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
                 # later invocation (the monitor stage is one) compares the host
                 # against the digest that was actually SENT, not against a local
                 # checkout that may have been pulled or switched since.
-                entry["tree_sha256"] = (pinned.get(entry["name"])
-                                        or tree_digest(Path(repo).expanduser(),
-                                                       SOURCE_EXCLUDES)["sha256"])
+                walked = tree_digest(Path(repo).expanduser(), SOURCE_EXCLUDES)
+                entry["tree_sha256"] = pinned.get(entry["name"]) or walked["sha256"]
+                if walked["sha256"] == entry["tree_sha256"]:
+                    listing = rd / "listings" / f"{name}.listing"
+                    listing.parent.mkdir(parents=True, exist_ok=True)
+                    listing.write_bytes(walked["listing"].encode("utf-8"))
             entries.append(entry)
+            if listing:
+                entries.append(_entry(f"listing:{name}", listing,
+                                      f"{root}/{names['repos']}/.{name}.listing",
+                                      note="the sent tree's paths and digests, so a refused "
+                                           "digest names what differs"))
         if not companions:
             warnings.append("--include-sources was given but workspace.yaml lists no companion repos")
     wants_images = "image" in source_access(run).lower()
