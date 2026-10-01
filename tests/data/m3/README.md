@@ -12,26 +12,28 @@ A maintainer keeps them in one directory and names it with
 `CF_M3_REFERENCE_DIR`. It holds exactly these six files:
 
 - `measure_theory.annotations.json.gz`: `cf export attribution-table` at
-  measure_theory 00a2438.
+  measure_theory 2cd263a (the first commit whose refinement table is schema
+  version 2, which the exporter needs).
 - `measure_theory.export-report.json`: that export's report.
 - `tao-measure-lean.annotations.json.gz`: `cf export docstring-tags` at
-  tao-measure-lean f158509.
+  tao-measure-lean 677ada1.
 - `tao-measure-lean.export-report.json`: that export's report.
 - `tml-site-xref.json.gz`: `_site/xref.json` of the tao-measure-lean literate
-  site rendered from f158509 (git-ignored build output of that repository).
-- `tml-site-pages.json`: the site pin: the site's HTML pages with sha256 and
-  bytes, the site digest (docs/annotations.md section 3.1), the site source's
-  id and title, its path under the checkout and the render time
-  (docs/exporters.md section 2 gives the shape).
+  site rendered from 677ada1 (git-ignored build output of that repository).
+- `tml-site-pages.json`: the site pin: the pages the producer pins (the 38
+  module, index and search pages; the `_lazy/states` fragments are left out)
+  with sha256 and bytes, the site digest (docs/annotations.md section 5.1),
+  the site source's id and title, its path under the checkout and the render
+  time (docs/exporters.md section 2 gives the shape).
 
 Regenerate the documents and reports from the pinned checkouts, the published
 edition's PDF and the rendered site (docs/exporters.md section 5):
 
 ```sh
 M3="$CF_M3_REFERENCE_DIR"
-python3 scripts/cf.py export attribution-table <measure_theory checkout> --commit 00a2438 \
+python3 scripts/cf.py export attribution-table <measure_theory checkout> --commit 2cd263a \
     --out "$M3/measure_theory.annotations.json" --lean-build <its .lake/build/lib/lean>
-python3 scripts/cf.py export docstring-tags <tao-measure-lean checkout> --commit f158509 \
+python3 scripts/cf.py export docstring-tags <tao-measure-lean checkout> --commit 677ada1 \
     --pdf <the published PDF> --xref "$M3/tml-site-xref.json.gz" \
     --site-pages "$M3/tml-site-pages.json" --site <its _site> \
     --out "$M3/tao-measure-lean.annotations.json"

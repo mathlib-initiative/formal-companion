@@ -8,11 +8,13 @@ document where the defect is planted is wrong, not the document:
 
 * ``attribution_gap``: an item keyed only to where it sits.  It has no ``key``
   link to a declaration, and no coverage class that excludes one says why
-  (``not_formalized``, ``out_of_scope``, ``support_only``, ``example_only``);
-  a ``formalized`` or ``partial`` item with no key is the very defect, a
-  claimed formalization no key names.  Before the PDF-overlay companion's
-  section 1.7 was curated, every item of that section was in this state: the
-  adapter could key it only to its in-text page anchor.
+  (``not_formalized``, ``out_of_scope``, ``support_only``, ``example_only``,
+  or ``partial_only`` with the ``attributed`` links that are its partial
+  statements); a ``formalized`` item with no key, or a ``partial_only`` one
+  with no attributed link, is the very defect, a claimed formalization no
+  link names.  Before the PDF-overlay companion's section 1.7 was curated,
+  every item of that section was in this state: the adapter could key it only
+  to its in-text page anchor.
 * ``key_on_structure_member``: a ``key`` link, or a ``primary`` membership,
   whose declaration is a ``field`` or ``projection``.  A structure member states
   no item; its structure does.  The overlay companion's first viewer PR counted
@@ -20,8 +22,10 @@ document where the defect is planted is wrong, not the document:
 * ``borrowed_key``: a numbered item whose every key declaration is another
   item's key declaration, where one of those other items (the owner) also has
   a key of its own that this item lacks, so the item states nothing of its
-  own; and, for an item with no key link that falls back to its clusters, a
-  cluster whose primary declarations are all another item's keys.  The overlay
+  own; and, for an item with no link that falls back to its clusters (the
+  format writes no flag: the fallback is an item with ``clusters`` and no
+  live link), a cluster whose primary declarations are all another item's
+  keys.  The overlay
   companion's curation of batches a to c recorded such remarks as "formalised
   only by declarations that state a neighbouring item".
 * ``shared_key``: the same shape with no owner: items keyed only to the same
@@ -36,8 +40,9 @@ document where the defect is planted is wrong, not the document:
   were spelled ``In-text proof (book p. N)`` and folded away.  A ``helper``
   link is proof plumbing the script is right to hide, so it is not reported.
 * ``adjudicated_attribution_gap``: the verdicts the document itself carries
-  with the viewer verdict ``attribution_gap``: the adjudication ledger's rows
-  of that class, when the export carried them.
+  with the verdict ``attribution_gap``, or whose ``x_ledger_verdict`` (the
+  adjudication ledger's own class, which the format does not carry as a
+  field) says ``ATTRIBUTION_GAP``.
 
 The patterns of the fold script are the defaults and both are arguments, so
 another site's rules can be checked against the same document.
@@ -54,7 +59,8 @@ KEEP_PATTERN = (r"(?:(?:Exercise|Definition|Theorem|Lemma|Proposition|Corollary|
 #: The spelling the same script hides as proof plumbing (its ``PROOF_RE``).
 HIDE_PATTERN = r"\bIn-text proof"
 STRUCTURE_MEMBER_KINDS = frozenset({"field", "projection"})
-#: Coverage classes that say why an item has no key link (docs/annotations.md, I5).
+#: Coverage classes that say why an item has no key link (docs/annotations.md, I5).  ``partial_only``
+#: says so too, but only through the attributed links that are its partial statements.
 UNKEYED_COVERAGE = frozenset({"not_formalized", "out_of_scope", "support_only", "example_only"})
 #: The link roles a book-content tag carries; a helper tag is proof plumbing.
 BOOK_CONTENT_ROLES = ("key", "attributed")
@@ -70,17 +76,28 @@ def _live_links(doc: dict) -> list[dict]:
     return [ln for ln in doc.get("links", []) or [] if not ln.get("orphaned")]
 
 
+def _cluster_fallback(doc: dict) -> set[str]:
+    """The items shown through their clusters: ``clusters`` and no live link (the format writes no flag)."""
+    linked = {ln["item"] for ln in _live_links(doc)}
+    return {item["id"] for item in doc.get("items", []) or [] if item.get("clusters") and item["id"] not in linked}
+
+
 def check_attribution_gap(doc: dict) -> list[dict]:
     """Items with no key link to a declaration and no coverage class that excludes one."""
     located = {i for loc in doc.get("locations", []) or [] for i in loc["items"]}
     keyed = {ln["item"] for ln in _live_links(doc) if ln["role"] == "key" and "declaration" in ln}
+    attributed = {ln["item"] for ln in _live_links(doc) if ln["role"] == "attributed" and "declaration" in ln}
+    fallback = _cluster_fallback(doc)
     out = []
     for item in doc.get("items", []) or []:
-        if item["id"] in keyed or item.get("coverage") in UNKEYED_COVERAGE:
+        coverage = item.get("coverage")
+        if item["id"] in keyed or coverage in UNKEYED_COVERAGE:
+            continue
+        if coverage == "partial_only" and item["id"] in attributed:
             continue
         anchored = item["id"] in located or "pages" in item or "quote" in item
         out.append({"item": item["id"], "form": item["form"], "kind": item["kind"],
-                    "anchored": anchored, "cluster_fallback": bool(item.get("cluster_fallback"))})
+                    "anchored": anchored, "cluster_fallback": item["id"] in fallback})
         if "coverage" in item:
             out[-1]["coverage"] = item["coverage"]
     return out
@@ -122,6 +139,7 @@ def _key_sharing(doc: dict) -> list[dict]:
     for m in doc.get("memberships", []) or []:
         if m["role"] == "primary" and "declaration" in m:
             primaries[m["cluster"]].add(m["declaration"])
+    fallback = _cluster_fallback(doc)
     out = []
     for iid, item in items.items():
         if item["form"] != "numbered":
@@ -129,7 +147,7 @@ def _key_sharing(doc: dict) -> list[dict]:
         own = key_by_item.get(iid)
         if own:
             decls, via = own, "links"
-        elif item.get("cluster_fallback"):
+        elif iid in fallback:
             decls = set().union(*(primaries.get(c, set()) for c in item.get("clusters", [])))
             via = "clusters"
         else:
@@ -181,10 +199,10 @@ def check_hidden_spelling(doc: dict, keep_pattern: str = KEEP_PATTERN,
 
 
 def check_adjudicated_attribution_gap(doc: dict) -> list[dict]:
-    """Verdicts the document carries with the viewer verdict ``attribution_gap``."""
+    """Verdicts of class ``attribution_gap``, or whose ledger class (``x_ledger_verdict``) is ATTRIBUTION_GAP."""
     out = []
     for v in doc.get("verdicts", []) or []:
-        if v["verdict"] == "attribution_gap" or v.get("ledger_verdict") == "ATTRIBUTION_GAP":
+        if v["verdict"] == "attribution_gap" or v.get("x_ledger_verdict") == "ATTRIBUTION_GAP":
             out.append({"verdict": v["id"], "item": v["item"], "status": v["status"],
                         "resolution": v.get("resolution", {}).get("state", "open"),
                         "declarations": [d["declaration"] for d in v.get("declarations", [])]})

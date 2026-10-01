@@ -69,7 +69,7 @@ pipeline below.
 | revision pins and recheck | `scripts/recheck/` | loops, S9 |
 | planted mutations and scoring | `scripts/score/mutate.py`, `scripts/score/answer_key.py`, `scripts/score/score.py`, `tests/e2e/synthetic.sh` | calibration |
 | redacted exchange | `scripts/share/redact.py` | the release document |
-| annotation format v1.0 | `formal-companion-annotations/schema/annotations-v1.schema.json`, `formal-companion-annotations/src/formal_companion_annotations/validate.py`, `docs/annotations.md` | the spine of the pipeline |
+| annotation format v1.0 | `formal-companion-annotations/schema/annotations-v1.0.schema.json`, `formal-companion-annotations/src/formal_companion_annotations/validate.py`, `docs/annotations.md` | the spine of the pipeline |
 
 What this repository does not have:
 
@@ -202,7 +202,7 @@ Output, doc v0:
   generated repository from the Lake template and commits it once, so `commit`
   is a real 40-hex id and `repo` is `local/<name>` until the repository has a
   remote; later checkpoints move `commit` to its head. The v1.0 schema requires
-  both (`formal-companion-annotations/schema/annotations-v1.schema.json`), so
+  both (`formal-companion-annotations/schema/annotations-v1.0.schema.json`), so
   a `commit: null` companion would fail S0's own gate.
 - One `pdf` source with sha256, bytes, `physical_page_count`,
   `printed_page_offset`, page sizes and the text layer `{extractor: pdftotext,

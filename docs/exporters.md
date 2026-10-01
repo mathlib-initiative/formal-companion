@@ -1,14 +1,25 @@
 # The companion exporters: `cf export` and `cf review-tags`
 
 Two commands turn a companion's own attribution data into an annotation
-document (`docs/annotations.md`, format 1.0), and one reads such a document
-back for the attribution defects the audits found. They are milestone M3 of
+document (`docs/annotations.md`, format 1.0, release candidate 1.0.0rc1 as
+vendored), and one reads such a document back for the attribution defects
+the audits found. They are milestone M3 of
 `docs/proposals/pdf-to-companion.md` (section 5.4): the exporters reproduce
-the two documents that section 10 of the format was written from, record for
-record, and the tag review reproduces the known answers.
+the two documents the format was first written from, record for record, and
+the tag review reproduces the known answers.
 
 Neither command needs a workspace. Both read a checkout at a pinned commit
-through `cflib.gitsafe` and write nothing under it.
+through `cflib.gitsafe` and write nothing under it. Each document declares
+in its root `profiles` exactly the format profiles its keys use
+(`annotations.export.common.declare_profiles`, invariant I14): `graph` for
+clusters, memberships, artifacts and `companion.graph`; `site` for
+destinations and snippets; `audit` for verdicts (a source's `role` is core,
+so a document with no verdict declares no `audit`); `history` for the
+changelog. A document with none of those is core only and carries no
+`profiles`. Before the command returns, the document is
+checked canonically and with the format's `external-urls` lint, which the
+exporters keep their documents clean of: a URL in a note, a title, a tag or a
+coverage note is dropped and reported rather than written.
 
 **Contents**: 1 attribution-table · 2 docstring-tags · 3 what is lossy · 4 the
 tag review · 5 reproducing the references · 6 deliberate differences
@@ -33,7 +44,7 @@ The exporter reads, at the pinned commit,
 | input | becomes |
 |---|---|
 | `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer); one `provenance` record per batch |
-| `pdf-overlay/data/target-refinement.json` | `key` and `attributed` `links`, merged per item; the curation note's per-item classes as `coverage` |
+| `pdf-overlay/data/target-refinement.json` (schema version 2) | `key` and `attributed` `links`, merged per item; its *coverage entries* (an entry with a `coverage` class, no key ids, a `note`) as the item's `coverage` and `coverage_note`, their declarations as the links the class admits (below) |
 | `source-formalization-ledger.json` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
 | `pdf-overlay/data/declaration-snippets.json` | `snippets` |
 | `pdf-overlay/data/destinations.json` | `destinations` and `cluster.related_to` |
@@ -65,11 +76,30 @@ A geometry label's sub-part goes through the renderer both exporters share
 (`annotations.export.common.render_sub`, over the item grammar's groups):
 nested groups join with `.` (`(i)(a)` is `i.a`), a range stays a range
 (`(i)-(iii)` is `i-iii`) and a list a list (`(i), (iii)` is `i,iii`), so an
-item is never narrowed to its first part. A parenthetical attached to the
-number that the grammar refuses (`1.2.3(ii')`) is dropped and reported as a
-problem. An item whose only links are ledger support edges carries the class
-they imply as `coverage` (`example_only` when every one is an example,
-`support_only` otherwise; section I5).
+item is never narrowed to its first part, and a primed part keeps its prime
+(`(b')` is `b'`, and the item id is `remark-1.1.4-b'`). A parenthetical
+attached to the number that the grammar refuses (`1.2.3(ii*)`) is dropped
+and reported as a problem. An item the table keys to an anonymous `example`
+carries `coverage: formalized`: the example states it (section 5.2 of the
+format), and the class says so, where an `example_only` entry's examples
+are `example` links.
+
+**Coverage.** The table's coverage entries (schema version 2; a version 1
+table, which classified the items with no entry in its provenance note's
+prose, is refused) give an item its class and note. The declarations such an
+entry lists become the links invariant I5 admits for the class: a
+`partial_only` entry's are `attributed` links with `relation: part`, or
+`special_case` when the note says so; a `support_only` or `not_formalized`
+entry's are `support` links; an `example_only` entry's anonymous examples
+are `example` links and a `private_only` entry's private declarations `key`
+links (anything else under those classes is a `support` link, reported).
+Entries of one item's regions must agree on the class; a key id on a coverage
+entry is a problem. An item with no entry and no ledger-derived link is shown
+through its clusters: the format writes no flag for that (a reader derives
+it from `clusters` and the absence of links), and such an item carries no
+`coverage` and is counted under `item.coverage_unclassified`. An item whose
+only links are ledger support edges carries the class they imply
+(`example_only` when every one is an example, `support_only` otherwise).
 
 ## 2. `cf export docstring-tags`
 
@@ -77,7 +107,36 @@ they imply as `coverage` (`example_only` when every one is an example,
 cf export docstring-tags <checkout> --commit <sha> --pdf <the anchor edition> \
     --xref <xref.json[.gz]> --site-pages <pages.json> [--site <rendered site>] \
     [--adapter-config <adapter.yaml>] --out <doc.json>
+cf export docstring-tags <checkout> --commit <sha> --source-id <id> --source-title <title> \
+    --source-revision <edition stamp> [--source-media-type <type>] [--source-doi <doi>] \
+    [--source-isbn <isbn13>]... [--adapter-config <adapter.yaml>] --out <doc.json>
 ```
+
+The PDF and the site are each optional. Without `--pdf` the edition is a
+source whose bytes the producer does not hold: `kind: pdf` pinned by the
+`identifiers` from `--source-doi` and `--source-isbn` (section 5.1 of the
+format; no `sha256`, page count, offset or text layer), with the `revision`
+given as `--source-revision` (an edition stamp); with no identifier, or a
+`--source-media-type` that is not `application/pdf`, it is `kind: other`
+with that `media_type` and the revision as its identity. A numbered item is
+then located by its number alone (no location, quote or pages of its own: I4
+is for passages), a bare tag's parenthetical becomes the item's `title` with
+`title_source: producer` when the item's tags agree on it
+(`item.title_from_tag`, a bent bucket), a tag's page is kept on its link
+unchecked when the medium is a PDF and dropped otherwise, and an in-text
+passage is keyed by its printed page and title or, with no page, reported
+and left out. The report's `source.bytes_unpinned` bucket says that nothing
+in the document is verified against the edition. Without `--xref` and
+`--site-pages` (which come together) the document has no site source and no
+destinations.
+
+A tag that names two numbered items (`Lemma 2.3.2 / Exercise 2.3.1`: the
+exercise is to prove the lemma) gives the declaration a `key` link per item,
+and the two items are related with `relations.same_as` (counted in the
+report as `items.items_paired_by_one_declaration`). A `key` link whose
+declaration is an anonymous `example` says the example states the item, so
+the item carries `coverage: formalized` (never `example_only`, which is for
+an item linked to examples with role `example` alone).
 
 The convention `adapters/docstring_tags.py` reads: every declaration that
 formalises a book item opens its docstring with the item's tag. The exporter
@@ -89,18 +148,20 @@ reads
 | `In-text` tags | passages: one per tag, keyed by a docstring quote verified once on its page, or on any page of a `pp.` range (`quote_hash`), or by printed page and title (`page_title_hash`); a numbered item the tag mentions is named in `relations.near`, and a passage with no page of its own takes its page from that neighbour's heading; the tag's own single word (`definition`, `convention`) is the passage's `kind`, anything longer leaves it `passage` |
 | `--pdf`, through `pdftotext` | the anchor edition's text layer: every numbered item's heading line becomes its location (a `TextQuoteSelector` under `page=`), docstring quotes are verified before a selector is written; `pdfinfo` gives the page box |
 | `--xref` | `destinations` and, on the site source, the anchor locations of named declarations (`SitePageSelector` plus an RFC 3236 fragment) and of anonymous ones (a `CssSelector` on the keyword's `data-binding`) |
-| `--site-pages` | the site source: one `scope: site` source pinned by the sha256 of its page manifest, with the manifest as `page_hashes`, its id, title, path and render time |
-| `--site` | the rendered pages, checked against the manifest, then every anchor checked to occur once on its page; without it the index is trusted and the site provenance says so |
+| `--site-pages` | the site source: one `scope: site` source whose `sha256` is the digest of its page manifest, carried as `page_hashes`, with its id, title, path and render time. The producer chooses the pages it pins: the manifest must list every page a location names and may leave generated fragments (lazy states, search indexes) out |
+| `--site` | the pinned pages checked against their hashes, then every anchor checked to occur once on its page; pages on disk the manifest leaves out are counted (`site.html_pages_on_disk_not_pinned`), not refused; without `--site` the index is trusted and the site provenance says so |
 
 A numbered item whose heading line the text layer does not show takes its
 `pages` from its earliest key link that has them (counted in the report as
 `headings.pages_from_key_link_items`). A tag's page outside the PDF, or a
 reversed range, a sub-part the grammar refuses, or a URL in a note, a
-passage title or a tag (I10) is dropped and reported as a problem naming the
-declaration, so the document stays valid and the command still exits 1.
+passage title or a tag (the format's `external-urls` lint) is dropped and
+reported as a problem naming the declaration, so the document stays valid
+and the command still exits 1.
 
 The site pin is a small JSON file: `{"source_id", "title", "path",
-"rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`;
+"rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`, each
+`path` a file (`TaoMeasure/Section_1_1_1/index.html`, never a directory).
 The reference companion's is `tml-site-pages.json` in the maintainer's
 `CF_M3_REFERENCE_DIR` (`tests/data/m3/README.md`); it is not in this tree.
 The PDF is named through the registry as in section 1.
@@ -118,14 +179,14 @@ reference companions, with the counts of the maintainer's reports (kept in
 | bucket | count | what is lost |
 |---|---|---|
 | `declaration.head_not_in_ledger` | 93 | named or private declarations at HEAD that the ledger snapshot does not list are not exported |
-| `declaration.private_line_stale` | 242 | the ledger's positional private ids name lines that moved; resolved by module and name, the old id in `legacy_ids` |
+| `declaration.private_line_stale` | 451 | the ledger's positional private ids name lines that moved; resolved by module and name, the old id in `legacy_ids` |
 | `declaration.private_field_kind_guessed` | 6 | a private structure member the ledger gives no kind is exported as `field` |
-| `membership.realization` | 1695 | the edges' `realization` (constant per role, so derivable) |
-| `ledger.node_class_and_text_hash` | 2884 | the nodes' class and verification-text hash (recoverable from the pinned ledger) |
+| `membership.realization` | 1995 | the edges' `realization` (constant per role, so derivable) |
+| `ledger.node_class_and_text_hash` | 3181 | the nodes' class and verification-text hash (recoverable from the pinned ledger) |
 | `ledger.integrity_blocks` | 1 | the ledger's `files[]`, signatures, counts and authority (recoverable from the pinned ledger) |
-| `item.coverage_unclassified` | 205 | the class of the fallback items of sections 1.1 to 1.6, which the curation note does not give item by item |
+| `item.coverage_unclassified` | 1 | an item with no refinement entry and no link, shown through its clusters, whose class the curation has not given (the equation split off Remark 1.1.3's label) |
 | `item.passage_label` | 20 | the verbatim `Unnumbered ...` geometry label, which became a producer title |
-| `link.region_granularity` | 35 | the per-region keying of refinement entries, merged per item |
+| `link.region_granularity` | 75 | the per-region keying of refinement entries, merged per item |
 | `geometry.batch_order` | 4 | the in-batch order of items and the batch page partitions |
 | `location.quads_highlight` | 1 | the RFC 8118 fallback of a quads region is its bounding box |
 | `destinations.header` | 1 | the destinations file's lock blocks and relation id |
@@ -135,37 +196,48 @@ reference companions, with the counts of the maintainer's reports (kept in
 | `source.path` | 1 | the ledger's workspace-relative PDF path |
 | `source.printed_page_offset_from_prose` | 1 | the offset is read from locator prose and the registry, not a companion field |
 
-Two lossy buckets appear only when their input does: `link.key_outside_formalization_ids`
-(a refinement key id its own entry's `formalization_ids` does not list; links
-follow `formalization_ids`) and, as a count rather than a bucket,
+Three lossy buckets and two counts appear only when their input does:
+`link.key_outside_formalization_ids` (a refinement key id its own entry's
+`formalization_ids` does not list; links follow `formalization_ids`),
+`link.pages_without_pdf` and `source.bytes_unpinned` (docstring-tags without
+a PDF, section 2), and the counts
 `ledger_support_edges.same_link_from_another_node` (one support edge reached
-through two single-item nodes gives one link).
+through two single-item nodes gives one link) and
+`ledger_support_edges.already_listed_by_refinement` (a support edge a
+coverage entry already lists).
 
 and bent: the ledger's scope and snapshot tree (`x_graph_scope`, 1), the source
 nodes' plan ids and statuses (`cluster.x_plan_status`, 77), the refinement's
 method name and curation count (`provenance.x_refinement_fields`, 1), the PDF's
 download checks (`source.x_download_checks`, 1), the ledger's own words for the
-edition (`source.x_companion_edition`, 1), the 64 comment tags refused as
+edition (`source.x_companion_edition`, 1), the 19 comment tags refused as
 declared ids and kept as `legacy_ids` (`declaration.comment_tag_as_legacy_id`),
-one geometry label naming two items (`item.split_merged_label`), the 33
-coverage classes read from the curation note (`item.coverage_from_prose`), and
-the verdicts' sub-parts and replacing declarations read from prose
-(`verdict.sub_from_prose`, 2; `verdict.replaced_by_from_prose`, 4). An item
-linked only by support edges adds `item.coverage_from_support_edges` (none in
-the reference).
+one geometry label naming two items (`item.split_merged_label`), the 55 items
+classified by the table's coverage entries (`item.coverage_from_table`: 23
+`support_only`, 19 `partial_only`, 13 `not_formalized`, giving 50 support and
+32 attributed `part` links), the adjudication ledger's own verdict class read
+from the evidence prose (`verdict.x_ledger_verdict`, 1), and the verdicts'
+sub-parts and replacing declarations read from prose
+(`verdict.sub_from_prose`, 2; `verdict.replaced_by_from_prose`, 4). Four bent
+buckets appear only when their input does: `item.coverage_from_support_edges`
+(an item linked only by support edges), `link.relation_from_note` (a
+`partial_only` note that says "special case"),
+`link.support_role_from_coverage_class` (a coverage entry listing a
+declaration its class does not name) and, without a PDF,
+`item.title_from_tag` (section 2).
 
 **docstring-tags** (`tao-measure-lean.export-report.json`): no
 lossy bucket and three bent buckets: `source.x_note` (1, why the site is
 pinned by content), `location.x_page_basis` (16, how a passage's page was
 placed) and `location.x_heading_candidates` (2, the pages of every heading
-line of an item the text layer shows twice). The reference report predates the
-last two buckets and lists those keys only under `counts.output.x_keys`; the
-document itself is unchanged. Its counts record what could not be located rather than lost: 6 of
-32 passage docstring quotes not found, ambiguous or found only on the next or
-previous page, 14 of 21 link docstring quotes not verified, 1 tag the item
-grammar refused (an `unattributed` signal), and 1 index anchor the page lacks
-(a `fallback` destination). Without `--site` a further bucket,
-`site.anchors_unverified`, counts the anchors that were not checked.
+line of an item the text layer shows twice). Its counts record what could
+not be located rather than lost: 6 of 32 passage docstring quotes not found,
+ambiguous or found only on the next or previous page, 14 of 21 link
+docstring quotes not verified, 1 tag the item grammar refused (an
+`unattributed` signal), 1 index anchor the page lacks (a `fallback`
+destination) and 29,729 lazy-state fragments on disk the manifest leaves
+out. Without `--site` a further bucket, `site.anchors_unverified`, counts the
+anchors that were not checked.
 
 ## 4. `cf review-tags`
 
@@ -179,12 +251,12 @@ audits of the two companions met. An invalid `--keep-pattern` or
 
 | check | what it reports | the known answer |
 |---|---|---|
-| `attribution_gap` | an item with no `key` link to a declaration (a key on a cluster does not count) and no `coverage` class that excludes one (`not_formalized`, `out_of_scope`, `support_only`, `example_only`): a `formalized` or `partial` item with no key is reported, since a claimed formalization no key names is the defect | measure_theory: 205 items (the fallback items of sections 1.1 to 1.6; before its PR #17 every section 1.7 item was one); tao-measure-lean: `remark-1.4.50` |
+| `attribution_gap` | an item with no `key` link to a declaration (a key on a cluster does not count) and no `coverage` class that excludes one (`not_formalized`, `out_of_scope`, `support_only`, `example_only`, or `partial_only` with the `attributed` links that are its partial statements): a `formalized` item with no key, or a `partial_only` one with no attributed link, is reported, since a claimed formalization no link names is the defect | measure_theory: 1 item at 2cd263a (`equation-1.1`, split off Remark 1.1.3's label; at 00a2438 it was 205, the fallback items of sections 1.1 to 1.6 the curation has since classified); tao-measure-lean: `remark-1.4.50` |
 | `key_on_structure_member` | a `key` link, or a `primary` membership, on a `field` or `projection` | measure_theory: 10 key links over 3 items and the 142 primary memberships its PR #1 counted |
-| `borrowed_key` | a numbered item whose every key declaration is another item's key, where that other item (the owner) also has a key this one lacks (`via: links`), or, with no key of its own, whose cluster fallback shows only other items' keys (`via: clusters`) | measure_theory: 4 and 127, among them Exercise 1.1.2, whose entry its PR #19 records as stating Lemma 1.1.2(ii) |
-| `shared_key` | the same sharing with no owner: items keyed only to declarations they share with items that hold nothing more, each listed once and neither called a borrower | measure_theory: 15, mutual groups such as Definitions 1.4.34 and 1.4.35, or Equations (1.4) and (1.5) with Proposition 1.2.18 |
+| `borrowed_key` | a numbered item whose every key declaration is another item's key, where that other item (the owner) also has a key this one lacks (`via: links`), or, with no key of its own, whose cluster fallback (an item with `clusters` and no link; the format writes no flag) shows only other items' keys (`via: clusters`) | measure_theory: 10 and 13, among them Exercise 1.1.2, whose entry its PR #19 records as stating Lemma 1.1.2(ii) |
+| `shared_key` | the same sharing with no owner: items keyed only to declarations they share with items that hold nothing more, each listed once and neither called a borrower | measure_theory: 42, mutual groups such as Definitions 1.4.34 and 1.4.35, or Corollary 1.6.35 with Exercises 1.6.40 and 1.6.41 |
 | `hidden_spelling` | a book-content docstring-tag link (`key` or `attributed`) whose raw label matches the fold script's proof-plumbing rule (`--hide-pattern`, default `\bIn-text proof`) or carries none of the book anchors it keeps (`--keep-pattern`); a `helper` link is proof plumbing the script is right to hide | tao-measure-lean: none. Its 14 book-content tags spelled `In-text proof (book p. N)` were respelled in its PR #12; the 5 links still spelled `In-text proof of Lemma 1.1.2` are helper links |
-| `adjudicated_attribution_gap` | the document's own verdicts of class `attribution_gap` | measure_theory: Exercises 1.2.21 and 1.3.4, both fixed |
+| `adjudicated_attribution_gap` | the document's own verdicts of class `attribution_gap`, or whose `x_ledger_verdict` (the adjudication ledger's class, which the format carries under no field of its own) is `ATTRIBUTION_GAP` | measure_theory: Exercises 1.2.21 and 1.3.4, both fixed |
 
 `tests/test_review_tags.py` plants each defect in a small document and lists
 what the two reference documents report today (when `CF_M3_REFERENCE_DIR`
@@ -196,20 +268,24 @@ The references are the exporters' own output over the two private companions,
 so they are maintainer-side: a directory named by `CF_M3_REFERENCE_DIR`, whose
 contents `tests/data/m3/README.md` lists. No file derived from a private
 companion is committed to this repository. With the
-pinned checkouts on disk (`measure_theory` at `00a2438`, `tao-measure-lean` at
-`f158509`), the published edition's PDF and the rendered site whose pages the
-manifest pins:
+pinned checkouts on disk (`measure_theory` at `2cd263a`, the first commit whose
+refinement table is version 2; `tao-measure-lean` at `677ada1`), the published
+edition's PDF and the rendered site whose module pages the manifest pins:
 
 ```sh
 M3="$CF_M3_REFERENCE_DIR"            # the pinned site index and page manifest
-cf export attribution-table <measure_theory checkout> --commit 00a2438 \
+cf export attribution-table <measure_theory checkout> --commit 2cd263a \
     --out measure_theory.annotations.json --lean-build <its .lake/build/lib/lean>
-cf export docstring-tags <tao-measure-lean checkout> --commit f158509 \
+cf export docstring-tags <tao-measure-lean checkout> --commit 677ada1 \
     --pdf <the published PDF> --xref "$M3/tml-site-xref.json.gz" \
     --site-pages "$M3/tml-site-pages.json" --site <its _site> \
     --out tao-measure-lean.annotations.json
 gzip -n -9 measure_theory.annotations.json tao-measure-lean.annotations.json
 ```
+
+The references written against the withdrawn `v1.0.0` tag (at `00a2438` and
+`f158509`) do not validate under the release candidate and must be
+regenerated at these pins; the reproduction tests skip until they are.
 
 `python3 -m unittest tests.test_export` does the same comparison record for
 record when the environment names the inputs: `CF_M3_REFERENCE_DIR` (the
@@ -225,9 +301,9 @@ companions still run everywhere.
 
 ## 6. Deliberate differences from the prototype documents
 
-Section 10 of `docs/annotations.md` was written from two prototype documents.
-The references differ from them in three ways, all deliberate and
-recorded in `tests/test_export.py` (`DELIBERATE`):
+The format was first written from two prototype documents. The references
+differ from them in three ways, all deliberate and recorded in
+`tests/test_export.py` (`DELIBERATE`):
 
 1. `companion.generator` names the command and the skill's version.
 2. The PDF source is named through the registry: one id

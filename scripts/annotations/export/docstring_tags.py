@@ -13,20 +13,31 @@ docs/proposals/pdf-to-companion.md section 5.4.  It reuses the skill's readers:
 * ``formal_companion_annotations.ids`` for statement-hash ids and signatures;
 * ``formal_companion_annotations.validate`` for the canonical bytes.
 
-Outside the checkout, all read-only:
+Outside the checkout, all read-only and each optional:
 
 * the anchor edition's PDF (named through the registry by its sha256), whose
   ``pdftotext`` layer locates numbered headings and verifies docstring quotes
-  before a ``TextQuoteSelector`` is written (:mod:`.pdftext`);
+  before a ``TextQuoteSelector`` is written (:mod:`.pdftext`).  Without it the
+  edition is a source whose bytes the producer does not hold: ``kind: pdf``
+  pinned by its ``identifiers`` (DOI, ISBN) with a ``revision`` (the edition
+  stamp), all given on the command line, or ``kind: other`` with the
+  publisher's ``media_type`` when no identifier is given or the medium is not
+  a PDF; a numbered item is then located by its number alone (no location,
+  quote or pages of its own), a tag's page is kept on its link unchecked, and
+  no ``PdfRegionSelector`` is written (the format admits none without the
+  bytes);
 * the literate site's cross-reference index (``xref.json``) and its page
-  manifest, a pin file listing every HTML page with its sha256 (the site is
-  git-ignored build output that cannot be rebuilt everywhere).  The site is one
-  ``scope: site`` source pinned by the sha256 of that manifest; a location
-  names its page with a ``SitePageSelector`` refined by an RFC 3236 fragment
-  (named declarations) or a ``CssSelector`` on the keyword's ``data-binding``
+  manifest, a pin file listing the HTML pages the producer pins with their
+  sha256 (the site is git-ignored build output that cannot be rebuilt
+  everywhere).  The site is one ``scope: site`` source whose ``sha256`` is the
+  digest of that manifest (``page_hashes``); the manifest lists every page a
+  location names and may leave generated fragments out.  A location names its
+  page with a ``SitePageSelector`` refined by an RFC 3236 fragment (named
+  declarations) or a ``CssSelector`` on the keyword's ``data-binding``
   attribute (anonymous ones, which Verso gives no id).  With the rendered site
-  on disk each anchor is checked to occur once on its page; without it the
-  index is trusted and the provenance note says so.
+  on disk each pinned page is checked against its hash and each anchor to
+  occur once on its page; without it the index is trusted and the provenance
+  note says so.
 
 Deliberate differences from the prototype, documented in tests/test_export.py:
 the PDF's id, title and edition come from the registry; ``companion.generator``
@@ -168,26 +179,60 @@ def link_note(paren: str | None, book_title: str | None, page_raw: str | None,
 class DocstringTagsExport:
     """One export: the tag rows, every declaration, the PDF text layer and the site pin."""
 
-    def __init__(self, repo: Path, commit: str, *, pdf: Path, xref: Path, site_pages: Path,
-                 site: Path | None = None, adapter_config: Path | None = None,
+    def __init__(self, repo: Path, commit: str, *, pdf: Path | None = None, xref: Path | None = None,
+                 site_pages: Path | None = None, site: Path | None = None, adapter_config: Path | None = None,
                  name: str | None = None, repo_id: str | None = None, pdf_text: PdfText | None = None,
                  site_name: str = "verso_literate", source_id: str | None = None,
                  source_title: str | None = None, source_edition: str | None = None,
-                 page_offset: int | None = None):
+                 page_offset: int | None = None, source_revision: str | None = None,
+                 source_media_type: str = "application/pdf", source_doi: str | None = None,
+                 source_isbn: tuple[str, ...] = ()):
         self.repo = repo.resolve()
         self.head, self.head_date = common.pinned_checkout(self.repo, commit)
         self.name, self.repo_id = common.companion_identity(self.repo, name, repo_id)
         self.report = Report()
         self.site_name = site_name
-        # the PDF
-        self.pdf_path = pdf
-        self.pdf_bytes = pdf.stat().st_size
-        self.pdf_sha = common.sha256_bytes(pdf.read_bytes())
-        fields = common.pdf_source_fields(self.pdf_sha, source_id=source_id, title=source_title,
-                                          edition=source_edition, offset=page_offset)
-        self.source_id, self.source_fields = fields["id"], fields
-        self.offset = fields["printed_page_offset"]
-        self.pdf = pdf_text if pdf_text is not None else PdfText.extract(pdf)
+        # the PDF, or the unpinned edition
+        self.pdf: PdfText | None = None
+        self.pdf_sha: str | None = None
+        if pdf is not None:
+            self.pdf_path = pdf
+            self.pdf_bytes = pdf.stat().st_size
+            self.pdf_sha = common.sha256_bytes(pdf.read_bytes())
+            fields = common.pdf_source_fields(self.pdf_sha, source_id=source_id, title=source_title,
+                                              edition=source_edition, offset=page_offset)
+            self.source_id, self.source_fields = fields["id"], fields
+            self.offset = fields["printed_page_offset"]
+            self.pdf = pdf_text if pdf_text is not None else PdfText.extract(pdf)
+            self.pdf_family = True
+        else:
+            missing = [flag for flag, value in (("--source-id", source_id), ("--source-title", source_title),
+                                                ("--source-revision", source_revision)) if not value]
+            if missing:
+                raise ExportError(f"without --pdf the edition's bytes are not held and it needs {', '.join(missing)}",
+                                  hint="docs/annotations.md section 5.1: a source whose bytes the producer does not "
+                                       "hold is pinned by its identifiers (--source-doi, --source-isbn) or, as an "
+                                       "`other` source, by its media_type and revision (the edition stamp)")
+            self.source_id = source_id
+            self.pdf_family = source_media_type == "application/pdf"
+            identifiers: dict = {}
+            if source_doi:
+                identifiers["doi"] = source_doi
+            if source_isbn:
+                identifiers["isbn"] = sorted(set(source_isbn))
+            fields = {"id": source_id, "title": source_title, "revision": source_revision}
+            if self.pdf_family and identifiers:
+                # a PDF edition the producer knows but does not hold: kind pdf, pinned by identifiers (5.1)
+                fields["kind"] = "pdf"
+            else:
+                fields["kind"] = "other"
+                fields["media_type"] = source_media_type
+            if source_edition:
+                fields["edition"] = source_edition
+            if identifiers:
+                fields["identifiers"] = identifiers
+            self.source_fields = fields
+            self.offset = page_offset if page_offset is not None else 0
         # the adapter and its rows
         config_path = adapter_config or TEMPLATE
         cfg = yamlio.read_yaml(config_path)
@@ -200,8 +245,14 @@ class DocstringTagsExport:
         self.config_name = Path(config_path).name
         self.config_is_template = Path(config_path).resolve() == TEMPLATE.resolve()
         # the site pin
-        self.pin = load_json(site_pages)
-        self.xref_bytes = read_bytes(xref)
+        if (xref is None) != (site_pages is None):
+            raise ExportError("--xref and --site-pages come together: the index names the anchors, the manifest "
+                              "pins the pages")
+        self.pin = load_json(site_pages) if site_pages is not None else None
+        self.xref_bytes = read_bytes(xref) if xref is not None else b""
+        if site is not None and self.pin is None:
+            raise ExportError("--site needs --xref and --site-pages: the rendered pages are checked against the "
+                              "manifest")
         self.site_dir = site.resolve() if site is not None else None
         # state
         self.items: dict[str, dict] = {}
@@ -221,7 +272,9 @@ class DocstringTagsExport:
         self.quote_misses: list[dict] = []
         self.anchored_in_text: list[dict] = []
         self.split_tags: list[dict] = []
+        self.paired_tags: list[dict] = []
         self.sub_fixes: list[dict] = []
+        self.tag_titles: dict[str, set[str]] = collections.defaultdict(set)
 
     # -- rows and declarations -------------------------------------------------------
     def read_rows(self) -> None:
@@ -335,8 +388,8 @@ class DocstringTagsExport:
         lid = f"{item}/{role}/{decl}" + (f"/{sub}" if sub else "")
         rec = {"id": lid, "item": item, "declaration": decl, "role": role, "provenance": PROV_TAG}
         if common.has_url(raw):
-            self.report.problem(f"{decl}: the tag {raw!r} holds a URL, which I10 keeps out of raw_label; "
-                                "the link was written without it")
+            self.report.problem(f"{decl}: the tag {raw!r} holds a URL, which the external-urls lint keeps out of "
+                                "raw_label; the link was written without it")
         else:
             rec["raw_label"] = raw
         if sub:
@@ -355,9 +408,23 @@ class DocstringTagsExport:
         return int(m.group(1)), last, m.group(0).strip()
 
     def pages_in_range(self, did: str, raw: str, page, last) -> bool:
-        """Whether a tag's printed page (and range end) lie in the PDF; a problem naming the declaration if not."""
+        """Whether a tag's printed page (and range end) lie in the PDF; a problem naming the declaration if not.
+
+        Without a PDF the pages are unchecked: kept when the unpinned source is
+        a PDF by media type (the format admits pages there), else dropped and
+        counted, since pages apply only to a PDF source (I6).
+        """
         if page is None:
             return True
+        if self.pdf is None:
+            if self.pdf_family:
+                self.link_quote_stats["pages_unchecked_without_pdf"] += 1
+                return True
+            self.report.lose("link.pages_without_pdf", 1,
+                             "the tag names a printed page, but the source is not a PDF (no PDF was given and the "
+                             "unpinned edition's media type is not application/pdf); pages apply only to a PDF "
+                             "source (I6), so the page was dropped", [f"{did}: {raw}"])
+            return False
         count = self.pdf.page_count()
         bad = page < 1 or page + self.offset > count
         if last is not None and last != page:
@@ -373,8 +440,8 @@ class DocstringTagsExport:
         tag = self.adapter.tag_of(d.doc, self.adapter.item_kinds())
         title = first_sentence(d.doc, tag)
         if common.has_url(title):
-            self.report.problem(f"{did}: the passage title from its docstring holds a URL, which I10 keeps out "
-                                "of every non-source field; the fallback title was written instead")
+            self.report.problem(f"{did}: the passage title from its docstring holds a URL, which the external-urls "
+                                "lint keeps out of every non-source field; the fallback title was written instead")
             title = ""
         title = title or f"In-text passage formalised by {did}"
         parsed = cf_items.try_parse(half, self.all_kinds)[0]
@@ -399,6 +466,10 @@ class DocstringTagsExport:
         basis_note = None
         runs = quoted_runs(d.doc)
         pdf = self.pdf
+        if pdf is None:
+            self.add_passage_without_pdf(did, raw, half, page, last, page_raw, title, kind, kind_source, label,
+                                         near_item)
+            return
         if page is None:
             if near_item is None:
                 self.report.problem(f"in-text passage with neither page nor reference: {half!r} {did}")
@@ -482,9 +553,41 @@ class DocstringTagsExport:
         if basis_note and "x_page_basis" not in loc:
             loc["x_page_basis"] = basis_note
 
+    def add_passage_without_pdf(self, did: str, raw: str, half: str, page, last, page_raw, title: str, kind: str,
+                                kind_source, label, near_item) -> None:
+        """An In-text passage with no text layer to place it in: by its printed page alone, or not at all."""
+        if page is None or not self.pdf_family:
+            self.report.problem(f"{did}: the in-text passage {half!r} cannot be anchored without the PDF's text "
+                                "layer" + ("" if self.pdf_family else " (and the unpinned source is not a PDF, so "
+                                                                        "it has no pages)")
+                                + "; no item was written")
+            return
+        pages = {"first": page, "basis": "printed", "anchor": "own"}
+        if last and last != page:
+            pages["last"] = last
+        if page_raw:
+            pages["raw"] = page_raw
+        iid = ids.passage_page_id(page, title)
+        rec = {"id": iid, "id_source": "page_title_hash", "form": "passage", "source": self.source_id,
+               "kind": kind, "title": title, "title_source": "producer", "pages": pages}
+        if kind_source:
+            rec["kind_source"] = kind_source
+        if label:
+            rec["label"] = label
+        if near_item:
+            rec["relations"] = {"near": [near_item]}
+        if iid in self.items:
+            self.passage_merges.append({"id": iid, "decl": did, "kept_title": self.items[iid]["title"],
+                                        "dropped_title": title, "same_pages": self.items[iid]["pages"] == pages})
+        else:
+            self.items[iid] = rec
+            self.passage_pages[page] += 1
+        self.passage_quote_stats["unverified_without_pdf"] += 1
+        self.add_link(iid, "key", did, raw)
+
     def link_location(self, lid: str, d: leanparse.Decl, pages: dict | None) -> list[str] | None:
         """A per-link location when a docstring quote is verified on the link's own page."""
-        if pages is None:
+        if pages is None or self.pdf is None:
             return None
         runs = quoted_runs(d.doc)
         if not runs:
@@ -526,10 +629,30 @@ class DocstringTagsExport:
             row_page_half = None
             if anchor.page is not None and len(halves) > 1:
                 row_page_half = next((i for i, h in enumerate(halves) if self.page_of(h)[0] is not None), None)
+            keyed = []
             for hi, half in enumerate(halves):
-                self.link_half(d, did, row, raw, half, halves, hi, anchor, row_page_half)
+                iid = self.link_half(d, did, row, raw, half, halves, hi, anchor, row_page_half)
+                if iid is not None and iid not in keyed:
+                    keyed.append(iid)
+            if len(keyed) > 1:
+                self.pair_items(keyed, did)
 
-    def link_half(self, d, did, row, raw, half, halves, hi, anchor, row_page_half) -> None:
+    def pair_items(self, iids: list[str], did: str) -> None:
+        """Two numbered items one declaration states (``Lemma 2.3.2 / Exercise 2.3.1``) are the same content.
+
+        The format's mapping notes (``mapping-notes.md`` section 1): the
+        declaration gets a ``key`` link per item (``link_half`` wrote them),
+        and the items are related with ``relations.same_as``, each naming the
+        others.
+        """
+        for iid in iids:
+            others = sorted(set(iids) - {iid})
+            rels = self.items[iid].setdefault("relations", {})
+            rels["same_as"] = sorted(set(rels.get("same_as", [])) | set(others))
+        self.paired_tags.append({"decl": did, "items": sorted(iids)})
+
+    def link_half(self, d, did, row, raw, half, halves, hi, anchor, row_page_half) -> str | None:
+        """One half of a tag: a key link (the numbered item's id is returned), a helper link or a passage."""
         # the row's page belongs to the half that names it (or to the whole tag)
         own_page = anchor.page is not None and (len(halves) == 1 or row_page_half in (None, hi))
         page = anchor.page if own_page else None
@@ -541,24 +664,26 @@ class DocstringTagsExport:
         parsed, reject = cf_items.try_parse(half, self.all_kinds)
         if parsed is None:
             self.report.problem(f"tag half unparsed: {half!r} of {raw!r} ({reject.reason})")
-            return
+            return None
         if parsed.kind != cf_items.IN_TEXT:
             number = ".".join(str(n) for n in parsed.number_levels)
             iid = self.numbered_item(parsed.kind, number)
+            if parsed.title:
+                self.tag_titles[iid].add(parsed.title.strip())
             sub = self.sub_of(did, raw, common.after_number(half, number))
             if len(halves) == 1 and sub != itemtag.collapse(row["sub"]).strip("()").replace(")(", "."):
                 self.sub_fixes.append({"decl": did, "raw": raw, "adapter_sub": row["sub"], "sub": sub})
             pages = self.link_pages(page, last, praw, psrc) if psrc in ("own", "crossref") else None
             lid = f"{iid}/key/{did}" + (f"/{sub}" if sub else "")
             self.add_link(iid, "key", did, raw, sub, pages=pages, locations=self.link_location(lid, d, pages))
-            return
+            return iid
         # In-text: "proof of <item>" is a helper of that numbered item
         m = re.search(r"\bproof of\s+(?P<ref>.+?)(?:,\s*book\b.*)?$", half)
         if m:
             ref, rej = cf_items.try_parse(m.group("ref"), self.numbered_kinds)
             if ref is None:
                 self.report.problem(f"proof-of target unparsed: {half!r} ({rej.reason})")
-                return
+                return None
             number = ".".join(str(n) for n in ref.number_levels)
             iid = self.numbered_item(ref.kind, number)
             sub = self.sub_of(did, raw, common.after_number(m.group("ref"), number))
@@ -567,12 +692,13 @@ class DocstringTagsExport:
             self.add_link(iid, "helper", did, raw, sub, pages=pages,
                           locations=self.link_location(lid, d, pages))
             self.helper_rows.append({"decl": did, "raw": raw, "item": iid})
-            return
+            return None
         if page is None and len(halves) > 1:
             page, last, praw = self.page_of(half)
             if not self.pages_in_range(did, raw, page, last):
                 page = last = praw = None
         self.add_passage(d, did, raw, half, page, last, praw)
+        return None
 
     def sub_of(self, did: str, raw: str, after: str) -> str:
         """The link's sub-part, by the renderer both exporters share; a refused one is dropped and reported."""
@@ -582,8 +708,39 @@ class DocstringTagsExport:
                                 "carry (docs/annotations.md section 3.2); the link was written without a sub")
         return sub
 
+    def titles_from_tags(self) -> None:
+        """Without a text layer, a numbered item is located by its number alone; its tags may still title it.
+
+        No location, quote or pages is written for it (I4 is for passages: a
+        numbered item needs none), and nothing in the document is verified
+        against the edition's text.  The parenthetical the tags write after the
+        number is the companion's words for the item's title.
+        """
+        numbered = [it for it in self.items.values() if it["form"] == "numbered"]
+        titled, disagree = 0, []
+        for it in numbered:
+            titles = sorted(self.tag_titles.get(it["id"], ()))
+            if len(titles) == 1 and not common.has_url(titles[0]):
+                # the parenthetical the tags write after the number: the companion's words for the title
+                it["title"], it["title_source"] = titles[0], "producer"
+                titled += 1
+            elif len(titles) > 1:
+                disagree.append({"item": it["id"], "titles": titles})
+        self.report.counts["headings"] = {"not_located": len(numbered), "no_heading_items": [],
+                                          "titles_from_tags": titled, "title_disagreements": disagree}
+        self.report.counts["link_pages_vs_heading"] = {}
+        self.report.counts["link_pages_vs_heading_disagreements"] = []
+        if titled:
+            self.report.bend("item.title_from_tag", titled,
+                             "the parenthetical the tags write after the item's number is carried as the item's "
+                             "title with title_source producer: the companion's words, not a heading read from "
+                             "the edition; an item whose tags disagree gets none (title_disagreements)")
+
     def locate_headings(self) -> None:
         """A numbered item's location: its heading line in the text layer."""
+        if self.pdf is None:
+            self.titles_from_tags()
+            return
         heading_stats: collections.Counter = collections.Counter()
         no_heading: list[str] = []
         from_links: list[str] = []
@@ -666,8 +823,8 @@ class DocstringTagsExport:
             note = link_note(paren, self.items[ln["item"]].get("title"), ln.get("pages", {}).get("raw"),
                              self.page_re)
             if common.has_url(note):
-                self.report.problem(f"{ln['declaration']}: the note of {ln['id']} holds a URL, which I10 keeps "
-                                    "out of every non-source field; the note was dropped")
+                self.report.problem(f"{ln['declaration']}: the note of {ln['id']} holds a URL, which the "
+                                    "external-urls lint keeps out of every non-source field; the note was dropped")
                 note = None
             if note:
                 ln["note"] = note
@@ -678,9 +835,17 @@ class DocstringTagsExport:
         helper_only = sorted(i for i, r in roles_by_item.items() if "key" not in r)
         for iid in helper_only:
             self.items[iid]["coverage"] = "support_only"
+        # an anonymous example that states an item is a key link's target (the tag says so), and the item is
+        # then formalized, not example_only (docs/annotations.md section 5.2); the class is written so a reader
+        # does not take the example for an illustration
+        by_example = sorted({ln["item"] for ln in self.links.values() if ln["role"] == "key"
+                             and self.declarations[ln["declaration"]]["kind"] == "example"})
+        for iid in by_example:
+            self.items[iid]["coverage"] = "formalized"
+        # I4 is for passages: a numbered item is located by its number alone
         located = {i for loc in self.locations.values() for i in loc["items"]}
-        unanchored = [i for i, it in self.items.items()
-                      if i not in located and "quote" not in it and "pages" not in it]
+        unanchored = [i for i, it in self.items.items() if it["form"] == "passage"
+                      and i not in located and "quote" not in it and "pages" not in it]
         unlinked = sorted(i for i in self.items if i not in roles_by_item)
         items = list(self.items.values())
         self.report.counts["items"] = {
@@ -694,7 +859,11 @@ class DocstringTagsExport:
             "with_label_display": sum(1 for i in items if i["form"] == "passage" and "label" in i),
             "kind_source_producer": sum(1 for i in items if i.get("kind_source") == "producer"),
             "helper_only_items_given_coverage_support_only": helper_only,
-            "items_without_links": unlinked, "unanchored_items": unanchored}
+            "items_stated_by_an_anonymous_example_given_coverage_formalized": by_example,
+            "items_paired_by_one_declaration": self.paired_tags,
+            "numbered_without_own_anchor": sum(1 for i, it in self.items.items() if it["form"] == "numbered"
+                                               and i not in located and "pages" not in it),
+            "items_without_links": unlinked, "unanchored_passages": unanchored}
         self.report.counts["passages"] = {
             "pages_with_more_than_one_passage": sum(1 for n in self.passage_pages.values() if n > 1),
             "passages_on_those_pages": sum(n for n in self.passage_pages.values() if n > 1),
@@ -713,7 +882,7 @@ class DocstringTagsExport:
             "with_note": note_count, "with_relation": sum(1 for ln in links if "relation" in ln),
             "link_quote_check": dict(self.link_quote_stats)}
         if unanchored:
-            self.report.problem(f"items anchored nowhere: {unanchored}")
+            self.report.problem(f"passages anchored nowhere: {unanchored}")
 
     # -- the literate site -------------------------------------------------------------------
     def read_site_pin(self) -> None:
@@ -739,10 +908,12 @@ class DocstringTagsExport:
                 if sha256_bytes(f.read_bytes()) != sha:
                     raise ExportError(f"{self.site_dir}/{rel} is not the pinned page",
                                       hint="render the site from the pinned commit, or export without --site")
-            extra = sorted(str(q.relative_to(self.site_dir)) for q in self.site_dir.rglob("*.html")
-                           if str(q.relative_to(self.site_dir)) not in by_path)
-            if extra:
-                raise ExportError(f"{self.site_dir} holds pages the manifest does not pin: {extra[:3]}")
+            # the producer chooses the pages it pins (docs/annotations.md section 5.1): pages on disk the
+            # manifest leaves out (generated fragments, search indexes) are counted, not refused
+            extra = sum(1 for q in self.site_dir.rglob("*.html") if str(q.relative_to(self.site_dir)) not in by_path)
+            self.pages_not_pinned = extra
+        else:
+            self.pages_not_pinned = None
 
     def page_text(self, rel_dir: str) -> str | None:
         """The HTML of one module page when the site is on disk, else None."""
@@ -823,6 +994,8 @@ class DocstringTagsExport:
             rec["anchors"] = [lid]
         stats["module_pages_selected"] = len({d["href"] for d in self.destinations.values()})
         stats["html_pages_hashed"] = len(self.page_hashes)
+        if self.pages_not_pinned is not None:
+            stats["html_pages_on_disk_not_pinned"] = self.pages_not_pinned
         self.report.counts["site"] = dict(stats)
         self.report.counts["site"]["sha256"] = self.site_sha
         self.report.counts["site"]["missing_on_page"] = missing_on_page
@@ -863,37 +1036,61 @@ class DocstringTagsExport:
     def run(self) -> dict:
         self.read_rows()
         self.read_declarations()
-        pages_expected = common.registry_source(self.pdf_sha)
+        pages_expected = common.registry_source(self.pdf_sha) if self.pdf_sha else None
         if pages_expected is not None and pages_expected.pages and self.pdf.page_count() != pages_expected.pages:
             self.report.problem(f"pdftotext gave {self.pdf.page_count()} pages, the registry says "
                                 f"{pages_expected.pages}")
         self.build_links()
         self.locate_headings()
         self.annotate_links()
-        self.build_site()
+        if self.pin is not None:
+            self.build_site()
         self.build_unattributed()
-        pdf_source = {
-            "id": self.source_id, "kind": "pdf", "role": "audited", "title": self.source_fields["title"],
-            "sha256": self.pdf_sha, "bytes": self.pdf_bytes, "physical_page_count": self.pdf.page_count(),
-            "printed_page_offset": self.offset,
-            "text_layer": {"extractor": "pdftotext", "version": self.pdf.version,
-                           "unicode": "nfkc", "whitespace": "collapse", "case": "sensitive"}}
-        if "edition" in self.source_fields:
-            pdf_source["edition"] = self.source_fields["edition"]
-        if self.pdf.page_size_pt:
-            pdf_source["page_size"] = {"width_pt": self.pdf.page_size_pt[0], "height_pt": self.pdf.page_size_pt[1]}
+        if self.pdf is not None:
+            pdf_source = {
+                "id": self.source_id, "kind": "pdf", "role": "audited", "title": self.source_fields["title"],
+                "sha256": self.pdf_sha, "bytes": self.pdf_bytes, "physical_page_count": self.pdf.page_count(),
+                "printed_page_offset": self.offset,
+                "text_layer": {"extractor": "pdftotext", "version": self.pdf.version,
+                               "unicode": "nfkc", "whitespace": "collapse", "case": "sensitive"}}
+            if "edition" in self.source_fields:
+                pdf_source["edition"] = self.source_fields["edition"]
+            if self.pdf.page_size_pt:
+                pdf_source["page_size"] = {"width_pt": self.pdf.page_size_pt[0],
+                                           "height_pt": self.pdf.page_size_pt[1]}
+            else:
+                self.report.lose("source.page_size", 1, "pdfinfo was not available, so the page box is not recorded")
         else:
-            self.report.lose("source.page_size", 1, "pdfinfo was not available, so the page box is not recorded")
-        site_source = {
-            "id": self.pin.get("source_id") or f"{self.name}-site", "kind": "web", "scope": "site",
-            "role": "reference",
-            "title": self.pin.get("title") or f"{self.name} literate site (local build, hosted nowhere)",
-            "path": self.site_path, "sha256": self.site_sha, "page_hashes": self.page_hashes,
-            "x_note": SITE_NOTE}
-        if self.pin.get("rendered_at"):
-            site_source["retrieved_at"] = self.pin["rendered_at"]
-        self.report.bend("source.x_note", 1, "why the site is pinned by content and not by revision; a note, "
-                         "not a field")
+            pdf_source = {"id": self.source_id, "role": "audited",
+                          **{k: v for k, v in self.source_fields.items() if k != "id"}}
+            if pdf_source["kind"] == "pdf":
+                pdf_source["x_note"] = ("the producer holds no copy of this edition: the identifiers name it, "
+                                        "revision is the edition stamp, and no sha256, page count, offset or text "
+                                        "layer is known")
+                how = "a `pdf` source pinned by its identifiers (section 5.1)"
+            else:
+                pdf_source["x_note"] = ("the producer holds no copy of this edition: media_type names the "
+                                        "publisher's electronic form, revision is the edition stamp, and the "
+                                        "identifiers, if any, name it")
+                how = "an `other` source identified by its revision (the edition stamp) and identifiers"
+            self.report.lose("source.bytes_unpinned", 1,
+                             f"no PDF was given: the edition is written as {how}, with no sha256, no page count, no "
+                             "offset and no text layer; nothing in the document is verified against its text, no "
+                             "numbered item has a location of its own, and a tag's page is kept unchecked")
+            self.report.bend("source.x_note", 1, "why the edition is pinned by identifiers or revision and not by "
+                             "content; a note, not a field")
+        site_source = None
+        if self.pin is not None:
+            site_source = {
+                "id": self.pin.get("source_id") or f"{self.name}-site", "kind": "web", "scope": "site",
+                "role": "reference",
+                "title": self.pin.get("title") or f"{self.name} literate site (local build, hosted nowhere)",
+                "path": self.site_path, "sha256": self.site_sha, "page_hashes": self.page_hashes,
+                "x_note": SITE_NOTE}
+            if self.pin.get("rendered_at"):
+                site_source["retrieved_at"] = self.pin["rendered_at"]
+            self.report.bend("source.x_note", 1, "why the site is pinned by content and not by revision; a note, "
+                             "not a field")
         lean_inputs = []
         for path in self.files:
             data = path.read_bytes()
@@ -905,37 +1102,48 @@ class DocstringTagsExport:
                      "Anchor from the Verso cross-reference index (named declarations) or the keyword's "
                      "data-binding attribute (anonymous ones); the rendered pages were not on disk, so no "
                      "anchor was checked against its page.")
+        tag_note = (f"Book tag read from the declaration's docstring at {self.head[:7]}. "
+                    "Whether a human reviewed each tag is not recorded in the repository.")
+        if self.pdf is None:
+            tag_note += (" No text of the edition was available: a numbered item is located by its number alone, "
+                         "and a page a tag names is unchecked.")
         provenance = [
             {"id": PROV_TAG, "actor": "author", "method": "docstring_tag", "confirmed_by_human": False,
              "tool": {"name": "companion-faithfulness adapters.docstring_tags",
                       "version": f"{'template' if self.config_is_template else 'config'} {self.config_name}"},
              "inputs": sorted(lean_inputs, key=lambda r: r["path"]),
-             "note": f"Book tag read from the declaration's docstring at {self.head[:7]}. "
-                     "Whether a human reviewed each tag is not recorded in the repository."},
-            {"id": PROV_TEXT, "actor": "tool", "method": "text_match", "confirmed_by_human": False,
-             "tool": {"name": "pdftotext", "version": self.pdf.version},
-             "inputs": [{"source": self.source_id}],
-             "note": "Page found by matching the text layer: a numbered item's heading line, "
-                     "a quote from the docstring found exactly once on the anchored page, or, "
-                     "for a passage placed by a numbered neighbour, that neighbour's heading page."},
-            {"id": PROV_SITE, "actor": "tool", "method": "site_index", "confirmed_by_human": False,
-             "tool": {"name": "Verso literate site", "path": f"{self.site_path}/xref.json"},
-             "inputs": [{"path": f"{self.site_path}/xref.json", "sha256": sha256_bytes(self.xref_bytes),
-                         "bytes": len(self.xref_bytes)}],
-             "note": site_note},
+             "note": tag_note},
         ]
+        if self.pdf is not None:
+            provenance.append(
+                {"id": PROV_TEXT, "actor": "tool", "method": "text_match", "confirmed_by_human": False,
+                 "tool": {"name": "pdftotext", "version": self.pdf.version},
+                 "inputs": [{"source": self.source_id}],
+                 "note": "Page found by matching the text layer: a numbered item's heading line, "
+                         "a quote from the docstring found exactly once on the anchored page, or, "
+                         "for a passage placed by a numbered neighbour, that neighbour's heading page."})
+        if site_source is not None:
+            provenance.append(
+                {"id": PROV_SITE, "actor": "tool", "method": "site_index", "confirmed_by_human": False,
+                 "tool": {"name": "Verso literate site", "path": f"{self.site_path}/xref.json"},
+                 "inputs": [{"path": f"{self.site_path}/xref.json", "sha256": sha256_bytes(self.xref_bytes),
+                             "bytes": len(self.xref_bytes)}],
+                 "note": site_note})
         doc = {
             "schema": vocab.ANNOTATION_SCHEMA, "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
             "companion": {"name": self.name, "repo": self.repo_id, "commit": self.head,
                           "generated_at": self.head_date, "generator": common.generator("docstring-tags")},
-            "sources": [pdf_source, site_source],
+            "sources": [pdf_source] + ([site_source] if site_source is not None else []),
             "items": list(self.items.values()), "declarations": list(self.declarations.values()),
             "links": list(self.links.values()), "provenance": provenance,
-            "locations": list(self.locations.values()), "destinations": list(self.destinations.values()),
+            "locations": list(self.locations.values()),
             "unattributed": list(self.unattributed.values()),
         }
+        if site_source is not None:
+            doc["destinations"] = list(self.destinations.values())
         if self.changelog:
             doc["changelog"] = list(self.changelog.values())
+        common.declare_profiles(doc)
         x_keys = collections.Counter(k for arr in doc.values() if isinstance(arr, list)
                                      for r in arr if isinstance(r, dict) for k in r if k.startswith("x_"))
         self.report.counts["output"] = {"counts": {k: len(v) for k, v in doc.items() if isinstance(v, list)},
@@ -950,6 +1158,7 @@ class DocstringTagsExport:
                              "a numbered item whose heading line the text layer shows on several pages is located "
                              "on the first; the physical pages of every candidate are kept as x_heading_candidates")
         self.report.counts["repo_head"] = self.head
+        self.report.counts["profiles"] = dict(doc.get("profiles", {}))
         return doc
 
 
