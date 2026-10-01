@@ -1076,6 +1076,292 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                          ["theorem-1.1.2: volume (Demo/Basic.lean)"])
 
 
+def refinement(root: Path) -> Path:
+    return root / "pdf-overlay" / "data" / "target-refinement.json"
+
+
+def coverage_entry(root: Path, item_id: str, coverage: str, fids=(), note: str | None = None,
+                   region: str | None = None) -> None:
+    """Make the refinement a version-2 table and one item's entry a coverage entry.
+
+    With ``region`` the entry is added for that region instead of replacing the
+    item's own, which is how two regions of one item come to disagree.
+    """
+    def change(table):
+        table["schema_version"] = 2
+        entry = {"coverage": coverage, "formalization_ids": list(fids), "item_id": item_id,
+                 "key_formalization_ids": []}
+        if note:
+            entry["note"] = note
+        if region is not None:
+            table["entries"].append(dict(entry, region_id=region))
+            return
+        for e in table["entries"]:
+            if e["item_id"] == item_id:
+                here = e["region_id"]
+                e.clear()
+                e.update(entry, region_id=here)
+    edit_json(refinement(root), change)
+
+
+class TestVersionTwoCoverageEntries(unittest.TestCase):
+    """A refinement entry that gives no key declaration says which class the item is instead.
+
+    Every class becomes links and an item ``coverage`` that satisfy I5 (an
+    ``attributed`` link needs a ``key`` link), and the curation's own word and
+    note ride along in ``x_`` keys where the format's enum has no value for
+    them (docs/exporters.md section 1).
+    """
+
+    ANON = "example:demo-volume-nonneg"
+
+    def export_with(self, coverage: str, fids=(), note: str | None = None):
+        root, commit = at_variant(self, lambda r: coverage_entry(
+            r, "item:batch-a:thm-1.1.2", coverage, fids, note))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        return doc, report
+
+    def links_of(self, doc, iid: str) -> dict[str, str]:
+        return {link["declaration"]: link["role"] for link in doc["links"] if link["item"] == iid}
+
+    def test_partial_only_links_its_declarations_without_claiming_a_key(self):
+        doc, report = self.export_with("partial_only", ["Demo.volume_add"], "states one part only")
+        item = by_id(doc, "items")["theorem-1.1.2"]
+        self.assertEqual(item["coverage"], "partial")
+        self.assertEqual(item["x_coverage"], "partial_only")
+        self.assertEqual(item["x_coverage_note"], "states one part only")
+        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {"Demo.volume_add": "support"})
+        self.assertEqual(report.bent["item.coverage_from_table"]["count"], 1)
+        self.assertEqual(report.bent["item.x_coverage_class"]["examples"],
+                         ["theorem-1.1.2: partial_only -> partial"])
+
+    def test_support_only_links_a_named_declaration_as_support(self):
+        doc, _report = self.export_with("support_only", ["Demo.volume_add"], "supports it")
+        item = by_id(doc, "items")["theorem-1.1.2"]
+        self.assertEqual(item["coverage"], "support_only")
+        self.assertNotIn("x_coverage", item)                     # the format spells this one itself
+        self.assertEqual(item["x_coverage_note"], "supports it")
+        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {"Demo.volume_add": "support"})
+
+    def test_support_only_links_an_anonymous_example_as_an_example(self):
+        doc, _report = self.export_with("support_only", [self.ANON])
+        anon = next(d for d in doc["declarations"] if self.ANON in d.get("legacy_ids", []))
+        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {anon["id"]: "example"})
+        self.assertEqual(by_id(doc, "items")["theorem-1.1.2"]["coverage"], "support_only")
+
+    def test_example_only_links_the_examples(self):
+        doc, _report = self.export_with("example_only", [self.ANON], "only an example states it")
+        anon = next(d for d in doc["declarations"] if self.ANON in d.get("legacy_ids", []))
+        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {anon["id"]: "example"})
+        self.assertEqual(by_id(doc, "items")["theorem-1.1.2"]["coverage"], "example_only")
+
+    def test_private_only_keys_the_private_declarations(self):
+        doc, report = self.export_with("private_only", ["private:Demo.Basic:Demo/Basic.lean:L99:helper_bound"])
+        item = by_id(doc, "items")["theorem-1.1.2"]
+        self.assertEqual(item["coverage"], "formalized")
+        self.assertEqual(item["x_coverage"], "private_only")
+        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {"private:Demo.Basic:Demo.helper_bound": "key"})
+        self.assertIn("private_only -> formalized", report.bent["item.x_coverage_class"]["examples"][0])
+
+    def test_not_formalized_links_nothing(self):
+        doc, _report = self.export_with("not_formalized", [], "nothing states it")
+        item = by_id(doc, "items")["theorem-1.1.2"]
+        self.assertEqual(item["coverage"], "not_formalized")
+        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {})
+        self.assertTrue(item["cluster_fallback"])                # it still has a populated cluster to show
+
+    def test_regions_that_disagree_give_the_item_the_strongest_class(self):
+        def mutate(root):
+            coverage_entry(root, "item:batch-a:ex-1.1.3", "not_formalized", [],
+                           region="region:batch-a:p008:ex-1.1.3:01")
+            coverage_entry(root, "item:batch-a:ex-1.1.3", "support_only", ["Demo.volume_add"], "supports it",
+                           region="region:batch-a:p009:ex-1.1.3:01")
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        item = by_id(doc, "items")["exercise-1.1.3"]
+        self.assertEqual(item["coverage"], "support_only")
+        self.assertEqual(report.lossy["item.coverage_regions_disagree"]["examples"],
+                         ["exercise-1.1.3: ['not_formalized', 'support_only'] -> support_only"])
+
+    def test_a_curated_region_beside_an_attribution_leaves_the_item_formalized(self):
+        def mutate(root):
+            coverage_entry(root, "item:batch-a:def-1.1.1", "support_only", ["Demo.volume_add"], "supports it",
+                           region="region:batch-a:p007:def-1.1.1:01")
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        item = by_id(doc, "items")["definition-1.1.1"]
+        self.assertNotIn("coverage", item)
+        self.assertEqual(self.links_of(doc, "definition-1.1.1")["Demo.volume_add"], "support")
+        self.assertEqual(self.links_of(doc, "definition-1.1.1")["Demo.Box"], "key")
+        self.assertIn("formalized", report.lossy["item.coverage_regions_disagree"]["examples"][0])
+
+    def test_one_declaration_reached_twice_keeps_the_stronger_role(self):
+        def mutate(root):
+            coverage_entry(root, "item:batch-a:def-1.1.1", "support_only", ["Demo.Box"], "supports it",
+                           region="region:batch-a:p007:def-1.1.1:01")
+        root, commit = at_variant(self, mutate)
+        doc, _report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(self.links_of(doc, "definition-1.1.1")["Demo.Box"], "key")
+        self.assertNotIn("definition-1.1.1/support/Demo.Box", by_id(doc, "links"))
+
+    def test_a_class_the_convention_does_not_define_is_a_refusal(self):
+        root, commit = at_variant(self, lambda r: coverage_entry(r, "item:batch-a:thm-1.1.2", "mostly", []))
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("'mostly'", caught.exception.message)
+        self.assertIn("support_only", caught.exception.hint)
+
+    def test_a_version_one_table_still_reads_its_classes_from_the_note(self):
+        # the version the prose parse is for: no entry carries a class, so nothing changed
+        self.assertEqual(TestAttributionTableExport.report.counts["refinement_schema_version"], 1)
+        self.assertEqual(TestAttributionTableExport.report.bent["item.coverage_from_prose"]["count"], 2)
+        self.assertEqual(TestAttributionTableExport.report.counts["items_by_curation_class"], {})
+        self.assertNotIn("item.coverage_from_table", TestAttributionTableExport.report.bent)
+
+    def test_a_version_two_table_does_not_classify_from_the_note_as_well(self):
+        doc, report = self.export_with("support_only", ["Demo.volume_add"])
+        self.assertEqual(report.counts["refinement_schema_version"], 2)
+        self.assertNotIn("item.coverage_from_prose", report.bent)
+        self.assertNotIn("coverage", by_id(doc, "items")["remark-1.1.4"])
+
+
+class TestTheConfigurableInputLayout(unittest.TestCase):
+    """--data-dir, --ledger and --official-source move the three paths the convention does not fix."""
+
+    @staticmethod
+    def move(root: Path, src: str, dst: str) -> None:
+        (root / dst).parent.mkdir(parents=True, exist_ok=True)
+        (root / src).rename(root / dst)
+
+    def test_the_data_directory_can_live_anywhere_in_the_checkout(self):
+        root, commit = at_variant(self, lambda r: self.move(r, "pdf-overlay/data", "exports/overlay"))
+        doc, report = attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                               source_id="demo-pdf", source_title="A Demo Book",
+                                               data_dir="exports/overlay")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        inputs = [i["path"] for i in by_id(doc, "provenance")["prov-target-refinement"]["inputs"]]
+        self.assertIn("exports/overlay/target-refinement.json", inputs)
+        self.assertIn("exports/overlay/geometry-batch-a.json",
+                      [i["path"] for i in by_id(doc, "provenance")["prov-geometry-a"]["inputs"]])
+
+    def test_the_ledger_can_live_anywhere_and_the_graph_names_where(self):
+        root, commit = at_variant(self, lambda r: self.move(r, "source-formalization-ledger.json",
+                                                            "graph/ledger.json"))
+        doc, report = attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                               source_id="demo-pdf", source_title="A Demo Book",
+                                               ledger="graph/ledger.json")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(doc["companion"]["graph"]["path"], "graph/ledger.json")
+
+    def test_the_official_source_record_can_live_anywhere(self):
+        root, commit = at_variant(self, lambda r: self.move(r, "pdf-overlay/official-source.json",
+                                                            "pdf-overlay/pdf.json"))
+        doc, report = attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                               source_id="demo-pdf", source_title="A Demo Book",
+                                               official_source="pdf-overlay/pdf.json")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(doc["sources"][0]["bytes"], 1234)
+
+    def test_a_missing_input_names_the_flag_that_moves_it(self):
+        root = scratch(self) / "repo"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        for kwargs, words in (({"data_dir": "nowhere"}, "--data-dir"),
+                              ({"ledger": "nowhere.json"}, "--ledger"),
+                              ({"official_source": "nowhere.json"}, "--official-source")):
+            with self.subTest(**kwargs), self.assertRaises(common.ExportError) as caught:
+                attribution_table.export(root, commit, name="demo", repo_id="x/y/z", source_id="demo-pdf",
+                                         source_title="t", **kwargs)
+            self.assertIn(words, (caught.exception.hint or "") + caught.exception.message)
+
+    def test_a_path_outside_the_checkout_is_refused(self):
+        root = scratch(self) / "repo"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        for value in ("/etc", "../elsewhere", "pdf-overlay/../../data", ""):
+            with self.subTest(value=value), self.assertRaises(common.ExportError) as caught:
+                attribution_table.export(root, commit, name="demo", repo_id="x/y/z", source_id="demo-pdf",
+                                         source_title="t", data_dir=value)
+            self.assertIn("--data-dir", caught.exception.message)
+
+    def test_the_command_passes_all_three_flags_through(self):
+        def mutate(r):
+            self.move(r, "pdf-overlay/data", "exports/overlay")
+            self.move(r, "source-formalization-ledger.json", "graph/ledger.json")
+            self.move(r, "pdf-overlay/official-source.json", "exports/pdf.json")
+        root, commit = at_variant(self, mutate)
+        out = scratch(self) / "moved.annotations.json"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = cf_main.main(["export", "attribution-table", str(root), "--commit", commit,
+                                   "--out", str(out), "--repo-id", "git.example.org/demo/demo",
+                                   "--source-id", "demo-pdf", "--source-title", "A Demo Book",
+                                   "--data-dir", "exports/overlay", "--ledger", "graph/ledger.json",
+                                   "--official-source", "exports/pdf.json"])
+        self.assertEqual(status, 0, stderr.getvalue())
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(doc["companion"]["graph"]["path"], "graph/ledger.json")
+
+
+class TestSnippetsDerivedFromTheSource(unittest.TestCase):
+    """With no declaration-snippets.json every snippet is the section 5.1 cut of its own declaration."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = Path(tempfile.mkdtemp(prefix="cf-export-nosnip-",
+                                         dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
+        make_attribution_table_repo(cls.root)
+        (cls.root / "pdf-overlay" / "data" / "declaration-snippets.json").unlink()
+        cls.commit = commit_all(cls.root, "no snippets export")
+        cls.doc, cls.report = at_export(cls.root, cls.commit)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.root, ignore_errors=True)
+
+    def test_the_document_is_still_valid_and_the_report_says_where_the_text_came_from(self):
+        valid_and_quiet(self, self.doc)
+        self.assertEqual(self.report.problems, [])
+        self.assertIn("derived", self.report.counts["snippets_source"])
+        self.assertEqual(self.report.lossy["snippets.no_snippets_file"]["count"], 1)
+
+    def test_every_snippet_is_the_declarations_own_signature(self):
+        snippets = by_id(self.doc, "snippets")
+        decls = by_id(self.doc, "declarations")
+        self.assertEqual(snippets["snippet:Demo.volume_add"]["text"],
+                         "theorem volume_add (b : Box) : b.volume = b.volume")
+        self.assertEqual(snippets["snippet:Demo.volume_add"]["line"], decls["Demo.volume_add"]["line"])
+        self.assertNotIn("truncated", snippets["snippet:Demo.volume_add"])
+        for sid, snippet in snippets.items():
+            with self.subTest(snippet=sid):
+                self.assertEqual(snippet["text"], decls[snippet["declaration"]]["signature"])
+
+    def test_a_declaration_with_no_header_to_cut_has_no_snippet(self):
+        snippets = by_id(self.doc, "snippets")
+        self.assertNotIn("snippet:Demo.Box", snippets)            # a structure: its `where` opens fields
+        self.assertNotIn("snippet:Demo.Box.left", snippets)       # a field the ledger names by itself
+        self.assertNotIn("snippet:example:demo-unlocated", snippets)
+
+    def test_a_declaration_the_verdicts_added_is_covered_too(self):
+        # replacement_stated enters the document only through the verdict's note prose
+        self.assertEqual(self.report.counts["declarations_added_as_replacements"], ["Demo.replacement_stated"])
+        self.assertIn("snippet:Demo.replacement_stated", by_id(self.doc, "snippets"))
+
+    def test_the_snippets_file_is_still_read_when_it_is_there(self):
+        self.assertEqual(TestAttributionTableExport.report.counts["snippets_source"],
+                         "pdf-overlay/data/declaration-snippets.json")
+        self.assertNotIn("snippets.no_snippets_file", TestAttributionTableExport.report.lossy)
+
+
 class TestTheExportCommandReviewFixes(unittest.TestCase):
     """Review items 3 and 7: the backstop, and nothing written under the checkout."""
 
@@ -1273,6 +1559,27 @@ class TestCompanionIdentity(unittest.TestCase):
                           ("", None), ("not a url", None)):
             with self.subTest(url=url):
                 self.assertEqual(common.repo_id_from_url(url), want)
+
+    def test_a_checkout_with_no_remote_is_named_by_its_own_directory(self):
+        root = scratch(self) / "pinned-copy"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        self.assertEqual(subprocess.run(["git", "-C", str(root), "remote"], capture_output=True,
+                                        text=True).stdout, "")
+        doc, report = attribution_table.export(root, commit, source_id="demo-pdf", source_title="A Demo Book")
+        valid_and_quiet(self, doc)
+        self.assertEqual((doc["companion"]["repo"], doc["companion"]["name"]),
+                         ("local/pinned-copy", "pinned-copy"))
+        self.assertEqual(report.lossy["companion.repo_from_checkout_directory"]["count"], 1)
+
+    def test_a_checkout_whose_remotes_do_not_parse_is_still_a_refusal(self):
+        root = scratch(self) / "has-a-remote"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        subprocess.run(["git", "-C", str(root), "remote", "add", "origin", "not a url"], check=True)
+        with self.assertRaises(common.ExportError) as caught:
+            attribution_table.export(root, commit, source_id="demo-pdf", source_title="A Demo Book")
+        self.assertIn("no origin remote", caught.exception.message)
 
 
 # ---------------------------------------------------------------------------

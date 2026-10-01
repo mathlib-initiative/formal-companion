@@ -14,6 +14,21 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
     source-formalization-ledger.json            the graph authority: source nodes,
                                                 formalization nodes, edges
 
+:data:`LAYOUT` is only the default spelling of that layout: ``data_dir``,
+``ledger`` and ``official_source`` (``--data-dir``, ``--ledger``,
+``--official-source``) move the three the convention does not fix, and a
+companion with no ``declaration-snippets.json`` gets its snippets cut from its
+own Lean instead (:meth:`AttributionTableExport.derive_snippets`).
+
+The refinement table has two schema versions.  Version 1 says only which
+declarations an item's region is attributed to and which of them are keys.
+Version 2 adds *coverage entries*: a region the curation classified but could
+not give a key declaration carries a ``coverage`` class and, usually, the
+curator's note.  :data:`COVERAGE_MAP` is the whole of what those classes become
+-- the format's own ``coverage`` value and the role the entry's declarations
+take as links -- so an item that no declaration states is labelled rather than
+refused.
+
 Every file is read as it is; the Lean sources are scanned at the pinned commit
 with ``adapters.leanparse`` (every declaration, its namespace and privacy) and
 ``formal_companion_annotations.ids`` (statement-hash ids and signatures), and a
@@ -43,7 +58,8 @@ from formal_companion_annotations import vocab
 from . import common
 from .common import ExportError, HeaderCutter, Report, file_lock, git_out, module_of
 
-#: The convention's layout, relative to the checkout.
+#: The convention's default layout, relative to the checkout.  ``data``,
+#: ``ledger`` and ``official`` are the three an export may move.
 LAYOUT = {
     "data": "pdf-overlay/data",
     "geometry_glob": "geometry-batch-?.json",
@@ -57,6 +73,32 @@ LAYOUT = {
     "ledger_tool": "scripts/source_formalization_ledger.py",
     "geometry_tool": "scripts/overlay_geometry_from_layout.py",
 }
+#: The three layout keys an export may move, and the flag that moves each.
+MOVABLE_LAYOUT = {"data": "--data-dir", "ledger": "--ledger", "official": "--official-source"}
+#: The curation's own coverage classes (refinement schema version 2), strongest
+#: first.  ``formalized`` is not written in the table: it is what a version-1
+#: attribution entry (one with key declarations) says.  Regions of one item that
+#: disagree give the item the strongest class any of them names.
+COVERAGE_CLASSES = ("formalized", "partial_only", "private_only", "support_only",
+                    "example_only", "not_formalized")
+#: Each curation class as ``(the format's coverage value, the role its
+#: declarations take)``.  The format's enum is
+#: ``formal_companion_annotations.vocab.ANNOTATION_COVERAGE``; it has no value
+#: of its own for ``partial_only`` or ``private_only``, so those map onto the
+#: value that is true of the item (``partial``; ``formalized``, since a private
+#: declaration does state it) and the class itself is kept as ``x_coverage``.
+#: An entry with no key declaration may carry no ``attributed`` link either:
+#: invariant I5 refuses one without a ``key``.  ``None`` is "no links at all".
+COVERAGE_MAP = {
+    "partial_only": ("partial", "support"),
+    "private_only": ("formalized", "key"),
+    "support_only": ("support_only", "support"),
+    "example_only": ("example_only", "example"),
+    "not_formalized": ("not_formalized", None),
+}
+#: Link roles, strongest first: two entries that reach the same declaration give
+#: one link, in the strongest role either of them asked for.
+ROLE_RANK = ("key", "attributed", "support", "example", "helper")
 RFC8118 = vocab.CONFORMS_TO_PDF
 COORDINATE_SPACE = {"origin": "top_left", "units": "normalized", "x_axis": "right", "y_axis": "down"}
 FIELD_KIND = {"structure field": "field", "projection": "projection", "structure projection": "projection"}
@@ -163,34 +205,45 @@ class AttributionTableExport:
     def __init__(self, repo: Path, commit: str, *, name: str | None = None, repo_id: str | None = None,
                  lean_build: Path | None = None, site_name: str = "verso_literate",
                  source_id: str | None = None, source_title: str | None = None,
-                 source_edition: str | None = None, page_offset: int | None = None):
+                 source_edition: str | None = None, page_offset: int | None = None,
+                 data_dir: str | Path | None = None, ledger: str | Path | None = None,
+                 official_source: str | Path | None = None):
         self.repo = repo.resolve()
         self.head, self.head_date = common.pinned_checkout(self.repo, commit)
-        self.name, self.repo_id = common.companion_identity(self.repo, name, repo_id)
+        self.report = Report()
+        self.name, self.repo_id = common.companion_identity(self.repo, name, repo_id, report=self.report)
         self.lean_build = (lean_build or self.repo / ".lake" / "build" / "lib" / "lean").resolve()
         self.site_name = site_name
         self.overrides = {"source_id": source_id, "title": source_title, "edition": source_edition,
                           "offset": page_offset}
-        self.report = Report()
-        self.data = self.repo / LAYOUT["data"]
-        for rel in ("refinement", "verdicts", "snippets", "destinations"):
-            if not (self.data / LAYOUT[rel]).is_file():
-                raise ExportError(f"{self.repo} has no {LAYOUT['data']}/{LAYOUT[rel]}",
-                                  hint="the attribution-table convention needs the overlay data files")
+        self.layout = dict(LAYOUT)
+        for key, value in (("data", data_dir), ("ledger", ledger), ("official", official_source)):
+            if value is not None:
+                self.layout[key] = common.repo_relative(value, MOVABLE_LAYOUT[key])
+        self.data = self.repo / self.layout["data"]
+        for rel in ("refinement", "verdicts", "destinations"):
+            if not (self.data / self.layout[rel]).is_file():
+                raise ExportError(f"{self.repo} has no {self.layout['data']}/{self.layout[rel]}",
+                                  hint="the attribution-table convention needs the overlay data files; "
+                                       "--data-dir says where they are")
         for rel in ("official", "ledger"):
-            if not (self.repo / LAYOUT[rel]).is_file():
-                raise ExportError(f"{self.repo} has no {LAYOUT[rel]}")
-        self.batch_paths = sorted(self.data.glob(LAYOUT["geometry_glob"]))
+            if not (self.repo / self.layout[rel]).is_file():
+                raise ExportError(f"{self.repo} has no {self.layout[rel]}",
+                                  hint=f"{MOVABLE_LAYOUT[rel]} says where it is")
+        self.batch_paths = sorted(self.data.glob(self.layout["geometry_glob"]))
         if not self.batch_paths:
-            raise ExportError(f"{self.data} holds no {LAYOUT['geometry_glob']}")
+            raise ExportError(f"{self.data} holds no {self.layout['geometry_glob']}")
         self.batches = {p.stem: load(p) for p in self.batch_paths}
-        self.refinement = load(self.data / LAYOUT["refinement"])
-        self.verdicts_in = load(self.data / LAYOUT["verdicts"])
-        self.snippets_in = load(self.data / LAYOUT["snippets"])
-        self.dest_in = load(self.data / LAYOUT["destinations"])
-        self.official = load(self.repo / LAYOUT["official"])
-        self.ledger = load(self.repo / LAYOUT["ledger"])
-        self.ledger_lock = file_lock(self.repo, LAYOUT["ledger"])
+        self.refinement = load(self.data / self.layout["refinement"])
+        self.verdicts_in = load(self.data / self.layout["verdicts"])
+        snippets_path = self.data / self.layout["snippets"]
+        #: None when the companion exports no snippets: they are cut from its Lean instead.
+        self.snippets_in = load(snippets_path) if snippets_path.is_file() else None
+        self.dest_in = load(self.data / self.layout["destinations"])
+        self.official = load(self.repo / self.layout["official"])
+        self.ledger = load(self.repo / self.layout["ledger"])
+        self.ledger_lock = file_lock(self.repo, self.layout["ledger"])
+        self.refinement_version = int(self.refinement.get("schema_version", 1))
         # the record arrays, keyed by id
         self.items: dict[str, dict] = {}
         self.locations: dict[str, dict] = {}
@@ -222,6 +275,9 @@ class AttributionTableExport:
         self.support_counts: collections.Counter = collections.Counter()
         self.fallback_items: list[str] = []
         self.snippet_line_diff: list[str] = []
+        #: item id -> the curation's coverage class, and the notes its entries gave
+        self.item_class: dict[str, str] = {}
+        self.coverage_notes: dict[str, str] = {}
         self.width = self.height = 0.0
 
     # -- helpers ---------------------------------------------------------------
@@ -229,11 +285,11 @@ class AttributionTableExport:
         """The ledger as a provenance input: the full lock when it is the ledger at HEAD."""
         if sha == self.ledger_lock["sha256"]:
             return dict(self.ledger_lock)
-        return {"path": LAYOUT["ledger"], "sha256": sha}
+        return {"path": self.layout["ledger"], "sha256": sha}
 
     def tool(self, key: str, name: str) -> dict | None:
         """A provenance ``tool`` naming one of the companion's own scripts, when it exists."""
-        rel = LAYOUT[key]
+        rel = self.layout[key]
         if (self.repo / rel).is_file():
             return {"name": name, "path": rel}
         self.report.lose(f"provenance.{key}_missing", 1,
@@ -316,7 +372,7 @@ class AttributionTableExport:
         prov_id = f"prov-geometry-{letter}"
         verifiers = sorted({r["visual_signoff"]["verifier_id"] for it in batch["items"] for r in it["regions"]})
         methods = sorted({r["visual_signoff"]["method"] for it in batch["items"] for r in it["regions"]})
-        rel = f"{LAYOUT['data']}/{batch_path.name}"
+        rel = f"{self.layout['data']}/{batch_path.name}"
         inputs = [file_lock(self.repo, rel)]
         sidecar = batch_path.with_name(batch_path.stem + ".sources.json")
         if sidecar.is_file():
@@ -326,7 +382,7 @@ class AttributionTableExport:
                    "note": f"{batch_id}: regions from poppler pdftotext -bbox-layout line boxes, then an "
                            f"agent visual sign-off per region (signoff.method is the file's "
                            f"{', '.join(methods)})."}
-            tool = self.tool("geometry_tool", Path(LAYOUT["geometry_tool"]).name)
+            tool = self.tool("geometry_tool", Path(self.layout["geometry_tool"]).name)
             if tool:
                 rec["tool"] = tool
         else:
@@ -578,7 +634,7 @@ class AttributionTableExport:
                     rec = {"id": lid, "id_source": "name", "name": lid, "kind": FIELD_KIND[kind],
                            "module": n["module"], "file": n["file"], "private": False, "anonymous": False,
                            "parent": lid.rsplit(".", 1)[0]}
-                    snip = self.snippets_in["snippets"].get(lid)
+                    snip = self.snippets_in["snippets"].get(lid) if self.snippets_in else None
                     if snip:
                         rec["line"] = snip["line"]
                     pending_fields.append((rec, None))
@@ -702,13 +758,13 @@ class AttributionTableExport:
                 "note": "Node-level edges of source-formalization-ledger.json, a clone-local export of the "
                         "external ff-core correspondence state (snapshot "
                         + self.ledger["formalization_snapshot"]["commit"] + ")."}
-        tool = self.tool("ledger_tool", Path(LAYOUT["ledger_tool"]).name + " export")
+        tool = self.tool("ledger_tool", Path(self.layout["ledger_tool"]).name + " export")
         if tool:
             prov["tool"] = tool
         self.provenance["prov-ledger"] = prov
         realization: collections.Counter = collections.Counter()
         for e in self.ledger["edges"]:
-            key, target = self.resolve(e["formalization_id"], f"{LAYOUT['ledger']} edge of {e['source_id']}")
+            key, target = self.resolve(e["formalization_id"], f"{self.layout['ledger']} edge of {e['source_id']}")
             mid = f"{e['source_id']}/{e['role']}/{target}"
             if mid in self.memberships:
                 raise ExportError(f"membership id collision {mid}")
@@ -731,7 +787,7 @@ class AttributionTableExport:
         """The declaration id a formalization id resolves to; a refusal naming the file when the ledger lacks it."""
         did = self.ledger_to_decl.get(fid)
         if did is None:
-            raise ExportError(f"{where} names {fid!r}, which {LAYOUT['ledger']} does not list as a formalization "
+            raise ExportError(f"{where} names {fid!r}, which {self.layout['ledger']} does not list as a formalization "
                               "node", hint="the overlay data and the ledger must come from the same snapshot; "
                                            "regenerate the one that is stale")
         return did
@@ -748,7 +804,7 @@ class AttributionTableExport:
             "id": "prov-target-refinement", "actor": "agent", "method": "curation",
             "confirmed_by_human": self.refinement["provenance"]["confirmed_by_human"],
             "note": self.refinement["provenance"]["note"],
-            "inputs": sorted([file_lock(self.repo, f"{LAYOUT['data']}/{LAYOUT['refinement']}"),
+            "inputs": sorted([file_lock(self.repo, f"{self.layout['data']}/{self.layout['refinement']}"),
                               self.ledger_input(ref_ledger)], key=lambda d: d["path"]),
             "x_method": self.refinement["method"],
             "x_nodes_curated": self.refinement["provenance"]["nodes_curated"]}
@@ -762,31 +818,100 @@ class AttributionTableExport:
                 raise ExportError(f"refinement entry {e['region_id']} names an item its region does not show")
             per_item[e["item_id"]].append(e)
         differing = 0
-        where = f"{LAYOUT['data']}/{LAYOUT['refinement']}"
+        where = f"{self.layout['data']}/{self.layout['refinement']}"
         for old, entries in sorted(per_item.items()):
-            sets = {(tuple(sorted(e["formalization_ids"])), tuple(sorted(e["key_formalization_ids"])))
-                    for e in entries}
-            differing += len(sets) > 1
             iid = self.old_to_item[old]
-            keys = {x for e in entries for x in e["key_formalization_ids"]}
-            listed = {x for e in entries for x in e["formalization_ids"]}
+            attributions = [e for e in entries if not e.get("coverage")]
+            curated = [e for e in entries if e.get("coverage")]
+            sets = {(tuple(sorted(e["formalization_ids"])), tuple(sorted(e["key_formalization_ids"])))
+                    for e in attributions}
+            differing += len(sets) > 1
+            keys = {x for e in attributions for x in e["key_formalization_ids"]}
+            listed = {x for e in attributions for x in e["formalization_ids"]}
             if keys - listed:
                 self.report.lose("link.key_outside_formalization_ids", len(keys - listed),
                                  "a refinement entry names a key id that its own formalization_ids does not list; "
                                  "links follow formalization_ids, so that key is not carried",
                                  [f"{iid}: {fid}" for fid in sorted(keys - listed)])
             for fid in sorted(listed):
-                role = "key" if fid in keys else "attributed"
-                did = self.decl_of(fid, f"{where} entry for {old}")
-                lk = f"{iid}/{role}/{did}"
-                self.links[lk] = {"id": lk, "item": iid, "declaration": did, "role": role,
-                                  "provenance": "prov-target-refinement"}
+                self.add_link(iid, fid, "key" if fid in keys else "attributed", f"{where} entry for {old}")
+            self.coverage_entries(iid, old, attributions, curated, where)
         multi = sum(1 for v in per_item.values() if len(v) > 1)
         self.report.lose("link.region_granularity", multi,
                          f"target-refinement is keyed by region; {multi} items have one entry per region. Entries "
                          f"were merged per item ({differing} items had differing entries across regions, so "
                          "nothing is lost but the per-region keying itself)")
         self.support_links()
+
+    def add_link(self, iid: str, fid: str, role: str, where: str) -> str:
+        """One curated link, in the strongest role any of the item's entries asked for.
+
+        Several regions of one item may name the same declaration in different
+        roles (a key in one, a supporting declaration in another); the item
+        carries one link, and a weaker role never replaces a stronger one.
+        """
+        did = self.decl_of(fid, where)
+        for weaker in ROLE_RANK[ROLE_RANK.index(role) + 1:]:
+            self.links.pop(f"{iid}/{weaker}/{did}", None)
+        for stronger in ROLE_RANK[:ROLE_RANK.index(role)]:
+            if f"{iid}/{stronger}/{did}" in self.links:
+                return did
+        lk = f"{iid}/{role}/{did}"
+        self.links[lk] = {"id": lk, "item": iid, "declaration": did, "role": role,
+                          "provenance": "prov-target-refinement"}
+        return did
+
+    def coverage_entries(self, iid: str, old: str, attributions: list[dict], curated: list[dict],
+                         where: str) -> None:
+        """The version-2 entries of one item: its class, its note, and the links its class implies.
+
+        An entry that gives no key declaration says which of
+        :data:`COVERAGE_CLASSES` the item is instead, and its declarations are
+        linked in the role that class implies (section I5 refuses an
+        ``attributed`` link with no ``key``, so a keyless entry never writes
+        one).  The item's class is the strongest its regions name; a
+        disagreement is reported, never a refusal.
+        """
+        if not curated:
+            return
+        classes = ["formalized"] * len(attributions)
+        for e in curated:
+            if e["coverage"] not in COVERAGE_CLASSES[1:]:
+                raise ExportError(f"{where} entry for {old} carries the coverage class {e['coverage']!r}, "
+                                  f"which this convention does not define",
+                                  hint="the classes are " + ", ".join(COVERAGE_CLASSES[1:]))
+            classes.append(e["coverage"])
+            if e["key_formalization_ids"]:
+                # a coverage entry that does name a key declaration is an attribution after all
+                classes.append("formalized")
+                self.report.bend("link.key_in_coverage_entry", len(e["key_formalization_ids"]),
+                                 "a coverage entry names key declarations, which its class says it has none "
+                                 "of; the keys are carried as key links and the item counts as formalized",
+                                 [f"{iid}: {e['coverage']}"])
+        strongest = min(classes, key=COVERAGE_CLASSES.index)
+        if len(set(classes)) > 1:
+            self.report.lose("item.coverage_regions_disagree", 1,
+                             "the regions of one item carry different coverage classes; the item takes the "
+                             "strongest (" + " > ".join(COVERAGE_CLASSES) + ") and the weaker regions' classes "
+                             "are not carried (coverage is an item field, not a region one)",
+                             [f"{iid}: {sorted(set(classes))} -> {strongest}"])
+        self.item_class[iid] = strongest
+        notes = [e["note"] for e in curated if e.get("coverage") == strongest and e.get("note")]
+        unique = list(dict.fromkeys(notes))
+        if unique:
+            self.coverage_notes[iid] = " | ".join(unique)
+        for e in curated:
+            role = COVERAGE_MAP[e["coverage"]][1]
+            if role is None:
+                continue
+            for fid in sorted(e["formalization_ids"]):
+                did = self.decl_of(fid, f"{where} entry for {old}")
+                here = role
+                if e["coverage"] == "support_only" and self.declarations[did]["kind"] == "example":
+                    here = "example"
+                self.add_link(iid, fid, here, f"{where} entry for {old}")
+            for fid in sorted(e["key_formalization_ids"]):
+                self.add_link(iid, fid, "key", f"{where} entry for {old}")
 
     def support_links(self) -> None:
         """A ledger support edge becomes an item-level link only where the node has exactly one item."""
@@ -804,7 +929,7 @@ class AttributionTableExport:
             if len(its) > 1:
                 sup["multi_item_node"] += 1
                 continue
-            did = self.decl_of(e["formalization_id"], f"{LAYOUT['ledger']} support edge of {e['source_id']}")
+            did = self.decl_of(e["formalization_id"], f"{self.layout['ledger']} support edge of {e['source_id']}")
             role = "example" if self.declarations[did]["kind"] == "example" else "support"
             lk = f"{its[0]}/{role}/{did}"
             if lk in self.links:
@@ -819,19 +944,27 @@ class AttributionTableExport:
 
     # -- coverage ---------------------------------------------------------------------
     def build_coverage(self) -> None:
-        """An item with no item-level link falls back to its clusters; the curation's class where the note names it."""
+        """An item with no item-level link falls back to its clusters; the curation's class where it gives one.
+
+        The class comes from the item's own entries when the table carries them
+        (schema version 2, :meth:`coverage_entries`), from the provenance note's
+        prose when it does not (version 1), and from the roles of the links
+        themselves for an item only the ledger's support edges reach.
+        """
         linked_roles: dict[str, set[str]] = collections.defaultdict(set)
         for link in self.links.values():
             linked_roles[link["item"]].add(link["role"])
         populated = {m["cluster"] for m in self.memberships.values()}
         for iid, item in self.items.items():
             roles = linked_roles.get(iid, set())
+            curated = self.item_class.get(iid)
             if not roles:
-                if not (item.get("clusters") and populated.intersection(item["clusters"])):
+                if item.get("clusters") and populated.intersection(item["clusters"]):
+                    item["cluster_fallback"] = True
+                    self.fallback_items.append(iid)
+                elif curated is None:
                     raise ExportError(f"{iid} has no link and no populated cluster to fall back to")
-                item["cluster_fallback"] = True
-                self.fallback_items.append(iid)
-            elif "key" not in roles:
+            elif "key" not in roles and curated is None:
                 if not roles <= {"example", "support"}:
                     raise ExportError(f"{iid} has links but no key link: {sorted(roles)}")
                 # only the ledger's support edges link it: section I5's example_only or support_only
@@ -840,8 +973,9 @@ class AttributionTableExport:
                                  "an item whose only links are ledger support edges (example or support links, no "
                                  "key) carries the class those edges imply as coverage (I5)",
                                  [f"{iid}: {item['coverage']}"])
-        parsed = coverage_from_note(self.refinement["provenance"]["note"])
-        classified: list[str] = []
+        self.table_coverage()
+        parsed = None if self.refinement_version > 1 else coverage_from_note(
+            self.refinement["provenance"]["note"])
         if parsed is not None:
             section, named_class, total = parsed
             in_section = sorted(i for i in self.fallback_items
@@ -855,7 +989,6 @@ class AttributionTableExport:
             else:
                 for iid in in_section:
                     self.items[iid]["coverage"] = named_class.get(iid, "example_only")
-                classified = in_section
                 self.report.bend("item.coverage_from_prose", len(in_section),
                                  f"target-refinement's provenance note classifies section {section}'s {total} "
                                  "items with no entry (formalised only by anonymous examples, by nothing, or only "
@@ -863,15 +996,60 @@ class AttributionTableExport:
                                  f"items numbered {section}.x) and carry that class as coverage beside "
                                  "cluster_fallback",
                                  [f"{i}: {self.items[i]['coverage']}" for i in sorted(named_class)])
-        self.report.lose("item.coverage_unclassified", len(self.fallback_items) - len(classified),
-                         "the same note says the other items with no entry are formalised only by anonymous "
-                         "examples, by nothing, or only by supporting declarations, without saying which; they "
-                         "carry cluster_fallback and no coverage")
+        unclassified = [i for i in self.fallback_items if "coverage" not in self.items[i]]
+        self.report.lose("item.coverage_unclassified", len(unclassified),
+                         "the table classifies the other items with no entry nowhere: they are formalised only "
+                         "by anonymous examples, by nothing, or only by supporting declarations, and nothing "
+                         "says which; they carry cluster_fallback and no coverage", sorted(unclassified)[:5])
+
+    def table_coverage(self) -> None:
+        """The coverage class each item's own entries gave it (refinement schema version 2).
+
+        ``coverage`` is the format's value for the class (:data:`COVERAGE_MAP`);
+        a class the format's enum has no word of its own for also keeps the
+        curation's word as ``x_coverage``, and the curator's note rides along as
+        ``x_coverage_note``, so nothing the table said is dropped.
+        """
+        bent: list[str] = []
+        for iid, cls in sorted(self.item_class.items()):
+            if cls == "formalized":
+                continue
+            value = COVERAGE_MAP[cls][0]
+            item = self.items[iid]
+            item["coverage"] = value
+            if value != cls:
+                item["x_coverage"] = cls
+                bent.append(f"{iid}: {cls} -> {value}")
+            note = self.coverage_notes.get(iid)
+            if note:
+                item["x_coverage_note"] = note
+        classified = [i for i, c in self.item_class.items() if c != "formalized"]
+        if classified:
+            self.report.bend("item.coverage_from_table", len(classified),
+                             "target-refinement version 2 classifies a region it could give no key declaration; "
+                             "the class is the item's coverage and the curator's note its x_coverage_note, "
+                             "which the format has no field for",
+                             [f"{i}: {self.items[i]['coverage']}" for i in sorted(classified)])
+        if bent:
+            self.report.bend("item.x_coverage_class", len(bent),
+                             "the curation's class is finer than the format's coverage enum (" +
+                             ", ".join(sorted(vocab.ANNOTATION_COVERAGE)) + "): the item carries the format's "
+                             "value and keeps the curation's word in x_coverage", sorted(bent))
 
     # -- snippets and destinations ------------------------------------------------------
     def build_snippets(self) -> None:
+        """``snippets``: the companion's own export, when the data directory holds one."""
+        if self.snippets_in is None:
+            self.report.counts["snippets_source"] = f"derived: the section 5.1 cut of each declaration's own " \
+                                                    f"source ({self.layout['snippets']} is not in the checkout)"
+            self.report.lose("snippets.no_snippets_file", 1,
+                             f"{self.layout['data']}/{self.layout['snippets']} is not in the checkout, so each "
+                             "snippet is the section 5.1 signature cut of the declaration at the pinned commit; "
+                             "a text the companion would have trimmed, truncated or rewritten is not carried")
+            return
+        self.report.counts["snippets_source"] = f"{self.layout['data']}/{self.layout['snippets']}"
         for fid, s in self.snippets_in["snippets"].items():
-            did = self.decl_of(fid, f"{LAYOUT['data']}/{LAYOUT['snippets']}")
+            did = self.decl_of(fid, f"{self.layout['data']}/{self.layout['snippets']}")
             dec = self.declarations[did]
             if s["file"] != dec["file"]:
                 raise ExportError(f"snippet {fid} is in {s['file']}, the declaration in {dec['file']}")
@@ -884,9 +1062,32 @@ class AttributionTableExport:
                 raise ExportError(f"two snippets for {did}")
             self.snippets[rec["id"]] = rec
 
+    def derive_snippets(self) -> None:
+        """A snippet per declaration, cut from the Lean the pinned commit holds.
+
+        The cut is the format's section 5.1 header -- the keyword up to the
+        ``:=`` or ``where`` that ends a typed header -- which the Lean scan
+        already made for every declaration it could cut one for
+        (:class:`annotations.export.common.HeaderCutter`, and
+        ``formal_companion_annotations.ids`` for the anonymous ones), so the
+        text here is the same text the docstring-tags exporter writes.  A
+        ``structure``, ``class`` or ``inductive``, a field the ledger named by
+        itself and an unlocated example have no header to cut and get no
+        snippet.
+        """
+        for did, dec in sorted(self.declarations.items()):
+            signature = dec.get("signature")
+            if not signature:
+                continue
+            rec = {"id": f"snippet:{did}", "declaration": did, "text": signature}
+            if dec.get("line") is not None:
+                rec["line"] = dec["line"]
+            self.snippets[rec["id"]] = rec
+        self.report.counts["snippets_derived"] = len(self.snippets)
+
     def build_destinations(self) -> None:
         for r in self.dest_in["destinations"]:
-            key, target = self.resolve(r["formalization_id"], f"{LAYOUT['data']}/{LAYOUT['destinations']}")
+            key, target = self.resolve(r["formalization_id"], f"{self.layout['data']}/{self.layout['destinations']}")
             rec = {"id": f"{self.site_name}:{target}", key: target, "site": self.site_name, "resolution": r["resolution"]}
             if r["resolution"] == "exact":
                 href, _, frag = r["exact_href"].partition("#")
@@ -905,7 +1106,7 @@ class AttributionTableExport:
     def build_verdicts(self) -> None:
         vin = self.verdicts_in
         diff_date = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", vin["method"])
-        inputs = sorted([file_lock(self.repo, f"{LAYOUT['data']}/{LAYOUT['verdicts']}"),
+        inputs = sorted([file_lock(self.repo, f"{self.layout['data']}/{self.layout['verdicts']}"),
                          self.ledger_input(vin["ledger_sha256"])], key=lambda d: d["path"])
         self.provenance["prov-verdicts-differential"] = {
             "id": "prov-verdicts-differential", "actor": "agent", "method": "adjudication",
@@ -933,7 +1134,8 @@ class AttributionTableExport:
         v = {"id": vid, "item": iid, "locations": sorted(locs), "verdict": e["verdict"],
              "severity": e["severity"], "status": e["status"], "summary": e["summary"],
              "evidence": list(e["evidence"]),
-             "declarations": sorted(({"declaration": self.decl_of(d["id"], f"{LAYOUT['data']}/{LAYOUT['verdicts']}"),
+             "declarations": sorted(({"declaration": self.decl_of(
+                 d["id"], f"{self.layout['data']}/{self.layout['verdicts']}"),
                                       "verdict": d["verdict"],
                                       **({"note": d["note"]} if d.get("note") else {})}
                                      for d in e["declarations"]), key=lambda d: d["declaration"])}
@@ -1052,12 +1254,15 @@ class AttributionTableExport:
         self.build_snippets()
         self.build_destinations()
         self.build_verdicts()
+        if self.snippets_in is None:
+            # after the verdicts: they are the last stage that can add a declaration
+            self.derive_snippets()
         self.build_changelog()
         doc = {
             "schema": vocab.ANNOTATION_SCHEMA, "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
             "companion": {"name": self.name, "repo": self.repo_id, "commit": self.head,
                           "generated_at": self.head_date, "generator": common.generator("attribution-table"),
-                          "graph": {"path": LAYOUT["ledger"], "sha256": self.ledger_lock["sha256"],
+                          "graph": {"path": self.layout["ledger"], "sha256": self.ledger_lock["sha256"],
                                     "bytes": self.ledger_lock["bytes"],
                                     "snapshot_commit": self.ledger["formalization_snapshot"]["commit"]}},
             "x_graph_scope": {"scope": self.ledger["scope"],
@@ -1119,6 +1324,8 @@ class AttributionTableExport:
         counts["items_by_id_source"] = dict(sorted(C(i["id_source"] for i in doc["items"]).items()))
         counts["items_by_kind"] = dict(sorted(C(i["kind"] for i in doc["items"]).items()))
         counts["items_by_coverage"] = dict(sorted(C(i.get("coverage", "-") for i in doc["items"]).items()))
+        counts["items_by_curation_class"] = dict(sorted(C(self.item_class.values()).items()))
+        counts["refinement_schema_version"] = self.refinement_version
         counts["items_cluster_fallback"] = sum(1 for i in doc["items"] if i.get("cluster_fallback"))
         counts["verdicts_without_resolution"] = sum(1 for v in doc["verdicts"] if "resolution" not in v)
         counts["passage_ids"] = {k: self.passage_ids[k] for k in sorted(self.passage_ids)}
