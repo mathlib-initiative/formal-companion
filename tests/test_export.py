@@ -77,6 +77,8 @@ DELIBERATE = (
     "for both companions, where the prototypes wrote tao-measure-pdf and tao-gsm126-published; the ledger's "
     "own words for the edition stay on the measure_theory source as x_companion_edition",
     "the site source's title and retrieved_at come from the page manifest, not from the build's file times",
+    "an equation's title (measure_theory: equation-1.2 and equation-1.3) carries title_source producer: a book "
+    "prints an equation by its number alone, and the prototype's missing field read as the book's words",
 )
 
 
@@ -866,6 +868,21 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                 self.assertEqual(by_id(doc, "items")[iid]["sub"], sub)
                 self.assertNotIn("item.label_trailing", report.lossy)
 
+    def test_an_equation_title_is_the_producers(self):
+        # review item 7: a book prints an equation by its number, so the words after the colon are the producer's
+        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4",
+                                                            "Equation (1.1.4): a made-up name", "b"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        item = by_id(doc, "items")["equation-1.1.4"]
+        self.assertEqual((item["title"], item["title_source"]), ("a made-up name", "producer"))
+        # an equation with no words after its number has neither field
+        kinds = tuple(attribution_table.cf_items.DEFAULT_KINDS)
+        bare = attribution_table.item_identity("Equation (1.1.4)", "item:x", kinds)[0]
+        self.assertNotIn("title", bare)
+        self.assertNotIn("title_source", bare)
+
     def test_a_sub_part_the_format_cannot_carry_is_dropped_and_reported(self):
         root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(ii')", "b"))
         doc, report = at_export(root, commit)
@@ -1340,7 +1357,7 @@ class TestTheReferencesAreWhatTheyClaim(unittest.TestCase):
                                                     "unattributed")},
                          {"items": 651, "declarations": 1544, "links": 1169, "locations": 2201,
                           "destinations": 1544, "unattributed": 377})
-        self.assertEqual(len(DELIBERATE), 3)
+        self.assertEqual(len(DELIBERATE), 4)
 
 
 if __name__ == "__main__":                                       # pragma: no cover

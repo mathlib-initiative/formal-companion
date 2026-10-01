@@ -265,6 +265,16 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `cf export attribution-table` marks an equation's title as the producer's
+  (`title_source: producer`). A geometry label `Equation (n): <words>` gives
+  the item those words as its `title`, but a book prints an equation by its
+  number alone, and with no `title_source` the title read as the book's (the
+  format's default). In measure_theory this is `equation-1.2` and
+  `equation-1.3`, and they are the only records that change. The pre-merge
+  review of the exporters listed this as item 7, and #17 left it open. The
+  maintainer's measure_theory reference must be regenerated
+  (`tests/data/m3/README.md`), and `DELIBERATE` in `tests/test_export.py`
+  records it as the fourth deliberate difference from the prototypes.
 - The findings gate's changed-files check now diffs a contribution from the
   point it branched (the merge base with the merge target), not from the
   target's tip. Against the tip, every finding merged after a worktree was cut
