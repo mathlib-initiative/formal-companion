@@ -273,7 +273,10 @@ if want and want != got:
                              ("changed", [p for p in here if p in sent and here[p] != sent[p]])):
             if paths:
                 sys.stderr.write("  %d %s:\n" % (len(paths), label))
-                sys.stderr.writelines("    %s\n" % p for p in sorted(paths)[:20])
+                # An extra path is named by whoever wrote it on the host, so it is
+                # escaped: no name may move the cursor or forge a line of this refusal.
+                sys.stderr.writelines("    %s\n" % p.encode("unicode_escape").decode("ascii")
+                                      for p in sorted(paths)[:20])
                 if len(paths) > 20:
                     sys.stderr.write("    ... and %d more\n" % (len(paths) - 20))
     else:

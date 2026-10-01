@@ -718,7 +718,8 @@ class CompanionTreeIntegrityTest(unittest.TestCase):
         for target, step in rsyncs.items():
             self.assertNotIn("--delete", step["argv"], target)
 
-    def test_a_stale_copy_is_refused_naming_the_paths_that_were_not_sent(self):
+    def _landed_copy(self) -> tuple[Path, str]:
+        """A host copy as transferred, and the shell command that verifies it."""
         import shlex
 
         from run import remote
@@ -733,7 +734,10 @@ class CompanionTreeIntegrityTest(unittest.TestCase):
         cmd = cmd.replace("python3", shlex.quote(sys.executable), 1)
         res = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True)
         self.assertEqual(res.returncode, 0, res.stderr)
+        return copy, cmd
 
+    def test_a_stale_copy_is_refused_naming_the_paths_that_were_not_sent(self):
+        copy, cmd = self._landed_copy()
         (copy / "Blueprint.lean").write_text("-- deleted upstream\n", encoding="utf-8")
         (copy / "lakefile.toml").unlink()
         (copy / "Mod" / "A.lean").write_text("theorem a : False := sorry\n", encoding="utf-8")
@@ -746,6 +750,18 @@ class CompanionTreeIntegrityTest(unittest.TestCase):
         self.assertIn("1 changed", res.stderr)
         self.assertIn("Mod/A.lean", res.stderr)
         self.assertIn("stale files from an earlier transfer, or an edit", res.stderr)
+
+    def test_an_extra_path_cannot_write_escapes_or_lines_into_the_refusal(self):
+        copy, cmd = self._landed_copy()
+        forged = "x\x1b]52;c;cm0gLXJmIH4=\x07\x1b[2K\r  0 extra (harmless)\n.lean"
+        (copy / "Mod" / forged).write_text("planted\n", encoding="utf-8")
+        res = subprocess.run(["sh", "-c", cmd], capture_output=True)
+        self.assertEqual(res.returncode, 1)
+        for raw in (b"\x1b", b"\x07", b"\r"):
+            self.assertNotIn(raw, res.stderr)
+        self.assertNotIn(b"\n  0 extra", res.stderr)
+        self.assertIn(b"    Mod/x\\x1b]52;c;cm0gLXJmIH4=\\x07\\x1b[2K\\r  0 extra (harmless)"
+                      b"\\n.lean\n", res.stderr)
 
     def _cf_run(self, root: Path, *extra: str) -> subprocess.CompletedProcess:
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
