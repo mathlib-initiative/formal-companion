@@ -24,6 +24,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -271,6 +272,42 @@ class TestClaudeTranscripts(unittest.TestCase):
         self.assertEqual(totals.message_count, 2)
         self.assertEqual(totals.duplicate_lines, 2)
         self.assertEqual(totals.tokens["claude-opus-5"]["output"], 674)
+
+    def test_several_paths_are_one_fleet_and_a_file_counts_once(self):
+        write_jsonl(self.root / "host-1" / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
+        write_jsonl(self.root / "host-2" / "b.jsonl", [claude_line("m2", "r2", self.USAGE)])
+        totals = usage_mod.read_path([self.root / "host-1", self.root / "host-2"])
+        self.assertEqual((totals.transcript_count, totals.message_count), (2, 2))
+        overlapping = usage_mod.read_path([self.root, self.root / "host-1"])
+        self.assertEqual((overlapping.transcript_count, overlapping.message_count), (2, 2))
+        with self.assertRaises(FileNotFoundError):
+            usage_mod.read_path([self.root / "host-1", self.root / "nope"])
+
+    def test_the_standalone_command_takes_several_directories(self):
+        """references/runbook-server.md step 5, from a copy of the script
+        alone, as on a host: ``python3 usage.py <dir> [<dir> ...] --export usage.jsonl``."""
+        write_jsonl(self.root / "host-1" / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
+        write_jsonl(self.root / "host-2" / "b.jsonl", [
+            claude_line("m2", "r2", self.USAGE), claude_line("m2", "r2", self.USAGE)])
+        host = self.root / "host"
+        host.mkdir()
+        shutil.copy(SCRIPTS / "cost" / "usage.py", host / "usage.py")
+        out_file = self.root / "usage.jsonl"
+        done = subprocess.run(
+            [sys.executable, str(host / "usage.py"), str(self.root / "host-1"),
+             str(self.root / "host-2"), "--export", str(out_file)],
+            cwd=host, capture_output=True, text=True, check=False)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(len(out_file.read_text(encoding="utf-8").splitlines()), 2)
+        self.assertIn("wrote 2 row(s)", done.stdout)
+        self.assertEqual(done.stderr, "")
+        # a missing directory among them is refused and nothing is written
+        missing_out = self.root / "missing.jsonl"
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            rc = usage_mod.main([str(self.root / "host-1"), str(self.root / "nope"),
+                                 "--export", str(missing_out)])
+        self.assertEqual(rc, 2)
+        self.assertFalse(missing_out.exists())
 
     def test_an_empty_directory_gives_zero(self):
         totals = usage_mod.read_path(self.root)

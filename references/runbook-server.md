@@ -204,14 +204,16 @@ leaves three. Above the cap you get 409s.
    inside Claude Code and the orchestrator never sees a token; the agents' own transcripts on the
    host carry every one (issue #11). The transcripts hold prompts, paths and tool output, so they
    stay on the host: run the standalone reader there, from a copy of `scripts/cost/usage.py`, as
-   `python3 usage.py <the run's transcript directories> --export usage.jsonl` (one `{model,
-   usage}` row per response, no text), bring the export back, and pass it to
-   `cf harvest <run-id> --transcripts usage.jsonl`. The receipt then carries the `cost` block
-   (tokens by model, dollars at `workspace.yaml` `budget.prices`, the models the table does not
-   price, the table's sha) and `cf tally` prints the cost per task. A Codex fleet's
-   `rollout-*.jsonl` logs read the same way; a log that names no model takes
-   `--transcripts-model <id>`. A model missing from the price table is reported as UNPRICED,
-   never guessed at, and the dollar figure is then a lower bound until the table has a row for it.
+   `python3 usage.py <dir> [<dir> ...] --export usage.jsonl`, naming every transcript directory
+   of the run (they are read as one fleet, a file under two of them once; one `{model, usage}`
+   row per response, no text). A missing directory is refused before anything is written.
+   Bring the export back and pass it to `cf harvest <run-id> --transcripts usage.jsonl`. The
+   receipt then carries the `cost` block (tokens by model, dollars at `workspace.yaml`
+   `budget.prices`, the models the table does not price, the table's sha) and `cf tally` prints
+   the cost per task. A Codex fleet's `rollout-*.jsonl` logs read the same way; a log that
+   names no model takes `--transcripts-model <id>`. A model missing from the price table is
+   reported as UNPRICED, never guessed at, and the dollar figure is then a lower bound until the
+   table has a row for it.
 
 Everything downstream is a function of `corpus/`, never of files someone read.
 
