@@ -35,6 +35,13 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf export site-pages <site> --out <pages.json>`: writes the page manifest
+  `cf export docstring-tags --site-pages` pins a literate site by (every
+  `*.html` page with its sha256 and bytes, the site digest, and the site
+  source's id, title, path and render time). The reference manifest was
+  described as "written from that site's pages", but no tool in the tree
+  wrote it. `tests/data/m3/README.md` now names the command and gives the
+  f158509 render recipe that reproduces the pin.
 - `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
   pipeline (milestone M1, `docs/pipeline.md`). S0 pins one PDF (sha256, pages,
   page sizes, `pdftotext` version), prepares it with the onboarding code,

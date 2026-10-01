@@ -62,7 +62,7 @@ import cf as cf_main                                               # noqa: E402
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids                       # noqa: E402
 from formal_companion_annotations import validate as V             # noqa: E402
-from annotations.export import attribution_table, common, docstring_tags  # noqa: E402
+from annotations.export import attribution_table, common, docstring_tags, site_pages  # noqa: E402
 from annotations.export.pdftext import PdfText                     # noqa: E402
 from cflib.errors import CfError                                   # noqa: E402
 
@@ -749,6 +749,44 @@ class TestDocstringTagsExport(unittest.TestCase):
             self.assertIn("not the pinned page", caught.exception.message)
         finally:
             page.write_text(kept, encoding="utf-8")
+
+    def test_site_pages_writes_the_pin_the_exporter_reads(self):
+        out = scratch(self) / "pages.json"
+        stderr = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+            status = cf_main.main(["export", "site-pages", str(self.site), "--out", str(out),
+                                   "--source-id", "demo-site", "--title", "the demo site",
+                                   "--rendered-at", "2026-09-02T00:00:00Z"])
+        self.assertEqual(status, 0, stderr.getvalue())
+        written = json.loads(out.read_text(encoding="utf-8"))
+        handmade = json.loads(self.pin.read_text(encoding="utf-8"))
+        handmade.pop("note")
+        self.assertEqual(written, handmade)          # path defaults to the directory's name, _site
+        doc, report = docstring_tags.export(self.root, self.commit, site=self.site,
+                                            **dict(self.options, site_pages=out))
+        self.assertEqual(report.problems, [])
+        self.assertEqual(record_diff(doc, self.doc), [])
+
+    def test_site_pages_defaults_and_refusals(self):
+        pin = site_pages.manifest(self.site)
+        self.assertNotIn("source_id", pin)
+        self.assertNotIn("title", pin)
+        self.assertEqual(pin["path"], "_site")
+        newest = max(p.stat().st_mtime for p in self.site.rglob("*.html"))
+        self.assertEqual(pin["rendered_at"], common.utc(newest))
+        empty = scratch(self) / "empty"
+        empty.mkdir()
+        for site, options, words in ((empty, {}, "holds no HTML page"),
+                                     (self.site, {"rendered_at": "2026-09-02 00:00"}, "RFC 3339"),
+                                     (empty / "absent", {}, "is not a directory")):
+            with self.subTest(words=words):
+                with self.assertRaises(common.ExportError) as caught:
+                    site_pages.manifest(site, **options)
+                self.assertIn(words, caught.exception.message)
+        with self.assertRaises(CfError) as caught:
+            cf_main.main(["export", "site-pages", str(self.site), "--out", str(self.site / "pages.json")])
+        self.assertIn("inside the site", caught.exception.message)
+        self.assertFalse((self.site / "pages.json").exists())
 
     def test_the_command_runs_end_to_end(self):
         out = scratch(self) / "demo.annotations.json"
