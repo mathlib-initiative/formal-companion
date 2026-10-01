@@ -9,10 +9,7 @@ published edition (registry id `tao-measure-gsm126-published`, sha256
 - `measure_theory.truth.json`
 - `tao-measure-lean.truth.json`
 
-A table holds only item numbers, kinds and page numbers, with no text from the
-book or the companions. The `numbered` rows record where each numbered item is
-printed; the `passages` rows record where a companion chose to tag in-text
-material, which is a fact about that companion, not about the edition:
+A table holds only item numbers, kinds and page numbers, no text:
 
 - `numbered`: `{kind, number, page}` for each numbered item, `page` being the
   first physical page the companion places it on;
@@ -25,28 +22,8 @@ annotation documents carry those and stay in the companions' repositories or
 a workspace, never here (CLAUDE.md section 1, docs/annotations.md section 11).
 `scripts/pipeline/derive_truth.py` refuses to write any other field.
 
-## What each table checks
-
-The two tables are not two independent ground truths for the numbered items.
-
-- **tao-measure-lean** gets its pages from the docstring-tags exporter, which
-  places each numbered item on the first line-start match of `Kind N` in the
-  book's `pdftotext` layer (`locate_headings`, through `PdfText.headings` in
-  `scripts/annotations/export/pdftext.py`). S1 finds headings with essentially
-  the same regex on the same text layer (`_HEADING_SHAPE` in
-  `scripts/pipeline/inventory.py`), so its numbered-item figure measures two
-  heading regexes agreeing. It can catch a place where they differ (it caught
-  the wrapped title of Exercise 1.2.11), not an error they share, such as a
-  cross-reference at line start that precedes the real heading.
-- **measure_theory** gets its pages from region geometry signed off against
-  rendered pages, so its numbered-item figure is the independent check on S1,
-  and it alone supports the 407/407 figure. Part of that geometry was first
-  laid out from the text layer and then checked visually, so it is not wholly
-  free of `pdftotext` either.
-
-The passage rows of tao-measure-lean are where that companion chose to tag a
-passage, not a list of the book's passages, which is one more reason the
-passage figure is an upper bound on recovery and not a recall.
+The tao-measure-lean pages come from the same `pdftotext` heading match S1
+uses, so only measure_theory is an independent check of S1's numbered items.
 
 ## Regenerating the tables
 

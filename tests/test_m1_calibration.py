@@ -28,8 +28,6 @@ The PDF is ``CF_TAO_PDF`` when set, or a copy already cached under the system
 temporary directory.  Only with ``CF_M1_DOWNLOAD=1`` does the test download
 the file the author publishes (the registry's ``download_url``) into that
 cache, checking its sha256; otherwise, and when the network refuses, it skips.
-``TestTheDownloadIsOptIn`` checks that rule with ``urlopen`` stubbed, and runs
-everywhere.
 """
 from __future__ import annotations
 
@@ -242,13 +240,7 @@ class TestTaoChapterOne(unittest.TestCase):
 
 
 class TestTheDownloadIsOptIn(unittest.TestCase):
-    """``tao_pdf``'s fetch, with the network stubbed: it runs only under ``CF_M1_DOWNLOAD=1``.
-
-    ``urllib.request.urlopen`` is replaced in every test, by a stub that serves
-    synthetic bytes or by one that fails the test when called, and the cache
-    lives under a temporary directory, so nothing here reaches the network or
-    the real cache, and no line of the book is involved.
-    """
+    """``tao_pdf``'s fetch with ``urlopen`` stubbed and the cache in a temp dir."""
 
     BYTES = b"%PDF-1.4 synthetic stand-in for the pinned edition, not the book\n"
 
@@ -266,7 +258,6 @@ class TestTheDownloadIsOptIn(unittest.TestCase):
         self.fetches: list[tuple[str, float | None]] = []
 
     def _use(self, **changes):
-        """Make ``tao_pdf`` see the registry entry with ``changes`` applied."""
         entry = dataclasses.replace(self.real, **changes)
         patcher = mock.patch(f"{__name__}._entry", lambda: entry)
         patcher.start()
@@ -274,7 +265,6 @@ class TestTheDownloadIsOptIn(unittest.TestCase):
         return entry
 
     def _serve(self, body: bytes):
-        """A stub ``urlopen`` that records the call and answers ``body``."""
         def urlopen(url, timeout=None):
             self.fetches.append((url, timeout))
             resp = mock.MagicMock()
@@ -312,7 +302,6 @@ class TestTheDownloadIsOptIn(unittest.TestCase):
         self.assertEqual(self.fetches, [(entry.download_url, 30)])
         self.assertEqual(path, self._cache(entry.sha256))
         self.assertEqual(path.read_bytes(), self.BYTES)
-        # The cached copy is reused afterwards, opt-in or not, without a fetch.
         del os.environ["CF_M1_DOWNLOAD"]
         with self._no_network() as urlopen:
             again, why = tao_pdf()
