@@ -93,7 +93,7 @@ def schema_path(major: int, minor: int) -> Path:
 
 def schema_id(major: int, minor: int) -> str:
     """The ``$id`` of one format minor's schema: an identifier, never fetched."""
-    return f"{vocab.ANNOTATION_SCHEMA_ID_BASE}/v{major}.{minor}/schema.json"
+    return f"{vocab.ANNOTATION_SCHEMA_ID_BASE}/annotations-v{major}.{minor}.schema.json"
 
 
 #: The newest schema this package knows: the one a newer document is checked against.

@@ -49,9 +49,10 @@ ANNOTATION_SCHEMA = "formal-companion/annotations"
 #: lowest minor whose schema admits the document.
 ANNOTATION_SCHEMA_VERSION = "1.0"
 ANNOTATION_SCHEMA_MAJOR = 1
-#: The schema ``$id`` is ``<base>/v<major>.<minor>/schema.json``: one per format
+#: The schema ``$id`` is ``<base>/annotations-v<major>.<minor>.schema.json``, the
+#: raw URL of that schema file on the repository's default branch: one per format
 #: minor, never changed after release, an identifier that is never fetched.
-ANNOTATION_SCHEMA_ID_BASE = "https://w3id.org/formal-companion/annotations"
+ANNOTATION_SCHEMA_ID_BASE = "https://raw.githubusercontent.com/mathlib-initiative/formal-companion-annotations/main/schema"
 #: The four optional profiles and the version of each that this package knows
 #: (docs/annotations.md, section 4.2).  Each profile is versioned on its own;
 #: a document declares the ones it uses in its root ``profiles`` object.

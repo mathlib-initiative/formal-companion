@@ -20,4 +20,4 @@ from __future__ import annotations
 #: import them; ``from formal_companion_annotations import *`` does.
 __all__ = ["__version__", "ids", "schemacheck", "validate", "vocab"]
 
-__version__ = "1.0.0rc1"
+__version__ = "1.0.0rc2"
