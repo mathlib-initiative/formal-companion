@@ -28,8 +28,6 @@ _MASK = (1 << 64) - 1
 
 #: words that may precede a declaration keyword in its header
 _HEADER_WORDS = frozenset(leanparse._MODIFIERS) | {"public", "meta"}
-#: commands that prefix another as ``<cmd> ... in``
-_IN_PREFIXES = frozenset({"open", "include", "omit", "set_option", "variable"})
 #: literate code parts that stand for a doc comment (its text is not kept), and how that comment opens
 _DOC_PARTS = {"verso": "/--", "markdown": "/--", "modDoc": "/-!", "markdownModDoc": "/-!"}
 _COMMENT_TOKENS = frozenset({"lineComment", "blockComment", "commentDelim"})
@@ -512,8 +510,8 @@ def _scopes(src: _Src, items: list) -> list[tuple[str, tuple[str, ...]]]:
     return out
 
 
-def _example_head(src: _Src, start: int, stop: int) -> list:
-    """Tokens of the command at ``start`` up to its keyword, past any ``open ... in`` style prefixes."""
+def _example_head(src: _Src, start: int, stop: int, kinds: tuple[str, ...]) -> list:
+    """Tokens of the command at ``start`` up to its keyword, past any ``<command> ... in`` prefixes."""
     head: list = []
     skipping = False
     for t in _tokens(src.text, start, stop):
@@ -521,12 +519,14 @@ def _example_head(src: _Src, start: int, stop: int) -> list:
         if skipping:
             skipping = w != "in"
             continue
-        if not head and w in _IN_PREFIXES:
-            skipping = True
+        if t[0] == "attr" or w in _HEADER_WORDS or (t[0] == "doc" and not head):
+            head.append(t)
             continue
-        head.append(t)
-        if not (t[0] == "attr" or w in _HEADER_WORDS or (t[0] == "doc" and len(head) == 1)):
+        if w in kinds or any(h[0] != "doc" for h in head):
+            head.append(t)
             break
+        # a prefix such as `attribute [..] in` or `#guard_msgs in`; a docstring before it is the prefix's
+        head, skipping = [], True
     return head
 
 
@@ -564,7 +564,7 @@ def _build_decls(path: Path, rel: str, text: str, kinds: tuple[str, ...], max_bo
         for _kind, start, stop, defines in items:
             if defines:
                 continue
-            head = _example_head(src, start, stop)
+            head = _example_head(src, start, stop, kinds)
             got = _keyword(src, head, kinds) if head else None
             if got is None or got[0] != "example":
                 continue

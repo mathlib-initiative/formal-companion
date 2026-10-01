@@ -450,6 +450,42 @@ TRICKY_ITEMS = [
 ]
 
 
+#: anonymous examples behind `<command> ... in` prefixes (item kinds as a real v4.33 build writes them)
+PREFIXED = """\
+namespace Pre
+
+#guard_msgs in
+example : 1 + 1 = 2 := rfl
+
+attribute [local instance] Classical.propDecidable in
+/-- doc after attribute-in -/
+example : True := trivial
+
+/-- trace: hi -/
+#guard_msgs in
+example : True := by trace "hi"; trivial
+
+attribute [local simp] «Nat».add_comm in example : True := trivial
+
+set_option maxHeartbeats 400 in
+#guard_msgs in
+/-- doc after two prefixes -/
+example : True := trivial
+
+end Pre
+"""
+
+PREFIXED_ITEMS = [
+    (NS, "namespace Pre", []),
+    ("Lean.guardMsgsCmd", "#guard_msgs in\nexample : 1", []),
+    (IN, "attribute [local instance]", []),
+    ("Lean.guardMsgsCmd", "/-- trace", []),
+    (IN, "attribute [local simp]", []),
+    (IN, "set_option", []),
+    (END, "end Pre", []),
+]
+
+
 def fields(d) -> dict:
     out = dataclasses.asdict(d)
     out.pop("origin")
@@ -721,6 +757,21 @@ class TrickyTest(Scratch):
         self.assertEqual(named, [(line, name, full, "" if (name or "").startswith("_root_") else ns)
                                  for line, kind, name, full, ns, _p, _d in self.expected() if kind != "example"])
         self.assertEqual([d.origin for d in decls if d.kind == "example"], ["text"])
+
+
+class PrefixTest(Scratch):
+    def test_examples_behind_any_in_prefix(self):
+        self.lake.module("Pre.lean", PREFIXED, [], PREFIXED_ITEMS)
+        decls, build = self.parse("Pre.lean")
+        self.assertEqual(build.tally(), {"lean": 1})
+        # the docstring before `#guard_msgs` is its expected output, not the example's
+        self.assertEqual([(d.line, d.full_name, d.namespace, d.doc, d.origin) for d in decls], [
+            (4, "example@Pre.lean:4", "Pre", None, "lean"),
+            (8, "example@Pre.lean:8", "Pre", "doc after attribute-in", "lean"),
+            (12, "example@Pre.lean:12", "Pre", None, "lean"),
+            (14, "example@Pre.lean:14", "Pre", None, "lean"),
+            (19, "example@Pre.lean:19", "Pre", "doc after two prefixes", "lean"),
+        ])
 
 
 class ConsumerTest(Scratch):
