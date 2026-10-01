@@ -80,11 +80,8 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
-- `adapters.leanbuild`: the five declaration readers take a companion's
-  declarations from its Lake build (`.ilean`, verso literate JSON) when Lake's
-  own hashes show it current, and parse the text per file otherwise;
-  `lean_source` reports which, and `CF_LEAN_SOURCE=text` forces the text
-  parser.
+- `adapters.leanbuild`: declarations come from the companion's Lake build where it
+  verifies, else from the text; `lean_source` counts which; `CF_LEAN_SOURCE=text` forces text.
 - `cf export site-pages <site> --out <pages.json>`: writes the page manifest
   that `cf export docstring-tags --site-pages` reads; `--exclude GLOB` leaves
   out generated pages (`'*/_lazy/*'`), which `--site` then counts.
