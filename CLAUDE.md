@@ -26,8 +26,7 @@ licence notes — facts *about* an edition, never a line *of* it. See
 `registry/README.md`.
 
 Both first-target companions are private repositories. Do not paste their Lean
-source or their owners' details into this repo. Section 9 is how a
-review checks all of this.
+source or their owners' details into this repo.
 
 ## 2. Layout
 
@@ -255,16 +254,6 @@ push, do not rewrite history, do not commit anything from a workspace
 directory, and do not run `git add -A` — this repo is edited by several agents
 at once; add the paths you own. End a commit message with the
 `Co-Authored-By:` line for the model that wrote the change.
-
-## 9. Reviewing
-
-A review of a pull request checks section 1 first, and over every commit, every
-commit message, the PR description and its own comments, not only the final
-diff: a closed PR's head ref still serves what a later commit deleted.
-`CONTRIBUTING.md` ("Reviewing a pull request") lists what counts as private and
-how to check; the mechanical half is
-`CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q tests/test_rf_scrub.py`.
-Report a leak without quoting it, and do not approve the PR.
 
 ## End-to-end demonstration
 

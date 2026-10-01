@@ -26,11 +26,6 @@ JSON data file's `_source` key. It is deliberately a small set of literal rules
 with a short, explicit allowlist, because a rule nobody can read is a rule that
 gets broadened instead of obeyed.
 
-The same rule covers data a companion was exported to, which names no machine:
-a guard on a data file's kind, name and size catches the two exported documents
-two closed pull requests carried under tests/data, and `CF_SCRUB_RANGE` runs
-every rule here over each commit a branch adds rather than only its last tree.
-
 It also holds the two CLI findings of the same package: a warning must reach ONE
 stream as ONE block (first-run#4), and the README's onboarding transcript must
 say what it is (first-run#7).
@@ -243,8 +238,7 @@ class TestNothingComesFromOneMachine(unittest.TestCase):
 REPO_ROOTS = ("scripts/", "references/", "docs/", "templates/", "tests/",
               "registry/", "workflows/", "evals/", ".github/", "schema/", "examples/")
 
-#: A trailing `.gz` belongs to the path: without it `<dir>/rows.jsonl.gz` was
-#: read as a citation of `<dir>/rows.jsonl`, which is not here.
+#: `.gz` belongs to the path, else `x.jsonl.gz` reads as a citation of `x.jsonl`.
 _PATHISH = re.compile(
     r"[A-Za-z0-9_./*<>{}-]+"
     r"\.(?:py|md|sh|js|json|jsonl|yaml|yml|txt|tmpl|toml|lean|example)(?:\.gz)?\b")
@@ -328,48 +322,26 @@ class TestNoCitationOfAFileThatIsNotHere(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # no companion's data, by its shape: kind, name and size
 # ---------------------------------------------------------------------------
-#
-# The text rules above read what a file SAYS. Two closed pull requests carried
-# both private companions' exported annotation documents under tests/data
-# (340,632 and 591,138 bytes gzipped: thousands of Lean signatures, snippets and
-# book-text quote selectors), and nothing above could see them: a gzip is not
-# text, and an export names no machine. Their review never asked the CLAUDE.md
-# S1 question either. What gives such a file away is its shape, so these rules
-# key on that -- what kind of file it is, the name an exporter or a workspace
-# gives it, and how big it is -- and leave the judgement to the review checklist
-# in CONTRIBUTING.md, which says what counts as private.
+# A gzipped export is not text and names no machine, so the text rules miss it.
 
-#: Kinds CLAUDE.md S1 names that no test needs committed: a companion's Lean and
-#: its build output, a book or a page of one, a rendered site page, a page image
-#: or crop. A test that needs one generates it in a temporary directory, as the
-#: suite's fixture PDFs and tests/e2e's synthetic companions already do.
+#: No test needs these committed; one that needs such a file generates it.
 FORBIDDEN_SUFFIXES = (".lean", ".olean", ".ilean", ".pdf", ".djvu", ".epub",
                       ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp",
                       ".tif", ".tiff", ".ppm", ".pgm", ".pbm")
 
-#: Names an export or a workspace writes, in any directory: the M3 reference
-#: files tests/data/m3/README.md keeps maintainer-side (a document, its export
-#: report or statistics, a site index, a page manifest) and the workspace files
-#: whose names `cflib.paths` fixes (a source's text, a companion's statements,
-#: the pairs).
+#: Names an exporter or a workspace (`cflib.paths`) writes.
 FORBIDDEN_NAME = re.compile(r"""(?x)
       \.annotations\.json(?:\.gz)?$   | \.export-(?:report|stats)\.json$
     | xref\.json(?:\.gz)?$            | site-pages\.json$
     | ^text\.txt$ | ^statements\.jsonl$ | ^pairs\.jsonl$""")
 
-#: Suffixes that mark a file as data rather than code or prose.
 DATA_SUFFIXES = (".json", ".jsonl", ".ndjson", ".csv", ".tsv", ".txt", ".xml",
                  ".gz", ".bz2", ".xz", ".zst", ".zip", ".tar", ".sqlite", ".db")
 
-#: The largest data file a test reads is a derived truth table (37,521 bytes),
-#: and the smaller of the two exported documents was 340,632 bytes gzipped. A
-#: gzip is measured unpacked as well, since packing is what made the document
-#: look small. 64 KiB leaves the next truth table room and nothing else.
+#: Largest real fixture: 37,521 bytes; smaller leaked export: 340,632 gzipped.
 DATA_BYTES_MAX = 64 * 1024
 
-#: (file, why). A data file allowed past the size cap, with what it holds. The
-#: kind and name rules have no allowlist: a synthetic fixture can be renamed.
-#: `test_every_large_data_exemption_is_needed` fails on an entry that is stale.
+#: (file, why) exempt from the size cap only; a fixture can be renamed instead.
 DATA_ALLOWLIST: tuple[tuple[str, str], ...] = (
     ("tests/data/m0a/s17b-usage.jsonl.gz",
      "5,207 rows of {model, usage} token counts and nothing else -- no text, "
@@ -395,11 +367,7 @@ def _unpacked_bytes(payload: bytes, limit: int) -> int:
 
 
 def shape_problems(rel: str, size: int, payload) -> list[str]:
-    """Why a file at `rel` of `size` bytes may not be here, if it may not.
-
-    `payload()` returns its bytes; it is called only for a gzip, so the
-    whole-tree check reads nothing else.
-    """
+    """`payload()` is called only for a gzip, so the tree scan reads nothing else."""
     name = rel.rsplit("/", 1)[-1].lower()
     problems = []
     if name.endswith(FORBIDDEN_SUFFIXES):
@@ -420,8 +388,6 @@ def shape_problems(rel: str, size: int, payload) -> list[str]:
 
 
 class TestNoCompanionDataByItsShape(unittest.TestCase):
-    """The data-file half of CLAUDE.md S1, over the whole tracked tree."""
-
     def test_no_tracked_file_has_the_shape_of_companion_data(self):
         problems: list[str] = []
         for rel in tracked_files():
@@ -448,11 +414,7 @@ class TestNoCompanionDataByItsShape(unittest.TestCase):
                                      f"entry ({why})")
 
     def test_the_rules_catch_what_they_are_written_for(self):
-        """The two exported documents, by name and size, and their near misses.
-
-        The made-up paths carry no `tests/` prefix: the citation check above
-        would read one as a claim that the file is here.
-        """
+        """No `tests/` prefix, or the citation check reads a path as a claim."""
         import gzip
         never = lambda: self.fail("only a gzip is read")              # noqa: E731
         self.assertTrue(shape_problems(
@@ -479,18 +441,10 @@ class TestNoCompanionDataByItsShape(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # a branch is more than its last tree
 # ---------------------------------------------------------------------------
-#
-# The checks above read the checkout, which is the tree a squash merge would
-# land. A pull request publishes every commit on it: a file added in one commit
-# and deleted in the next stays fetchable through the PR's head ref after the
-# branch is gone, and so does a commit message. So a reviewer runs the same
-# rules over every blob and message a branch adds:
-#
-#     CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q tests/test_rf_scrub.py
+# A PR's head ref keeps every commit and message after a later commit deletes it.
 
 SCRUB_RANGE = os.environ.get("CF_SCRUB_RANGE", "")
 
-#: Rules for a commit message on top of RULES. A session trailer names a session.
 MESSAGE_RULES: dict[str, tuple] = {
     "session_trailer": (
         lambda text: re.findall(r"(?mi)^(?:claude|codex)-session:.*$", text),
@@ -507,12 +461,7 @@ def _git(repo: Path, *args: str, stdin: str | None = None) -> str:
 
 
 def scan_range(repo: Path, rev_range: str) -> list[str]:
-    """Every rule of this module, over what `rev_range` adds to `repo`.
-
-    Each blob is checked under the path it was first seen at, so an allowlist
-    entry covers whatever a branch put at that path; that is the same trust the
-    whole-tree check gives the entry.
-    """
+    """Blobs are checked at their first-seen path, so allowlists apply as in the tree."""
     paths: dict[str, str] = {}
     for line in _git(repo, "rev-list", "--objects", rev_range).splitlines():
         sha, _, rel = line.partition(" ")
@@ -553,8 +502,6 @@ def scan_range(repo: Path, rev_range: str) -> list[str]:
 
 
 class TestABranchCarriesNothingInAnyCommit(unittest.TestCase):
-    """The rules above, over every commit of a branch rather than its last tree."""
-
     @unittest.skipUnless(SCRUB_RANGE, "set CF_SCRUB_RANGE (e.g. origin/master..HEAD) "
                                       "to scan every commit a branch adds")
     def test_the_named_range_adds_nothing_private(self):
@@ -562,7 +509,6 @@ class TestABranchCarriesNothingInAnyCommit(unittest.TestCase):
         self.assertEqual(problems, [], f"{SCRUB_RANGE}: " + "; ".join(problems[:10]))
 
     def test_a_file_added_then_deleted_is_still_found(self):
-        """A synthetic branch whose last tree is clean and whose history is not."""
         import gzip
         import shutil
         import tempfile

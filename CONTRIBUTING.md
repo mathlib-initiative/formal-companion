@@ -37,8 +37,7 @@ these are the four that bite hardest.
 4. **Metadata only in this repo.** No book text, no page images, no statement
    tables, no findings, no host names, session ids or repo owners' identities.
    Examples in templates and docs are synthetic. `POLICY.md` is the whole rule
-   and `cf sources validate-registry` is the mechanical half. It is the first
-   item of the review checklist below, because it is the one a review skipped.
+   and `cf sources validate-registry` is the mechanical half.
 
 ## How to add a …
 
@@ -109,74 +108,6 @@ moving detail into `references/`.
 - End a commit message with the `Co-Authored-By:` line naming the model that
   wrote the change, if one did.
 - Green on `python3 -m unittest discover -s tests` before you open it.
-
-## Reviewing a pull request
-
-A review that reads only the final diff misses the cheapest thing to catch.
-Two pull requests once carried both private companions' exported documents
-under `tests/data`; the review of the first checked the code and never asked
-whether the data could be here, and a squash merge would have landed it.
-Closing them did not unpublish them either: a pull request's head ref keeps
-every commit it ever had, after the branch is deleted. So the private-data
-item comes first, and it covers **every commit, every commit message, the PR
-description and the review's own comments**, not only the last tree.
-
-`.github/pull_request_template.md` carries the same list for the author.
-
-1. **No private-companion data, and no book text.** Private means anything that
-   came out of a private companion, a workspace or the reviewer's machine:
-   - a companion's Lean: source, declaration names, signatures, docstrings,
-     snippets, `sorry` lists. Both Tao companions are private repositories;
-   - anything an exporter wrote from a companion, gzipped or not: annotation
-     documents, export reports and statistics, site indexes, page manifests.
-     A test that needs one reads it from `CF_M3_REFERENCE_DIR` and skips
-     without it (`tests/data/m3/README.md`);
-   - workspace output: statement tables, pairs, findings, verdicts, ledgers,
-     reports, run state;
-   - book text: a passage, a quote, an item's statement or title, a page image,
-     a crop, a PDF; and the text of a fetched errata page. Facts *about* an
-     edition (counts, page numbers, item numbers, the registry's fields) are
-     fine, and so are tables that hold only those, such as the M1 truth tables;
-   - machine-local identity: an absolute home path, a host name, a Workflow
-     run id, a session or turn id (Claude Code or Codex), a `Claude-Session:`
-     trailer, a path into a transcript.
-
-   Synthetic text is the replacement for every one of these. A comment that
-   pastes a miss list of docstrings or passages is the same leak as a file:
-   post counts.
-
-   How to check, from the branch:
-
-   ```sh
-   # every rule of the scrub test over each blob and message the branch adds
-   CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q tests/test_rf_scrub.py
-   # what the branch adds, and any blob over 64 KiB, in any commit
-   git diff --stat origin/master...HEAD
-   git rev-list --objects origin/master..HEAD \
-     | git cat-file --batch-check='%(objecttype) %(objectsize) %(rest)' \
-     | awk '$1 == "blob" && $2 > 65536'
-   # paths, ids and trailers in the patches and the messages
-   git log -p origin/master..HEAD | grep -nE '/(Users|home)/|Desktop/|-Session:'
-   ```
-
-   A maintainer who holds the pinned book text or a rendered errata page also
-   runs the passage scans: `CF_BOOK_TXT=<text.txt> CF_ERRATA_MD=<errata.md>
-   python3 -m pytest -q tests/test_rf_scrub.py`. Without them nothing checks
-   for book text mechanically, so read every new fixture string and ask where
-   it came from. A data file the scrub test refuses is moved out of the tree;
-   its size allowlist (`DATA_ALLOWLIST`) takes an entry only with a sentence
-   saying what the file holds and why none of it is private.
-
-   If something private is found, say so on the PR without quoting it, and do
-   not approve: removing it in a later commit leaves it in the PR's history.
-   The branch is rebuilt without it and the PR closed, and the owner asks
-   GitHub to purge the closed PR's refs.
-2. **Every fix has a test that fails before it**, and the PR says how that was
-   confirmed.
-3. **The stated evidence reproduces.** Rerun the counts the description gives
-   (tests run, skipped, figures) on the head being merged, and check that
-   "every fix applied" lists the exceptions.
-4. **The invariants above hold**: stdlib only, `finding_id` and
-   `items.clean()` unchanged, no write to a companion repository.
-5. **Documents match the code**: `tests/test_rf_docs.py` passes, and a change
-   to behaviour moves `docs/design/stage_map.md` in the same commit.
+- Reviewers: no private-companion data or book text in any commit or message
+  (item 4 above); `CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q
+  tests/test_rf_scrub.py` scans every commit the branch adds.
