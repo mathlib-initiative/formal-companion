@@ -4,7 +4,7 @@
 verbatim into a companion's `pdf-overlay/`, so everything about one companion
 has to reach them through `overlay.config.json` and the annotation document
 beside it. These tests hold the behaviour section 5 of
-`templates/overlay/SPEC.md` asks for, against a synthetic document, a synthetic
+`docs/overlay.md` asks for, against a synthetic document, a synthetic
 configuration and a synthetic PDF in a temporary directory: no network (the
 URL opener is injected), no real build tool (a fake one on PATH, reached
 through a symlink), and nothing written outside the temporary directory.
@@ -227,7 +227,7 @@ class Companion:
         source.update(source_overrides)
         source = {key: value for key, value in source.items() if value is not None}
         return {
-            "schema": "formal-companion/annotations",
+            "schema": "lean-companion/annotations",
             "schema_version": "1.0",
             "companion": {"id": "notes-companion", "name": "notes-companion"},
             "sources": [source],

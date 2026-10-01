@@ -8,8 +8,8 @@ list, the numbering depth, the section prefix, the text column and the
 paragraph indent as constants.  Here every one is an argument or a
 measurement, and the
 output is the annotation format's own `items`, `locations` and `provenance`
-(docs/annotations.md sections 5.2, 5.6, 5.7 and 6.1-6.4) instead of a private
-batch file.
+(docs/annotations.md sections 3.2, 3.6 and 4.2-4.4, with the item ids of
+section 5.2) instead of a private batch file.
 
 What the original did, which is kept:
 

@@ -35,6 +35,21 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf overlay init|sync|check|export|geometry|destinations`: a companion's
+  `pdf-overlay/` directory is now generated from `templates/overlay/runtime/`
+  rather than written by hand for one book. `sync` copies the viewer, the
+  three runtime tools, the two schemas and the vendored PDF.js in byte for
+  byte and records every sha256 in `GENERATED.json`, so a companion's CI can
+  verify the whole directory with
+  `python3 pdf-overlay/tools/check_generated.py` and the standard library
+  alone; `check` adds the annotation format's own checker (canonical bytes
+  included) and the three rules the viewer depends on. `docs/overlay.md`,
+  moved here from the overlay template, is the contract.
+  This is the **one exception** to "never write to a companion repo"
+  (`CLAUDE.md` section 4, `CONTRIBUTING.md` invariant 3, `SKILL.md` rule 10):
+  `init`, `sync` and `export` write under `<companion>/pdf-overlay/` and
+  nowhere else, refuse a symlinked or escaping `pdf-overlay`, and run no git
+  in the companion.
 - `cf export site-pages <site> --out <pages.json>`: writes the page manifest
   that `cf export docstring-tags --site-pages` reads.
 - `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
@@ -269,6 +284,13 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- The overlay runtime tools `serve.py` and `build_site.py` accepted only
+  `formal-companion/annotations` as the document's `schema`. The vendored
+  format's own value is `lean-companion/annotations`
+  (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`), which is what
+  every `cf export` convention writes and what the viewer accepts, so both
+  tools refused every real document. They now use the format's value, and the
+  contract (`docs/overlay.md`) states which sections of the format it cites.
 - `cf export attribution-table` marks an equation's title as the producer's
   (`title_source: producer`); in measure_theory `equation-1.2` and
   `equation-1.3` change, so the measure_theory reference must be regenerated.

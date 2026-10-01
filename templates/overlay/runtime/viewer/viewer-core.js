@@ -5,7 +5,7 @@
  * Nothing here touches the DOM, so `node --test` exercises all of it; viewer.js
  * holds the controller. Nothing here is specific to one companion either: every
  * per-book value arrives as data, from an `overlay.config.json`
- * (templates/overlay/SPEC.md section 3) and from an annotation document of
+ * (docs/overlay.md section 3) and from an annotation document of
  * format 1.0 (docs/annotations.md), and a value this module cannot read is an
  * error with a message, never a guess.
  */
@@ -29,7 +29,7 @@ export const DOCUMENT_SCHEMA_MAJOR = "1.";
 /** The viewer never reads a JSON file larger than this. */
 export const MAX_JSON_BYTES = 64 * 1024 * 1024;
 
-/** `pdf.route` must start with this and carry no `..` (SPEC section 3). */
+/** `pdf.route` must start with this and carry no `..` (the contract's section 3). */
 export const ROUTE_PREFIX = "/__";
 
 /** Where the site root sits from `<output_root>/<mount>/viewer/index.html`. */
@@ -44,7 +44,7 @@ export const CARD_PAGE_SIZE = 25;
 
 // --- vocabulary (the format's, copied as data the viewer can order by) -------
 
-/** A link's `role`, in the order the card list shows them (SPEC section 4). */
+/** A link's `role`, in the order the card list shows them (the contract's section 4). */
 export const LINK_ROLES = Object.freeze(["key", "attributed", "support", "example", "helper"]);
 
 /** A cluster membership's `role`, in the order the fallback list shows them. */
@@ -71,7 +71,7 @@ export const VERDICT_LABELS = Object.freeze({
  * One generic line per coverage value: what the item's links do NOT show on
  * their own. The first six are the format's own values
  * (formal_companion_annotations.vocab.ANNOTATION_COVERAGE); `partial_only` and
- * `private_only` are the two further spellings templates/overlay/SPEC.md
+ * `private_only` are the two further spellings docs/overlay.md
  * section 4 names, kept so a document written to the contract's wording also
  * reads. No value is ever guessed: an unknown one shows no summary.
  */
@@ -219,7 +219,7 @@ export function encodeFragment(fragment) {
 /**
  * The back link's own `href`, or null. It is the one href the config supplies
  * rather than the document, and its default (`../../index.html`) climbs out of
- * the mount, so the destination rule of SPEC section 4 cannot apply verbatim:
+ * the mount, so the destination rule of the contract's section 4 cannot apply verbatim:
  * a relative path is accepted with its `..` segments, and an `https:` URL is
  * accepted whole, but a scheme-bearing (`javascript:`, `data:`), protocol-
  * relative or root-absolute value is refused so the page header can never
@@ -279,7 +279,7 @@ export function destinationHref(destination, root = DEFAULT_SITE_ROOT) {
 
 /**
  * Read `overlay.config.json`: check what the viewer relies on, and fill in the
- * defaults of templates/overlay/SPEC.md section 3 for everything else. The full
+ * defaults of docs/overlay.md section 3 for everything else. The full
  * rule set is `tools/check_generated.py`'s; this is the subset the page needs
  * before it will fetch anything.
  */
@@ -334,7 +334,7 @@ export function readConfig(raw) {
 
 /**
  * The `kind: pdf` source the config names, after the three refusals of
- * templates/overlay/SPEC.md section 4: the document's schema, its major
+ * docs/overlay.md section 4: the document's schema, its major
  * version, and a source that carries `sha256` and `physical_page_count`.
  */
 export function pdfSource(doc, sourceId) {
@@ -747,7 +747,7 @@ function buildItem(item, context) {
       text(context.clusters.get(clusterId)?.title) || clusterId),
     coverage: text(item.coverage),
     // The format carries a producer's note under the `x_` extension prefix;
-    // templates/overlay/SPEC.md section 4 spells it without one, so both read.
+    // docs/overlay.md section 4 spells it without one, so both read.
     coverageNote: text(item.coverage_note) || text(item.x_coverage_note),
     id,
     kind: text(item.kind),
