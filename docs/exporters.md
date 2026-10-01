@@ -19,7 +19,8 @@ tag review · 5 reproducing the references · 6 deliberate differences
 cf export attribution-table <checkout> --commit <sha> --out <doc.json> \
     [--lean-build <dir>] [--report <file>] [--name <name>] [--repo-id host/org/name] \
     [--site-name <site kind>] [--source-id <id>] [--source-title <title>] \
-    [--source-edition <edition>] [--page-offset <n>]
+    [--source-edition <edition>] [--page-offset <n>] \
+    [--data-dir <dir>] [--ledger <file>] [--official-source <file>]
 ```
 
 Both subcommands take the same common flags. `--site-name` is the
@@ -32,15 +33,34 @@ The exporter reads, at the pinned commit,
 
 | input | becomes |
 |---|---|
-| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
-| `pdf-overlay/data/target-refinement.json` | `key` and `attributed` `links`, merged per item; the curation note's per-item classes as `coverage` |
-| `source-formalization-ledger.json` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
-| `pdf-overlay/data/declaration-snippets.json` | `snippets` |
-| `pdf-overlay/data/destinations.json` | `destinations` and `cluster.related_to` |
-| `pdf-overlay/data/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
-| `pdf-overlay/official-source.json` | the PDF source's URLs, bytes and retrieval time |
+| `<data-dir>/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
+| `<data-dir>/target-refinement.json` | `key` and `attributed` `links`, merged per item; the table's own coverage entries, or the curation note's per-item classes, as `coverage` |
+| `<ledger>` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
+| `<data-dir>/declaration-snippets.json`, when it is there | `snippets` |
+| `<data-dir>/destinations.json` | `destinations` and `cluster.related_to` |
+| `<data-dir>/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
+| `<official-source>` | the PDF source's URLs, bytes and retrieval time |
 | every tracked `.lean` file | every declaration (`adapters.leanparse`), the statement-hash ids and signatures of anonymous ones (`formal_companion_annotations.ids`), the section 5.1 cut for named ones |
 | a Lake build's `lib/lean` (`--lean-build`, default `<checkout>/.lake/build/lib/lean`) | an anonymous instance's generated name as `lean_name`, when the `.ilean` postdates the file's last commit |
+
+Three of those paths are flags, so a companion that keeps the same data
+somewhere else needs no new convention. Each is **relative to the checkout**,
+read at the pinned commit like every other input; an absolute path, or one that
+climbs out with `..`, is refused.
+
+| flag | default | moves |
+|---|---|---|
+| `--data-dir` | `pdf-overlay/data` | the geometry batches, the target refinement, the verdicts, the destinations and the declaration snippets |
+| `--ledger` | `source-formalization-ledger.json` | the source-formalization ledger, which is also `companion.graph.path` and every provenance input that pins it |
+| `--official-source` | `pdf-overlay/official-source.json` | the PDF's download record |
+
+`declaration-snippets.json` is the one input of the four under `--data-dir`
+that may be absent. When the data directory has none, every declaration's
+snippet is cut from the Lean at the pinned commit instead — the format's
+section 5.1 header cut, the same cut `docstring-tags` writes — and the report
+says so (`counts.snippets_source`, the `snippets.no_snippets_file` bucket). A
+declaration with no header to cut (a `structure`, `class` or `inductive`, a
+field, an unlocated example) then has no snippet.
 
 The PDF source is named through the registry by the sha256 the overlay
 records: id, title, edition and printed-page offset come from
@@ -48,7 +68,10 @@ records: id, title, edition and printed-page offset come from
 and `--page-offset` supply them for an edition the registry does not know; the
 ledger's locator prose is cross-checked against the offset). `companion.name`
 and `companion.repo` come from the `origin` remote, or `--name` and
-`--repo-id`.
+`--repo-id`. A checkout that names no remote at all — a copy made by pushing
+into a bare tree — is named by its own directory under `local/`, counted in
+`companion.repo_from_checkout_directory`; one that has remotes none of which
+parses is still a refusal.
 
 The document validates canonically before the command returns. The report
 (`<out>` with `.export-report.json`, or `--report`) carries the counts, the
@@ -61,15 +84,50 @@ fewer than four points, or an unnumbered label with no title. Any other input
 the exporter does not check for (a `KeyError`, `ValueError`, `IndexError` or a
 failed tool) ends the command with one error line, never a traceback.
 
+### The refinement table's two versions
+
+A version-1 target refinement says, per region, which declarations the item is
+attributed to and which of them state it (`key_formalization_ids`). Version 2
+adds **coverage entries**: a region the curation classified but could give no
+key declaration carries a `coverage` class, an empty `key_formalization_ids`,
+the declarations that class implies and usually the curator's `note`. Each
+class becomes links and an item `coverage` that satisfy invariant I5 — which
+refuses an `attributed` link on an item with no `key` link, so a keyless entry
+never writes one:
+
+| the table's class | links | item `coverage` |
+|---|---|---|
+| `partial_only` | its declarations as `support` links | `partial` |
+| `support_only` | `support` links, or `example` for an anonymous example | `support_only` |
+| `example_only` | `example` links | `example_only` |
+| `private_only` | `key` links to the private declarations | `formalized` |
+| `not_formalized` | none | `not_formalized` |
+
+The format's `coverage` enum (`formal_companion_annotations.vocab.ANNOTATION_COVERAGE`)
+is coarser than the curation's classes and has no `coverage_note`, so a class
+it cannot spell keeps the curation's own word in `x_coverage`
+(`item.x_coverage_class`) and the note rides along as `x_coverage_note`
+(`item.coverage_from_table`). Nothing the table said is dropped.
+
+Several regions of one item may disagree. The item takes the strongest class
+any of them names — formalized (a version-1 attribution entry) > `partial_only`
+> `private_only` > `support_only` > `example_only` > `not_formalized` — and the
+disagreement is a report bucket (`item.coverage_regions_disagree`), not a
+refusal. Two entries that reach the same declaration give one link, in the
+strongest role either asked for (`key` > `attributed` > `support` > `example` >
+`helper`). Version-1 tables are unchanged: with no coverage entry the links are
+the merged `formalization_ids` as before and the classes still come from the
+provenance note's prose.
+
 A geometry label's sub-part goes through the renderer both exporters share
 (`annotations.export.common.render_sub`, over the item grammar's groups):
 nested groups join with `.` (`(i)(a)` is `i.a`), a range stays a range
 (`(i)-(iii)` is `i-iii`) and a list a list (`(i), (iii)` is `i,iii`), so an
 item is never narrowed to its first part. A parenthetical attached to the
 number that the grammar refuses (`1.2.3(ii')`) is dropped and reported as a
-problem. An item whose only links are ledger support edges carries the class
-they imply as `coverage` (`example_only` when every one is an example,
-`support_only` otherwise; section I5).
+problem. An item the table classifies nowhere and whose only links are ledger
+support edges carries the class they imply as `coverage` (`example_only` when
+every one is an example, `support_only` otherwise; section I5).
 
 ## 2. `cf export docstring-tags`
 
@@ -138,11 +196,19 @@ reference companions, with the counts of the maintainer's reports (kept in
 | `source.path` | 1 | the ledger's workspace-relative PDF path |
 | `source.printed_page_offset_from_prose` | 1 | the offset is read from locator prose and the registry, not a companion field |
 
-Two lossy buckets appear only when their input does: `link.key_outside_formalization_ids`
-(a refinement key id its own entry's `formalization_ids` does not list; links
-follow `formalization_ids`) and, as a count rather than a bucket,
+Five further lossy buckets appear only when their input does:
+`link.key_outside_formalization_ids` (a refinement key id its own entry's
+`formalization_ids` does not list; links follow `formalization_ids`),
+`item.coverage_regions_disagree` (the regions of one item carry different
+coverage classes; the weaker ones are not carried),
+`snippets.no_snippets_file` (the data directory exports no snippets, so they
+are cut from the Lean), `companion.repo_from_checkout_directory` (the checkout
+names no remote) and, as a count rather than a bucket,
 `ledger_support_edges.same_link_from_another_node` (one support edge reached
-through two single-item nodes gives one link).
+through two single-item nodes gives one link). The reference is a version-1
+table, so its `item.coverage_unclassified` count above is the whole of its
+unclassified fallback; a version-2 table classifies most of them in
+`item.coverage_from_table` instead.
 
 and bent: the ledger's scope and snapshot tree (`x_graph_scope`, 1), the source
 nodes' plan ids and statuses (`cluster.x_plan_status`, 77), the refinement's
@@ -155,7 +221,10 @@ coverage classes read from the curation note (`item.coverage_from_prose`), and
 the verdicts' sub-parts and replacing declarations read from prose
 (`verdict.sub_from_prose`, 2; `verdict.replaced_by_from_prose`, 4). An item
 linked only by support edges adds `item.coverage_from_support_edges` (none in
-the reference).
+the reference), and a version-2 refinement table adds
+`item.coverage_from_table`, `item.x_coverage_class` and, where a coverage entry
+names a key declaration after all, `link.key_in_coverage_entry` (none of the
+three in the reference, which is version 1).
 
 **docstring-tags** (`tao-measure-lean.export-report.json`): no
 lossy bucket and three bent buckets: `source.x_note` (1, why the site is

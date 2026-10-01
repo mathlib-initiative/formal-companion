@@ -31,6 +31,19 @@ sources:
   map: []
 
 # The exported artifacts, repo-relative. Defaults match measure_theory's layout.
+#
+# `cf export attribution-table` reads the same artifacts and takes the three
+# paths that are not fixed by the convention as flags, also repo-relative
+# (docs/exporters.md section 1):
+#
+#   --data-dir pdf-overlay/data                      the directory below
+#   --ledger source-formalization-ledger.json        the `ledger` below
+#   --official-source pdf-overlay/official-source.json
+#
+# A repo whose layout differs needs those flags, not a new convention. The
+# snippets file is the one the export can do without: with no
+# declaration-snippets.json it cuts each statement from the Lean at the pinned
+# commit (the format's section 5.1 header cut) and says so in its report.
 target_refinement: pdf-overlay/data/target-refinement.json
 declaration_snippets: pdf-overlay/data/declaration-snippets.json
 geometry_glob: "pdf-overlay/data/geometry-batch-*.json"
