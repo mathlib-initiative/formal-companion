@@ -100,8 +100,13 @@ passage title or a tag (I10) is dropped and reported as a problem naming the
 declaration, so the document stays valid and the command still exits 1.
 
 The site pin is a small JSON file: `{"source_id", "title", "path",
-"rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`;
-The reference companion's is `tml-site-pages.json` in the maintainer's
+"rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`.
+`cf export site-pages <rendered site> --out <pages.json> [--source-id ID]
+[--title T] [--path P] [--rendered-at TIME]` writes it: every `*.html` file
+under the site (the same walk `--site` checks), the digest of section 3.1 of
+`docs/annotations.md`, `path` defaulting to the site directory's name and
+`rendered_at` to the newest page's modification time. It reads no checkout
+and refuses an `--out` inside the site. The reference companion's is `tml-site-pages.json` in the maintainer's
 `CF_M3_REFERENCE_DIR` (`tests/data/m3/README.md`); it is not in this tree.
 The PDF is named through the registry as in section 1.
 
