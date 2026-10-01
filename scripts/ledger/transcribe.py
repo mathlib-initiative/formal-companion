@@ -337,8 +337,31 @@ def _counts(rows: Iterable[dict]) -> dict:
     return out
 
 
-def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: dict) -> str:
-    """Render adjudicated.<companion>.md -- the human record of the run."""
+#: sections of the record read from a result rather than the rows; a pass whose
+#: result has none (every challenge pass) keeps the earlier record's
+RESULT_SECTIONS = (
+    ("definitions", "Definition readings"),
+    ("uncovered", "Book definitions with no native definition"),
+    ("critic", "Completeness critic"),
+)
+
+
+def _earlier_section(md: str, title: str) -> list[str]:
+    lines = md.splitlines()
+    heading = "## %s" % title
+    if heading not in lines:
+        return []
+    stops = {"## %s" % t for _, t in RESULT_SECTIONS}
+    end = start = lines.index(heading)
+    while end + 1 < len(lines) and lines[end + 1] not in stops \
+            and not lines[end + 1].startswith("Refutation details: "):
+        end += 1
+    return lines[start:end + 1]
+
+
+def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: dict,
+                    previous: str = "") -> str:
+    """Render adjudicated.<companion>.md -- the human record of the ledger."""
     rows = sorted(rows, key=lambda r: (r.get("item", ""), r.get("finding_id", "")))
     counts = _counts(rows)
     lines: list[str] = []
@@ -348,6 +371,12 @@ def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: di
         "Result file: `%s`, method `%s`."
         % (meta.get("result_file", ""), meta.get("method", ""))
     )
+    passes: dict[tuple, int] = {}
+    for row in rows:
+        key = (str(row.get("at") or ""), str(row.get("method") or ""))
+        passes[key] = passes.get(key, 0) + 1
+    lines.append("Rows by pass: " + "; ".join(
+        "`%s` %s (%d)" % (method, at, n) for (at, method), n in sorted(passes.items())))
     by_source: dict[str, list[dict]] = {}
     for row in rows:
         by_source.setdefault(str(row.get("source_id") or "(unstamped)"), []).append(row)
@@ -420,12 +449,10 @@ def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: di
                     )
                 )
         lines.append("")
-    for key, title in (
-        ("definitions", "Definition readings"),
-        ("uncovered", "Book definitions with no native definition"),
-    ):
+    for key, title in RESULT_SECTIONS[:2]:
         entries = result.get(key) or []
         if not entries:
+            lines.extend(_earlier_section(previous, title))
             continue
         lines.append("## %s" % title)
         lines.append("")
@@ -447,6 +474,8 @@ def render_markdown(companion: str, rows: Iterable[dict], result: dict, meta: di
         lines.append("")
         lines.append(str(result["critic"]).strip())
         lines.append("")
+    else:
+        lines.extend(_earlier_section(previous, RESULT_SECTIONS[2][1]))
     lines.append("Refutation details: `refuted.%s.jsonl`; open rows: `accepted.%s.jsonl`." % (companion, companion))
     lines.append("")
     return "\n".join(lines)
@@ -497,12 +526,18 @@ def transcribe(
             result, companion=companion, source_id=source_id, source_sha=source_sha,
             index=index, method=method, at=at, pins=Pins(paths)
         )
-    accepted, refuted = split_rows(rows)
+    # a pass's verdict replaces any earlier row for its finding, in either file
+    earlier = [r for path in (paths.accepted(companion), paths.refuted(companion))
+               if os.path.exists(path) for r in compat.data_rows(compat.read_jsonl(path))]
+    ids = {str(r.get("finding_id") or "") for r in rows}
+    kept = [r for r in earlier if str(r.get("finding_id") or "") not in ids]
+    accepted, refuted = split_rows(kept + rows)
+    ledger = accepted + refuted
     meta_common = {
         "companion": companion,
-        "sources": sorted({str(r.get("source_id") or "") for r in rows if r.get("source_id")}),
+        "sources": sorted({str(r.get("source_id") or "") for r in ledger if r.get("source_id")}),
         "source_shas": {str(r.get("source_id")): str(r.get("source_sha") or "")
-                        for r in rows if r.get("source_id")},
+                        for r in ledger if r.get("source_id")},
         "method": method,
         "at": at,
         "result_file": os.path.abspath(result_path),
@@ -518,14 +553,25 @@ def transcribe(
         [{k: v for k, v in r.items() if not k.startswith("_")} for r in refuted],
         meta=dict(meta_common, file="refuted", counts=_counts(refuted)),
     )
-    md = render_markdown(companion, rows, result, meta_common)
-    compat.write_text(paths.adjudicated_md(companion), md)
+    md_path = paths.adjudicated_md(companion)
+    previous = ""
+    if os.path.exists(md_path):
+        with open(md_path, encoding="utf-8") as fh:
+            previous = fh.read()
+    compat.write_text(md_path, render_markdown(companion, ledger, result, meta_common, previous))
 
+    this_accepted, this_refuted = split_rows(rows)
     report = {
         "companion": companion,
-        "accepted": len(accepted),
-        "refuted": len(refuted),
+        "accepted": len(this_accepted),
+        "refuted": len(this_refuted),
         "contested": sum(1 for r in rows if r.get("contested")),
+        "replaced": len(earlier) - len(kept),
+        "ledger": {
+            "accepted": len(accepted),
+            "refuted": len(refuted),
+            "contested": sum(1 for r in ledger if r.get("contested")),
+        },
         "files": [
             paths.accepted(companion),
             paths.refuted(companion),
@@ -538,6 +584,17 @@ def transcribe(
         report["errors"] = errs
         report["ok"] = not errs
     return report
+
+
+def summary(report: dict) -> str:
+    """What one transcription added, and what the companion's ledger now holds."""
+    return (
+        "%s: transcribed %d accepted, %d refuted, %d contested (%d earlier row(s) replaced); "
+        "ledger now %d accepted, %d refuted, %d contested"
+        % (report["companion"], report["accepted"], report["refuted"], report["contested"],
+           report["replaced"], report["ledger"]["accepted"], report["ledger"]["refuted"],
+           report["ledger"]["contested"])
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -574,16 +631,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     for err in report.get("errors") or []:
         print(str(err), file=sys.stderr)
-    print(
-        "%s: %d accepted, %d refuted, %d contested -> %s"
-        % (
-            report["companion"],
-            report["accepted"],
-            report["refuted"],
-            report["contested"],
-            ", ".join(report["files"]),
-        )
-    )
+    print("%s -> %s" % (summary(report), ", ".join(report["files"])))
     return 0 if not report.get("errors") else 1
 
 
