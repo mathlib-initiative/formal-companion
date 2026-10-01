@@ -16,19 +16,14 @@ export const CONFIG_SCHEMA = "formal-companion/overlay-config";
 export const CONFIG_SCHEMA_VERSION = 1;
 
 /**
- * The `schema` values an annotation document may carry: the format's own
- * (formal_companion_annotations.vocab.ANNOTATION_SCHEMA, which is what every
- * `cf export` convention writes) and the spelling templates/overlay/SPEC.md
- * section 4 uses for the same format. A document written by `cf overlay export`
- * carries the first; the second is accepted so the contract's wording also
- * loads.
+ * The one `schema` value an annotation document may carry: the format's own,
+ * `formal_companion_annotations.vocab.ANNOTATION_SCHEMA`, which is what the
+ * vendored schema pins with a `const` and what every `cf export` convention
+ * writes. Any other spelling is refused, not translated.
  */
-export const DOCUMENT_SCHEMAS = Object.freeze([
-  "lean-companion/annotations",
-  "formal-companion/annotations",
-]);
+export const DOCUMENT_SCHEMA = "lean-companion/annotations";
 
-/** Readers match the major version only (format section 9). */
+/** Readers match the major version only (format section 9.1). */
 export const DOCUMENT_SCHEMA_MAJOR = "1.";
 
 /** The viewer never reads a JSON file larger than this. */
@@ -129,6 +124,19 @@ function byId(records) {
   return index;
 }
 
+/** U+0000, spelled so it is visible in the source rather than a stray byte. */
+const VERDICT_KEY_SEPARATOR = String.fromCharCode(0);
+
+/**
+ * The key one `verdicts[].declarations[]` entry is indexed under. A verdict
+ * belongs to an (item, declaration) pair — the same declaration under another
+ * item is another judgement — and the separator occurs in no id, so the two
+ * parts of a key can never run together. `buildIndex` writes the same key.
+ */
+function verdictKey(itemId, declarationId) {
+  return [itemId, declarationId].join(VERDICT_KEY_SEPARATOR);
+}
+
 function groupBy(records, key) {
   const index = new Map();
   for (const record of asArray(records)) {
@@ -180,9 +188,10 @@ export async function verifyPdfBytes(bytes, expected, cryptoProvider = globalThi
 const SCHEME = /^[a-z][a-z\d+.-]*:/i;
 
 /**
- * The format's `site_path` grammar: a path relative to the site root, with no
- * leading `/` or `#`, no `..` segment, and no whitespace, `#` or `:` (so it can
- * never read as a URL scheme). Returns the path, or null.
+ * The grammar a destination's relative `href` follows (format section 3.6, the
+ * same grammar as `SitePageSelector.path`): a path relative to the site root,
+ * with no leading `/`, no `..` segment, and no whitespace, `#` or `:` (so it
+ * can never read as a URL scheme). Returns the path, or null.
  */
 export function safeSitePath(value) {
   const path = typeof value === "string" ? value : "";
@@ -208,9 +217,32 @@ export function encodeFragment(fragment) {
 }
 
 /**
- * The directory a destination's `site_path` resolves against: the back link's
- * own directory. A back link that is absolute or carries a scheme is not a site
- * path at all, so the default mount depth is used instead.
+ * The back link's own `href`, or null. It is the one href the config supplies
+ * rather than the document, and its default (`../../index.html`) climbs out of
+ * the mount, so the destination rule of SPEC section 4 cannot apply verbatim:
+ * a relative path is accepted with its `..` segments, and an `https:` URL is
+ * accepted whole, but a scheme-bearing (`javascript:`, `data:`), protocol-
+ * relative or root-absolute value is refused so the page header can never
+ * carry a live link the config smuggled in.
+ */
+export function safeBackLinkHref(value) {
+  const href = text(value);
+  if (!href) {
+    return null;
+  }
+  if (safeHttpsUrl(href)) {
+    return href;
+  }
+  if (/[\s#]/.test(href) || href.includes("\\") || href.startsWith("/") || SCHEME.test(href)) {
+    return null;
+  }
+  return href;
+}
+
+/**
+ * The directory a destination's relative `href` resolves against: the back
+ * link's own directory. A back link that is absolute or carries a scheme is not
+ * a relative path at all, so the default mount depth is used instead.
  */
 export function siteRootFrom(href) {
   const value = text(href);
@@ -276,18 +308,21 @@ export function readConfig(raw) {
          + `"${ROUTE_PREFIX}" and carries no "..".`);
   }
   const backLink = isObject(raw.back_link) ? raw.back_link : DEFAULT_BACK_LINK;
+  // An href the back-link rule refuses falls back to the default, which is the
+  // site index at the depth the mount sits at.
+  const backHref = safeBackLinkHref(backLink.href) ?? DEFAULT_BACK_LINK.href;
   const display = isObject(raw.display) ? raw.display : {};
   return {
     backLink: {
-      href: text(backLink.href) || DEFAULT_BACK_LINK.href,
+      href: backHref,
       text: text(backLink.text) || DEFAULT_BACK_LINK.text,
     },
-    // Section 3's key table has no entry for the document's path, so every
-    // generated config takes the default; a config that names one is honoured.
-    documentUrl: text(raw.document_url) || DEFAULT_DOCUMENT_URL,
+    // Section 3's key table has no entry for the document's path: there is one
+    // place the generated document sits, and the viewer reads only that one.
+    documentUrl: DEFAULT_DOCUMENT_URL,
     lede: text(raw.lede),
     pdfRoute: route,
-    siteRoot: siteRootFrom(text(backLink.href) || DEFAULT_BACK_LINK.href),
+    siteRoot: siteRootFrom(backHref),
     sourceId,
     storageKey: text(raw.storage_key) || DEFAULT_STORAGE_KEY,
     stripPrefix: text(display.strip_prefix),
@@ -306,9 +341,9 @@ export function pdfSource(doc, sourceId) {
   if (!isObject(doc)) {
     fail("The annotation document must be a JSON object.");
   }
-  if (!DOCUMENT_SCHEMAS.includes(doc.schema)) {
+  if (doc.schema !== DOCUMENT_SCHEMA) {
     fail(`The annotation document has schema ${JSON.stringify(doc.schema)}; expected `
-         + `${DOCUMENT_SCHEMAS.map((value) => JSON.stringify(value)).join(" or ")}.`);
+         + `${JSON.stringify(DOCUMENT_SCHEMA)}.`);
   }
   const version = typeof doc.schema_version === "string" ? doc.schema_version : "";
   if (!version.startsWith(DOCUMENT_SCHEMA_MAJOR)) {
@@ -333,7 +368,7 @@ export function pdfSource(doc, sourceId) {
   return source;
 }
 
-// --- geometry (format sections 6.1 to 6.4) ----------------------------------
+// --- geometry (the format's PdfRegionSelector, format section 4.2) ----------
 
 /** The size of one physical page: its `page_sizes` range, else `page_size`. */
 export function pageSizeFor(source, page) {
@@ -614,7 +649,7 @@ function declarationCard(declaration, context, extra) {
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
     resolution: text(destination?.resolution),
     snippet: snippet ? { line: snippet.line ?? null, text: text(snippet.text) } : null,
-    verdict: context.verdictsByDeclaration.get(`${extra.itemId} ${id}`) ?? null,
+    verdict: context.verdictsByDeclaration.get(verdictKey(extra.itemId, id)) ?? null,
     ...extra,
   };
 }
@@ -673,8 +708,9 @@ function buildItem(item, context) {
     LINK_ROLES,
   );
 
-  // Format section 8.1: an item with no links of its own but with clusters is
-  // shown through those clusters' memberships, labelled as a fallback.
+  // The item's `cluster_fallback` case (format section 3.2): an item with no
+  // links of its own but with clusters is shown through those clusters'
+  // memberships, labelled as a fallback.
   const clusterIds = asArray(item.clusters).map(text).filter(Boolean);
   const fallbackCards = cards.length === 0
     ? orderCards(
@@ -767,7 +803,7 @@ export function buildIndex(doc, config) {
     }
     context.verdictsByItem.get(itemId).push(verdict);
     for (const entry of asArray(verdict.declarations)) {
-      const key = `${itemId} ${text(entry?.declaration)}`;
+      const key = verdictKey(itemId, text(entry?.declaration));
       if (text(entry?.declaration) && !context.verdictsByDeclaration.has(key)) {
         context.verdictsByDeclaration.set(key, {
           declaration: text(entry.declaration),
