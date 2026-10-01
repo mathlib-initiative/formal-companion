@@ -45,7 +45,11 @@ class TestCalibrationRegistry(unittest.TestCase):
         stack = entry["fix_stack"]
         self.assertRegex(str(stack["first_merge_commit"]), r"^[0-9a-f]{7,40}$")
         self.assertEqual(stack["pull_requests"], [8, 9, 10, 4, 12, 13, 14])
-        self.assertIn("first parent", entry["found_by"] + entry["purpose"] + "first parent")
+        # the reasoning names the relation the two recorded commits stand in,
+        # with the same two commits: change either and the record must follow
+        found_by = " ".join(str(entry["found_by"]).split())
+        self.assertIn(f"{entry['pre_fix_commit']} as the first parent of "
+                      f"{stack['first_merge_commit']}", found_by)
         self.assertIn("96e64a9", entry["found_by"])
         self.assertIn("section 5.1", entry["purpose"])
 
