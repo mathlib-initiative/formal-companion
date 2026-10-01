@@ -7,7 +7,7 @@
   in issue #11) the rows sum to $358.10, the recorded total. The lines are one
   per content block with the response's usage repeated, and the recorded total
   was summed the same way; collapsing identical adjacent rows leaves 2,628 rows
-  at $168.91.
+  at $168.91 (an estimate: the rows carry no message id).
 - `codex-usage-shapes.json` and `codex-usage-sample.json`: the shapes of the
   token-count events in a Codex rollout log (`rollout-*.jsonl`), with every
   free string replaced by `<str>` or a placeholder id. The usage object has

@@ -1139,6 +1139,8 @@ M0a:
   s17 run's $219.55 (issue #11). It also prices one Codex session, checked
   against a hand computation from that session's token counts and the
   published rate. There is no fallback without a recorded total.
+  Not yet met: those totals were summed line by line, about 2x the per-response
+  cost; a per-response re-read of the retained transcripts is still owed.
 - A stage-receipt writer (section 4.1) passes its tests.
 - The `$TML` commit before the camera-ready fix stack is identified from git
   log.
