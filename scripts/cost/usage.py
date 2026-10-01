@@ -62,6 +62,10 @@ FIELDS: tuple[str, ...] = ("input", "output", "cache_write", "cache_read")
 #: the model id a response is filed under when its log names none
 UNKNOWN_MODEL = "unknown"
 
+#: the model id of an assistant line Claude Code writes itself (an API error,
+#: "No response requested.") with all-zero usage; nothing was billed for it
+SYNTHETIC_MODEL = "<synthetic>"
+
 #: how a file was read
 KIND_CLAUDE = "claude_transcript"
 KIND_CODEX = "codex_rollout"
@@ -259,7 +263,7 @@ def read_claude_transcript(path: Path, totals: Totals) -> Iterator[Record]:
         if obj.get("type") != "assistant":
             continue
         message = obj.get("message")
-        if not isinstance(message, dict):
+        if not isinstance(message, dict) or message.get("model") == SYNTHETIC_MODEL:
             totals.skipped_without_usage += 1
             continue
         usage = normalise_usage(message.get("usage"))
@@ -349,7 +353,7 @@ def read_usage_export(path: Path, totals: Totals, model: str | None = None) -> I
     """Rows of a ``{model, usage}`` export, summed as written."""
     for obj in _lines(path, totals):
         usage = normalise_usage(obj.get("usage"))
-        if usage is None:
+        if usage is None or obj.get("model") == SYNTHETIC_MODEL:  # exported before the skip
             totals.skipped_without_usage += 1
             continue
         yield Record(model=str(obj.get("model") or model or UNKNOWN_MODEL), usage=usage,
