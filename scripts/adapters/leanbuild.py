@@ -140,6 +140,10 @@ def _tokens(s: str, i: int, stop: int):
                 i += 1
 
 
+def _split_name(name: str) -> list[str]:
+    return re.findall(r"(?:«[^»]*»|[^.«»])+", name)
+
+
 def _name_parts(name: str) -> list[str]:
     parts = re.findall(r"«[^»]*»|[^.«»]+", name)
     return [p[1:-1] if p.startswith("«") else p for p in parts]
@@ -202,14 +206,13 @@ def _keyword(src: _Src, toks: list, kinds: tuple[str, ...]):
         return None
     kw = src.text[words[-1][1]:words[-1][2]]
     start = words[-1][1]
-    if kw == "inductive" and len(words) >= 2 and src.text[words[-2][1]:words[-2][2]] == "class" \
-            and "class" in kinds:
-        kw, start = "class", words[-2][1]
-    if kw not in kinds:
+    words.pop()
+    if kw == "inductive" and words and src.text[words[-1][1]:words[-1][2]] == "class" and "class" in kinds:
+        kw, start = "class", words.pop()[1]
+    head = [src.text[a:b] if k == "word" else None for k, a, b in words]
+    if kw not in kinds or not all(w in _HEADER_WORDS for w in head):
         return None
-    mods = tuple(w for w in (src.text[a:b] for k, a, b in words[:-1] if k == "word")
-                 if w in leanparse._MODIFIERS)
-    return kw, start, mods
+    return kw, start, tuple(w for w in head if w in leanparse._MODIFIERS)
 
 
 def _doc(src: _Src, tok) -> tuple[int, str]:
@@ -323,6 +326,16 @@ class Build:
             raise _Unusable("no literate")
         base = self.literate.joinpath(*stem.relative_to(self.lib).parts)
         path = base.with_name(base.name + ".json")
+        if not path.is_file():
+            raise _Unusable("no literate")
+        trace = _load_json(base.with_name(base.name + ".json.trace"), "literate trace")
+        try:
+            olean = [h for label, h in trace["inputs"] if label == f"{module}:olean"]
+            same = len(olean) == 1 and str(olean[0][0][1]).lower() == olean_hash
+        except (ValueError, TypeError, KeyError, IndexError):
+            raise _Unusable("unexpected literate format") from None
+        if not same:   # checked before hashing the (large) JSON
+            raise _Unusable("literate built from another .olean")
         try:
             text, h = self._hash_file(path)
             want = base.with_name(base.name + ".json.hash").read_text(encoding="utf-8").strip().lower()
@@ -332,17 +345,13 @@ class Build:
             raise _Unusable("unreadable literate") from None
         if h != want:
             raise _Unusable("literate does not match its hash")
-        trace = _load_json(base.with_name(base.name + ".json.trace"), "literate trace")
         try:
-            olean = [h for label, h in trace["inputs"] if label == f"{module}:olean"]
-            if len(olean) != 1 or str(olean[0][0][1]).lower() != olean_hash:
-                raise _Unusable("literate built from another .olean")
             out = []
             for it in json.loads(text)["items"]["items"]:
                 a, b = it["range"]
                 out.append((str(it["kind"]), (int(a["line"]) - 1, int(a["column"])),
                             (int(b["line"]) - 1, int(b["column"])), [str(d) for d in it["defines"]]))
-        except (ValueError, TypeError, KeyError, IndexError):
+        except (ValueError, TypeError, KeyError, IndexError, AttributeError):
             raise _Unusable("unexpected literate format") from None
         return out
 
@@ -488,7 +497,7 @@ def _build_decls(path: Path, rel: str, text: str, kinds: tuple[str, ...], max_bo
             got = _keyword(src, toks + [("word", sel_a, sel_b)], kinds)
             if got is None or got[0] != "instance":
                 continue
-            name, full = None, None
+            name = None
         else:
             want = _name_parts(written[len("_root_."):] if written.startswith("_root_.") else written)
             if not want or _name_parts(full)[-len(want):] != want:
@@ -521,12 +530,12 @@ def _build_decls(path: Path, rel: str, text: str, kinds: tuple[str, ...], max_bo
         by_line = {d.line: d for d in text_decls}
         for e in entries:
             d = by_line.get(src.line_of(e.kw) + 1)
-            if d is not None:
-                e.ns, e.secs = d.namespace, d.sections
-            elif e.full and e.name and _name_parts(e.full)[-len(_name_parts(e.name)):] == _name_parts(e.name):
-                e.ns, e.secs = ".".join(e.full.split(".")[:-len(_name_parts(e.name))]), ()
-            else:
-                e.ns, e.secs = "", ()
+            derived = None
+            if e.full is not None and not (e.name or "").startswith("_root_."):
+                derived = ".".join(_split_name(e.full)[:-len(_split_name(e.name)) if e.name else -1])
+            # leanparse's block tracking can be wrong (e.g. after `mutual ... end`); Lean's name is not
+            e.ns = d.namespace if d is not None and derived in (None, d.namespace) else (derived or "")
+            e.secs = d.sections if d is not None else ()
     for e in entries:
         e.doc_line, e.doc_text = _doc(src, e.doc) if e.doc is not None else (None, None)
     for d in text_decls:
