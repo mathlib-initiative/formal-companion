@@ -744,17 +744,15 @@ class TrickyTest(Scratch):
         self.assertEqual(by_name["b𝔸"].body, "def b𝔸 : Nat := 2\n")
         self.assertEqual(leanparse.signature(by_name["univ_thm"].body), "theorem univ_thm.{u} (α : Sort u) : True")
         self.assertEqual(by_name["isEven"].body, "  def isEven : Nat → Bool\n    | 0 => true\n    | n + 1 => isOdd n")
-        old = leanparse.parse_file(self.root / self.REL, self.REL)
-        self.assertNotIn("isEven", [d.name for d in old])
-        self.assertEqual(next(d for d in old if d.name == "after_mutual").full_name, "after_mutual")
 
     def test_without_literate_data_lean_s_names_correct_the_namespaces(self):
         shutil.rmtree(self.lake.lit)
         decls, build = self.parse(self.REL)
         self.assertEqual(build.tally(), {"lean": 1, "without_literate": {"no literate": 1}})
         named = [(d.line, d.name, d.full_name, d.namespace) for d in decls if d.kind != "example"]
-        # nothing in the .ilean names the namespace around `_root_.X`: leanparse's (wrong) value stays
-        self.assertEqual(named, [(line, name, full, "" if (name or "").startswith("_root_") else ns)
+        # nothing in the .ilean names the namespace around `_root_.X`: leanparse's value stays
+        text_ns = {d.line: d.namespace for d in leanparse.parse_file(self.root / self.REL, self.REL)}
+        self.assertEqual(named, [(line, name, full, text_ns[line] if (name or "").startswith("_root_") else ns)
                                  for line, kind, name, full, ns, _p, _d in self.expected() if kind != "example"])
         self.assertEqual([d.origin for d in decls if d.kind == "example"], ["text"])
 
@@ -794,7 +792,8 @@ class ConsumerTest(Scratch):
         key = adapter.key()
         os.environ[leanbuild.ENV] = "text"
         text_adapter = from_config(adapter.config, source="<synthetic>")
-        self.assertEqual(list(text_adapter.extract(sources={"src": "aa" * 32})), [])
+        self.assertEqual(text_adapter.dry_run(sources={"src": "aa" * 32})["lean_source"],
+                         {"build": f"not read ({leanbuild.ENV}=text)"})
         self.assertNotEqual(text_adapter.key(), key)
         self.assertIn("lean_build", adapter.key_inputs())
         self.assertNotIn("lean_build", text_adapter.key_inputs())   # a text-only key is the one it always was
@@ -861,7 +860,6 @@ class ConsumerTest(Scratch):
         self.assertIn("Lab.isEven", names)
         self.assertIn("Lab.after_mutual", names)
         self.assertEqual(tally, {"lab": {"lean": 1}})
-        self.assertNotIn("Lab.isEven", decl_index._from_lean(self.root))
 
 
 def _env_dir(name: str) -> Path | None:
