@@ -571,9 +571,9 @@ class WorktreeTestCase(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def git(self, *args):
-        subprocess.run(["git", *args], cwd=self.root, check=True, env=self.env,
-                       capture_output=True, text=True)
+    def git(self, *args) -> str:
+        return subprocess.run(["git", *args], cwd=self.root, check=True, env=self.env,
+                              capture_output=True, text=True).stdout.strip()
 
     def write_own_pair(self):
         (self.root / "findings" / "carol.json").write_text("{}\n")
@@ -757,6 +757,65 @@ class TestTheGateRunsNoProgramTheWorkerChose(WorktreeTestCase):
                     line = body[:m.start()].count("\n") + 1
                     offenders.append(f"{rel}:{line}")
         self.assertEqual(offenders, [], "bare git invocation(s) outside gitsafe")
+
+
+class TestTheWorktreesGitSettingsHideNoPath(WorktreeTestCase):
+    """#9: settings in the worker's own repository could drop a path from the change set."""
+
+    def commit(self, message="mine"):
+        self.git("add", "-A")
+        self.git("commit", "-qm", message)
+
+    def test_a_copy_line_keeps_its_destination(self):
+        self.git("checkout", "-q", "main")
+        (self.root / "tasks" / "carol.yaml").write_text("id: carol\nstatus: open\n")
+        self.commit("carol's task is committed before the run")
+        self.git("checkout", "-q", "-B", "carol")
+        self.git("config", "diff.renames", "copies")
+        (self.root / "scripts").mkdir()
+        (self.root / "scripts" / "gate.py").write_text("id: carol\nstatus: open\n")
+        (self.root / "tasks" / "carol.yaml").write_text("id: carol\nstatus: complete\n")
+        (self.root / "findings" / "carol.json").write_text("{}\n")
+        self.commit()
+        entries = self.entries()
+        self.assertEqual(entries.get("scripts/gate.py"), "A")
+        problems = vf.check_changed(entries, task_id="carol")
+        self.assertTrue(any("'scripts/gate.py' is outside" in p for p in problems), problems)
+
+    def test_a_status_line_the_parser_does_not_know_fails_closed(self):
+        from unittest import mock
+
+        real = vf._git
+        for line in ("C100\ttasks/carol.yaml\tscripts/gate.py",
+                     "R100\tfindings/alice.json\tfindings/carol.json",
+                     "X\tscripts/gate.py"):
+            def fake(args, cwd, line=line):
+                return (0, line + "\n") if args[0] == "diff" else real(args, cwd)
+
+            with self.subTest(line=line), mock.patch.object(vf, "_git", fake):
+                _entries, errs = vf.changed_entries(self.root, "main")
+                self.assertTrue(any("could not parse" in e for e in errs), errs)
+
+    def test_neither_replace_refs_nor_grafts_move_the_merge_base(self):
+        # both tips grafted onto a root older than alice's finding made that root
+        # the merge base, and deleting her finding vanished from the diff
+        self.write_own_pair()
+        self.git("rm", "-q", "findings/alice.json", "tasks/alice.yaml")
+        self.commit("mine in, alice's out")
+        empty = self.git("hash-object", "-t", "tree", "-w", os.devnull)
+        older = self.git("commit-tree", empty, "-m", "a root before alice landed")
+        tips = [self.git("rev-parse", ref) for ref in ("main", "HEAD")]
+        with self.subTest("replace refs"):
+            for tip in tips:
+                self.git("replace", "--graft", tip, older)
+            got, _errs = vf.changed_entries(self.root, "main")
+            self.git("replace", "-d", *tips)
+            self.assertEqual(got.get("findings/alice.json"), "D")
+        with self.subTest("grafts"):
+            grafts = self.root / ".git" / "info" / "grafts"
+            grafts.parent.mkdir(exist_ok=True)
+            grafts.write_text("".join(f"{tip} {older}\n" for tip in tips))
+            self.assertEqual(self.entries().get("findings/alice.json"), "D")
 
 
 # --------------------------------------------------------------------------- #

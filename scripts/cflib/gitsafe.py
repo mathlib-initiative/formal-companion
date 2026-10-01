@@ -51,8 +51,8 @@ A git whose version does not parse counts as old: a version we cannot read is
 not one a safety floor may rest on.
 
 plus ``GIT_CONFIG_NOSYSTEM=1`` (ignore ``/etc/gitconfig``),
-``GIT_OPTIONAL_LOCKS=0`` (never take a lock in someone else's repo) and
-``GIT_TERMINAL_PROMPT=0``.
+``GIT_OPTIONAL_LOCKS=0`` (never take a lock in someone else's repo),
+``GIT_TERMINAL_PROMPT=0`` and no replace refs or grafts.
 
 The user's own ``~/.gitconfig`` is deliberately still read: it is the user's
 machine.  What is neutralised is the part of the configuration the *audited
@@ -93,6 +93,10 @@ SAFE_ENV: dict[str, str] = {
     "GIT_CONFIG_NOSYSTEM": "1",
     "GIT_OPTIONAL_LOCKS": "0",
     "GIT_TERMINAL_PROMPT": "0",
+    # replace refs and grafts rewrite history; the graft path cannot exist,
+    # because /dev/null opens and git then prints a hint on every read
+    "GIT_NO_REPLACE_OBJECTS": "1",
+    "GIT_GRAFT_FILE": "/dev/null/grafts",
 }
 
 
