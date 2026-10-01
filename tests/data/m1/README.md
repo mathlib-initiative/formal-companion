@@ -22,6 +22,29 @@ annotation documents carry those and stay in the companions' repositories or
 a workspace, never here (CLAUDE.md section 1, docs/annotations.md section 11).
 `scripts/pipeline/derive_truth.py` refuses to write any other field.
 
+## What each table checks
+
+The two tables are not two independent ground truths for the numbered items.
+
+- **tao-measure-lean** gets its pages from the docstring-tags exporter, which
+  places each numbered item on the first line-start match of `Kind N` in the
+  book's `pdftotext` layer (`locate_headings`, through `PdfText.headings` in
+  `scripts/annotations/export/pdftext.py`). S1 finds headings with essentially
+  the same regex on the same text layer (`_HEADING_SHAPE` in
+  `scripts/pipeline/inventory.py`), so its numbered-item figure measures two
+  heading regexes agreeing. It can catch a place where they differ (it caught
+  the wrapped title of Exercise 1.2.11), not an error they share, such as a
+  cross-reference at line start that precedes the real heading.
+- **measure_theory** gets its pages from region geometry signed off against
+  rendered pages, so its numbered-item figure is the independent check on S1,
+  and it alone supports the 407/407 figure. Part of that geometry was first
+  laid out from the text layer and then checked visually, so it is not wholly
+  free of `pdftotext` either.
+
+The passage rows of tao-measure-lean are where that companion chose to tag a
+passage, not a list of the book's passages, which is one more reason the
+passage figure is an upper bound on recovery and not a recall.
+
 ## Regenerating the tables
 
 The maintainer exports each companion's annotation document (the M3
