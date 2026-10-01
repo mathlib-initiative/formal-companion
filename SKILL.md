@@ -211,6 +211,7 @@ actually has, and is generated from the parsers themselves.
 | `export docstring-tags <checkout> --commit <sha> --pdf <file> --xref <file> --site-pages <file> [--site <dir>] --out <file>` | the same for a docstring-tagged companion: the tags through the `docstring_tags` adapter, headings and quotes located in the PDF's text layer, the literate site's index and page manifest as one site source; with `--site` every anchor is checked against its page |
 | `export site-pages <site> --out <file> [--source-id ID] [--title T] [--path P] [--rendered-at TIME]` | write a rendered literate site's page manifest, the pin `export docstring-tags --site-pages` reads: every HTML page with its sha256 and bytes, and the site digest; reads no checkout |
 | `review-tags <document> [--json]` | the known attribution defects a document's key links carry: items keyed only to where they sit, keys on a structure field or projection, keys borrowed from a neighbouring item or shared with no owner, book-content tag spellings a fold script hides, the document's own attribution-gap verdicts; `--keep-pattern` and `--hide-pattern` are the fold script's rules |
+| `overlay init \| sync \| check \| export \| geometry \| destinations` | generate a companion's `pdf-overlay/` directory and keep it honest: `cf overlay init <companion> --source-id ID --title T` writes the config, `cf overlay sync <companion>` copies the viewer, tools, schemas and PDF.js in byte for byte and writes `GENERATED.json` (`--check` is read-only), `cf overlay check <companion>` validates the document and the overlay rules, and `cf overlay export <companion> --convention attribution-table --commit SHA` runs an exporter into it. `geometry` and `destinations` write document fragments and touch no companion. **The one command that writes into a companion repo**, and only under `pdf-overlay/` (`docs/overlay.md` rule 5). Needs no workspace |
 
 Deleted: `cf book` — a source is discovered, and re-prepared by
 `cf sources refresh`. Out of scope in v1 (documented, not implemented): `fix`,
@@ -332,7 +333,12 @@ needs neither.
 10. **Never modify a companion repo.** v1 reads companions; it does not write
     to them, build them, or touch their worktrees. Discovery is the load-
     bearing case: it *reads* `formalization.yaml`, ledgers, `CLAUDE.md`, caches
-    and PDFs, and writes nothing back.
+    and PDFs, and writes nothing back. The one exception is `cf overlay`
+    `init`, `sync` and `export`, which a person runs by name: they write under
+    `<companion>/pdf-overlay/` and nowhere else, refuse a `pdf-overlay` that is
+    a symlink or resolves outside the companion, and run no git there
+    (`docs/overlay.md` rule 5). No other command, and no stage, writes
+    anything.
 11. **Low confidence is a refusal.** An inferred offset below 0.9, an
     undecidable anchor edition (agreement under 0.80, or a margin under 0.05
     between two editions), an adapter score under 0.5, an item table under 0.6

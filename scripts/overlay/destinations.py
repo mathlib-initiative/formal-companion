@@ -3,7 +3,7 @@
 
 New code, implementing section 7 of the overlay contract
 (`docs/overlay.md`, seeded as the overlay template's SPEC.md) and the format's
-``destinations[]`` records (docs/annotations.md section 8.2).  The overlay
+``destinations[]`` records (docs/annotations.md section 3.6).  The overlay
 viewer puts a "where is this rendered" link on every declaration card; this is
 what writes those links, and it writes them from the site that was actually
 built rather than from a table somebody keeps by hand.

@@ -36,6 +36,7 @@ POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
 docs/proposals/   designs not yet built: pdf-to-companion.md, the PDF-to-companion pipeline
 docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inventory)
+docs/overlay.md   the contract for the generated companion PDF overlay (`cf overlay`)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
 vendor/           formal_companion_annotations/: one release of the annotation format

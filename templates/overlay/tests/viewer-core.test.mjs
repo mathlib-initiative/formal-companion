@@ -1,7 +1,7 @@
 /**
  * The overlay viewer's pure half, against synthetic documents and configs.
  *
- * Everything the contract (templates/overlay/SPEC.md section 4) says the viewer
+ * Everything the contract (docs/overlay.md section 4) says the viewer
  * builds "purely from the document" is checked here: the refusals, the four
  * geometry combinations, link ordering, orphaned links, coverage, the cluster
  * fallback, the href and fragment rules, verdict display and sha256
@@ -416,7 +416,7 @@ test("coverage: every value has its own one-line summary, and an unknown one has
     assert.equal(coverageSummary(value), COVERAGE_SUMMARIES[value]);
     assert.match(coverageSummary(value), /\.$/, `${value}'s summary is not a sentence`);
   }
-  // The format's six values, and the two further spellings SPEC section 4 names.
+  // The format's six values, and the two further spellings the contract's section 4 names.
   for (const value of ["formalized", "partial", "support_only", "example_only",
                        "not_formalized", "out_of_scope", "partial_only", "private_only"]) {
     assert.ok(COVERAGE_VALUES.includes(value), `${value} is missing`);

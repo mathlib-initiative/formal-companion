@@ -8,7 +8,7 @@ manifest, and ran one companion's build steps. Everything specific now comes
 from `pdf-overlay/overlay.config.json` and the `kind: pdf` source record of
 `pdf-overlay/annotations.json`, both found from this file's own path.
 
-`templates/overlay/SPEC.md` section 5 is the contract; section 1 rule 4 is why
+`docs/overlay.md` section 5 is the contract; section 1 rule 4 is why
 the PDF is cached under an ignored directory and served only on loopback at one
 route, and section 1 rule 6 is why the acquisition hardening (HTTPS only,
 redirects only to HTTPS, atomic install, no directory listings, no traversal)
@@ -50,7 +50,10 @@ except ImportError:                                          # pragma: no cover
 CONFIG_NAME = "overlay.config.json"
 DOCUMENT_NAME = "annotations.json"
 CONFIG_SCHEMA = "formal-companion/overlay-config"
-DOCUMENT_SCHEMA = "formal-companion/annotations"
+#: The annotation format's own schema id
+#: (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`), which is what every
+#: `cf export` convention writes and what the viewer accepts.
+DOCUMENT_SCHEMA = "lean-companion/annotations"
 BUILD_SITE_TOOL = "build_site.py"
 LOCK_NAME = ".overlay-serve.lock"
 USER_AGENT = "formal-companion-overlay/1"

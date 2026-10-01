@@ -155,7 +155,14 @@ Those two lines move together or not at all.
   another machine goes through `Workspace.check_host` and an explicit
   `--i-have-consent` recorded in `run.yaml`.
 - **Never write to a companion repo.** Discovery reads a repo's metadata,
-  prose, caches and PDFs; it writes nothing back, and no stage ever does.
+  prose, caches and PDFs; it writes nothing back, and no stage ever does. The
+  one exception is `cf overlay init|sync|export`, which a person runs by name:
+  they write under `<companion>/pdf-overlay/` and nowhere else, refuse a
+  `pdf-overlay` that is a symlink or resolves outside the companion, refuse to
+  write through a symlinked component inside it, and run no git there — the
+  generator commit they stamp is read from THIS checkout, through
+  `cflib.gitsafe`. `docs/overlay.md` rule 5 is the whole exception; widening it
+  is a change to that file in the same commit.
 
 ## 5. Adding a command
 

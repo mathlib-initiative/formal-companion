@@ -9,7 +9,7 @@ and refused to run against anything else. Everything specific now comes from
 found from this file's own path; the inventory is whatever `cf overlay sync`
 copied under `viewer/` and `vendor/`.
 
-`templates/overlay/SPEC.md` section 5 is the contract -- copy the runtime into
+`docs/overlay.md` section 5 is the contract -- copy the runtime into
 `<output_root>/<mount>/`, replace a previous copy atomically, insert or replace
 one marked link block in the index, write `receipt.json` -- and section 8 lists
 the manifests the port leaves behind. It never runs the build: `serve.py
@@ -38,7 +38,10 @@ from typing import Any, NoReturn
 CONFIG_NAME = "overlay.config.json"
 DOCUMENT_NAME = "annotations.json"
 CONFIG_SCHEMA = "formal-companion/overlay-config"
-DOCUMENT_SCHEMA = "formal-companion/annotations"
+#: The annotation format's own schema id
+#: (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`), which is what every
+#: `cf export` convention writes and what the viewer accepts.
+DOCUMENT_SCHEMA = "lean-companion/annotations"
 RECEIPT_SCHEMA = "formal-companion/overlay-site-receipt"
 RECEIPT_NAME = "receipt.json"
 #: The directories of the generated runtime a site needs, in copy order.

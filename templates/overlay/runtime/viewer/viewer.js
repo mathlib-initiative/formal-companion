@@ -9,7 +9,7 @@
  * `node --test` reaches it without a DOM; this file keeps the injectable
  * `fetch` / `document` / `storage` seams the tests drive it through.
  *
- * Security (templates/overlay/SPEC.md section 4): every string from either file
+ * Security (docs/overlay.md section 4): every string from either file
  * reaches the DOM through `textContent` or an attribute setter, never
  * `innerHTML`; an `href` is used only when it passes the site-path or `https:`
  * rules of viewer-core.js, with its fragment percent-encoded; the PDF is
