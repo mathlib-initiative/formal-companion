@@ -153,10 +153,13 @@ both are pinned:
   `cost`: null for a run harvested without `--transcripts`, otherwise the
   priced totals of the agents' transcripts (`tokens` by model id, `usd`,
   `priced`, `unpriced`, `price_table_sha256`, `transcript_count`,
-  `message_count`), priced with `workspace.yaml` `budget.prices`. `cost` never
-  changes `complete`; an unpriced model makes `usd` a lower bound and is named
-  wherever the figure is printed; a block with `message_count` 0 is warned
-  about by harvest and refused by a stage receipt.
+  `message_count`), priced with `workspace.yaml` `budget.prices`, and
+  `source: {path, files}`, where `path` is the last component of the path
+  priced (`usage.jsonl`, `transcripts`), never its parent directories, so a
+  committed receipt leaks no machine layout. `cost` never changes `complete`;
+  an unpriced model makes `usd` a lower bound and is named wherever the
+  figure is printed; a block with `message_count` 0 is warned about by
+  harvest and refused by a stage receipt.
 - `runs/<id>/run.yaml`: `companion_pins: {<name>: {repo_commit, dirty,
   method}}`, read through `cflib.gitsafe`.
 - `reports/pin.<run>.json`: written by `cf harvest`, never by a worker — the
