@@ -35,6 +35,8 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Added
+- `cf export site-pages <site> --out <pages.json>`: writes the page manifest
+  that `cf export docstring-tags --site-pages` reads.
 - `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
   pipeline (milestone M1, `docs/pipeline.md`). S0 pins one PDF (sha256, pages,
   page sizes, `pdftotext` version), prepares it with the onboarding code,
@@ -267,6 +269,9 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- `cf export attribution-table` marks an equation's title as the producer's
+  (`title_source: producer`); in measure_theory `equation-1.2` and
+  `equation-1.3` change, so the measure_theory reference must be regenerated.
 - The findings gate's changed-files check now diffs a contribution from the
   point it branched (the merge base with the merge target), not from the
   target's tip. Against the tip, every finding merged after a worktree was cut

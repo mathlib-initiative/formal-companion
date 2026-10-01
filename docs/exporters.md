@@ -32,7 +32,7 @@ The exporter reads, at the pinned commit,
 
 | input | becomes |
 |---|---|
-| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer); one `provenance` record per batch |
+| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
 | `pdf-overlay/data/target-refinement.json` | `key` and `attributed` `links`, merged per item; the curation note's per-item classes as `coverage` |
 | `source-formalization-ledger.json` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
 | `pdf-overlay/data/declaration-snippets.json` | `snippets` |
@@ -100,8 +100,11 @@ passage title or a tag (I10) is dropped and reported as a problem naming the
 declaration, so the document stays valid and the command still exits 1.
 
 The site pin is a small JSON file: `{"source_id", "title", "path",
-"rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`;
-The reference companion's is `tml-site-pages.json` in the maintainer's
+"rendered_at", "site_sha256", "pages": [{"path", "sha256", "bytes"}]}`.
+`cf export site-pages <rendered site> --out <pages.json> [--source-id ID]
+[--title T] [--path P] [--rendered-at TIME]` writes it (`path` defaults to the
+site directory's name, `rendered_at` to the newest page's mtime). The
+reference companion's is `tml-site-pages.json` in the maintainer's
 `CF_M3_REFERENCE_DIR` (`tests/data/m3/README.md`); it is not in this tree.
 The PDF is named through the registry as in section 1.
 
@@ -226,7 +229,7 @@ companions still run everywhere.
 ## 6. Deliberate differences from the prototype documents
 
 Section 10 of `docs/annotations.md` was written from two prototype documents.
-The references differ from them in three ways, all deliberate and
+The references differ from them in four ways, all deliberate and
 recorded in `tests/test_export.py` (`DELIBERATE`):
 
 1. `companion.generator` names the command and the skill's version.
@@ -237,5 +240,7 @@ recorded in `tests/test_export.py` (`DELIBERATE`):
    measure_theory source as `x_companion_edition`.
 3. The site source's title and `retrieved_at` come from the page manifest,
    not from the build's file times.
+4. An equation's title is marked `title_source: producer` (measure_theory:
+   `equation-1.2` and `equation-1.3`).
 
 Every other record is byte for byte what the prototypes wrote.

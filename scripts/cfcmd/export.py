@@ -9,6 +9,8 @@ writes the document in canonical form beside a report of what did not fit.
     cf export attribution-table <checkout> --commit <sha> --out <doc.json>
     cf export docstring-tags <checkout> --commit <sha> --pdf <the anchor edition> \\
         --xref <xref.json> --site-pages <pages.json> [--site <rendered site>] --out <doc.json>
+    cf export site-pages <rendered site> --out <pages.json> [--source-id ID] [--title T] \\
+        [--path P] [--rendered-at TIME]
 
 The document is validated before the command returns (schema, invariants,
 canonical bytes); a problem the exporter recorded, or a document that does not
@@ -28,6 +30,7 @@ from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import validate as V
 from annotations.export import common
 from cflib import log
+from cflib.jsonio import atomic_write
 from cflib.errors import CfError
 
 
@@ -55,6 +58,17 @@ def register(subparsers) -> None:
     dt.add_argument("--adapter-config", type=Path, metavar="FILE",
                     help="the docstring_tags adapter config to read the tags with "
                          "(default: the shipped tao-measure-lean template)")
+    sp = sub.add_parser("site-pages",
+                        help="write a rendered literate site's page manifest, the file docstring-tags "
+                             "--site-pages reads")
+    sp.add_argument("site", type=Path, help="the rendered site directory (read only)")
+    sp.add_argument("--out", type=Path, required=True, metavar="FILE", help="the manifest to write")
+    sp.add_argument("--source-id", help="the site source's id (default when absent: <name>-site at export)")
+    sp.add_argument("--title", help="the site source's title (default when absent: a generic one at export)")
+    sp.add_argument("--path", help="the site's path under the companion's checkout (default: the directory's "
+                                   "name)")
+    sp.add_argument("--rendered-at", metavar="TIME",
+                    help="the render time, RFC 3339 in UTC (default: the newest page's modification time)")
 
 
 def _common_arguments(p) -> None:
@@ -89,6 +103,8 @@ def run(args) -> int:
     if not getattr(args, "export_command", None):
         raise CfError("say which convention to export", hint="cf export attribution-table … or "
                                                              "cf export docstring-tags …")
+    if args.export_command == "site-pages":
+        return _site_pages(args)
     checkout = args.checkout.expanduser()
     if not checkout.is_dir():
         raise CfError(f"{checkout} is not a directory")
@@ -149,3 +165,20 @@ def run(args) -> int:
     if args.verbose:
         log.detail(json.dumps(report.counts, indent=1, ensure_ascii=False, default=str))
     return status
+
+
+def _site_pages(args) -> int:
+    from annotations.export import site_pages
+    site = args.site.expanduser()
+    target = args.out.expanduser().resolve()
+    if site.is_dir() and site.resolve() in target.parents:
+        raise CfError(f"--out {args.out} is inside the site {site}",
+                      hint="the manifest describes the site's pages; write it elsewhere")
+    try:
+        pin = site_pages.manifest(site, source_id=args.source_id, title=args.title, path=args.path,
+                                  rendered_at=args.rendered_at)
+    except common.ExportError as exc:
+        raise CfError(exc.message, hint=exc.hint) from exc
+    atomic_write(args.out, json.dumps(pin, indent=1, ensure_ascii=False) + "\n")
+    log.info(f"wrote {args.out} ({len(pin['pages'])} pages, site_sha256 {pin['site_sha256'][:12]}...)")
+    return 0
