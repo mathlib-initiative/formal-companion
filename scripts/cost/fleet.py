@@ -30,6 +30,25 @@ from harvest.harvest import read_receipt
 COST_KEY = "cost"
 
 
+def empty_warning(block: Mapping[str, Any]) -> str | None:
+    """A warning when a cost block counted no response, else None.
+
+    A fleet that ran produced responses, so zero is an empty or wrong path or
+    logs the reader could not read, never a measured $0.  `cf harvest` and
+    `cf cost` print this; `stage_receipt.sum_fleets` refuses such a block.
+    """
+    if int(block.get("message_count") or 0) > 0:
+        return None
+    files = int(block.get("transcript_count") or 0)
+    if not files:
+        return ("no log file (*.jsonl, *.jsonl.gz) was found under the transcripts path, "
+                "so nothing was priced and $0.00 is not a measurement")
+    return (f"{files} log file(s) read and no response counted "
+            f"({int(block.get('skipped_without_usage') or 0)} message(s) without usage, "
+            f"{int(block.get('unreadable_lines') or 0)} unreadable line(s)), so $0.00 is not "
+            f"a measurement")
+
+
 def cost_block(path: str | Path, *, table: Mapping[str, Mapping[str, Any]], table_source: str,
                model: str | None = None) -> dict:
     """Read every log under *path*, price it, and return the receipt's ``cost`` block."""

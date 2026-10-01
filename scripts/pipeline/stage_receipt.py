@@ -11,9 +11,10 @@ and says that "fleet cost follows issue #11's design: harvest writes each
 fleet's priced totals into its RECEIPT.json, with prices in workspace.yaml,
 and the stage receipt sums its fleets".  :func:`sum_fleets` is that sum: it
 reads every fleet run's ``run.yaml`` and ``RECEIPT.json``, records both shas,
-and refuses a fleet whose receipt carries no cost block or an unpriced model,
-because a stage receipt that quietly omitted one fleet's dollars would be the
-cost line every report so far shipped without.
+and refuses a fleet whose receipt carries no cost block, an unpriced model or
+a block that counted no response, because a stage receipt that quietly
+omitted one fleet's dollars would be the cost line every report so far
+shipped without.
 
 The writer fails closed: a missing field, an extra field, a sha that is not 64
 lowercase hex characters, a stage name outside S0 to S9, a negative cost or a
@@ -177,8 +178,9 @@ def fleet_run_entry(paths, run_id: str) -> dict:
 def sum_fleets(paths, run_ids) -> dict:
     """The stage's ``fleet_runs``, ``cost_usd``, ``tokens`` and ``model_ids`` from its fleets.
 
-    Refuses a fleet whose receipt has no ``cost`` block or names an unpriced
-    model: the sum would silently be a lower bound.
+    Refuses a fleet whose receipt has no ``cost`` block, names an unpriced
+    model, or counted no response (an empty or wrong transcripts path prices
+    to $0): the sum would silently be a lower bound.
     """
     fleet_runs = []
     tokens: dict[str, dict[str, int]] = {}
@@ -196,6 +198,16 @@ def sum_fleets(paths, run_ids) -> dict:
                           f"unpriced in its {RECEIPT_NAME}",
                           hint="add them to workspace.yaml budget.prices with a source note "
                                "and re-harvest")
+        responses = block.get("message_count")
+        if not isinstance(responses, int) or isinstance(responses, bool) or responses <= 0:
+            what = ("counted no response" if responses == 0 and not isinstance(responses, bool)
+                    else f"carries no response count (message_count {responses!r})")
+            raise CfError(f"fleet run {run_id!r}: the cost block of its {RECEIPT_NAME} {what}, "
+                          f"so its ${float(block.get('usd') or 0.0):.2f} is not a measurement "
+                          f"of the fleet",
+                          hint=f"re-run `cf harvest {run_id} --transcripts <path>` with the "
+                               f"directory that holds the fleet's transcripts or its usage "
+                               f"export")
         cost_usd += float(block.get("usd") or 0.0)
         for model, counts in (block.get("tokens") or {}).items():
             bucket = tokens.setdefault(str(model), {f: 0 for f in TOKEN_FIELDS})

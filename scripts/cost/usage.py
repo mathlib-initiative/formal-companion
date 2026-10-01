@@ -29,10 +29,16 @@ Three input shapes are read, and a directory may mix them:
   that names none is read under the id passed as ``model``, or under
   ``UNKNOWN_MODEL`` when there is none, which the price table cannot price.
 * a **usage export** (``*.jsonl`` or ``*.jsonl.gz``, one ``{model, usage}``
-  object per line, the shape of the s17b fixture under ``tests/data/m0a/``):
-  the rows carry no ids, so they are summed as written.  ``export_rows`` writes
-  one, one row per counted response, which is how usage leaves a host without
-  the transcripts' text.
+  object per line): the rows carry no ids, so they are summed as written.
+  ``export_rows`` writes one, one row per counted response, which is how usage
+  leaves a host without the transcripts' text.  The s17b fixture under
+  ``tests/data/m0a/`` has this shape but is NOT one row per response: it is
+  one row per transcript line, so it holds each response once per content
+  block (its README gives the figures).
+
+A file is classified by its first JSON object, not by its suffix (a gzipped
+transcript is still a transcript); only a ``rollout-*`` name is decided by the
+name alone.
 
 Every usage is normalised to four fields, ``input`` (uncached prompt tokens),
 ``output``, ``cache_write`` and ``cache_read``, which is what the price table
@@ -225,11 +231,16 @@ def _lines(path: Path, totals: Totals) -> Iterator[dict]:
 
 
 def classify(path: Path) -> str:
-    """Which of the three shapes a file is, from its name and its first object."""
+    """Which of the three shapes a file is, from its name and its first object.
+
+    A ``rollout-*`` name is a Codex log.  Every other file, gzipped or not, is
+    classified by its first JSON object: a gzipped Claude transcript is a
+    transcript, not an export, so ``.jsonl.gz`` alone decides nothing (read as
+    an export, a transcript's lines carry no top-level usage and the file
+    would price to $0 without a word).
+    """
     if path.name.startswith("rollout-"):
         return KIND_CODEX
-    if path.name.endswith(".jsonl.gz"):
-        return KIND_USAGE
     try:
         with _open_text(path) as fh:
             for line in fh:
@@ -243,7 +254,7 @@ def classify(path: Path) -> str:
                 break
             else:
                 return KIND_USAGE
-    except OSError:
+    except (OSError, EOFError, UnicodeDecodeError):
         return KIND_CLAUDE
     if not isinstance(obj, dict):
         return KIND_CLAUDE
@@ -417,7 +428,9 @@ def iter_records(paths: PathsArg, totals: Totals, model: str | None = None) -> I
 def read_path(paths: PathsArg, model: str | None = None) -> Totals:
     """Sum every log under *paths* (one path or several) into one :class:`Totals`.
 
-    An empty directory gives zero tokens, zero files and zero messages.
+    An empty directory gives zero tokens, zero files and zero messages; the
+    callers that price a run say so out loud (:func:`main`, `cf cost`,
+    `cf harvest`) and a stage receipt refuses it.
     """
     totals = Totals()
     for record in iter_records(paths, totals, model=model):
@@ -446,6 +459,22 @@ def export_rows(paths: PathsArg, out: str | Path, model: str | None = None) -> T
     return totals
 
 
+def nothing_counted(totals: Totals) -> str | None:
+    """A warning when *totals* counted no response, else None.
+
+    Zero responses is never a measurement of a fleet: it is an empty or wrong
+    directory, or logs in a shape the reader does not know.  The warning says
+    which files were read and how many lines had no usage.
+    """
+    if totals.message_count:
+        return None
+    if not totals.transcript_count:
+        return "no log file (*.jsonl, *.jsonl.gz) was found: nothing was priced"
+    return (f"{totals.transcript_count} file(s) read and no response counted "
+            f"({totals.lines_read} line(s), {totals.skipped_without_usage} without usage, "
+            f"{totals.unreadable_lines} unreadable): $0 here is not a measurement")
+
+
 def render_tokens(tokens: Mapping[str, Mapping[str, int]]) -> list[str]:
     """One line per model: the four token counts."""
     return [f"  {model}: " + ", ".join(f"{f}={int(tokens[model][f]):,}" for f in FIELDS)
@@ -471,6 +500,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     except FileNotFoundError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
+    empty = nothing_counted(totals)
+    if empty:
+        print(f"warning: {empty}", file=sys.stderr)
     if args.json:
         print(json.dumps(totals.as_dict(), indent=1, sort_keys=True))
         return 0

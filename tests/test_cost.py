@@ -273,6 +273,28 @@ class TestClaudeTranscripts(unittest.TestCase):
         self.assertEqual(totals.duplicate_lines, 2)
         self.assertEqual(totals.tokens["claude-opus-5"]["output"], 674)
 
+    def test_a_gzipped_transcript_is_read_as_a_transcript_not_an_export(self):
+        """``.jsonl.gz`` is not a shape: the first object decides.  Read as an
+        export, every line here would be 'without usage' and price to $0."""
+        path = self.root / "session.jsonl.gz"
+        with gzip.open(path, "wt", encoding="utf-8") as fh:
+            for line in (claude_line("m1", "r1", self.USAGE), claude_line("m1", "r1", self.USAGE),
+                         claude_line("m2", "r2", self.USAGE)):
+                fh.write(json.dumps(line) + "\n")
+        totals = usage_mod.read_path(path)
+        self.assertEqual(totals.files["claude_transcript"], 1)
+        self.assertEqual(totals.files["usage_export"], 0)
+        self.assertEqual((totals.message_count, totals.duplicate_lines), (2, 1))
+        self.assertEqual(totals.tokens["claude-opus-5"]["output"], 674)
+        # and a gzipped Codex log that is not named rollout-*
+        events = [turn_context("gpt-test")] + codex_sample_events()
+        codex = self.root / "codex" / "session.jsonl.gz"
+        codex.parent.mkdir()
+        with gzip.open(codex, "wt", encoding="utf-8") as fh:
+            fh.write("".join(json.dumps(e) + "\n" for e in events))
+        self.assertEqual(usage_mod.classify(codex), usage_mod.KIND_CODEX)
+        self.assertEqual(usage_mod.read_path(codex).message_count, 2)
+
     def test_several_paths_are_one_fleet_and_a_file_counts_once(self):
         write_jsonl(self.root / "host-1" / "a.jsonl", [claude_line("m1", "r1", self.USAGE)])
         write_jsonl(self.root / "host-2" / "b.jsonl", [claude_line("m2", "r2", self.USAGE)])
@@ -308,6 +330,14 @@ class TestClaudeTranscripts(unittest.TestCase):
                                  "--export", str(missing_out)])
         self.assertEqual(rc, 2)
         self.assertFalse(missing_out.exists())
+
+    def test_the_standalone_command_warns_when_it_counts_nothing(self):
+        (self.root / "empty").mkdir()
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc = usage_mod.main([str(self.root / "empty")])
+        self.assertEqual(rc, 0)
+        self.assertIn("warning: no log file", err.getvalue())
 
     def test_an_empty_directory_gives_zero(self):
         totals = usage_mod.read_path(self.root)
@@ -462,6 +492,16 @@ class TestCfCost(unittest.TestCase):
         self.assertIn("claude-opus-5", err)
         self.assertIn("$0.00", out)
 
+    def test_an_empty_directory_is_said_out_loud(self):
+        cwd = os.getcwd()
+        os.chdir(self.root)
+        self.addCleanup(os.chdir, cwd)
+        (self.root / "empty").mkdir()
+        rc, out, err = _run(["cost", str(self.root / "empty")])
+        self.assertEqual(rc, 0)
+        self.assertIn("NO RESPONSES", err)
+        self.assertIn("not a measurement", err)
+
     def test_export_writes_rows_only(self):
         write_jsonl(self.root / "logs" / "a.jsonl", [
             claude_line("m1", "r1", TestClaudeTranscripts.USAGE),
@@ -544,6 +584,28 @@ class TestHarvestWritesTheCostBlock(unittest.TestCase):
         self.assertEqual(cost["usd"], 0.0)
         self.assertIn("UNPRICED", err)
         self.assertIn("some-other-model", err)
+
+    def test_a_transcripts_path_that_counts_no_response_is_warned_about(self):
+        empty = self.root.parent / "empty"
+        empty.mkdir()
+        rc, out, err = self.harvest("--transcripts", str(empty))
+        self.assertEqual(rc, 0, err)
+        cost = self.receipt()["cost"]
+        self.assertEqual((cost["message_count"], cost["usd"]), (0, 0.0))
+        self.assertIn("NO RESPONSES priced for run run-a", err)
+        self.assertIn("no log file", err)
+
+    def test_a_gzipped_transcript_is_priced(self):
+        logs = self.root.parent / "logs"
+        logs.mkdir()
+        with gzip.open(logs / "session.jsonl.gz", "wt", encoding="utf-8") as fh:
+            fh.write(json.dumps(claude_line("m1", "r1", TestClaudeTranscripts.USAGE)) + "\n")
+        rc, out, err = self.harvest("--transcripts", str(logs))
+        self.assertEqual(rc, 0, err)
+        cost = self.receipt()["cost"]
+        self.assertEqual(cost["message_count"], 1)
+        self.assertGreater(cost["usd"], 0)
+        self.assertNotIn("NO RESPONSES", err)
 
     def test_the_task_count_comes_from_the_run_yaml_copy_when_there_is_one(self):
         run_dir = self.root / "runs" / "run-a"
