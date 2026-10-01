@@ -329,6 +329,7 @@ release has something to say.
 - two line-range citations into files this repo rewrites (`references/traps.md`
   G5 into `CLAUDE.md`, `references/vocabulary.md` §2.2 into the gate script);
   both now cite a section, and a test refuses a new one.
+- The changed-files check lost a new file when the worktree set `diff.renames=copies` (a copy line's destination was dropped) or a gitlink under `diff.ignoreSubmodules=all`, and replace refs, grafts or a shallow file could move its merge base past a landed finding; it now diffs with `--no-renames --ignore-submodules=none`, fails closed on a repository with any of those three, and on any status line it does not parse (#9).
 - the findings gate ran `git` inside a worktree a worker can configure, so a
   content filter driver named from that worktree's `.git/info/attributes` made
   the gate run the worker's own program — and the gate still reported the
@@ -460,7 +461,6 @@ release has something to say.
   performs: every free-text field of a row at any depth, and a record of (page,
   normalised length, sha256, and at most a quarter of the quote's words from each
   end, none at all below fourteen words).
-- The changed-files check lost a new file when the worktree set `diff.renames=copies` (a copy line's destination was dropped), and replace refs or grafts could move its merge base past a landed finding; it now diffs with `--no-renames`, ignores replace refs and grafts, and fails closed on any status line it does not parse (#9).
 
 ## 0.2.0 — the multi-source model
 
