@@ -674,6 +674,95 @@ class CompanionTreeIntegrityTest(unittest.TestCase):
             self.assertTrue(step["record_output"])
             self.assertTrue(step["safe"])
 
+    def _companion_manifest(self, remote_root: str) -> tuple[dict, list[dict]]:
+        from run import manifest
+
+        host = {"name": "examplebox", "ssh": "tester@examplebox",
+                "remote_root": remote_root, "tend_cmd": "uv run",
+                "agentbox_profile": "", "disk_budget_bytes": 10 ** 10,
+                "tend_version_required": ""}
+        workspace_dir = scratch(self)
+        (workspace_dir / "runs" / "demo" / "tasks").mkdir(parents=True)
+        (workspace_dir / "runs" / "demo" / "tasks" / "t.yaml").write_text("id: t\n",
+                                                                         encoding="utf-8")
+        entries, _ = manifest.build_manifest(
+            workspace_dir=workspace_dir, skill_dir=REPO, run_id="demo",
+            run={"run_id": "demo", "sources": [], "remote": {}}, host=host,
+            include_sources=True, include_texts=False, companions={"ours": str(self._tree())})
+        return host, entries
+
+    def test_the_companion_copy_is_resynced_with_delete_and_the_entrypoint_is_not(self):
+        """Issue #6: `rsync -a` kept every file a later commit deleted, so verify refused."""
+        from run import manifest, remote
+
+        host, entries = self._companion_manifest("/home/tester")
+        original = remote.rsync_supports_chmod
+        remote.rsync_supports_chmod = lambda *a, **k: False
+        try:
+            steps = remote.plan_commands(
+                host=host, run_id="demo", run={"remote": {}}, entries=entries,
+                names=manifest.remote_names({}, "demo"),
+                budget={"max_cost": 5.0, "currency": "USD"},
+                concurrency={"workers": 1, "reviewers": 1})
+        finally:
+            remote.rsync_supports_chmod = original
+        shells = [s["shell"] for s in steps if s["stage"] == "transfer"]
+        rsyncs = {s["argv"][-1]: s for s in steps if s["argv"][0] == "rsync"}
+        repo = rsyncs.pop("tester@examplebox:/home/tester/repos/ours/")
+        self.assertIn("--delete", repo["argv"])
+        at = shells.index(repo["shell"])
+        # the earlier copy is read-only: rsync cannot unlink inside a 0555 directory
+        self.assertIn("chmod -R u+w /home/tester/repos/ours/", shells[at - 1])
+        self.assertIn("chmod 0555", shells[at + 1])
+        self.assertIn("tester@examplebox:/home/tester/demo/tasks/", rsyncs)
+        for target, step in rsyncs.items():
+            self.assertNotIn("--delete", step["argv"], target)
+
+    def _landed_copy(self) -> tuple[Path, str]:
+        """A host copy as transferred, and the shell command that verifies it."""
+        import shlex
+
+        from run import remote
+
+        host_root = scratch(self)
+        host, entries = self._companion_manifest(str(host_root))
+        sent = {e["name"]: e for e in entries}
+        copy = Path(sent["repo:ours"]["dest"])
+        shutil.copytree(sent["repo:ours"]["src"], copy)
+        shutil.copy(sent["listing:ours"]["src"], sent["listing:ours"]["dest"])
+        cmd = remote._tree_check(host, sent["repo:ours"])["argv"][2]
+        cmd = cmd.replace("python3", shlex.quote(sys.executable), 1)
+        res = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 0, res.stderr)
+        return copy, cmd
+
+    def test_a_stale_copy_is_refused_naming_the_paths_that_were_not_sent(self):
+        copy, cmd = self._landed_copy()
+        (copy / "Blueprint.lean").write_text("-- deleted upstream\n", encoding="utf-8")
+        (copy / "lakefile.toml").unlink()
+        (copy / "Mod" / "A.lean").write_text("theorem a : False := sorry\n", encoding="utf-8")
+        res = subprocess.run(["sh", "-c", cmd], capture_output=True, text=True)
+        self.assertEqual(res.returncode, 1)
+        self.assertIn("1 extra", res.stderr)
+        self.assertIn("Blueprint.lean", res.stderr)
+        self.assertIn("1 missing", res.stderr)
+        self.assertIn("lakefile.toml", res.stderr)
+        self.assertIn("1 changed", res.stderr)
+        self.assertIn("Mod/A.lean", res.stderr)
+        self.assertIn("stale files from an earlier transfer, or an edit", res.stderr)
+
+    def test_an_extra_path_cannot_write_escapes_or_lines_into_the_refusal(self):
+        copy, cmd = self._landed_copy()
+        forged = "x\x1b]52;c;cm0gLXJmIH4=\x07\x1b[2K\r  0 extra (harmless)\n.lean"
+        (copy / "Mod" / forged).write_text("planted\n", encoding="utf-8")
+        res = subprocess.run(["sh", "-c", cmd], capture_output=True)
+        self.assertEqual(res.returncode, 1)
+        for raw in (b"\x1b", b"\x07", b"\r"):
+            self.assertNotIn(raw, res.stderr)
+        self.assertNotIn(b"\n  0 extra", res.stderr)
+        self.assertIn(b"    Mod/x\\x1b]52;c;cm0gLXJmIH4=\\x07\\x1b[2K\\r  0 extra (harmless)"
+                      b"\\n.lean\n", res.stderr)
+
     def _cf_run(self, root: Path, *extra: str) -> subprocess.CompletedProcess:
         env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
         env.pop("CF_WORKSPACE", None)
