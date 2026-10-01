@@ -15,7 +15,7 @@ export const meta = {
 //     finding by "item + first 40 characters of the concept", which is what
 //     made challenge<->finding linking fragile;
 //   * the per-finding result carries the finding_id through, so
-//     `cf adjudicate --transcribe --source challenge` can write ledger rows.
+//     `cf adjudicate --transcribe <file> --from challenge` can write ledger rows.
 // The rule that must NOT be generalised away: DEFAULT TO REFUTED. A first-pass
 // finding in this pipeline is wrong about 40% of the time, always by calling a
 // house convention a content bug.
@@ -131,7 +131,7 @@ const survived = results.filter(r => r.survives_all).length
 log('challenged ' + results.length + ' findings: ' + survived + ' survived, ' +
     (results.length - survived) + ' refuted or unresolved')
 
-// Shape consumed by `cf adjudicate --transcribe <file> --source challenge`.
+// Shape consumed by `cf adjudicate --transcribe <file> --from challenge`.
 return {
   schema: 'cf-challenge-v2',
   companion: COMP.name,
