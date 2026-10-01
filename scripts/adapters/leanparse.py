@@ -62,9 +62,11 @@ _MODIFIERS = (
 
 _ATTR_LINE_RE = re.compile(r"^\s*@\[[^\]]*\]\s*$")
 _OPEN_IN_RE = re.compile(r"^\s*(?:open|variable|set_option)\b.*\bin\s*$")
-_NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z_À-￿][\w'.À-￿]*)\s*$")
-_SECTION_RE = re.compile(r"^(?:noncomputable\s+)?section(?:\s+(?P<name>[\w'.]+))?\s*$")
-_END_RE = re.compile(r"^end(?:\s+[\w'.]+)?\s*$")
+_NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z_À-￿][\w'.À-￿]*)\s*(?:--.*)?$")
+_SECTION_RE = re.compile(r"^(?:@\[expose\]\s*)?(?:public\s+)?(?:noncomputable\s+)?(?:meta\s+)?"
+                         r"section(?:\s+(?P<name>[\w'.]+))?\s*(?:--.*)?$")
+_END_RE = re.compile(r"^end(?:\s+[\w'.]+)?\s*(?:--.*)?$")
+_MUTUAL_RE = re.compile(r"^mutual\b")
 _SECTION_DOC_RE = re.compile(r"^\s*/-!")
 _TOKEN_RE = re.compile(r"/-|-/|--")
 
@@ -269,6 +271,9 @@ def parse_file(
                 elif kind_popped == "section" and name and sec_stack:
                     sec_stack.pop()
             continue
+        if _MUTUAL_RE.match(line):
+            # no `continue`: `mutual def f ...` on one line is still a declaration
+            blocks.append(("mutual", 0, ""))
         m = decl_re.match(line)
         if m:
             starts.append((i, m))

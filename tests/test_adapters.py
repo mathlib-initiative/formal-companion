@@ -185,6 +185,95 @@ class LeanParserTest(unittest.TestCase):
         self.assertEqual(leanparse.strip_comments("keep -- drop\nnext").strip(), "keep \nnext".strip())
 
 
+MUTUAL_FLUSH = '''\
+namespace Demo
+
+mutual
+def isEven : Nat → Bool
+  | 0 => true
+  | n + 1 => isOdd n
+def isOdd : Nat → Bool
+  | 0 => false
+  | n + 1 => isEven n
+end
+
+theorem after_mutual : isEven 0 = true := rfl
+
+end Demo
+'''
+
+MUTUAL_IN_SECTION = '''\
+namespace Demo
+section Parity
+mutual
+def isEven : Nat → Bool
+  | 0 => true
+  | n + 1 => isOdd n
+def isOdd : Nat → Bool
+  | 0 => false
+  | n + 1 => isEven n
+end
+theorem in_section : isEven 0 = true := rfl
+end Parity
+theorem after_section : isOdd 1 = true := rfl
+end Demo
+'''
+
+
+class BlockEndTest(unittest.TestCase):
+    """An `end` closes only the block it belongs to (#24)."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp(prefix="cf-blocks-",
+                                         dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def parse(self, text: str) -> dict:
+        path = self.tmp / "Blocks.lean"
+        path.write_text(text, encoding="utf-8")
+        return {d.name: d for d in leanparse.parse_file(path, rel="Blocks.lean")}
+
+    def test_mutual_end_keeps_the_namespace(self):
+        decls = self.parse(MUTUAL_FLUSH)
+        self.assertEqual([(d.line, d.full_name, d.namespace) for d in decls.values()],
+                         [(4, "Demo.isEven", "Demo"), (7, "Demo.isOdd", "Demo"),
+                          (12, "Demo.after_mutual", "Demo")])
+        self.assertEqual(decls["isOdd"].body.splitlines()[-1], "  | n + 1 => isEven n")
+
+    def test_mutual_end_keeps_the_section(self):
+        decls = self.parse(MUTUAL_IN_SECTION)
+        self.assertEqual((decls["in_section"].full_name, decls["in_section"].sections),
+                         ("Demo.in_section", ("Parity",)))
+        after = decls["after_section"]
+        self.assertEqual((after.full_name, after.namespace, after.sections),
+                         ("Demo.after_section", "Demo", ()))
+
+    def test_every_section_header_and_a_trailing_comment_open_a_block(self):
+        plain, in_inner = ("Demo.inside", ()), ("Demo.inside", ("Inner",))
+        for opener, closer, inside in [
+            ("public section", "end", plain),
+            ("@[expose] public section", "end", plain),
+            ("@[expose] public noncomputable section", "end", plain),
+            ("public meta section", "end", plain),
+            ("meta section", "end", plain),
+            ("public section Inner", "end Inner", in_inner),
+            ("section Inner -- a comment", "end Inner", in_inner),
+            ("section Inner", "end Inner --section", in_inner),
+            ("namespace Inner -- a comment", "end Inner --namespace", ("Demo.Inner.inside", ())),
+            ("mutual -- a comment", "end", plain),
+        ]:
+            with self.subTest(opener=opener, closer=closer):
+                decls = self.parse(f"namespace Demo\n{opener}\ndef inside : Nat := 0\n"
+                                   f"{closer}\ntheorem after : True := trivial\nend Demo\n")
+                self.assertEqual([(d.full_name, d.sections) for d in decls.values()],
+                                 [inside, ("Demo.after", ())])
+
+    def test_a_declaration_on_the_mutual_line_is_kept(self):
+        decls = self.parse("namespace Demo\nmutual def inside : Nat := 0\nend\n"
+                           "theorem after : True := trivial\nend Demo\n")
+        self.assertEqual([d.full_name for d in decls.values()], ["Demo.inside", "Demo.after"])
+
+
 class TagAndAnchorTest(unittest.TestCase):
     """The tag grammar and the own-versus-cross-reference anchor rule."""
 
