@@ -189,7 +189,8 @@ def _tree_check(host: dict, entry: dict) -> dict:
 
 
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
-                  names: dict, budget: dict, concurrency: dict) -> list[dict]:
+                  names: dict, budget: dict, concurrency: dict,
+                  force: bool = False) -> list[dict]:
     """The ordered command plan: preflight, transfer, verify, smoke, raise, monitor.
 
     Each step is ``{stage, title, argv, shell, safe}``; ``safe`` marks the
@@ -200,6 +201,7 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     tend = host["tend_cmd"]
     tend_root = f"{root}/{names['tend_root']}"
     entrypoint = f"{root}/{names['entrypoint']}"
+    tasks_commit = shlex.quote("tasks for " + run_id)
     steps: list[dict] = []
 
     def add(stage: str, title: str, cmd: dict, safe: bool = False, **extra) -> None:
@@ -209,6 +211,18 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"set -e; uname -sm; df -h {shlex.quote(root)} | tail -1; "
                    f"command -v agentbox >/dev/null && echo 'agentbox: ok' || echo 'agentbox: MISSING'; "
                    + _tend_version_step(host, tend)), safe=True, record_output=True)
+
+    if not force:
+        # Every transfer commits tasks/ over main, so once tend has merged into
+        # it a re-send reopens each finished task and the fleet runs it again.
+        add("transfer", f"refuse to re-send tasks/ once main has moved past 'tasks for {run_id}' "
+                        "(--force sends anyway)",
+            _ssh(host, f"head=$(git --git-dir={shlex.quote(entrypoint + '/.git')} log -1 "
+                       "--format=%s 2>/dev/null); "
+                       f"test -z \"$head\" || test \"$head\" = {tasks_commit} || "
+                       "{ printf 'REFUSED: the entrypoint is at \"%s\", past %s; re-sending "
+                       f"tasks/ would reopen every finished task\\n' \"$head\" {tasks_commit} >&2; "
+                       "exit 1; }"), safe=True)
 
     dirs = sorted({str(Path(e["dest"]).parent) if e["kind"] == "file" else e["dest"].rstrip("/")
                    for e in entries})
@@ -241,7 +255,7 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"cd {shlex.quote(entrypoint)} && "
                    f"(git rev-parse --git-dir >/dev/null 2>&1 || git init -q -b main .) && "
                    f"git add -A && "
-                   f"(git diff --cached --quiet || git commit -qm {shlex.quote('tasks for ' + run_id)}) && "
+                   f"(git diff --cached --quiet || git commit -qm {tasks_commit}) && "
                    f"test -z \"$(git status --porcelain)\" || "
                    f"{{ echo 'REFUSED: entrypoint still dirty after commit; tend will bounce every merge batch' >&2; exit 1; }}"))
 
@@ -308,8 +322,8 @@ STAGE_ORDER = ["preflight", "transfer", "verify", "smoke", "raise", "monitor", "
 
 
 def stages_upto(stage: str) -> list[str]:
-    """Stage names up to and including *stage* (monitor/stop stand alone)."""
-    if stage in ("monitor", "stop"):
+    """Stage names up to and including *stage* (raise/monitor/stop act on the running fleet alone)."""
+    if stage in ("raise", "monitor", "stop"):
         return [stage]
     if stage not in STAGE_ORDER:
         raise CfError(f"unknown stage {stage!r} (want {', '.join(STAGE_ORDER)})")

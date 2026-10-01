@@ -1078,3 +1078,63 @@ class EntrypointIsCommittedOnEveryTransferTest(unittest.TestCase):
         shell = self._transfer_shell()
         head, _, tail = shell.partition("git init")
         self.assertIn("git add -A", tail, "add/commit must follow init unconditionally")
+
+
+class TasksAreNotResentOverARunningFleetTest(unittest.TestCase):
+    """A re-transfer onto an entrypoint tend had merged into reopened its finished tasks (#7)."""
+
+    HOST = {"name": "examplebox", "ssh": "t@examplebox", "remote_root": "/srv/runs",
+            "tend_cmd": "uv run", "agentbox_profile": "p",
+            "disk_budget_bytes": 1 << 30, "tend_version_required": ""}
+
+    def _transfer(self, remote_root: str = "/srv/runs", **kw) -> list[dict]:
+        from run import remote
+
+        tasks = {"name": "tasks", "kind": "dir", "src": "/local/runs/r/tasks",
+                 "dest": f"{remote_root}/r/tasks/", "rsync_flags": [], "exists": True}
+        steps = remote.plan_commands(
+            host={**self.HOST, "remote_root": remote_root}, run_id="r", run={"remote": {}},
+            entries=[tasks], concurrency={"workers": 8, "reviewers": 5},
+            names={"entrypoint": "r", "tend_root": "r-tend", "gate": "r-gate",
+                   "sources": "sources", "repos": "repos"},
+            budget={"max_cost": None, "currency": "USD"}, **kw)
+        return [s for s in steps if s["stage"] == "transfer"]
+
+    def test_the_guard_runs_before_anything_is_sent(self):
+        steps = self._transfer()
+        self.assertIn("moved past", steps[0]["title"])
+        self.assertIn("tasks for r", steps[0]["shell"])
+        self.assertIn("REFUSED", steps[0]["shell"])
+        self.assertTrue(steps[0]["safe"])
+
+    def test_force_drops_the_guard_and_keeps_the_transfer(self):
+        steps = self._transfer(force=True)
+        self.assertFalse([s for s in steps if "moved past" in s["title"]])
+        self.assertTrue([s for s in steps if s["argv"][0] == "rsync"])
+
+    def test_the_guard_refuses_only_once_main_has_moved(self):
+        if shutil.which("git") is None:                      # pragma: no cover
+            self.skipTest("git is not installed")
+        root = scratch(self)
+        steps = self._transfer(str(root))
+        guard, commit = steps[0]["argv"][2], steps[-1]["argv"][2]
+        env = dict(os.environ, GIT_AUTHOR_NAME="t", GIT_AUTHOR_EMAIL="t@t",
+                   GIT_COMMITTER_NAME="t", GIT_COMMITTER_EMAIL="t@t",
+                   GIT_CEILING_DIRECTORIES=str(root))
+
+        def sh(cmd: str) -> subprocess.CompletedProcess:
+            return subprocess.run(["sh", "-c", cmd], capture_output=True, text=True, env=env)
+
+        self.assertEqual(sh(guard).returncode, 0, "a first transfer has no entrypoint yet")
+        (root / "r" / "tasks").mkdir(parents=True, exist_ok=True)
+        (root / "r" / "tasks" / "t.yaml").write_text("status: open\n", encoding="utf-8")
+        self.assertEqual(sh(commit).returncode, 0)
+        self.assertEqual(sh(guard).returncode, 0, "nothing merged yet: a re-plan may re-send")
+
+        (root / "r" / "tasks" / "t.yaml").write_text("status: complete\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(root / "r"), "commit", "-qam", "finding: Corollary 1.7.17"],
+                       env=env, capture_output=True, check=True)
+        refused = sh(guard)
+        self.assertEqual(refused.returncode, 1)
+        self.assertIn("REFUSED", refused.stderr)
+        self.assertIn("finding: Corollary 1.7.17", refused.stderr)
