@@ -175,17 +175,20 @@ deviation a companion states in its own `adapter.yaml`: no scan runs, so nothing
 `cf extract` warns on every run that the table was not cross-checked. A bare `off` is YAML false
 and is read as `off`.
 
-### 1.10 Annotation documents (`lean-companion/annotations`, schema_version `1.0`)
+### 1.10 Annotation documents (`formal-companion/annotations`, schema_version `1.0`)
 
 The annotation enums are defined in the vendored `formal_companion_annotations.vocab`
 (`vendor/formal_companion_annotations/vocab.py`, one release of formal-companion-annotations)
-and documented, value by value, in `formal-companion-annotations/docs/vocabulary.md`. The nine
-sets sections 1.2, 1.4, 1.5, 1.6 and 1.7 and `SORRY_CLASSES` document for the skill's stages
-(`VIEWER_VERDICTS`, `VIEWER_SEVERITIES`, `VIEWER_STATUS`, `LEDGER_VERDICTS`, `FINDING_KINDS`,
-`SOURCE_ROLES`, `SORRY_CLASSES`, `STATIC_RESOLUTIONS`, `RESOLUTION_PREFIXES`) are the format's,
-defined with their meanings in that file's section 2; `cflib.vocab` keeps copies for the stages,
-and those sections of this document must agree with the format. `tests/test_vendored_format.py`
-checks that the values do.
+and documented, value by value, in `formal-companion-annotations/docs/vocabulary.md`. The format
+owns its vocabulary and names it its own way (`ANNOTATION_VERDICTS`, `ANNOTATION_SEVERITIES`,
+`ANNOTATION_VERDICT_STATUSES`, `ANNOTATION_RESOLUTION_STATES`, `ANNOTATION_SOURCE_ROLES`,
+`ANNOTATION_SORRY_CLASSES`, ...); the skill keeps its own sets here for its stages and maps onto
+the format's values where it writes a document: a verdict's `verdict`, `severity` and `status`
+are the viewer layer's (section 1.7), a source's `role` section 1.5's, a declaration's `sorry`
+`SORRY_CLASSES`, a resolution's `state` section 1.4's. `tests/test_vendored_format.py` checks that
+every value the skill writes is one the format admits. The ledger verdicts and finding kinds
+(sections 1.2 and 1.4) are not in the format at all: a document carries them only under `x_`
+keys (`x_ledger_verdict`).
 
 ---
 

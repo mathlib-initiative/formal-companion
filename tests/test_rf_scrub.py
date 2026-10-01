@@ -262,7 +262,12 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "the docstring-tagged companion's own site recipe, which tests/data/m3/README.md follows to render "
      "the literate site the M3 page manifest pins"),
     ("scripts/slim_large_pages.py",
-     "the same companion's post-processor, the last step of that render recipe"),
+     "the same companion's earlier post-processor, which docs/proposals/pdf-to-companion.md names"),
+    ("scripts/lazy_literate.py",
+     "the same companion's post-processor that moves tactic states and proof bodies into _lazy/ fragments, "
+     "a step of that render recipe"),
+    ("scripts/check_lazy_pages.py",
+     "the same companion's check that the _lazy/ rewrite lost no text, the last step of that render recipe"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:
