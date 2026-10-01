@@ -61,7 +61,8 @@ def register(subparsers) -> None:
                    help="acknowledge running without a ceiling")
     p.add_argument("--stage", default="smoke",
                    choices=("preflight", "transfer", "verify", "smoke", "raise", "monitor", "stop"),
-                   help="how far to go (default: smoke)")
+                   help="how far to go (default: smoke); raise, monitor and stop run alone, "
+                        "on the running fleet")
     p.add_argument("--smoke-verified", action="store_true",
                    help="a human watched one task through the pipeline; required for --stage raise")
     p.add_argument("--workers", type=int, help="worker limit when raising (default from run.yaml)")
@@ -74,7 +75,9 @@ def register(subparsers) -> None:
                    help="report this run's progress instead of planning it")
     p.add_argument("--local", action="store_true",
                    help="stage the local Workflow fleet instead (<100 items)")
-    p.add_argument("--force", action="store_true", help="ignore the local fleet size limit")
+    p.add_argument("--force", action="store_true",
+                   help="ignore the local fleet size limit; on a server run, re-send tasks/ "
+                        "although the entrypoint's main has moved past 'tasks for <run>'")
     p.add_argument("--journal", help="with --status: a Workflow directory to count")
 
 
@@ -379,7 +382,8 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
     concurrency = _concurrency(workspace, data, args)
 
     steps = remote.plan_commands(host=host, run_id=args.run_id, run=data, entries=entries,
-                                 names=names, budget=budget, concurrency=concurrency)
+                                 names=names, budget=budget, concurrency=concurrency,
+                                 force=args.force)
     stages = remote.stages_upto(args.stage)
     if args.stage == "raise" and not args.smoke_verified:
         raise CfError(
