@@ -1,12 +1,16 @@
 """The cost reader, the price table and `cf cost` / `cf harvest --transcripts`.
 
 Milestone M0a of docs/proposals/pdf-to-companion.md (section 5.1) asks the
-tool to reproduce a recorded total within 1% from retained usage, to price one
-Codex session against a hand computation, and never to price a model the table
-does not list.  The fixtures are ``tests/data/m0a/`` (their README says what
-each is); every other log here is synthetic and built in a temporary
-directory.  ``_hermetic`` is imported first because the harvest test builds a
-workspace.
+tool to reproduce a recorded total within 1% from retained transcripts, to
+price one Codex session against a hand computation, and never to price a model
+the table does not list.  The s17b fixture does not meet the first bar: its
+rows are transcript lines, one per content block, and the recorded $358.10 was
+summed over the same lines, so matching it shows the sum is the same sum.  One
+count per response, which the transcript reader gives, prices them at about
+$168.91 (TestTheS17bRowsAreContentBlockLines pins both figures).  The
+fixtures are ``tests/data/m0a/`` (their README says what each is); every
+other log here is synthetic and built in a temporary directory.
+``_hermetic`` is imported first because the harvest test builds a workspace.
 """
 from __future__ import annotations
 
@@ -42,7 +46,8 @@ FIXTURES = HERE / "data" / "m0a"
 S17B = FIXTURES / "s17b-usage.jsonl.gz"
 CODEX_SAMPLE = FIXTURES / "codex-usage-sample.json"
 
-#: the total tests/data/m0a/README.md records for the s17b rows
+#: the total tests/data/m0a/README.md records for the s17b rows, summed line
+#: by line (one row per content block, not per response)
 RECORDED_S17B_USD = 358.10
 #: what the tool computes for them at the shipped prices (rounded to 6 places
 #: by ``pricing.price``); the assertion below is the 1% band, this is the figure
@@ -88,10 +93,18 @@ def codex_sample_events() -> list[dict]:
 # the recorded total
 # ---------------------------------------------------------------------------
 
-class TestTheRecordedTotalIsReproduced(unittest.TestCase):
-    """5,207 exported rows of the section 1.7 re-run price to $358.10."""
+class TestTheS17bRowsAreContentBlockLines(unittest.TestCase):
+    """The fixture's 5,207 rows are transcript lines, not responses.
 
-    def test_the_s17b_rows_price_to_the_recorded_total_within_one_percent(self):
+    Summed as written they give the recorded $358.10, because the recorded
+    total was summed the same way; that shows the arithmetic, not a per-response
+    reproduction.  Collapsing each run of identical adjacent rows (the lines of
+    one response) leaves 2,628 rows at $168.91.  The rows carry no message id,
+    so that collapse is an estimate of the per-response figure, not a re-read
+    of the transcripts.
+    """
+
+    def test_summed_line_by_line_the_rows_give_the_recorded_total(self):
         totals = usage_mod.read_path(S17B)
         self.assertEqual(totals.message_count, 5207)
         self.assertEqual(totals.transcript_count, 1)
@@ -102,11 +115,31 @@ class TestTheRecordedTotalIsReproduced(unittest.TestCase):
         self.assertEqual(priced["unpriced"], [])
         self.assertEqual(priced["priced"], ["claude-opus-5"])
 
+    def test_one_row_per_response_prices_about_53_percent_lower(self):
+        """The figures tests/data/m0a/README.md, the CHANGELOG and the proposal
+        quote, computed here from the rows and the issue #11 prices by hand,
+        without the reader."""
+        with gzip.open(S17B, "rt", encoding="utf-8") as fh:
+            rows = [json.loads(line) for line in fh if line.strip()]
+        collapsed = [r for i, r in enumerate(rows) if i == 0 or r != rows[i - 1]]
+        rate = {"input_tokens": 5.0, "output_tokens": 25.0,
+                "cache_creation_input_tokens": 6.25, "cache_read_input_tokens": 0.5}
+
+        def usd(selected):
+            return sum(r["usage"][k] * v for r in selected for k, v in rate.items()) / 1e6
+
+        self.assertEqual((len(rows), len(rows) - len(collapsed), len(collapsed)),
+                         (5207, 2579, 2628))
+        self.assertEqual(round(usd(rows), 2), 358.10)
+        self.assertEqual(round(usd(collapsed), 2), 168.91)
+        self.assertEqual(round(100 * (1 - usd(collapsed) / usd(rows))), 53)
+
     def test_the_rows_are_summed_as_written_because_they_carry_no_ids(self):
         """The export repeats identical consecutive rows (the transcripts write
         one line per content block); with no message id to de-duplicate on, a
         usage export is summed as written, and that is what the recorded total
-        was computed from."""
+        was computed from.  A `cf cost --export` file is one row per response,
+        so summing it as written is right; this fixture is not one."""
         with gzip.open(S17B, "rt", encoding="utf-8") as fh:
             first, second = fh.readline(), fh.readline()
         self.assertEqual(first, second)
