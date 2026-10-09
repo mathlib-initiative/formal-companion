@@ -1228,7 +1228,19 @@ class AttributionTableExport:
                          "declaration with no membership is exactly one the ledger does not list (every ledger "
                          "node has an edge)", absent[:5])
         self.count(doc)
+        self.report.counts["inputs"] = self.inputs()
         return doc
+
+    def inputs(self) -> list[dict]:
+        """``{path, sha256, bytes}`` of every curation file this export read (`cf overlay export` records them)."""
+        rels = [f"{self.layout['data']}/{p.name}" for p in self.batch_paths]
+        rels += [f"{self.layout['data']}/{p.stem}.sources.json" for p in self.batch_paths
+                 if p.with_name(p.stem + ".sources.json").is_file()]
+        rels += [f"{self.layout['data']}/{self.layout[k]}" for k in ("refinement", "verdicts", "destinations")]
+        if self.snippets_in is not None:
+            rels.append(f"{self.layout['data']}/{self.layout['snippets']}")
+        rels += [self.layout["official"], self.layout["ledger"]]
+        return [file_lock(self.repo, rel) for rel in sorted(set(rels))]
 
     def count(self, doc: dict) -> None:
         """The report's counts: per array, and the breakdowns the docs cite."""
