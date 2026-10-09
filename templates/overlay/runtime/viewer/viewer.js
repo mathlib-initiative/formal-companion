@@ -28,12 +28,13 @@ import {
   groupCards,
   paginateCards,
   parseShard,
+  preferredItemId,
+  provenanceText,
   quadToViewport,
   readConfig,
   readShardList,
-  resolutionText,
   sha256Hex,
-  verdictDisplay,
+  verdictNote,
   verifyPdfBytes,
 } from "./viewer-core.js";
 
@@ -216,7 +217,7 @@ export async function bootstrapViewer({
       "rotate-left", "rotate-right", "rotation-value",
       "page-stage", "pdf-canvas", "overlay",
       "selection-empty", "selection", "item-choices", "item-label", "item-locator",
-      "verdict-notes", "coverage-note", "fallback-note",
+      "verdict-notes", "coverage-note", "provenance-note", "fallback-note",
       "role-filter", "role-filter-wrap", "target-filter",
       "target-summary", "target-groups",
       "previous-targets", "next-targets", "target-page",
@@ -271,15 +272,11 @@ export async function bootstrapViewer({
   function renderVerdictNotes(item) {
     ui["verdict-notes"].replaceChildren();
     for (const verdict of item.verdicts) {
-      const display = verdictDisplay(verdict.verdict, verdict.status);
+      const shown = verdictNote(verdict);
       const note = documentRef.createElement("p");
-      note.className = `verdict-note ${display.className}`;
-      note.title = (verdict.evidence ?? []).join("\n");
-      const severity = verdict.severity && verdict.severity !== "none" ? ` (${verdict.severity})` : "";
-      const resolution = resolutionText(verdict.resolution);
-      const status = String(verdict.status ?? "").replace(/_/g, " ");
-      note.textContent = `Faithfulness: ${display.label}${severity}. ${verdict.summary} `
-        + `[${status}${resolution ? `; ${resolution}` : ""}]`;
+      note.className = shown.className;
+      note.title = shown.title;
+      note.textContent = shown.text;
       ui["verdict-notes"].append(note);
     }
   }
@@ -310,7 +307,7 @@ export async function bootstrapViewer({
       polygon.setAttribute("aria-pressed", String(region?.id === polygon.dataset.regionId));
     }
     renderItemChoices(region);
-    selectItem(region?.itemIds[0] ?? null);
+    selectItem(region ? preferredItemId(region, state.index.items) : null);
   }
 
   function selectItem(itemId) {
@@ -330,6 +327,9 @@ export async function bootstrapViewer({
     renderVerdictNotes(item);
     ui["coverage-note"].hidden = !item.coverageNote;
     ui["coverage-note"].textContent = item.coverageNote;
+    const provenance = provenanceText(item);
+    ui["provenance-note"].hidden = !provenance;
+    ui["provenance-note"].textContent = provenance;
     const clusters = item.cards.length ? [] : item.clusterIds;
     ui["fallback-note"].hidden = !clusters.length;
     ui["fallback-note"].textContent = clusters.length

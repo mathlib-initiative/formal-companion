@@ -10,7 +10,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { sha256Hex } from "../runtime/viewer/viewer-core.js";
+import { NAMESPACE, sha256Hex } from "../runtime/viewer/viewer-core.js";
 import { bootstrapViewer, isViewerShortcut, rememberedPage } from "../runtime/viewer/viewer.js";
 import {
   FakeOption,
@@ -223,7 +223,10 @@ test("rendered: selecting a region shows its item's cards, grouped in role order
   assert.equal(el(documentRef, "selection").hidden, false);
   assert.equal(el(documentRef, "selection-empty").hidden, true);
   assert.equal(el(documentRef, "item-label").textContent, "Theorem 1.1");
-  assert.equal(el(documentRef, "item-locator").textContent, "p. 2 (physical)");
+  assert.equal(el(documentRef, "item-locator").textContent, "Chapter 1, Theorem 1.1");
+  assert.equal(el(documentRef, "provenance-note").hidden, false);
+  assert.equal(el(documentRef, "provenance-note").textContent,
+               "1 key declaration for this result (2 attributed); curation, unconfirmed; pipeline, confirmed.");
   assert.equal(el(documentRef, "target-summary").textContent,
                "Formalised in this companion: a key declaration states it.");
   assert.deepEqual(el(documentRef, "target-groups").children.map((section) => section.children[0].textContent),
@@ -256,8 +259,8 @@ test("rendered: verdict badges mark a repaired declaration faithful and an old o
   const [note] = el(documentRef, "verdict-notes").children;
   assert.match(note.className, /verdict-fixed/);
   assert.equal(note.textContent, "Faithfulness: fixed: statement deviation (medium). The box bound was stated "
-               + "for closed boxes only. [fixed; fixed, PR #7]");
-  assert.equal(note.title, "Notes/Box.lean:12\nsource page 2");
+               + "for closed boxes only. [adjudication, fixed; fixed, PR #7]");
+  assert.equal(note.title, "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler");
 });
 
 test("rendered: a status states what applies, with its class and its note", async (t) => {
@@ -284,7 +287,31 @@ test("rendered: an item that links nothing says so and names its cluster", async
   assert.equal(el(documentRef, "fallback-note").hidden, false);
   assert.equal(el(documentRef, "fallback-note").textContent,
                "No declaration is linked to this item; its ledger cluster: cluster:sets.");
+  assert.equal(el(documentRef, "provenance-note").hidden, true);
   assert.deepEqual(cardsShown(documentRef), []);
+});
+
+test("rendered: a region opens the item its curation names first, and never an empty one first", async (t) => {
+  withOption(t);
+  const { documentRef, result } = await start();
+  await selectPageRegion(documentRef, result.state, "loc:0005");
+  const choices = el(documentRef, "item-choices");
+  assert.deepEqual(choices.children.map((button) => button.textContent), ["Remark 7.1 and equation (7)", "Equation 7"]);
+  assert.equal(el(documentRef, "item-label").textContent, "Remark 7.1 and equation (7)");
+  const shards = makeShards(PDF_SHA256);
+  for (const record of shards["annotations/2.jsonl"]) {
+    const ext = record.extensions?.[NAMESPACE];
+    if (ext?.region === "loc:0005") {
+      ext.region_items = ["item:equation-7", "item:remark-7.1"];
+    }
+  }
+  const second = await start({ shards });
+  await selectPageRegion(second.documentRef, second.result.state, "loc:0005");
+  assert.deepEqual(el(second.documentRef, "item-choices").children.map((button) => button.textContent),
+                   ["Equation 7", "Remark 7.1 and equation (7)"]);
+  assert.equal(el(second.documentRef, "item-label").textContent, "Remark 7.1 and equation (7)",
+               "the equation has no card, so the remark opens");
+  assert.equal(cardsShown(second.documentRef).length, 1);
 });
 
 test("rendered: a region with two items offers a choice, and the choice switches the cards", async (t) => {

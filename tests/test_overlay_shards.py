@@ -56,7 +56,7 @@ def document() -> dict:
                      "alternate_urls": ["https://mirror.example.invalid/notes.pdf"],
                      "physical_page_count": 9, "edition": "second", "retrieved_at": "2026-01-02T00:00:00Z",
                      "identifiers": {"isbn": ["9780000000002", "9780000000019"], "doi": "10.0000/x"},
-                     "page_size": {"width_pt": 600, "height_pt": 800}},
+                     "page_size": {"width_pt": 600, "height_pt": 800}, "printed_page_offset": 1},
                     {"id": "site", "kind": "web", "revision": "r1", "title": "a site"}],
         "items": [
             {"id": "theorem-1.2.3", "form": "numbered", "kind": "Theorem", "number": "1.2.3",
@@ -77,11 +77,12 @@ def document() -> dict:
         "locations": [
             location("theorem-1.2.3@p002", ["theorem-1.2.3"],
                      selector(2, rect={"x0": 0.1, "y0": 0.2, "x1": 0.6, "y1": 0.35})),
-            location("remark-1.2.4@p002", ["remark-1.2.4", "equation-1.1"],
-                     selector(2, quads=[{"x0": 0.1, "y0": 0.5, "x1": 0.9, "y1": 0.5,
+            dict(location("remark-1.2.4@p002", ["equation-1.1", "remark-1.2.4"],
+                          selector(2, quads=[{"x0": 0.1, "y0": 0.5, "x1": 0.9, "y1": 0.5,
                                          "x2": 0.9, "y2": 0.6, "x3": 0.1, "y3": 0.6},
                                         {"x0": 0.1, "y0": 0.6, "x1": 0.4, "y1": 0.6,
                                          "x2": 0.4, "y2": 0.7, "x3": 0.1, "y3": 0.7}])),
+                 x_item_order=["remark-1.2.4", "equation-1.1"]),
             location("exercise-1.3.1@p003", ["exercise-1.3.1"],
                      selector(3, rect={"x0": 0.7, "y0": 0.0, "x1": 1.0, "y1": 0.1})),
             location("passage-p5@p005", ["passage-p5"],
@@ -95,11 +96,16 @@ def document() -> dict:
         "declarations": [decl("Notes.Box.mono"), decl("Notes.Box.part", kind="lemma"),
                          decl("Notes.Box.help", private=True, line=None), decl("Notes.Box.ext"),
                          decl("Notes.Box.orphan")],
+        "provenance": [
+            {"id": "prov-curation", "actor": "agent", "method": "curation", "confirmed_by_human": False,
+             "note": "curated by one agent, checked by another", "x_method": "semantic_curation"},
+            {"id": "prov-verdicts", "actor": "agent", "method": "adjudication", "confirmed_by_human": False,
+             "note": "two readings and a reconciler"}],
         "links": [
             {"id": "theorem-1.2.3/attributed/Notes.Box.part", "item": "theorem-1.2.3",
-             "declaration": "Notes.Box.part", "role": "attributed"},
+             "declaration": "Notes.Box.part", "role": "attributed", "provenance": "prov-curation"},
             {"id": "theorem-1.2.3/key/Notes.Box.mono", "item": "theorem-1.2.3",
-             "declaration": "Notes.Box.mono", "role": "key"},
+             "declaration": "Notes.Box.mono", "role": "key", "provenance": "prov-curation"},
             {"id": "remark-1.2.4/attributed/Notes.Box.part", "item": "remark-1.2.4",
              "declaration": "Notes.Box.part", "role": "attributed", "relation": "part"},
             {"id": "passage-p5/support/Notes.Box.help", "item": "passage-p5",
@@ -121,7 +127,7 @@ def document() -> dict:
         ],
         "verdicts": [{"item": "theorem-1.2.3", "verdict": "deviation", "severity": "low", "status": "fixed",
                       "summary": "closed boxes only", "evidence": ["Notes/Box.lean:10"],
-                      "resolution": {"state": "fixed", "pr": 3},
+                      "resolution": {"state": "fixed", "pr": 3}, "provenance": "prov-verdicts",
                       "declarations": [{"declaration": "Notes.Box.mono", "verdict": "faithful",
                                         "note": "repaired"}]}],
     }
@@ -170,7 +176,13 @@ class TestTheMapping(unittest.TestCase):
         self.assertEqual(ext["signoff"], {"method": "agent_visual", "verifier": "agent:one"})
         self.assertEqual(ext["verdicts"], [{"verdict": "deviation", "severity": "low", "status": "fixed",
                                             "summary": "closed boxes only", "evidence": ["Notes/Box.lean:10"],
-                                            "resolution": {"state": "fixed", "pr": 3}}])
+                                            "resolution": {"state": "fixed", "pr": 3},
+                                            "provenance": {"actor": "agent", "method": "adjudication",
+                                                           "confirmed_by_human": False,
+                                                           "note": "two readings and a reconciler"}}])
+        self.assertEqual(ext["provenance"], {"actor": "agent", "method": "curation", "confirmed_by_human": False})
+        self.assertEqual(ext["locator"], {"physical": [2], "printed": [1]})
+        self.assertNotIn("region_items", ext)
         self.assertEqual(ext["declaration_verdict"], {"verdict": "faithful", "status": "fixed", "note": "repaired"})
 
     def test_a_fallback_destination_has_no_fragment_and_keeps_its_label(self):
@@ -207,7 +219,8 @@ class TestTheMapping(unittest.TestCase):
         [record] = self.records["passage-p5/support/Notes.Box.help"]
         self.assertEqual(record["location"], {"page": 5, "rect": [0.1, 0.8, 0.4, 0.1]})
         self.assertEqual((record["kind"], record["label"]), ("passage", "A remark on unions"))
-        self.assertEqual(record["extensions"][NS]["pages"], {"basis": "physical", "first": 5})
+        self.assertEqual(record["extensions"][NS]["locator"], {"physical": [5], "printed": [4]})
+        self.assertNotIn("provenance", record["extensions"][NS], "the link names no provenance")
 
     def test_an_item_that_links_nothing_is_one_target_less_record_per_region(self):
         [record] = self.records["exercise-1.3.1"]
@@ -216,10 +229,28 @@ class TestTheMapping(unittest.TestCase):
             "type": "repository", "url": "https://git.example.invalid/owner/notes", "commit": "1" * 40}})
         self.assertEqual(record["label"], "Exercise 1.3.1(ii)")
         self.assertEqual(record["extensions"][NS]["clusters"], ["c:13"])
+        self.assertEqual(record["extensions"][NS]["locator"],
+                         {"text": "Section 1.3, Exercise 1.3.1", "physical": [3], "printed": [2]})
         [equation] = self.records["equation-1.1"]
         self.assertNotIn("status", equation)
         self.assertEqual(equation["extensions"][NS]["region"], "remark-1.2.4@p002")
         self.assertEqual(equation["label"], "Equation 1.1")
+
+    def test_a_region_keeps_the_order_its_curation_names_its_items_in(self):
+        for record in self.records["remark-1.2.4/attributed/Notes.Box.part"] + self.records["equation-1.1"]:
+            self.assertEqual(record["extensions"][NS]["region_items"], ["remark-1.2.4", "equation-1.1"])
+        doc = document()
+        doc["locations"][1]["x_item_order"] = ["remark-1.2.4", "lemma-2.1"]
+        [equation] = by_id(shards.convert(doc))["equation-1.1"]
+        self.assertEqual(equation["extensions"][NS]["region_items"], ["equation-1.1", "remark-1.2.4"],
+                         "an order that names other items is ignored")
+
+    def test_an_item_on_several_pages_names_them_all_on_every_record(self):
+        doc = document()
+        doc["locations"].append(location("theorem-1.2.3@p004", ["theorem-1.2.3"],
+                                         selector(4, rect={"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.2})))
+        for record in by_id(shards.convert(doc))["theorem-1.2.3/key/Notes.Box.mono"]:
+            self.assertEqual(record["extensions"][NS]["locator"], {"physical": [2, 4], "printed": [1, 3]})
 
     def test_a_rect_that_reaches_the_edge_stays_on_the_page_in_exact_arithmetic(self):
         [record] = self.records["exercise-1.3.1"]
@@ -243,19 +274,19 @@ class TestTheShards(unittest.TestCase):
         self.assertEqual({name: sorted({r["extensions"][NS]["item"] for r in records})
                           for name, records in conversion.shards.items()},
                          {"1.1": ["equation-1.1"], "1.2": ["remark-1.2.4", "theorem-1.2.3"],
-                          "1.3": ["exercise-1.3.1"], "2": ["lemma-2.1"], "other": ["passage-p5"]})
+                          "1.3": ["exercise-1.3.1"], "other": ["lemma-2.1", "passage-p5"]})
 
     def test_section_of(self):
         clusters = {"c": {"locator": "Section 4.2, Lemma 4.2.1"}, "d": {"locator": "pp. 3-4"}}
         for item, section in (({"number": "1.2.7"}, "1.2"), ({"number": "1.2.7", "clusters": ["c"]}, "1.2"),
                               ({"number": "1.1", "clusters": ["c"]}, "4.2"), ({"section": "Section 3.1"}, "3.1"),
-                              ({"number": "3.4"}, "3"), ({"clusters": ["d"]}, "other"), ({}, "other")):
+                              ({"number": "3.4"}, "other"), ({"clusters": ["d"]}, "other"), ({}, "other")):
             with self.subTest(item=item):
                 self.assertEqual(shards.section_of(item, clusters), section)
 
     def test_lines_are_canonical_sorted_and_end_with_a_newline(self):
         files = shards.shard_bytes(shards.convert(document()))
-        self.assertEqual(sorted(files), ["1.1.jsonl", "1.2.jsonl", "1.3.jsonl", "2.jsonl", "other.jsonl"])
+        self.assertEqual(sorted(files), ["1.1.jsonl", "1.2.jsonl", "1.3.jsonl", "other.jsonl"])
         text = files["1.2.jsonl"].decode("utf-8")
         self.assertTrue(text.endswith("\n"))
         lines = text.splitlines()
@@ -266,6 +297,12 @@ class TestTheShards(unittest.TestCase):
         self.assertEqual(ids, ["theorem-1.2.3/key/Notes.Box.mono", "theorem-1.2.3/attributed/Notes.Box.part",
                                "remark-1.2.4/attributed/Notes.Box.part"],
                          "by page, then position, then role")
+        doc = document()
+        doc["items"][3].update(clusters=[], section="Section 1.2")
+        lines = shards.shard_bytes(shards.convert(doc))["1.2.jsonl"].decode("utf-8").splitlines()
+        self.assertEqual([json.loads(line)["id"] for line in lines][2:], ["remark-1.2.4/attributed/Notes.Box.part",
+                                                                          "equation-1.1"],
+                         "a region's items in its curation's order, not by id")
 
     def test_the_bytes_are_deterministic(self):
         doc = document()

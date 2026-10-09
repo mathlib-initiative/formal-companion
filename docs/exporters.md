@@ -282,7 +282,7 @@ method name and curation count (`provenance.x_refinement_fields`, 1), the PDF's
 download checks (`source.x_download_checks`, 1), the ledger's own words for the
 edition (`source.x_companion_edition`, 1), the 19 comment tags refused as
 declared ids and kept as `legacy_ids` (`declaration.comment_tag_as_legacy_id`),
-one geometry label naming two items (`item.split_merged_label`), the 55 items
+one geometry label naming two items (`item.split_merged_label`; their order is `location.x_item_order`), the 55 items
 classified by the table's coverage entries (`item.coverage_from_table`: 23
 `support_only`, 19 `partial_only`, 13 `not_formalized`, giving 50 support and
 32 attributed `part` links), the adjudication ledger's own verdict class read

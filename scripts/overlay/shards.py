@@ -110,8 +110,8 @@ def section_of(item: dict, clusters: dict) -> str:
 
     A number with three or more parts names its section (``1.2.7`` is in
     ``1.2``); otherwise the item's own ``section`` or a cluster locator that
-    says ``Section N.M``; otherwise a two-part number's first part (``3.4`` is
-    in chapter ``3``); otherwise ``other``.
+    says ``Section N.M``; otherwise ``other`` (a two-part number such as
+    ``3.4`` may be an equation or a section, so it names no shard).
     """
     parts = str(item.get("number") or "").split(".")
     if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
@@ -123,8 +123,6 @@ def section_of(item: dict, clusters: dict) -> str:
         match = _CLUSTER_SECTION.search(str((clusters.get(cluster) or {}).get("locator") or ""))
         if match:
             return f"{match.group(1)}.{match.group(2)}"
-    if len(parts) == 2 and parts[0].isdigit():
-        return parts[0]
     return "other"
 
 
@@ -279,9 +277,29 @@ def _status(item: dict, has_key: bool) -> str | None:
     return "formalized" if has_key else None
 
 
-def _verdict(v: dict) -> dict:
-    out = {k: v[k] for k in ("verdict", "severity", "status", "summary", "evidence", "resolution", "sub") if k in v}
-    return out
+def provenance_of(record: object, *, note: bool = False) -> dict | None:
+    """``{actor, method, confirmed_by_human}`` of a provenance record (and its ``note``), or None."""
+    if not isinstance(record, dict):
+        return None
+    out = {k: record[k] for k in ("actor", "method", "confirmed_by_human") if k in record}
+    if note and record.get("note"):
+        out["note"] = record["note"]
+    return out or None
+
+
+def item_order(location: dict) -> list[str]:
+    """A location's items in the order its curation names them.
+
+    The format keeps ``items`` sorted; an exporter that knows the order the
+    region's own label names them in records it as ``x_item_order``, used
+    when it lists exactly the same items.
+    """
+    items = [i for i in location.get("items") or [] if isinstance(i, str)]
+    order = location.get("x_item_order")
+    if isinstance(order, list) and all(isinstance(i, str) for i in order) \
+            and len(set(order)) == len(order) and sorted(order) == sorted(items):
+        return list(order)
+    return items
 
 
 class _Converter:
@@ -298,6 +316,7 @@ class _Converter:
         self.snippets = _by_id(doc.get("snippets"), "declaration")
         self.destinations = _by_id(doc.get("destinations"), "declaration")
         self.clusters = _by_id(doc.get("clusters"))
+        self.provenance = _by_id(doc.get("provenance"))
         self.items = {i["id"]: i for i in doc.get("items") or [] if i.get("source") == self.source["id"]}
         self.links: dict[str, list[dict]] = collections.defaultdict(list)
         for link in doc.get("links") or []:
@@ -355,7 +374,33 @@ class _Converter:
                 urllib.parse.quote(decl.get("name") or decl["id"], safe=".")
         return {"uri": uri, "pin": self.repository_pin(decl)}
 
+    def verdict(self, v: dict) -> dict:
+        out = {k: v[k] for k in ("verdict", "severity", "status", "summary", "evidence", "resolution", "sub") if k in v}
+        found = provenance_of(self.provenance.get(v.get("provenance")), note=True)
+        if found:
+            out["provenance"] = found
+        return out
+
+    def locator(self, item: dict, pages: set[int]) -> dict:
+        """The item's cluster locators, and the physical and printed pages its regions are on."""
+        out: dict = {}
+        texts: list[str] = []
+        for cluster in item.get("clusters") or []:
+            text = (self.clusters.get(cluster) or {}).get("locator")
+            if isinstance(text, str) and text.strip() and text not in texts:
+                texts.append(text)
+        if texts:
+            out["text"] = "; ".join(texts)
+        out["physical"] = sorted(pages)
+        offset = self.source.get("printed_page_offset")
+        if isinstance(offset, int) and not isinstance(offset, bool):
+            printed = [page - offset for page in out["physical"] if page - offset >= 1]
+            if printed:
+                out["printed"] = printed
+        return out
+
     def records(self) -> Conversion:
+        placed = []
         for location in sorted(self.doc.get("locations") or [], key=lambda l: l["id"]):
             if (location.get("target") or {}).get("source") != self.source["id"]:
                 continue
@@ -376,35 +421,42 @@ class _Converter:
                     continue
                 self.out.counts["regions"] += 1
                 self.out.counts["quad_regions"] += quads is not None
-                for item_id in location.get("items") or []:
-                    item = self.items.get(item_id)
-                    if item is None:
-                        self.out.problems.append(f"{location['id']}: item {item_id!r} is not an item of the source")
-                        continue
-                    self.add(item, location, region_id, page, rect, quads)
+                placed.append((location, region_id, page, rect, quads, item_order(location)))
+        pages: dict[str, set[int]] = collections.defaultdict(set)
+        for _location, _region, page, _rect, _quads, order in placed:
+            for item_id in order:
+                pages[item_id].add(page)
+        for location, region_id, page, rect, quads, order in placed:
+            for item_id in order:
+                item = self.items.get(item_id)
+                if item is None:
+                    self.out.problems.append(f"{location['id']}: item {item_id!r} is not an item of the source")
+                    continue
+                self.add(item, location, region_id, page, rect, quads, order, pages[item_id])
         for records in self.out.shards.values():
             records.sort(key=_order)
         self.out.counts["records"] = sum(len(r) for r in self.out.shards.values())
         self.out.counts["shards"] = len(self.out.shards)
         return self.out
 
-    def add(self, item: dict, location: dict, region_id: str, page: int, rect: list[float], quads) -> None:
+    def add(self, item: dict, location: dict, region_id: str, page: int, rect: list[float], quads,
+            order: list[str], pages: set[int]) -> None:
         links = self.links.get(item["id"], [])
         status = _status(item, any(l["role"] == "key" for l in links))
         base = {"source": self.ll_source, "location": {"page": page, "rect": rect},
                 "kind": item["kind"].lower(), "label": item_label(item)}
         if item.get("coverage_note"):
             base["note"] = item["coverage_note"]
-        common = {"item": item["id"], "region": region_id}
+        common = {"item": item["id"], "region": region_id, "locator": self.locator(item, pages)}
+        if len(order) > 1:
+            common["region_items"] = list(order)
         if quads:
             common["quads"] = quads
         if location.get("signoff"):
             common["signoff"] = location["signoff"]
-        if item.get("pages"):
-            common["pages"] = item["pages"]
         verdicts = self.verdicts.get(item["id"], [])
         if verdicts:
-            common["verdicts"] = [_verdict(v) for v in verdicts]
+            common["verdicts"] = [self.verdict(v) for v in verdicts]
         shard = self.out.shards.setdefault(section_of(item, self.clusters), [])
         if not links:
             record = dict(base, id=item["id"])
@@ -426,6 +478,9 @@ class _Converter:
             ext = dict(common, role=link["role"])
             if link.get("relation"):
                 ext["relation"] = link["relation"]
+            found = provenance_of(self.provenance.get(link.get("provenance")))
+            if found:
+                ext["provenance"] = found
             ext["declaration"] = {"id": decl["id"], "kind": decl.get("kind")}
             for flag in ("private", "anonymous"):
                 if decl.get(flag):
@@ -454,7 +509,9 @@ def _order(record: dict) -> tuple:
     role = ext.get("role")
     rank = -1 if role is None else (ROLES.index(role) if role in ROLES else len(ROLES))
     x, y = record["location"]["rect"][:2]
-    return (record["location"]["page"], y, x, ext["region"], ext["item"], rank, record["id"])
+    items = ext.get("region_items") or [ext["item"]]
+    position = items.index(ext["item"]) if ext["item"] in items else len(items)
+    return (record["location"]["page"], y, x, ext["region"], position, ext["item"], rank, record["id"])
 
 
 def convert(doc: dict, *, source_id: str | None = None, directory: str = DIRECTORY) -> Conversion:
