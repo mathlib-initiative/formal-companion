@@ -652,6 +652,7 @@ def sync_problems(companion: str | Path) -> list[str]:
 
     block = record.get("annotations") if isinstance(record.get("annotations"), dict) else {}
     found = read_annotations(companion)
+    out += found.problems
     count = annotation_count(found.files)
     if (block.get("count"), block.get("manifest_sha256")) != (count, manifest_sha256(found.files)):
         out.append(f"changed annotations: {ANNOTATIONS_DIRNAME}/ holds {count} annotations in "
@@ -741,7 +742,7 @@ def check(companion: str | Path) -> list[str]:
     overlay = overlay_dir(companion)
     out = sync_problems(companion)
     files, problems = annotation_files(companion)
-    out += problems
+    out += [line for line in problems if line not in out]
     if not files:
         out.append(f"{ANNOTATIONS_DIRNAME}/ holds no annotation file; `cf overlay export` writes them")
     out += inputs_problems(companion, _previous(overlay) or {})

@@ -866,6 +866,14 @@ class TestSyncCheck(OverlayCase):
         (self.overlay / BUNDLE).unlink()
         self.assertIn(f"missing: {BUNDLE}", overlay_sync.sync_problems(self.companion))
 
+    def test_it_names_what_sync_refuses_in_the_annotations_and_check_names_it_once(self):
+        self.ready()
+        (self.companion / "_defaults.json").write_text("{}\n", encoding="utf-8")
+        line = "_defaults.json: folder defaults outside annotations/ apply to its annotations; remove it"
+        self.assertIn(line, overlay_sync.sync_problems(self.companion))
+        self.assertEqual(self.sync("--check"), 1)
+        self.assertEqual(self.check()[1].count(line), 1)
+
     def test_it_reports_a_format_block_that_is_not_the_vendored_release(self):
         self.ready()
         record = self.record()
