@@ -83,7 +83,7 @@ release has something to say.
 - `cf overlay init|sync|check|export`: a companion's
   `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
   written by hand for one book, and reads Literature Links 1.0.0 (vendored as
-  `vendor/literature_links/` at commit `6d41ac6`). `export` converts an
+  `vendor/literature_links/` at commit `ef8449d`). `export` converts an
   exporter's document into one `annotations/<section>/<name>.json` file per
   annotation, one folder per book section (`overlay.shards`; the extension key
   `org.mathlib-initiative.formal-companion.overlay` carries what the core
