@@ -1,9 +1,11 @@
 """Validate one annotation, and read and write strict JSON."""
 from __future__ import annotations
 
+import copy
 import functools
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from fractions import Fraction
 from pathlib import Path
@@ -11,7 +13,8 @@ from typing import Any
 
 from .schemacheck import Validator
 
-__all__ = ["SCHEMA_PATH", "LoadError", "Problem", "Report", "check", "dumps", "load_schema", "loads", "validate"]
+__all__ = ["SCHEMA_PATH", "LoadError", "Problem", "Report", "check", "dumps", "load_schema", "loads", "merge",
+           "rebase", "validate"]
 
 _HERE = Path(__file__).resolve().parent
 _PACKAGE_SCHEMA = _HERE / "schema" / "companion.schema.json"
@@ -203,3 +206,61 @@ def check(document: Any) -> Report:
 def validate(document: Any) -> list[str]:
     """Return each problem as a ``path: message`` string. An empty list means valid."""
     return [str(problem) for problem in check(document).problems]
+
+
+def merge(inherited: dict[str, Any], written: dict[str, Any]) -> dict[str, Any]:
+    """Merge ``written`` over ``inherited`` (docs/companion.md, "Folder defaults").
+
+    Objects merge member by member at any depth, and any other written value
+    replaces the inherited one. A ``null`` removes the inherited member; where
+    nothing is inherited it is kept. Neither argument is changed.
+    """
+    result = copy.deepcopy(inherited)
+    _merge_into(result, written)
+    return result
+
+
+def _merge_into(result: dict[str, Any], written: dict[str, Any]) -> None:
+    for key, value in written.items():
+        if key in result and value is None:
+            del result[key]
+        elif key in result and isinstance(value, dict) and isinstance(result[key], dict):
+            _merge_into(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+
+
+_SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
+
+
+def _rebased(reference: str, base: str) -> str:
+    if _SCHEME.match(reference) or reference.startswith("/"):
+        return reference
+    if reference.startswith(("#", "?")):
+        return base + reference
+    return base[:base.rfind("/") + 1] + reference
+
+
+def rebase(value: dict[str, Any], base: str) -> dict[str, Any]:
+    """Copy ``value`` with its relative references resolved against ``base``.
+
+    ``base`` is a relative reference to the file that holds ``value``, written
+    from the file that will hold the result, such as ``"../_defaults.json"``.
+    Only the references that docs/companion.md lists under "References" change.
+    """
+    result = copy.deepcopy(value)
+
+    def fix(holder: Any, key: str) -> None:
+        if isinstance(holder, dict) and isinstance(holder.get(key), str):
+            holder[key] = _rebased(holder[key], base)
+
+    fix(result, "$schema")
+    fix(result, "target")
+    fix(result.get("location"), "profile")
+    for name in ("source", "target"):
+        fix(result.get(name), "uri")
+    for name in ("source", "target", "status"):
+        holder = result.get(name)
+        if isinstance(holder, dict):
+            fix(holder.get("pin"), "url")
+    return result
