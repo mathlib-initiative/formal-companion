@@ -340,6 +340,13 @@ class TestExport(OverlayCase):
         self.export(inputs=(CURATION, "../elsewhere.json", "/etc/hosts", "missing.json"))
         self.assertEqual([row["path"] for row in self.record()["annotations"]["inputs"]], [CURATION])
 
+    def test_an_export_that_names_no_input_writes_nothing(self):
+        self.assertEqual(self.init(), 0)
+        with self.assertRaises(CfError) as caught:
+            self.export(inputs=())
+        self.assertIn("names no curation file", caught.exception.message)
+        self.assertFalse(self.shards.exists())
+
     def test_a_second_export_removes_a_stale_shard(self):
         self.ready()
         (self.shards / "9.9.jsonl").write_bytes(self.shard().read_bytes())
@@ -630,6 +637,15 @@ class TestCheck(OverlayCase):
         (self.companion / CURATION).unlink()
         self.assertIn(f"{CURATION}: gone", self.check()[1])
 
+    def test_it_reports_an_export_that_records_no_input(self):
+        self.ready()
+        record = self.record()
+        record["annotations"]["inputs"] = []
+        self.write_record(record)
+        code, said = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("annotations.inputs: the export records no curation input", said)
+
     def test_it_reports_no_shards(self):
         self.assertEqual(self.init(), 0)
         self.assertEqual(self.sync(), 0)
@@ -760,6 +776,15 @@ class TestCheckGenerated(OverlayCase):
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
         self.assertIn(f"{CURATION}: changed since the shards were exported", done.stderr)
+
+    def test_it_fails_on_an_export_that_records_no_input(self):
+        self.ready()
+        record = self.record()
+        del record["annotations"]["inputs"]
+        self.write_record(record)
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("annotations.inputs: the export records no curation input", done.stderr)
 
     def test_it_fails_on_a_format_block_the_shipped_package_does_not_match(self):
         self.ready()

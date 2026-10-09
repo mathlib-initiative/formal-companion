@@ -621,10 +621,14 @@ def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
 
 
 def inputs_problems(companion: str | Path, record: dict) -> list[str]:
-    """Every curation input the export recorded still has its recorded sha256."""
+    """Every curation input the export recorded still has its recorded sha256; an export records one."""
     root = Path(companion).expanduser().resolve()
+    block = record.get("annotations") or {}
+    if "export" in block and not block.get("inputs"):
+        return [f"{GENERATED_NAME}.annotations.inputs: the export records no curation input, so a stale "
+                "export cannot be told; re-run `cf overlay export`"]
     out = []
-    for row in ((record.get("annotations") or {}).get("inputs") or []):
+    for row in block.get("inputs") or []:
         path = root / row["path"]
         if not path.is_file():
             out.append(f"{row['path']}: gone since the shards were exported from it; "

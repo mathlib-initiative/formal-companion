@@ -191,6 +191,9 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
                       hint="; ".join(scanned[:5]))
 
     inputs = _inputs(Path(companion).expanduser().resolve(), report, doc)
+    if not inputs:
+        raise CfError("the export names no curation file it read, so nothing was written",
+                      hint="GENERATED.json must record the inputs, or CI cannot tell a stale export")
     deleted = _replace_shards(directory, files)
     entries, problems = overlay_sync.shard_entries(companion)
     if problems:                                             # pragma: no cover - scanned above

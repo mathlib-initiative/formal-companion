@@ -11,9 +11,10 @@ file's own path; the inventory is whatever `cf overlay sync` copied under
 
 `docs/overlay.md` section 5 is the contract -- copy the viewer, the config and
 `GENERATED.json` into `<output_root>/<mount>/` and the Literature Links shards
-into `<output_root>/<annotations directory>/`, where the shards' relative
-target references resolve against the built pages as they do in the
-repository; replace a previous copy atomically; insert or replace one marked
+into `<output_root>/<annotations directory>/`. The shards' relative target
+references are relative to this published site layout (`../<page>` from the
+shard directory is a page of `<output_root>`), not to the repository, where
+they resolve to nothing; replace a previous copy atomically; insert or replace one marked
 link block in the index; write `receipt.json`. It never runs the build:
 `serve.py --build` does that first.
 """
