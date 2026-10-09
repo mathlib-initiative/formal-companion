@@ -1,9 +1,10 @@
-"""The annotation document → Literature Links shards mapping (`scripts/overlay/shards.py`).
+"""The annotation document → Literature Links annotation files mapping (`scripts/overlay/shards.py`).
 
 docs/overlay.md section 7, record by record, on a synthetic document: what a
 link, a region, a quad region, an item that links nothing, a destination, a
-verdict and the source become, which shard each record goes to, and that
-every shard passes the vendored `literature_links` scan.
+verdict and the source become, which section folder and file each record goes
+to, how a file is named, and that every file passes the vendored
+`literature_links` scan.
 """
 from __future__ import annotations
 
@@ -12,7 +13,9 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import collections
 import copy
+import hashlib
 import json
 import sys
 import unittest
@@ -161,7 +164,7 @@ class TestTheMapping(unittest.TestCase):
                                 "alternate_urls": ["https://mirror.example.invalid/notes.pdf"]}}})
         self.assertEqual(record["location"], {"page": 2, "rect": [0.1, 0.2, 0.5, 0.15]})
         self.assertEqual(record["target"], {
-            "uri": "../Notes/Box/index.html#Notes___Box___mono%C2%ABx%C2%BB",
+            "uri": "../../Notes/Box/index.html#Notes___Box___mono%C2%ABx%C2%BB",
             "pin": {"type": "repository", "url": "https://git.example.invalid/owner/notes", "commit": "1" * 40,
                     "path": "Notes/Box.lean", "line": 10, "module": "Notes.Box", "declaration": "Notes.Box.mono"}})
         self.assertEqual((record["kind"], record["label"], record["status"]),
@@ -187,7 +190,7 @@ class TestTheMapping(unittest.TestCase):
 
     def test_a_fallback_destination_has_no_fragment_and_keeps_its_label(self):
         [record] = self.records["theorem-1.2.3/attributed/Notes.Box.part"]
-        self.assertEqual(record["target"]["uri"], "../Notes/Box/index.html")
+        self.assertEqual(record["target"]["uri"], "../../Notes/Box/index.html")
         self.assertEqual(record["extensions"][NS]["destination"],
                          {"resolution": "fallback", "fallback_label": "module page"})
         self.assertEqual(record["extensions"][NS]["snippet"]["truncated"], True)
@@ -198,7 +201,7 @@ class TestTheMapping(unittest.TestCase):
 
     def test_a_declaration_with_no_rendered_page_links_its_source_file(self):
         [record] = self.records["passage-p5/support/Notes.Box.help"]
-        self.assertEqual(record["target"]["uri"], "../Notes/Box.lean")
+        self.assertEqual(record["target"]["uri"], "../../Notes/Box.lean")
         self.assertNotIn("line", record["target"]["pin"])
         self.assertNotIn("destination", record["extensions"][NS])
         self.assertEqual(record["extensions"][NS]["declaration"]["private"], True)
@@ -268,11 +271,11 @@ class TestTheMapping(unittest.TestCase):
                 self.assertEqual(companion.validate(record), [])
 
 
-class TestTheShards(unittest.TestCase):
+class TestTheFiles(unittest.TestCase):
     def test_records_go_to_their_section(self):
         conversion = shards.convert(document())
         self.assertEqual({name: sorted({r["extensions"][NS]["item"] for r in records})
-                          for name, records in conversion.shards.items()},
+                          for name, records in conversion.sections.items()},
                          {"1.1": ["equation-1.1"], "1.2": ["remark-1.2.4", "theorem-1.2.3"],
                           "1.3": ["exercise-1.3.1"], "other": ["lemma-2.1", "passage-p5"]})
 
@@ -284,38 +287,123 @@ class TestTheShards(unittest.TestCase):
             with self.subTest(item=item):
                 self.assertEqual(shards.section_of(item, clusters), section)
 
-    def test_lines_are_canonical_sorted_and_end_with_a_newline(self):
-        files = shards.shard_bytes(shards.convert(document()))
-        self.assertEqual(sorted(files), ["1.1.jsonl", "1.2.jsonl", "1.3.jsonl", "other.jsonl"])
-        text = files["1.2.jsonl"].decode("utf-8")
-        self.assertTrue(text.endswith("\n"))
-        lines = text.splitlines()
-        for line in lines:
-            self.assertEqual(line, json.dumps(json.loads(line), sort_keys=True, separators=(",", ":"),
-                                              ensure_ascii=False))
-        ids = [json.loads(line)["id"] for line in lines]
-        self.assertEqual(ids, ["theorem-1.2.3/key/Notes.Box.mono", "theorem-1.2.3/attributed/Notes.Box.part",
-                               "remark-1.2.4/attributed/Notes.Box.part"],
-                         "by page, then position, then role")
-        doc = document()
-        doc["items"][3].update(clusters=[], section="Section 1.2")
-        lines = shards.shard_bytes(shards.convert(doc))["1.2.jsonl"].decode("utf-8").splitlines()
-        self.assertEqual([json.loads(line)["id"] for line in lines][2:], ["remark-1.2.4/attributed/Notes.Box.part",
-                                                                          "equation-1.1"],
-                         "a region's items in its curation's order, not by id")
+    def test_one_canonical_file_per_record_in_file_order(self):
+        conversion = shards.convert(document())
+        files = shards.file_bytes(conversion)
+        self.assertEqual(list(files), [
+            "1.1/equation-1.1.json",
+            "1.2/remark-1.2.4__attributed__Notes.Box.part.json",
+            "1.2/theorem-1.2.3__attributed__Notes.Box.part.json",
+            "1.2/theorem-1.2.3__key__Notes.Box.mono.json",
+            "1.3/exercise-1.3.1.json",
+            "other/lemma-2.1__key__Notes.Box.ext.json",
+            "other/passage-p5__support__Notes.Box.help.json"])
+        self.assertEqual(conversion.records, list(conversion.files.values()))
+        for path, raw in files.items():
+            with self.subTest(path=path):
+                record = json.loads(raw)
+                self.assertEqual(raw, (json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False)
+                                       + "\n").encode("utf-8"))
+                self.assertEqual(record, conversion.files[path])
+        self.assertIn("lemma part…".encode("utf-8"), files["1.2/theorem-1.2.3__attributed__Notes.Box.part.json"])
 
     def test_the_bytes_are_deterministic(self):
         doc = document()
         shuffled = copy.deepcopy(doc)
         for key in ("links", "locations", "declarations", "destinations"):
             shuffled[key].reverse()
-        self.assertEqual(shards.shard_bytes(shards.convert(doc)), shards.shard_bytes(shards.convert(shuffled)))
+        self.assertEqual(shards.file_bytes(shards.convert(doc)), shards.file_bytes(shards.convert(shuffled)))
 
-    def test_every_shard_passes_the_scan_and_a_broken_one_does_not(self):
-        files = shards.shard_bytes(shards.convert(document()))
+    def test_every_file_passes_the_scan_and_a_broken_one_does_not(self):
+        files = shards.file_bytes(shards.convert(document()))
         self.assertEqual(shards.scan_problems(files), [])
-        files["1.2.jsonl"] += b'{"source": {"type": "pdf", "uri": "x"}, "location": {"page": 1, "rect": [0.5, 0, 0.6, 1]}}\n'
-        self.assertTrue(any("PDF_RECT" in line for line in shards.scan_problems(files)))
+        files["1.2/broken.json"] = b'{"source": {"type": "pdf", "uri": "x"}, "location": {"page": 1, "rect": [0.5, 0, 0.6, 1]}}\n'
+        self.assertTrue(any("1.2/broken.json" in line and "PDF_RECT" in line for line in shards.scan_problems(files)))
+
+
+def named(*rows) -> list[dict]:
+    """Records with just what a file name is made of: ``(item, role, declaration, region)``."""
+    out = []
+    for item, role, decl, region in rows:
+        ext = {"item": item, "region": region or f"{item}@p001"}
+        if role:
+            ext.update(role=role, declaration={"id": decl})
+        out.append({"extensions": {NS: ext}})
+    return out
+
+
+def suffix(key: str) -> str:
+    return "-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:10] + ".json"
+
+
+class TestFileNames(unittest.TestCase):
+    def test_a_name_is_the_item_role_and_declaration(self):
+        self.assertEqual(shards.file_names(named(("theorem-1.2.3", "key", "Notes.Box.mono", None),
+                                                 ("exercise-1.3.1", None, None, None))),
+                         ["theorem-1.2.3__key__Notes.Box.mono.json", "exercise-1.3.1.json"])
+
+    def test_every_character_outside_the_safe_set_becomes_a_dash(self):
+        self.assertEqual(shards.file_names(named(("thm 1.2/3", "key", "Notes.σ_finite'", None),
+                                                 (".hidden", None, None, None))),
+                         ["thm-1.2-3__key__Notes.-_finite-.json", "-hidden.json"])
+        for name in shards.file_names(named(("a:b", "key", "x/y\\z «w»", None))):
+            self.assertRegex(name, shards.ANNOTATION_FILE)
+
+    def test_a_long_name_is_truncated_and_hashed_from_the_full_key(self):
+        decl = "Notes." + "veryLongDeclarationName" * 8
+        key = f"theorem-1.2.3__key__{decl}"
+        [name] = shards.file_names(named(("theorem-1.2.3", "key", decl, None)))
+        self.assertEqual(len(name), shards.MAX_NAME)
+        self.assertEqual(name, key[:shards.MAX_NAME - len(suffix(key))] + suffix(key))
+        self.assertRegex(name, shards.ANNOTATION_FILE)
+        counts = collections.Counter()
+        shards.file_names(named(("theorem-1.2.3", "key", decl, None), ("t", "key", "short", None)), counts)
+        self.assertEqual((counts["files_truncated"], counts["files_hashed"]), (1, 1))
+        [exact] = shards.file_names(named(("x" * (shards.MAX_NAME - 5), None, None, None)))
+        self.assertEqual(exact, "x" * (shards.MAX_NAME - 5) + ".json", "exactly the limit is not truncated")
+
+    def test_two_records_with_one_name_both_take_the_hash(self):
+        self.assertEqual(shards.file_names(named(("a b", None, None, None), ("a/b", None, None, None),
+                                                 ("c", None, None, None))),
+                         ["a-b" + suffix("a b"), "a-b" + suffix("a/b"), "c.json"])
+
+    def test_names_that_differ_only_in_case_both_take_the_hash(self):
+        self.assertEqual(shards.file_names(named(("Lemma-1", None, None, None), ("lemma-1", None, None, None))),
+                         ["Lemma-1" + suffix("Lemma-1"), "lemma-1" + suffix("lemma-1")])
+
+    def test_one_item_in_two_regions_hashes_each_record_with_its_region(self):
+        names = shards.file_names(named(("t", "key", "D", "t@p002"), ("t", "key", "D", "t@p003")))
+        self.assertEqual(names, ["t__key__D" + suffix("t__key__D@t@p002"), "t__key__D" + suffix("t__key__D@t@p003")])
+
+    def test_a_hashed_name_that_meets_a_plain_one_hashes_that_one_too(self):
+        clash = "a-b" + suffix("a b")[:-len(".json")]
+        names = shards.file_names(named(("a b", None, None, None), ("a/b", None, None, None),
+                                        (clash, None, None, None)))
+        self.assertEqual(len({n.lower() for n in names}), 3)
+        self.assertEqual(names[2], clash + suffix(clash))
+
+    def test_a_windows_device_name_is_hashed(self):
+        self.assertEqual(shards.file_names(named(("CON", None, None, None), ("nul.1", None, None, None),
+                                                 ("console", None, None, None))),
+                         ["CON" + suffix("CON"), "nul.1" + suffix("nul.1"), "console.json"])
+
+    def test_names_do_not_depend_on_the_record_order_but_the_records(self):
+        rows = [("a b", None, None, None), ("a/b", None, None, None), ("Z", "key", "D", None)]
+        forward = dict(zip([r[0] for r in rows], shards.file_names(named(*rows))))
+        backward = dict(zip([r[0] for r in reversed(rows)], shards.file_names(named(*reversed(rows)))))
+        self.assertEqual(forward, backward)
+
+    def test_two_conversions_of_a_document_with_one_item_in_two_regions(self):
+        doc = document()
+        doc["locations"].append(location("theorem-1.2.3@p004", ["theorem-1.2.3"],
+                                         selector(4, rect={"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.2})))
+        conversion = shards.convert(doc)
+        self.assertEqual(conversion.problems, [])
+        names = [p for p in conversion.files if p.startswith("1.2/theorem-1.2.3__key__")]
+        self.assertEqual(names, sorted(
+            "1.2/theorem-1.2.3__key__Notes.Box.mono" + suffix(f"theorem-1.2.3__key__Notes.Box.mono@{region}")
+            for region in ("theorem-1.2.3@p002", "theorem-1.2.3@p004")))
+        self.assertEqual(shards.scan_problems(shards.file_bytes(conversion)), [])
 
 
 class TestRefusals(unittest.TestCase):

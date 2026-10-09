@@ -8,9 +8,10 @@ one companion is data the viewer and the tools read at run time:
 
 | path in the companion | written by | what it holds |
 |---|---|---|
-| `annotations/<section>.jsonl` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) annotations, one link per line, one shard per book section (section 7) |
+| `annotations/<section>/<name>.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) annotations, one link per file, one folder per book section (section 7) |
 | `pdf-overlay/overlay.config.json` | `cf overlay init`, then edited | presentation and local-build settings (section 3) |
-| `pdf-overlay/GENERATED.json` | `cf overlay sync` (and `export`) | the generator commit, the Literature Links release, the sha256 of every copied file, and the shard list (section 6) |
+| `pdf-overlay/annotations.bundle.json` | `cf overlay sync` | every annotation file with its path, in file order: what the viewer reads, in one fetch (section 6) |
+| `pdf-overlay/GENERATED.json` | `cf overlay sync` (and `export`) | the generator commit, the Literature Links release, the sha256 of every copied file, and the annotation files' count, manifest sha256 and bundle sha256 (section 6) |
 
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
 which needs nothing but CPython and the checkout.
@@ -23,7 +24,7 @@ skill's other tools keep the annotation document format of
 the other.
 
 **Contents**: 1 rules · 2 layout · 3 `overlay.config.json` · 4 the viewer ·
-5 the runtime tools · 6 `cf overlay` and `GENERATED.json` · 7 the shards
+5 the runtime tools · 6 `cf overlay` and `GENERATED.json` · 7 the annotation files
 
 ## 1. Rules
 
@@ -34,7 +35,7 @@ the other.
 3. **Standard library only** for every Python file, and no build step for the
    JavaScript.
 4. **The PDF is never copied, committed or served off loopback.** The tools
-   fetch it from the URLs the shards' source names, verify it against the
+   fetch it from the URLs the annotations' source names, verify it against the
    pinned sha256 (and `bytes`), cache it under the config's ignored cache
    directory and serve it only on `127.0.0.1`; the viewer verifies it again.
 5. **One exception to "never write to a companion repo".** `cf overlay init`,
@@ -56,7 +57,7 @@ templates/overlay/
   runtime/                     copied verbatim into <companion>/pdf-overlay/
     README.md THIRD_PARTY.md
     schema/                    overlay-config-v1.schema.json
-    tools/serve.py build_site.py check_generated.py overlay_shards.py
+    tools/serve.py build_site.py check_generated.py overlay_annotations.py
     viewer/index.html viewer.js viewer-core.js viewer.css
     vendor/pdfjs/
   tests/                       node --test suites (not copied)
@@ -68,14 +69,15 @@ scripts/cfcmd/overlay.py
 A companion after `export` and `sync`:
 
 ```text
-annotations/1.1.jsonl 1.2.jsonl ...
-pdf-overlay/GENERATED.json overlay.config.json README.md THIRD_PARTY.md
+annotations/1.1/definition-1.1.1__key__Notes.Box.json 1.1/... 1.2/... ...
+pdf-overlay/GENERATED.json annotations.bundle.json overlay.config.json README.md THIRD_PARTY.md
             schema/ tools/ (with tools/literature_links/) viewer/ vendor/
 ```
 
-The shards live at the repository root, not in `pdf-overlay/`: they are the
-companion's annotations, which any Literature Links reader can scan, and the
-overlay is one reader of them. `annotations/` holds shards and nothing else.
+The annotation files live at the repository root, not in `pdf-overlay/`: they
+are the companion's annotations, which any Literature Links reader can scan,
+and the overlay is one reader of them. `annotations/` holds section folders of
+annotation files and nothing else.
 
 ## 3. `overlay.config.json`, version 1
 
@@ -91,10 +93,13 @@ carry the same rules and patterns, held together by `tests/test_overlay_config.p
 ## 4. The viewer (`runtime/viewer/`)
 
 At start-up it fetches `../overlay.config.json`, then `../GENERATED.json`,
-then every shard the `annotations` block lists, from the site root
-(`../` once per `site.mount` component, plus one), checking each against its
-recorded sha256. It keeps the records whose `source` is a PDF with the
-config's `source_id`; they must all pin one sha256.
+then the bundle its `annotations` block names (one fetch), checking it against
+its recorded sha256. Each annotation's base URL is its own file's in the
+published site (`<site root>/annotations/<section>/<name>.json`, the site
+root `../` once per `site.mount` component, plus one), since Literature Links
+resolves a relative reference against the file that holds the annotation.
+It keeps the records whose `source` is a PDF with the config's `source_id`;
+they must all pin one sha256.
 
 From the records alone it builds:
 
@@ -113,10 +118,12 @@ From the records alone it builds:
   repeat it, in the order key, attributed, support, example, helper, with the
   extension's snippet, destination resolution and fallback label, declaration
   kind and flags, and declaration verdict. The target resolves against the
-  shard's URL (Literature Links' rule for relative references) and becomes a
-  link only when it is `https:` or a page of the same origin, and only when
-  the extension says it is a rendered page;
-- an item with no card says so, and names its ledger clusters.
+  annotation file's URL and becomes a link only when it is `https:` or a
+  page of the same origin, and only when the extension says it is a rendered
+  page;
+- an item with no card says so, and names its ledger clusters;
+- the regions on a page are in reading order (top, then left), whatever
+  order the files came in.
 
 A record it cannot place is dropped with a notice, never guessed at. Every
 string reaches the DOM through `textContent` or attribute setters.
@@ -128,26 +135,29 @@ Run from the companion root as `python3 pdf-overlay/tools/<tool>.py`; they find
 `pdf-overlay/` from their own path and import nothing but their siblings, with
 bytecode writing off.
 
-- **`serve.py`**: the PDF identity is the `source` of the first record with
-  the config's `source_id`: `uri` and the book pin's `url`, then the
+- **`serve.py`**: the PDF identity is the `source` of the first annotation in
+  the bundle with the config's `source_id`: `uri` and the book pin's `url`, then the
   extension's `alternate_urls`, over HTTPS only; the pin's `sha256` and the
   extension's `bytes`. Acquire, verify, cache, optionally build, serve on
   loopback.
-- **`build_site.py`**: publish `viewer/`, `vendor/`, `overlay.config.json` and
-  `GENERATED.json` into `<output_root>/<mount>/`, and the shards (each at its
-  recorded sha256) into `<output_root>/annotations/`: their relative targets
-  are relative to this published site layout, not to the repository; replace
-  both atomically (refusing a site directory that holds anything but shards),
-  insert the index link, write `receipt.json`.
+- **`build_site.py`**: publish `viewer/`, `vendor/`, `overlay.config.json`,
+  `GENERATED.json` and the bundle into `<output_root>/<mount>/`, and the
+  annotation files (exactly the bundle's) into
+  `<output_root>/annotations/<section>/`: their relative targets are relative
+  to this published site layout, not to the repository; replace both
+  atomically (refusing a site directory that holds anything but section
+  folders of annotation files), insert the index link, write `receipt.json`.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
-  sha256, and nothing else in `pdf-overlay/`; the `format` block against the
-  shipped package's version; the config; exactly the listed shards in
-  `annotations/`, each at its sha256 and passing the shipped `literature_links`
-  scan, with a record of the config's PDF; every recorded curation input (at
-  least one when an export is recorded) at its recorded sha256, so a stale
-  export fails CI.
-- **`overlay_shards.py`**: reads `GENERATED.json`'s shard list and the shards
-  for the other three.
+  sha256, and nothing else in `pdf-overlay/` but the bundle; the `format`
+  block against the shipped package's version; the config; `annotations/`
+  holding only `<section>/<name>.json` files, as many as recorded and with the
+  recorded manifest sha256; the bundle at its recorded sha256 and equal to the
+  files (each file that differs, is missing or is extra is named); every file
+  passing the shipped `literature_links` scan, with a record of the config's
+  PDF; every recorded curation input (at least one when an export is
+  recorded) at its recorded sha256, so a stale export fails CI.
+- **`overlay_annotations.py`**: reads `GENERATED.json`'s annotations block,
+  the bundle and the files for the other three.
 
 ## 6. `cf overlay` and `GENERATED.json`
 
@@ -159,14 +169,18 @@ cf overlay check <companion>
 ```
 
 - `export` runs `cf export` into a temporary file, validates the document,
-  converts it (section 7), scans every shard with the vendored
-  `literature_links`, and only then replaces `annotations/` (refusing any
-  file there that is not a shard) and records the export in `GENERATED.json`.
+  converts it (section 7), scans every file with the vendored
+  `literature_links`, and only then replaces the contents of `annotations/`
+  exactly: files it no longer writes are removed (and a `<section>.jsonl`
+  shard of the earlier layout that a previous `GENERATED.json` lists, at its
+  sha256); anything else there stops it before it writes. It records the
+  export, the files' count and manifest sha256 in `GENERATED.json`.
 - `sync` copies the runtime and `vendor/literature_links/` (as
   `tools/literature_links/`), removes what a previous record listed and the
-  templates dropped, refuses unlisted files, and records the shard list. A
-  shard `export` wrote that has changed since is refused, not recorded; shards
-  nothing exported are recorded as they are.
+  templates dropped, refuses unlisted files, writes the bundle and records
+  it. Files `export` wrote that changed since are refused, not recorded
+  (named, when the last bundle holds the export); files nothing exported are
+  recorded as they are.
 - `sync --check` is read-only; `check` adds the config, the scan, the inputs'
   hashes and the overlay's rules (one PDF per `source_id`, pages within its
   `physical_page_count`, targets `https:` or relative and inside the site).
@@ -174,7 +188,7 @@ cf overlay check <companion>
 ```json
 {
   "schema": "formal-companion/overlay-generated",
-  "schema_version": 2,
+  "schema_version": 3,
   "generator": {"name": "formal-companion", "version": "...", "commit": "<this repo's HEAD>"},
   "format": {"package": "literature-links", "version": "1.0.0", "commit": "<40 hex>"},
   "instance_files": ["overlay.config.json"],
@@ -184,16 +198,24 @@ cf overlay check <companion>
     "extension": "org.mathlib-initiative.formal-companion.overlay",
     "export": {"convention": "attribution-table", "commit": "<companion commit>", "source_id": "..."},
     "inputs": [{"path": "<curation file>", "sha256": "..."}],
-    "shards": [{"path": "annotations/1.2.jsonl", "records": 87, "sha256": "..."}]
+    "count": 1332,
+    "manifest_sha256": "<sha256 of `sha256sum` lines of the files, sorted by path>",
+    "bundle": {"path": "annotations.bundle.json", "sha256": "..."}
   }
 }
 ```
 
+The manifest is `cd <companion> && find annotations -type f | LC_ALL=C sort |
+xargs sha256sum | sha256sum`. The bundle is
+`{"schema": "formal-companion/overlay-annotations", "schema_version": 1,
+"directory", "count", "annotations": [{"path", "annotation"}, ...]}`, one
+annotation per line, in path order.
+
 `format.tag` appears when the vendored revision is a tagged release.
-`export` and `inputs` appear when `cf overlay export` wrote the shards; with
+`export` and `inputs` appear when `cf overlay export` wrote the files; with
 `export`, `check` and `check_generated.py` require a non-empty `inputs`.
 
-## 7. The shards
+## 7. The annotation files
 
 `scripts/overlay/shards.py` converts the exporter's annotation document:
 
@@ -202,7 +224,7 @@ cf overlay check <companion>
 | one record | each (region, item, linked declaration) for roles key, attributed, support, example, helper; one target-less record per region of an item that links nothing |
 | `source` | `{type: pdf, uri: <official URL>, pin: {type: book, title, edition, url, retrieved, sha256, isbn, identifiers}}`, only the keys the source record has |
 | `location` | `{page, rect: [x, y, width, height]}` from the `PdfRegionSelector` (`normalized` or `pt`, either origin, CropBox or MediaBox, taken as unrotated); a quad region becomes its bounding box |
-| `target` | `{uri, pin: {type: repository, url, commit, path, line, module, declaration}}`; `uri` is the rendered page relative to the shard as the site publishes it (`../<href>#<fragment>` from `<output_root>/annotations/`, the fallback page, or an `https:` URL), else the declaration's source file |
+| `target` | `{uri, pin: {type: repository, url, commit, path, line, module, declaration}}`; `uri` is the rendered page relative to the annotation's file as the site publishes it (`../../<href>#<fragment>` from `<output_root>/annotations/<section>/`, the fallback page, or an `https:` URL), else the declaration's source file |
 | `kind`, `label` | the item kind lower-cased; the printed label (kind, number, sub-part, title) |
 | `status` | the item's coverage (`partial_only` becomes `partial`), else `formalized` for an item with a key link; a target-less `not_formalized` record carries `{value, pin: {type: repository, url, commit}}` |
 | `note`, `id` | the coverage note; `<item>/<role>/<declaration>`, or `<item>` |
@@ -225,9 +247,15 @@ Everything else the viewer needs is under the extension key
   `clusters`;
 - on `source`: `source_id`, `bytes`, `physical_page_count`, `alternate_urls`.
 
-A shard is `<section>.jsonl`: the item number's first two parts (`1.2.7` is
-`1.2`); otherwise the item's section or a cluster locator's `Section N.M`;
-otherwise `other` (a two-part number may be an equation's). Lines are sorted
-by page, position, region, the item's place in the region, item, role and id,
-written as canonical JSON (sorted keys, no spaces), each ending in a newline. A
-record the conversion cannot carry stops the export.
+The section folder is the item number's first two parts (`1.2.7` is `1.2`);
+otherwise the item's section or a cluster locator's `Section N.M`; otherwise
+`other` (a two-part number may be an equation's). Each file is one record as
+canonical JSON (sorted keys, two-space indent, UTF-8, a final newline), named
+`<item>__<role>__<declaration>.json`, or `<item>.json` for a record with no
+target, every character outside `[A-Za-z0-9._-]` (and a leading `.`) replaced
+by `-`. A name longer than 120 characters, a Windows device name (`con`,
+`nul`, ...), and every name that equals another one in its folder ignoring
+case instead ends in `-` and the first 10 hex digits of the sha256 of the
+full unsanitised key, truncated to fit; the key is followed by `@<region>`
+when one item drawn in several regions gives several records the same key.
+A record the conversion cannot carry stops the export.
