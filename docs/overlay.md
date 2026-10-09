@@ -115,9 +115,9 @@ From the records alone it builds:
   key and attributed counts and each link `provenance` (method, confirmed
   or unconfirmed);
 - cards: one per record with a `target`, once per item however many regions
-  repeat it, in the order key, attributed, support, example, helper, with the
-  extension's snippet, destination resolution and fallback label, declaration
-  kind and flags, and declaration verdict. The target resolves against the
+  repeat it, in the order key, attributed, support, example, helper (then by
+  record id), with the extension's snippet, destination resolution and
+  fallback label, declaration kind and flags, and declaration verdict. The target resolves against the
   annotation file's URL and becomes a link only when it is `https:` or a
   page of the same origin, and only when the extension says it is a rendered
   page;
