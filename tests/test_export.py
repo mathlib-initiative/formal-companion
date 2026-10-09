@@ -1265,34 +1265,6 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                          ["theorem-1.1.2: volume (Demo/Basic.lean)"])
 
 
-def refinement(root: Path) -> Path:
-    return root / "pdf-overlay" / "data" / "target-refinement.json"
-
-
-def coverage_entry(root: Path, item_id: str, coverage: str, fids=(), note: str | None = None,
-                   region: str | None = None) -> None:
-    """Make the refinement a version-2 table and one item's entry a coverage entry.
-
-    With ``region`` the entry is added for that region instead of replacing the
-    item's own, which is how two regions of one item come to disagree.
-    """
-    def change(table):
-        table["schema_version"] = 2
-        entry = {"coverage": coverage, "formalization_ids": list(fids), "item_id": item_id,
-                 "key_formalization_ids": []}
-        if note:
-            entry["note"] = note
-        if region is not None:
-            table["entries"].append(dict(entry, region_id=region))
-            return
-        for e in table["entries"]:
-            if e["item_id"] == item_id:
-                here = e["region_id"]
-                e.clear()
-                e.update(entry, region_id=here)
-    edit_json(refinement(root), change)
-
-
 class TestTheConfigurableInputLayout(unittest.TestCase):
     """--data-dir, --ledger and --official-source move the three paths the convention does not fix."""
 
@@ -1372,56 +1344,6 @@ class TestTheConfigurableInputLayout(unittest.TestCase):
         self.assertEqual(status, 0, stderr.getvalue())
         doc = json.loads(out.read_text(encoding="utf-8"))
         self.assertEqual(doc["companion"]["graph"]["path"], "graph/ledger.json")
-
-
-class TestSnippetsDerivedFromTheSource(unittest.TestCase):
-    """With no declaration-snippets.json every snippet is the section 5.1 cut of its own declaration."""
-
-    @classmethod
-    def setUpClass(cls):
-        cls.root = Path(tempfile.mkdtemp(prefix="cf-export-nosnip-",
-                                         dir=os.environ.get("CF_TEST_TMP") or None)).resolve()
-        make_attribution_table_repo(cls.root)
-        (cls.root / "pdf-overlay" / "data" / "declaration-snippets.json").unlink()
-        cls.commit = commit_all(cls.root, "no snippets export")
-        cls.doc, cls.report = at_export(cls.root, cls.commit)
-
-    @classmethod
-    def tearDownClass(cls):
-        shutil.rmtree(cls.root, ignore_errors=True)
-
-    def test_the_document_is_still_valid_and_the_report_says_where_the_text_came_from(self):
-        valid_and_quiet(self, self.doc)
-        self.assertEqual(self.report.problems, [])
-        self.assertIn("derived", self.report.counts["snippets_source"])
-        self.assertEqual(self.report.lossy["snippets.no_snippets_file"]["count"], 1)
-
-    def test_every_snippet_is_the_declarations_own_signature(self):
-        snippets = by_id(self.doc, "snippets")
-        decls = by_id(self.doc, "declarations")
-        self.assertEqual(snippets["snippet:Demo.volume_add"]["text"],
-                         "theorem volume_add (b : Box) : b.volume = b.volume")
-        self.assertEqual(snippets["snippet:Demo.volume_add"]["line"], decls["Demo.volume_add"]["line"])
-        self.assertNotIn("truncated", snippets["snippet:Demo.volume_add"])
-        for sid, snippet in snippets.items():
-            with self.subTest(snippet=sid):
-                self.assertEqual(snippet["text"], decls[snippet["declaration"]]["signature"])
-
-    def test_a_declaration_with_no_header_to_cut_has_no_snippet(self):
-        snippets = by_id(self.doc, "snippets")
-        self.assertNotIn("snippet:Demo.Box", snippets)            # a structure: its `where` opens fields
-        self.assertNotIn("snippet:Demo.Box.left", snippets)       # a field the ledger names by itself
-        self.assertNotIn("snippet:example:demo-unlocated", snippets)
-
-    def test_a_declaration_the_verdicts_added_is_covered_too(self):
-        # replacement_stated enters the document only through the verdict's note prose
-        self.assertEqual(self.report.counts["declarations_added_as_replacements"], ["Demo.replacement_stated"])
-        self.assertIn("snippet:Demo.replacement_stated", by_id(self.doc, "snippets"))
-
-    def test_the_snippets_file_is_still_read_when_it_is_there(self):
-        self.assertEqual(TestAttributionTableExport.report.counts["snippets_source"],
-                         "pdf-overlay/data/declaration-snippets.json")
-        self.assertNotIn("snippets.no_snippets_file", TestAttributionTableExport.report.lossy)
 
 
 class TestTheExportCommandReviewFixes(unittest.TestCase):
@@ -1779,26 +1701,16 @@ class TestCompanionIdentity(unittest.TestCase):
             with self.subTest(url=url):
                 self.assertEqual(common.repo_id_from_url(url), want)
 
-    def test_a_checkout_with_no_remote_is_named_by_its_own_directory(self):
+    def test_a_checkout_with_no_remote_or_an_unparsable_one_is_a_refusal(self):
         root = scratch(self) / "pinned-copy"
         root.mkdir()
         commit = make_attribution_table_repo(root)
-        self.assertEqual(subprocess.run(["git", "-C", str(root), "remote"], capture_output=True,
-                                        text=True).stdout, "")
-        doc, report = attribution_table.export(root, commit, source_id="demo-pdf", source_title="A Demo Book")
-        valid_and_quiet(self, doc)
-        self.assertEqual((doc["companion"]["repo"], doc["companion"]["name"]),
-                         ("local/pinned-copy", "pinned-copy"))
-        self.assertEqual(report.lossy["companion.repo_from_checkout_directory"]["count"], 1)
-
-    def test_a_checkout_whose_remotes_do_not_parse_is_still_a_refusal(self):
-        root = scratch(self) / "has-a-remote"
-        root.mkdir()
-        commit = make_attribution_table_repo(root)
-        subprocess.run(["git", "-C", str(root), "remote", "add", "origin", "not a url"], check=True)
-        with self.assertRaises(common.ExportError) as caught:
-            attribution_table.export(root, commit, source_id="demo-pdf", source_title="A Demo Book")
-        self.assertIn("no origin remote", caught.exception.message)
+        for remote in (None, "not a url"):
+            if remote:
+                subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote], check=True)
+            with self.subTest(remote=remote), self.assertRaises(common.ExportError) as caught:
+                attribution_table.export(root, commit, source_id="demo-pdf", source_title="A Demo Book")
+            self.assertIn("no origin remote", caught.exception.message)
 
 
 # ---------------------------------------------------------------------------

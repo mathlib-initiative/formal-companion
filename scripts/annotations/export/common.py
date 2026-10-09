@@ -10,10 +10,7 @@ docs/proposals/pdf-to-companion.md section 5.4.
   as the bytes it describes, so anything else would be a lie.
 * :func:`companion_identity` derives ``companion.name`` and ``companion.repo``
   from the checkout's ``origin`` remote, so no exporter carries a repository
-  name in its code.  A clone that names no remote at all still has to be named
-  -- ``companion.repo`` is a required field -- so it falls back to the
-  checkout's own directory name under :data:`LOCAL_REPO_HOST` and says so in
-  the report; ``--repo-id`` gives the real one.
+  name in its code.
 * :func:`repo_relative` checks a path an input flag names: an exporter reads a
   checkout at a pinned commit, so every input it is pointed at is a path
   *inside* that checkout.
@@ -65,8 +62,6 @@ from cflib.jsonio import atomic_write                                # noqa: E40
 #: Keywords whose header opens fields or constructors, not a value: no signature
 #: (``ids.signature_at`` returns None for them; counted apart in the cutter's ``skipped``).
 NO_HEADER_CUT = frozenset({"structure", "class", "inductive"})
-#: The host part of the ``companion.repo`` of a checkout that names no remote.
-LOCAL_REPO_HOST = "local"
 #: The lint the exporters' documents are checked with (``validate.LINTS``).
 LINTS = ("external-urls",)
 #: A sub-part as the format writes it (the schema's ``sub`` pattern): ``ii``, ``i.a``, ``iv-vi``, ``i,iii``,
@@ -336,33 +331,15 @@ def repo_id_from_url(url: str) -> str | None:
     return "/".join([host, *parts[1:]])
 
 
-def companion_identity(repo: Path, name: str | None = None, repo_id: str | None = None, *,
-                       report: Report | None = None) -> tuple[str, str]:
-    """``(companion.name, companion.repo)``: the flags, else the ``origin`` remote.
-
-    A checkout that names **no** remote -- a clone made by pushing into a bare
-    tree, which is what a pinned reference copy usually is -- cannot say where
-    it came from, and ``companion.repo`` is a required field.  It is then named
-    by its own directory under :data:`LOCAL_REPO_HOST`, and ``report`` (when one
-    is given) records that the document names a local copy rather than the
-    repository.  A checkout that *has* remotes none of which parses is still a
-    refusal: there the answer exists and we failed to read it.
-    """
+def companion_identity(repo: Path, name: str | None = None,
+                       repo_id: str | None = None) -> tuple[str, str]:
+    """``(companion.name, companion.repo)``: the flags, else the ``origin`` remote."""
     if repo_id is None:
         proc = gitsafe.run(repo, ["remote", "get-url", "origin"])
         repo_id = repo_id_from_url(proc.stdout) if proc.returncode == 0 else None
     if not repo_id:
-        remotes = gitsafe.run(repo, ["remote"])
-        local = re.sub(r"[^A-Za-z0-9._-]+", "-", repo.resolve().name).strip("-.")
-        if remotes.returncode != 0 or remotes.stdout.strip() or not local:
-            raise ExportError(f"{repo} has no origin remote to name the companion by",
-                              hint="pass --repo-id host/org/name (and --name)")
-        repo_id = f"{LOCAL_REPO_HOST}/{local}"
-        if report is not None:
-            report.lose("companion.repo_from_checkout_directory", 1,
-                        f"the checkout names no remote, so no repository id can be read from it; "
-                        f"companion.repo is the checkout's own directory name under "
-                        f"{LOCAL_REPO_HOST}/ ({repo_id}). --repo-id host/org/name gives the real one")
+        raise ExportError(f"{repo} has no origin remote to name the companion by",
+                          hint="pass --repo-id host/org/name (and --name)")
     return (name or repo_id.rsplit("/", 1)[-1]), repo_id
 
 

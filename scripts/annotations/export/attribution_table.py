@@ -18,9 +18,7 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
 
 :data:`LAYOUT` is only the default spelling of that layout: ``data_dir``,
 ``ledger`` and ``official_source`` (``--data-dir``, ``--ledger``,
-``--official-source``) move the three the convention does not fix, and a
-companion with no ``declaration-snippets.json`` gets its snippets cut from its
-own Lean instead (:meth:`AttributionTableExport.derive_snippets`).
+``--official-source``) move the three the convention does not fix.
 
 Every file is read as it is; the Lean sources are scanned at the pinned commit
 with ``adapters.leanbuild`` (every declaration, its namespace and privacy) and
@@ -169,18 +167,18 @@ class AttributionTableExport:
                  official_source: str | Path | None = None):
         self.repo = repo.resolve()
         self.head, self.head_date = common.pinned_checkout(self.repo, commit)
-        self.report = Report()
-        self.name, self.repo_id = common.companion_identity(self.repo, name, repo_id, report=self.report)
+        self.name, self.repo_id = common.companion_identity(self.repo, name, repo_id)
         self.lean_build = (lean_build or self.repo / ".lake" / "build" / "lib" / "lean").resolve()
         self.site_name = site_name
         self.overrides = {"source_id": source_id, "title": source_title, "edition": source_edition,
                           "offset": page_offset}
+        self.report = Report()
         self.layout = dict(LAYOUT)
         for key, value in (("data", data_dir), ("ledger", ledger), ("official", official_source)):
             if value is not None:
                 self.layout[key] = common.repo_relative(value, MOVABLE_LAYOUT[key])
         self.data = self.repo / self.layout["data"]
-        for rel in ("refinement", "verdicts", "destinations"):
+        for rel in ("refinement", "verdicts", "snippets", "destinations"):
             if not (self.data / self.layout[rel]).is_file():
                 raise ExportError(f"{self.repo} has no {self.layout['data']}/{self.layout[rel]}",
                                   hint="the attribution-table convention needs the overlay data files; "
@@ -195,9 +193,7 @@ class AttributionTableExport:
         self.batches = {p.stem: load(p) for p in self.batch_paths}
         self.refinement = load(self.data / self.layout["refinement"])
         self.verdicts_in = load(self.data / self.layout["verdicts"])
-        snippets_path = self.data / self.layout["snippets"]
-        #: None when the companion exports no snippets: they are cut from its Lean instead.
-        self.snippets_in = load(snippets_path) if snippets_path.is_file() else None
+        self.snippets_in = load(self.data / self.layout["snippets"])
         self.dest_in = load(self.data / self.layout["destinations"])
         self.official = load(self.repo / self.layout["official"])
         self.ledger = load(self.repo / self.layout["ledger"])
@@ -597,7 +593,7 @@ class AttributionTableExport:
                     rec = {"id": lid, "id_source": "name", "name": lid, "kind": FIELD_KIND[kind],
                            "module": n["module"], "file": n["file"], "private": False, "anonymous": False,
                            "parent": lid.rsplit(".", 1)[0]}
-                    snip = self.snippets_in["snippets"].get(lid) if self.snippets_in else None
+                    snip = self.snippets_in["snippets"].get(lid)
                     if snip:
                         rec["line"] = snip["line"]
                     pending_fields.append((rec, None))
@@ -972,16 +968,6 @@ class AttributionTableExport:
 
     # -- snippets and destinations ------------------------------------------------------
     def build_snippets(self) -> None:
-        """``snippets``: the companion's own export, when the data directory holds one."""
-        if self.snippets_in is None:
-            self.report.counts["snippets_source"] = f"derived: the section 5.1 cut of each declaration's own " \
-                                                    f"source ({self.layout['snippets']} is not in the checkout)"
-            self.report.lose("snippets.no_snippets_file", 1,
-                             f"{self.layout['data']}/{self.layout['snippets']} is not in the checkout, so each "
-                             "snippet is the section 5.1 signature cut of the declaration at the pinned commit; "
-                             "a text the companion would have trimmed, truncated or rewritten is not carried")
-            return
-        self.report.counts["snippets_source"] = f"{self.layout['data']}/{self.layout['snippets']}"
         for fid, s in self.snippets_in["snippets"].items():
             did = self.decl_of(fid, f"{self.layout['data']}/{self.layout['snippets']}")
             dec = self.declarations[did]
@@ -995,29 +981,6 @@ class AttributionTableExport:
             if rec["id"] in self.snippets:
                 raise ExportError(f"two snippets for {did}")
             self.snippets[rec["id"]] = rec
-
-    def derive_snippets(self) -> None:
-        """A snippet per declaration, cut from the Lean the pinned commit holds.
-
-        The cut is the format's section 5.1 header -- the keyword up to the
-        ``:=`` or ``where`` that ends a typed header -- which the Lean scan
-        already made for every declaration it could cut one for
-        (:class:`annotations.export.common.HeaderCutter`, and
-        ``formal_companion_annotations.ids`` for the anonymous ones), so the
-        text here is the same text the docstring-tags exporter writes.  A
-        ``structure``, ``class`` or ``inductive``, a field the ledger named by
-        itself and an unlocated example have no header to cut and get no
-        snippet.
-        """
-        for did, dec in sorted(self.declarations.items()):
-            signature = dec.get("signature")
-            if not signature:
-                continue
-            rec = {"id": f"snippet:{did}", "declaration": did, "text": signature}
-            if dec.get("line") is not None:
-                rec["line"] = dec["line"]
-            self.snippets[rec["id"]] = rec
-        self.report.counts["snippets_derived"] = len(self.snippets)
 
     def build_destinations(self) -> None:
         for r in self.dest_in["destinations"]:
@@ -1191,9 +1154,6 @@ class AttributionTableExport:
         self.build_snippets()
         self.build_destinations()
         self.build_verdicts()
-        if self.snippets_in is None:
-            # after the verdicts: they are the last stage that can add a declaration
-            self.derive_snippets()
         self.build_changelog()
         doc = {
             "schema": vocab.ANNOTATION_SCHEMA, "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
@@ -1239,9 +1199,8 @@ class AttributionTableExport:
         rels = [f"{self.layout['data']}/{p.name}" for p in self.batch_paths]
         rels += [f"{self.layout['data']}/{p.stem}.sources.json" for p in self.batch_paths
                  if p.with_name(p.stem + ".sources.json").is_file()]
-        rels += [f"{self.layout['data']}/{self.layout[k]}" for k in ("refinement", "verdicts", "destinations")]
-        if self.snippets_in is not None:
-            rels.append(f"{self.layout['data']}/{self.layout['snippets']}")
+        rels += [f"{self.layout['data']}/{self.layout[k]}"
+                 for k in ("refinement", "verdicts", "snippets", "destinations")]
         rels += [self.layout["official"], self.layout["ledger"]]
         return [file_lock(self.repo, rel) for rel in sorted(set(rels))]
 

@@ -50,8 +50,8 @@ def register(subparsers) -> None:
                          "(default: <checkout>/.lake/build/lib/lean)")
     at.add_argument("--data-dir", metavar="DIR",
                     help="the overlay data directory, relative to the checkout: the geometry batches, the "
-                         "target refinement, the verdicts, the destinations and, when it is there, the "
-                         "declaration snippets (default: pdf-overlay/data)")
+                         "target refinement, the verdicts, the destinations and the declaration snippets "
+                         "(default: pdf-overlay/data)")
     at.add_argument("--ledger", metavar="FILE",
                     help="the source-formalization ledger, relative to the checkout "
                          "(default: source-formalization-ledger.json)")
