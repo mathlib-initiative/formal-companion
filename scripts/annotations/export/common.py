@@ -27,7 +27,7 @@ docs/proposals/pdf-to-companion.md section 5.4.
 * :func:`declare_profiles` writes the root ``profiles`` object from what the
   document holds: each of the format's four profiles exactly when one of the
   keys it owns is present (invariant I14), at the version the vendored package
-  knows.  A source's ``role`` is core (1.0.0rc1), so a document whose only
+  knows.  A source's ``role`` is core (1.0.0rc1 and later), so a document whose only
   profile-shaped key is ``role`` declares nothing.
 * :func:`has_url` is the exporters' own guard for the format's ``external-urls``
   lint (``L1``): a note, a title or a raw label that holds a URL is dropped and

@@ -36,7 +36,7 @@ release has something to say.
 
 ### Changed
 - The vendored annotation format is the release candidate
-  `formal-companion-annotations v1.0.0rc1` (identifier
+  `formal-companion-annotations v1.0.0rc2` (identifier
   `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).
   `scripts/annotations/sync_format.py` accepts `vX.Y.ZrcN` tags. The
   producers write the rc: root `profiles` declared for exactly the profile

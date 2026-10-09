@@ -1,7 +1,7 @@
 # The companion exporters: `cf export` and `cf review-tags`
 
 Two commands turn a companion's own attribution data into an annotation
-document (`docs/annotations.md`, format 1.0, release candidate 1.0.0rc1 as
+document (`docs/annotations.md`, format 1.0, release candidate 1.0.0rc2 as
 vendored), and one reads such a document back for the attribution defects
 the audits found. They are milestone M3 of
 `docs/proposals/pdf-to-companion.md` (section 5.4): the exporters reproduce
