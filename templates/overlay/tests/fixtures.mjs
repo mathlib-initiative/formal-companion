@@ -74,8 +74,11 @@ function link(sha256, { id, item, region, page, rect, role, decl, module = "Note
 const THEOREM = { item: "item:theorem-1.1", kind: "theorem", label: "Theorem 1.1", page: 2,
                   rect: [0.25, 0.125, 0.5, 0.125], region: "loc:0001", status: "formalized" };
 const SHARED = { ...THEOREM, rect: [0.1, 0.4, 0.7, 0.1], region: "loc:0004" };
+const CURATION = { actor: "agent", confirmed_by_human: false, method: "curation" };
 const THEOREM_VERDICTS = [{
   evidence: ["Notes/Box.lean:12", "source page 2"],
+  provenance: { actor: "agent", confirmed_by_human: false, method: "adjudication",
+                note: "two independent readings and a reconciler" },
   resolution: { pr: 7, state: "fixed" },
   severity: "medium",
   status: "fixed",
@@ -87,7 +90,8 @@ function theoremLinks(sha256, where) {
   const base = (role, decl, rest = {}) => link(sha256, {
     decl, extra: { kind: where.kind, label: where.label, status: where.status }, id: `${where.item}/${role}/${decl}`,
     item: where.item, page: where.page, rect: where.rect, region: where.region, role, ...rest,
-    ext: { pages: { basis: "physical", first: 2 }, verdicts: THEOREM_VERDICTS, ...(rest.ext ?? {}) },
+    ext: { locator: { physical: [2], text: "Chapter 1, Theorem 1.1" }, provenance: CURATION,
+           verdicts: THEOREM_VERDICTS, ...(rest.ext ?? {}) },
   });
   // Deliberately not in role order: the viewer is what orders them.
   return [
@@ -103,7 +107,8 @@ function theoremLinks(sha256, where) {
       uri: "../Notes/Box/index.html#Notes___Box___volume_nonneg",
     }),
     base("example", "example:0123456789ab", {
-      ext: { declaration: { anonymous: true, id: "example:0123456789ab", kind: "example" } },
+      ext: { declaration: { anonymous: true, id: "example:0123456789ab", kind: "example" },
+             provenance: { actor: "tool", confirmed_by_human: true, method: "pipeline" } },
       module: "Notes.Set", uri: "../Notes/Set.lean",
     }),
     base("support", "Notes.Set.inter_sub", {
@@ -125,7 +130,7 @@ function theoremLinks(sha256, where) {
 export function makeShards(sha256) {
   const definition = link(sha256, {
     decl: "Notes.Set.inter_sub",
-    ext: { destination: { resolution: "exact" },
+    ext: { destination: { resolution: "exact" }, locator: { physical: [3], printed: [1] },
            quads: [[0.1, 0.2, 0.9, 0.2, 0.9, 0.3, 0.1, 0.3]] },
     extra: { kind: "definition", label: "Definition 2.1",
              note: "The companion states the neighbouring box lemma, not this definition.",
@@ -149,6 +154,23 @@ export function makeShards(sha256) {
     page: 2, rect: SHARED.rect, region: "loc:0004", role: "key",
     uri: "../Notes/Internal/index.html#Notes___Internal___aux",
   });
+  // One region, two items: the curation names the remark first, and the
+  // equation split off its label (no card) comes first in the shard.
+  const pair = { region_items: ["item:remark-7.1", "item:equation-7"] };
+  const equation = {
+    extensions: { [NAMESPACE]: { ...pair, item: "item:equation-7", region: "loc:0005" } },
+    id: "item:equation-7", kind: "equation", label: "Equation 7",
+    location: { page: 7, rect: [0.1, 0.5, 0.8, 0.1] },
+    source: pdfSource(sha256),
+  };
+  const remarkSeven = link(sha256, {
+    decl: "Notes.Box.volume_nonneg",
+    ext: { ...pair, destination: { resolution: "exact" }, provenance: CURATION },
+    extra: { kind: "remark", label: "Remark 7.1 and equation (7)", status: "formalized" },
+    id: "item:remark-7.1/key/Notes.Box.volume_nonneg", item: "item:remark-7.1",
+    page: 7, rect: [0.1, 0.5, 0.8, 0.1], region: "loc:0005", role: "key",
+    uri: "../Notes/Box/index.html#Notes___Box___volume_nonneg",
+  });
   // A record from elsewhere: no overlay extension at all.
   const plain = {
     id: "plain-link", label: "Lemma 6.1", location: { page: 6, rect: [0.2, 0.2, 0.2, 0.2] },
@@ -159,7 +181,7 @@ export function makeShards(sha256) {
   const other = { ...unlinked, id: "elsewhere", source: pdfSource(fakeSha256("e"), { id: OTHER_SOURCE_ID }) };
   return {
     "annotations/1.jsonl": [...theoremLinks(sha256, THEOREM), definition, other],
-    "annotations/2.jsonl": [unlinked, remark, ...theoremLinks(sha256, SHARED), plain],
+    "annotations/2.jsonl": [unlinked, remark, ...theoremLinks(sha256, SHARED), plain, equation, remarkSeven],
   };
 }
 

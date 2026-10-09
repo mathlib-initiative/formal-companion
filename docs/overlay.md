@@ -101,10 +101,15 @@ From the records alone it builds:
 
 - regions: `location.page` and `location.rect` (fractions of the displayed
   page from the top left, so drawn through the page's own rotation), or the
-  extension's `quads`; one region per extension `region` id;
+  extension's `quads`; one region per extension `region` id, its items in
+  the extension's `region_items` order; a click opens the first item with a
+  card;
 - items: one per extension `item`, labelled by `label`, with `status` as its
-  coverage line, `note` as its coverage note, the extension's `verdicts` and
-  `pages`;
+  coverage line, `note` as its coverage note, the extension's `locator` (its
+  `text`, else its printed and physical pages) and `verdicts` (each ending
+  `[<provenance method>, <status>; <resolution>]`), and a line naming the
+  key and attributed counts and each link `provenance` (method, confirmed
+  or unconfirmed);
 - cards: one per record with a `target`, once per item however many regions
   repeat it, in the order key, attributed, support, example, helper, with the
   extension's snippet, destination resolution and fallback label, declaration
@@ -209,17 +214,23 @@ Everything else the viewer needs is under the extension key
   `kind`, `private`, `anonymous`, `sorry`), `snippet` (`text`, `line`,
   `truncated`), `destination` (`resolution`, `fallback_label`), `verdicts`
   (the item's: `verdict`, `severity`, `status`, `summary`, `evidence`,
-  `resolution`, `sub`), `declaration_verdict` (`verdict`, `status`, `note`),
-  `quads` (`[x0, y0, …, y3]` per quad), `signoff`, `pages`, and on a
-  target-less record `clusters`;
+  `resolution`, `sub`, `provenance`: `actor`, `method`,
+  `confirmed_by_human`, `note`), `declaration_verdict` (`verdict`, `status`,
+  `note`), `provenance` (the link's: `actor`, `method`, `confirmed_by_human`),
+  `locator` (the item's: `text`, its clusters' locators; `physical` and, from
+  the source's `printed_page_offset`, `printed` pages of its regions),
+  `region_items` (a region's items in the order the location's
+  `x_item_order` names them, when it has several), `quads`
+  (`[x0, y0, …, y3]` per quad), `signoff`, and on a target-less record
+  `clusters`;
 - on `source`: `source_id`, `bytes`, `physical_page_count`, `alternate_urls`.
 
 A shard is `<section>.jsonl`: the item number's first two parts (`1.2.7` is
 `1.2`); otherwise the item's section or a cluster locator's `Section N.M`;
-otherwise a two-part number's first part; otherwise `other`. Lines are sorted
-by page, position, region, item, role and id, written as canonical JSON
-(sorted keys, no spaces), each ending in a newline. A record the conversion
-cannot carry stops the export.
+otherwise `other` (a two-part number may be an equation's). Lines are sorted
+by page, position, region, the item's place in the region, item, role and id,
+written as canonical JSON (sorted keys, no spaces), each ending in a newline. A
+record the conversion cannot carry stops the export.
 
 ## 8. Producers
 

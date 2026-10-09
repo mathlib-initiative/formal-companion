@@ -26,10 +26,14 @@ import {
   coverageSummary,
   declarationVerdictDisplay,
   groupCards,
+  locatorText,
   paginateCards,
   parseShard,
   pdfSource,
   pointToViewport,
+  preferredItemId,
+  provenanceLabel,
+  provenanceText,
   quadToViewport,
   readConfig,
   readShardList,
@@ -41,6 +45,7 @@ import {
   siteRootFor,
   targetHref,
   verdictDisplay,
+  verdictNote,
   verifyPdfBytes,
 } from "../runtime/viewer/viewer-core.js";
 import {
@@ -206,13 +211,30 @@ test("index: pages carry the regions of this PDF only, and name their items", ()
   assert.equal(index.sha256, PDF_SHA256);
   assert.equal(index.bytes, PDF_BYTES.byteLength);
   assert.equal(index.sourceTitle, "Elementary Sets: Lecture Notes (synthetic)");
-  assert.deepEqual([...index.pages.keys()].sort(), [2, 3, 5, 6]);
+  assert.deepEqual([...index.pages.keys()].sort(), [2, 3, 5, 6, 7]);
   assert.deepEqual(index.pages.get(2).map((region) => [region.id, region.label]), [
     ["loc:0001", "Theorem 1.1"],
     ["loc:0004", "A remark on unions + Theorem 1.1"],
   ]);
   assert.equal(index.warnings.length, 0);
   assert.equal(index.regions.some((region) => region.itemIds.includes("elsewhere")), false);
+});
+
+test("index: a region lists its items in the curation's order, not the shards'", () => {
+  const { index } = fixture();
+  const [region] = index.pages.get(7);
+  assert.deepEqual(region.itemIds, ["item:remark-7.1", "item:equation-7"],
+                   "region_items names the remark first; the shard holds the equation first");
+  assert.equal(region.label, "Remark 7.1 and equation (7) + Equation 7");
+  assert.equal(preferredItemId(region, index.items), "item:remark-7.1");
+});
+
+test("index: a click opens the first item with a card, else the first item", () => {
+  const items = new Map([["a", { cards: [] }], ["b", { cards: [{}] }], ["c", { cards: [{}] }]]);
+  assert.equal(preferredItemId({ itemIds: ["a", "b", "c"] }, items), "b");
+  assert.equal(preferredItemId({ itemIds: ["c", "b"] }, items), "c");
+  assert.equal(preferredItemId({ itemIds: ["a"] }, items), "a");
+  assert.equal(preferredItemId({ itemIds: [] }, items), null);
 });
 
 test("index: a record that cannot be placed is dropped with a warning, not guessed", () => {
@@ -274,7 +296,8 @@ test("index: status, note, verdicts, locator and clusters ride on the item", () 
   assert.equal(definition.coverageNote, "The companion states the neighbouring box lemma, not this definition.");
   const theorem = index.items.get("item:theorem-1.1");
   assert.equal(theorem.coverage, "formalized");
-  assert.equal(theorem.locator, "p. 2 (physical)");
+  assert.equal(theorem.locator, "Chapter 1, Theorem 1.1");
+  assert.equal(definition.locator, "printed p. 1, PDF p. 3");
   assert.equal(theorem.verdicts.length, 1);
   const exercise = index.items.get("item:exercise-3.1");
   assert.deepEqual(exercise.cards, []);
@@ -283,6 +306,30 @@ test("index: status, note, verdicts, locator and clusters ride on the item", () 
   const absent = makeShards(PDF_SHA256);
   absent["annotations/2.jsonl"][0].status = { pin: { type: "repository" }, value: "not_formalized" };
   assert.equal(fixture(absent).index.items.get("item:exercise-3.1").coverage, "not_formalized");
+});
+
+test("locator: the cluster locator, else the printed and physical pages", () => {
+  assert.equal(locatorText({ physical: [21, 25], printed: [5, 9], text: "Section 1.1, Definition 1.1.1" }),
+               "Section 1.1, Definition 1.1.1");
+  assert.equal(locatorText({ physical: [21, 25], printed: [5, 9] }), "printed pp. 5, 9, PDF pp. 21, 25");
+  assert.equal(locatorText({ physical: [3] }), "PDF p. 3");
+  assert.equal(locatorText(undefined), "");
+});
+
+test("provenance: each card carries its link's, and the item line counts key and attributed", () => {
+  const { index } = fixture();
+  const theorem = index.items.get("item:theorem-1.1");
+  assert.deepEqual(theorem.cards.map((card) => card.provenance), [
+    "curation, unconfirmed", "curation, unconfirmed", "curation, unconfirmed", "pipeline, confirmed",
+    "curation, unconfirmed",
+  ]);
+  assert.equal(provenanceText(theorem),
+               "1 key declaration for this result (2 attributed); curation, unconfirmed; pipeline, confirmed.");
+  assert.equal(provenanceText(index.items.get("item:definition-2.1")), "", "no provenance, no line");
+  assert.equal(provenanceText({ cards: [{ provenance: "curation, unconfirmed", role: "support" }] }),
+               "Links: curation, unconfirmed.");
+  assert.equal(provenanceLabel({ method: "curation" }), "curation");
+  assert.equal(provenanceLabel({ confirmed_by_human: true }), "");
 });
 
 // --- coverage and the summary line ------------------------------------------
@@ -370,6 +417,20 @@ test("verdicts: a repaired declaration reads faithful and an unchanged one super
                    { className: "verdict-deviation", label: "statement deviation, superseded" });
   assert.deepEqual(declarationVerdictDisplay("proxy", "human_confirmed"),
                    { className: "verdict-proxy", label: "proxy definition" });
+});
+
+test("verdicts: the note ends with the adjudication method, the status and the resolution", () => {
+  const { index } = fixture();
+  const [verdict] = index.items.get("item:theorem-1.1").verdicts;
+  assert.deepEqual(verdictNote(verdict), {
+    className: "verdict-note verdict-fixed",
+    text: "Faithfulness: fixed: statement deviation (medium). The box bound was stated for closed boxes only. "
+      + "[adjudication, fixed; fixed, PR #7]",
+    title: "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler",
+  });
+  const bare = verdictNote({ severity: "none", status: "human_confirmed", summary: "S.", verdict: "proxy" });
+  assert.equal(bare.text, "Faithfulness: proxy definition. S. [human confirmed]");
+  assert.equal(bare.title, "");
 });
 
 test("verdicts: a resolution adds one line, and an open verdict adds none", () => {

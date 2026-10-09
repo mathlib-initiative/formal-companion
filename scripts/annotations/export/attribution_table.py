@@ -413,7 +413,8 @@ class AttributionTableExport:
                              "as two numbered items that share the location. Every curated link stays on the "
                              "remark (the curation never said which declarations state (1.1)); the geometry label "
                              "and the old item id stay on the remark only, and no item relation fits 'shown in the "
-                             "same region' (relations are same_as, part_of, near)",
+                             "same region' (relations are same_as, part_of, near); the order the label names them in "
+                             "is the location's x_item_order",
                              [it["item_id"] + " -> " + ", ".join(new_ids)])
         self.old_to_item[it["item_id"]] = new_ids[0]
         self.old_to_all[it["item_id"]] = new_ids
@@ -458,6 +459,8 @@ class AttributionTableExport:
                     "refinedBy": region_sel},
                    {"type": "FragmentSelector", "conformsTo": RFC8118,
                     "value": f"page={page}&highlight={self.rect_highlight(bbox)}"}]}}
+        if len(new_ids) > 1:
+            loc["x_item_order"] = list(new_ids)
         if lid in self.locations:
             raise ExportError(f"location id collision {lid}")
         self.locations[lid] = loc

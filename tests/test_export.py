@@ -385,6 +385,8 @@ class TestAttributionTableExport(unittest.TestCase):
         self.assertNotIn("legacy_ids", items["equation-1.1"])
         loc = by_id(self.doc, "locations")["theorem-1.1.2@p008"]
         self.assertEqual(loc["items"], ["equation-1.1", "theorem-1.1.2"])
+        self.assertEqual(loc["x_item_order"], ["theorem-1.1.2", "equation-1.1"], "the order the label names them in")
+        self.assertNotIn("x_item_order", by_id(self.doc, "locations")["exercise-1.1.3@p009"])
         # the unnumbered region is a passage titled by the producer, keyed by printed page and title
         pid = ids.passage_page_id(6, "Remark on volume")
         self.assertEqual(items[pid]["title_source"], "producer")

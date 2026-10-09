@@ -416,6 +416,27 @@ export function declarationVerdictDisplay(verdict, status) {
     : { className: `verdict-${verdict}`, label };
 }
 
+/**
+ * The item-level verdict note: its kind, severity and summary, then
+ * `[<method>, <status>; <resolution>]`. The method is the adjudication's, from
+ * the verdict's provenance, and stays on purpose: these verdicts are machine
+ * adjudications until a human confirms them or a merged fix supersedes them.
+ * The title (a tooltip) is the evidence and the provenance's note.
+ */
+export function verdictNote(verdict) {
+  const display = verdictDisplay(verdict.verdict, verdict.status);
+  const severity = text(verdict.severity) && verdict.severity !== "none" ? ` (${verdict.severity})` : "";
+  const provenance = isObject(verdict.provenance) ? verdict.provenance : {};
+  const status = text(verdict.status).replace(/_/g, " ");
+  const resolution = resolutionText(verdict.resolution);
+  const tail = [text(provenance.method), status].filter(Boolean).join(", ") + (resolution ? `; ${resolution}` : "");
+  return {
+    className: `verdict-note ${display.className}`,
+    text: `Faithfulness: ${display.label}${severity}. ${text(verdict.summary)} [${tail}]`,
+    title: [...asArray(verdict.evidence), text(provenance.note)].filter((line) => text(line)).join("\n"),
+  };
+}
+
 /** The one line a verdict's resolution adds, or "" when the verdict is open. */
 export function resolutionText(resolution) {
   if (!isObject(resolution) || !text(resolution.state) || resolution.state === "open") {
@@ -459,13 +480,55 @@ function statusValue(status) {
   return isObject(status) ? text(status.value) : text(status);
 }
 
-function itemLocator(pages) {
-  if (!isObject(pages) || !Number.isInteger(pages.first)) {
+function pageList(pages) {
+  const list = asArray(pages).filter(Number.isInteger);
+  return list.length ? `${list.length === 1 ? "p." : "pp."} ${list.join(", ")}` : "";
+}
+
+/** Where the item is in the source: its locator text, else its printed and physical pages. */
+export function locatorText(locator) {
+  if (!isObject(locator)) {
     return "";
   }
-  const last = pages.last ?? pages.first;
-  const span = pages.first === last ? `p. ${pages.first}` : `pp. ${pages.first}-${last}`;
-  return `${span} (${text(pages.basis) || "physical"})`;
+  if (text(locator.text)) {
+    return text(locator.text);
+  }
+  const printed = pageList(locator.printed);
+  const physical = pageList(locator.physical);
+  return [printed && `printed ${printed}`, physical && `PDF ${physical}`].filter(Boolean).join(", ");
+}
+
+/** `<method>, confirmed|unconfirmed` of a link's provenance, or "". */
+export function provenanceLabel(provenance) {
+  if (!isObject(provenance) || !text(provenance.method)) {
+    return "";
+  }
+  const confirmed = typeof provenance.confirmed_by_human === "boolean"
+    ? `, ${provenance.confirmed_by_human ? "confirmed" : "unconfirmed"}` : "";
+  return `${text(provenance.method)}${confirmed}`;
+}
+
+/**
+ * The line naming how the item's links were made: the key and attributed
+ * counts when it has a key card, and each distinct link provenance.
+ */
+export function provenanceText(item) {
+  const cards = asArray(item?.cards);
+  const labels = [...new Set(cards.map((entry) => entry.provenance).filter(Boolean))];
+  if (!labels.length) {
+    return "";
+  }
+  const keys = cards.filter((entry) => entry.role === "key").length;
+  const attributed = cards.filter((entry) => entry.role === "key" || entry.role === "attributed").length;
+  return keys
+    ? `${plural(keys, "key declaration")} for this result (${attributed} attributed); ${labels.join("; ")}.`
+    : `Links: ${labels.join("; ")}.`;
+}
+
+/** The item a click on the region opens: the first that has a card, else the first. */
+export function preferredItemId(region, items) {
+  const ids = asArray(region?.itemIds);
+  return ids.find((id) => asArray(items?.get(id)?.cards).length) ?? ids[0] ?? null;
 }
 
 function stripPrefix(name, prefix) {
@@ -519,6 +582,7 @@ function card(record, ext, context) {
     kind: text(declaration.kind),
     module: text(pin.module),
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
+    provenance: provenanceLabel(ext.provenance),
     relation: text(ext.relation),
     resolution: text(destination?.resolution),
     role: text(ext.role),
@@ -623,7 +687,7 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
           id: itemId,
           kind: text(record.kind),
           label: text(record.label) || itemId,
-          locator: itemLocator(ext.pages),
+          locator: locatorText(ext.locator),
           verdicts: asArray(ext.verdicts).filter(isObject),
         });
         seen.set(itemId, new Set());
@@ -634,11 +698,14 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
         items.get(itemId).cards.push(card(record, ext, context));
       }
       if (!regions.has(regionId)) {
-        regions.set(regionId, { id: regionId, itemIds: [], page: place.page, quads: place.quads });
+        regions.set(regionId, { id: regionId, itemIds: [], order: [], page: place.page, quads: place.quads });
       }
       const region = regions.get(regionId);
       if (!region.itemIds.includes(itemId)) {
         region.itemIds.push(itemId);
+      }
+      if (!region.order.length) {
+        region.order = asArray(ext.region_items).map(text).filter(Boolean);
       }
     }
   }
@@ -648,6 +715,13 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
   }
   const pages = new Map();
   for (const region of regions.values()) {
+    // The curation's order (the item the region's own label names first), not shard order.
+    const rank = (id) => (region.order.includes(id) ? region.order.indexOf(id) : region.order.length);
+    region.itemIds = region.itemIds
+      .map((id, index) => ({ id, index }))
+      .sort((left, right) => rank(left.id) - rank(right.id) || left.index - right.index)
+      .map(({ id }) => id);
+    delete region.order;
     region.label = region.itemIds.map((id) => items.get(id).label).join(" + ");
     if (!pages.has(region.page)) {
       pages.set(region.page, []);
