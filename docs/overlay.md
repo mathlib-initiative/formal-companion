@@ -62,7 +62,7 @@ templates/overlay/
     vendor/pdfjs/
   tests/                       node --test suites (not copied)
 scripts/overlay/
-  config.py   sync.py   export.py   shards.py
+  config.py   sync.py   export.py   shards.py   defaults.py
 scripts/cfcmd/overlay.py
 ```
 
@@ -76,8 +76,8 @@ pdf-overlay/GENERATED.json annotations.bundle.json overlay.config.json README.md
 
 The annotation files live at the repository root, not in `pdf-overlay/`: they
 are the companion's annotations, which any Literature Links reader can scan,
-and the overlay is one reader of them. `annotations/` holds section folders of
-annotation files and nothing else.
+and the overlay is one reader of them. `annotations/` holds a `_defaults.json`,
+section folders of annotation files and nothing else.
 
 ## 3. `overlay.config.json`, version 1
 
