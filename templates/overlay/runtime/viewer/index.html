@@ -13,7 +13,7 @@
       page count. The title, the heading, the lede and the back link below are
       placeholders that viewer.js replaces at run time with the values in
       ../overlay.config.json, and every other string on the page comes from the
-      annotation document. Nothing is substituted into this file when it is
+      annotation shards. Nothing is substituted into this file when it is
       copied into a companion.
     -->
     <title>Source and formalization overlay</title>
@@ -38,8 +38,8 @@
           <h2 id="pdf-heading">Verified loopback PDF</h2>
           <p>
             The PDF is served only on loopback, out of the ignored local cache the runtime
-            tools fill. This page verifies its SHA-256 against the annotation document's
-            source record before the bundled PDF.js renders it; the PDF is never uploaded
+            tools fill. This page verifies its SHA-256 against the one the annotations pin
+            before the bundled PDF.js renders it; the PDF is never uploaded
             and never part of the generated site.
           </p>
         </div>
@@ -47,7 +47,7 @@
 
       <p id="error" class="message error" role="alert" hidden></p>
       <p id="status" class="message status" role="status" aria-live="polite">
-        Loading the overlay configuration, the annotation document and the PDF.
+        Loading the overlay configuration, the annotations and the PDF.
       </p>
       <p id="notice" class="message notice" role="status" hidden></p>
 

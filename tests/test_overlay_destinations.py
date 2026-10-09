@@ -35,7 +35,6 @@ if str(SCRIPTS) not in sys.path:
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import validate as V              # noqa: E402
 from formal_companion_annotations import vocab                      # noqa: E402
-from formal_companion_annotations import vocab                      # noqa: E402
 from cflib.errors import CfError                                    # noqa: E402
 from overlay import destinations as D                               # noqa: E402
 

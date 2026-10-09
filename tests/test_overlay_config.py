@@ -17,10 +17,8 @@ fourth reader, outside the three-way table because it is deliberately laxer in
 two documented places; what is checked of it is the direction: nothing
 `config.py` accepts may be a config `serve.py` refuses.
 
-The last class here holds a fifth retyped string: the path of the annotation
-format's own schema inside a generated directory.  `cf overlay sync` writes
-that file and four readers fetch or open it by name; a name that drifts in one
-of them is a reader that silently stops checking the format at all.
+The last class holds the strings the shard readers retype: the overlay's
+extension key and the shard file pattern.
 
 Everything here is synthetic: a source id, a page title and a file name that
 belong to no edition and no companion.
@@ -313,35 +311,32 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertIn(f'CONFIG_SCHEMA = "{overlay_config.CONFIG_SCHEMA}"', viewer)
 
 
-class TestTheFourReadersOpenTheSameFormatSchema(unittest.TestCase):
-    """The format schema's path inside a generated directory, retyped five times.
+class TestTheReadersAgreeOnTheShards(unittest.TestCase):
+    """The extension key and the shard file pattern, written once per reader.
 
-    `cf overlay sync` writes `pdf-overlay/schema/annotations.schema.json`; the three
-    runtime tools open it and the viewer fetches it, each by a name of its
-    own, because none of them may import another.  A name that drifts in one
-    of them is a reader that reports a missing schema -- or, worse, stops
-    being the thing the others agree with -- so the five strings are pinned
-    together here.
+    The producer (`scripts/overlay/shards.py`), the runtime tools
+    (`tools/overlay_shards.py`) and the viewer each spell them, because none
+    of them may import another; a key that drifts is a viewer that finds no
+    item, region or card in any record.
     """
 
-    def test_the_tools_name_the_path_sync_writes(self):
-        self.assertEqual(overlay_sync.FORMAT_SCHEMA_PATH,
-                         ("schema", "annotations.schema.json"))
-        written = overlay_sync.FORMAT_SCHEMA_RELATIVE
-        for tool, module in (("check_generated", CHECK_GENERATED), ("serve", SERVE),
-                             ("build_site", BUILD_SITE)):
-            with self.subTest(tool=tool):
-                self.assertEqual("/".join(module.FORMAT_SCHEMA_PATH), written)
-
-    def test_the_viewer_fetches_it_from_beside_its_own_directory(self):
-        """`viewer/index.html` sits one level under the mount, hence `../`."""
+    def test_the_namespace_is_one_string(self):
+        from overlay import shards as overlay_shards
         viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
-        self.assertIn(
-            f'DOCUMENT_SCHEMA_URL = "../{overlay_sync.FORMAT_SCHEMA_RELATIVE}"', viewer)
+        tools = (RUNTIME / "tools" / "overlay_shards.py").read_text(encoding="utf-8")
+        self.assertIn(f'NAMESPACE = "{overlay_shards.NAMESPACE}"', viewer)
+        self.assertIn(f'NAMESPACE = "{overlay_shards.NAMESPACE}"', tools)
 
-    def test_build_site_publishes_the_directory_the_viewer_fetches_from(self):
-        root = overlay_sync.FORMAT_SCHEMA_RELATIVE.split("/")[0]
-        self.assertIn(root, BUILD_SITE.RUNTIME_ROOTS)
+    def test_the_shard_file_pattern_is_one_pattern(self):
+        from overlay import shards as overlay_shards
+        tools = (RUNTIME / "tools" / "overlay_shards.py").read_text(encoding="utf-8")
+        viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
+        self.assertIn(overlay_shards.SHARD_FILE.pattern, tools)
+        self.assertIn("/^[0-9A-Za-z][0-9A-Za-z._-]*\\.jsonl$/", viewer)
+
+    def test_build_site_publishes_what_the_viewer_reads(self):
+        self.assertEqual(set(BUILD_SITE.INSTANCE_FILES),
+                         {overlay_config.CONFIG_NAME, overlay_sync.GENERATED_NAME})
 
 
 class TestProblemsAreReportedWhole(unittest.TestCase):

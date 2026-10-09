@@ -13,27 +13,22 @@ for byte -- a generated directory can be checked against its own manifest.
 It reports, one line per problem, and exits 1 when there is one:
 
 * every file `GENERATED.json` lists exists, is an ordinary file, and has the
-  sha256 recorded for it;
-* `pdf-overlay/` holds no other file, except the two instance files
-  `GENERATED.json` names and `GENERATED.json` itself;
+  sha256 recorded for it, and `pdf-overlay/` holds nothing else but
+  `GENERATED.json` and the instance file `overlay.config.json`;
+* `GENERATED.json`'s `format` block names the Literature Links release whose
+  package `cf overlay sync` shipped in `tools/literature_links/`;
 * `overlay.config.json` satisfies section 3 -- the same rules as the skill's
   `scripts/overlay/config.py` and as the `overlay-config-v1.schema.json` in
   the `schema/` directory beside this one.  The four patterns below are those
-  files' patterns, and
-  the skill's `tests/test_overlay_config.py` fails when one of the strings
-  differs or when the three disagree on any config in its table;
-* `annotations.json` parses, declares the annotation format's own `schema`,
-  and carries the config's `source_id` as a `kind: pdf` source with a
-  `sha256`.  The format's full checker is not here (it is a package this
-  directory deliberately does not depend on); `cf overlay check` runs it.
-
-Which documents count as "the annotation format" is not written down here.
-`pdf-overlay/schema/annotations.schema.json` beside this directory is the
-format's own JSON Schema, copied in by `cf overlay sync`, and its
-``properties.schema.const`` and ``properties.schema_version.pattern`` are the
-only statement of the accepted identity; `GENERATED.json`'s ``format`` block
-records which release that schema came from.  A format upgrade is therefore a
-new vendored release and a re-sync, and nothing in this file to edit.
+  files' patterns, and the skill's `tests/test_overlay_config.py` fails when
+  one of the strings differs or when the three disagree on any config in its
+  table;
+* the shard directory `GENERATED.json`'s `annotations` block names holds
+  exactly the shards it lists, each with its recorded sha256, and every shard
+  passes the shipped `literature_links` scan; at least one record is of the
+  PDF the config's `source_id` names;
+* every curation input the export read still has the sha256 recorded for it,
+  so a companion that changed its curation and did not re-export fails here.
 """
 from __future__ import annotations
 
@@ -49,21 +44,18 @@ import sys
 from typing import Any
 
 CONFIG_NAME = "overlay.config.json"
-DOCUMENT_NAME = "annotations.json"
 GENERATED_NAME = "GENERATED.json"
 
 CONFIG_SCHEMA = "formal-companion/overlay-config"
 CONFIG_SCHEMA_VERSION = 1
 GENERATED_SCHEMA = "formal-companion/overlay-generated"
-GENERATED_SCHEMA_VERSION = 1
-#: The annotation format's own schema, as `cf overlay sync` copied it out of
-#: the vendored release.  Nothing here names the format's identity: it is read
-#: from this file.
-FORMAT_SCHEMA_PATH = ("schema", "annotations.schema.json")
-#: The distribution `GENERATED.json`'s `format` block must name.
-FORMAT_PACKAGE = "formal-companion-annotations"
-#: The keys of that block, and the two the shipped schema settles.
-FORMAT_KEYS = ("package", "version", "tag", "commit", "schema", "schema_version")
+GENERATED_SCHEMA_VERSION = 2
+#: The distribution `GENERATED.json`'s `format` block must name, and where
+#: `cf overlay sync` ships its package.
+FORMAT_PACKAGE = "literature-links"
+FORMAT_KEYS = ("package", "version", "commit")
+FORMAT_OPTIONAL_KEYS = ("tag",)
+LINKS_INIT = ("tools", "literature_links", "__init__.py")
 
 CONFIG_KEYS = {
     "schema", "schema_version", "source_id", "title", "lede", "back_link",
@@ -102,6 +94,13 @@ _RELATIVE = re.compile(RELATIVE_PATH_PATTERN)
 _REFUSED = tuple(re.compile(p) for p in RELATIVE_PATH_REFUSED)
 _LOOPBACK = re.compile(LOOPBACK_PATTERN)
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+_VERSION = re.compile(r'^__version__ = "([^"]+)"$', re.M)
+
+# The siblings are imported from the companion's tree: never leave bytecode there.
+sys.dont_write_bytecode = True
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import overlay_shards  # noqa: E402  (beside this file in pdf-overlay/tools/)
 
 
 # ---------------------------------------------------------------------------
@@ -153,55 +152,6 @@ def _lstat(path: Path, label: str) -> int:
         raise Unreadable(f"{label}: {path} does not exist") from error
     except OSError as error:                                 # pragma: no cover
         raise Unreadable(f"{label}: cannot inspect {path}: {error}") from error
-
-
-# ---------------------------------------------------------------------------
-# the document identity, read from the schema this directory ships
-# ---------------------------------------------------------------------------
-
-class DocumentFormat:
-    """Which documents the shipped annotation schema accepts.
-
-    `schema` is the schema's ``properties.schema.const`` and `version` is a
-    compiled ``properties.schema_version.pattern``.  A schema file that states
-    neither is a broken generated directory, not a licence to accept anything.
-    """
-
-    __slots__ = ("schema", "version")
-
-    def __init__(self, schema: str, version: "re.Pattern[str]") -> None:
-        self.schema = schema
-        self.version = version
-
-
-def format_label() -> str:
-    return "/".join(FORMAT_SCHEMA_PATH)
-
-
-def document_format(overlay: Path) -> DocumentFormat:
-    """Read `pdf-overlay/schema/annotations.schema.json`, or say why it cannot be."""
-    label = format_label()
-    value = strict_json(read_bytes(overlay.joinpath(*FORMAT_SCHEMA_PATH), label), label)
-    if not isinstance(value, dict):
-        raise Unreadable(f"{label}: expected a JSON Schema object")
-    properties = value.get("properties")
-    properties = properties if isinstance(properties, dict) else {}
-    schema = properties.get("schema")
-    const = schema.get("const") if isinstance(schema, dict) else None
-    if not isinstance(const, str) or not const:
-        raise Unreadable(f"{label}: properties.schema has no const, so the accepted "
-                         f"document identity cannot be read")
-    version = properties.get("schema_version")
-    pattern = version.get("pattern") if isinstance(version, dict) else None
-    if not isinstance(pattern, str) or not pattern:
-        raise Unreadable(f"{label}: properties.schema_version has no pattern, so the "
-                         f"accepted document versions cannot be read")
-    try:
-        compiled = re.compile(pattern)
-    except re.error as error:
-        raise Unreadable(f"{label}: properties.schema_version.pattern is not a regular "
-                         f"expression: {error}") from error
-    return DocumentFormat(const, compiled)
 
 
 # ---------------------------------------------------------------------------
@@ -349,50 +299,46 @@ def _safe_relative(relative: str) -> bool:
             and not any(part in {"", ".", ".."} for part in pure.parts))
 
 
-def format_problems(record: Any, fmt: DocumentFormat | None) -> list[str]:
-    """`GENERATED.json`'s `format` block, against the schema this directory ships.
+def format_problems(overlay: Path, record: Any) -> list[str]:
+    """`GENERATED.json`'s `format` block, against the package shipped in `tools/`.
 
-    The block records which release of the annotation format generated this
-    directory.  Its `version`, `tag` and `commit` cannot be checked from here
-    -- there is no network and no package -- but the three that can are
-    checked: the distribution's name, and the identity and version the shipped
-    schema states.
+    The block names the Literature Links release this directory reads.  Its
+    `commit` cannot be checked from here -- there is no network and no
+    checkout -- but the package name and the shipped package's version can.
     """
     out: list[str] = []
     block = record.get("format") if isinstance(record, dict) else None
     if not isinstance(block, dict):
-        return [f"{GENERATED_NAME}.format: expected an object naming the annotation "
-                f"format release this directory was generated against"]
+        return [f"{GENERATED_NAME}.format: expected an object naming the Literature Links "
+                f"release this directory was generated against"]
     missing = sorted(set(FORMAT_KEYS) - set(block))
     if missing:
         out.append(f"{GENERATED_NAME}.format: missing keys {missing}")
-    unknown = sorted(set(block) - set(FORMAT_KEYS))
+    unknown = sorted(set(block) - set(FORMAT_KEYS) - set(FORMAT_OPTIONAL_KEYS))
     if unknown:
         out.append(f"{GENERATED_NAME}.format: unknown keys {unknown}")
-    for key in FORMAT_KEYS:
+    for key in (*FORMAT_KEYS, *FORMAT_OPTIONAL_KEYS):
         if key in block and (not isinstance(block[key], str) or not block[key]):
             out.append(f"{GENERATED_NAME}.format.{key}: expected a nonempty string")
     if isinstance(block.get("package"), str) and block["package"] != FORMAT_PACKAGE:
         out.append(f"{GENERATED_NAME}.format.package: expected {FORMAT_PACKAGE}")
-    if fmt is None:
-        return out
-    if isinstance(block.get("schema"), str) and block["schema"] != fmt.schema:
-        out.append(f"{GENERATED_NAME}.format.schema: {block['schema']!r} is not the "
-                   f"identity {format_label()} states ({fmt.schema!r})")
-    version = block.get("schema_version")
-    if isinstance(version, str) and version and not fmt.version.fullmatch(version):
-        out.append(f"{GENERATED_NAME}.format.schema_version: {version!r} does not match "
-                   f"the pattern {format_label()} states ({fmt.version.pattern})")
+    try:
+        shipped = _VERSION.search(read_bytes(overlay.joinpath(*LINKS_INIT), "/".join(LINKS_INIT))
+                                  .decode("utf-8"))
+    except (Unreadable, UnicodeDecodeError) as error:
+        return out + [str(error)]
+    if shipped is None or shipped.group(1) != block.get("version"):
+        out.append(f"{GENERATED_NAME}.format.version: {block.get('version')!r} is not the version of "
+                   f"the shipped {'/'.join(LINKS_INIT[:2])} "
+                   f"({shipped.group(1) if shipped else 'none'!r})")
     return out
 
 
-def generated_problems(overlay: Path, record: Any,
-                       fmt: DocumentFormat | None = None) -> tuple[list[str], list[str]]:
+def generated_problems(overlay: Path, record: Any) -> tuple[list[str], list[str]]:
     """Problems with the manifest and the files, and the instance file names."""
     out: list[str] = []
     if not isinstance(record, dict):
-        return [f"{GENERATED_NAME}: expected an object"], list(
-            (DOCUMENT_NAME, CONFIG_NAME))
+        return [f"{GENERATED_NAME}: expected an object"], [CONFIG_NAME]
     if record.get("schema") != GENERATED_SCHEMA:
         out.append(f"{GENERATED_NAME}.schema: expected {GENERATED_SCHEMA}")
     if record.get("schema_version") != GENERATED_SCHEMA_VERSION:
@@ -401,12 +347,12 @@ def generated_problems(overlay: Path, record: Any,
     generator = record.get("generator")
     if not isinstance(generator, dict) or not generator.get("name"):
         out.append(f"{GENERATED_NAME}.generator: expected an object naming the generator")
-    out += format_problems(record, fmt)
+    out += format_problems(overlay, record)
 
     instance = record.get("instance_files")
     if not isinstance(instance, list) or not all(isinstance(n, str) for n in instance):
         out.append(f"{GENERATED_NAME}.instance_files: expected an array of file names")
-        instance = [DOCUMENT_NAME, CONFIG_NAME]
+        instance = [CONFIG_NAME]
 
     listed: dict[str, str] = {}
     order: list[str] = []
@@ -466,41 +412,75 @@ def _walk(overlay: Path) -> dict[str, int]:
     return found
 
 
-def document_problems(overlay: Path, source_id: str, fmt: DocumentFormat) -> list[str]:
-    """`annotations.json` parses, is the format, and carries the config's PDF source.
-
-    "Is the format" means what *fmt* says, which is what the shipped schema
-    says: this tool holds no identity of its own to compare against.
-    """
+def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
+    """The shards against `GENERATED.json`, the shipped scan, the config's source, and the inputs."""
     try:
-        value = strict_json(read_bytes(overlay / DOCUMENT_NAME, DOCUMENT_NAME),
-                            DOCUMENT_NAME)
-    except Unreadable as error:
+        block = overlay_shards.annotations_block(overlay)
+    except overlay_shards.ShardError as error:
         return [str(error)]
-    if not isinstance(value, dict):
-        return [f"{DOCUMENT_NAME}: expected an object"]
+    root = overlay.parent
+    directory = root.joinpath(*PurePosixPath(block["directory"]).parts)
     out: list[str] = []
-    if value.get("schema") != fmt.schema:
-        out.append(f"{DOCUMENT_NAME}.schema: expected {fmt.schema}, which "
-                   f"{format_label()} states")
-    version = value.get("schema_version")
-    if not isinstance(version, str) or not fmt.version.fullmatch(version):
-        out.append(f"{DOCUMENT_NAME}.schema_version: expected a version matching "
-                   f"{fmt.version.pattern}, which {format_label()} states")
-    sources = value.get("sources")
-    if not isinstance(sources, list) or not sources:
-        return out + [f"{DOCUMENT_NAME}.sources: expected a nonempty array"]
-    named = [row for row in sources if isinstance(row, dict) and row.get("id") == source_id]
-    if not named:
-        return out + [f"{DOCUMENT_NAME}: no source {source_id!r}, which "
-                      f"{CONFIG_NAME} names"]
-    source = named[0]
-    if source.get("kind") != "pdf":
-        out.append(f"{DOCUMENT_NAME}: source {source_id!r} is kind "
-                   f"{source.get('kind')!r}, not pdf")
-    digest = source.get("sha256")
-    if not isinstance(digest, str) or not _HEX64.search(digest):
-        out.append(f"{DOCUMENT_NAME}: source {source_id!r} carries no lowercase sha256")
+    listed = {row["path"]: row for row in block["shards"]}
+    if not listed:
+        out.append(f"{GENERATED_NAME}.annotations lists no shard; `cf overlay export` writes them")
+    if directory.is_symlink() or not directory.is_dir():
+        return out + [f"{block['directory']}/: not an ordinary directory"]
+    for name, mode in sorted(_walk(directory).items()):
+        relative = f"{block['directory']}/{name}"
+        if relative not in listed:
+            kind = "a symlink" if stat.S_ISLNK(mode) else "not a shard"
+            out.append(f"{relative}: {kind} {GENERATED_NAME} lists; the shard directory holds "
+                       f"only the shards")
+    present = []
+    for relative, row in sorted(listed.items()):
+        try:
+            raw = read_bytes(root.joinpath(*PurePosixPath(relative).parts), relative)
+        except Unreadable as error:
+            out.append(str(error))
+            continue
+        found = hashlib.sha256(raw).hexdigest()
+        if found != row["sha256"]:
+            out.append(f"{relative}: sha256 {found}, but {GENERATED_NAME} records {row['sha256']}")
+        present.append(root.joinpath(*PurePosixPath(relative).parts))
+    if present:
+        try:
+            from literature_links import discovery
+        except ImportError as error:                         # pragma: no cover
+            return out + [f"tools/literature_links: cannot import it: {error}"]
+        collection = discovery.collect(present)
+        for problem in collection.problems:
+            path = problem.path.replace(str(root.resolve()) + os.sep, "")
+            out.append(f"{path}: {problem.message} [{problem.code}]")
+        if source_id is not None and not any(
+                overlay_shards.extension(r.annotation["source"]).get("source_id") == source_id
+                for r in collection.records if r.annotation["source"].get("type") == "pdf"):
+            out.append(f"no shard holds a record of the PDF {source_id!r}, which "
+                       f"{CONFIG_NAME} names")
+    out += inputs_problems(root, block.get("inputs"))
+    return out
+
+
+def inputs_problems(root: Path, inputs: Any) -> list[str]:
+    """Each curation input the export recorded still hashes to its recorded sha256."""
+    if inputs is None:
+        return []
+    if not isinstance(inputs, list):
+        return [f"{GENERATED_NAME}.annotations.inputs: expected an array of {{path, sha256}}"]
+    out = []
+    for index, row in enumerate(inputs):
+        if not isinstance(row, dict) or not _safe_relative(row.get("path")) \
+                or not isinstance(row.get("sha256"), str) or not _HEX64.search(row["sha256"]):
+            out.append(f"{GENERATED_NAME}.annotations.inputs[{index}]: expected {{path, sha256}}")
+            continue
+        try:
+            raw = read_bytes(root.joinpath(*PurePosixPath(row["path"]).parts), row["path"])
+        except Unreadable as error:
+            out.append(f"{error}; the shards were exported from it: re-run `cf overlay export`")
+            continue
+        if hashlib.sha256(raw).hexdigest() != row["sha256"]:
+            out.append(f"{row['path']}: changed since the shards were exported from it; "
+                       f"re-run `cf overlay export` and `cf overlay sync`")
     return out
 
 
@@ -523,29 +503,26 @@ def problems(overlay: Path) -> list[str]:
     except Unreadable as error:
         return [str(error), f"{GENERATED_NAME} is what `cf overlay sync <companion>` "
                             f"writes; run it from the formal-companion checkout"]
-    schema_problem: list[str] = []
-    try:
-        fmt: DocumentFormat | None = document_format(overlay)
-    except Unreadable as error:
-        fmt, schema_problem = None, [str(error)]
-    out, _instance = generated_problems(overlay, record, fmt)
-    out += schema_problem
+    out, _instance = generated_problems(overlay, record)
+    source_id = None
     try:
         config = strict_json(read_bytes(overlay / CONFIG_NAME, CONFIG_NAME), CONFIG_NAME)
     except Unreadable as error:
-        return out + [str(error)]
-    found = config_problems(config)
-    out += found
-    if not found and fmt is not None:
-        out += document_problems(overlay, config["source_id"], fmt)
-    return out
+        out.append(str(error))
+    else:
+        found = config_problems(config)
+        out += found
+        if not found:
+            source_id = config["source_id"]
+    return out + annotations_problems(overlay, source_id)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="check_generated.py",
         description="Verify that pdf-overlay/ is the directory formal-companion "
-                    "generated, and that its two instance files fit it.")
+                    "generated, that its config fits it, and that the shards it lists "
+                    "are current and valid.")
     parser.add_argument("--overlay", metavar="DIR",
                         help="the pdf-overlay directory (default: the one holding "
                              "this script)")

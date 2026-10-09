@@ -1,41 +1,38 @@
 /**
  * The overlay viewer's DOM controller.
  *
- * It fetches two data files — `../overlay.config.json` and the annotation
- * document that configuration names — and takes every per-companion value from
- * them: the page title and heading, the back link, the PDF route and its
- * sha256, the pages, the regions, the items, the cards, the verdicts. Between
- * the two it fetches `../schema/annotations.schema.json`, the annotation
- * format's own schema as `cf overlay sync` copied it in, and takes from it the
- * one `schema` value and the `schema_version` pattern it will accept: the
- * viewer holds no copy of the format's identity, so a format upgrade is a
- * re-sync. A missing or unreadable schema file is a refusal with a message.
- * The pure half (indexing, geometry, href rules, hashing) is in viewer-core.js,
- * so `node --test` reaches it without a DOM; this file keeps the injectable
+ * It fetches `../overlay.config.json`, then `../GENERATED.json` for the shard
+ * list, then every Literature Links shard it lists (each checked against its
+ * recorded sha256), and takes every per-companion value from them: the page
+ * title and heading, the back link, the PDF route and its sha256, the pages,
+ * the regions, the items, the cards, the verdicts. The pure half (the shard
+ * list, the records, geometry, href rules, hashing) is in viewer-core.js, so
+ * `node --test` reaches it without a DOM; this file keeps the injectable
  * `fetch` / `document` / `storage` seams the tests drive it through.
  *
- * Security (docs/overlay.md section 4): every string from either file
- * reaches the DOM through `textContent` or an attribute setter, never
- * `innerHTML`; an `href` is used only when it passes the site-path or `https:`
- * rules of viewer-core.js, with its fragment percent-encoded; the PDF is
- * requested only from `config.pdf.route`; PDF.js runs with
- * `isEvalSupported: false`.
+ * Security (docs/overlay.md section 4): every string from those files reaches
+ * the DOM through `textContent` or an attribute setter, never `innerHTML`; an
+ * `href` is used only when a record's target resolves to an `https:` URL or a
+ * page of this site; the PDF is requested only from `config.pdf.route`;
+ * PDF.js runs with `isEvalSupported: false`.
  */
 import {
   CARD_PAGE_SIZE,
   CONFIG_URL,
-  DOCUMENT_SCHEMA_URL,
+  GENERATED_URL,
   MAX_JSON_BYTES,
   buildIndex,
   cardSummaryText,
   cardsMatching,
   declarationVerdictDisplay,
-  documentFormat,
   groupCards,
   paginateCards,
+  parseShard,
   quadToViewport,
   readConfig,
+  readShardList,
   resolutionText,
+  sha256Hex,
   verdictDisplay,
   verifyPdfBytes,
 } from "./viewer-core.js";
@@ -45,9 +42,17 @@ export const PDF_MEDIA_TYPE = "application/pdf";
 /** The hash the viewer writes and reads back for the current page. */
 const PAGE_HASH = /^#page=(\d{1,6})$/;
 
+function decodeUtf8(bytes, label) {
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch (error) {
+    throw new Error(`${label} is not valid UTF-8 (${error.message}).`);
+  }
+}
+
 function parseJsonBytes(bytes, label) {
   try {
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    return JSON.parse(decodeUtf8(bytes, label));
   } catch (error) {
     throw new Error(`${label} is not valid UTF-8 JSON (${error.message}).`);
   }
@@ -79,25 +84,31 @@ export async function loadConfig(fetchImpl = globalThis.fetch, url = CONFIG_URL)
 }
 
 /**
- * Read the annotation format's own schema, the file `cf overlay sync` copied
- * out of the vendored release, and derive the document identity this viewer
- * accepts. A fetch that fails says so in the same words a missing data file
- * does; the caller shows it on the page.
+ * Read the shard list from `GENERATED.json`, fetch every shard it names from
+ * the site root and check its sha256, then index the records. A shard that
+ * does not match its recorded sha256 is a refusal: the page and the data it
+ * was generated with are out of step.
  */
-export async function loadFormat(fetchImpl = globalThis.fetch, url = DOCUMENT_SCHEMA_URL) {
-  return documentFormat(parseJsonBytes(await checkedFetch(url, fetchImpl), url));
-}
-
-/** Read the annotation document the configuration names and index it. */
-export async function loadDocument(config, fetchImpl = globalThis.fetch, format) {
-  const bytes = await checkedFetch(config.documentUrl, fetchImpl);
-  const doc = parseJsonBytes(bytes, "The annotation document");
-  return { doc, index: buildIndex(doc, config, format) };
+export async function loadShards(config, fetchImpl = globalThis.fetch, cryptoProvider = globalThis.crypto,
+                                 pageUrl = globalThis.location?.href, generatedUrl = GENERATED_URL) {
+  const list = readShardList(parseJsonBytes(await checkedFetch(generatedUrl, fetchImpl), "GENERATED.json"));
+  // siteRoot is relative to the viewer's own directory, where pageUrl is.
+  const base = new URL(config.siteRoot, pageUrl).href;
+  const shards = await Promise.all(list.shards.map(async (shard) => {
+    const url = new URL(shard.path, base).href;
+    const bytes = await checkedFetch(url, fetchImpl);
+    const actual = await sha256Hex(bytes, cryptoProvider);
+    if (actual !== shard.sha256) {
+      throw new Error(`${shard.path} has sha256 ${actual}; GENERATED.json records ${shard.sha256}.`);
+    }
+    return { path: shard.path, records: parseShard(decodeUtf8(bytes, shard.path), shard.path), url };
+  }));
+  return { index: buildIndex(shards, config, { pageOrigin: new URL(pageUrl).origin }), shards };
 }
 
 /**
  * Fetch the PDF from the configured loopback route and verify its bytes against
- * the sha256 of the document's source record before anything renders them.
+ * the sha256 its source pins before anything renders them.
  */
 export async function loadPdfBytes(config, index, fetchImpl = globalThis.fetch,
                                    cryptoProvider = globalThis.crypto) {
@@ -118,7 +129,7 @@ export async function loadPdfBytes(config, index, fetchImpl = globalThis.fetch,
     throw new Error(`The loopback PDF response has unexpected media type ${mediaType || "missing"}.`);
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
-  const declared = index.source.bytes;
+  const declared = index.bytes;
   if (Number.isInteger(declared) && bytes.byteLength !== declared) {
     throw new Error(`The loopback PDF is ${bytes.byteLength} bytes; the source record says ${declared}.`);
   }
@@ -185,8 +196,9 @@ export async function bootstrapViewer({
   fetchImpl = globalThis.fetch,
   historyRef = globalThis.history,
   locationRef = globalThis.location,
+  generatedUrl = GENERATED_URL,
+  pageUrl = globalThis.location?.href,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
-  schemaUrl = DOCUMENT_SCHEMA_URL,
   storage = (() => {
     try {
       return globalThis.localStorage ?? null;
@@ -214,8 +226,6 @@ export async function bootstrapViewer({
     cardPage: 1,
     config: null,
     currentPage: 1,
-    doc: null,
-    format: null,
     index: null,
     pdfDocument: null,
     region: null,
@@ -320,10 +330,10 @@ export async function bootstrapViewer({
     renderVerdictNotes(item);
     ui["coverage-note"].hidden = !item.coverageNote;
     ui["coverage-note"].textContent = item.coverageNote;
-    ui["fallback-note"].hidden = !item.usesFallback;
-    ui["fallback-note"].textContent = item.usesFallback
-      ? `Fallback: these rows are the memberships of ${item.clusterTitles.join(", ")}, `
-        + "not declarations linked to this item."
+    const clusters = item.cards.length ? [] : item.clusterIds;
+    ui["fallback-note"].hidden = !clusters.length;
+    ui["fallback-note"].textContent = clusters.length
+      ? `No declaration is linked to this item; its ledger cluster: ${clusters.join(", ")}.`
       : "";
     setOptions(ui["role-filter"], item.roles);
     ui["role-filter"].value = "";
@@ -390,12 +400,7 @@ export async function bootstrapViewer({
     ui["target-summary"].className = item.coverage
       ? `target-summary coverage-summary coverage-${item.coverage}`
       : "target-summary";
-    ui["target-summary"].textContent = cardSummaryText({
-      clusters: item.clusterIds.length,
-      coverage: item.coverage,
-      fallback: item.usesFallback,
-      shown: page.total,
-    });
+    ui["target-summary"].textContent = cardSummaryText({ coverage: item.coverage, shown: page.total });
     ui["target-page"].textContent = `Page ${page.page} of ${page.pageCount}`;
     ui["previous-targets"].disabled = page.page <= 1;
     ui["next-targets"].disabled = page.page >= page.pageCount;
@@ -413,7 +418,7 @@ export async function bootstrapViewer({
     }
   }
 
-  function renderOverlay(page, viewport) {
+  function renderOverlay(displayed, viewport) {
     ui.overlay.replaceChildren();
     ui.overlay.setAttribute("viewBox", `0 0 ${viewport.width} ${viewport.height}`);
     ui.overlay.setAttribute("width", String(viewport.width));
@@ -425,7 +430,7 @@ export async function bootstrapViewer({
         polygon.dataset.regionId = region.id;
         polygon.setAttribute(
           "points",
-          quadToViewport(quad, page.view, viewport).map(([x, y]) => `${x},${y}`).join(" "),
+          quadToViewport(quad, displayed, viewport).map(([x, y]) => `${x},${y}`).join(" "),
         );
         polygon.setAttribute("tabindex", "0");
         polygon.setAttribute("role", "button");
@@ -450,7 +455,11 @@ export async function bootstrapViewer({
     const epoch = ++state.renderEpoch;
     state.renderTask?.cancel();
     const page = await state.pdfDocument.getPage(state.currentPage);
-    const viewport = page.getViewport({ rotation: state.rotation, scale: state.zoom / 100 });
+    // Records place regions on the displayed page: after the page's own
+    // rotation, which the reader's rotation adds to.
+    const own = Number.isInteger(page.rotate) ? page.rotate : 0;
+    const displayed = page.getViewport({ rotation: own, scale: 1 });
+    const viewport = page.getViewport({ rotation: (own + state.rotation) % 360, scale: state.zoom / 100 });
     const deviceScale = Math.max(1, globalThis.devicePixelRatio || 1);
     const canvas = ui["pdf-canvas"];
     canvas.width = Math.ceil(viewport.width * deviceScale);
@@ -476,7 +485,7 @@ export async function bootstrapViewer({
     if (epoch !== state.renderEpoch) {
       return;
     }
-    renderOverlay(page, viewport);
+    renderOverlay(displayed, viewport);
     ui["page-number"].value = String(state.currentPage);
     ui["page-count"].textContent = `of ${state.pdfDocument.numPages}`;
     ui["previous-page"].disabled = state.currentPage <= 1;
@@ -514,12 +523,8 @@ export async function bootstrapViewer({
     ui.status.textContent = "Loading the overlay configuration…";
     state.config = await loadConfig(fetchImpl, configUrl);
     applyConfig(state.config);
-    ui.status.textContent = "Loading the annotation format…";
-    state.format = await loadFormat(fetchImpl, schemaUrl);
-    ui.status.textContent = "Loading the annotation document…";
-    const loaded = await loadDocument(state.config, fetchImpl, state.format);
-    state.doc = loaded.doc;
-    state.index = loaded.index;
+    ui.status.textContent = "Loading the annotations…";
+    state.index = (await loadShards(state.config, fetchImpl, cryptoProvider, pageUrl, generatedUrl)).index;
   } catch (error) {
     ui.workspace.hidden = true;
     ui.status.textContent = "The overlay data was not loaded.";

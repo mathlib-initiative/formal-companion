@@ -29,7 +29,7 @@ read, and a page whose derived path leaves the site root is refused.
 Run it by path::
 
     python3 scripts/overlay/destinations.py --site .lake/build/literate-html \\
-        --doc pdf-overlay/annotations.json --out fragment.json
+        --doc <document>.json --out fragment.json
 """
 from __future__ import annotations
 
