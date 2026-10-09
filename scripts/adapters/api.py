@@ -41,7 +41,7 @@ from cflib.adapters_api import Adapter as CoreAdapter
 from cflib.errors import AdapterError
 from cflib.hashing import sha256_file, sha256_text
 
-from . import yamlio
+from . import leanbuild, yamlio
 
 __all__ = ["Adapter", "AdapterError", "SourceBinding", "load", "from_config", "register",
            "registry", "detect_all", "explain_all", "sha_of_files"]
@@ -121,6 +121,7 @@ class Adapter(CoreAdapter):
         super().__init__(config, name=name, workspace=workspace)
         self.source = source or f"adapter({self.kind})"
         self._claims_cache: dict[str, list] = {}
+        self._lean_builds: dict[Path, "leanbuild.Build | None"] = {}
         self.last_binding: "SourceBinding | None" = None
         if not self.name:
             raise AdapterError(f"{self.source}: 'name' is required (the companion's short name)")
@@ -155,6 +156,13 @@ class Adapter(CoreAdapter):
         if not path.is_dir():
             raise AdapterError(f"{self.name}: repo not found: {path}")
         return path
+
+    def lean_build(self, repo: Path) -> "leanbuild.Build | None":
+        """The repo's Lake build, read as data (:mod:`adapters.leanbuild`); one per repo."""
+        key = Path(repo).resolve()
+        if key not in self._lean_builds:
+            self._lean_builds[key] = leanbuild.Build.find(key)
+        return self._lean_builds[key]
 
     def globs(self, default: Sequence[str] = ()) -> list[str]:
         """``glob:`` as a list (a single string or a list are both accepted)."""
