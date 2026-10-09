@@ -30,7 +30,8 @@ tag review · 5 reproducing the references · 6 deliberate differences
 cf export attribution-table <checkout> --commit <sha> --out <doc.json> \
     [--lean-build <dir>] [--report <file>] [--name <name>] [--repo-id host/org/name] \
     [--site-name <site kind>] [--source-id <id>] [--source-title <title>] \
-    [--source-edition <edition>] [--page-offset <n>]
+    [--source-edition <edition>] [--page-offset <n>] \
+    [--data-dir <dir>] [--ledger <file>] [--official-source <file>]
 ```
 
 Both subcommands take the same common flags. `--site-name` is the
@@ -43,19 +44,30 @@ The exporter reads, at the pinned commit,
 
 | input | becomes |
 |---|---|
-| `pdf-overlay/data/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
-| `pdf-overlay/data/target-refinement.json` (schema version 2) | `key` and `attributed` `links`, merged per item; its *coverage entries* (an entry with a `coverage` class, no key ids, a `note`) as the item's `coverage` and `coverage_note`, their declarations as the links the class admits (below) |
-| `source-formalization-ledger.json` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
-| `pdf-overlay/data/declaration-snippets.json` | `snippets` |
-| `pdf-overlay/data/destinations.json` | `destinations` and `cluster.related_to` |
-| `pdf-overlay/data/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
-| `pdf-overlay/official-source.json` | the PDF source's URLs, bytes and retrieval time |
+| `<data-dir>/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
+| `<data-dir>/target-refinement.json` (schema version 2) | `key` and `attributed` `links`, merged per item; its *coverage entries* (an entry with a `coverage` class, no key ids, a `note`) as the item's `coverage` and `coverage_note`, their declarations as the links the class admits (below) |
+| `<ledger>` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
+| `<data-dir>/declaration-snippets.json` | `snippets` |
+| `<data-dir>/destinations.json` | `destinations` and `cluster.related_to` |
+| `<data-dir>/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
+| `<official-source>` | the PDF source's URLs, bytes and retrieval time |
 | every tracked `.lean` file | every declaration (`adapters.leanparse`), the statement-hash ids and signatures of anonymous ones (`formal_companion_annotations.ids`), the section 5.1 cut for named ones |
 | a Lake build's `lib/lean` (`--lean-build`, default `<checkout>/.lake/build/lib/lean`) | an anonymous instance's generated name as `lean_name`, when the `.ilean` postdates the file's last commit |
 
 When that build's trace hashes match a file's text, its declarations are read
 from the build (`.ilean`, and the literate JSON beside `lib/`) instead of
 parsed; the report's `lean_source` counts files by origin.
+
+Three of those paths are flags, so a companion that keeps the same data
+somewhere else needs no new convention. Each is **relative to the checkout**,
+read at the pinned commit like every other input; an absolute path, or one that
+climbs out with `..`, is refused.
+
+| flag | default | moves |
+|---|---|---|
+| `--data-dir` | `pdf-overlay/data` | the geometry batches, the target refinement, the verdicts, the destinations and the declaration snippets |
+| `--ledger` | `source-formalization-ledger.json` | the source-formalization ledger, which is also `companion.graph.path` and every provenance input that pins it |
+| `--official-source` | `pdf-overlay/official-source.json` | the PDF's download record |
 
 The PDF source is named through the registry by the sha256 the overlay
 records: id, title, edition and printed-page offset come from
@@ -221,7 +233,7 @@ method name and curation count (`provenance.x_refinement_fields`, 1), the PDF's
 download checks (`source.x_download_checks`, 1), the ledger's own words for the
 edition (`source.x_companion_edition`, 1), the 19 comment tags refused as
 declared ids and kept as `legacy_ids` (`declaration.comment_tag_as_legacy_id`),
-one geometry label naming two items (`item.split_merged_label`), the 55 items
+one geometry label naming two items (`item.split_merged_label`; their order is `location.x_item_order`), the 55 items
 classified by the table's coverage entries (`item.coverage_from_table`: 23
 `support_only`, 19 `partial_only`, 13 `not_formalized`, giving 50 support and
 32 attributed `part` links), the adjudication ledger's own verdict class read

@@ -11,6 +11,9 @@ docs/proposals/pdf-to-companion.md section 5.4.
 * :func:`companion_identity` derives ``companion.name`` and ``companion.repo``
   from the checkout's ``origin`` remote, so no exporter carries a repository
   name in its code.
+* :func:`repo_relative` checks a path an input flag names: an exporter reads a
+  checkout at a pinned commit, so every input it is pointed at is a path
+  *inside* that checkout.
 * :func:`registry_source` names a PDF the way the skill names it: by the
   sha256 of its bytes, through ``registry/sources.yaml``.  The two prototypes
   gave one edition two ids; one id per edition is the registry's rule.
@@ -338,6 +341,22 @@ def companion_identity(repo: Path, name: str | None = None,
         raise ExportError(f"{repo} has no origin remote to name the companion by",
                           hint="pass --repo-id host/org/name (and --name)")
     return (name or repo_id.rsplit("/", 1)[-1]), repo_id
+
+
+def repo_relative(rel: str | Path, flag: str) -> str:
+    """One input path inside the checkout, as a ``/``-joined relative path.
+
+    An exporter reads a companion at a pinned commit, so a flag that moves one
+    of its inputs moves it *within* that checkout: an absolute path, or one that
+    climbs out with ``..``, is refused rather than read.
+    """
+    text = str(rel).replace("\\", "/").strip().rstrip("/")
+    parts = [p for p in text.split("/") if p and p != "."]
+    if not parts or text.startswith("/") or ".." in parts or Path(text).is_absolute():
+        raise ExportError(f"{flag} {str(rel)!r} is not a path inside the checkout",
+                          hint="the exporter reads the companion at the pinned commit and writes nothing "
+                               "under it; give a path relative to the checkout root")
+    return "/".join(parts)
 
 
 # ---------------------------------------------------------------------------

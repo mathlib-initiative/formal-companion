@@ -1,0 +1,23 @@
+{
+  "schema": "formal-companion/overlay-config",
+  "schema_version": 1,
+  "source_id": "notes-pdf",
+  "title": "Elementary Sets: Lecture Notes (synthetic)",
+  "lede": "Every region of the source, and the declarations that formalise it.",
+  "back_link": {"href": "../../index.html", "text": "Back to the site"},
+  "display": {},
+  "storage_key": "formal-companion-overlay-page",
+  "pdf": {
+    "file_name": "notes.pdf",
+    "cache_dir": ".lake/overlay-pdf",
+    "route": "/__overlay_pdf__/notes.pdf"
+  },
+  "site": {
+    "output_root": ".lake/build/literate-html",
+    "index": "index.html",
+    "mount": "pdf-overlay",
+    "link_text": "Source overlay"
+  },
+  "build": {"commands": [["lake", "build"], ["lake", "query", ":literateHtml"]]},
+  "serve": {"host": "127.0.0.1", "port": 8000}
+}

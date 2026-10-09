@@ -16,6 +16,10 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
     source-formalization-ledger.json            the graph authority: source nodes,
                                                 formalization nodes, edges
 
+:data:`LAYOUT` is only the default spelling of that layout: ``data_dir``,
+``ledger`` and ``official_source`` (``--data-dir``, ``--ledger``,
+``--official-source``) move the three the convention does not fix.
+
 Every file is read as it is; the Lean sources are scanned at the pinned commit
 with ``adapters.leanbuild`` (every declaration, its namespace and privacy) and
 ``formal_companion_annotations.ids`` (statement-hash ids and signatures), and a
@@ -45,7 +49,8 @@ from formal_companion_annotations import vocab
 from . import common
 from .common import ExportError, HeaderCutter, Report, file_lock, git_out, module_of
 
-#: The convention's layout, relative to the checkout.
+#: The convention's default layout, relative to the checkout.  ``data``,
+#: ``ledger`` and ``official`` are the three an export may move.
 LAYOUT = {
     "data": "pdf-overlay/data",
     "geometry_glob": "geometry-batch-?.json",
@@ -59,6 +64,8 @@ LAYOUT = {
     "ledger_tool": "scripts/source_formalization_ledger.py",
     "geometry_tool": "scripts/overlay_geometry_from_layout.py",
 }
+#: The three layout keys an export may move, and the flag that moves each.
+MOVABLE_LAYOUT = {"data": "--data-dir", "ledger": "--ledger", "official": "--official-source"}
 RFC8118 = vocab.CONFORMS_TO_PDF
 COORDINATE_SPACE = {"origin": "top_left", "units": "normalized", "x_axis": "right", "y_axis": "down"}
 FIELD_KIND = {"structure field": "field", "projection": "projection", "structure projection": "projection"}
@@ -155,7 +162,9 @@ class AttributionTableExport:
     def __init__(self, repo: Path, commit: str, *, name: str | None = None, repo_id: str | None = None,
                  lean_build: Path | None = None, site_name: str = "verso_literate",
                  source_id: str | None = None, source_title: str | None = None,
-                 source_edition: str | None = None, page_offset: int | None = None):
+                 source_edition: str | None = None, page_offset: int | None = None,
+                 data_dir: str | Path | None = None, ledger: str | Path | None = None,
+                 official_source: str | Path | None = None):
         self.repo = repo.resolve()
         self.head, self.head_date = common.pinned_checkout(self.repo, commit)
         self.name, self.repo_id = common.companion_identity(self.repo, name, repo_id)
@@ -164,25 +173,31 @@ class AttributionTableExport:
         self.overrides = {"source_id": source_id, "title": source_title, "edition": source_edition,
                           "offset": page_offset}
         self.report = Report()
-        self.data = self.repo / LAYOUT["data"]
+        self.layout = dict(LAYOUT)
+        for key, value in (("data", data_dir), ("ledger", ledger), ("official", official_source)):
+            if value is not None:
+                self.layout[key] = common.repo_relative(value, MOVABLE_LAYOUT[key])
+        self.data = self.repo / self.layout["data"]
         for rel in ("refinement", "verdicts", "snippets", "destinations"):
-            if not (self.data / LAYOUT[rel]).is_file():
-                raise ExportError(f"{self.repo} has no {LAYOUT['data']}/{LAYOUT[rel]}",
-                                  hint="the attribution-table convention needs the overlay data files")
+            if not (self.data / self.layout[rel]).is_file():
+                raise ExportError(f"{self.repo} has no {self.layout['data']}/{self.layout[rel]}",
+                                  hint="the attribution-table convention needs the overlay data files; "
+                                       "--data-dir says where they are")
         for rel in ("official", "ledger"):
-            if not (self.repo / LAYOUT[rel]).is_file():
-                raise ExportError(f"{self.repo} has no {LAYOUT[rel]}")
-        self.batch_paths = sorted(self.data.glob(LAYOUT["geometry_glob"]))
+            if not (self.repo / self.layout[rel]).is_file():
+                raise ExportError(f"{self.repo} has no {self.layout[rel]}",
+                                  hint=f"{MOVABLE_LAYOUT[rel]} says where it is")
+        self.batch_paths = sorted(self.data.glob(self.layout["geometry_glob"]))
         if not self.batch_paths:
-            raise ExportError(f"{self.data} holds no {LAYOUT['geometry_glob']}")
+            raise ExportError(f"{self.data} holds no {self.layout['geometry_glob']}")
         self.batches = {p.stem: load(p) for p in self.batch_paths}
-        self.refinement = load(self.data / LAYOUT["refinement"])
-        self.verdicts_in = load(self.data / LAYOUT["verdicts"])
-        self.snippets_in = load(self.data / LAYOUT["snippets"])
-        self.dest_in = load(self.data / LAYOUT["destinations"])
-        self.official = load(self.repo / LAYOUT["official"])
-        self.ledger = load(self.repo / LAYOUT["ledger"])
-        self.ledger_lock = file_lock(self.repo, LAYOUT["ledger"])
+        self.refinement = load(self.data / self.layout["refinement"])
+        self.verdicts_in = load(self.data / self.layout["verdicts"])
+        self.snippets_in = load(self.data / self.layout["snippets"])
+        self.dest_in = load(self.data / self.layout["destinations"])
+        self.official = load(self.repo / self.layout["official"])
+        self.ledger = load(self.repo / self.layout["ledger"])
+        self.ledger_lock = file_lock(self.repo, self.layout["ledger"])
         # the record arrays, keyed by id
         self.items: dict[str, dict] = {}
         self.locations: dict[str, dict] = {}
@@ -224,11 +239,11 @@ class AttributionTableExport:
         """The ledger as a provenance input: the full lock when it is the ledger at HEAD."""
         if sha == self.ledger_lock["sha256"]:
             return dict(self.ledger_lock)
-        return {"path": LAYOUT["ledger"], "sha256": sha}
+        return {"path": self.layout["ledger"], "sha256": sha}
 
     def tool(self, key: str, name: str) -> dict | None:
         """A provenance ``tool`` naming one of the companion's own scripts, when it exists."""
-        rel = LAYOUT[key]
+        rel = self.layout[key]
         if (self.repo / rel).is_file():
             return {"name": name, "path": rel}
         self.report.lose(f"provenance.{key}_missing", 1,
@@ -311,7 +326,7 @@ class AttributionTableExport:
         prov_id = f"prov-geometry-{letter}"
         verifiers = sorted({r["visual_signoff"]["verifier_id"] for it in batch["items"] for r in it["regions"]})
         methods = sorted({r["visual_signoff"]["method"] for it in batch["items"] for r in it["regions"]})
-        rel = f"{LAYOUT['data']}/{batch_path.name}"
+        rel = f"{self.layout['data']}/{batch_path.name}"
         inputs = [file_lock(self.repo, rel)]
         sidecar = batch_path.with_name(batch_path.stem + ".sources.json")
         if sidecar.is_file():
@@ -321,7 +336,7 @@ class AttributionTableExport:
                    "note": f"{batch_id}: regions from poppler pdftotext -bbox-layout line boxes, then an "
                            f"agent visual sign-off per region (signoff.method is the file's "
                            f"{', '.join(methods)})."}
-            tool = self.tool("geometry_tool", Path(LAYOUT["geometry_tool"]).name)
+            tool = self.tool("geometry_tool", Path(self.layout["geometry_tool"]).name)
             if tool:
                 rec["tool"] = tool
         else:
@@ -394,7 +409,8 @@ class AttributionTableExport:
                              "as two numbered items that share the location. Every curated link stays on the "
                              "remark (the curation never said which declarations state (1.1)); the geometry label "
                              "and the old item id stay on the remark only, and no item relation fits 'shown in the "
-                             "same region' (relations are same_as, part_of, near)",
+                             "same region' (relations are same_as, part_of, near); the order the label names them in "
+                             "is the location's x_item_order",
                              [it["item_id"] + " -> " + ", ".join(new_ids)])
         self.old_to_item[it["item_id"]] = new_ids[0]
         self.old_to_all[it["item_id"]] = new_ids
@@ -439,6 +455,8 @@ class AttributionTableExport:
                     "refinedBy": region_sel},
                    {"type": "FragmentSelector", "conformsTo": RFC8118,
                     "value": f"page={page}&highlight={self.rect_highlight(bbox)}"}]}}
+        if len(new_ids) > 1:
+            loc["x_item_order"] = list(new_ids)
         if lid in self.locations:
             raise ExportError(f"location id collision {lid}")
         self.locations[lid] = loc
@@ -699,13 +717,13 @@ class AttributionTableExport:
                 "note": "Node-level edges of source-formalization-ledger.json, a clone-local export of the "
                         "external ff-core correspondence state (snapshot "
                         + self.ledger["formalization_snapshot"]["commit"] + ")."}
-        tool = self.tool("ledger_tool", Path(LAYOUT["ledger_tool"]).name + " export")
+        tool = self.tool("ledger_tool", Path(self.layout["ledger_tool"]).name + " export")
         if tool:
             prov["tool"] = tool
         self.provenance["prov-ledger"] = prov
         realization: collections.Counter = collections.Counter()
         for e in self.ledger["edges"]:
-            key, target = self.resolve(e["formalization_id"], f"{LAYOUT['ledger']} edge of {e['source_id']}")
+            key, target = self.resolve(e["formalization_id"], f"{self.layout['ledger']} edge of {e['source_id']}")
             mid = f"{e['source_id']}/{e['role']}/{target}"
             if mid in self.memberships:
                 raise ExportError(f"membership id collision {mid}")
@@ -728,7 +746,7 @@ class AttributionTableExport:
         """The declaration id a formalization id resolves to; a refusal naming the file when the ledger lacks it."""
         did = self.ledger_to_decl.get(fid)
         if did is None:
-            raise ExportError(f"{where} names {fid!r}, which {LAYOUT['ledger']} does not list as a formalization "
+            raise ExportError(f"{where} names {fid!r}, which {self.layout['ledger']} does not list as a formalization "
                               "node", hint="the overlay data and the ledger must come from the same snapshot; "
                                            "regenerate the one that is stale")
         return did
@@ -740,7 +758,7 @@ class AttributionTableExport:
 
     # -- links -----------------------------------------------------------------------
     def build_links(self) -> None:
-        where = f"{LAYOUT['data']}/{LAYOUT['refinement']}"
+        where = f"{self.layout['data']}/{self.layout['refinement']}"
         if self.refinement.get("schema_version") != REFINEMENT_SCHEMA_VERSION:
             raise ExportError(f"{where} is schema_version {self.refinement.get('schema_version')!r}; the exporter "
                               f"reads version {REFINEMENT_SCHEMA_VERSION} (coverage entries)",
@@ -752,7 +770,7 @@ class AttributionTableExport:
             "id": "prov-target-refinement", "actor": "agent", "method": "curation",
             "confirmed_by_human": self.refinement["provenance"]["confirmed_by_human"],
             "note": self.refinement["provenance"]["note"],
-            "inputs": sorted([file_lock(self.repo, f"{LAYOUT['data']}/{LAYOUT['refinement']}"),
+            "inputs": sorted([file_lock(self.repo, f"{self.layout['data']}/{self.layout['refinement']}"),
                               self.ledger_input(ref_ledger)], key=lambda d: d["path"]),
             "x_method": self.refinement["method"],
             "x_nodes_curated": self.refinement["provenance"]["nodes_curated"]}
@@ -874,7 +892,7 @@ class AttributionTableExport:
             if len(its) > 1:
                 sup["multi_item_node"] += 1
                 continue
-            did = self.decl_of(e["formalization_id"], f"{LAYOUT['ledger']} support edge of {e['source_id']}")
+            did = self.decl_of(e["formalization_id"], f"{self.layout['ledger']} support edge of {e['source_id']}")
             role = "example" if self.declarations[did]["kind"] == "example" else "support"
             lk = f"{its[0]}/{role}/{did}"
             if lk in self.table_links:
@@ -951,7 +969,7 @@ class AttributionTableExport:
     # -- snippets and destinations ------------------------------------------------------
     def build_snippets(self) -> None:
         for fid, s in self.snippets_in["snippets"].items():
-            did = self.decl_of(fid, f"{LAYOUT['data']}/{LAYOUT['snippets']}")
+            did = self.decl_of(fid, f"{self.layout['data']}/{self.layout['snippets']}")
             dec = self.declarations[did]
             if s["file"] != dec["file"]:
                 raise ExportError(f"snippet {fid} is in {s['file']}, the declaration in {dec['file']}")
@@ -966,7 +984,7 @@ class AttributionTableExport:
 
     def build_destinations(self) -> None:
         for r in self.dest_in["destinations"]:
-            key, target = self.resolve(r["formalization_id"], f"{LAYOUT['data']}/{LAYOUT['destinations']}")
+            key, target = self.resolve(r["formalization_id"], f"{self.layout['data']}/{self.layout['destinations']}")
             rec = {"id": f"{self.site_name}:{target}", key: target, "site": self.site_name, "resolution": r["resolution"]}
             if r["resolution"] == "exact":
                 href, _, frag = r["exact_href"].partition("#")
@@ -985,7 +1003,7 @@ class AttributionTableExport:
     def build_verdicts(self) -> None:
         vin = self.verdicts_in
         diff_date = re.search(r"(\d{4}-\d{2}-\d{2})\s*$", vin["method"])
-        inputs = sorted([file_lock(self.repo, f"{LAYOUT['data']}/{LAYOUT['verdicts']}"),
+        inputs = sorted([file_lock(self.repo, f"{self.layout['data']}/{self.layout['verdicts']}"),
                          self.ledger_input(vin["ledger_sha256"])], key=lambda d: d["path"])
         self.provenance["prov-verdicts-differential"] = {
             "id": "prov-verdicts-differential", "actor": "agent", "method": "adjudication",
@@ -1013,7 +1031,7 @@ class AttributionTableExport:
         v = {"id": vid, "item": iid, "locations": sorted(locs), "verdict": e["verdict"],
              "severity": e["severity"], "status": e["status"], "summary": e["summary"],
              "evidence": list(e["evidence"]),
-             "declarations": sorted(({"declaration": self.decl_of(d["id"], f"{LAYOUT['data']}/{LAYOUT['verdicts']}"),
+             "declarations": sorted(({"declaration": self.decl_of(d["id"], f"{self.layout['data']}/{self.layout['verdicts']}"),
                                       "verdict": d["verdict"],
                                       **({"note": d["note"]} if d.get("note") else {})}
                                      for d in e["declarations"]), key=lambda d: d["declaration"])}
@@ -1141,7 +1159,7 @@ class AttributionTableExport:
             "schema": vocab.ANNOTATION_SCHEMA, "schema_version": vocab.ANNOTATION_SCHEMA_VERSION,
             "companion": {"name": self.name, "repo": self.repo_id, "commit": self.head,
                           "generated_at": self.head_date, "generator": common.generator("attribution-table"),
-                          "graph": {"path": LAYOUT["ledger"], "sha256": self.ledger_lock["sha256"],
+                          "graph": {"path": self.layout["ledger"], "sha256": self.ledger_lock["sha256"],
                                     "bytes": self.ledger_lock["bytes"],
                                     "snapshot_commit": self.ledger["formalization_snapshot"]["commit"]}},
             "x_graph_scope": {"scope": self.ledger["scope"],
@@ -1173,7 +1191,18 @@ class AttributionTableExport:
                          "declaration with no membership is exactly one the ledger does not list (every ledger "
                          "node has an edge)", absent[:5])
         self.count(doc)
+        self.report.counts["inputs"] = self.inputs()
         return doc
+
+    def inputs(self) -> list[dict]:
+        """``{path, sha256, bytes}`` of every curation file this export read (`cf overlay export` records them)."""
+        rels = [f"{self.layout['data']}/{p.name}" for p in self.batch_paths]
+        rels += [f"{self.layout['data']}/{p.stem}.sources.json" for p in self.batch_paths
+                 if p.with_name(p.stem + ".sources.json").is_file()]
+        rels += [f"{self.layout['data']}/{self.layout[k]}"
+                 for k in ("refinement", "verdicts", "snippets", "destinations")]
+        rels += [self.layout["official"], self.layout["ledger"]]
+        return [file_lock(self.repo, rel) for rel in sorted(set(rels))]
 
     def count(self, doc: dict) -> None:
         """The report's counts: per array, and the breakdowns the docs cite."""
