@@ -106,6 +106,7 @@ class Decl:
     protected: bool = False
     anonymous: bool = False
     modifiers: tuple[str, ...] = field(default_factory=tuple)
+    origin: str = "text"           # "lean" when read from a verified build (adapters.leanbuild)
 
     @property
     def is_definition(self) -> bool:

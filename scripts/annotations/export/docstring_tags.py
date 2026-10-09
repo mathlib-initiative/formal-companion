@@ -7,7 +7,7 @@ docs/proposals/pdf-to-companion.md section 5.4.  It reuses the skill's readers:
 * ``adapters.docstring_tags`` (driven by an adapter config, by default the
   shipped template ``templates/adapters/docstring_tags.tao-measure-lean.yaml``)
   for the tag rows: item, sub, kind, page anchor and sorry class;
-* ``adapters.leanparse`` for every declaration, tagged or not, with its
+* ``adapters.leanbuild`` for every declaration, tagged or not, with its
   docstring, namespace, privacy and doc line;
 * ``adapters.itemtag`` and ``cflib.items`` for tag spans and the item grammar;
 * ``formal_companion_annotations.ids`` for statement-hash ids and signatures;
@@ -53,7 +53,7 @@ import re
 import unicodedata
 from pathlib import Path
 
-from adapters import itemtag, leanparse
+from adapters import itemtag, leanbuild, leanparse
 from adapters.api import from_config
 from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids
@@ -295,13 +295,17 @@ class DocstringTagsExport:
     def read_declarations(self) -> None:
         decls: list[leanparse.Decl] = []
         scanned: list[ids.AnonymousDecl] = []
+        build = self.adapter.lean_build(self.repo)
         for path in self.files:
             rel = str(path.relative_to(self.repo))
-            decls += list(leanparse.parse_file(path, rel=rel, decl_kinds=self.adapter.decl_kinds(),
-                                               max_body_lines=int(self.adapter.get("max_body_lines", 40))))
-            scanned += ids.scan_file(path.read_text(encoding="utf-8"), rel)
+            text = path.read_text(encoding="utf-8")
+            decls += list(leanbuild.parse_file(path, rel=rel, decl_kinds=self.adapter.decl_kinds(),
+                                               max_body_lines=int(self.adapter.get("max_body_lines", 40)),
+                                               build=build, text=text))
+            scanned += ids.scan_file(text, rel)
         self.decls = decls
         self.decl_by_loc = {(d.file, d.line): d for d in decls}
+        self.report.counts["lean_source"] = leanbuild.tally(build)
         assigned = ids.assign_ids(scanned)
         anon_at = {(a.file, a.line): (a, *assigned[a]) for a in scanned}
         anon_decls = [d for d in decls if d.anonymous]

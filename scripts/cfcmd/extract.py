@@ -329,6 +329,8 @@ def _counts(rows: list[dict], report: dict, key: str, repo: Path, adapter) -> di
                             for o in origins} or None
     if report.get(CROSS_CHECK_KEY):
         counts[CROSS_CHECK_KEY] = report[CROSS_CHECK_KEY]
+    if report.get("lean_source"):
+        counts["lean_source"] = report["lean_source"]
     for extra in ("ledger_sha", "ledger_sha_in_refinement", "ledger_stale",
                   "uncurated_items", "missing_snippet"):
         if report.get(extra) is not None:
