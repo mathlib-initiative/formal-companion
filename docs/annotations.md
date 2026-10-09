@@ -9,7 +9,7 @@ Schema and a language-neutral conformance suite. Every section number this
 repository cites is the specification's.
 
 The skill carries one release of the format's package under `vendor/` (its
-manifest names the tag; at present the release candidate `v1.0.0rc1`, whose
+manifest names the tag; at present the release candidate `v1.0.0rc2`, whose
 identifier is `formal-companion/annotations`, `schema_version` `1.0`) and
 imports it through `cflib.vendored`. The release candidate is not compatible
 with the withdrawn `v1.0.0`: the identifier, the id rules, the vocabulary and
