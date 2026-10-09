@@ -154,16 +154,18 @@ def _replace_files(directory: Path, files: dict[str, bytes], legacy: dict[str, s
                     refuse(relative, "not an annotation file")
                 if relative not in files:
                     stale.append(relative)
-    directory.mkdir(exist_ok=True)
-    for relative, raw in sorted(files.items()):
-        path = directory.joinpath(*PurePosixPath(relative).parts)
-        if not (path.is_file() and path.read_bytes() == raw):
-            overlay_sync.write_file(path, raw)
+    # Stale files go first: on a case-insensitive filesystem a stale
+    # `foo.json` and a new `Foo.json` are one directory entry.
     for relative in stale:
         path = directory.joinpath(*PurePosixPath(relative).parts)
         path.unlink()
         if path.parent != directory and not any(path.parent.iterdir()):
             path.parent.rmdir()
+    directory.mkdir(exist_ok=True)
+    for relative, raw in sorted(files.items()):
+        path = directory.joinpath(*PurePosixPath(relative).parts)
+        if not (path.is_file() and path.read_bytes() == raw):
+            overlay_sync.write_file(path, raw)
     return stale
 
 
@@ -233,6 +235,11 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
     found, problems = overlay_sync.annotation_files(companion)
     if problems:                                             # pragma: no cover - scanned above
         raise CfError(problems[0])
+    wanted = {f"{overlay_sync.ANNOTATIONS_DIRNAME}/{path}": raw for path, raw in files.items()}
+    if found != wanted:
+        wrong = sorted(path for path in found.keys() | wanted.keys() if found.get(path) != wanted.get(path))
+        raise CfError(f"{len(wrong)} annotation files on disk are not the ones the export wrote, "
+                      "so GENERATED.json was not updated", hint="; ".join(wrong[:5]))
     overlay_sync.record_annotations(companion, {
         "count": len(found),
         "directory": overlay_sync.ANNOTATIONS_DIRNAME,
