@@ -185,9 +185,10 @@ cf overlay check <companion>
   it. Files `export` wrote that changed since are refused, not recorded
   (named, when the last bundle holds the export); files nothing exported are
   recorded as they are.
-- `sync --check` is read-only; `check` adds the config, the scan, the inputs'
-  hashes and the overlay's rules (one PDF per `source_id`, pages within its
-  `physical_page_count`, targets `https:` or relative and inside the site).
+- `sync --check` is read-only and includes the scan; `check` adds the config,
+  the inputs' hashes and the overlay's rules (one PDF per `source_id`, pages
+  within its `physical_page_count`, targets `https:` or relative and inside
+  the site).
 
 ```json
 {
