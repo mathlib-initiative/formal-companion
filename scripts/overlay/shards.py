@@ -70,8 +70,8 @@ STATUS_OF_COVERAGE = {"partial_only": "partial"}
 #: A fragment percent-encoded as `encodeURIComponent` does, so the viewer uses it as it is.
 FRAGMENT_SAFE = "!'()*-._~"
 
-_CLUSTER_SECTION = re.compile(r"\bSection (\d+)\.(\d+)")
-_DOTTED = re.compile(r"(\d+)\.(\d+)")
+_CLUSTER_SECTION = re.compile(r"\bSection (\d+)\.(\d+)", re.ASCII)
+_DOTTED = re.compile(r"(\d+)\.(\d+)", re.ASCII)
 _HTTPS = re.compile(r"https://[^\s#\\]+\Z")
 _UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
 #: Device names Windows reserves whatever the extension (`nul.json` is `NUL`).
@@ -696,7 +696,7 @@ def file_bytes(conversion: Conversion) -> dict[str, bytes]:
 
 
 def scan_problems(files: dict[str, bytes]) -> list[str]:
-    """What the vendored ``literature_links`` scan says about these files, one line each."""
+    """What the vendored ``literature_links`` scan and the layout (:func:`walk`) say about these files, line by line."""
     with tempfile.TemporaryDirectory(prefix="cf-overlay-annotations-") as tmp:
         root = Path(tmp).resolve()
         for name, raw in files.items():
@@ -705,6 +705,7 @@ def scan_problems(files: dict[str, bytes]) -> list[str]:
             path.write_bytes(raw)
         found = discovery.collect([root])
         out = [f"{p.path.replace(str(root) + '/', '')}: {p.message} [{p.code}]" for p in found.problems]
+        out += [f"{relative}: not a path of the annotation layout" for relative in walk(root)[2]]
         leaves = sum(PurePosixPath(name).name != DEFAULTS for name in files)
         if not out and len(found.records) != leaves:
             out.append(f"the scan read {len(found.records)} annotations from {leaves} files")

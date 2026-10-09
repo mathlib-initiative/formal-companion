@@ -538,6 +538,16 @@ class TestExport(OverlayCase):
         self.assertIn("TrimBox", caught.exception.hint)
         self.assertEqual(self.annotation().read_bytes(), before)
 
+    def test_a_folder_the_layout_refuses_stops_the_export_before_it_writes(self):
+        self.ready()
+        before = self.annotation().read_bytes(), self.record()
+        with mock.patch.object(overlay_shards, "section_of", lambda item, clusters: "٣.٤"):
+            with self.assertRaises(CfError) as caught:
+                self.export(document(region_page=8))
+        self.assertIn("٣.٤: ", caught.exception.hint)
+        self.assertEqual((self.annotation().read_bytes(), self.record()), before)
+        self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
+
     def test_it_refuses_a_document_without_the_configured_source(self):
         self.assertEqual(self.init(), 0)
         with self.assertRaises(CfError) as caught:
