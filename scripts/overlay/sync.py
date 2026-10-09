@@ -654,7 +654,7 @@ def sync_problems(companion: str | Path) -> list[str]:
                    f"{len(found.files)} files, not the {block.get('count')} {GENERATED_NAME} records by "
                    f"manifest sha256")
     out += [f"{path}: not as `cf overlay export` writes it" for path, raw in found.files.items()
-            if _form(raw) not in (None, raw)]
+            if "export" in block and _form(raw) not in (None, raw)]
     bundle = overlay / BUNDLE_NAME
     recorded = (block.get("bundle") or {}).get("sha256") if isinstance(block.get("bundle"), dict) else None
     if not bundle.is_file():
