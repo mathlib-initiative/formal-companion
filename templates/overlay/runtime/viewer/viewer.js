@@ -201,6 +201,7 @@ export async function bootstrapViewer({
   generatedUrl = GENERATED_URL,
   pageUrl = globalThis.location?.href,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
+  windowRef = globalThis,
   storage = (() => {
     try {
       return globalThis.localStorage ?? null;
@@ -598,6 +599,11 @@ export async function bootstrapViewer({
     else if (event.key === "-") changeZoom(state.zoom - 10);
     else if (event.key.toLowerCase() === "r") rotate(90);
     else if (event.key === "Escape") selectRegion(null);
+  });
+  // An edited `#page=` in the address bar; the viewer's own replaceState fires no hashchange.
+  windowRef?.addEventListener?.("hashchange", () => {
+    const page = rememberedPage(null, { locationRef });
+    if (page && page !== state.currentPage) changePage(page);
   });
   return { state, ui };
 }
