@@ -14,7 +14,7 @@ It reports, one line per problem, and exits 1 when there is one:
 
 * every file `GENERATED.json` lists exists, is an ordinary file, and has the
   sha256 recorded for it, and `pdf-overlay/` holds nothing else but
-  `GENERATED.json` and the instance file `overlay.config.json`;
+  `GENERATED.json`, the bundle and the instance file `overlay.config.json`;
 * `GENERATED.json`'s `format` block names the Literature Links release whose
   package `cf overlay sync` shipped in `tools/literature_links/`;
 * `overlay.config.json` satisfies section 3 -- the same rules as the skill's
