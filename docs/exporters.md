@@ -47,7 +47,7 @@ The exporter reads, at the pinned commit,
 | `<data-dir>/geometry-batch-?.json` | one `location` per region (`PdfRegionSelector`, plus an RFC 8118 `highlight=` fallback), its visual sign-off as `signoff`; one `item` per geometry label (numbered through the item grammar, an unnumbered label a passage titled by the producer; the words after `Equation (n):` a `title` with `title_source: producer`); one `provenance` record per batch |
 | `<data-dir>/target-refinement.json` (schema version 2) | `key` and `attributed` `links`, merged per item; its *coverage entries* (an entry with a `coverage` class, no key ids, a `note`) as the item's `coverage` and `coverage_note`, their declarations as the links the class admits (below) |
 | `<ledger>` | `clusters` (source nodes), `memberships` (edges), `artifacts` (module docs, checks, figures), the declarations the nodes name, `companion.graph` |
-| `<data-dir>/declaration-snippets.json`, when it is there | `snippets` |
+| `<data-dir>/declaration-snippets.json` | `snippets` |
 | `<data-dir>/destinations.json` | `destinations` and `cluster.related_to` |
 | `<data-dir>/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
 | `<official-source>` | the PDF source's URLs, bytes and retrieval time |
@@ -69,24 +69,13 @@ climbs out with `..`, is refused.
 | `--ledger` | `source-formalization-ledger.json` | the source-formalization ledger, which is also `companion.graph.path` and every provenance input that pins it |
 | `--official-source` | `pdf-overlay/official-source.json` | the PDF's download record |
 
-`declaration-snippets.json` is the one input of the four under `--data-dir`
-that may be absent. When the data directory has none, every declaration's
-snippet is cut from the Lean at the pinned commit instead — the format's
-section 5.1 header cut, the same cut `docstring-tags` writes — and the report
-says so (`counts.snippets_source`, the `snippets.no_snippets_file` bucket). A
-declaration with no header to cut (a `structure`, `class` or `inductive`, a
-field, an unlocated example) then has no snippet.
-
 The PDF source is named through the registry by the sha256 the overlay
 records: id, title, edition and printed-page offset come from
 `registry/sources.yaml` (`--source-id`, `--source-title`, `--source-edition`
 and `--page-offset` supply them for an edition the registry does not know; the
 ledger's locator prose is cross-checked against the offset). `companion.name`
 and `companion.repo` come from the `origin` remote, or `--name` and
-`--repo-id`. A checkout that names no remote at all — a copy made by pushing
-into a bare tree — is named by its own directory under `local/`, counted in
-`companion.repo_from_checkout_directory`; one that has remotes none of which
-parses is still a refusal.
+`--repo-id`.
 
 The document validates canonically before the command returns. The report
 (`<out>` with `.export-report.json`, or `--report`) carries the counts, the
@@ -98,41 +87,6 @@ page 1 (section 5.2 of the format needs such a passage declared), a quad with
 fewer than four points, or an unnumbered label with no title. Any other input
 the exporter does not check for (a `KeyError`, `ValueError`, `IndexError` or a
 failed tool) ends the command with one error line, never a traceback.
-
-### The refinement table's two versions
-
-A version-1 target refinement says, per region, which declarations the item is
-attributed to and which of them state it (`key_formalization_ids`). Version 2
-adds **coverage entries**: a region the curation classified but could give no
-key declaration carries a `coverage` class, an empty `key_formalization_ids`,
-the declarations that class implies and usually the curator's `note`. Each
-class becomes links and an item `coverage` that satisfy invariant I5 — which
-refuses an `attributed` link on an item with no `key` link, so a keyless entry
-never writes one:
-
-| the table's class | links | item `coverage` |
-|---|---|---|
-| `partial_only` | its declarations as `support` links | `partial` |
-| `support_only` | `support` links, or `example` for an anonymous example | `support_only` |
-| `example_only` | `example` links | `example_only` |
-| `private_only` | `key` links to the private declarations | `formalized` |
-| `not_formalized` | none | `not_formalized` |
-
-The format's `coverage` enum (`formal_companion_annotations.vocab.ANNOTATION_COVERAGE`)
-is coarser than the curation's classes and has no `coverage_note`, so a class
-it cannot spell keeps the curation's own word in `x_coverage`
-(`item.x_coverage_class`) and the note rides along as `x_coverage_note`
-(`item.coverage_from_table`). Nothing the table said is dropped.
-
-Several regions of one item may disagree. The item takes the strongest class
-any of them names — formalized (a version-1 attribution entry) > `partial_only`
-> `private_only` > `support_only` > `example_only` > `not_formalized` — and the
-disagreement is a report bucket (`item.coverage_regions_disagree`), not a
-refusal. Two entries that reach the same declaration give one link, in the
-strongest role either asked for (`key` > `attributed` > `support` > `example` >
-`helper`). Version-1 tables are unchanged: with no coverage entry the links are
-the merged `formalization_ids` as before and the classes still come from the
-provenance note's prose.
 
 A geometry label's sub-part goes through the renderer both exporters share
 (`annotations.export.common.render_sub`, over the item grammar's groups):
@@ -263,14 +217,11 @@ reference companions, with the counts of the maintainer's reports (kept in
 | `source.path` | 1 | the ledger's workspace-relative PDF path |
 | `source.printed_page_offset_from_prose` | 1 | the offset is read from locator prose and the registry, not a companion field |
 
-Five lossy buckets and two counts appear only when their input does:
+Three lossy buckets and two counts appear only when their input does:
 `link.key_outside_formalization_ids` (a refinement key id its own entry's
 `formalization_ids` does not list; links follow `formalization_ids`),
 `link.pages_without_pdf` and `source.bytes_unpinned` (docstring-tags without
-a PDF, section 2), `snippets.no_snippets_file` (the data directory exports
-no snippets, so they are cut from the Lean),
-`companion.repo_from_checkout_directory` (the checkout names no remote), and
-the counts
+a PDF, section 2), and the counts
 `ledger_support_edges.same_link_from_another_node` (one support edge reached
 through two single-item nodes gives one link) and
 `ledger_support_edges.already_listed_by_refinement` (a support edge a
