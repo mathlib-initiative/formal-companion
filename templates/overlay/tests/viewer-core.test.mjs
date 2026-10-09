@@ -267,6 +267,21 @@ test("index: the regions on a page are in reading order, whatever order the file
                    "on one line, left before right: the region sits where its first record put it");
 });
 
+test("index: the cards of one role are in record id order, whatever order the files came in", () => {
+  const sections = makeSections(PDF_SHA256);
+  const theorem = sections[1].find((record) => record.extensions[NAMESPACE].role === "key");
+  const second = JSON.parse(JSON.stringify(theorem));
+  second.id = theorem.id.replace("volume_nonneg", "a_first");
+  second.target.pin.declaration = "Notes.Box.a_first";
+  sections[2].push(second);
+  const config = readConfig(makeConfig());
+  for (const files of [fileInputs(sections), fileInputs(sections).reverse()]) {
+    const keys = buildIndex(files, config, { pageOrigin: ORIGIN }).items.get("item:theorem-1.1").cards
+      .filter((card) => card.role === "key").map((card) => card.id);
+    assert.deepEqual(keys, [second.id, theorem.id]);
+  }
+});
+
 test("index: a record that cannot be placed is dropped with a warning, not guessed", () => {
   const sections = makeSections(PDF_SHA256);
   sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };

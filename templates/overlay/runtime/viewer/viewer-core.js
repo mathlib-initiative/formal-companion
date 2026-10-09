@@ -602,6 +602,7 @@ function card(record, ext, context) {
   };
 }
 
+/** By role, then by record id, so the order does not depend on the order the files came in. */
 function orderCards(cards) {
   return cards
     .map((entry, index) => ({ entry, index }))
@@ -609,7 +610,8 @@ function orderCards(cards) {
       const a = LINK_ROLES.indexOf(left.entry.role);
       const b = LINK_ROLES.indexOf(right.entry.role);
       const rank = (a < 0 ? LINK_ROLES.length : a) - (b < 0 ? LINK_ROLES.length : b);
-      return rank !== 0 ? rank : left.index - right.index;
+      const byId = left.entry.id < right.entry.id ? -1 : left.entry.id > right.entry.id ? 1 : 0;
+      return rank || byId || left.index - right.index;
     })
     .map(({ entry }) => entry);
 }
