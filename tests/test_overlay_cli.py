@@ -446,6 +446,38 @@ class TestExport(OverlayCase):
             overlay_sync.sync(self.companion)
         self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
 
+    def test_an_export_that_dies_writing_a_file_has_recorded_itself_so_sync_refuses_what_it_left(self):
+        self.assertEqual(self.init(), 0)
+        real = overlay_sync.write_file
+
+        def full(path, raw):
+            if self.annotations in path.parents:
+                raise OSError("no space left on device")
+            real(path, raw)
+
+        with mock.patch.object(overlay_sync, "write_file", full):
+            with self.assertRaises(OSError):
+                self.export()
+        block = self.record()["annotations"]
+        self.assertEqual((block["export"]["convention"], block["count"]), ("attribution-table", 1))
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
+
+    def test_an_export_that_dies_removing_a_file_has_recorded_itself_so_sync_refuses_what_it_left(self):
+        self.assertEqual(self.init(), 0)
+        stale = self.annotations / "9.9" / "old.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text(json.dumps(overlay_shards.convert(document()).records[0]), encoding="utf-8")
+        with mock.patch.object(Path, "unlink", side_effect=OSError("died")):
+            with self.assertRaises(OSError):
+                self.export()
+        self.assertIn("export", self.record()["annotations"])
+        self.assertTrue(stale.is_file())
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
+
     def test_it_refuses_anything_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         for extra in ("README.md", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/.hidden.json",
                       "1.2/_defaults.json"):
