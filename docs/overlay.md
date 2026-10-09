@@ -176,8 +176,9 @@ cf overlay check <companion>
   changed only in case survives a case-insensitive filesystem (and a
   `<section>.jsonl` shard of the earlier layout that a previous
   `GENERATED.json` lists, at its sha256); anything else there stops it before
-  it writes. Only when the files on disk are exactly the ones it wrote does it
-  record the export, the files' count and manifest sha256 in `GENERATED.json`.
+  it writes. It records the export, the files' count and manifest sha256 in
+  `GENERATED.json` before it removes or writes a file, so `sync` refuses what
+  an export that died left.
 - `sync` copies the runtime and `vendor/literature_links/` (as
   `tools/literature_links/`), removes what a previous record listed and the
   templates dropped, refuses unlisted files, writes the bundle and records
