@@ -1,18 +1,18 @@
 {
-  "commit": "245814086a67f6a2e409af090bc4634b012d3681",
+  "commit": "62e8031763af3bb865e631ef00e34e257ca59458",
   "files": {
-    "__init__.py": "335b640e0ce5673803880d715eac8c40bf9a4c8af47996ff045f2daa81656997",
+    "__init__.py": "8d7113b50093d9b0eb762f55ca0f9ca3bc51d59adf27144be0b215425ea02125",
     "__main__.py": "db7d403ada610c95c852768cc2e4c00ad083ea587bbfe9400013986458d15cc6",
-    "ids.py": "300d526e0692bbb425a96dac065818e4e37eb902fa12310beb9bf161cd9c44aa",
+    "ids.py": "b649a3f2134bf9c33328854628cfd654969b6d94b5900ca752f7b27f43c48a81",
     "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "schema/annotations-v1.schema.json": "230e57b9dbfa91712685b643f854fb8a183ecdc5db6aa291a0242551d5c8dca1",
-    "schemacheck.py": "812de8e337e986932e094a124c76d56a63476a7e31d52f123b5451149392a304",
-    "validate.py": "204c85c9e56b0af7e0fb95ebd73eeaa7fd5514cc7e605b6d586bc857b84b1308",
-    "vocab.py": "51f88cce9cde8b9b36f7cc8a33452b25ad2bdcf73b03408c976f5f578601ee93"
+    "schema/annotations-v1.0.schema.json": "102c609948d4d48675b7f9c46bff630ade0af8606f5a2c618e3096e7e9eecd81",
+    "schemacheck.py": "3e1d68b2230bc6c13509ac3dce57a61207556671024e8e7d192b794a507c0981",
+    "validate.py": "78673e6d3409914934f5d4ae7ca42d560bc3f99b254a48bd8dba66a60dec99be",
+    "vocab.py": "3ced04cd1d749b23ea70e79096c21cf98a15510ba3f55d6b286afb3e859a3f00"
   },
   "license": "Apache-2.0",
   "source": "src/formal_companion_annotations",
-  "tag": "v1.0.0",
+  "tag": "v1.0.0rc2",
   "upstream": "https://github.com/mathlib-initiative/formal-companion-annotations",
-  "version": "1.0.0"
+  "version": "1.0.0rc2"
 }

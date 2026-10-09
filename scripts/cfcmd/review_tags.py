@@ -49,7 +49,7 @@ def load_document(path: Path) -> dict:
     except (OSError, UnicodeDecodeError, V.LoadError) as exc:
         raise CfError(f"{path}: cannot read: {exc}") from exc
     if not isinstance(doc, dict) or doc.get("schema") != vocab.ANNOTATION_SCHEMA:
-        raise CfError(f"{path} is not an annotation document",
+        raise CfError(f"{path} is not a formal-companion annotation document",
                       hint=f"the root carries schema: {vocab.ANNOTATION_SCHEMA}")
     return doc
 

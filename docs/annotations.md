@@ -1,19 +1,17 @@
-# Annotation documents: the vendored format
+# Annotation documents: `formal-companion/annotations`
 
-The annotation format's specification moved to its own repository,
+The annotation format's specification lives in its own repository,
 formal-companion-annotations
-(`github.com/mathlib-initiative/formal-companion-annotations`), as
-`docs/annotations.md` there. Every section number this repository cites is
-that document's; the numbers are unchanged.
+(`github.com/mathlib-initiative/formal-companion-annotations`): the
+specification itself, the id rules as an algorithm and every enum value,
+each a document under that repository's `docs` directory, plus its JSON
+Schema and a language-neutral conformance suite. Every section number this
+repository cites is the specification's.
 
-The skill carries one tagged release of the format's package under `vendor/`
-and imports it through `cflib.vendored`.
-`vendor/formal_companion_annotations.manifest.json` names that release — its
-upstream, tag, commit, version and the sha256 of every file — and
-`scripts/annotations/sync_format.py` is what replaces it. That manifest is the
-only place the release is named, and the package's own
-`formal_companion_annotations.vocab` is the only place its `schema` value and
-major version are written down: the format repository may move ahead of this
-one, including by renaming the schema identity, so nothing here states the
-identity itself. `docs/overlay.md`, "Upgrading the format", is how a bump
-reaches a generated overlay.
+The skill carries one release of the format's package under `vendor/` (its
+manifest names the tag; at present the release candidate `v1.0.0rc2`, whose
+identifier is `formal-companion/annotations`, `schema_version` `1.0`) and
+imports it through `cflib.vendored`. The release candidate is not compatible
+with the withdrawn `v1.0.0`: the identifier, the id rules, the vocabulary and
+several fields changed (the format's changelog lists them), and documents
+written against that tag must be regenerated.

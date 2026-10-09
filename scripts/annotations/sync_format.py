@@ -14,6 +14,10 @@ repository that has the tag::
 
     python3 scripts/annotations/sync_format.py <formal-companion-annotations checkout> v1.0.0
 
+A release candidate is tagged ``vMAJOR.MINOR.PATCHrcN`` (``v1.0.0rc1``) and is
+vendored the same way; the manifest then names that tag and the package's
+``__version__`` must be ``1.0.0rc1``.
+
 It copies the package as the tag has it (``git ls-tree`` and ``git cat-file``
 through :mod:`cflib.gitsafe`, never the checkout's working tree), checks each
 file against the tag's blob id, checks that the package's ``__version__`` is
@@ -46,7 +50,9 @@ MANIFEST = VENDOR / f"{PACKAGE}.manifest.json"
 UPSTREAM = "https://github.com/mathlib-initiative/formal-companion-annotations"
 #: Where the package sits in the upstream tree.
 SOURCE = f"src/{PACKAGE}"
-_TAG = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+)")
+#: A release tag: ``vMAJOR.MINOR.PATCH``, or a release candidate ``vMAJOR.MINOR.PATCHrcN``
+#: (PEP 440 spelling, as the package's ``__version__`` writes it).
+_TAG = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:rc[1-9][0-9]*)?)")
 _VERSION = re.compile(r'^__version__ = "([^"]+)"$', re.M)
 
 
@@ -79,7 +85,7 @@ def git(checkout: Path, *args: str) -> str:
 def release(checkout: Path, tag: str) -> tuple[str, dict[str, bytes]]:
     """The commit ``tag`` names and the package's files at it, each checked against its blob id."""
     if _TAG.fullmatch(tag) is None:
-        raise SystemExit(f"{tag}: not a release tag (vMAJOR.MINOR.PATCH)")
+        raise SystemExit(f"{tag}: not a release tag (vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCHrcN)")
     if git(checkout, "cat-file", "-t", f"refs/tags/{tag}").strip() != "tag":
         raise SystemExit(f"{tag}: not an annotated tag in {checkout}")
     commit = git(checkout, "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}").strip()
@@ -132,7 +138,8 @@ def write(manifest: dict, files: dict[str, bytes]) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Vendor a formal-companion-annotations release.")
     parser.add_argument("checkout", type=Path, help="a local checkout of formal-companion-annotations")
-    parser.add_argument("tag", help="the release tag, vMAJOR.MINOR.PATCH")
+    parser.add_argument("tag", help="the release tag, vMAJOR.MINOR.PATCH (or vMAJOR.MINOR.PATCHrcN for a "
+                                    "release candidate)")
     parser.add_argument("--check", action="store_true",
                         help="change nothing; exit 1 unless vendor/ is exactly this release")
     args = parser.parse_args(argv)

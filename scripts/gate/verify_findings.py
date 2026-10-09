@@ -1504,8 +1504,8 @@ def _git(args: list[str], cwd: pathlib.Path) -> tuple[int, str]:
 def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list[str]]:
     """``{path: status}`` for this contribution since it branched from ``base``, plus untracked work.
 
-    The statuses are git's own: ``A`` added, ``M`` modified, ``D`` deleted, ``R``
-    renamed (recorded against the old path, with the new one as an addition).
+    The statuses are git's own: ``A`` added, ``M`` modified, ``D`` deleted (a
+    rename is a ``D`` of the old path and an ``A`` of the new one).
     ``git diff --name-only`` erased them, so the check could not tell a
     contribution that added its own pair from one that also deleted another
     worker's landed findings -- which is the failure ``harvest.py`` exists
@@ -1522,6 +1522,15 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
         code, _ = _git(["rev-parse", "--verify", "--quiet", base], root)
         if code != 0:
             return {}, [f"base ref {base!r} does not exist in {root} (the check fails closed)"]
+        # Replace refs, grafts and a shallow file move the merge base.  Refused, not
+        # ignored: the merge follows them, so a gate that ignored `git replace
+        # --graft HEAD main` passed a branch whose merge dropped later findings.
+        rcode, replaced = _git(["for-each-ref", "--format=%(refname)", "refs/replace/"], root)
+        code, out = _git(["rev-parse", "--is-shallow-repository", "--git-path", "info/grafts"], root)
+        shallow, _, grafts = out.strip().partition("\n")
+        if rcode or code or replaced.strip() or shallow != "false" or (root / grafts).exists():
+            return {}, [f"{root} has replace refs, grafts or a shallow history, which rewrite "
+                        "what this contribution branched from (the check fails closed)"]
         # Diff from the point this contribution BRANCHED, not from the base's tip.
         # Against the tip, every finding that landed on the merge target after the
         # worktree was cut read as this worker's deletion ("D"), so the check
@@ -1541,18 +1550,19 @@ def changed_entries(root: pathlib.Path, base: str) -> tuple[dict[str, str], list
             return {}, [f"{len(bases)} merge bases between {base!r} and HEAD in {root}: a "
                         "criss-cross history hides what this contribution changed "
                         "(the check fails closed)"]
-        code, out = _git(["diff", "--name-status", bases[0]], root)
+        # diff.renames and diff.ignoreSubmodules are the worktree's to set: with
+        # "copies" a new path arrived only as the third field of a C line, and with
+        # "all" a committed gitlink did not arrive at all.
+        code, out = _git(["diff", "--no-renames", "--ignore-submodules=none",
+                          "--name-status", bases[0]], root)
         if code != 0:
             errs.append(f"git diff against the merge base of {base} failed")
         for line in out.splitlines():
             if not line.strip():
                 continue
             parts = line.split("\t")
-            status = parts[0].strip()[:1]
-            if status == "R" and len(parts) >= 3:
-                entries[parts[1]] = "R"
-                entries[parts[2]] = "A"
-            elif status and len(parts) >= 2 and parts[1].strip():
+            status = parts[0].strip()
+            if status in ("A", "D", "M", "T", "U") and len(parts) == 2 and parts[1].strip():
                 entries[parts[1]] = status
             else:
                 errs.append(f"could not parse `git diff --name-status` line {line!r} "

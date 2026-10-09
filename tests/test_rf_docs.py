@@ -363,6 +363,23 @@ class TestNoCodeLiteralNamesACommandThatIsGone(unittest.TestCase):
                                         f"{path.relative_to(SKILL)}: `cf {cmd}` has "
                                         f"no {flag}, and nothing beside it says so")
 
+    def test_a_workflows_transcribe_command_reads_the_schema_it_returns(self):
+        """challenge.workflow.js said `--transcribe <file> --source challenge`.
+
+        `--source` is a real flag of `adjudicate` (a source_id), so the check
+        above passed it; parsed, it left `--from` at its `adjudicate` default.
+        """
+        parser = argparse.ArgumentParser(prog="cf")
+        cf_main.discover_commands(parser.add_subparsers(dest="command"))
+        for path in sorted(SKILL.glob("workflows/*.workflow.js")):
+            text = path.read_text(encoding="utf-8")
+            schema = re.search(r"schema: 'cf-([a-z-]+)-v\d+'", text)
+            for tail in re.findall(r"adjudicate (--transcribe[^`'\"\n]*)", text):
+                with self.subTest(file=path.name, command=tail):
+                    argv = re.sub(r"<[^>]+>", "result.json", tail).split()
+                    args = parser.parse_args(["adjudicate", *argv])
+                    self.assertEqual(args.kind, schema.group(1) if schema else None)
+
 
 class TestTheCommandIndexIsComplete(unittest.TestCase):
     """A command absent from the index is a command a fresh session never runs."""

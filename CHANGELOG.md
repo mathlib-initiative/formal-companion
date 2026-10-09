@@ -34,6 +34,51 @@ Nothing is released yet: there is no tag, and the version has been `0.2.0`
 since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
+### Changed
+- The vendored annotation format is the release candidate
+  `formal-companion-annotations v1.0.0rc2` (identifier
+  `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).
+  `scripts/annotations/sync_format.py` accepts `vX.Y.ZrcN` tags. The
+  producers write the rc: root `profiles` declared for exactly the profile
+  keys a document uses (`annotations.export.common.declare_profiles`), no
+  `cluster_fallback` (a reader derives it: `clusters` and no links),
+  `coverage` classes `partial_only` and `private_only` with `coverage_note`,
+  the `part` relation, site sources whose `sha256` is the digest of the pages
+  `page_hashes` pins (generated fragments may be left out), the ledger's own
+  verdict class under `x_ledger_verdict`, named declarations cut with
+  `ids.signature_at`, and the checker's `Problem` records (`path: message
+  [code]`) in every message. The `external-urls` lint, formerly invariant
+  I10, is run by the exporters' self-check and the pipeline's checkpoint
+  writer, so the documents stay as the viewer's deployment needs them.
+- `cf export attribution-table` reads the refinement table's version 2
+  *coverage entries* (`coverage`, the declarations the class admits, `note`)
+  and refuses a version 1 table; the prose-note classifier is gone. At
+  measure_theory `2cd263a` the export succeeds again (it failed on an
+  `attributed`-only item) and the document validates without a warning.
+- `cf export docstring-tags` runs without a PDF (a `pdf` source pinned by
+  its identifiers from `--source-doi` and `--source-isbn`, or an `other`
+  source by `--source-media-type` and `--source-revision`, named by
+  `--source-id`, `--source-title` and `--source-revision`; numbered items
+  located by their numbers alone, bare tags' parentheticals as producer
+  titles) and without a site (`--xref` and `--site-pages` optional,
+  together); with `--site`, pages on disk the manifest leaves out are
+  counted, not refused.
+- Both exporters write what the release candidate's last changes admit: a
+  primed sub-part keeps its prime (`(b')` is `sub: b'`, item id
+  `proposition-6.2.5-b'`; `cflib.items` accepts the prime as a sub-part
+  group), a declaration tagged with two numbered items gets two `key` links
+  and the items `relations.same_as`, an item keyed to an anonymous `example`
+  carries `coverage: formalized`, and `profiles` no longer names `audit` for
+  a source's `role` (core now): a docstring-tags document with no verdict
+  declares `site` alone, or nothing.
+- `cf review-tags` derives the cluster fallback, treats `partial_only` with
+  attributed links as the curation's answer, and reads `x_ledger_verdict`.
+- `tests/test_vendored_format.py` checks that every value the skill writes
+  into a document is in the format's set, instead of equality of nine sets
+  the format no longer exports. The reference pins move to measure_theory
+  `2cd263a` and tao-measure-lean `677ada1`; references written against
+  `v1.0.0` must be regenerated.
+
 ### Added
 - `cf overlay init|sync|check|export|geometry|destinations`: a companion's
   `pdf-overlay/` directory is now generated from `templates/overlay/runtime/`
@@ -50,8 +95,11 @@ release has something to say.
   `init`, `sync` and `export` write under `<companion>/pdf-overlay/` and
   nowhere else, refuse a symlinked or escaping `pdf-overlay`, and run no git
   in the companion.
+- `adapters.leanbuild`: declarations come from the companion's Lake build where it
+  verifies, else from the text; `lean_source` counts which; `CF_LEAN_SOURCE=text` forces text.
 - `cf export site-pages <site> --out <pages.json>`: writes the page manifest
-  that `cf export docstring-tags --site-pages` reads.
+  that `cf export docstring-tags --site-pages` reads; `--exclude GLOB` leaves
+  out generated pages (`'*/_lazy/*'`), which `--site` then counts.
 - `cf ingest` and `cf inventory`, stages S0 and S1 of the PDF-to-companion
   pipeline (milestone M1, `docs/pipeline.md`). S0 pins one PDF (sha256, pages,
   page sizes, `pdftotext` version), prepares it with the onboarding code,
@@ -190,8 +238,9 @@ release has something to say.
   checks the schema, selected by major version through an in-repo evaluator
   because the skill is stdlib only, plus the invariants a schema cannot state,
   and `--print-canonical` writes the canonical form. The adapters, the viewer
-  and WikiLean do not read or write the format yet. The ids use the planned
-  name lean-companion; the rename is pending.
+  and WikiLean do not read or write the format yet. The ids used the planned
+  name lean-companion; the release candidate renamed the format to
+  `formal-companion/annotations` (see Changed above).
 - `docs/proposals/pdf-to-companion.md`: a design proposal, not built, for a
   pipeline that turns one PDF into a Lean companion through ten gated stages,
   with the annotation document as its spine and a v1.1 proposal of three
@@ -246,32 +295,6 @@ release has something to say.
   cross-check needed it and must not have had a second item regex of its own.
 
 ### Changed
-- The annotation format is now pinned in **one** place, the vendored release,
-  and a generated overlay reads its format from the schema it ships. Four
-  runtime files used to carry the format's `schema` value or its major as a
-  constant, and `templates/overlay/runtime/schema/` held a fifth copy, the
-  vendored schema duplicated by hand; a format upgrade would
-  have left all five saying the old thing while the checker said the new one,
-  and the format repository's next major renames the identity. The template
-  copy is deleted. `cf overlay sync` now copies the vendored package's own
-  schema file (`formal_companion_annotations.validate.SCHEMA_PATH`) to
-  `pdf-overlay/schema/annotations.schema.json`, lists it in `GENERATED.json`
-  `files` with its sha256, and records the release in a new `GENERATED.json`
-  `format` block (`package`, `version`, `tag`, `commit` from the manifest;
-  `schema`, `schema_version` from the vendored `vocab`), which
-  `cf overlay sync --check`, `cf overlay check` and
-  `pdf-overlay/tools/check_generated.py` all verify. `viewer-core.js` (a new
-  pure `documentFormat`), `viewer.js`, `serve.py`, `build_site.py` and
-  `check_generated.py` take the accepted `schema` from that schema's
-  `properties.schema.const` and the accepted `schema_version` from a full
-  match of its `properties.schema_version.pattern`; the viewer fetches it
-  before the document and refuses to start without it, and `build_site.py`
-  publishes `schema/` into the site mount so it can. `cf review-tags` uses
-  `vocab.ANNOTATION_SCHEMA` instead of the literal. A format upgrade is now
-  `scripts/annotations/sync_format.py`, the suite, then `cf overlay export` +
-  `cf overlay sync` per companion, and nothing else: `docs/overlay.md`,
-  "Upgrading the format", and `tests/test_format_pin.py`, which fails on any
-  copy of the identity under `templates/overlay/runtime/` or `scripts/`.
 - The annotation format moved to its own repository,
   formal-companion-annotations, released as 1.0.0 (tag `v1.0.0`, commit
   `2458140`): the schema, the specification, the checker, the id rules, the
@@ -310,13 +333,7 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
-- The overlay runtime tools `serve.py` and `build_site.py` accepted only
-  `formal-companion/annotations` as the document's `schema`. The vendored
-  format's own value is `lean-companion/annotations`
-  (`formal_companion_annotations.vocab.ANNOTATION_SCHEMA`), which is what
-  every `cf export` convention writes and what the viewer accepts, so both
-  tools refused every real document. They now use the format's value, and the
-  contract (`docs/overlay.md`) states which sections of the format it cites.
+- `cf run --include-sources` re-transfers a companion with `--delete`, making the earlier read-only copy writable first, so the files a later commit deleted no longer stay on the host and fail the tree digest; a refused digest now names the extra, missing and changed paths (#6).
 - `cf export attribution-table` marks an equation's title as the producer's
   (`title_source: producer`); in measure_theory `equation-1.2` and
   `equation-1.3` change, so the measure_theory reference must be regenerated.
@@ -377,6 +394,7 @@ release has something to say.
 - two line-range citations into files this repo rewrites (`references/traps.md`
   G5 into `CLAUDE.md`, `references/vocabulary.md` §2.2 into the gate script);
   both now cite a section, and a test refuses a new one.
+- The changed-files check lost a new file when the worktree set `diff.renames=copies` (a copy line's destination was dropped) or a gitlink under `diff.ignoreSubmodules=all`, and replace refs, grafts or a shallow file could move its merge base past a landed finding; it now diffs with `--no-renames --ignore-submodules=none`, fails closed on a repository with any of those three, and on any status line it does not parse (#9).
 - the findings gate ran `git` inside a worktree a worker can configure, so a
   content filter driver named from that worktree's `.git/info/attributes` made
   the gate run the worker's own program — and the gate still reported the
@@ -387,6 +405,7 @@ release has something to say.
   Book text used to survive in `summary`, `recovery_argument`, a dissent's
   argument and the witness — that is, in a bundle handed to somebody else and
   in the issue body drafted for a public tracker.
+- leanparse did not see a `mutual` block, a `public`/`meta`/`@[expose]` section header or a block line with a trailing `--` comment, so the `end` closing it closed the enclosing namespace or section and later declarations got the wrong `full_name` or `sections`; each `end` now closes its own block (#24).
 - a manuscript companion (`blueprint_tex`) has no item table by design, so the
   handoff gave it a coverage denominator of zero and a `TODO(coverage)` naming
   commands that could not fill it, while the same file said the run had
@@ -424,6 +443,7 @@ release has something to say.
   `workspace.yaml` entry — the state a half-finished onboard or a copied
   directory leaves — one line after printing it as `not onboarded`. It prints it
   and exits 0.
+- `cf adjudicate --transcribe` rewrote the ledger from one result, so a second pass wiped the first; it now merges by `finding_id`, a new verdict replacing the old row in either file.
 - the printed `cf adjudicate` and `cd` next steps interpolated the workspace
   path unquoted, so in a workspace whose directory name contains a space they
   could not be pasted. `cf route` writes one of them into the routed ledger and
@@ -448,6 +468,7 @@ release has something to say.
   folio-only page at the seam was enough to reach it.
 - a quote whose edge carries a sign written apart from its operand (`- 1 ≤ …`
   where the source has `1 ≤ …`) was certified verbatim.
+- `cf cost` and `cf harvest --transcripts` filed Claude Code's own API-error lines (model `<synthetic>`, zero usage) as an unpriced model, so an exact cost read as a lower bound; they are skipped now.
 - `cf report` dropped a corpus document `cf tally` refuses to read, publishing
   coverage figures that were a lower bound with nothing in the report saying so;
   it also dropped every examined item outside the audited chapters from those
@@ -508,6 +529,7 @@ release has something to say.
   performs: every free-text field of a row at any depth, and a record of (page,
   normalised length, sha256, and at most a quarter of the quote's words from each
   end, none at all below fourteen words).
+- `cf run --stage raise` re-sent `tasks/` over merged work and restarted tend; it now only raises, and a re-send onto a moved `main` needs `--force` (#7).
 
 ## 0.2.0 — the multi-source model
 

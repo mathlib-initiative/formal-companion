@@ -35,6 +35,7 @@ if str(SCRIPTS) not in sys.path:
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from formal_companion_annotations import validate as V              # noqa: E402
 from formal_companion_annotations import vocab                      # noqa: E402
+from formal_companion_annotations import vocab                      # noqa: E402
 from cflib.errors import CfError                                    # noqa: E402
 from overlay import destinations as D                               # noqa: E402
 
@@ -227,7 +228,9 @@ class TestTheDestinations(unittest.TestCase):
     def test_the_fragment_validates_inside_a_document_of_those_declarations(self):
         with tempfile.TemporaryDirectory() as tmp:
             fragment = D.build_destinations(write_site(Path(tmp)), document())
-        doc = V.canonicalize(dict(document(), destinations=fragment["destinations"]))
+        doc = dict(document(), destinations=fragment["destinations"])
+        doc["profiles"] = {"site": vocab.ANNOTATION_PROFILE_VERSIONS["site"]}
+        doc = V.canonicalize(doc)
         text = V.canonical_dumps(doc)
         report = V.check(doc, text=text, canonical=True)
         self.assertEqual(report.problems, [])
