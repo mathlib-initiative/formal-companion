@@ -685,6 +685,18 @@ class TestSync(OverlayCase):
             overlay_sync.sync(self.companion)
         self.assertIn(FILE, caught.exception.message)
 
+    def test_it_refuses_a_file_that_does_not_hold_exactly_one_annotation(self):
+        self.assertEqual(self.init(), 0)
+        record = overlay_shards.convert(document()).records[0]
+        self.annotation().parent.mkdir(parents=True)
+        self.annotation().with_name("one.json").write_text(json.dumps(record), encoding="utf-8")
+        for held in ([record, dict(record, id="second")], []):
+            with self.subTest(held=len(held)):
+                self.annotation().write_text(json.dumps(held), encoding="utf-8")
+                with self.assertRaises(CfError) as caught:
+                    overlay_sync.sync(self.companion)
+                self.assertIn(f"{FILE}: {len(held)} annotations", caught.exception.message)
+
     def test_it_refuses_a_file_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         self.ready()
         (self.annotations / "notes.txt").write_text("mine\n", encoding="utf-8")

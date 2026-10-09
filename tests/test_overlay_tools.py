@@ -785,6 +785,14 @@ class TestBuildSite(OverlayToolsTestCase):
         with self.assertRaisesRegex(BUILD.BuildError, "annotations/1.1/notes.txt: not an annotation file"):
             BUILD.build_site(self.companion.overlay)
 
+    def test_a_file_that_does_not_hold_exactly_one_annotation_is_not_published(self):
+        self.companion.write_site()
+        record = self.companion.record_value()
+        (self.companion.root / FILE).write_text(json.dumps([record, record]), encoding="utf-8")
+        with self.assertRaisesRegex(BUILD.BuildError, f"{FILE}: 2 annotations"):
+            BUILD.build_site(self.companion.overlay)
+        self.assertFalse((self.companion.site / "pdf-overlay").exists())
+
     def test_a_site_directory_that_is_not_an_annotation_directory_is_not_replaced(self):
         for extra in ("page.html", "1.1/page.html"):
             with self.subTest(extra=extra):
