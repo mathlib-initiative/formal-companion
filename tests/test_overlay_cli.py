@@ -39,6 +39,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -379,6 +380,30 @@ class TestExport(OverlayCase):
         self.assertEqual(result.deleted, ["1.2/stale.json", "9.9/old.json"])
         self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
         self.assertFalse((self.annotations / "9.9").exists(), "an emptied section folder goes too")
+
+    def test_a_second_export_keeps_a_file_renamed_only_in_case(self):
+        """On APFS or NTFS the stale and the new name are one entry: removing the stale one must not lose it."""
+        self.ready()
+        renamed = DECL.replace("volume", "Volume")
+        result = self.export(json.loads(json.dumps(document()).replace(DECL, renamed)))
+        self.assertEqual(result.deleted, [FILE.removeprefix("annotations/")])
+        self.assertEqual({entry.name for entry in os.scandir(self.annotations / "1.2")},
+                         {f"lemma-1.2.3__key__{renamed}.json"})
+        files, _ = overlay_sync.annotation_files(self.companion)
+        self.assertEqual(len(files), 1)
+        block = self.record()["annotations"]
+        self.assertEqual((block["count"], block["manifest_sha256"]), (1, overlay_sync.manifest_sha256(files)))
+        self.assertIn(renamed, next(iter(files.values())).decode("utf-8"))
+
+    def test_it_records_nothing_when_the_files_on_disk_are_not_the_ones_it_wrote(self):
+        self.ready()
+        before = self.record()
+        with mock.patch.object(overlay_sync, "write_file", lambda path, raw: None):
+            with self.assertRaises(CfError) as caught:
+                self.export(document(region_page=8))
+        self.assertIn("not the ones the export wrote", caught.exception.message)
+        self.assertIn(FILE, caught.exception.hint)
+        self.assertEqual(self.record(), before)
 
     def test_it_refuses_anything_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         for extra in ("README.md", "1.2/notes.txt", "1.2/sub/x.json", "1.2.jsonl", "1.2/.hidden.json"):

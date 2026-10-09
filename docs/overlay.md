@@ -171,10 +171,12 @@ cf overlay check <companion>
 - `export` runs `cf export` into a temporary file, validates the document,
   converts it (section 7), scans every file with the vendored
   `literature_links`, and only then replaces the contents of `annotations/`
-  exactly: files it no longer writes are removed (and a `<section>.jsonl`
-  shard of the earlier layout that a previous `GENERATED.json` lists, at its
-  sha256); anything else there stops it before it writes. It records the
-  export, the files' count and manifest sha256 in `GENERATED.json`.
+  exactly: files it no longer writes are removed first, so a name that
+  changed only in case survives a case-insensitive filesystem (and a
+  `<section>.jsonl` shard of the earlier layout that a previous
+  `GENERATED.json` lists, at its sha256); anything else there stops it before
+  it writes. Only when the files on disk are exactly the ones it wrote does it
+  record the export, the files' count and manifest sha256 in `GENERATED.json`.
 - `sync` copies the runtime and `vendor/literature_links/` (as
   `tools/literature_links/`), removes what a previous record listed and the
   templates dropped, refuses unlisted files, writes the bundle and records
