@@ -1,7 +1,8 @@
 # Third-party code in `pdf-overlay/`
 
-One third-party component is vendored here. Everything else under this
-directory was written for the formal-companion overlay.
+Two third-party components are vendored here: PDF.js and Literature Links.
+Everything else under this directory was written for the formal-companion
+overlay.
 
 ## PDF.js
 
@@ -29,3 +30,12 @@ allows no other origin. PDF.js is started with `isEvalSupported: false`.
 Nothing here is modified, so the Apache 2.0 notice requirement is met by
 shipping `vendor/pdfjs/LICENSE` beside the files it covers; this file is the
 notice that says which files it covers and where they came from.
+
+## Literature Links
+
+- Project: Literature Links, <https://github.com/mathlib-initiative/literature-links>
+  at commit `6d41ac6974346c95e02f06f0d894b1770e1d9b39`
+- Version: **1.0.0**
+- Licence: **Apache License 2.0**; Copyright 2026 the Literature Links contributors
+- Files: `tools/literature_links/`, copied without modification and pinned by
+  sha256 in `GENERATED.json`
