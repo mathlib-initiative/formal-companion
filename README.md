@@ -39,9 +39,9 @@ docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inve
 docs/overlay.md   the contract for the generated companion PDF overlay (`cf overlay`)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
-vendor/           formal_companion_annotations/: one release of the annotation format
-                  (formal-companion-annotations), byte for byte, sealed by its
-                  manifest; never edited here
+vendor/           formal_companion_annotations/ (the annotation format) and
+                  literature_links/ (Literature Links, which the overlay reads),
+                  byte for byte, each sealed by its manifest; never edited here
 evals/            trigger evals: prompts as data, run by hand against the skill
 bin/cf            the PATH shim; it resolves back to this checkout
 scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/

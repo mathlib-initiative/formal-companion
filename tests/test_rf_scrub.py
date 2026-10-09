@@ -277,6 +277,9 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "a step of that render recipe"),
     ("scripts/check_lazy_pages.py",
      "the same companion's check that the _lazy/ rewrite lost no text, the last step of that render recipe"),
+    ("schema/companion.schema.json",
+     "the Literature Links repository's schema, which sync_format.py vendors as "
+     "vendor/literature_links/schema/companion.schema.json"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:
