@@ -56,8 +56,8 @@ __all__ = [
     "ANNOTATIONS_DIRNAME", "BUNDLE_NAME", "BUNDLE_SCHEMA", "FORMAT_PACKAGE", "GENERATED_NAME",
     "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES",
     "LINKS_RELATIVE", "OVERLAY_DIRNAME", "Annotations", "SyncResult", "annotation_count", "annotation_files",
-    "annotations_dir", "bundle_bytes", "bundle_differences", "bundle_records", "check", "digest", "format_pin",
-    "generated_document", "generated_files", "generator_commit", "init", "manifest_sha256", "overlay_dir",
+    "annotations_dir", "bundle_bytes", "bundle_differences", "bundle_records", "check", "defaults_above", "digest",
+    "format_pin", "generated_document", "generated_files", "generator_commit", "init", "manifest_sha256", "overlay_dir",
     "overlay_problems", "read_annotations", "record_annotations", "runtime_root", "sync", "sync_problems",
     "template_files",
 ]
@@ -357,6 +357,15 @@ class Annotations:
     problems: list[str]
 
 
+def defaults_above(directory: Path) -> list[str]:
+    """One problem per `_defaults.json` above the annotation directory: the reader applies them to its records."""
+    root = str(directory.parent) + os.sep
+    _merged, applied, unusable = discovery.inherit({}, directory)
+    return [f"{p.path.replace(root, '')}: {p.message} [{p.code}]" for p in unusable] + [
+        f"{str(path).replace(root, '')}: folder defaults outside {ANNOTATIONS_DIRNAME}/ apply to its annotations; "
+        "remove it" for path in applied]
+
+
 def read_annotations(companion: str | Path) -> Annotations:
     """Every file of the annotation directory, every record the reader reads from it, and the problems.
 
@@ -368,12 +377,14 @@ def read_annotations(companion: str | Path) -> Annotations:
     found, _folders, odd = overlay_shards.walk(directory)
     problems = [f"{ANNOTATIONS_DIRNAME}/{relative}: not an annotation file; {ANNOTATIONS_DIRNAME}/ holds only "
                 f"<section>/[<item>/]<name>.json files and their {overlay_shards.DEFAULTS}" for relative in odd]
+    problems += defaults_above(directory)
     files = {f"{ANNOTATIONS_DIRNAME}/{relative}": path.read_bytes() for relative, path in found.items()}
     records: dict[str, dict] = {}
     if files:
         collection = discovery.collect([directory])
         root = str(directory.parent) + os.sep
-        problems += [f"{p.path.replace(root, '')}: {p.message} [{p.code}]" for p in collection.problems]
+        problems += [line for p in collection.problems
+                     if (line := f"{p.path.replace(root, '')}: {p.message} [{p.code}]") not in problems]
         records = {f"{ANNOTATIONS_DIRNAME}/{r.path.relative_to(directory).as_posix()}": r.annotation
                    for r in collection.records}
     return Annotations(files, dict(sorted(records.items())), problems)

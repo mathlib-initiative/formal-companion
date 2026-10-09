@@ -227,6 +227,9 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
     if not inputs:
         raise CfError("the export names no curation file it read, so nothing was written",
                       hint="GENERATED.json must record the inputs, or CI cannot tell a stale export")
+    above = overlay_sync.defaults_above(directory)
+    if above:
+        raise CfError(above[0], hint="; ".join(above[1:]) or "nothing was written")
     deleted = _replace_files(directory, files, _legacy_shards(overlay))
     found, problems = overlay_sync.annotation_files(companion)
     if problems:                                             # pragma: no cover - scanned above
