@@ -11,8 +11,8 @@ file's own path; the inventory is whatever `cf overlay sync` copied under
 
 `docs/overlay.md` section 5 is the contract -- copy the viewer, the config,
 `GENERATED.json` and the annotation bundle into `<output_root>/<mount>/` and
-the Literature Links annotation files into
-`<output_root>/<annotations directory>/<section>/`. Their relative target
+the Literature Links annotation files, with their `_defaults.json`, into
+`<output_root>/<annotations directory>/`. Their relative target
 references are relative to this published site layout (`../../<page>` from a
 section folder is a page of `<output_root>`), not to the repository, where
 they resolve to nothing; replace a previous copy atomically; insert or replace one marked
@@ -282,11 +282,12 @@ def load_config(overlay: Path) -> Config:
 
 
 def collect_annotations(overlay: Path, config: Config) -> tuple[str, str, dict[str, bytes]]:
-    """``(directory, bundle path, {path in the directory: bytes})``: the files the bundle holds.
+    """``(directory, bundle path, {path in the directory: bytes})``: the files whose records the bundle holds.
 
-    The bundle must have its recorded sha256 and hold exactly the files on
-    disk; anything else is refused rather than published: the viewer checks
-    the same sha256 and would refuse it later.
+    The bundle must have its recorded sha256 and hold exactly the records the
+    shipped reader reads from the files on disk; anything else is refused
+    rather than published: the viewer checks the same sha256 and would refuse
+    it later.
     """
     try:
         block = overlay_annotations.annotations_block(overlay)
@@ -295,7 +296,8 @@ def collect_annotations(overlay: Path, config: Config) -> tuple[str, str, dict[s
     except overlay_annotations.AnnotationError as error:
         fail(str(error))
     files, problems = overlay_annotations.disk_files(overlay.parent, block["directory"])
-    problems += overlay_annotations.bundle_problems(entries, files)
+    records, scanned = overlay_annotations.read_records(overlay.parent, block["directory"]) if files else ({}, [])
+    problems += scanned + overlay_annotations.bundle_problems(entries, records)
     if problems:
         fail(f"{problems[0]}; re-run `cf overlay sync`")
     if not files:
@@ -510,16 +512,11 @@ def clear_stale_staging(parent: Path, leaf: str) -> None:
 
 def only_annotations(target: Path) -> None:
     """Refuse to replace a directory of the site that is not an annotation directory."""
-    for entry in os.scandir(target):
-        mode = entry.stat(follow_symlinks=False).st_mode
-        if not (stat.S_ISDIR(mode) and overlay_annotations.SECTION_DIR.match(entry.name)):
-            fail(f"the built site already has {target}, which holds {entry.name}; the annotations "
-                 f"are published there, so it may hold only <section>/<name>.json files")
-        for child in os.scandir(entry.path):
-            if not (stat.S_ISREG(child.stat(follow_symlinks=False).st_mode)
-                    and overlay_annotations.ANNOTATION_FILE.match(child.name)):
-                fail(f"the built site already has {target}, which holds {entry.name}/{child.name}; the "
-                     f"annotations are published there, so it may hold only <section>/<name>.json files")
+    _files, odd = overlay_annotations.walk(target)
+    if odd:
+        fail(f"the built site already has {target}, which holds {odd[0]}; the annotations are published "
+             f"there, so it may hold only <section>/[<item>/]<name>.json files and their "
+             f"{overlay_annotations.DEFAULTS}")
 
 
 def install_directory(output_root: Path, relative: str, contents: dict[str, bytes],

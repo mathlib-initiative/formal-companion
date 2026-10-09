@@ -334,9 +334,18 @@ class TestTheReadersAgreeOnTheAnnotations(unittest.TestCase):
     def test_the_section_and_file_patterns_are_one_pattern_each(self):
         from overlay import shards as overlay_shards
         tools, viewer = self.sources()
-        for pattern in (overlay_shards.SECTION_DIR.pattern, overlay_shards.ANNOTATION_FILE.pattern):
+        for pattern in (overlay_shards.SECTION_DIR.pattern, overlay_shards.ITEM_DIR.pattern,
+                        overlay_shards.ANNOTATION_FILE.pattern):
             self.assertIn(pattern, tools)
             self.assertIn("/^" + pattern.removesuffix("\\Z") + "$/", viewer)
+
+    def test_the_tools_check_files_against_the_form_the_export_writes(self):
+        from overlay import defaults as overlay_defaults
+        tools = load_tool("overlay_annotations")
+        self.assertEqual((tools.TOP, tools.DEFAULTS), (overlay_defaults.TOP, overlay_defaults.DEFAULTS))
+        value = {"extensions": {"x": {"b": [1, "é"], "type": "t", "a": [{"type": "q", "z": None}, []]}}, "zz": {},
+                 "location": {"rect": [0.24, 0.47, 0.5, 0.16], "page": 1}, "id": "i", "$schema": "s", "kind": "k"}
+        self.assertEqual(tools.file_bytes(value), overlay_defaults.dumps(value))
 
     def test_build_site_publishes_what_the_viewer_reads(self):
         self.assertEqual(set(BUILD_SITE.INSTANCE_FILES),

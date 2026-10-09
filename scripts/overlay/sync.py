@@ -10,9 +10,11 @@ New code, implementing sections 2, 5 and 6 of the overlay contract
   `pdf-overlay/` byte for byte, adds the vendored Literature Links package as
   `pdf-overlay/tools/literature_links/`, deletes what a previous
   `GENERATED.json` listed and the templates no longer have, writes the bundle
-  (every annotation file in `<companion>/annotations/` with its path, in file
-  order, so the viewer reads them in one fetch) and writes `GENERATED.json`,
-  which records the files' count and manifest sha256 and the bundle's sha256.
+  (every annotation in `<companion>/annotations/` as the vendored reader reads
+  it, folder defaults applied, with its file's path, in file order, so the
+  viewer reads them in one fetch) and writes `GENERATED.json`, which records
+  the annotation count, the manifest sha256 of every file in the directory,
+  `_defaults.json` included, and the bundle's sha256.
   It substitutes nothing (contract rule 2), which is why a second sync is a
   no-op and why `tools/check_generated.py` can verify the whole directory
   with the standard library alone.
@@ -47,15 +49,17 @@ from cflib.paths import skill_root, templates_dir
 from literature_links import discovery
 
 from overlay import config as overlay_config
+from overlay import defaults
 from overlay import shards as overlay_shards
 
 __all__ = [
     "ANNOTATIONS_DIRNAME", "BUNDLE_NAME", "BUNDLE_SCHEMA", "FORMAT_PACKAGE", "GENERATED_NAME",
     "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES",
-    "LINKS_RELATIVE", "OVERLAY_DIRNAME", "SyncResult", "annotation_files", "annotations_dir",
-    "bundle_bytes", "bundle_differences", "bundle_files", "check", "digest", "format_pin", "generated_document", "generated_files",
-    "generator_commit", "init", "manifest_sha256", "overlay_dir", "overlay_problems",
-    "record_annotations", "runtime_root", "sync", "sync_problems", "template_files",
+    "LINKS_RELATIVE", "OVERLAY_DIRNAME", "Annotations", "SyncResult", "annotation_count", "annotation_files",
+    "annotations_dir", "bundle_bytes", "bundle_differences", "bundle_records", "check", "digest", "format_pin",
+    "generated_document", "generated_files", "generator_commit", "init", "manifest_sha256", "overlay_dir",
+    "overlay_problems", "read_annotations", "record_annotations", "runtime_root", "sync", "sync_problems",
+    "template_files",
 ]
 
 #: The one directory a companion gets, and the file in it that is not copied.
@@ -64,7 +68,7 @@ GENERATED_NAME = "GENERATED.json"
 INSTANCE_FILES = (overlay_config.CONFIG_NAME,)
 #: The annotation directory, relative to the companion root (contract section 2).
 ANNOTATIONS_DIRNAME = overlay_shards.DIRECTORY
-#: The bundle `sync` writes beside `GENERATED.json`: every annotation file, for the viewer.
+#: The bundle `sync` writes beside `GENERATED.json`: every annotation, for the viewer.
 BUNDLE_NAME = "annotations.bundle.json"
 BUNDLE_SCHEMA = "formal-companion/overlay-annotations"
 
@@ -342,36 +346,48 @@ def _dump(document: dict) -> bytes:
 # the annotation files and the bundle
 # ---------------------------------------------------------------------------
 
-def annotation_files(companion: str | Path) -> tuple[dict[str, bytes], list[str]]:
-    """``(files, problems)``: ``{path relative to the companion: bytes}`` of every annotation file.
+@dataclass
+class Annotations:
+    """The annotation directory as the vendored reader reads it."""
 
-    The directory holds ``<section>/<name>.json`` files and nothing else:
-    anything else (a file outside a section folder, a nested folder, a link,
-    a name the export would not write) is a problem, and so is anything the
-    vendored ``literature_links`` scan reports.
+    #: ``{path relative to the companion: bytes}`` of every file, `_defaults.json` included.
+    files: dict[str, bytes]
+    #: ``{path: annotation}`` of every annotation file, its folder defaults applied.
+    records: dict[str, dict]
+    problems: list[str]
+
+
+def read_annotations(companion: str | Path) -> Annotations:
+    """Every file of the annotation directory, every record the reader reads from it, and the problems.
+
+    The directory holds the layout `overlay.shards.walk` describes and nothing
+    else: anything else is a problem, and so is anything the vendored
+    ``literature_links`` scan reports.
     """
     directory = annotations_dir(companion)
-    files: dict[str, bytes] = {}
-    problems: list[str] = []
-    if not directory.is_dir():
-        return files, problems
-    for entry in sorted(os.scandir(directory), key=lambda e: e.name):
-        relative = f"{ANNOTATIONS_DIRNAME}/{entry.name}"
-        if not entry.is_dir(follow_symlinks=False) or not overlay_shards.SECTION_DIR.fullmatch(entry.name):
-            problems.append(f"{relative}: not a section folder; {ANNOTATIONS_DIRNAME}/ holds only "
-                            "<section>/<name>.json files")
-            continue
-        for child in sorted(os.scandir(entry.path), key=lambda e: e.name):
-            if not stat.S_ISREG(child.stat(follow_symlinks=False).st_mode) \
-                    or not overlay_shards.ANNOTATION_FILE.fullmatch(child.name):
-                problems.append(f"{relative}/{child.name}: not an annotation file")
-                continue
-            files[f"{relative}/{child.name}"] = Path(child.path).read_bytes()
+    found, _folders, odd = overlay_shards.walk(directory)
+    problems = [f"{ANNOTATIONS_DIRNAME}/{relative}: not an annotation file; {ANNOTATIONS_DIRNAME}/ holds only "
+                f"<section>/[<item>/]<name>.json files and their {overlay_shards.DEFAULTS}" for relative in odd]
+    files = {f"{ANNOTATIONS_DIRNAME}/{relative}": path.read_bytes() for relative, path in found.items()}
+    records: dict[str, dict] = {}
     if files:
+        collection = discovery.collect([directory])
         root = str(directory.parent) + os.sep
-        problems += [f"{p.path.replace(root, '')}: {p.message} [{p.code}]"
-                     for p in discovery.collect([directory]).problems]
-    return dict(sorted(files.items())), problems
+        problems += [f"{p.path.replace(root, '')}: {p.message} [{p.code}]" for p in collection.problems]
+        records = {f"{ANNOTATIONS_DIRNAME}/{r.path.relative_to(directory).as_posix()}": r.annotation
+                   for r in collection.records}
+    return Annotations(files, dict(sorted(records.items())), problems)
+
+
+def annotation_files(companion: str | Path) -> tuple[dict[str, bytes], list[str]]:
+    """``(files, problems)`` of :func:`read_annotations`."""
+    found = read_annotations(companion)
+    return found.files, found.problems
+
+
+def annotation_count(files: dict[str, bytes]) -> int:
+    """How many of ``files`` are annotation files, not folder defaults: `GENERATED.json`'s `count`."""
+    return sum(PurePosixPath(path).name != overlay_shards.DEFAULTS for path in files)
 
 
 def manifest_sha256(files: dict[str, bytes]) -> str:
@@ -379,32 +395,44 @@ def manifest_sha256(files: dict[str, bytes]) -> str:
     return digest("".join(f"{digest(raw)}  {path}\n" for path, raw in sorted(files.items())).encode("utf-8"))
 
 
-def bundle_bytes(files: dict[str, bytes]) -> bytes:
-    """Every annotation file with its path, in file order: one line per annotation."""
-    rows = [json.dumps({"annotation": json.loads(raw), "path": path}, sort_keys=True, separators=(",", ":"),
-                       ensure_ascii=False, allow_nan=False) for path, raw in sorted(files.items())]
+def _form(raw: bytes) -> bytes | None:
+    """``raw`` as `overlay.defaults.dumps` writes its JSON, or None when it is not JSON."""
+    try:
+        return defaults.dumps(json.loads(raw.decode("utf-8")))
+    except (UnicodeDecodeError, ValueError, TypeError):
+        return None
+
+
+def _canonical(annotation: dict) -> bytes:
+    return json.dumps(annotation, sort_keys=True, ensure_ascii=False, allow_nan=False).encode("utf-8")
+
+
+def bundle_bytes(records: dict[str, dict]) -> bytes:
+    """Every annotation with its file's path, in file order: one line per annotation."""
+    rows = [json.dumps({"annotation": annotation, "path": path}, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False, allow_nan=False) for path, annotation in sorted(records.items())]
     head = json.dumps({"schema": BUNDLE_SCHEMA, "schema_version": 1, "directory": ANNOTATIONS_DIRNAME,
                        "count": len(rows)}, separators=(",", ":"))[:-1]
     return (head + ',"annotations":[\n' + ",\n".join(rows) + "\n]}\n").encode("utf-8")
 
 
-def bundle_files(raw: bytes) -> dict[str, bytes] | None:
-    """``{path: bytes}`` of the annotation files a bundle holds, or None when it is not one."""
+def bundle_records(raw: bytes) -> dict[str, dict] | None:
+    """``{path: annotation}`` a bundle holds, or None when it is not one."""
     try:
         rows = json.loads(raw.decode("utf-8"))["annotations"]
-        return {row["path"]: overlay_shards.annotation_bytes(row["annotation"]) for row in rows}
+        return {row["path"]: dict(row["annotation"]) for row in rows}
     except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
         return None
 
 
-def bundle_differences(held: dict[str, bytes] | None, files: dict[str, bytes]) -> list[str]:
-    """Each annotation file the bundle does not hold exactly, by path; empty when it holds them all."""
+def bundle_differences(held: dict[str, dict] | None, records: dict[str, dict]) -> list[str]:
+    """Each annotation the bundle does not hold exactly, by path; empty when it holds them all."""
     if held is None:
         return [f"{BUNDLE_NAME} is not a readable bundle; run `cf overlay sync`"]
-    out = [f"{path}: not in {BUNDLE_NAME}" for path in sorted(set(files) - set(held))]
-    out += [f"{path}: in {BUNDLE_NAME} but not on disk" for path in sorted(set(held) - set(files))]
-    out += [f"{path}: differs from {BUNDLE_NAME}" for path in sorted(set(held) & set(files))
-            if held[path] != files[path]]
+    out = [f"{path}: not in {BUNDLE_NAME}" for path in sorted(set(records) - set(held))]
+    out += [f"{path}: in {BUNDLE_NAME} but not on disk" for path in sorted(set(held) - set(records))]
+    out += [f"{path}: differs from {BUNDLE_NAME}" for path in sorted(set(held) & set(records))
+            if _canonical(held[path]) != _canonical(records[path])]
     return out
 
 
@@ -443,21 +471,23 @@ def _annotations_for_sync(companion: str | Path, previous: dict | None) -> tuple
     """
     old = (previous or {}).get("annotations")
     old = old if isinstance(old, dict) else {}
-    files, problems = annotation_files(companion)
-    if problems:
-        raise CfError(problems[0], hint="; ".join(problems[1:4]) or
+    found = read_annotations(companion)
+    if found.problems:
+        raise CfError(found.problems[0], hint="; ".join(found.problems[1:4]) or
                       "fix or re-export the annotations; `cf overlay export` writes them")
     block = {k: v for k, v in old.items() if k in ("export", "inputs")}
-    if "export" in block and (old.get("count"), old.get("manifest_sha256")) != (len(files), manifest_sha256(files)):
-        # The last bundle names the file when it holds what the export wrote.
+    if "export" in block and (old.get("count"), old.get("manifest_sha256")) \
+            != (annotation_count(found.files), manifest_sha256(found.files)):
+        # The bundle the last sync recorded names the annotation when it was of the files recorded.
         bundle = overlay_dir(companion) / BUNDLE_NAME
-        held = bundle_files(bundle.read_bytes()) if bundle.is_file() else None
-        named = bundle_differences(held, files) \
-            if held is not None and manifest_sha256(held) == old.get("manifest_sha256") else []
+        recorded = old.get("bundle") if isinstance(old.get("bundle"), dict) else {}
+        held = bundle_records(bundle.read_bytes()) \
+            if bundle.is_file() and digest(bundle.read_bytes()) == recorded.get("sha256") else None
+        named = bundle_differences(held, found.records) if held is not None else []
         raise CfError(f"{named[0] if named else ANNOTATIONS_DIRNAME + '/'}: not what `cf overlay export` wrote",
                       hint="re-run `cf overlay export`; exported annotations are not edited by hand")
-    bundle = bundle_bytes(files)
-    block.update(count=len(files), manifest_sha256=manifest_sha256(files),
+    bundle = bundle_bytes(found.records)
+    block.update(count=annotation_count(found.files), manifest_sha256=manifest_sha256(found.files),
                  bundle={"path": BUNDLE_NAME, "sha256": digest(bundle)})
     return dict(sorted({**empty_annotations(), **block}.items())), bundle
 
@@ -606,10 +636,14 @@ def sync_problems(companion: str | Path) -> list[str]:
             out.append(f"{GENERATED_NAME} records the wrong sha256 for {relative}")
 
     block = record.get("annotations") if isinstance(record.get("annotations"), dict) else {}
-    files, _problems = annotation_files(companion)
-    if (block.get("count"), block.get("manifest_sha256")) != (len(files), manifest_sha256(files)):
-        out.append(f"changed annotations: {ANNOTATIONS_DIRNAME}/ holds {len(files)} files, not the "
-                   f"{block.get('count')} {GENERATED_NAME} records by manifest sha256")
+    found = read_annotations(companion)
+    count = annotation_count(found.files)
+    if (block.get("count"), block.get("manifest_sha256")) != (count, manifest_sha256(found.files)):
+        out.append(f"changed annotations: {ANNOTATIONS_DIRNAME}/ holds {count} annotations in "
+                   f"{len(found.files)} files, not the {block.get('count')} {GENERATED_NAME} records by "
+                   f"manifest sha256")
+    out += [f"{path}: not as `cf overlay export` writes it" for path, raw in found.files.items()
+            if _form(raw) not in (None, raw)]
     bundle = overlay / BUNDLE_NAME
     recorded = (block.get("bundle") or {}).get("sha256") if isinstance(block.get("bundle"), dict) else None
     if not bundle.is_file():
@@ -618,7 +652,7 @@ def sync_problems(companion: str | Path) -> list[str]:
         raw = bundle.read_bytes()
         if digest(raw) != recorded:
             out.append(f"changed: {BUNDLE_NAME}")
-        out += bundle_differences(bundle_files(raw), files)
+        out += bundle_differences(bundle_records(raw), found.records)
     return out
 
 
@@ -645,9 +679,7 @@ def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
     root = Path(companion).expanduser().resolve()
     out: list[str] = []
     sources: dict[str, dict] = {}
-    files, _problems = annotation_files(companion)
-    for path, raw in files.items():
-        record = json.loads(raw)
+    for path, record in read_annotations(companion).records.items():
         source = record.get("source") or {}
         ext = (source.get("extensions") or {}).get(overlay_shards.NAMESPACE) or {}
         if source.get("type") != "pdf" or ext.get("source_id") != source_id:

@@ -56,7 +56,7 @@ def register(subparsers) -> None:
     chk.add_argument("companion", type=Path, help="the companion's checkout")
 
     exp = sub.add_parser("export", help="run a cf export convention and write its Literature "
-                                        "Links annotations into annotations/<section>/")
+                                        "Links annotations into annotations/")
     exp.add_argument("companion", type=Path, help="the companion's checkout")
     exp.add_argument("--convention", required=True, choices=list(overlay_export.CONVENTIONS),
                      help="which cf export subcommand writes this companion's document")

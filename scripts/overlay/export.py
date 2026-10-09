@@ -8,8 +8,9 @@ document; this module adds what they deliberately refuse to do, because
 1. export to a temporary file OUTSIDE the companion and check the document
    with the vendored `formal_companion_annotations` checker;
 2. convert it into Literature Links records, one file per annotation in one
-   folder per book section (`overlay.shards`), and check every file with the
-   vendored `literature_links` scan;
+   folder per book section and one folder per item with several, with folder
+   defaults (`overlay.shards`, `overlay.defaults`), and check every file with
+   the vendored `literature_links` scan;
 3. only then replace the files in `<companion>/annotations/` and record them
    (their count and manifest sha256) in `pdf-overlay/GENERATED.json`, with the
    export, its commit and the sha256 of every curation input it read, so the
@@ -25,7 +26,6 @@ import collections
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 import tempfile
@@ -126,41 +126,33 @@ def _legacy_shards(overlay: Path) -> dict[str, str]:
 
 
 def _replace_files(directory: Path, files: dict[str, bytes], legacy: dict[str, str]) -> list[str]:
-    """Put exactly ``files`` (``<section>/<name>.json``) in the directory; return what was removed.
+    """Put exactly ``files`` in the directory; return what was removed.
 
-    Everything already there must be an annotation file in a section folder,
-    or a legacy shard at the sha256 its export recorded: anything else is
-    somebody's file, and the export stops before writing.
+    Everything already there must fit the layout (`overlay.shards.walk`), or
+    be a legacy shard at the sha256 its export recorded: anything else is
+    somebody's file, and the export stops before writing.  Stale files and
+    the folders left empty go.
     """
+    found, folders, odd = overlay_shards.walk(directory)
     stale: list[str] = []
-
-    def refuse(path: str, what: str):
-        raise CfError(f"{directory.name}/{path} is {what}",
-                      hint=f"{directory.name}/ holds only the exported <section>/<name>.json files; "
-                           "move it elsewhere and re-run")
-
-    if directory.is_dir():
-        for entry in sorted(os.scandir(directory), key=lambda e: e.name):
-            mode = entry.stat(follow_symlinks=False).st_mode
-            if stat.S_ISREG(mode) and legacy.get(entry.name) == overlay_sync.digest(Path(entry.path).read_bytes()):
-                stale.append(entry.name)
-                continue
-            if not stat.S_ISDIR(mode) or not overlay_shards.SECTION_DIR.fullmatch(entry.name):
-                refuse(entry.name, "not a section folder")
-            for child in sorted(os.scandir(entry.path), key=lambda e: e.name):
-                relative = f"{entry.name}/{child.name}"
-                if not stat.S_ISREG(child.stat(follow_symlinks=False).st_mode) \
-                        or not overlay_shards.ANNOTATION_FILE.fullmatch(child.name):
-                    refuse(relative, "not an annotation file")
-                if relative not in files:
-                    stale.append(relative)
+    for relative in odd:
+        path = directory / relative
+        if "/" not in relative and path.is_file() and not path.is_symlink() \
+                and legacy.get(relative) == overlay_sync.digest(path.read_bytes()):
+            stale.append(relative)
+            continue
+        raise CfError(f"{directory.name}/{relative} is not an exported annotation file or folder",
+                      hint=f"{directory.name}/ holds only the exported <section>/[<item>/]<name>.json files "
+                           f"and their {overlay_shards.DEFAULTS}; move it elsewhere and re-run")
+    stale += [relative for relative in found if relative not in files]
     # Stale files go first: on a case-insensitive filesystem a stale
     # `foo.json` and a new `Foo.json` are one directory entry.
     for relative in stale:
+        directory.joinpath(*PurePosixPath(relative).parts).unlink()
+    for relative in folders:
         path = directory.joinpath(*PurePosixPath(relative).parts)
-        path.unlink()
-        if path.parent != directory and not any(path.parent.iterdir()):
-            path.parent.rmdir()
+        if not any(path.iterdir()):
+            path.rmdir()
     directory.mkdir(exist_ok=True)
     for relative, raw in sorted(files.items()):
         path = directory.joinpath(*PurePosixPath(relative).parts)
@@ -221,7 +213,11 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
     if conversion.problems:
         raise CfError(f"{len(conversion.problems)} records could not be converted, so nothing was written",
                       hint="; ".join(conversion.problems[:5]))
-    files = overlay_shards.file_bytes(conversion)
+    try:
+        files = overlay_shards.file_bytes(conversion)
+    except ValueError as exc:
+        raise CfError("the annotation files would not read back as the records, so nothing was written",
+                      hint=str(exc)) from exc
     scanned = overlay_shards.scan_problems(files)
     if scanned:
         raise CfError("the annotations do not pass the Literature Links scan, so nothing was written",
@@ -241,7 +237,7 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
         raise CfError(f"{len(wrong)} annotation files on disk are not the ones the export wrote, "
                       "so GENERATED.json was not updated", hint="; ".join(wrong[:5]))
     overlay_sync.record_annotations(companion, {
-        "count": len(found),
+        "count": len(conversion.files),
         "directory": overlay_sync.ANNOTATIONS_DIRNAME,
         "export": {"commit": (doc.get("companion") or {}).get("commit") or commit,
                    "convention": convention, "source_id": source["id"]},
@@ -249,6 +245,6 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
         "inputs": inputs,
         "manifest_sha256": overlay_sync.manifest_sha256(found),
     })
-    sections = collections.Counter(PurePosixPath(path).parts[0] for path in files)
+    sections = collections.Counter(PurePosixPath(path).parts[0] for path in conversion.files)
     return ExportResult(directory=directory, sections=dict(sorted(sections.items())),
-                        deleted=deleted, counts=dict(conversion.counts))
+                        deleted=sorted(deleted), counts=dict(conversion.counts))
