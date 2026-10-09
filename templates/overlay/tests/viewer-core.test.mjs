@@ -146,7 +146,9 @@ test("bundle: every annotation with its path in file order, and anything else re
     [of(files, { schema: "x" }), /is not a formal-companion\/overlay-annotations bundle/],
     [of(files, { directory: "other" }), /bundle of annotations\//],
     [of([{ ...files[0], path: "annotations/1.jsonl" }]), /annotations\[0\]/],
-    [of([{ ...files[0], path: "annotations/1/x/y.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/1/x/y/z.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/1/x/_defaults.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/_defaults.json" }]), /annotations\[0\]/],
     [of([{ ...files[0], path: "annotations/../1/x.json" }]), /annotations\[0\]/],
     [of([{ ...files[0], path: "annotations/1/.x.json" }]), /annotations\[0\]/],
     [of([{ ...files[0], annotation: [1] }]), /annotations\[0\]/],
@@ -154,6 +156,8 @@ test("bundle: every annotation with its path in file order, and anything else re
   ]) {
     assert.throws(() => parseBundle(text, block), pattern);
   }
+  const inItem = [{ ...files[0], path: "annotations/1.1/theorem-1.1/key__A.json" }];
+  assert.deepEqual(parseBundle(of(inItem), { ...block, count: 1 }), inItem, "a record in its item's folder");
 });
 
 // --- the source -------------------------------------------------------------
@@ -421,6 +425,8 @@ test("href: a target resolves against its own file and must be https or this sit
   assert.equal(targetHref({ uri: "B.html" }, file, ORIGIN), `${ORIGIN}/annotations/1.1/B.html`);
   assert.equal(targetHref("../A.html", file, ORIGIN), `${ORIGIN}/annotations/A.html`,
                "one ../ short stays inside annotations/");
+  assert.equal(targetHref("../../../A/index.html#x", `${ORIGIN}/annotations/1.1/theorem-1.1/key__A.json`, ORIGIN),
+               `${ORIGIN}/A/index.html#x`, "from an item folder, one ../ more");
   assert.equal(targetHref("https://docs.example.invalid/A.html#a%22b", file, ORIGIN),
                "https://docs.example.invalid/A.html#a%22b");
   for (const bad of ["javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x",

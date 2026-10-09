@@ -192,6 +192,8 @@ class Companion:
             "fixture licence\n", encoding="utf-8")
         for name in ("serve", "build_site", "overlay_annotations"):
             shutil.copy2(TOOLS / f"{name}.py", self.overlay / "tools" / f"{name}.py")
+        shutil.copytree(SKILL / "vendor" / "literature_links", self.overlay / "tools" / "literature_links",
+                        ignore=shutil.ignore_patterns("__pycache__"))
         self.log = base / "commands.log"
         self.bin = base / "bin"
         self.bin.mkdir()
@@ -251,7 +253,7 @@ class Companion:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(overlay_shards.annotation_bytes(self.record_value(**source_overrides)))
         files = {FILE: path.read_bytes()}
-        bundle = overlay_sync.bundle_bytes(files)
+        bundle = overlay_sync.bundle_bytes({FILE: self.record_value(**source_overrides)})
         (self.overlay / BUNDLE).write_bytes(bundle)
         record = {"annotations": {"directory": "annotations", "count": 1,
                                   "manifest_sha256": overlay_sync.manifest_sha256(files),
@@ -773,7 +775,8 @@ class TestBuildSite(OverlayToolsTestCase):
 
     def test_a_file_the_bundle_does_not_hold_is_not_published(self):
         self.companion.write_site()
-        (self.companion.root / FILE).write_text("{}\n", encoding="utf-8")
+        (self.companion.root / FILE).write_bytes(overlay_shards.annotation_bytes(
+            dict(self.companion.record_value(), label="Lemma 9.9.9")))
         with self.assertRaisesRegex(BUILD.BuildError, f"{FILE}: differs from the bundle"):
             BUILD.build_site(self.companion.overlay)
         self.assertFalse((self.companion.site / "pdf-overlay").exists())

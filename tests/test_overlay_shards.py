@@ -2,8 +2,8 @@
 
 docs/overlay.md section 7, record by record, on a synthetic document: what a
 link, a region, a quad region, an item that links nothing, a destination, a
-verdict and the source become, which section folder and file each record goes
-to, how a file is named, and that every file passes the vendored
+verdict and the source become, which section folder, item folder and file each
+record goes to, how a file is named, and that every file passes the vendored
 `literature_links` scan.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ import copy
 import hashlib
 import json
 import sys
+import tempfile
 import unittest
 from fractions import Fraction
 from pathlib import Path
@@ -27,7 +28,7 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
-from literature_links import companion                               # noqa: E402
+from literature_links import companion, discovery                    # noqa: E402
 from overlay import shards                                           # noqa: E402
 
 NS = shards.NAMESPACE
@@ -164,7 +165,7 @@ class TestTheMapping(unittest.TestCase):
                                 "alternate_urls": ["https://mirror.example.invalid/notes.pdf"]}}})
         self.assertEqual(record["location"], {"page": 2, "rect": [0.1, 0.2, 0.5, 0.15]})
         self.assertEqual(record["target"], {
-            "uri": "../../Notes/Box/index.html#Notes___Box___mono%C2%ABx%C2%BB",
+            "uri": "../../../Notes/Box/index.html#Notes___Box___mono%C2%ABx%C2%BB",
             "pin": {"type": "repository", "url": "https://git.example.invalid/owner/notes", "commit": "1" * 40,
                     "path": "Notes/Box.lean", "line": 10, "module": "Notes.Box", "declaration": "Notes.Box.mono"}})
         self.assertEqual((record["kind"], record["label"], record["status"]),
@@ -190,7 +191,7 @@ class TestTheMapping(unittest.TestCase):
 
     def test_a_fallback_destination_has_no_fragment_and_keeps_its_label(self):
         [record] = self.records["theorem-1.2.3/attributed/Notes.Box.part"]
-        self.assertEqual(record["target"]["uri"], "../../Notes/Box/index.html")
+        self.assertEqual(record["target"]["uri"], "../../../Notes/Box/index.html", "one folder deeper, in its item's")
         self.assertEqual(record["extensions"][NS]["destination"],
                          {"resolution": "fallback", "fallback_label": "module page"})
         self.assertEqual(record["extensions"][NS]["snippet"]["truncated"], True)
@@ -287,25 +288,35 @@ class TestTheFiles(unittest.TestCase):
             with self.subTest(item=item):
                 self.assertEqual(shards.section_of(item, clusters), section)
 
-    def test_one_canonical_file_per_record_in_file_order(self):
+    def test_an_item_with_several_records_gets_a_folder_and_one_record_a_file(self):
         conversion = shards.convert(document())
-        files = shards.file_bytes(conversion)
-        self.assertEqual(list(files), [
+        self.assertEqual(list(conversion.files), [
             "1.1/equation-1.1.json",
             "1.2/remark-1.2.4__attributed__Notes.Box.part.json",
-            "1.2/theorem-1.2.3__attributed__Notes.Box.part.json",
-            "1.2/theorem-1.2.3__key__Notes.Box.mono.json",
+            "1.2/theorem-1.2.3/attributed__Notes.Box.part.json",
+            "1.2/theorem-1.2.3/key__Notes.Box.mono.json",
             "1.3/exercise-1.3.1.json",
             "other/lemma-2.1__key__Notes.Box.ext.json",
             "other/passage-p5__support__Notes.Box.help.json"])
         self.assertEqual(conversion.records, list(conversion.files.values()))
-        for path, raw in files.items():
-            with self.subTest(path=path):
-                record = json.loads(raw)
-                self.assertEqual(raw, (json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False)
-                                       + "\n").encode("utf-8"))
-                self.assertEqual(record, conversion.files[path])
-        self.assertIn("lemma part…".encode("utf-8"), files["1.2/theorem-1.2.3__attributed__Notes.Box.part.json"])
+        files = shards.file_bytes(conversion)
+        self.assertEqual([path for path in files if path.endswith(shards.DEFAULTS)],
+                         ["1.2/theorem-1.2.3/_defaults.json", "_defaults.json"],
+                         "defaults at the top and in item folders only")
+        self.assertEqual(set(files) - {"1.2/theorem-1.2.3/_defaults.json", "_defaults.json"}, set(conversion.files))
+        self.assertIn("lemma part…".encode("utf-8"), files["1.2/theorem-1.2.3/attributed__Notes.Box.part.json"])
+
+    def test_the_reader_reads_back_every_record_from_the_files(self):
+        conversion = shards.convert(document())
+        files = shards.file_bytes(conversion)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve()
+            for name, raw in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_bytes(raw)
+            found = discovery.collect([root])
+        self.assertEqual(found.problems, [])
+        self.assertEqual({r.path.relative_to(root).as_posix(): r.annotation for r in found.records}, conversion.files)
 
     def test_the_bytes_are_deterministic(self):
         doc = document()
@@ -317,7 +328,8 @@ class TestTheFiles(unittest.TestCase):
     def test_every_file_passes_the_scan_and_a_broken_one_does_not(self):
         files = shards.file_bytes(shards.convert(document()))
         self.assertEqual(shards.scan_problems(files), [])
-        files["1.2/broken.json"] = b'{"source": {"type": "pdf", "uri": "x"}, "location": {"page": 1, "rect": [0.5, 0, 0.6, 1]}}\n'
+        files["1.2/broken.json"] = (b'{"source": {"type": "pdf", "uri": "x"}, "target": null,'
+                                    b' "location": {"page": 1, "rect": [0.5, 0, 0.6, 1]}}\n')
         self.assertTrue(any("1.2/broken.json" in line and "PDF_RECT" in line for line in shards.scan_problems(files)))
 
 
@@ -387,6 +399,20 @@ class TestFileNames(unittest.TestCase):
                                                  ("console", None, None, None))),
                          ["CON" + suffix("CON"), "nul.1" + suffix("nul.1"), "console.json"])
 
+    def test_no_file_is_named_like_folder_defaults(self):
+        self.assertEqual(shards.file_names(named(("_defaults", None, None, None), ("_Defaults", "key", "D", None)),
+                                           in_item=False),
+                         ["_defaults" + suffix("_defaults"), "_Defaults__key__D.json"])
+        self.assertEqual(shards.layout(named(("_defaults.json", "key", "D", "a"), ("_defaults.json", "key", "E", "a")))
+                         [0].split("/")[0], "_defaults.json" + suffix("_defaults.json")[:-len(".json")])
+
+    def test_one_item_in_a_folder_named_like_a_file_beside_it_hashes_both(self):
+        paths = shards.layout(named(("t", "key", "D", None), ("t", "key", "E", None), ("T", None, None, None)))
+        self.assertEqual(paths, ["t/key__D.json", "t/key__E.json", "T.json"])
+        paths = shards.layout(named(("t.json", "key", "D", None), ("t.json", "key", "E", None), ("t", None, None, None)))
+        self.assertEqual(paths[2], "t" + suffix("t"))
+        self.assertTrue(paths[0].startswith("t.json" + suffix("t.json")[:-len(".json")] + "/"))
+
     def test_names_do_not_depend_on_the_record_order_but_the_records(self):
         rows = [("a b", None, None, None), ("a/b", None, None, None), ("Z", "key", "D", None)]
         forward = dict(zip([r[0] for r in rows], shards.file_names(named(*rows))))
@@ -399,9 +425,9 @@ class TestFileNames(unittest.TestCase):
                                          selector(4, rect={"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.2})))
         conversion = shards.convert(doc)
         self.assertEqual(conversion.problems, [])
-        names = [p for p in conversion.files if p.startswith("1.2/theorem-1.2.3__key__")]
+        names = [p for p in conversion.files if p.startswith("1.2/theorem-1.2.3/key__")]
         self.assertEqual(names, sorted(
-            "1.2/theorem-1.2.3__key__Notes.Box.mono" + suffix(f"theorem-1.2.3__key__Notes.Box.mono@{region}")
+            "1.2/theorem-1.2.3/key__Notes.Box.mono" + suffix(f"key__Notes.Box.mono@{region}")
             for region in ("theorem-1.2.3@p002", "theorem-1.2.3@p004")))
         self.assertEqual(shards.scan_problems(shards.file_bytes(conversion)), [])
 

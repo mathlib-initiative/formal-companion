@@ -53,6 +53,7 @@ from cflib.errors import CfError                                      # noqa: E4
 from formal_companion_annotations import validate as V                # noqa: E402
 from formal_companion_annotations import vocab as fmt                 # noqa: E402
 from overlay import config as overlay_config                          # noqa: E402
+from overlay import defaults as overlay_defaults                      # noqa: E402
 from overlay import export as overlay_export                          # noqa: E402
 from overlay import shards as overlay_shards                          # noqa: E402
 from overlay import sync as overlay_sync                              # noqa: E402
@@ -256,13 +257,24 @@ class OverlayCase(unittest.TestCase):
 
     def reseal(self) -> None:
         """Re-record the files and rewrite the bundle as they are now, as a hand edit of both would."""
-        files, _ = overlay_sync.annotation_files(self.companion)
-        bundle = overlay_sync.bundle_bytes(files)
+        found = overlay_sync.read_annotations(self.companion)
+        bundle = overlay_sync.bundle_bytes(found.records)
         (self.overlay / BUNDLE).write_bytes(bundle)
         record = self.record()
-        record["annotations"].update(count=len(files), manifest_sha256=overlay_sync.manifest_sha256(files),
+        record["annotations"].update(count=overlay_sync.annotation_count(found.files),
+                                     manifest_sha256=overlay_sync.manifest_sha256(found.files),
                                      bundle={"path": BUNDLE, "sha256": hashlib.sha256(bundle).hexdigest()})
         self.write_record(record)
+
+    def two_records(self) -> dict:
+        """A second declaration linked to the lemma, and a lemma of 1.1 in its region: an item folder and defaults."""
+        doc = document()
+        doc["declarations"].append(dict(doc["declarations"][0], id=DECL + "_two", name=DECL + "_two"))
+        doc["links"].append(dict(doc["links"][0], id=f"lemma-1.2.3/key/{DECL}_two", declaration=DECL + "_two"))
+        doc["items"].append({"form": "numbered", "id": "lemma-1.1.1", "id_source": "label", "kind": "Lemma",
+                             "number": "1.1.1", "source": SOURCE_ID})
+        doc["locations"][0]["items"] = ["lemma-1.1.1", "lemma-1.2.3"]
+        return doc
 
     def tool(self, name: str, *argv: str) -> subprocess.CompletedProcess:
         """Run one copied runtime tool the way a companion's CI does."""
@@ -341,8 +353,7 @@ class TestExport(OverlayCase):
         self.assertEqual((block["count"], block["manifest_sha256"]), (1, manifest(self.companion, [FILE])))
         self.assertNotIn("bundle", block, "sync writes the bundle")
         raw = self.annotation().read_bytes()
-        self.assertEqual(raw, (json.dumps(json.loads(raw), sort_keys=True, indent=2, ensure_ascii=False)
-                               + "\n").encode("utf-8"))
+        self.assertEqual(raw, overlay_defaults.dumps(json.loads(raw)))
         self.assertIn('"uri": "../../Notes/Basic/index.html#Notes___Box___volume_nonneg"', raw.decode("utf-8"))
         self.assertEqual(overlay_shards.scan_problems({"1.2/x.json": raw}), [])
 
@@ -381,6 +392,27 @@ class TestExport(OverlayCase):
         self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
         self.assertFalse((self.annotations / "9.9").exists(), "an emptied section folder goes too")
 
+    def test_an_item_with_two_records_is_a_folder_with_its_defaults_and_a_stale_folder_goes(self):
+        self.ready()
+        result = self.export(self.two_records())
+        self.assertEqual(result.deleted, [FILE.removeprefix("annotations/")])
+        self.assertEqual(tree(self.annotations), {"_defaults.json", "1.1/lemma-1.1.1.json",
+                                                  "1.2/lemma-1.2.3/_defaults.json",
+                                                  f"1.2/lemma-1.2.3/key__{DECL}.json",
+                                                  f"1.2/lemma-1.2.3/key__{DECL}_two.json"})
+        block = self.record()["annotations"]
+        self.assertEqual((block["count"], block["manifest_sha256"]),
+                         (3, manifest(self.companion, [f"annotations/{p}" for p in tree(self.annotations)])))
+        (self.annotations / "1.3" / "empty").mkdir(parents=True)
+        result = self.export()
+        self.assertEqual(result.deleted, ["1.1/lemma-1.1.1.json", "1.2/lemma-1.2.3/_defaults.json",
+                                          f"1.2/lemma-1.2.3/key__{DECL}.json",
+                                          f"1.2/lemma-1.2.3/key__{DECL}_two.json", "_defaults.json"])
+        self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
+        self.assertEqual(sorted(p.name for p in self.annotations.iterdir()), ["1.2"],
+                         "the emptied item folder and an empty folder go")
+        self.assertFalse((self.annotations / "1.2" / "lemma-1.2.3").exists())
+
     def test_a_second_export_keeps_a_file_renamed_only_in_case(self):
         """On APFS or NTFS the stale and the new name are one entry: removing the stale one must not lose it."""
         self.ready()
@@ -406,7 +438,8 @@ class TestExport(OverlayCase):
         self.assertEqual(self.record(), before)
 
     def test_it_refuses_anything_in_the_annotation_directory_that_is_not_an_annotation_file(self):
-        for extra in ("README.md", "1.2/notes.txt", "1.2/sub/x.json", "1.2.jsonl", "1.2/.hidden.json"):
+        for extra in ("README.md", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/.hidden.json",
+                      "1.2/_defaults.json"):
             with self.subTest(extra=extra):
                 if self.overlay.exists():
                     shutil.rmtree(self.overlay)
@@ -564,21 +597,26 @@ class TestSync(OverlayCase):
         self.assertEqual(block["bundle"], {
             "path": BUNDLE, "sha256": hashlib.sha256((self.overlay / BUNDLE).read_bytes()).hexdigest()})
 
-    def test_the_bundle_holds_every_file_with_its_path_in_file_order(self):
-        doc = document()
-        doc["items"].append({"form": "numbered", "id": "lemma-1.1.1", "id_source": "label", "kind": "Lemma",
-                             "number": "1.1.1", "source": SOURCE_ID})
-        doc["locations"][0]["items"] = ["lemma-1.1.1", "lemma-1.2.3"]
-        self.ready(doc)
-        files, _ = overlay_sync.annotation_files(self.companion)
-        self.assertEqual(list(files), ["annotations/1.1/lemma-1.1.1.json", FILE])
+    def test_the_bundle_holds_every_record_as_the_reader_reads_it_in_file_order(self):
+        self.ready(self.two_records())
+        found = overlay_sync.read_annotations(self.companion)
+        self.assertEqual(list(found.files), [
+            "annotations/1.1/lemma-1.1.1.json", "annotations/1.2/lemma-1.2.3/_defaults.json",
+            f"annotations/1.2/lemma-1.2.3/key__{DECL}.json", f"annotations/1.2/lemma-1.2.3/key__{DECL}_two.json",
+            "annotations/_defaults.json"])
         raw = (self.overlay / BUNDLE).read_bytes()
         bundle = json.loads(raw)
         self.assertEqual((bundle["schema"], bundle["directory"], bundle["count"]),
-                         ("formal-companion/overlay-annotations", "annotations", 2))
+                         ("formal-companion/overlay-annotations", "annotations", 3))
         self.assertEqual([(row["path"], row["annotation"]) for row in bundle["annotations"]],
-                         [(path, json.loads(data)) for path, data in files.items()])
-        self.assertEqual(raw.count(b"\n"), 2 + 2, "one line per annotation")
+                         list(found.records.items()))
+        self.assertEqual(list(found.records), [p for p in found.files if not p.endswith("_defaults.json")])
+        row = bundle["annotations"][1]["annotation"]
+        self.assertEqual(row["source"]["extensions"][overlay_shards.NAMESPACE]["source_id"], SOURCE_ID)
+        self.assertEqual(row["target"]["uri"], "../../../Notes/Basic/index.html#Notes___Box___volume_nonneg",
+                         "relative to its own file, one folder deeper")
+        self.assertEqual(raw.count(b"\n"), 2 + 3, "one line per annotation")
+        self.assertEqual(self.tool("check_generated").returncode, 0)
 
     def test_a_second_sync_is_a_no_op(self):
         self.ready()
@@ -707,8 +745,10 @@ class TestSyncCheck(OverlayCase):
         self.ready()
         self.annotation().write_bytes(self.annotation().read_bytes() + b"\n")
         problems = overlay_sync.sync_problems(self.companion)
-        self.assertIn(f"{FILE}: differs from {BUNDLE}", problems)
+        self.assertIn(f"{FILE}: not as `cf overlay export` writes it", problems)
         self.assertTrue(any(line.startswith("changed annotations:") for line in problems), problems)
+        self.annotation().write_bytes(self.annotation().read_bytes()[:-1].replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
+        self.assertIn(f"{FILE}: differs from {BUNDLE}", overlay_sync.sync_problems(self.companion))
         (self.annotations / "2.1").mkdir()
         (self.annotations / "2.1" / "x.json").write_bytes(self.annotation().read_bytes())
         self.assertIn(f"annotations/2.1/x.json: not in {BUNDLE}", overlay_sync.sync_problems(self.companion))
@@ -869,7 +909,21 @@ class TestCheckGenerated(OverlayCase):
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
         self.assertIn(f"{FILE}: differs from the bundle", done.stderr)
-        self.assertIn("annotations/: 1 files with manifest sha256", done.stderr)
+        self.assertIn("annotations/: 1 annotations in 1 files with manifest sha256", done.stderr)
+
+    def test_it_names_a_tampered_defaults_file_and_the_records_below_it(self):
+        self.ready(self.two_records())
+        self.assertEqual(self.tool("check_generated").returncode, 0)
+        defaults = self.annotations / "1.2" / "lemma-1.2.3" / "_defaults.json"
+        defaults.write_bytes(defaults.read_bytes().replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("annotations/: 3 annotations in 5 files with manifest sha256", done.stderr)
+        for name in (DECL, DECL + "_two"):
+            self.assertIn(f"annotations/1.2/lemma-1.2.3/key__{name}.json: differs from the bundle", done.stderr)
+        defaults.write_bytes(defaults.read_bytes().replace(b"Lemma 1.2.4", b"Lemma 1.2.3") + b"\n")
+        done = self.tool("check_generated")
+        self.assertIn("annotations/1.2/lemma-1.2.3/_defaults.json: not as `cf overlay export` writes it", done.stderr)
 
     def test_it_names_a_missing_and_a_stale_annotation_file(self):
         self.ready()
@@ -907,7 +961,7 @@ class TestCheckGenerated(OverlayCase):
         self.assertIn("[SCHEMA]", done.stderr)
 
     def test_it_fails_on_an_extra_file_that_is_not_an_annotation_file(self):
-        for extra in ("notes.txt", "1.2/notes.txt", "1.2/sub/x.json", "1.2.jsonl"):
+        for extra in ("notes.txt", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/_defaults.json"):
             with self.subTest(extra=extra):
                 if not self.overlay.exists():
                     self.ready()
@@ -918,8 +972,8 @@ class TestCheckGenerated(OverlayCase):
                 self.assertEqual(done.returncode, 1)
                 self.assertIn(f"annotations/{extra.removesuffix('/x.json')}: not a", done.stderr)
                 path.unlink()
-                if path.parent.name == "sub":
-                    path.parent.rmdir()
+                if path.parent.name == "deeper":
+                    shutil.rmtree(path.parent.parent)
         self.assertEqual(self.tool("check_generated").returncode, 0)
 
     def test_it_fails_on_a_stale_export(self):

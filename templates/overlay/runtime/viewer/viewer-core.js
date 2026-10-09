@@ -169,7 +169,7 @@ export function safeBackLinkHref(value) {
  * Where a record's `target` leads, or null. Literature Links resolves a
  * relative reference against the file that holds the annotation (the
  * specification's "References"), so `baseUrl` is the URL of the annotation's
- * own file, `<site root>/<directory>/<section>/<name>.json`. The
+ * own file, `<site root>/<directory>/<section>/[<item>/]<name>.json`. The
  * result is used only when it is an `https:` URL or an `http(s):` URL of the
  * page's own origin: a `javascript:`, `data:` or foreign plain-`http:` target
  * is never a link.
@@ -260,6 +260,7 @@ export function readConfig(raw) {
 
 export const BUNDLE_SCHEMA = "formal-companion/overlay-annotations";
 const SECTION_NAME = /^[0-9A-Za-z][0-9A-Za-z._-]*$/;
+const ITEM_NAME = /^[0-9A-Za-z_-][0-9A-Za-z._-]{0,119}$/;
 const ANNOTATION_NAME = /^[0-9A-Za-z_-][0-9A-Za-z._-]{0,114}\.json$/;
 /** The bundle sits beside `GENERATED.json`. */
 const BUNDLE_NAME = /^[0-9A-Za-z][0-9A-Za-z._-]*\.json$/;
@@ -294,9 +295,9 @@ export function readAnnotationsBlock(generated) {
 }
 
 /**
- * The bundle's annotations, `[{path, annotation}]` in file order. Each path is
- * `<directory>/<section>/<name>.json`, the file the annotation's relative
- * references resolve against.
+ * The bundle's annotations, `[{path, annotation}]` in file order, folder
+ * defaults applied. Each path is `<directory>/<section>/[<item>/]<name>.json`,
+ * the file the annotation's relative references resolve against.
  */
 export function parseBundle(source, block) {
   let value;
@@ -313,9 +314,11 @@ export function parseBundle(source, block) {
   const rows = value.annotations.map((row, index) => {
     const path = isObject(row) ? row.path : null;
     const parts = typeof path === "string" && path.startsWith(prefix) ? path.slice(prefix.length).split("/") : [];
-    if (!safeRelative(path) || parts.length !== 2 || !SECTION_NAME.test(parts[0])
-        || !ANNOTATION_NAME.test(parts[1]) || !isObject(row.annotation)) {
-      fail(`${block.bundle.path} annotations[${index}] is not {path: <directory>/<section>/<name>.json, annotation}.`);
+    const name = parts[parts.length - 1];
+    if (!safeRelative(path) || (parts.length !== 2 && parts.length !== 3) || !SECTION_NAME.test(parts[0])
+        || !parts.slice(1, -1).every((part) => ITEM_NAME.test(part)) || !ANNOTATION_NAME.test(name)
+        || name === "_defaults.json" || !isObject(row.annotation)) {
+      fail(`${block.bundle.path} annotations[${index}] is not {path: <directory>/<section>/[<item>/]<name>.json, annotation}.`);
     }
     return { annotation: row.annotation, path };
   });

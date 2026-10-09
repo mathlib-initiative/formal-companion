@@ -20,15 +20,18 @@ section.  :func:`convert` is the whole mapping:
   coverage and the link;
 * everything else the viewer shows under one extension, :data:`NAMESPACE`.
 
-:func:`file_names` names the files, the same way on every OS.
+:func:`layout` places the files, the same way on every OS: an item with
+several records gets a folder; :func:`file_bytes` writes them with folder
+defaults (`overlay.defaults`).
 """
 from __future__ import annotations
 
 import collections
 import hashlib
-import json
 import math
+import os
 import re
+import stat
 import tempfile
 import urllib.parse
 from dataclasses import dataclass, field
@@ -39,15 +42,21 @@ from pathlib import Path, PurePosixPath
 from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from literature_links import discovery
 
-__all__ = ["ANNOTATION_FILE", "DIRECTORY", "NAMESPACE", "ROLES", "SECTION_DIR", "Conversion",
-           "annotation_bytes", "convert", "file_bytes", "file_names", "scan_problems", "section_of"]
+from overlay import defaults
+
+__all__ = ["ANNOTATION_FILE", "DEFAULTS", "DIRECTORY", "ITEM_DIR", "NAMESPACE", "ROLES", "SECTION_DIR",
+           "Conversion", "annotation_bytes", "convert", "file_bytes", "file_names", "layout", "scan_problems",
+           "section_of", "walk"]
 
 #: The one extension key every record carries (docs/overlay.md section 7).
 NAMESPACE = "org.mathlib-initiative.formal-companion.overlay"
 #: Where the annotation files live, relative to the companion root: one folder per
-#: section, one ``<name>.json`` per annotation, no name longer than :data:`MAX_NAME`.
+#: section, one ``<name>.json`` per annotation, one ``<item>/`` folder per item with
+#: several, no name longer than :data:`MAX_NAME`; `_defaults.json` at the top and in item folders.
 DIRECTORY = "annotations"
+DEFAULTS = defaults.DEFAULTS
 SECTION_DIR = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]*\Z")
+ITEM_DIR = re.compile(r"[0-9A-Za-z_-][0-9A-Za-z._-]{0,119}\Z")
 ANNOTATION_FILE = re.compile(r"[0-9A-Za-z_-][0-9A-Za-z._-]{0,114}\.json\Z")
 MAX_NAME = 120
 #: How many hex digits of sha256 a hashed name ends with.
@@ -74,7 +83,7 @@ class Conversion:
     """The records by section, their files, and what the conversion could not carry."""
 
     sections: dict[str, list[dict]] = field(default_factory=dict)
-    #: ``{"<section>/<name>.json": record}``, in file order.
+    #: ``{"<section>/[<item>/]<name>.json": record}`` in file order, each record as the reader reads it there.
     files: dict[str, dict] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
     counts: collections.Counter = field(default_factory=collections.Counter)
@@ -325,7 +334,7 @@ class _Converter:
         companion = doc.get("companion") or {}
         self.commit = companion.get("commit")
         self.repo_url = repo_url(companion.get("repo"))
-        # An annotation file sits in <directory>/<section>/: this far below the site root.
+        # Records are made for a file in <directory>/<section>/, this far below the site root; then moved.
         self.up = "../" * (len(PurePosixPath(directory).parts) + 1)
         self.declarations = _by_id(doc.get("declarations"))
         self.snippets = _by_id(doc.get("snippets"), "declaration")
@@ -451,12 +460,13 @@ class _Converter:
         for section, records in sorted(self.out.sections.items()):
             records.sort(key=_order)
             try:
-                names = file_names(records, self.out.counts)
+                paths = layout(records, self.out.counts)
             except ValueError as exc:
                 self.out.problems.append(f"{section}: {exc}")
                 continue
-            for name, record in zip(names, records):
-                self.out.files[f"{section}/{name}"] = record
+            for path, record in zip(paths, records):
+                self.out.files[f"{section}/{path}"] = defaults.moved(record, f"{section}/{DEFAULTS}",
+                                                                     f"{section}/{path}")
         self.out.files = dict(sorted(self.out.files.items()))
         self.out.counts["records"] = sum(len(r) for r in self.out.sections.values())
         self.out.counts["sections"] = len(self.out.sections)
@@ -546,45 +556,35 @@ def convert(doc: dict, *, source_id: str | None = None, directory: str = DIRECTO
 # the files
 # ---------------------------------------------------------------------------
 
-def name_key(record: dict) -> str:
-    """``<item>__<role>__<declaration>``, or ``<item>`` for a record with no target, unsanitised."""
+def name_key(record: dict, *, in_item: bool = False) -> str:
+    """``<item>__<role>__<declaration>``, or ``<item>`` for a record with no target, unsanitised.
+
+    In its item's folder a record with a target drops the ``<item>__``.
+    """
     ext = record["extensions"][NAMESPACE]
     if "role" not in ext:
         return ext["item"]
-    return f"{ext['item']}__{ext['role']}__{ext['declaration']['id']}"
+    rest = f"{ext['role']}__{ext['declaration']['id']}"
+    return rest if in_item else f"{ext['item']}__{rest}"
 
 
-def _hashed(stem: str, key: str) -> str:
-    suffix = "-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:HASH_DIGITS]
-    return stem[:MAX_NAME - len(".json") - len(suffix)] + suffix + ".json"
+def _hashed(stem: str, key: str, suffix: str) -> str:
+    tail = "-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:HASH_DIGITS]
+    return stem[:MAX_NAME - len(suffix) - len(tail)] + tail + suffix
 
 
-def file_names(records: list[dict], counts: collections.Counter | None = None) -> list[str]:
-    """One file name per record of one section folder, in the records' order.
-
-    The name is :func:`name_key` with every character outside
-    ``[A-Za-z0-9._-]`` (and a leading ``.``) replaced by ``-``, then ``.json``.
-    A name longer than :data:`MAX_NAME`, a Windows device name, and every name
-    that would equal another one ignoring case end instead in ``-`` and the
-    first :data:`HASH_DIGITS` hex digits of the sha256 of the full key,
-    truncated to fit.  The full key is the unsanitised key, followed by
-    ``@<region>`` when one item drawn in several regions gives several
-    records the same key.
-    """
-    keys = [name_key(record) for record in records]
-    shared = collections.Counter(keys)
-    full = [key if shared[key] == 1 else f"{key}@{record['extensions'][NAMESPACE]['region']}"
-            for key, record in zip(keys, records)]
-    if len(set(full)) != len(full):
-        raise ValueError(f"two records share the key {collections.Counter(full).most_common(1)[0][0]!r}")
+def _names(entries: list[tuple[str, str, str]], counts: collections.Counter | None) -> list[str]:
+    """One name per ``(key, full key, suffix)`` entry of one folder; see :func:`file_names`."""
     stems = []
-    for key in keys:
+    for key, _full, _suffix in entries:
         stem = _UNSAFE.sub("-", key)
         stems.append("-" + stem[1:] if stem.startswith(".") else stem)
-    long = [len(stem) + len(".json") > MAX_NAME for stem in stems]
-    hashed = [too_long or bool(_RESERVED.fullmatch(stem.split(".", 1)[0])) for stem, too_long in zip(stems, long)]
+    long = [len(stem) + len(suffix) > MAX_NAME for stem, (_, _, suffix) in zip(stems, entries)]
+    hashed = [too_long or bool(_RESERVED.fullmatch(stem.split(".", 1)[0])) or (stem + suffix).lower() == DEFAULTS
+              for stem, (_, _, suffix), too_long in zip(stems, entries, long)]
     while True:
-        names = [_hashed(stem, key) if h else stem + ".json" for stem, key, h in zip(stems, full, hashed)]
+        names = [_hashed(stem, full, suffix) if h else stem + suffix
+                 for stem, (_, full, suffix), h in zip(stems, entries, hashed)]
         groups: dict[str, list[int]] = collections.defaultdict(list)
         for index, name in enumerate(names):
             groups[name.lower()].append(index)
@@ -602,14 +602,97 @@ def file_names(records: list[dict], counts: collections.Counter | None = None) -
     return names
 
 
+def file_names(records: list[dict], counts: collections.Counter | None = None, *, in_item: bool = False) -> list[str]:
+    """One file name per record of one folder, in the records' order.
+
+    The name is :func:`name_key` with every character outside
+    ``[A-Za-z0-9._-]`` (and a leading ``.``) replaced by ``-``, then ``.json``.
+    A name longer than :data:`MAX_NAME`, a Windows device name, `_defaults.json`,
+    and every name that would equal another one in the folder ignoring case end
+    instead in ``-`` and the first :data:`HASH_DIGITS` hex digits of the sha256
+    of the full key, truncated to fit.  The full key is the unsanitised key,
+    followed by ``@<region>`` when one item drawn in several regions gives
+    several records the same key.
+    """
+    keys = [name_key(record, in_item=in_item) for record in records]
+    shared = collections.Counter(keys)
+    full = [key if shared[key] == 1 else f"{key}@{record['extensions'][NAMESPACE]['region']}"
+            for key, record in zip(keys, records)]
+    if len(set(full)) != len(full):
+        raise ValueError(f"two records share the key {collections.Counter(full).most_common(1)[0][0]!r}")
+    return _names([(key, f, ".json") for key, f in zip(keys, full)], counts)
+
+
+def layout(records: list[dict], counts: collections.Counter | None = None) -> list[str]:
+    """Each record's path in its section folder, in the records' order.
+
+    An item with one record is ``<name>.json`` (:func:`file_names`); an item
+    with several is a folder named like a file without ``.json``, its records
+    named in it without the item.  Folders and files share the folder's names.
+    """
+    items: dict[str, list[int]] = collections.defaultdict(list)
+    for index, record in enumerate(records):
+        items[record["extensions"][NAMESPACE]["item"]].append(index)
+    single = [found[0] for found in items.values() if len(found) == 1]
+    folders = [item for item, found in items.items() if len(found) > 1]
+    keys = [name_key(records[index]) for index in single]
+    names = _names([(key, key, ".json") for key in keys] + [(item, item, "") for item in folders], counts)
+    paths = [""] * len(records)
+    for index, name in zip(single, names):
+        paths[index] = name
+    for item, folder in zip(folders, names[len(single):]):
+        inside = items[item]
+        for index, name in zip(inside, file_names([records[i] for i in inside], counts, in_item=True)):
+            paths[index] = f"{folder}/{name}"
+    return paths
+
+
+def walk(directory: Path) -> tuple[dict[str, Path], list[str], list[str]]:
+    """``(files, folders, odd)`` of an annotation directory, by path relative to it.
+
+    The layout is `_defaults.json` and section folders at the top, annotation
+    files and item folders in a section, `_defaults.json` and annotation files
+    in an item folder.  Anything else, a link included, is odd.  Folders come
+    deepest first.
+    """
+    files: dict[str, Path] = {}
+    folders: list[str] = []
+    odd: list[str] = []
+
+    def visit(path: Path, prefix: str, depth: int) -> None:
+        for entry in sorted(os.scandir(path), key=lambda e: e.name):
+            relative = prefix + entry.name
+            mode = entry.stat(follow_symlinks=False).st_mode
+            if stat.S_ISDIR(mode) and depth < 2 and (SECTION_DIR, ITEM_DIR)[depth].fullmatch(entry.name):
+                visit(Path(entry.path), relative + "/", depth + 1)
+                folders.append(relative)
+            elif stat.S_ISREG(mode) and (depth != 1 if entry.name == DEFAULTS
+                                         else depth > 0 and ANNOTATION_FILE.fullmatch(entry.name)):
+                files[relative] = Path(entry.path)
+            else:
+                odd.append(relative)
+
+    if directory.is_dir():
+        visit(directory, "", 0)
+    return dict(sorted(files.items())), folders, odd
+
+
+def defaults_folders(paths) -> list[str]:
+    """The folders that may hold a `_defaults.json`: the directory (``""``) and each item folder."""
+    return [""] + sorted({path.rsplit("/", 1)[0] for path in paths if path.count("/") == 2})
+
+
 def annotation_bytes(record: dict) -> bytes:
-    """One annotation file: canonical JSON, sorted keys, two-space indent, UTF-8, a final newline."""
-    return (json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+    """One file on its own, with no defaults: `overlay.defaults.dumps`."""
+    return defaults.dumps(record)
 
 
 def file_bytes(conversion: Conversion) -> dict[str, bytes]:
-    """``{"<section>/<name>.json": bytes}``, one file per record, in file order."""
-    return {path: annotation_bytes(record) for path, record in conversion.files.items()}
+    """``{path: bytes}`` of every file in file order: the leaves and their `_defaults.json` files.
+
+    Raises ValueError when the files would not read back as the records.
+    """
+    return defaults.files(conversion.files, defaults_folders(conversion.files))
 
 
 def scan_problems(files: dict[str, bytes]) -> list[str]:
@@ -622,6 +705,7 @@ def scan_problems(files: dict[str, bytes]) -> list[str]:
             path.write_bytes(raw)
         found = discovery.collect([root])
         out = [f"{p.path.replace(str(root) + '/', '')}: {p.message} [{p.code}]" for p in found.problems]
-        if not out and len(found.records) != len(files):
-            out.append(f"the scan read {len(found.records)} annotations from {len(files)} files")
+        leaves = sum(PurePosixPath(name).name != DEFAULTS for name in files)
+        if not out and len(found.records) != leaves:
+            out.append(f"the scan read {len(found.records)} annotations from {leaves} files")
     return out

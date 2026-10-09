@@ -24,11 +24,13 @@ It reports, one line per problem, and exits 1 when there is one:
   one of the strings differs or when the three disagree on any config in its
   table;
 * the annotation directory `GENERATED.json`'s `annotations` block names
-  holds only `<section>/<name>.json` files, as many as it records and with
-  its manifest sha256; the bundle beside it has its recorded sha256 and holds
-  exactly those files (each file it does not hold is named); every file
-  passes the shipped `literature_links` scan; at least one record is of the
-  PDF the config's `source_id` names;
+  holds only `<section>/[<item>/]<name>.json` files and their
+  `_defaults.json`, each as `cf overlay export` writes it, as many annotations
+  as it records and every file with its manifest sha256; the shipped
+  `literature_links` scan reads them with no problem; the bundle beside it
+  has its recorded sha256 and holds exactly the records that scan reads,
+  defaults applied (each one it does not hold is named); at least one record
+  is of the PDF the config's `source_id` names;
 * every curation input the export read still has the sha256 recorded for it,
   so a companion that changed its curation and did not re-export fails here.
 """
@@ -433,31 +435,25 @@ def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
     if directory.is_symlink() or not directory.is_dir():
         return out + [f"{block['directory']}/: not an ordinary directory"]
     files, layout = overlay_annotations.disk_files(root, block["directory"])
-    out += layout
+    out += layout + overlay_annotations.form_problems(files)
     found = overlay_annotations.manifest_sha256(files)
-    if (len(files), found) != (block["count"], block["manifest_sha256"]):
-        out.append(f"{block['directory']}/: {len(files)} files with manifest sha256 {found}, but "
-                   f"{GENERATED_NAME} records {block['count']} with {block['manifest_sha256']}")
+    count = overlay_annotations.annotation_count(files)
+    if (count, found) != (block["count"], block["manifest_sha256"]):
+        out.append(f"{block['directory']}/: {count} annotations in {len(files)} files with manifest sha256 "
+                   f"{found}, but {GENERATED_NAME} records {block['count']} with {block['manifest_sha256']}")
+    records, scanned = overlay_annotations.read_records(root, block["directory"]) if files else ({}, [])
+    out += scanned
     try:
         entries = overlay_annotations.read_bundle(overlay, block)
     except overlay_annotations.AnnotationError as error:
         out.append(str(error))
     else:
-        out += overlay_annotations.bundle_problems(entries, files)
-    if files:
-        try:
-            from literature_links import discovery
-        except ImportError as error:                         # pragma: no cover
-            return out + [f"tools/literature_links: cannot import it: {error}"]
-        collection = discovery.collect([directory])
-        for problem in collection.problems:
-            path = problem.path.replace(str(root.resolve()) + os.sep, "")
-            out.append(f"{path}: {problem.message} [{problem.code}]")
-        if source_id is not None and not any(
-                overlay_annotations.extension(r.annotation["source"]).get("source_id") == source_id
-                for r in collection.records if r.annotation["source"].get("type") == "pdf"):
-            out.append(f"no annotation is a record of the PDF {source_id!r}, which "
-                       f"{CONFIG_NAME} names")
+        out += overlay_annotations.bundle_problems(entries, records)
+    if files and source_id is not None and not any(
+            overlay_annotations.extension(r["source"]).get("source_id") == source_id
+            for r in records.values() if r["source"].get("type") == "pdf"):
+        out.append(f"no annotation is a record of the PDF {source_id!r}, which "
+                   f"{CONFIG_NAME} names")
     out += inputs_problems(root, block.get("inputs"), exported="export" in block)
     return out
 
