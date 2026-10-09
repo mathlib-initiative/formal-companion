@@ -27,8 +27,8 @@ The PDF is fetched over HTTPS from the URLs the annotations' source names,
 verified against its pinned sha256, cached under `pdf.cache_dir` and served
 only on loopback at `pdf.route`; it is never committed. `build_site.py` copies
 the viewer into `<site.output_root>/<site.mount>/` and the shards into
-`<site.output_root>/annotations/`, where their relative targets resolve against
-the built pages.
+`<site.output_root>/annotations/`: the shards' relative targets are relative
+to that published layout, not to the repository.
 
 ## Checking it in CI
 

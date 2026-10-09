@@ -457,12 +457,18 @@ def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
                 for r in collection.records if r.annotation["source"].get("type") == "pdf"):
             out.append(f"no shard holds a record of the PDF {source_id!r}, which "
                        f"{CONFIG_NAME} names")
-    out += inputs_problems(root, block.get("inputs"))
+    out += inputs_problems(root, block.get("inputs"), exported="export" in block)
     return out
 
 
-def inputs_problems(root: Path, inputs: Any) -> list[str]:
-    """Each curation input the export recorded still hashes to its recorded sha256."""
+def inputs_problems(root: Path, inputs: Any, *, exported: bool = False) -> list[str]:
+    """Each curation input the export recorded still hashes to its recorded sha256.
+
+    An export must record at least one: without them a stale export passes.
+    """
+    if exported and not inputs:
+        return [f"{GENERATED_NAME}.annotations.inputs: the export records no curation input, so a stale "
+                f"export cannot be told; re-run `cf overlay export`"]
     if inputs is None:
         return []
     if not isinstance(inputs, list):

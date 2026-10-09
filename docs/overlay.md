@@ -136,16 +136,17 @@ bytecode writing off.
   loopback.
 - **`build_site.py`**: publish `viewer/`, `vendor/`, `overlay.config.json` and
   `GENERATED.json` into `<output_root>/<mount>/`, and the shards (each at its
-  recorded sha256) into `<output_root>/annotations/`, the same place relative
-  to the built pages as in the repository, so their relative targets resolve;
-  replace both atomically (refusing a site directory that holds anything but
-  shards), insert the index link, write `receipt.json`.
+  recorded sha256) into `<output_root>/annotations/`: their relative targets
+  are relative to this published site layout, not to the repository; replace
+  both atomically (refusing a site directory that holds anything but shards),
+  insert the index link, write `receipt.json`.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/`; the `format` block against the
   shipped package's version; the config; exactly the listed shards in
   `annotations/`, each at its sha256 and passing the shipped `literature_links`
-  scan, with a record of the config's PDF; every recorded curation input at its
-  recorded sha256, so a stale export fails CI.
+  scan, with a record of the config's PDF; every recorded curation input (at
+  least one when an export is recorded) at its recorded sha256, so a stale
+  export fails CI.
 - **`overlay_shards.py`**: reads `GENERATED.json`'s shard list and the shards
   for the other three.
 
@@ -191,7 +192,8 @@ cf overlay geometry ... ; cf overlay destinations ...
 ```
 
 `format.tag` appears when the vendored revision is a tagged release.
-`export` and `inputs` appear when `cf overlay export` wrote the shards.
+`export` and `inputs` appear when `cf overlay export` wrote the shards; with
+`export`, `check` and `check_generated.py` require a non-empty `inputs`.
 
 ## 7. The shards
 
@@ -202,7 +204,7 @@ cf overlay geometry ... ; cf overlay destinations ...
 | one record | each (region, item, linked declaration) for roles key, attributed, support, example, helper; one target-less record per region of an item that links nothing |
 | `source` | `{type: pdf, uri: <official URL>, pin: {type: book, title, edition, url, retrieved, sha256, isbn, identifiers}}`, only the keys the source record has |
 | `location` | `{page, rect: [x, y, width, height]}` from the `PdfRegionSelector` (`normalized` or `pt`, either origin, CropBox or MediaBox, taken as unrotated); a quad region becomes its bounding box |
-| `target` | `{uri, pin: {type: repository, url, commit, path, line, module, declaration}}`; `uri` is the rendered page relative to the shard (`../<href>#<fragment>`, the fallback page, or an `https:` URL), else the declaration's source file |
+| `target` | `{uri, pin: {type: repository, url, commit, path, line, module, declaration}}`; `uri` is the rendered page relative to the shard as the site publishes it (`../<href>#<fragment>` from `<output_root>/annotations/`, the fallback page, or an `https:` URL), else the declaration's source file |
 | `kind`, `label` | the item kind lower-cased; the printed label (kind, number, sub-part, title) |
 | `status` | the item's coverage (`partial_only` becomes `partial`), else `formalized` for an item with a key link; a target-less `not_formalized` record carries `{value, pin: {type: repository, url, commit}}` |
 | `note`, `id` | the coverage note; `<item>/<role>/<declaration>`, or `<item>` |
