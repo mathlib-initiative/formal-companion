@@ -35,9 +35,10 @@ these are the four that bite hardest.
    build one, and run every `git` against one through `cflib.gitsafe` — a repo
    that can set `core.fsmonitor` can name a program for you to execute. One
    command is exempt, narrowly: `cf overlay init`, `cf overlay sync` and
-   `cf overlay export` generate `<companion>/pdf-overlay/` and write nowhere
-   else, refusing a `pdf-overlay` that is a symlink or resolves outside the
-   companion, and running no git there at all (`docs/overlay.md` rule 5).
+   `cf overlay export` write `<companion>/pdf-overlay/` and the shard
+   directory `<companion>/annotations/` and nowhere else, refusing either when
+   it is a symlink or resolves outside the companion, and running no git
+   there at all (`docs/overlay.md` rule 5).
 4. **Metadata only in this repo.** No book text, no page images, no statement
    tables, no findings, no host names, session ids or repo owners' identities.
    Examples in templates and docs are synthetic. `POLICY.md` is the whole rule

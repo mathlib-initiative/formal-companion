@@ -23,9 +23,10 @@ backslash and no control character, and a loopback host is spelled `127.x.y.z`
 or `::1` (serve.py takes any address ``ipaddress`` calls loopback, which
 includes `0:0:0:0:0:0:0:1`).
 
-The PDF's identity is deliberately not here: `sha256`, `bytes`, `url`,
-`alternate_urls`, `physical_page_count`, `page_size` and `page_sizes` come from
-the `kind: pdf` source record of `annotations.json` that `source_id` names.
+The PDF's identity is deliberately not here: its URL and `sha256` come from the
+`source` of the shards' records whose overlay extension carries this
+`source_id`, and `bytes`, `alternate_urls` and `physical_page_count` from that
+extension.
 """
 from __future__ import annotations
 

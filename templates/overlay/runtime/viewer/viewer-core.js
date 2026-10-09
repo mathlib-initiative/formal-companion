@@ -1,30 +1,24 @@
 /**
- * The overlay viewer's pure functions: document indexing, coordinate conversion,
- * the href and fragment rules, and sha256 verification.
+ * The overlay viewer's pure functions: the shard list, the Literature Links
+ * records, coordinate conversion, the href rules and sha256 verification.
  *
  * Nothing here touches the DOM, so `node --test` exercises all of it; viewer.js
  * holds the controller. Nothing here is specific to one companion either: every
- * per-book value arrives as data, from an `overlay.config.json`
- * (docs/overlay.md section 3) and from an annotation document, and a value this
- * module cannot read is an error with a message, never a guess.
- *
- * Nor is anything here specific to one release of the annotation format: the
- * accepted `schema` and `schema_version` are read from the schema file this
- * directory ships (`documentFormat`), never written down as a constant.
+ * per-book value arrives as data, from `overlay.config.json`
+ * (docs/overlay.md section 3), from `GENERATED.json`'s shard list and from the
+ * shards, and a value this module cannot read is an error or a warning with a
+ * message, never a guess.
  */
 
-// --- the two documents -----------------------------------------------------
+// --- the files --------------------------------------------------------------
 
 export const CONFIG_SCHEMA = "formal-companion/overlay-config";
 export const CONFIG_SCHEMA_VERSION = 1;
-
-/**
- * The annotation format's own JSON Schema, as `cf overlay sync` copied it out
- * of the vendored release. The viewer reads which documents it accepts from
- * that file and holds no copy of the identity itself, so a format upgrade is a
- * re-sync and nothing to edit here.
- */
-export const DOCUMENT_SCHEMA_URL = "../schema/annotations.schema.json";
+export const CONFIG_URL = "../overlay.config.json";
+/** The shard list: `GENERATED.json`'s `annotations` block (docs/overlay.md section 2). */
+export const GENERATED_URL = "../GENERATED.json";
+/** The extension key the overlay's records carry its own facts under. */
+export const NAMESPACE = "org.mathlib-initiative.formal-companion.overlay";
 
 /** The viewer never reads a JSON file larger than this. */
 export const MAX_JSON_BYTES = 64 * 1024 * 1024;
@@ -32,25 +26,19 @@ export const MAX_JSON_BYTES = 64 * 1024 * 1024;
 /** `pdf.route` must start with this and carry no `..` (the contract's section 3). */
 export const ROUTE_PREFIX = "/__";
 
-/** Where the site root sits from `<output_root>/<mount>/viewer/index.html`. */
-export const DEFAULT_SITE_ROOT = "../../";
 export const DEFAULT_BACK_LINK = Object.freeze({ href: "../../index.html", text: "Back to the site" });
+export const DEFAULT_MOUNT = "pdf-overlay";
 export const DEFAULT_STORAGE_KEY = "formal-companion-overlay-page";
-export const DEFAULT_DOCUMENT_URL = "../annotations.json";
-export const CONFIG_URL = "../overlay.config.json";
 
 /** How many declaration cards one page of the card list holds. */
 export const CARD_PAGE_SIZE = 25;
 
-// --- vocabulary (the format's, copied as data the viewer can order by) -------
+// --- vocabulary -------------------------------------------------------------
 
-/** A link's `role`, in the order the card list shows them (the contract's section 4). */
+/** A link's role, in the order the card list shows them (the contract's section 4). */
 export const LINK_ROLES = Object.freeze(["key", "attributed", "support", "example", "helper"]);
 
-/** A cluster membership's `role`, in the order the fallback list shows them. */
-export const MEMBERSHIP_ROLES = Object.freeze(["primary", "support", "consumer"]);
-
-/** A verdict's `verdict`, and each `declarations[].verdict`. */
+/** A verdict's `verdict`, and each declaration's. */
 export const VERDICT_KINDS = Object.freeze([
   "faithful",
   "convention",
@@ -68,12 +56,10 @@ export const VERDICT_LABELS = Object.freeze({
 });
 
 /**
- * One generic line per coverage value: what the item's links do NOT show on
- * their own. The first six are the format's own values
- * (formal_companion_annotations.vocab.ANNOTATION_COVERAGE); `partial_only` and
- * `private_only` are the two further spellings docs/overlay.md
- * section 4 names, kept so a document written to the contract's wording also
- * reads. No value is ever guessed: an unknown one shows no summary.
+ * One generic line per status: what the item's links do NOT show on their
+ * own. `formalized`, `partial` and `not_formalized` are Literature Links'
+ * recommended values; the others are the curation classes the exporter writes
+ * verbatim. No value is ever guessed: an unknown one shows no summary.
  */
 export const COVERAGE_SUMMARIES = Object.freeze({
   example_only: "Formalised only by anonymous examples; no named declaration is attributed to it.",
@@ -81,13 +67,11 @@ export const COVERAGE_SUMMARIES = Object.freeze({
   not_formalized: "Not formalised in this companion.",
   out_of_scope: "Outside the scope this companion set itself.",
   partial: "Formalised only in part: the attributed declarations state a special case or one part of it.",
-  partial_only:
-    "Formalised only in part: the attributed declarations state a special case or one part of it.",
   private_only: "Stated only by a private declaration.",
   support_only: "Supported only by declarations that state a neighbouring item.",
 });
 
-/** Every coverage value `COVERAGE_SUMMARIES` has a line for, sorted. */
+/** Every status `COVERAGE_SUMMARIES` has a line for, sorted. */
 export const COVERAGE_VALUES = Object.freeze(Object.keys(COVERAGE_SUMMARIES).sort());
 
 // --- small helpers ----------------------------------------------------------
@@ -112,44 +96,10 @@ function plural(count, word) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
-/** Index a record array by its `id`; the first record of an id wins. */
-function byId(records) {
-  const index = new Map();
-  for (const record of asArray(records)) {
-    const id = isObject(record) ? text(record.id) : "";
-    if (id && !index.has(id)) {
-      index.set(id, record);
-    }
-  }
-  return index;
-}
-
-/** U+0000, spelled so it is visible in the source rather than a stray byte. */
-const VERDICT_KEY_SEPARATOR = String.fromCharCode(0);
-
-/**
- * The key one `verdicts[].declarations[]` entry is indexed under. A verdict
- * belongs to an (item, declaration) pair — the same declaration under another
- * item is another judgement — and the separator occurs in no id, so the two
- * parts of a key can never run together. `buildIndex` writes the same key.
- */
-function verdictKey(itemId, declarationId) {
-  return [itemId, declarationId].join(VERDICT_KEY_SEPARATOR);
-}
-
-function groupBy(records, key) {
-  const index = new Map();
-  for (const record of asArray(records)) {
-    const value = isObject(record) ? text(record[key]) : "";
-    if (!value) {
-      continue;
-    }
-    if (!index.has(value)) {
-      index.set(value, []);
-    }
-    index.get(value).push(record);
-  }
-  return index;
+/** The overlay's own extension object of a record, a source or a target, or {}. */
+export function extensionOf(node) {
+  const value = isObject(node) && isObject(node.extensions) ? node.extensions[NAMESPACE] : null;
+  return isObject(value) ? value : {};
 }
 
 // --- hashing ----------------------------------------------------------------
@@ -160,7 +110,7 @@ export function bytesToHex(bytes) {
 
 export async function sha256Hex(bytes, cryptoProvider = globalThis.crypto) {
   if (!cryptoProvider?.subtle) {
-    throw new Error("WebCrypto is unavailable; the PDF cannot be verified safely.");
+    throw new Error("WebCrypto is unavailable; the overlay data cannot be verified safely.");
   }
   const view = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
   const digest = await cryptoProvider.subtle.digest(
@@ -171,38 +121,21 @@ export async function sha256Hex(bytes, cryptoProvider = globalThis.crypto) {
 }
 
 /**
- * Compare the bytes with the sha256 the document's source record pins.
+ * Compare the bytes with the sha256 the records' book pin states.
  * The expected value is a parameter: no hash of any one PDF lives in a template.
  */
 export async function verifyPdfBytes(bytes, expected, cryptoProvider = globalThis.crypto) {
   const want = text(expected).toLowerCase();
   if (!/^[a-f\d]{64}$/.test(want)) {
-    throw new Error("The source record's sha256 is not 64 hex digits; the PDF cannot be verified.");
+    throw new Error("The source's sha256 is not 64 hex digits; the PDF cannot be verified.");
   }
   const actual = await sha256Hex(bytes, cryptoProvider);
   return { actual, expected: want, ok: actual === want };
 }
 
-// --- hrefs and fragments ----------------------------------------------------
+// --- hrefs ------------------------------------------------------------------
 
 const SCHEME = /^[a-z][a-z\d+.-]*:/i;
-
-/**
- * The grammar a destination's relative `href` follows (format section 3.6, the
- * same grammar as `SitePageSelector.path`): a path relative to the site root,
- * with no leading `/`, no `..` segment, and no whitespace, `#` or `:` (so it
- * can never read as a URL scheme). Returns the path, or null.
- */
-export function safeSitePath(value) {
-  const path = typeof value === "string" ? value : "";
-  if (!path || /[\s#:]/.test(path) || path.includes("\\")) {
-    return null;
-  }
-  if (path.startsWith("/") || /(^|\/)\.\.(\/|$)/.test(path)) {
-    return null;
-  }
-  return path;
-}
 
 /** An `https:` URL with no fragment of its own, or null. */
 export function safeHttpsUrl(value) {
@@ -210,20 +143,13 @@ export function safeHttpsUrl(value) {
   return /^https:\/\/[^\s#\\]+$/.test(url) ? url : null;
 }
 
-/** A fragment, percent-encoded, so no document string can escape the URL. */
-export function encodeFragment(fragment) {
-  const value = typeof fragment === "string" ? fragment : "";
-  return value ? encodeURIComponent(value) : "";
-}
-
 /**
- * The back link's own `href`, or null. It is the one href the config supplies
- * rather than the document, and its default (`../../index.html`) climbs out of
- * the mount, so the destination rule of the contract's section 4 cannot apply verbatim:
- * a relative path is accepted with its `..` segments, and an `https:` URL is
- * accepted whole, but a scheme-bearing (`javascript:`, `data:`), protocol-
- * relative or root-absolute value is refused so the page header can never
- * carry a live link the config smuggled in.
+ * The back link's own `href`, or null. It is the one href the config supplies,
+ * and its default (`../../index.html`) climbs out of the mount: a relative path
+ * is accepted with its `..` segments and an `https:` URL whole, but a
+ * scheme-bearing (`javascript:`, `data:`), protocol-relative or root-absolute
+ * value is refused so the header can never carry a live link the config
+ * smuggled in.
  */
 export function safeBackLinkHref(value) {
   const href = text(value);
@@ -240,48 +166,52 @@ export function safeBackLinkHref(value) {
 }
 
 /**
- * The directory a destination's relative `href` resolves against: the back
- * link's own directory. A back link that is absolute or carries a scheme is not
- * a relative path at all, so the default mount depth is used instead.
+ * Where a record's `target` leads, or null. Literature Links resolves a
+ * relative reference against the URL of the shard that holds the record
+ * (the specification's "References"), so `baseUrl` is the shard's URL. The
+ * result is used only when it is an `https:` URL or an `http(s):` URL of the
+ * page's own origin: a `javascript:`, `data:` or foreign plain-`http:` target
+ * is never a link.
  */
-export function siteRootFrom(href) {
-  const value = text(href);
-  if (!value || value.startsWith("/") || value.includes("\\") || SCHEME.test(value)) {
-    return DEFAULT_SITE_ROOT;
-  }
-  const cut = value.lastIndexOf("/");
-  return cut < 0 ? "" : value.slice(0, cut + 1);
-}
-
-/**
- * The href a destination record yields, or null when the record names nothing
- * this viewer is willing to link to. An `exact` destination appends its
- * percent-encoded `fragment`; a `fallback` one does not.
- */
-export function destinationHref(destination, root = DEFAULT_SITE_ROOT) {
-  if (!isObject(destination)) {
+export function targetHref(target, baseUrl, pageOrigin) {
+  const uri = typeof target === "string" ? target : isObject(target) ? target.uri : null;
+  if (typeof uri !== "string" || !uri || /[\s\\]/.test(uri)) {
     return null;
   }
-  const absolute = safeHttpsUrl(destination.href);
-  const relative = absolute ? null : safeSitePath(destination.href);
-  if (!absolute && !relative) {
+  let resolved;
+  try {
+    resolved = new URL(uri, baseUrl);
+  } catch {
     return null;
   }
-  const base = absolute ?? `${root}${relative}`;
-  if (destination.resolution !== "exact") {
-    return base;
+  if (resolved.username || resolved.password) {
+    return null;
   }
-  const fragment = encodeFragment(destination.fragment);
-  return fragment ? `${base}#${fragment}` : base;
+  if (resolved.protocol === "https:") {
+    return resolved.href;
+  }
+  if (resolved.protocol === "http:" && resolved.origin === pageOrigin) {
+    return resolved.href;
+  }
+  return null;
 }
 
 // --- the configuration ------------------------------------------------------
 
+/** `../` once per directory between `<mount>/viewer/` and the site root. */
+export function siteRootFor(mount) {
+  const parts = text(mount).split("/").filter(Boolean);
+  if (!parts.length || parts.some((part) => part === "." || part === "..")) {
+    fail(`overlay.config.json has site.mount ${JSON.stringify(mount)}; a mount is a relative path.`);
+  }
+  return "../".repeat(parts.length + 1);
+}
+
 /**
  * Read `overlay.config.json`: check what the viewer relies on, and fill in the
- * defaults of docs/overlay.md section 3 for everything else. The full
- * rule set is `tools/check_generated.py`'s; this is the subset the page needs
- * before it will fetch anything.
+ * defaults of docs/overlay.md section 3 for everything else. The full rule set
+ * is `tools/check_generated.py`'s; this is the subset the page needs before it
+ * will fetch anything.
  */
 export function readConfig(raw) {
   if (!isObject(raw)) {
@@ -308,21 +238,16 @@ export function readConfig(raw) {
          + `"${ROUTE_PREFIX}" and carries no "..".`);
   }
   const backLink = isObject(raw.back_link) ? raw.back_link : DEFAULT_BACK_LINK;
-  // An href the back-link rule refuses falls back to the default, which is the
-  // site index at the depth the mount sits at.
   const backHref = safeBackLinkHref(backLink.href) ?? DEFAULT_BACK_LINK.href;
   const display = isObject(raw.display) ? raw.display : {};
+  const site = isObject(raw.site) ? raw.site : {};
   return {
-    backLink: {
-      href: backHref,
-      text: text(backLink.text) || DEFAULT_BACK_LINK.text,
-    },
-    // Section 3's key table has no entry for the document's path: there is one
-    // place the generated document sits, and the viewer reads only that one.
-    documentUrl: DEFAULT_DOCUMENT_URL,
+    backLink: { href: backHref, text: text(backLink.text) || DEFAULT_BACK_LINK.text },
     lede: text(raw.lede),
     pdfRoute: route,
-    siteRoot: siteRootFrom(backHref),
+    // build_site.py publishes the shards at the site root, the same place
+    // relative to the built pages as in the repository; it is this far up.
+    siteRoot: siteRootFor(site.mount ?? DEFAULT_MOUNT),
     sourceId,
     storageKey: text(raw.storage_key) || DEFAULT_STORAGE_KEY,
     stripPrefix: text(display.strip_prefix),
@@ -330,233 +255,135 @@ export function readConfig(raw) {
   };
 }
 
-// --- the annotation format --------------------------------------------------
+// --- the shard list and the shards ------------------------------------------
+
+const SHARD_NAME = /^[0-9A-Za-z][0-9A-Za-z._-]*\.jsonl$/;
+
+function safeRelative(value) {
+  return typeof value === "string" && value !== "" && !value.includes("\\")
+    && !value.startsWith("/") && value.split("/").every((part) => part && part !== "." && part !== "..");
+}
 
 /**
- * Which documents the shipped annotation schema accepts: `{schema, version}`,
- * the schema's `properties.schema.const` and a `RegExp` anchored on its
- * `properties.schema_version.pattern`.
- *
- * A schema file that states neither is refused with a message rather than read
- * as "accept anything": the viewer has no second copy of the identity, and a
- * guess here would open a document the companion's own validator refuses.
+ * The shards `GENERATED.json` lists: `[{path, sha256}]`, each path inside the
+ * recorded directory. A browser cannot list a directory, so this list is how
+ * the viewer finds them, and each sha256 is checked when the shard arrives.
  */
-export function documentFormat(schemaJson) {
-  if (!isObject(schemaJson)) {
-    fail(`${DOCUMENT_SCHEMA_URL} must be a JSON Schema object.`);
+export function readShardList(generated) {
+  const block = isObject(generated) ? generated.annotations : null;
+  if (!isObject(block)) {
+    fail("GENERATED.json has no annotations block; `cf overlay export` and `cf overlay sync` write it.");
   }
-  const properties = isObject(schemaJson.properties) ? schemaJson.properties : {};
-  const schema = isObject(properties.schema) ? properties.schema : {};
-  const identity = text(schema.const);
-  if (!identity) {
-    fail(`${DOCUMENT_SCHEMA_URL} states no properties.schema.const, so the accepted `
-         + "document identity cannot be read. Re-run `cf overlay sync`.");
+  if (!safeRelative(block.directory)) {
+    fail("GENERATED.json names no relative annotations.directory.");
   }
-  const versions = isObject(properties.schema_version) ? properties.schema_version : {};
-  const pattern = text(versions.pattern);
-  if (!pattern) {
-    fail(`${DOCUMENT_SCHEMA_URL} states no properties.schema_version.pattern, so the `
-         + "accepted document versions cannot be read. Re-run `cf overlay sync`.");
-  }
-  let version;
-  try {
-    version = new RegExp(pattern);
-  } catch (error) {
-    fail(`${DOCUMENT_SCHEMA_URL} has a properties.schema_version.pattern that is not a `
-         + `regular expression (${error instanceof Error ? error.message : error}).`);
-  }
-  return { schema: identity, version };
-}
-
-/** Does *value* match the format's `schema_version` pattern end to end? */
-function matchesVersion(format, value) {
-  if (typeof value !== "string") {
-    return false;
-  }
-  const found = format.version.exec(value);
-  return Boolean(found) && found[0] === value;
-}
-
-// --- the annotation document ------------------------------------------------
-
-/**
- * The `kind: pdf` source the config names, after the three refusals of
- * docs/overlay.md section 4: the document's schema, its version, and a source
- * that carries `sha256` and `physical_page_count`. The first two are the
- * shipped schema's, through *format* (`documentFormat`).
- */
-export function pdfSource(doc, sourceId, format) {
-  if (!isObject(doc)) {
-    fail("The annotation document must be a JSON object.");
-  }
-  if (!isObject(format) || typeof format.schema !== "string" || !(format.version instanceof RegExp)) {
-    fail("The annotation format was not read from "
-         + `${DOCUMENT_SCHEMA_URL}; the viewer cannot judge this document.`);
-  }
-  if (doc.schema !== format.schema) {
-    fail(`The annotation document has schema ${JSON.stringify(doc.schema)}; expected `
-         + `${JSON.stringify(format.schema)}.`);
-  }
-  if (!matchesVersion(format, doc.schema_version)) {
-    fail(`The annotation document is schema_version ${JSON.stringify(doc.schema_version)}; this `
-         + `overlay ships a schema for ${format.version.source}.`);
-  }
-  const source = asArray(doc.sources).find((entry) => isObject(entry) && entry.id === sourceId);
-  if (!source) {
-    fail(`The annotation document has no source ${JSON.stringify(sourceId)}, which `
-         + "overlay.config.json names.");
-  }
-  if (source.kind !== "pdf") {
-    fail(`Source ${JSON.stringify(sourceId)} is kind ${JSON.stringify(source.kind)}; the overlay `
-         + "needs a pdf source.");
-  }
-  if (!/^[a-f\d]{64}$/.test(text(source.sha256))) {
-    fail(`Source ${JSON.stringify(sourceId)} carries no sha256, so its PDF cannot be verified.`);
-  }
-  if (!Number.isInteger(source.physical_page_count) || source.physical_page_count < 1) {
-    fail(`Source ${JSON.stringify(sourceId)} carries no physical_page_count.`);
-  }
-  return source;
-}
-
-// --- geometry (the format's PdfRegionSelector, format section 4.2) ----------
-
-/** The size of one physical page: its `page_sizes` range, else `page_size`. */
-export function pageSizeFor(source, page) {
-  for (const range of asArray(source?.page_sizes)) {
-    if (isObject(range) && range.first <= page && page <= range.last) {
-      return range;
+  const shards = asArray(block.shards).map((row, index) => {
+    const path = isObject(row) ? row.path : null;
+    const sha256 = isObject(row) ? text(row.sha256) : "";
+    const name = typeof path === "string" ? path.slice(block.directory.length + 1) : "";
+    if (!safeRelative(path) || !path.startsWith(`${block.directory}/`) || !SHARD_NAME.test(name)
+        || !/^[a-f\d]{64}$/.test(sha256)) {
+      fail(`GENERATED.json annotations.shards[${index}] is not {path: <directory>/<name>.jsonl, sha256}.`);
     }
+    return { path, sha256 };
+  });
+  if (!shards.length) {
+    fail("GENERATED.json lists no shard; `cf overlay export` writes them.");
   }
-  return isObject(source?.page_size) ? source.page_size : null;
+  return { directory: block.directory, shards };
+}
+
+/** The annotations of one JSONL shard, one per nonblank line. */
+export function parseShard(source, label) {
+  const records = [];
+  source.split("\n").forEach((line, index) => {
+    if (!line.replace(/[ \t\r]/g, "")) {
+      return;
+    }
+    let value;
+    try {
+      value = JSON.parse(line);
+    } catch (error) {
+      fail(`${label}:${index + 1} is not JSON (${error instanceof Error ? error.message : error}).`);
+    }
+    if (!isObject(value)) {
+      fail(`${label}:${index + 1} is not an annotation object.`);
+    }
+    records.push(value);
+  });
+  return records;
+}
+
+// --- geometry (Literature Links' PDF location) -------------------------------
+
+const EPSILON = 1e-9;
+
+function fraction(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
 }
 
 /**
- * The quadrilaterals one `PdfRegionSelector` covers, as fractions of the page
- * with the origin at the top left — whatever `units` (`normalized` or `pt`) and
- * `origin` (`top_left` or `bottom_left`) the selector declares. `pt` needs the
- * source's `page_size` or a matching `page_sizes` range; without one the region
- * cannot be placed and this throws rather than guessing a page size.
+ * `{page, quads}` of a record's PDF location: its `rect`, `[x, y, width,
+ * height]` as fractions of the displayed page from the top left, or the
+ * extension's quads when the region was drawn as quadrilaterals. A location
+ * this viewer cannot place throws; the caller drops the record and says so.
  */
-export function regionQuads(selector, source) {
-  if (!isObject(selector) || selector.type !== "PdfRegionSelector") {
-    fail("A region is a PdfRegionSelector.");
-  }
-  const page = selector.page;
+export function recordRegion(record) {
+  const location = isObject(record) ? record.location : null;
+  const page = isObject(location) ? location.page : undefined;
   if (!Number.isInteger(page) || page < 1) {
-    fail("A PdfRegionSelector names a 1-based physical page.");
+    fail("A record has no physical page.");
   }
-  const space = selector.coordinate_space;
-  if (!isObject(space)) {
-    fail(`The region on page ${page} declares no coordinate_space.`);
+  const rect = location.rect;
+  if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(fraction)) {
+    fail(`The record on page ${page} has no rect of four page fractions.`);
   }
-  if (space.origin !== "top_left" && space.origin !== "bottom_left") {
-    fail(`The region on page ${page} has an unknown coordinate origin `
-         + `${JSON.stringify(space.origin)}.`);
+  const [x, y, width, height] = rect;
+  if (!(width > 0 && height > 0) || x + width > 1 + EPSILON || y + height > 1 + EPSILON) {
+    fail(`The record on page ${page} has a rect with no area or off the page.`);
   }
-  let width = 1;
-  let height = 1;
-  if (space.units === "pt") {
-    const size = pageSizeFor(source, page);
-    if (!size || !(size.width_pt > 0) || !(size.height_pt > 0)) {
-      fail(`The region on page ${page} is in pt, and the source gives no page size for that page.`);
-    }
-    width = size.width_pt;
-    height = size.height_pt;
-  } else if (space.units !== "normalized") {
-    fail(`The region on page ${page} has unknown coordinate units `
-         + `${JSON.stringify(space.units)}.`);
+  const quads = asArray(extensionOf(record).quads);
+  if (quads.length) {
+    return {
+      page,
+      quads: quads.map((quad) => {
+        if (!Array.isArray(quad) || quad.length !== 8 || !quad.every(fraction)) {
+          fail(`The record on page ${page} has a malformed quad.`);
+        }
+        return [0, 2, 4, 6].map((n) => [quad[n], quad[n + 1]]);
+      }),
+    };
   }
-  const flip = space.origin === "bottom_left";
-  const point = (x, y) => {
-    const fx = Number(x) / width;
-    const fy = Number(y) / height;
-    if (!Number.isFinite(fx) || !Number.isFinite(fy)) {
-      fail(`The region on page ${page} has non-finite coordinates.`);
-    }
-    const top = flip ? 1 - fy : fy;
-    if (fx < 0 || fx > 1 || top < 0 || top > 1) {
-      fail(`The region on page ${page} leaves the page.`);
-    }
-    return [fx, top];
-  };
-
-  if (isObject(selector.rect)) {
-    const { rect } = selector;
-    const [ax, ay] = point(rect.x0, rect.y0);
-    const [bx, by] = point(rect.x1, rect.y1);
-    const x0 = Math.min(ax, bx);
-    const x1 = Math.max(ax, bx);
-    const y0 = Math.min(ay, by);
-    const y1 = Math.max(ay, by);
-    if (x0 === x1 || y0 === y1) {
-      fail(`The region on page ${page} has no area.`);
-    }
-    return [[[x0, y0], [x1, y0], [x1, y1], [x0, y1]]];
-  }
-  if (Array.isArray(selector.quads) && selector.quads.length) {
-    return selector.quads.map((quad) => {
-      if (!isObject(quad)) {
-        fail(`The region on page ${page} has a malformed quad.`);
-      }
-      const corners = [0, 1, 2, 3].map((n) => point(quad[`x${n}`], quad[`y${n}`]));
-      const distinct = new Set(corners.map(([x, y]) => `${x},${y}`));
-      if (distinct.size < 3) {
-        fail(`The region on page ${page} has a quad with fewer than three distinct corners.`);
-      }
-      return corners;
-    });
-  }
-  fail(`The region on page ${page} carries neither a rect nor quads.`);
-  return [];
+  return { page, quads: [[[x, y], [x + width, y], [x + width, y + height], [x, y + height]]] };
 }
 
-/** A point in page fractions (top-left origin) placed in a PDF.js viewport. */
-export function normalizedPointToViewport(point, pageView, viewport) {
+/**
+ * A point in fractions of the displayed page (top-left origin, after the
+ * page's own rotation) placed in a PDF.js viewport. `displayed` is the page's
+ * viewport at its own rotation and scale 1; its `convertToPdfPoint` takes the
+ * point back to PDF space, whatever extra rotation `viewport` carries.
+ */
+export function pointToViewport(point, displayed, viewport) {
   const [x, y] = Array.isArray(point) ? point.map(Number) : [NaN, NaN];
   if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) {
     throw new Error("Overlay coordinates must be finite page fractions in [0, 1].");
   }
-  if (!Array.isArray(pageView) || pageView.length !== 4) {
-    throw new Error("A PDF page view box must have four coordinates.");
-  }
-  const [xMin, yMin, xMax, yMax] = pageView.map(Number);
-  if (![xMin, yMin, xMax, yMax].every(Number.isFinite) || xMax <= xMin || yMax <= yMin) {
-    throw new Error("The PDF page view box is invalid.");
+  if (!(displayed?.width > 0) || !(displayed?.height > 0)
+      || typeof displayed.convertToPdfPoint !== "function") {
+    throw new Error("The displayed page viewport is invalid.");
   }
   if (typeof viewport?.convertToViewportPoint !== "function") {
     throw new Error("A PDF.js viewport is required for overlay transformation.");
   }
-  return viewport.convertToViewportPoint(xMin + x * (xMax - xMin), yMax - y * (yMax - yMin));
+  const [px, py] = displayed.convertToPdfPoint(x * displayed.width, y * displayed.height);
+  return viewport.convertToViewportPoint(px, py);
 }
 
-export function quadToViewport(quad, pageView, viewport) {
+export function quadToViewport(quad, displayed, viewport) {
   if (!Array.isArray(quad) || quad.length !== 4) {
     throw new Error("An overlay quadrilateral must contain four points.");
   }
-  return quad.map((point) => normalizedPointToViewport(point, pageView, viewport));
-}
-
-/**
- * Every `PdfRegionSelector` one `target.selector` alternative reaches, through
- * `refinedBy` and through either end of a `RangeSelector`. Alternatives select
- * the same span, so a caller takes the first one that yields any.
- */
-export function regionSelectors(alternative) {
-  const found = [];
-  const walk = (node) => {
-    if (!isObject(node)) {
-      return;
-    }
-    if (node.type === "PdfRegionSelector") {
-      found.push(node);
-    }
-    walk(node.refinedBy);
-    walk(node.startSelector);
-    walk(node.endSelector);
-  };
-  walk(alternative);
-  return found;
+  return quad.map((point) => pointToViewport(point, displayed, viewport));
 }
 
 // --- verdict display --------------------------------------------------------
@@ -612,74 +439,58 @@ export function resolutionText(resolution) {
 
 // --- coverage and summaries -------------------------------------------------
 
-/** The generic one-line summary of a coverage value, or "" for an unknown one. */
+/** The generic one-line summary of a status, or "" for an unknown one. */
 export function coverageSummary(coverage) {
   return COVERAGE_SUMMARIES[coverage] ?? "";
 }
 
-/**
- * The line above the card list. A coverage value speaks for the item; otherwise
- * the line counts what is shown, and says plainly when the rows come from the
- * item's clusters rather than from links of its own.
- */
-export function cardSummaryText({ clusters = 0, coverage = null, fallback = false, shown = 0 }) {
+/** The line above the card list: the status speaks for the item, else a count. */
+export function cardSummaryText({ coverage = null, shown = 0 }) {
   const summary = coverage ? coverageSummary(coverage) : "";
   if (summary) {
     return summary;
   }
-  if (fallback) {
-    return `No declaration is linked to this item; showing ${plural(shown, "declaration")} `
-      + `from ${plural(clusters, "cluster")} it belongs to.`;
-  }
-  return `${plural(shown, "linked declaration")}.`;
+  return shown ? `${plural(shown, "linked declaration")}.` : "No declaration is linked to this item.";
 }
 
 // --- the index --------------------------------------------------------------
 
-function itemLabel(item) {
-  const label = text(item.label);
-  if (label) {
-    return label;
-  }
-  if (item.form === "numbered") {
-    const sub = text(item.sub);
-    return `${text(item.kind)} ${text(item.number)}${sub ? `(${sub})` : ""}`.trim();
-  }
-  return text(item.title) || text(item.id);
+function statusValue(status) {
+  return isObject(status) ? text(status.value) : text(status);
 }
 
-function itemLocator(item) {
-  const parts = [];
-  const section = text(item.section);
-  if (section) {
-    parts.push(section);
+function itemLocator(pages) {
+  if (!isObject(pages) || !Number.isInteger(pages.first)) {
+    return "";
   }
-  if (isObject(item.pages)) {
-    const { first } = item.pages;
-    const last = item.pages.last ?? first;
-    const span = first === last ? `p. ${first}` : `pp. ${first}-${last}`;
-    parts.push(`${span} (${text(item.pages.basis) || "physical"})`);
-  }
-  return parts.join(" · ");
+  const last = pages.last ?? pages.first;
+  const span = pages.first === last ? `p. ${pages.first}` : `pp. ${pages.first}-${last}`;
+  return `${span} (${text(pages.basis) || "physical"})`;
 }
 
 function stripPrefix(name, prefix) {
   return prefix && name.startsWith(prefix) ? name.slice(prefix.length) : name;
 }
 
-function declarationCard(declaration, context, extra) {
-  const id = text(declaration?.id) || text(extra.declarationId);
-  const fullName = text(declaration?.name) || id;
-  const destination = context.destinations.get(id) ?? null;
-  const href = destinationHref(destination, context.siteRoot);
+function card(record, ext, context) {
+  const target = record.target;
+  const pin = isObject(target) && isObject(target.pin) ? target.pin : {};
+  const declaration = isObject(ext.declaration) ? ext.declaration : {};
+  const destination = isObject(ext.destination) ? ext.destination : null;
+  const uri = typeof target === "string" ? target : text(target?.uri);
+  const fullName = text(pin.declaration) || text(declaration.id) || uri;
+  // The overlay's own records say whether the target is a rendered page; a
+  // record from elsewhere does not, and its target is taken as one.
+  const ours = Boolean(text(ext.role));
+  const href = !ours || destination ? targetHref(target, context.baseUrl, context.pageOrigin) : null;
   const badges = [];
-  if (declaration?.private) {
+  if (declaration.private) {
     badges.push("private");
   }
-  if (declaration?.anonymous) {
+  if (declaration.anonymous) {
     badges.push("anonymous");
   }
-  if (declaration?.sorry && declaration.sorry !== "none") {
+  if (text(declaration.sorry) && declaration.sorry !== "none") {
     badges.push(`sorry: ${declaration.sorry}`);
   }
   if (destination?.resolution === "fallback") {
@@ -688,248 +499,170 @@ function declarationCard(declaration, context, extra) {
   if (!href) {
     badges.push("unlinked");
   }
-  const snippet = context.snippets.get(id) ?? null;
+  const snippet = isObject(ext.snippet) && text(ext.snippet.text)
+    ? { line: Number.isInteger(ext.snippet.line) ? ext.snippet.line : null, text: ext.snippet.text }
+    : null;
+  const verdict = isObject(ext.declaration_verdict) && text(ext.declaration_verdict.verdict)
+    ? {
+      note: text(ext.declaration_verdict.note),
+      status: text(ext.declaration_verdict.status),
+      verdict: text(ext.declaration_verdict.verdict),
+    }
+    : null;
   return {
     badges,
-    declarationId: id,
+    declarationId: text(declaration.id) || fullName,
     fallbackLabel: destination?.resolution === "fallback" ? text(destination.fallback_label) : "",
     fullName,
     href,
-    kind: text(declaration?.kind),
-    module: text(declaration?.module),
+    id: text(record.id),
+    kind: text(declaration.kind),
+    module: text(pin.module),
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
+    relation: text(ext.relation),
     resolution: text(destination?.resolution),
-    snippet: snippet ? { line: snippet.line ?? null, text: text(snippet.text) } : null,
-    verdict: context.verdictsByDeclaration.get(verdictKey(extra.itemId, id)) ?? null,
-    ...extra,
+    role: text(ext.role),
+    snippet,
+    verdict,
   };
 }
 
-function clusterCard(cluster, context, extra) {
-  return {
-    badges: ["cluster"],
-    cluster: { id: text(cluster?.id), locator: text(cluster?.locator), title: text(cluster?.title) },
-    declarationId: "",
-    fallbackLabel: "",
-    fullName: text(cluster?.title) || text(cluster?.id),
-    href: null,
-    kind: "",
-    module: "",
-    name: text(cluster?.title) || text(cluster?.id),
-    resolution: "",
-    snippet: null,
-    verdict: null,
-    ...extra,
-  };
-}
-
-function orderCards(cards, order) {
+function orderCards(cards) {
   return cards
-    .map((card, index) => ({ card, index }))
+    .map((entry, index) => ({ entry, index }))
     .sort((left, right) => {
-      const a = order.indexOf(left.card.role);
-      const b = order.indexOf(right.card.role);
-      const rank = (a < 0 ? order.length : a) - (b < 0 ? order.length : b);
+      const a = LINK_ROLES.indexOf(left.entry.role);
+      const b = LINK_ROLES.indexOf(right.entry.role);
+      const rank = (a < 0 ? LINK_ROLES.length : a) - (b < 0 ? LINK_ROLES.length : b);
       return rank !== 0 ? rank : left.index - right.index;
     })
-    .map((entry) => entry.card);
+    .map(({ entry }) => entry);
 }
 
-function buildItem(item, context) {
-  const id = text(item.id);
-  const links = (context.linksByItem.get(id) ?? []).filter((link) => !link.orphaned);
-  const cards = orderCards(
-    links.map((link) => {
-      const shared = {
-        fallback: false,
-        id: text(link.id),
-        itemId: id,
-        note: text(link.note),
-        relation: text(link.relation),
-        role: text(link.role),
-      };
-      if (text(link.declaration)) {
-        return declarationCard(context.declarations.get(text(link.declaration)), context, {
-          ...shared,
-          declarationId: text(link.declaration),
-        });
+function ofSource(record, sourceId) {
+  return isObject(record) && isObject(record.source) && record.source.type === "pdf"
+    && extensionOf(record.source).source_id === sourceId;
+}
+
+/**
+ * The PDF the config names: the `source` of the records whose overlay
+ * extension carries its `source_id`. Every such record must cite the same
+ * bytes; two different sha256 under one id is a refusal.
+ */
+export function pdfSource(shards, sourceId) {
+  let found = null;
+  for (const shard of asArray(shards)) {
+    for (const record of asArray(shard.records)) {
+      if (!ofSource(record, sourceId)) {
+        continue;
       }
-      return clusterCard(context.clusters.get(text(link.cluster)), context, shared);
-    }),
-    LINK_ROLES,
-  );
-
-  // The item's `cluster_fallback` case (format section 3.2): an item with no
-  // links of its own but with clusters is shown through those clusters'
-  // memberships, labelled as a fallback.
-  const clusterIds = asArray(item.clusters).map(text).filter(Boolean);
-  const fallbackCards = cards.length === 0
-    ? orderCards(
-      clusterIds.flatMap((clusterId) =>
-        (context.membershipsByCluster.get(clusterId) ?? [])
-          .filter((member) => text(member.declaration))
-          .map((member) => declarationCard(
-            context.declarations.get(text(member.declaration)),
-            context,
-            {
-              cluster: {
-                id: clusterId,
-                locator: text(context.clusters.get(clusterId)?.locator),
-                title: text(context.clusters.get(clusterId)?.title),
-              },
-              declarationId: text(member.declaration),
-              fallback: true,
-              id: text(member.id),
-              itemId: id,
-              note: "",
-              relation: "",
-              role: text(member.role),
-            },
-          ))),
-      MEMBERSHIP_ROLES,
-    )
-    : [];
-  const usesFallback = fallbackCards.length > 0;
-
-  return {
-    cards: usesFallback ? fallbackCards : cards,
-    clusterIds,
-    clusterTitles: clusterIds.map((clusterId) =>
-      text(context.clusters.get(clusterId)?.title) || clusterId),
-    coverage: text(item.coverage),
-    // The format carries a producer's note under the `x_` extension prefix;
-    // docs/overlay.md section 4 spells it without one, so both read.
-    coverageNote: text(item.coverage_note) || text(item.x_coverage_note),
-    id,
-    kind: text(item.kind),
-    label: itemLabel(item),
-    locator: itemLocator(item),
-    roles: [...new Set((usesFallback ? fallbackCards : cards).map((card) => card.role))],
-    usesFallback,
-    verdicts: context.verdictsByItem.get(id) ?? [],
-  };
+      const pin = isObject(record.source.pin) ? record.source.pin : {};
+      const sha256 = text(pin.sha256).toLowerCase();
+      if (!found) {
+        found = { sha256, source: record.source };
+      } else if (found.sha256 !== sha256) {
+        fail(`The records of ${JSON.stringify(sourceId)} cite two different PDFs.`);
+      }
+    }
+  }
+  if (!found) {
+    fail(`No shard holds a record of the PDF ${JSON.stringify(sourceId)}, which overlay.config.json `
+         + "names.");
+  }
+  if (!/^[a-f\d]{64}$/.test(found.sha256)) {
+    fail(`The PDF ${JSON.stringify(sourceId)} pins no sha256, so it cannot be verified.`);
+  }
+  return found.source;
 }
 
 /**
  * The page → region → item → card index the viewer renders, built purely from
- * the annotation document and the configuration.
+ * the shards (`[{url, records}]`) and the configuration.
  *
- * `warnings` holds one line per location this build could not place (a region
- * in `pt` on a page with no declared size, coordinates off the page); such a
- * location is dropped, never guessed at.
+ * A record is one link: its region is its `location`, its item and region ids
+ * are the extension's, and a record with a `target` adds one card to its item
+ * (once per item, however many regions repeat it). `warnings` holds one line
+ * per record this build could not place; such a record is dropped, never
+ * guessed at.
  */
-export function buildIndex(doc, config, format) {
-  const source = pdfSource(doc, config.sourceId, format);
-  const context = {
-    clusters: byId(doc.clusters),
-    declarations: byId(doc.declarations),
-    destinations: new Map(),
-    linksByItem: groupBy(doc.links, "item"),
-    membershipsByCluster: groupBy(doc.memberships, "cluster"),
-    siteRoot: config.siteRoot ?? DEFAULT_SITE_ROOT,
-    snippets: new Map(),
-    stripPrefix: config.stripPrefix ?? "",
-    verdictsByDeclaration: new Map(),
-    verdictsByItem: new Map(),
-  };
-  for (const snippet of asArray(doc.snippets)) {
-    const declaration = text(snippet?.declaration);
-    if (declaration && !context.snippets.has(declaration)) {
-      context.snippets.set(declaration, snippet);
-    }
-  }
-  for (const destination of asArray(doc.destinations)) {
-    const declaration = text(destination?.declaration);
-    if (declaration && !context.destinations.has(declaration)) {
-      context.destinations.set(declaration, destination);
-    }
-  }
-  for (const verdict of asArray(doc.verdicts)) {
-    const itemId = text(verdict?.item);
-    if (!itemId) {
-      continue;
-    }
-    if (!context.verdictsByItem.has(itemId)) {
-      context.verdictsByItem.set(itemId, []);
-    }
-    context.verdictsByItem.get(itemId).push(verdict);
-    for (const entry of asArray(verdict.declarations)) {
-      const key = verdictKey(itemId, text(entry?.declaration));
-      if (text(entry?.declaration) && !context.verdictsByDeclaration.has(key)) {
-        context.verdictsByDeclaration.set(key, {
-          declaration: text(entry.declaration),
-          note: text(entry.note),
-          status: text(verdict.status),
-          verdict: text(entry.verdict),
-        });
-      }
-    }
-  }
-
+export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
+  const source = pdfSource(shards, config.sourceId);
+  const pin = isObject(source.pin) ? source.pin : {};
+  const sourceExt = extensionOf(source);
+  const pageCount = Number.isInteger(sourceExt.physical_page_count) ? sourceExt.physical_page_count : null;
   const items = new Map();
-  for (const item of asArray(doc.items)) {
-    if (isObject(item) && item.source === config.sourceId && text(item.id)) {
-      items.set(text(item.id), buildItem(item, context));
-    }
-  }
-
-  const regions = [];
+  const regions = new Map();
+  const seen = new Map();
   const warnings = [];
-  for (const location of asArray(doc.locations)) {
-    if (!isObject(location) || location.target?.source !== config.sourceId) {
-      continue;
-    }
-    let selectors = [];
-    for (const alternative of asArray(location.target?.selector)) {
-      selectors = regionSelectors(alternative);
-      if (selectors.length) {
-        break;
+  for (const shard of asArray(shards)) {
+    const context = { baseUrl: shard.url, pageOrigin, stripPrefix: config.stripPrefix ?? "" };
+    for (const record of asArray(shard.records)) {
+      if (!ofSource(record, config.sourceId)) {
+        continue;
       }
-    }
-    if (!selectors.length) {
-      continue;
-    }
-    const shown = asArray(location.items).map(text).filter((id) => items.has(id));
-    selectors.forEach((selector, index) => {
-      let quads;
+      const ext = extensionOf(record);
+      let place;
       try {
-        quads = regionQuads(selector, source);
+        place = recordRegion(record);
       } catch (error) {
-        warnings.push(`${text(location.id)}: ${error instanceof Error ? error.message : error}`);
-        return;
+        warnings.push(`${text(record.id) || shard.url}: ${error instanceof Error ? error.message : error}`);
+        continue;
       }
-      if (selector.page > source.physical_page_count) {
-        warnings.push(`${text(location.id)}: page ${selector.page} is past the source's `
-                      + `${source.physical_page_count} physical pages.`);
-        return;
+      if (pageCount !== null && place.page > pageCount) {
+        warnings.push(`${text(record.id)}: page ${place.page} is past the source's ${pageCount} pages.`);
+        continue;
       }
-      regions.push({
-        id: selectors.length === 1 ? text(location.id) : `${text(location.id)}#${index}`,
-        itemIds: shown,
-        label: shown.map((id) => items.get(id).label).join(" + ") || text(location.id),
-        locationId: text(location.id),
-        page: selector.page,
-        quads,
-      });
-    });
+      const itemId = text(ext.item) || text(record.id) || text(record.label) || `p${place.page}`;
+      const regionId = text(ext.region) || `p${place.page}:${record.location.rect.join(",")}`;
+      if (!items.has(itemId)) {
+        items.set(itemId, {
+          cards: [],
+          clusterIds: asArray(ext.clusters).map(text).filter(Boolean),
+          coverage: statusValue(record.status),
+          coverageNote: text(record.note),
+          id: itemId,
+          kind: text(record.kind),
+          label: text(record.label) || itemId,
+          locator: itemLocator(ext.pages),
+          verdicts: asArray(ext.verdicts).filter(isObject),
+        });
+        seen.set(itemId, new Set());
+      }
+      const key = text(record.id) || JSON.stringify(record.target);
+      if (record.target !== undefined && !seen.get(itemId).has(key)) {
+        seen.get(itemId).add(key);
+        items.get(itemId).cards.push(card(record, ext, context));
+      }
+      if (!regions.has(regionId)) {
+        regions.set(regionId, { id: regionId, itemIds: [], page: place.page, quads: place.quads });
+      }
+      const region = regions.get(regionId);
+      if (!region.itemIds.includes(itemId)) {
+        region.itemIds.push(itemId);
+      }
+    }
   }
-
+  for (const item of items.values()) {
+    item.cards = orderCards(item.cards);
+    item.roles = [...new Set(item.cards.map((entry) => entry.role))];
+  }
   const pages = new Map();
-  for (const region of regions) {
+  for (const region of regions.values()) {
+    region.label = region.itemIds.map((id) => items.get(id).label).join(" + ");
     if (!pages.has(region.page)) {
       pages.set(region.page, []);
     }
     pages.get(region.page).push(region);
   }
-
   return {
+    bytes: Number.isInteger(sourceExt.bytes) ? sourceExt.bytes : null,
     items,
-    pageCount: source.physical_page_count,
+    pageCount,
     pages,
-    regions,
-    sha256: text(source.sha256).toLowerCase(),
+    regions: [...regions.values()],
+    sha256: text(pin.sha256).toLowerCase(),
     source,
-    sourceTitle: text(source.title),
+    sourceTitle: text(pin.title),
     warnings,
   };
 }
@@ -939,14 +672,14 @@ export function buildIndex(doc, config, format) {
 export function cardsMatching(cards, filters = {}) {
   const role = text(filters.role);
   const query = text(filters.query).toLocaleLowerCase();
-  return asArray(cards).filter((card) => {
-    if (role && card.role !== role) {
+  return asArray(cards).filter((entry) => {
+    if (role && entry.role !== role) {
       return false;
     }
     if (!query) {
       return true;
     }
-    return [card.fullName, card.name, card.module, card.kind, card.declarationId]
+    return [entry.fullName, entry.name, entry.module, entry.kind, entry.declarationId]
       .join("\n")
       .toLocaleLowerCase()
       .includes(query);
@@ -970,12 +703,12 @@ export function paginateCards(cards, requestedPage, pageSize = CARD_PAGE_SIZE) {
 /** The cards grouped by role, in the role order the list is already sorted by. */
 export function groupCards(cards) {
   const groups = [];
-  for (const card of asArray(cards)) {
+  for (const entry of asArray(cards)) {
     const last = groups[groups.length - 1];
-    if (last && last.role === card.role) {
-      last.cards.push(card);
+    if (last && last.role === entry.role) {
+      last.cards.push(entry);
     } else {
-      groups.push({ cards: [card], role: card.role });
+      groups.push({ cards: [entry], role: entry.role });
     }
   }
   return groups;

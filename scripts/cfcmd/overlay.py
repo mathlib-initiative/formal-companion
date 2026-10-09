@@ -13,12 +13,13 @@ section 6 of `docs/overlay.md`:
     cf overlay destinations --site <built site> --doc <document> --out fragment.json
 
 It is the one command that writes into a companion repository, and it writes
-only under `<companion>/pdf-overlay/` (contract rule 5, CLAUDE.md S4,
-CONTRIBUTING.md invariant 3, SKILL.md rule 10).  `geometry` and `destinations`
+only under `<companion>/pdf-overlay/` and, for `export`, the shard directory
+`<companion>/annotations/` (contract rule 5, CLAUDE.md S4, CONTRIBUTING.md
+invariant 3, SKILL.md rule 10).  `geometry` and `destinations`
 write a document FRAGMENT wherever the user says and touch no companion at all.
 
 No workspace is needed: a companion's overlay is generated from this checkout
-and the companion's own document, so `cf overlay` runs in a clone with nothing
+and the companion's own data, so `cf overlay` runs in a clone with nothing
 set up -- the same reason `cf sources validate-registry` takes no workspace.
 
 `geometry` and `destinations` are the producers' own parsers mounted here with
@@ -54,7 +55,7 @@ def register(subparsers) -> None:
     init = sub.add_parser("init", help="write pdf-overlay/overlay.config.json from the example")
     init.add_argument("companion", type=Path, help="the companion's checkout")
     init.add_argument("--source-id", required=True,
-                      help="the id of the kind: pdf source in annotations.json")
+                      help="the id of the PDF source the overlay shows (the exporter's kind: pdf source)")
     init.add_argument("--title", required=True, help="the page title and heading")
     init.add_argument("--file-name", help="the cached PDF's file name "
                                           "(default: <source-id>.pdf)")
@@ -62,22 +63,25 @@ def register(subparsers) -> None:
                       help="overwrite a config that is already there")
 
     syn = sub.add_parser("sync", help="copy the runtime into pdf-overlay/ and write "
-                                      "GENERATED.json")
+                                      "GENERATED.json with the shard list")
     syn.add_argument("companion", type=Path, help="the companion's checkout")
     syn.add_argument("--check", action="store_true", dest="check_only",
                      help="write nothing; exit 1 naming every missing, changed or "
                           "extra file")
 
-    chk = sub.add_parser("check", help="verify the generated directory, the config and "
-                                       "the annotation document")
+    chk = sub.add_parser("check", help="verify the generated directory, the config, the "
+                                       "shards and the curation inputs they were exported from")
     chk.add_argument("companion", type=Path, help="the companion's checkout")
 
-    exp = sub.add_parser("export", help="run a cf export convention into "
-                                        "pdf-overlay/annotations.json")
+    exp = sub.add_parser("export", help="run a cf export convention and write its Literature "
+                                        "Links shards into annotations/")
     exp.add_argument("companion", type=Path, help="the companion's checkout")
     exp.add_argument("--convention", required=True, choices=list(overlay_export.CONVENTIONS),
                      help="which cf export subcommand writes this companion's document")
     exp.add_argument("--commit", required=True, help="the commit the checkout must be at")
+    exp.add_argument("--source-id",
+                     help="the kind: pdf source to export (default: the config's source_id, else "
+                          "the document's only pdf source)")
     exp.add_argument("exporter_args", nargs="*", metavar="ARG",
                      help="everything after a bare `--` is passed to `cf export` "
                           "unchanged (--data-dir, --ledger, --pdf, ...)")
@@ -155,16 +159,19 @@ def _check(args) -> int:
         log.error(f"{len(problems)} problem(s) in "
                   f"{args.companion}/{overlay_sync.OVERLAY_DIRNAME}")
         return 1
-    log.ok(f"{args.companion}/{overlay_sync.OVERLAY_DIRNAME} is generated, configured "
-           f"and carries a valid document")
+    log.ok(f"{args.companion}/{overlay_sync.OVERLAY_DIRNAME} is generated and configured, and "
+           f"its shards are valid and current")
     return 0
 
 
 def _export(args) -> int:
-    path = overlay_export.export(args.companion, convention=args.convention,
-                                 commit=args.commit, extra=args.exporter_args)
-    log.ok(f"wrote {path}")
-    log.info(f"next: `cf overlay check {args.companion}`")
+    result = overlay_export.export(args.companion, convention=args.convention, commit=args.commit,
+                                   source_id=args.source_id, extra=args.exporter_args)
+    log.ok(f"wrote {len(result.shards)} shards, {sum(result.shards.values())} records, "
+           f"into {result.directory}")
+    for name in result.deleted:
+        log.detail(f"deleted {name}")
+    log.info(f"next: `cf overlay sync {args.companion}`, then `cf overlay check {args.companion}`")
     return 0
 
 

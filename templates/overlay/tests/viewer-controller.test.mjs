@@ -3,14 +3,9 @@
  *
  * Every run here drives `bootstrapViewer` with a fake document built from the
  * real `runtime/viewer/index.html`, a fetch that serves a synthetic
- * `overlay.config.json`, a synthetic annotation format schema, a synthetic
- * annotation document and synthetic PDF bytes, and a fake PDF.js. The pure
- * half is covered in viewer-core.test.mjs.
- *
- * The format is synthetic too (`example/annotations`, major 7): the viewer
- * takes the identity it accepts from `../schema/annotations.schema.json`, so a
- * suite that served the real identity would pass against a viewer that had
- * never fetched that file.
+ * `overlay.config.json`, a synthetic `GENERATED.json`, synthetic Literature
+ * Links shards and synthetic PDF bytes, and a fake PDF.js. The pure half is
+ * covered in viewer-core.test.mjs.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -19,26 +14,28 @@ import { sha256Hex } from "../runtime/viewer/viewer-core.js";
 import { bootstrapViewer, isViewerShortcut, rememberedPage } from "../runtime/viewer/viewer.js";
 import {
   FakeOption,
+  ORIGIN,
+  PAGE_URL,
   PDF_BYTES,
   PDF_ROUTE,
-  SCHEMA_ID,
   fakeDocument,
   fakePdfjs,
   fakeSha256,
   fire,
   jsonResponse,
   makeConfig,
-  makeDocument,
-  makeFormatSchema,
+  makeGenerated,
+  makeShards,
   memoryStorage,
   notFound,
+  shardText,
   shellHtml,
   throwingStorage,
 } from "./fixtures.mjs";
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
 const SHELL = await shellHtml();
-const SCHEMA_URL = "../schema/annotations.schema.json";
+const SHARD_URLS = [`${ORIGIN}/annotations/1.jsonl`, `${ORIGIN}/annotations/2.jsonl`];
 
 /** Node has no `Option` constructor; `setOptions` builds its rows with one. */
 function withOption(t) {
@@ -57,14 +54,16 @@ function pdfResponse(bytes = PDF_BYTES, { contentType = "application/pdf", ok = 
 
 async function start({
   config = makeConfig(),
-  doc = makeDocument(PDF_SHA256),
+  shards = makeShards(PDF_SHA256),
+  generated = undefined,
   documentRef = fakeDocument(SHELL),
-  formatSchema = makeFormatSchema(),
   locationRef = { hash: "" },
   pdf = () => pdfResponse(),
   pdfjs = fakePdfjs(),
+  served = {},
   storage = memoryStorage(),
 } = {}) {
+  const record = generated === undefined ? await makeGenerated(shards) : generated;
   const urls = [];
   const historyRef = { replaceState: (_state, _title, url) => urls.push(url) };
   const fetched = [];
@@ -73,14 +72,16 @@ async function start({
     if (url === "../overlay.config.json") {
       return config === null ? notFound() : jsonResponse(config);
     }
-    if (url === SCHEMA_URL) {
-      return formatSchema === null ? notFound() : jsonResponse(formatSchema);
-    }
-    if (url === "../annotations.json") {
-      return doc === null ? notFound() : jsonResponse(doc);
+    if (url === "../GENERATED.json") {
+      return record === null ? notFound() : jsonResponse(record);
     }
     if (url === PDF_ROUTE) {
       return pdf();
+    }
+    for (const [shardPath, records] of Object.entries(shards)) {
+      if (url === `${ORIGIN}/${shardPath}`) {
+        return jsonResponse(served[shardPath] ?? shardText(records));
+      }
     }
     throw new Error(`the viewer asked for ${url}`);
   };
@@ -90,6 +91,7 @@ async function start({
     fetchImpl,
     historyRef,
     locationRef,
+    pageUrl: PAGE_URL,
     pdfjsLoader: async () => pdfjs,
     storage,
   });
@@ -101,18 +103,16 @@ function el(documentRef, id) {
 }
 
 function cardsShown(documentRef) {
-  return el(documentRef, "target-groups").children
-    .flatMap((section) => section.children[1].children);
+  return el(documentRef, "target-groups").children.flatMap((section) => section.children[1].children);
 }
 
-async function selectPageRegion(documentRef, state, predicate) {
-  const region = state.index.regions.find(predicate);
+async function selectPageRegion(documentRef, state, regionId) {
+  const region = state.index.regions.find((entry) => entry.id === regionId);
   assert.ok(region, "no such region");
   const input = el(documentRef, "page-number");
   input.value = String(region.page);
   await fire(input, "change");
-  const polygon = el(documentRef, "overlay").children
-    .find((child) => child.dataset.regionId === region.id);
+  const polygon = el(documentRef, "overlay").children.find((child) => child.dataset.regionId === region.id);
   assert.ok(polygon, `${region.id} has no polygon on page ${region.page}`);
   await fire(polygon, "click");
   return region;
@@ -120,17 +120,14 @@ async function selectPageRegion(documentRef, state, predicate) {
 
 // --- start-up ---------------------------------------------------------------
 
-test("start-up: only the data files, the shipped schema and the route are fetched", async (t) => {
+test("start-up: the config, the shard list, each shard and the route are fetched", async (t) => {
   withOption(t);
   const { fetched, pdfjs } = await start();
-  // The schema comes before the document: it is what says whether the
-  // document is readable at all.
   assert.deepEqual(fetched.map((call) => call.url),
-                   ["../overlay.config.json", SCHEMA_URL, "../annotations.json", PDF_ROUTE]);
+                   ["../overlay.config.json", "../GENERATED.json", ...SHARD_URLS, PDF_ROUTE]);
   for (const call of fetched) {
     assert.deepEqual(call.options, { cache: "no-store", credentials: "same-origin" });
   }
-  // PDF.js runs with eval off, on a copy of the verified bytes.
   assert.equal(pdfjs.calls.length, 1);
   assert.equal(pdfjs.calls[0].isEvalSupported, false);
   assert.deepEqual(pdfjs.calls[0].data, PDF_BYTES);
@@ -140,10 +137,8 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   withOption(t);
   const { documentRef } = await start();
   assert.equal(documentRef.title, "Elementary sets: source overlay (synthetic)");
-  assert.equal(el(documentRef, "page-heading").textContent,
-               "Elementary sets: source overlay (synthetic)");
-  assert.equal(el(documentRef, "page-lede").textContent,
-               "Regions on the source, declarations in the companion.");
+  assert.equal(el(documentRef, "page-heading").textContent, "Elementary sets: source overlay (synthetic)");
+  assert.equal(el(documentRef, "page-lede").textContent, "Regions on the source, declarations in the companion.");
   assert.equal(el(documentRef, "back-link").textContent, "Back to the notes");
   assert.equal(el(documentRef, "back-link").attributes.href, "../../index.html");
   assert.equal(el(documentRef, "workspace").hidden, false);
@@ -152,20 +147,19 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   assert.match(el(documentRef, "status").textContent, /^Verified PDF · page 1 of 12$/);
 });
 
-test("start-up: a refused document leaves an error on the page, not a blank one", async (t) => {
+test("start-up: refused data leaves an error on the page, not a blank one", async (t) => {
   withOption(t);
-  const bare = makeDocument(PDF_SHA256);
-  for (const [override, pattern] of [
-    [{ schema: "notes/overlay" }, /has schema "notes\/overlay"/],
-    // The shipped schema pins one id; the near spelling is refused too.
-    [{ schema: "example/annotation" }, /has schema "example\/annotation"/],
-    [{ schema_version: "2.0" }, /schema_version "2\.0"/],
-    [{ sources: [] }, /has no source "src:notes"/],
-    [{ sources: [{ ...bare.sources[0], sha256: undefined }, bare.sources[1]] },
-     /carries no sha256/],
+  const shards = makeShards(PDF_SHA256);
+  for (const [options, pattern] of [
+    [{ config: makeConfig({ pdf: { route: "/files/notes.pdf" } }) }, /pdf\.route/],
+    [{ generated: null }, /Unable to load \.\.\/GENERATED\.json \(404\)/],
+    [{ generated: {} }, /no annotations block/],
+    [{ config: makeConfig({ source_id: "src:nowhere" }) }, /No shard holds a record of the PDF "src:nowhere"/],
+    [{ served: { "annotations/2.jsonl": "{}\n" } }, /annotations\/2\.jsonl has sha256 [a-f\d]{64}; GENERATED\.json records/],
   ]) {
     const documentRef = fakeDocument(SHELL);
-    await assert.rejects(() => start({ doc: { ...bare, ...override }, documentRef }), pattern);
+    const generated = options.generated === undefined ? await makeGenerated(shards) : options.generated;
+    await assert.rejects(() => start({ ...options, documentRef, generated, shards }), pattern);
     assert.equal(el(documentRef, "error").hidden, false);
     assert.match(el(documentRef, "error").textContent, pattern);
     assert.equal(el(documentRef, "workspace").hidden, true);
@@ -173,80 +167,21 @@ test("start-up: a refused document leaves an error on the page, not a blank one"
   }
 });
 
-test("start-up: a refusal is written to the error element and the workspace stays hidden", async (t) => {
+test("start-up: a shard that matches its sha256 but is not JSONL is refused by line", async (t) => {
   withOption(t);
-  const documentRef = fakeDocument(SHELL);
-  const fetchImpl = async (url) => (url === "../overlay.config.json"
-    ? jsonResponse(makeConfig({ pdf: { route: "/files/notes.pdf" } }))
-    : notFound());
-  await assert.rejects(
-    () => bootstrapViewer({
-      documentRef,
-      fetchImpl,
-      locationRef: { hash: "" },
-      pdfjsLoader: async () => fakePdfjs(),
-      storage: memoryStorage(),
-    }),
-    /pdf\.route/,
-  );
-  assert.equal(el(documentRef, "error").hidden, false);
-  assert.match(el(documentRef, "error").textContent, /pdf\.route/);
-  assert.equal(el(documentRef, "workspace").hidden, true);
-  assert.equal(el(documentRef, "status").textContent, "The overlay data was not loaded.");
+  const shards = makeShards(PDF_SHA256);
+  const broken = { ...shards };
+  const generated = await makeGenerated(shards);
+  generated.annotations.shards[1].sha256 = await sha256Hex(new TextEncoder().encode("{oops\n"));
+  await assert.rejects(() => start({ generated, served: { "annotations/2.jsonl": "{oops\n" }, shards: broken }),
+                       /annotations\/2\.jsonl:1 is not JSON/);
 });
 
-test("start-up: with no schema file the viewer refuses to start and says which file", async (t) => {
+test("start-up: a record that cannot be placed is reported in the page notice", async (t) => {
   withOption(t);
-  const documentRef = fakeDocument(SHELL);
-  await assert.rejects(() => start({ documentRef, formatSchema: null }),
-                       /Unable to load \.\.\/schema\/annotations\.schema\.json \(404\)/);
-  assert.equal(el(documentRef, "error").hidden, false);
-  assert.match(el(documentRef, "error").textContent, /annotations\.schema\.json/);
-  assert.equal(el(documentRef, "workspace").hidden, true);
-  assert.equal(el(documentRef, "status").textContent, "The overlay data was not loaded.");
-
-  // A schema file that is there but states no identity is refused too: the
-  // viewer has no second copy of the format to fall back on.
-  const second = fakeDocument(SHELL);
-  await assert.rejects(
-    () => start({ documentRef: second, formatSchema: { properties: {} } }),
-    /states no properties\.schema\.const/,
-  );
-  assert.equal(el(second, "workspace").hidden, true);
-});
-
-test("start-up: the shipped schema decides the format, so another one reads another document",
-     async (t) => {
-       withOption(t);
-       const formatSchema = makeFormatSchema({
-         properties: {
-           schema: { const: "other/annotations" },
-           schema_version: { pattern: "^3\\.0$" },
-         },
-       });
-       const doc = makeDocument(PDF_SHA256);
-       // The fixture's own format is now the wrong one...
-       await assert.rejects(() => start({ doc, formatSchema }),
-                            /has schema "example\/annotations"/);
-       // ...and a document of the format the schema states opens.
-       const { documentRef } = await start({
-         doc: { ...doc, schema: "other/annotations", schema_version: "3.0" },
-         formatSchema,
-       });
-       assert.equal(el(documentRef, "workspace").hidden, false);
-       assert.equal(el(documentRef, "error").hidden, true);
-       assert.notEqual(SCHEMA_ID, "other/annotations");
-     });
-
-test("start-up: a region that cannot be placed is reported in the page notice", async (t) => {
-  withOption(t);
-  const doc = makeDocument(PDF_SHA256);
-  const bare = { ...doc.sources[0] };
-  delete bare.page_size;
-  delete bare.page_sizes;
-  const { documentRef, result } = await start({
-    doc: { ...doc, sources: [bare, doc.sources[1]] },
-  });
+  const shards = makeShards(PDF_SHA256);
+  shards["annotations/2.jsonl"][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  const { documentRef, result } = await start({ shards });
   assert.equal(el(documentRef, "notice").hidden, false);
   assert.match(el(documentRef, "notice").textContent, /^1 region\(s\) could not be placed/);
   assert.equal(result.state.index.pages.has(5), false);
@@ -257,9 +192,8 @@ test("start-up: a region that cannot be placed is reported in the page notice", 
 
 test("pdf: a hash mismatch stops before PDF.js and says so on the page", async (t) => {
   withOption(t);
-  const doc = makeDocument(fakeSha256("9"));
   const pdfjs = fakePdfjs();
-  const { documentRef, result } = await start({ doc, pdfjs });
+  const { documentRef, result } = await start({ pdfjs, shards: makeShards(fakeSha256("9")) });
   assert.equal(pdfjs.calls.length, 0, "PDF.js must not see unverified bytes");
   assert.equal(result.state.pdfDocument, null);
   assert.equal(el(documentRef, "workspace").hidden, true);
@@ -269,12 +203,11 @@ test("pdf: a hash mismatch stops before PDF.js and says so on the page", async (
 
 test("pdf: a 404, a wrong media type and a wrong byte count are all refused", async (t) => {
   withOption(t);
-  const cases = [
+  for (const [pdf, pattern] of [
     [() => pdfResponse(PDF_BYTES, { ok: false, status: 404 }), /loopback PDF \(404\)/],
     [() => pdfResponse(PDF_BYTES, { contentType: "text/html" }), /unexpected media type text\/html/],
     [() => pdfResponse(new TextEncoder().encode("short")), /the source record says \d+/],
-  ];
-  for (const [pdf, pattern] of cases) {
+  ]) {
     const { documentRef } = await start({ pdf, pdfjs: fakePdfjs() });
     assert.match(el(documentRef, "error").textContent, pattern);
     assert.equal(el(documentRef, "workspace").hidden, true);
@@ -286,36 +219,32 @@ test("pdf: a 404, a wrong media type and a wrong byte count are all refused", as
 test("rendered: selecting a region shows its item's cards, grouped in role order", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0001");
-
+  await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(el(documentRef, "selection").hidden, false);
   assert.equal(el(documentRef, "selection-empty").hidden, true);
   assert.equal(el(documentRef, "item-label").textContent, "Theorem 1.1");
-  assert.equal(el(documentRef, "item-locator").textContent, "Section 1 · p. 2 (physical)");
-  assert.equal(el(documentRef, "target-summary").textContent, "5 linked declarations.");
-  assert.deepEqual(
-    el(documentRef, "target-groups").children.map((section) => section.children[0].textContent),
-    ["key", "attributed", "support", "example", "helper"],
-  );
+  assert.equal(el(documentRef, "item-locator").textContent, "p. 2 (physical)");
+  assert.equal(el(documentRef, "target-summary").textContent,
+               "Formalised in this companion: a key declaration states it.");
+  assert.deepEqual(el(documentRef, "target-groups").children.map((section) => section.children[0].textContent),
+                   ["key", "attributed", "support", "example", "helper"]);
   const cards = cardsShown(documentRef);
   assert.deepEqual(cards.map((card) => card.children[0].textContent), [
-    "Box.volume_nonneg",
-    "Box.volume_mono",
-    "Set.inter_sub",
-    "example:0123456789ab",
-    "Set.union_comm",
+    "Box.volume_nonneg", "Box.volume_mono", "Set.inter_sub", "example:0123456789ab", "Set.union_comm",
   ]);
   assert.equal(cards[0].children[0].tagName, "A");
-  assert.equal(cards[0].children[0].attributes.href,
-               "../../Notes/Box/index.html#Notes___Box___volume_nonneg");
+  assert.equal(cards[0].children[0].attributes.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
   assert.equal(cards[3].children[0].tagName, "SPAN", "an unlinked card is not a link");
   assert.ok(cards[0].children.some((child) => child.className === "target-snippet"));
+  // The region is drawn through the displayed page: a quarter of 600 pt across, an eighth of 800 down.
+  const polygon = el(documentRef, "overlay").children.find((child) => child.dataset.regionId === "loc:0001");
+  assert.equal(polygon.attributes.points, "150,100 450,100 450,200 150,200");
 });
 
 test("rendered: verdict badges mark a repaired declaration faithful and an old one superseded", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0001");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
   const badges = cardsShown(documentRef)
     .flatMap((card) => card.children)
     .filter((child) => String(child.className).includes("verdict-badge"))
@@ -326,90 +255,69 @@ test("rendered: verdict badges mark a repaired declaration faithful and an old o
   ]);
   const [note] = el(documentRef, "verdict-notes").children;
   assert.match(note.className, /verdict-fixed/);
-  assert.equal(
-    note.textContent,
-    "Faithfulness: fixed: statement deviation (medium). The box bound was stated for closed "
-    + "boxes only. [fixed; fixed, PR #7]",
-  );
+  assert.equal(note.textContent, "Faithfulness: fixed: statement deviation (medium). The box bound was stated "
+               + "for closed boxes only. [fixed; fixed, PR #7]");
   assert.equal(note.title, "Notes/Box.lean:12\nsource page 2");
 });
 
-test("rendered: a coverage value states what applies, with its class and its note", async (t) => {
+test("rendered: a status states what applies, with its class and its note", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0002");
+  await selectPageRegion(documentRef, result.state, "loc:0002");
   assert.equal(el(documentRef, "item-label").textContent, "Definition 2.1");
   assert.equal(el(documentRef, "target-summary").textContent,
                "Supported only by declarations that state a neighbouring item.");
-  assert.equal(el(documentRef, "target-summary").className,
-               "target-summary coverage-summary coverage-support_only");
+  assert.equal(el(documentRef, "target-summary").className, "target-summary coverage-summary coverage-support_only");
   assert.equal(el(documentRef, "coverage-note").hidden, false);
   assert.equal(el(documentRef, "coverage-note").textContent,
                "The companion states the neighbouring box lemma, not this definition.");
   assert.equal(el(documentRef, "fallback-note").hidden, true);
-  // The orphaned link is not among the rows.
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title),
-                   ["Notes.Set.inter_sub"]);
+  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Set.inter_sub"]);
 });
 
-test("rendered: an item with no links is shown through its clusters, labelled a fallback", async (t) => {
+test("rendered: an item that links nothing says so and names its cluster", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0003");
+  await selectPageRegion(documentRef, result.state, "loc:0003");
   assert.equal(el(documentRef, "item-label").textContent, "Exercise 3.1");
+  assert.equal(el(documentRef, "target-summary").textContent, "No declaration is linked to this item.");
   assert.equal(el(documentRef, "fallback-note").hidden, false);
-  assert.equal(
-    el(documentRef, "fallback-note").textContent,
-    "Fallback: these rows are the memberships of Elementary sets, not declarations linked to "
-    + "this item.",
-  );
-  assert.equal(
-    el(documentRef, "target-summary").textContent,
-    "No declaration is linked to this item; showing 2 declarations from 1 cluster it belongs to.",
-  );
-  assert.deepEqual(
-    el(documentRef, "target-groups").children.map((section) => section.children[0].textContent),
-    ["primary", "consumer"],
-  );
+  assert.equal(el(documentRef, "fallback-note").textContent,
+               "No declaration is linked to this item; its ledger cluster: cluster:sets.");
+  assert.deepEqual(cardsShown(documentRef), []);
 });
 
 test("rendered: a region with two items offers a choice, and the choice switches the cards", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0004");
+  await selectPageRegion(documentRef, result.state, "loc:0004");
   const choices = el(documentRef, "item-choices");
   assert.equal(choices.hidden, false);
-  assert.deepEqual(choices.children.map((button) => button.textContent),
-                   ["A remark on unions", "Theorem 1.1"]);
+  assert.deepEqual(choices.children.map((button) => button.textContent), ["A remark on unions", "Theorem 1.1"]);
   assert.equal(el(documentRef, "item-label").textContent, "A remark on unions");
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title),
-                   ["Notes.Internal.aux", "Elementary sets"]);
-
+  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Internal.aux"]);
   await fire(choices.children[1], "click");
   assert.equal(el(documentRef, "item-label").textContent, "Theorem 1.1");
   assert.equal(cardsShown(documentRef).length, 5);
-  assert.deepEqual(choices.children.map((button) => button.attributes["aria-pressed"]),
-                   ["false", "true"]);
+  assert.deepEqual(choices.children.map((button) => button.attributes["aria-pressed"]), ["false", "true"]);
 });
 
 test("rendered: the role filter and the search narrow the card list", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0001");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
   const role = el(documentRef, "role-filter");
   assert.deepEqual(role.children.map((option) => option.value),
                    ["", "attributed", "example", "helper", "key", "support"]);
   role.value = "support";
   await fire(role, "input");
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title),
-                   ["Notes.Set.inter_sub"]);
+  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Set.inter_sub"]);
   role.value = "";
   const search = el(documentRef, "target-filter");
   search.value = "volume";
   await fire(search, "input");
   assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title),
                    ["Notes.Box.volume_nonneg", "Notes.Box.volume_mono"]);
-  assert.equal(el(documentRef, "target-summary").textContent, "2 linked declarations.");
   assert.equal(el(documentRef, "target-page").textContent, "Page 1 of 1");
 });
 
@@ -418,14 +326,12 @@ test("rendered: the role filter and the search narrow the card list", async (t) 
 test("navigation: the buttons and the page input move, and clear the selection", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  await selectPageRegion(documentRef, result.state, (region) => region.locationId === "loc:0001");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(el(documentRef, "selection").hidden, false);
-
   await fire(el(documentRef, "next-page"), "click");
   assert.equal(result.state.currentPage, 3);
   assert.equal(el(documentRef, "selection").hidden, true, "a page turn clears the selection");
   assert.equal(el(documentRef, "page-number").value, "3");
-
   await fire(el(documentRef, "previous-page"), "click");
   assert.equal(result.state.currentPage, 2);
   const input = el(documentRef, "page-number");
@@ -441,14 +347,9 @@ test("navigation: the page is remembered under the configured storage key", asyn
   const { hashes } = await start({ storage });
   assert.equal(storage.getItem("notes-overlay-page"), "1");
   assert.deepEqual(hashes, ["#page=1"]);
-
   const resumed = await start({ storage: memoryStorage({ "notes-overlay-page": "7" }) });
   assert.equal(resumed.result.state.currentPage, 7);
-  // The hash wins over the stored page.
-  const hashed = await start({
-    locationRef: { hash: "#page=4" },
-    storage: memoryStorage({ "notes-overlay-page": "7" }),
-  });
+  const hashed = await start({ locationRef: { hash: "#page=4" }, storage: memoryStorage({ "notes-overlay-page": "7" }) });
   assert.equal(hashed.result.state.currentPage, 4);
   assert.equal(rememberedPage("k", { locationRef: { hash: "#page=3" }, storage: null }), 3);
   assert.equal(rememberedPage("k", { locationRef: { hash: "#x" }, storage: memoryStorage() }), null);
@@ -460,7 +361,6 @@ test("navigation: a storage that throws on every access never breaks the viewer"
   assert.equal(rememberedPage("notes-overlay-page", { locationRef: { hash: "" }, storage }), null);
   const { documentRef, result } = await start({ storage });
   assert.equal(result.state.currentPage, 1);
-  assert.equal(el(documentRef, "workspace").hidden, false);
   await fire(el(documentRef, "next-page"), "click");
   assert.equal(result.state.currentPage, 2, "writing the remembered page is best-effort");
   assert.equal(el(documentRef, "error").hidden, true);
@@ -481,16 +381,13 @@ test("keyboard: the shortcuts work bare and are ignored with a modifier or in an
   assert.equal(result.state.zoom, 100);
   await fire(documentRef, "keydown", { key: "r" });
   assert.equal(result.state.rotation, 90);
-
-  // Held modifiers belong to the browser: Ctrl+Right, Cmd+Right and Shift+Right
-  // must still reach the page, and so must typing in the search box.
   for (const modifier of ["ctrlKey", "metaKey", "altKey", "shiftKey"]) {
     await fire(documentRef, "keydown", { [modifier]: true, key: "ArrowRight" });
     assert.equal(result.state.currentPage, 1, `${modifier}+ArrowRight must not turn the page`);
   }
-  await fire(documentRef, "keydown", { key: "ArrowRight", target: { tagName: "INPUT" } });
-  await fire(documentRef, "keydown", { key: "ArrowRight", target: { tagName: "SELECT" } });
-  await fire(documentRef, "keydown", { key: "ArrowRight", target: { tagName: "TEXTAREA" } });
+  for (const tagName of ["INPUT", "SELECT", "TEXTAREA"]) {
+    await fire(documentRef, "keydown", { key: "ArrowRight", target: { tagName } });
+  }
   assert.equal(result.state.currentPage, 1);
 });
 
@@ -498,8 +395,6 @@ test("keyboard: the shortcut test is the predicate's own, so both halves agree",
   assert.equal(isViewerShortcut({ key: "ArrowRight", target: {} }), true);
   assert.equal(isViewerShortcut({ ctrlKey: true, key: "ArrowRight", target: {} }), false);
   assert.equal(isViewerShortcut({ key: "ArrowRight", metaKey: true, target: {} }), false);
-  assert.equal(isViewerShortcut({ altKey: true, key: "ArrowRight", target: {} }), false);
-  assert.equal(isViewerShortcut({ key: "ArrowRight", shiftKey: true, target: {} }), false);
   assert.equal(isViewerShortcut({ key: "r", target: { tagName: "INPUT" } }), false);
   assert.equal(isViewerShortcut(null), false);
 });
@@ -507,15 +402,12 @@ test("keyboard: the shortcut test is the predicate's own, so both halves agree",
 test("escape clears the selected region and Enter on a region selects it", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
-  const region = await selectPageRegion(documentRef, result.state,
-                                        (entry) => entry.locationId === "loc:0001");
+  const region = await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(result.state.region.id, region.id);
   await fire(documentRef, "keydown", { key: "Escape" });
   assert.equal(result.state.region, null);
   assert.equal(el(documentRef, "selection").hidden, true);
-
-  const polygon = el(documentRef, "overlay").children
-    .find((child) => child.dataset.regionId === region.id);
+  const polygon = el(documentRef, "overlay").children.find((child) => child.dataset.regionId === region.id);
   await fire(polygon, "keydown", { key: "Enter" });
   assert.equal(result.state.region.id, region.id);
   assert.equal(polygon.attributes["aria-pressed"], "true");
@@ -532,30 +424,23 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
   assert.doesNotMatch(SHELL, /type=["']file|Choose PDF|pdf-file/);
   assert.doesNotMatch(SHELL, /<script(?![^>]*\ssrc=)/, "no inline script");
   assert.doesNotMatch(SHELL, /<style|\sstyle=/, "no inline style");
-  // The only absolute URL anywhere in the viewer is the SVG namespace.
-  const sources = await Promise.all(["viewer.js", "viewer-core.js"].map(async (name) => {
-    const { readFile } = await import("node:fs/promises");
-    const { VIEWER_DIR } = await import("./fixtures.mjs");
-    const path = await import("node:path");
-    return readFile(path.join(VIEWER_DIR, name), "utf8");
-  }));
+  const { readFile } = await import("node:fs/promises");
+  const { VIEWER_DIR } = await import("./fixtures.mjs");
+  const path = await import("node:path");
+  const sources = await Promise.all(["viewer.js", "viewer-core.js"].map(
+    (name) => readFile(path.join(VIEWER_DIR, name), "utf8")));
   for (const source of [SHELL, ...sources]) {
     assert.doesNotMatch(source.replaceAll("http://www.w3.org/2000/svg", ""), /https?:\/\//);
+    assert.doesNotMatch(source, /\.innerHTML\s*=|outerHTML|insertAdjacentHTML|document\.write\(/);
   }
 });
 
 test("shell: a back link the config spells as javascript: never reaches the header", async (t) => {
   withOption(t);
-  const { documentRef } = await start({
-    config: makeConfig({ back_link: { href: "javascript:alert(1)", text: "Back" } }),
-  });
-  const link = el(documentRef, "back-link");
-  assert.equal(link.attributes.href, "../../index.html");
-  assert.equal(link.textContent, "Back");
-  // The same for a protocol-relative href, which would leave the companion.
-  const offsite = await start({
-    config: makeConfig({ back_link: { href: "//notes.example.invalid/x.html", text: "Back" } }),
-  });
+  const { documentRef } = await start({ config: makeConfig({ back_link: { href: "javascript:alert(1)", text: "Back" } }) });
+  assert.equal(el(documentRef, "back-link").attributes.href, "../../index.html");
+  assert.equal(el(documentRef, "back-link").textContent, "Back");
+  const offsite = await start({ config: makeConfig({ back_link: { href: "//notes.example.invalid/x.html", text: "Back" } }) });
   assert.equal(el(offsite.documentRef, "back-link").attributes.href, "../../index.html");
 });
 
@@ -567,5 +452,4 @@ test("shell: the title and heading are placeholders the configuration replaces",
   assert.equal(documentRef.title, "Another title");
   assert.equal(el(documentRef, "page-heading").textContent, "Another title");
   assert.equal(el(documentRef, "page-lede").hidden, true);
-  assert.doesNotMatch(el(documentRef, "page-heading").textContent, placeholder);
 });

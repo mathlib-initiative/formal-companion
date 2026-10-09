@@ -5,8 +5,9 @@ Ported from the hand-written PDF workflow of the first companion overlay this
 template generalises: that script carried one book's sha256, byte count, URLs,
 cache file name and route as constants, pinned one toolchain and one package
 manifest, and ran one companion's build steps. Everything specific now comes
-from `pdf-overlay/overlay.config.json` and the `kind: pdf` source record of
-`pdf-overlay/annotations.json`, both found from this file's own path.
+from `pdf-overlay/overlay.config.json` and the `source` of the Literature Links
+shards `GENERATED.json` lists (read through `overlay_shards.py`), both found
+from this file's own path.
 
 `docs/overlay.md` section 5 is the contract; section 1 rule 4 is why
 the PDF is cached under an ignored directory and served only on loopback at one
@@ -41,6 +42,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+# The siblings are imported from the companion's tree: never leave bytecode there.
+sys.dont_write_bytecode = True
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import overlay_shards  # noqa: E402  (beside this file in pdf-overlay/tools/)
+
 try:                      # POSIX only; Windows is refused with one line below
     import fcntl
 except ImportError:                                          # pragma: no cover
@@ -48,14 +55,7 @@ except ImportError:                                          # pragma: no cover
 
 
 CONFIG_NAME = "overlay.config.json"
-DOCUMENT_NAME = "annotations.json"
 CONFIG_SCHEMA = "formal-companion/overlay-config"
-#: The annotation format's own JSON Schema, as `cf overlay sync` copied it out
-#: of the vendored release.  Which documents this tool accepts is read from
-#: that file -- its `properties.schema.const` and
-#: `properties.schema_version.pattern` -- and is written down nowhere here, so
-#: a format upgrade is a re-sync and no edit.
-FORMAT_SCHEMA_PATH = ("schema", "annotations.schema.json")
 BUILD_SITE_TOOL = "build_site.py"
 LOCK_NAME = ".overlay-serve.lock"
 USER_AGENT = "formal-companion-overlay/1"
@@ -134,7 +134,7 @@ class Config:
 
 @dataclass(frozen=True)
 class SourceRecord:
-    """The PDF identity, from the document's `kind: pdf` source record."""
+    """The PDF identity, from the `source` of the shards' records."""
 
     id: str
     title: str
@@ -237,51 +237,6 @@ def checked_bytes(path: Path, label: str) -> bytes:
         return path.read_bytes()
     except OSError as error:
         fail(f"{label}: cannot read {path}: {error}")
-
-
-@dataclass(frozen=True)
-class DocumentFormat:
-    """Which documents the shipped annotation schema accepts.
-
-    `schema` is the schema's ``properties.schema.const``; `version` is its
-    compiled ``properties.schema_version.pattern``.  A schema that states
-    neither stops the tool: this directory has no second copy of the identity
-    to fall back on, and guessing one would accept a document the companion's
-    own validator would refuse.
-    """
-
-    schema: str
-    version: "re.Pattern[str]"
-
-
-def format_label() -> str:
-    return "/".join(FORMAT_SCHEMA_PATH)
-
-
-def load_document_format(overlay: Path) -> DocumentFormat:
-    """Read `pdf-overlay/schema/annotations.schema.json` beside the document."""
-    label = format_label()
-    value = strict_json(checked_bytes(overlay.joinpath(*FORMAT_SCHEMA_PATH), label), label)
-    if not isinstance(value, dict):
-        fail(f"{label}: expected a JSON Schema object")
-    properties = value.get("properties")
-    properties = properties if isinstance(properties, dict) else {}
-    schema = properties.get("schema")
-    const = schema.get("const") if isinstance(schema, dict) else None
-    if not isinstance(const, str) or not const:
-        fail(f"{label}: properties.schema has no const, so the accepted document "
-             f"identity cannot be read; re-run `cf overlay sync`")
-    version = properties.get("schema_version")
-    pattern = version.get("pattern") if isinstance(version, dict) else None
-    if not isinstance(pattern, str) or not pattern:
-        fail(f"{label}: properties.schema_version has no pattern, so the accepted "
-             f"document versions cannot be read; re-run `cf overlay sync`")
-    try:
-        compiled = re.compile(pattern)
-    except re.error as error:
-        fail(f"{label}: properties.schema_version.pattern is not a regular "
-             f"expression: {error}")
-    return DocumentFormat(schema=const, version=compiled)
 
 
 def relative_subpath(value: Any, label: str) -> str:
@@ -454,55 +409,43 @@ def load_config(overlay: Path) -> Config:
     )
 
 
-def load_source_record(overlay: Path, config: Config,
-                       fmt: DocumentFormat | None = None) -> SourceRecord:
-    """The PDF identity: the document's `kind: pdf` source the config names."""
-    fmt = load_document_format(overlay) if fmt is None else fmt
-    path = overlay / DOCUMENT_NAME
-    value = strict_json(checked_bytes(path, DOCUMENT_NAME), DOCUMENT_NAME)
-    if not isinstance(value, dict):
-        fail(f"{DOCUMENT_NAME}: expected an object")
-    if value.get("schema") != fmt.schema:
-        fail(f"{DOCUMENT_NAME}.schema: expected {fmt.schema}, which "
-             f"{format_label()} states")
-    version = value.get("schema_version")
-    if not isinstance(version, str) or not fmt.version.fullmatch(version):
-        fail(f"{DOCUMENT_NAME}.schema_version: expected a version matching "
-             f"{fmt.version.pattern}, which {format_label()} states")
-    sources = value.get("sources")
-    if not isinstance(sources, list) or not sources:
-        fail(f"{DOCUMENT_NAME}.sources: expected a nonempty array")
-    matches = [row for row in sources
-               if isinstance(row, dict) and row.get("id") == config.source_id]
-    if not matches:
-        fail(f"{DOCUMENT_NAME}: no source {config.source_id!r}; "
-             f"the config's source_id names the PDF this overlay serves")
-    record = matches[0]
-    if record.get("kind") != "pdf":
-        fail(f"{DOCUMENT_NAME}: source {config.source_id!r} is not kind: pdf")
-    digest = record.get("sha256")
+def load_source_record(overlay: Path, config: Config) -> SourceRecord:
+    """The PDF identity: the `source` of the records whose PDF the config names.
+
+    `source.uri` and the book pin's `url` are the official addresses, then the
+    overlay extension's `alternate_urls`; `sha256` is the pin's and `bytes`
+    the extension's.
+    """
+    try:
+        source = overlay_shards.pdf_source(overlay, config.source_id)
+    except overlay_shards.ShardError as error:
+        fail(str(error))
+    label = f"source {config.source_id}"
+    pin = source.get("pin") if isinstance(source.get("pin"), dict) else {}
+    ext = overlay_shards.extension(source)
+    digest = pin.get("sha256")
     if not isinstance(digest, str) or not HEX64.fullmatch(digest):
-        fail(f"{DOCUMENT_NAME}: source {config.source_id!r} carries no lowercase sha256")
-    size = record.get("bytes")
+        fail(f"{label}: the pin carries no lowercase sha256")
+    size = ext.get("bytes")
     if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size < 0):
-        fail(f"{DOCUMENT_NAME}: source {config.source_id!r} has a non-integer bytes")
+        fail(f"{label}: bytes is not a nonnegative integer")
     if isinstance(size, int) and size > MAX_PDF_BYTES:
-        fail(f"{DOCUMENT_NAME}: source {config.source_id!r} declares more than "
-             f"{MAX_PDF_BYTES} bytes")
-    urls: list[str] = []
-    if "url" in record:
-        urls.append(validate_https_url(record["url"], f"source {config.source_id}.url"))
-    alternates = record.get("alternate_urls", [])
+        fail(f"{label}: declares more than {MAX_PDF_BYTES} bytes")
+    alternates = ext.get("alternate_urls", [])
     if not isinstance(alternates, list):
-        fail(f"{DOCUMENT_NAME}: source {config.source_id!r} alternate_urls is not an array")
-    for index, candidate in enumerate(alternates):
-        url = validate_https_url(
-            candidate, f"source {config.source_id}.alternate_urls[{index}]")
+        fail(f"{label}: alternate_urls is not an array")
+    urls: list[str] = []
+    for where, candidate in [("uri", source.get("uri")), ("pin.url", pin.get("url")),
+                             *((f"alternate_urls[{n}]", u) for n, u in enumerate(alternates))]:
+        if where in ("uri", "pin.url") and (candidate is None or (
+                isinstance(candidate, str) and not urllib.parse.urlsplit(candidate).scheme)):
+            continue                 # absent, or a relative reference: nothing to fetch
+        url = validate_https_url(candidate, f"{label}.{where}")
         if url not in urls:
             urls.append(url)
     return SourceRecord(
         id=config.source_id,
-        title=nonempty_string(record.get("title"), f"source {config.source_id}.title"),
+        title=nonempty_string(pin.get("title"), f"{label}.pin.title"),
         sha256=digest,
         bytes=size,
         urls=tuple(urls),

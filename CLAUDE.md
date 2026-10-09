@@ -161,8 +161,9 @@ Those two lines move together or not at all.
 - **Never write to a companion repo.** Discovery reads a repo's metadata,
   prose, caches and PDFs; it writes nothing back, and no stage ever does. The
   one exception is `cf overlay init|sync|export`, which a person runs by name:
-  they write under `<companion>/pdf-overlay/` and nowhere else, refuse a
-  `pdf-overlay` that is a symlink or resolves outside the companion, refuse to
+  they write under `<companion>/pdf-overlay/` and (`export`) the shard
+  directory `<companion>/annotations/`, and nowhere else, refuse either when
+  it is a symlink or resolves outside the companion, refuse to
   write through a symlinked component inside it, and run no git there — the
   generator commit they stamp is read from THIS checkout, through
   `cflib.gitsafe`. `docs/overlay.md` rule 5 is the whole exception; widening it
