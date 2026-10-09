@@ -131,8 +131,9 @@ class TestTheFiles(unittest.TestCase):
         self.assertEqual(moved, {"source": {"type": "pdf", "uri": "../../notes.pdf"}, "target": "../a.json#here"})
 
     def test_a_file_that_would_read_back_wrong_is_refused(self):
-        with mock.patch.object(defaults, "patch", lambda inherited, value: {"id": value["id"]}):
-            with self.assertRaisesRegex(ValueError, "do not read back"):
+        real = defaults.dumps
+        with mock.patch.object(defaults, "dumps", lambda value: real({**value, "note": "not the record"})):
+            with self.assertRaisesRegex(ValueError, "do not read back.*differs"):
                 defaults.files(RECORDS, FOLDERS)
 
 

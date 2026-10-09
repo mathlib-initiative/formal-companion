@@ -179,9 +179,12 @@ test("start-up: a bundle that matches its sha256 but is not a bundle is refused"
 
 test("start-up: each record's target resolves against its own file's URL", async (t) => {
   withOption(t);
-  const { result } = await start();
+  const sections = makeSections(PDF_SHA256);
+  const record = sections[1].find((entry) => entry.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  record.target = { ...record.target, uri: "beside.html" };
+  const { result } = await start({ sections });
   const [key] = result.state.index.items.get("item:theorem-1.1").cards;
-  assert.equal(key.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
+  assert.equal(key.href, `${ORIGIN}/annotations/1/beside.html`);
 });
 
 test("start-up: a record that cannot be placed is reported in the page notice", async (t) => {

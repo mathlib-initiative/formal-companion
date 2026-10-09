@@ -507,6 +507,18 @@ class TestExport(OverlayCase):
         self.assertIn("symlink", caught.exception.message)
         self.assertEqual(list(elsewhere.iterdir()), [])
 
+    def test_it_refuses_a_link_inside_the_annotation_directory_and_removes_nothing_through_it(self):
+        self.ready()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "x.json").write_bytes(self.annotation().read_bytes())
+        (self.annotations / "1.2" / "evil").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(CfError) as caught:
+            self.export(document(region_page=8))
+        self.assertIn("annotations/1.2/evil", caught.exception.message)
+        self.assertTrue((outside / "x.json").is_file())
+        self.assertIn("annotations/1.2/evil: not an annotation file", self.tool("check_generated").stderr)
+
     def test_a_failed_export_leaves_the_files_alone(self):
         self.ready()
         before = self.annotation().read_bytes()
@@ -1107,6 +1119,17 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual([row["path"] for row in receipt["annotations"]["files"]],
                          [FILE.removeprefix("annotations/")])
         self.assertEqual(list(self.overlay.rglob("__pycache__")), [])
+
+    def test_build_site_publishes_the_folder_defaults_with_the_annotations(self):
+        self.ready(self.two_records())
+        config = overlay_config.load(self.overlay / "overlay.config.json")
+        site = self.companion.joinpath(*config.output_root.split("/"))
+        site.mkdir(parents=True)
+        (site / config.index).write_text("<!doctype html><html><body><p>site</p></body></html>\n", encoding="utf-8")
+        done = self.tool("build_site")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual({p: (site / "annotations" / p).read_bytes() for p in tree(site / "annotations")},
+                         {p: (self.annotations / p).read_bytes() for p in tree(self.annotations)})
 
     def test_serve_help_runs_from_the_copy(self):
         self.ready()
