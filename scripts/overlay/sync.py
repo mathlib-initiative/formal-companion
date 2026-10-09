@@ -388,7 +388,8 @@ def read_annotations(companion: str | Path) -> Annotations:
                      if (line := f"{p.path.replace(root, '')}: {p.message} [{p.code}]") not in problems]
         read = collections.Counter(r.path for r in collection.records)
         problems += [f"{ANNOTATIONS_DIRNAME}/{path.relative_to(directory).as_posix()}: {read[path]} annotations "
-                     "read from it, not one" for path in collection.files if read[path] != 1]
+                     "read from it, not one" for path in collection.files
+                     if read[path] != 1 and not collection.problems]
         records = {f"{ANNOTATIONS_DIRNAME}/{r.path.relative_to(directory).as_posix()}": r.annotation
                    for r in collection.records}
     return Annotations(files, dict(sorted(records.items())), problems)

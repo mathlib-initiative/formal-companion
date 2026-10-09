@@ -738,6 +738,7 @@ class TestSync(OverlayCase):
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
         self.assertIn(FILE, caught.exception.message)
+        self.assertNotIn("read from it", "".join(overlay_sync.read_annotations(self.companion).problems))
 
     def test_it_refuses_a_file_that_does_not_hold_exactly_one_annotation(self):
         self.assertEqual(self.init(), 0)
@@ -1080,6 +1081,7 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn(f"{FILE}: ", done.stderr)
         self.assertIn("[SCHEMA]", done.stderr)
+        self.assertNotIn("read from it", done.stderr)
 
     def test_it_fails_on_an_extra_file_that_is_not_an_annotation_file(self):
         for extra in ("notes.txt", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/_defaults.json"):
