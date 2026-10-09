@@ -458,7 +458,7 @@ def record_annotations(companion: str | Path, annotations: dict) -> Path:
     """Write ``annotations`` as `GENERATED.json`'s `annotations` block, keeping the rest.
 
     `cf overlay export` calls it with the export, its inputs and the files it
-    wrote.  Before any sync there is no runtime yet, and the record lists no
+    writes.  Before any sync there is no runtime yet, and the record lists no
     file until `cf overlay sync` copies them; a record of an older version
     keeps its file list, so the next sync still knows what it wrote.
     """

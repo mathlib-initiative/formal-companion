@@ -11,10 +11,10 @@ document; this module adds what they deliberately refuse to do, because
    folder per book section and one folder per item with several, with folder
    defaults (`overlay.shards`, `overlay.defaults`), and check every file with
    the vendored `literature_links` scan;
-3. only then replace the files in `<companion>/annotations/` and record them
-   (their count and manifest sha256) in `pdf-overlay/GENERATED.json`, with the
-   export, its commit and the sha256 of every curation input it read, so the
-   companion's CI can tell a stale export without the skill.
+3. only then record the files (their count and manifest sha256) in
+   `pdf-overlay/GENERATED.json`, with the export, its commit and the sha256 of
+   every curation input it read, so the companion's CI can tell a stale export
+   without the skill, and replace the files in `<companion>/annotations/`.
 
 A failed export, conversion or scan leaves the companion untouched.  The
 writes follow rule 5: `annotations/` and `pdf-overlay/GENERATED.json`, through
@@ -125,13 +125,14 @@ def _legacy_shards(overlay: Path) -> dict[str, str]:
     return out
 
 
-def _replace_files(directory: Path, files: dict[str, bytes], legacy: dict[str, str]) -> list[str]:
+def _replace_files(directory: Path, files: dict[str, bytes], legacy: dict[str, str],
+                   record: Callable[[], object]) -> list[str]:
     """Put exactly ``files`` in the directory; return what was removed.
 
     Everything already there must fit the layout (`overlay.shards.walk`), or
     be a legacy shard at the sha256 its export recorded: anything else is
     somebody's file, and the export stops before writing.  Stale files and
-    the folders left empty go.
+    the folders left empty go.  ``record`` runs before the first removal.
     """
     found, folders, odd = overlay_shards.walk(directory)
     stale: list[str] = []
@@ -145,6 +146,7 @@ def _replace_files(directory: Path, files: dict[str, bytes], legacy: dict[str, s
                       hint=f"{directory.name}/ holds only the exported <section>/[<item>/]<name>.json files "
                            f"and their {overlay_shards.DEFAULTS}; move it elsewhere and re-run")
     stale += [relative for relative in found if relative not in files]
+    record()
     # Stale files go first: on a case-insensitive filesystem a stale
     # `foo.json` and a new `Foo.json` are one directory entry.
     for relative in stale:
@@ -230,24 +232,26 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
     above = overlay_sync.defaults_above(directory)
     if above:
         raise CfError(above[0], hint="; ".join(above[1:]) or "nothing was written")
-    deleted = _replace_files(directory, files, _legacy_shards(overlay))
-    found, problems = overlay_sync.annotation_files(companion)
-    if problems:                                             # pragma: no cover - scanned above
-        raise CfError(problems[0])
     wanted = {f"{overlay_sync.ANNOTATIONS_DIRNAME}/{path}": raw for path, raw in files.items()}
-    if found != wanted:
-        wrong = sorted(path for path in found.keys() | wanted.keys() if found.get(path) != wanted.get(path))
-        raise CfError(f"{len(wrong)} annotation files on disk are not the ones the export wrote, "
-                      "so GENERATED.json was not updated", hint="; ".join(wrong[:5]))
-    overlay_sync.record_annotations(companion, {
+    block = {
         "count": len(conversion.files),
         "directory": overlay_sync.ANNOTATIONS_DIRNAME,
         "export": {"commit": (doc.get("companion") or {}).get("commit") or commit,
                    "convention": convention, "source_id": source["id"]},
         "extension": overlay_shards.NAMESPACE,
         "inputs": inputs,
-        "manifest_sha256": overlay_sync.manifest_sha256(found),
-    })
+        "manifest_sha256": overlay_sync.manifest_sha256(wanted),
+    }
+    # Recorded before the first removal or write: an export that dies leaves a record its files do not match.
+    deleted = _replace_files(directory, files, _legacy_shards(overlay),
+                             lambda: overlay_sync.record_annotations(companion, block))
+    found, problems = overlay_sync.annotation_files(companion)
+    if problems:                                             # pragma: no cover - scanned above
+        raise CfError(problems[0])
+    if found != wanted:
+        wrong = sorted(path for path in found.keys() | wanted.keys() if found.get(path) != wanted.get(path))
+        raise CfError(f"{len(wrong)} annotation files on disk are not the ones the export wrote and "
+                      "GENERATED.json records; re-run it", hint="; ".join(wrong[:5]))
     sections = collections.Counter(PurePosixPath(path).parts[0] for path in conversion.files)
     return ExportResult(directory=directory, sections=dict(sorted(sections.items())),
                         deleted=sorted(deleted), counts=dict(conversion.counts))

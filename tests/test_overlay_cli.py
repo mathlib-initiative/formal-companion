@@ -427,15 +427,24 @@ class TestExport(OverlayCase):
         self.assertEqual((block["count"], block["manifest_sha256"]), (1, overlay_sync.manifest_sha256(files)))
         self.assertIn(renamed, next(iter(files.values())).decode("utf-8"))
 
-    def test_it_records_nothing_when_the_files_on_disk_are_not_the_ones_it_wrote(self):
-        self.ready()
-        before = self.record()
-        with mock.patch.object(overlay_sync, "write_file", lambda path, raw: None):
+    def test_it_records_the_export_before_it_writes_so_sync_refuses_what_a_failed_write_left(self):
+        self.assertEqual(self.init(), 0)
+        real = overlay_sync.write_file
+
+        def lost(path, raw):
+            if self.annotations not in path.parents:
+                real(path, raw)
+
+        with mock.patch.object(overlay_sync, "write_file", lost):
             with self.assertRaises(CfError) as caught:
-                self.export(document(region_page=8))
+                self.export()
         self.assertIn("not the ones the export wrote", caught.exception.message)
         self.assertIn(FILE, caught.exception.hint)
-        self.assertEqual(self.record(), before)
+        block = self.record()["annotations"]
+        self.assertEqual((block["export"]["convention"], block["count"]), ("attribution-table", 1))
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
 
     def test_it_refuses_anything_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         for extra in ("README.md", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/.hidden.json",
