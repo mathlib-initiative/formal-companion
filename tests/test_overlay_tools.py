@@ -2,9 +2,10 @@
 
 `templates/overlay/runtime/tools/serve.py` and `build_site.py` are copied
 verbatim into a companion's `pdf-overlay/`, so everything about one companion
-has to reach them through `overlay.config.json` and the Literature Links shards
-`GENERATED.json` lists. These tests hold the behaviour section 5 of
-`docs/overlay.md` asks for, against a synthetic shard, a synthetic
+has to reach them through `overlay.config.json` and the Literature Links
+annotations in the bundle `GENERATED.json` records. These tests hold the
+behaviour section 5 of `docs/overlay.md` asks for, against a synthetic
+annotation file, a synthetic
 configuration and a synthetic PDF in a temporary directory: no network (the
 URL opener is injected), no real build tool (a fake one on PATH, reached
 through a symlink), and nothing written outside the temporary directory.
@@ -46,10 +47,12 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 from overlay import shards as overlay_shards                          # noqa: E402
+from overlay import sync as overlay_sync                              # noqa: E402
 
 TOOLS = SKILL / "templates" / "overlay" / "runtime" / "tools"
 NAMESPACE = overlay_shards.NAMESPACE
-SHARD = "annotations/1.1.jsonl"
+FILE = "annotations/1.1/lemma-1.1.1.json"
+BUNDLE = overlay_sync.BUNDLE_NAME
 
 
 def load_tool(name: str):
@@ -187,7 +190,7 @@ class Companion:
             "export const overlay = true;\n", encoding="utf-8")
         (self.overlay / "vendor" / "pdfjs" / "LICENSE").write_text(
             "fixture licence\n", encoding="utf-8")
-        for name in ("serve", "build_site", "overlay_shards"):
+        for name in ("serve", "build_site", "overlay_annotations"):
             shutil.copy2(TOOLS / f"{name}.py", self.overlay / "tools" / f"{name}.py")
         self.log = base / "commands.log"
         self.bin = base / "bin"
@@ -243,11 +246,16 @@ class Companion:
         }
 
     def write_document(self, **source_overrides) -> Path:
-        """The shard and the `GENERATED.json` that lists it."""
-        path = self.root / SHARD
-        path.write_text(json.dumps(self.record_value(**source_overrides)) + "\n", encoding="utf-8")
-        record = {"annotations": {"directory": "annotations", "shards": [
-            {"path": SHARD, "records": 1, "sha256": digest(path.read_bytes())}]}}
+        """The annotation file, the bundle and the `GENERATED.json` that records them."""
+        path = self.root / FILE
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(overlay_shards.annotation_bytes(self.record_value(**source_overrides)))
+        files = {FILE: path.read_bytes()}
+        bundle = overlay_sync.bundle_bytes(files)
+        (self.overlay / BUNDLE).write_bytes(bundle)
+        record = {"annotations": {"directory": "annotations", "count": 1,
+                                  "manifest_sha256": overlay_sync.manifest_sha256(files),
+                                  "bundle": {"path": BUNDLE, "sha256": digest(bundle)}}}
         (self.overlay / "GENERATED.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         return path
 
@@ -402,11 +410,12 @@ class TestThePdfIdentityComesFromTheDocument(OverlayToolsTestCase):
         self.assertEqual(record.urls, (PDF_URL, MIRROR_URL))
         self.assertEqual(record.title, SOURCE_TITLE)
 
-    def test_shards_without_the_configured_source_are_refused(self):
+    def test_annotations_without_the_configured_source_are_refused(self):
         for override in ({"id": "other-pdf"}, {"kind": "html"}):
             with self.subTest(**override):
                 self.companion.write_document(**override)
-                with self.assertRaisesRegex(SERVE.OverlayError, f"no shard holds a record of the PDF '{SOURCE_ID}'"):
+                with self.assertRaisesRegex(SERVE.OverlayError,
+                                            f"no annotation is a record of the PDF '{SOURCE_ID}'"):
                     self.companion.record()
 
     def test_a_source_that_pins_no_hash_is_refused(self):
@@ -431,9 +440,13 @@ class TestThePdfIdentityComesFromTheDocument(OverlayToolsTestCase):
                 with self.assertRaises(SERVE.OverlayError):
                     self.companion.record()
 
-    def test_a_generated_record_without_the_shard_list_is_refused(self):
+    def test_a_generated_record_without_the_bundle_is_refused(self):
         (self.companion.overlay / "GENERATED.json").write_text("{}\n", encoding="utf-8")
         with self.assertRaisesRegex(SERVE.OverlayError, "GENERATED.json.annotations"):
+            self.companion.record()
+        self.companion.write_document()
+        (self.companion.overlay / BUNDLE).write_bytes(b"{}\n")
+        with self.assertRaisesRegex(SERVE.OverlayError, f"{BUNDLE}: sha256"):
             self.companion.record()
 
 
@@ -698,18 +711,18 @@ class TestBuildSite(OverlayToolsTestCase):
         return {path.relative_to(mount).as_posix(): digest(path.read_bytes())
                 for path in sorted(mount.rglob("*")) if path.is_file()}
 
-    def test_it_publishes_the_runtime_and_the_two_instance_files(self):
+    def test_it_publishes_the_runtime_the_two_instance_files_and_the_bundle(self):
         self.companion.write_site()
         summary = BUILD.build_site(self.companion.overlay)
         published = self.published()
         self.assertEqual(
             sorted(published),
-            ["GENERATED.json", "overlay.config.json", "receipt.json",
+            ["GENERATED.json", BUNDLE, "overlay.config.json", "receipt.json",
              "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
-        self.assertEqual((self.companion.site / SHARD).read_bytes(),
-                         (self.companion.root / SHARD).read_bytes(),
-                         "the shards sit at the site root as they sit at the repository root")
-        self.assertEqual(summary["shards"], 1)
+        self.assertEqual((self.companion.site / FILE).read_bytes(),
+                         (self.companion.root / FILE).read_bytes(),
+                         "the annotations sit at the site root as they sit at the repository root")
+        self.assertEqual(summary["annotation_files"], 1)
         self.assertEqual(published["viewer/viewer.js"],
                          digest((self.companion.overlay / "viewer/viewer.js").read_bytes()))
         self.assertEqual(summary["mount"], "pdf-overlay")
@@ -723,11 +736,11 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(receipt["schema"], BUILD.RECEIPT_SCHEMA)
         self.assertEqual(receipt["source_id"], SOURCE_ID)
         rows = {row["path"]: row["sha256"] for row in receipt["files"]}
-        self.assertEqual(sorted(rows), ["GENERATED.json", "overlay.config.json",
+        self.assertEqual(sorted(rows), ["GENERATED.json", BUNDLE, "overlay.config.json",
                                         "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
         self.assertEqual(receipt["annotations"], {"directory": "annotations", "files": [{
-            "bytes": len((self.companion.root / SHARD).read_bytes()), "path": "1.1.jsonl",
-            "sha256": digest((self.companion.root / SHARD).read_bytes())}]})
+            "bytes": len((self.companion.root / FILE).read_bytes()), "path": "1.1/lemma-1.1.1.json",
+            "sha256": digest((self.companion.root / FILE).read_bytes())}]})
         for relative, expected in rows.items():
             with self.subTest(path=relative):
                 self.assertEqual(digest((mount / relative).read_bytes()), expected)
@@ -758,20 +771,27 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertNotEqual((mount / "receipt.json").read_text(encoding="utf-8"), "{}\n")
         self.assertEqual(list(self.companion.site.glob(".pdf-overlay.*")), [])
 
-    def test_a_shard_that_does_not_match_its_record_is_not_published(self):
+    def test_a_file_the_bundle_does_not_hold_is_not_published(self):
         self.companion.write_site()
-        (self.companion.root / SHARD).write_text("{}\n", encoding="utf-8")
-        with self.assertRaisesRegex(BUILD.BuildError, "annotations/1.1.jsonl: sha256"):
+        (self.companion.root / FILE).write_text("{}\n", encoding="utf-8")
+        with self.assertRaisesRegex(BUILD.BuildError, f"{FILE}: differs from the bundle"):
             BUILD.build_site(self.companion.overlay)
         self.assertFalse((self.companion.site / "pdf-overlay").exists())
-
-    def test_a_site_directory_that_is_not_a_shard_directory_is_not_replaced(self):
-        self.companion.write_site()
-        (self.companion.site / "annotations").mkdir()
-        (self.companion.site / "annotations" / "page.html").write_text("built\n", encoding="utf-8")
-        with self.assertRaisesRegex(BUILD.BuildError, "may hold only"):
+        self.companion.write_document()
+        (self.companion.root / "annotations" / "1.1" / "notes.txt").write_text("mine\n", encoding="utf-8")
+        with self.assertRaisesRegex(BUILD.BuildError, "annotations/1.1/notes.txt: not an annotation file"):
             BUILD.build_site(self.companion.overlay)
-        self.assertTrue((self.companion.site / "annotations" / "page.html").is_file())
+
+    def test_a_site_directory_that_is_not_an_annotation_directory_is_not_replaced(self):
+        for extra in ("page.html", "1.1/page.html"):
+            with self.subTest(extra=extra):
+                self.companion.write_site()
+                shutil.rmtree(self.companion.site / "annotations", ignore_errors=True)
+                (self.companion.site / "annotations" / "1.1").mkdir(parents=True)
+                (self.companion.site / "annotations" / extra).write_text("built\n", encoding="utf-8")
+                with self.assertRaisesRegex(BUILD.BuildError, "may hold only"):
+                    BUILD.build_site(self.companion.overlay)
+                self.assertTrue((self.companion.site / "annotations" / extra).is_file())
 
     def test_the_link_block_is_inserted_once_and_then_replaced_in_place(self):
         self.companion.write_site()
@@ -1032,7 +1052,7 @@ class TestNothingInTheToolsNamesOneCompanion(OverlayToolsTestCase):
 
     def sources(self) -> dict[str, str]:
         return {name: (TOOLS / f"{name}.py").read_text(encoding="utf-8")
-                for name in ("serve", "build_site", "overlay_shards")}
+                for name in ("serve", "build_site", "overlay_annotations")}
 
     def test_no_tool_carries_a_hash_a_url_or_a_byte_count_of_its_own(self):
         for name, source in self.sources().items():
@@ -1054,8 +1074,8 @@ class TestNothingInTheToolsNamesOneCompanion(OverlayToolsTestCase):
         for name in ("serve", "build_site"):
             with self.subTest(tool=name):
                 self.assertIn("overlay.config.json", self.sources()[name])
-                self.assertIn("overlay_shards.", self.sources()[name])
-        self.assertIn("GENERATED.json", self.sources()["overlay_shards"])
+                self.assertIn("overlay_annotations.", self.sources()[name])
+        self.assertIn("GENERATED.json", self.sources()["overlay_annotations"])
 
 
 if __name__ == "__main__":                                   # pragma: no cover

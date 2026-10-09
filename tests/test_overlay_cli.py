@@ -1,4 +1,4 @@
-"""`cf overlay`: generate a companion's pdf-overlay/, feed it shards, and keep both honest.
+"""`cf overlay`: generate a companion's pdf-overlay/, feed it annotations, and keep both honest.
 
 Sections 5 and 6 of `docs/overlay.md`, against throwaway companion repositories
 (`git init` in a temporary directory) and a synthetic annotation document that
@@ -12,11 +12,12 @@ What is checked, beside the commands' own behaviour:
   templates and the vendored Literature Links package, and a second run writes
   nothing;
 * rule 5: the refusals (a symlinked `pdf-overlay` or `annotations`, a link
-  inside them, a file no manifest listed, a file in the shard directory that
-  is not a shard) are behaviour, tested as such;
+  inside them, a file no manifest listed, a file in the annotation directory
+  that is not an annotation file) are behaviour, tested as such;
 * `check_generated.py` runs as a companion's CI runs it -- a child process,
   from the copy under `pdf-overlay/tools/`, standard library only -- and fails
-  on a tampered file, a tampered shard and a changed curation input.
+  on a tampered file, a tampered annotation file or bundle and a changed
+  curation input, naming the file.
 """
 from __future__ import annotations
 
@@ -64,6 +65,9 @@ SOURCE_TITLE = "Elementary Sets: Lecture Notes (synthetic)"
 #: A synthetic digest: 64 hex digits that are nobody's edition.
 SOURCE_SHA = "a1b2c3d4" * 8
 DECL = "Notes.Box.volume_nonneg"
+#: The one annotation file the synthetic document exports.
+FILE = f"annotations/1.2/lemma-1.2.3__key__{DECL}.json"
+BUNDLE = "annotations.bundle.json"
 #: The companion's own curation file the stand-in export says it read.
 CURATION = "curation/table.json"
 
@@ -88,6 +92,12 @@ def tree(root: Path) -> set[str]:
     return {(Path(p) / n).relative_to(root).as_posix()
             for p, _d, files in os.walk(root) for n in files
             if "__pycache__" not in Path(p).parts and not n.endswith(".pyc")}
+
+
+def manifest(companion: Path, paths) -> str:
+    """What `sha256sum <paths> | sha256sum` prints, from the companion root."""
+    lines = "".join(f"{hashlib.sha256((companion / p).read_bytes()).hexdigest()}  {p}\n" for p in sorted(paths))
+    return hashlib.sha256(lines.encode("utf-8")).hexdigest()
 
 
 def generated_paths() -> set[str]:
@@ -204,7 +214,7 @@ class OverlayCase(unittest.TestCase):
         (self.companion / "curation").mkdir()
         (self.companion / CURATION).write_text('{"curated": true}\n', encoding="utf-8")
         self.overlay = self.companion / "pdf-overlay"
-        self.shards = self.companion / "annotations"
+        self.annotations = self.companion / "annotations"
 
     # -- helpers ---------------------------------------------------------
     def init(self, **over) -> int:
@@ -240,8 +250,18 @@ class OverlayCase(unittest.TestCase):
     def write_record(self, record: dict) -> None:
         (self.overlay / "GENERATED.json").write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
 
-    def shard(self) -> Path:
-        return self.shards / "1.2.jsonl"
+    def annotation(self) -> Path:
+        return self.companion / FILE
+
+    def reseal(self) -> None:
+        """Re-record the files and rewrite the bundle as they are now, as a hand edit of both would."""
+        files, _ = overlay_sync.annotation_files(self.companion)
+        bundle = overlay_sync.bundle_bytes(files)
+        (self.overlay / BUNDLE).write_bytes(bundle)
+        record = self.record()
+        record["annotations"].update(count=len(files), manifest_sha256=overlay_sync.manifest_sha256(files),
+                                     bundle={"path": BUNDLE, "sha256": hashlib.sha256(bundle).hexdigest()})
+        self.write_record(record)
 
     def tool(self, name: str, *argv: str) -> subprocess.CompletedProcess:
         """Run one copied runtime tool the way a companion's CI does."""
@@ -304,11 +324,11 @@ class TestInit(OverlayCase):
 # ---------------------------------------------------------------------------
 
 class TestExport(OverlayCase):
-    def test_it_writes_one_shard_per_section_and_records_the_export(self):
+    def test_it_writes_one_file_per_annotation_in_its_section_folder_and_records_the_export(self):
         self.assertEqual(self.init(), 0)
         result = self.export()
-        self.assertEqual(result.shards, {"1.2.jsonl": 1})
-        self.assertEqual(tree(self.shards), {"1.2.jsonl"})
+        self.assertEqual(result.sections, {"1.2": 1})
+        self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
         block = self.record()["annotations"]
         self.assertEqual(block["directory"], "annotations")
         self.assertEqual(block["extension"], overlay_shards.NAMESPACE)
@@ -317,10 +337,13 @@ class TestExport(OverlayCase):
         self.assertEqual(block["inputs"], [{
             "path": CURATION,
             "sha256": hashlib.sha256((self.companion / CURATION).read_bytes()).hexdigest()}])
-        self.assertEqual(block["shards"], [{
-            "path": "annotations/1.2.jsonl", "records": 1,
-            "sha256": hashlib.sha256(self.shard().read_bytes()).hexdigest()}])
-        self.assertEqual(overlay_shards.scan_problems({"1.2.jsonl": self.shard().read_bytes()}), [])
+        self.assertEqual((block["count"], block["manifest_sha256"]), (1, manifest(self.companion, [FILE])))
+        self.assertNotIn("bundle", block, "sync writes the bundle")
+        raw = self.annotation().read_bytes()
+        self.assertEqual(raw, (json.dumps(json.loads(raw), sort_keys=True, indent=2, ensure_ascii=False)
+                               + "\n").encode("utf-8"))
+        self.assertIn('"uri": "../../Notes/Basic/index.html#Notes___Box___volume_nonneg"', raw.decode("utf-8"))
+        self.assertEqual(overlay_shards.scan_problems({"1.2/x.json": raw}), [])
 
     def test_it_builds_the_cf_export_command_line(self):
         self.assertEqual(self.init(), 0)
@@ -345,71 +368,104 @@ class TestExport(OverlayCase):
         with self.assertRaises(CfError) as caught:
             self.export(inputs=())
         self.assertIn("names no curation file", caught.exception.message)
-        self.assertFalse(self.shards.exists())
+        self.assertFalse(self.annotations.exists())
 
-    def test_a_second_export_removes_a_stale_shard(self):
+    def test_a_second_export_removes_the_files_it_no_longer_writes(self):
         self.ready()
-        (self.shards / "9.9.jsonl").write_bytes(self.shard().read_bytes())
+        (self.annotations / "9.9").mkdir()
+        (self.annotations / "9.9" / "old.json").write_bytes(self.annotation().read_bytes())
+        (self.annotations / "1.2" / "stale.json").write_bytes(self.annotation().read_bytes())
         result = self.export()
-        self.assertEqual(result.deleted, ["9.9.jsonl"])
-        self.assertEqual(tree(self.shards), {"1.2.jsonl"})
+        self.assertEqual(result.deleted, ["1.2/stale.json", "9.9/old.json"])
+        self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
+        self.assertFalse((self.annotations / "9.9").exists(), "an emptied section folder goes too")
 
-    def test_it_refuses_a_file_in_the_shard_directory_that_is_not_a_shard(self):
-        self.ready()
-        (self.shards / "README.md").write_text("mine\n", encoding="utf-8")
-        before = self.shard().read_bytes()
+    def test_it_refuses_anything_in_the_annotation_directory_that_is_not_an_annotation_file(self):
+        for extra in ("README.md", "1.2/notes.txt", "1.2/sub/x.json", "1.2.jsonl", "1.2/.hidden.json"):
+            with self.subTest(extra=extra):
+                if self.overlay.exists():
+                    shutil.rmtree(self.overlay)
+                    shutil.rmtree(self.annotations)
+                self.ready()
+                path = self.annotations / extra
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("mine\n", encoding="utf-8")
+                before = self.annotation().read_bytes()
+                with self.assertRaises(CfError) as caught:
+                    self.export(document(region_page=8))
+                self.assertIn(extra.removesuffix("/x.json"), caught.exception.message)
+                self.assertEqual(self.annotation().read_bytes(), before, "a refusal writes nothing")
+                self.assertTrue(path.is_file(), "nothing else is ever deleted")
+
+    def test_it_removes_the_shards_a_previous_export_recorded_and_nothing_else(self):
+        """The layout before one file per annotation: `<section>.jsonl` shards listed in GENERATED.json."""
+        self.assertEqual(self.init(), 0)
+        self.annotations.mkdir()
+        old = self.annotations / "1.2.jsonl"
+        old.write_text('{"old": 1}\n', encoding="utf-8")
+        (self.overlay / "GENERATED.json").write_text(json.dumps({
+            "schema": "formal-companion/overlay-generated", "schema_version": 2, "files": [],
+            "annotations": {"directory": "annotations", "shards": [
+                {"path": "annotations/1.2.jsonl", "records": 1,
+                 "sha256": hashlib.sha256(old.read_bytes()).hexdigest()}]}}), encoding="utf-8")
+        old.write_text('{"old": 2}\n', encoding="utf-8")
         with self.assertRaises(CfError) as caught:
-            self.export(document(region_page=8))
-        self.assertIn("README.md", caught.exception.message)
-        self.assertEqual(self.shard().read_bytes(), before, "a refusal writes nothing")
+            self.export()
+        self.assertIn("1.2.jsonl", caught.exception.message, "a shard edited since is somebody's file")
+        old.write_text('{"old": 1}\n', encoding="utf-8")
+        result = self.export()
+        self.assertEqual(result.deleted, ["1.2.jsonl"])
+        self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
+        self.assertEqual(self.sync(), 0)
+        self.assertEqual(self.record()["schema_version"], 3)
 
-    def test_it_refuses_a_symlinked_shard_directory(self):
+    def test_it_refuses_a_symlinked_annotation_directory(self):
         self.assertEqual(self.init(), 0)
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir()
-        self.shards.symlink_to(elsewhere, target_is_directory=True)
+        self.annotations.symlink_to(elsewhere, target_is_directory=True)
         with self.assertRaises(CfError) as caught:
             self.export()
         self.assertIn("symlink", caught.exception.message)
         self.assertEqual(list(elsewhere.iterdir()), [])
 
-    def test_a_failed_export_leaves_the_shards_alone(self):
+    def test_a_failed_export_leaves_the_files_alone(self):
         self.ready()
-        before = self.shard().read_bytes()
+        before = self.annotation().read_bytes()
         with self.assertRaises(CfError) as caught:
             self.export(returncode=2)
         self.assertIn("exited 2", caught.exception.message)
-        self.assertEqual(self.shard().read_bytes(), before)
+        self.assertEqual(self.annotation().read_bytes(), before)
 
     def test_a_document_that_does_not_validate_writes_nothing(self):
         self.ready()
-        before = self.shard().read_bytes()
+        before = self.annotation().read_bytes()
         broken = document()
         broken["sources"][0].pop("sha256")
         with self.assertRaises(CfError) as caught:
             self.export(broken)
         self.assertIn("does not validate", caught.exception.message)
-        self.assertEqual(self.shard().read_bytes(), before)
+        self.assertEqual(self.annotation().read_bytes(), before)
         with self.assertRaises(CfError):
             self.export(text=json.dumps(document(), indent=4))
-        self.assertEqual(self.shard().read_bytes(), before)
+        self.assertEqual(self.annotation().read_bytes(), before)
 
     def test_a_record_that_cannot_be_converted_writes_nothing(self):
         self.ready()
-        before = self.shard().read_bytes()
+        before = self.annotation().read_bytes()
         doc = document()
         doc["locations"][0]["target"]["selector"][0]["coordinate_space"]["page_box"] = "TrimBox"
         with self.assertRaises(CfError) as caught:
             self.export(doc)
         self.assertIn("TrimBox", caught.exception.hint)
-        self.assertEqual(self.shard().read_bytes(), before)
+        self.assertEqual(self.annotation().read_bytes(), before)
 
     def test_it_refuses_a_document_without_the_configured_source(self):
         self.assertEqual(self.init(), 0)
         with self.assertRaises(CfError) as caught:
             self.export(document(source_id="other-pdf"))
         self.assertIn(SOURCE_ID, caught.exception.message)
-        self.assertFalse(self.shards.exists())
+        self.assertFalse(self.annotations.exists())
 
     def test_it_refuses_a_convention_that_writes_no_document(self):
         self.assertEqual(self.init(), 0)
@@ -448,7 +504,7 @@ class TestSync(OverlayCase):
     def test_it_writes_exactly_the_runtime_and_the_package(self):
         self.ready()
         self.assertEqual(tree(self.overlay),
-                         generated_paths() | {"GENERATED.json", "overlay.config.json"})
+                         generated_paths() | {"GENERATED.json", "overlay.config.json", BUNDLE})
 
     def test_every_copy_is_byte_identical(self):
         self.ready()
@@ -464,7 +520,7 @@ class TestSync(OverlayCase):
         self.ready()
         record = self.record()
         self.assertEqual((record["schema"], record["schema_version"]),
-                         ("formal-companion/overlay-generated", 2))
+                         ("formal-companion/overlay-generated", 3))
         self.assertEqual(record["generator"]["name"], "formal-companion")
         self.assertEqual(record["instance_files"], ["overlay.config.json"])
         listed = [row["path"] for row in record["files"]]
@@ -473,12 +529,31 @@ class TestSync(OverlayCase):
         for row in record["files"]:
             self.assertEqual(row["sha256"],
                              hashlib.sha256((self.overlay / row["path"]).read_bytes()).hexdigest())
-        manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
-        expected = {"package": "literature-links", "version": manifest["version"], "commit": manifest["commit"]}
-        if "tag" in manifest:                                # pragma: no cover - a tagged release
-            expected["tag"] = manifest["tag"]
+        sealed = json.loads(MANIFEST.read_text(encoding="utf-8"))
+        expected = {"package": "literature-links", "version": sealed["version"], "commit": sealed["commit"]}
+        if "tag" in sealed:                                  # pragma: no cover - a tagged release
+            expected["tag"] = sealed["tag"]
         self.assertEqual(record["format"], expected)
-        self.assertEqual([row["path"] for row in record["annotations"]["shards"]], ["annotations/1.2.jsonl"])
+        block = record["annotations"]
+        self.assertEqual((block["count"], block["manifest_sha256"]), (1, manifest(self.companion, [FILE])))
+        self.assertEqual(block["bundle"], {
+            "path": BUNDLE, "sha256": hashlib.sha256((self.overlay / BUNDLE).read_bytes()).hexdigest()})
+
+    def test_the_bundle_holds_every_file_with_its_path_in_file_order(self):
+        doc = document()
+        doc["items"].append({"form": "numbered", "id": "lemma-1.1.1", "id_source": "label", "kind": "Lemma",
+                             "number": "1.1.1", "source": SOURCE_ID})
+        doc["locations"][0]["items"] = ["lemma-1.1.1", "lemma-1.2.3"]
+        self.ready(doc)
+        files, _ = overlay_sync.annotation_files(self.companion)
+        self.assertEqual(list(files), ["annotations/1.1/lemma-1.1.1.json", FILE])
+        raw = (self.overlay / BUNDLE).read_bytes()
+        bundle = json.loads(raw)
+        self.assertEqual((bundle["schema"], bundle["directory"], bundle["count"]),
+                         ("formal-companion/overlay-annotations", "annotations", 2))
+        self.assertEqual([(row["path"], row["annotation"]) for row in bundle["annotations"]],
+                         [(path, json.loads(data)) for path, data in files.items()])
+        self.assertEqual(raw.count(b"\n"), 2 + 2, "one line per annotation")
 
     def test_a_second_sync_is_a_no_op(self):
         self.ready()
@@ -488,37 +563,48 @@ class TestSync(OverlayCase):
         after = {p: p.stat().st_mtime_ns for p in self.overlay.rglob("*") if p.is_file()}
         self.assertEqual(before, after, "a no-op sync rewrote a file")
 
-    def test_sync_before_export_records_no_shard(self):
+    def test_sync_before_export_records_no_annotation(self):
         self.assertEqual(self.init(), 0)
         self.assertEqual(self.sync(), 0)
-        self.assertEqual(self.record()["annotations"],
-                         {"directory": "annotations", "extension": overlay_shards.NAMESPACE, "shards": []})
+        bundle = (self.overlay / BUNDLE).read_bytes()
+        self.assertEqual(self.record()["annotations"], {
+            "bundle": {"path": BUNDLE, "sha256": hashlib.sha256(bundle).hexdigest()}, "count": 0,
+            "directory": "annotations", "extension": overlay_shards.NAMESPACE,
+            "manifest_sha256": hashlib.sha256(b"").hexdigest()})
+        self.assertEqual(json.loads(bundle)["annotations"], [])
 
-    def test_it_records_hand_written_shards_when_nothing_exported_them(self):
+    def test_it_records_hand_written_annotations_when_nothing_exported_them(self):
         self.assertEqual(self.init(), 0)
-        self.shards.mkdir()
         conversion = overlay_shards.convert(document())
-        self.shard().write_bytes(overlay_shards.shard_bytes(conversion)["1.2.jsonl"])
+        self.annotation().parent.mkdir(parents=True)
+        self.annotation().write_bytes(overlay_shards.file_bytes(conversion)[FILE.removeprefix("annotations/")])
         self.assertEqual(self.sync(), 0)
         block = self.record()["annotations"]
         self.assertNotIn("export", block)
-        self.assertEqual(block["shards"][0]["path"], "annotations/1.2.jsonl")
+        self.assertEqual(block["count"], 1)
 
-    def test_it_refuses_an_exported_shard_edited_by_hand(self):
+    def test_it_refuses_an_exported_file_edited_by_hand_and_names_it(self):
         self.ready()
-        self.shard().write_bytes(self.shard().read_bytes().replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
+        self.annotation().write_bytes(self.annotation().read_bytes().replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
-        self.assertIn("annotations/1.2.jsonl", caught.exception.message)
+        self.assertIn(FILE, caught.exception.message)
         self.assertIn("cf overlay export", caught.exception.hint)
 
-    def test_it_refuses_a_shard_the_scan_refuses(self):
+    def test_it_refuses_a_file_the_scan_refuses(self):
         self.assertEqual(self.init(), 0)
-        self.shards.mkdir()
-        self.shard().write_text('{"source": {"type": "pdf"}}\n', encoding="utf-8")
+        self.annotation().parent.mkdir(parents=True)
+        self.annotation().write_text('{"source": {"type": "pdf"}}\n', encoding="utf-8")
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
-        self.assertIn("annotations/1.2.jsonl", caught.exception.message)
+        self.assertIn(FILE, caught.exception.message)
+
+    def test_it_refuses_a_file_in_the_annotation_directory_that_is_not_an_annotation_file(self):
+        self.ready()
+        (self.annotations / "notes.txt").write_text("mine\n", encoding="utf-8")
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("annotations/notes.txt", caught.exception.message)
 
     def test_it_removes_a_file_a_previous_manifest_listed(self):
         self.ready()
@@ -592,15 +678,23 @@ class TestSyncCheck(OverlayCase):
         for line in ("missing: viewer/viewer.js", "changed: viewer/viewer.css", "extra: viewer/extra.js"):
             self.assertIn(line, problems)
 
-    def test_it_reports_a_changed_missing_or_unlisted_shard(self):
+    def test_it_names_a_changed_missing_or_extra_file_and_a_changed_bundle(self):
         self.ready()
-        self.shard().write_bytes(self.shard().read_bytes() + b"\n")
-        self.assertIn("changed shard: annotations/1.2.jsonl", overlay_sync.sync_problems(self.companion))
-        (self.shards / "2.1.jsonl").write_bytes(self.shard().read_bytes())
-        self.assertIn("GENERATED.json does not list the shard annotations/2.1.jsonl",
-                      overlay_sync.sync_problems(self.companion))
-        self.shard().unlink()
-        self.assertIn("missing shard: annotations/1.2.jsonl", overlay_sync.sync_problems(self.companion))
+        self.annotation().write_bytes(self.annotation().read_bytes() + b"\n")
+        problems = overlay_sync.sync_problems(self.companion)
+        self.assertIn(f"{FILE}: differs from {BUNDLE}", problems)
+        self.assertTrue(any(line.startswith("changed annotations:") for line in problems), problems)
+        (self.annotations / "2.1").mkdir()
+        (self.annotations / "2.1" / "x.json").write_bytes(self.annotation().read_bytes())
+        self.assertIn(f"annotations/2.1/x.json: not in {BUNDLE}", overlay_sync.sync_problems(self.companion))
+        self.annotation().unlink()
+        self.assertIn(f"{FILE}: in {BUNDLE} but not on disk", overlay_sync.sync_problems(self.companion))
+        (self.overlay / BUNDLE).write_bytes(b"{}\n")
+        problems = overlay_sync.sync_problems(self.companion)
+        self.assertIn(f"changed: {BUNDLE}", problems)
+        self.assertIn(f"{BUNDLE} is not a readable bundle; run `cf overlay sync`", problems)
+        (self.overlay / BUNDLE).unlink()
+        self.assertIn(f"missing: {BUNDLE}", overlay_sync.sync_problems(self.companion))
 
     def test_it_reports_a_format_block_that_is_not_the_vendored_release(self):
         self.ready()
@@ -623,7 +717,7 @@ class TestSyncCheck(OverlayCase):
 # ---------------------------------------------------------------------------
 
 class TestCheck(OverlayCase):
-    def test_it_accepts_a_generated_overlay_with_current_shards(self):
+    def test_it_accepts_a_generated_overlay_with_current_annotations(self):
         self.ready()
         code, said = self.check()
         self.assertEqual(code, 0, said)
@@ -633,7 +727,7 @@ class TestCheck(OverlayCase):
         (self.companion / CURATION).write_text('{"curated": false}\n', encoding="utf-8")
         code, said = self.check()
         self.assertEqual(code, 1)
-        self.assertIn(f"{CURATION}: changed since the shards were exported", said)
+        self.assertIn(f"{CURATION}: changed since the annotations were exported", said)
         (self.companion / CURATION).unlink()
         self.assertIn(f"{CURATION}: gone", self.check()[1])
 
@@ -646,19 +740,19 @@ class TestCheck(OverlayCase):
         self.assertEqual(code, 1)
         self.assertIn("annotations.inputs: the export records no curation input", said)
 
-    def test_it_reports_no_shards(self):
+    def test_it_reports_no_annotations(self):
         self.assertEqual(self.init(), 0)
         self.assertEqual(self.sync(), 0)
         code, said = self.check()
         self.assertEqual(code, 1)
-        self.assertIn("holds no shard", said)
+        self.assertIn("holds no annotation file", said)
 
-    def test_it_reports_shards_of_a_source_the_config_does_not_name(self):
+    def test_it_reports_annotations_of_a_source_the_config_does_not_name(self):
         self.hand_written(lambda r: r["source"]["extensions"][overlay_shards.NAMESPACE].update(
             source_id="other-pdf"))
         code, said = self.check()
         self.assertEqual(code, 1)
-        self.assertIn(f"no shard holds a record of the PDF '{SOURCE_ID}'", said)
+        self.assertIn(f"no annotation is a record of the PDF '{SOURCE_ID}'", said)
 
     def test_it_reports_a_broken_config(self):
         self.ready()
@@ -675,18 +769,16 @@ class TestCheck(OverlayCase):
         self.assertIn("missing:", said)
 
     def hand_written(self, *mutations) -> list[str]:
-        """Hand-written shards (nothing exported them), synced, one record per mutation."""
+        """Hand-written annotation files (nothing exported them), synced, one file per mutation."""
         if not self.overlay.exists():
             self.assertEqual(self.init(), 0)
-        if self.shards.exists():
-            shutil.rmtree(self.shards)
-        self.shards.mkdir()
-        lines = []
-        for mutate in mutations:
+        if self.annotations.exists():
+            shutil.rmtree(self.annotations)
+        (self.annotations / "1.2").mkdir(parents=True)
+        for n, mutate in enumerate(mutations):
             record = json.loads(json.dumps(overlay_shards.convert(document()).records[0]))
             mutate(record)
-            lines.append(overlay_shards.line(record) + "\n")
-        self.shard().write_text("".join(lines), encoding="utf-8")
+            (self.annotations / "1.2" / f"r{n}.json").write_bytes(overlay_shards.annotation_bytes(record))
         self.assertEqual(self.sync(), 0)
         return overlay_sync.overlay_problems(self.companion, SOURCE_ID)
 
@@ -695,7 +787,7 @@ class TestCheck(OverlayCase):
         self.assertTrue(any("page 40" in line and "12 pages" in line for line in problems), problems)
 
     def test_the_overlay_rules_hold_the_targets(self):
-        for uri, word in (("../../outside/index.html", "climbs out"), ("javascript:alert(1)", "neither"),
+        for uri, word in (("../../../outside/index.html", "climbs out"), ("javascript:alert(1)", "neither"),
                           ("http://plain.example.invalid/x", "neither")):
             with self.subTest(uri=uri):
                 problems = self.hand_written(lambda r, uri=uri: r["target"].update(uri=uri))
@@ -746,36 +838,71 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("loopback", done.stderr)
 
-    def test_it_fails_on_a_tampered_shard(self):
+    def test_it_names_a_tampered_annotation_file(self):
         self.ready()
-        self.shard().write_bytes(self.shard().read_bytes().replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
+        self.annotation().write_bytes(self.annotation().read_bytes().replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
-        self.assertIn("annotations/1.2.jsonl: sha256", done.stderr)
+        self.assertIn(f"{FILE}: differs from the bundle", done.stderr)
+        self.assertIn("annotations/: 1 files with manifest sha256", done.stderr)
 
-    def test_it_fails_on_a_shard_the_scan_refuses(self):
+    def test_it_names_a_missing_and_a_stale_annotation_file(self):
         self.ready()
-        self.shard().write_text('{"source": {"type": "pdf"}}\n', encoding="utf-8")
+        stale = self.annotations / "9.9" / "old.json"
+        stale.parent.mkdir()
+        stale.write_bytes(self.annotation().read_bytes())
+        self.annotation().unlink()
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"{FILE}: missing, but the bundle holds it", done.stderr)
+        self.assertIn("annotations/9.9/old.json: not in the bundle", done.stderr)
+
+    def test_it_fails_on_a_bundle_that_is_not_the_files(self):
+        self.ready()
+        bundle = self.overlay / BUNDLE
+        bundle.write_bytes(bundle.read_bytes().replace(b"Lemma 1.2.3", b"Lemma 1.2.4"))
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"{BUNDLE}: sha256", done.stderr)
         record = self.record()
-        record["annotations"]["shards"][0]["sha256"] = hashlib.sha256(self.shard().read_bytes()).hexdigest()
+        record["annotations"]["bundle"]["sha256"] = hashlib.sha256(bundle.read_bytes()).hexdigest()
         self.write_record(record)
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
-        self.assertIn("[SCHEMA]", done.stderr)
+        self.assertIn(f"{FILE}: differs from the bundle", done.stderr)
+        self.assertNotIn("manifest sha256", done.stderr, "the files themselves are what GENERATED.json records")
 
-    def test_it_fails_on_a_file_in_the_shard_directory_it_does_not_list(self):
+    def test_it_fails_on_a_file_the_scan_refuses(self):
         self.ready()
-        (self.shards / "notes.txt").write_text("mine\n", encoding="utf-8")
+        self.annotation().write_text('{"source": {"type": "pdf"}}\n', encoding="utf-8")
+        self.reseal()
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
-        self.assertIn("annotations/notes.txt", done.stderr)
+        self.assertIn(f"{FILE}: ", done.stderr)
+        self.assertIn("[SCHEMA]", done.stderr)
+
+    def test_it_fails_on_an_extra_file_that_is_not_an_annotation_file(self):
+        for extra in ("notes.txt", "1.2/notes.txt", "1.2/sub/x.json", "1.2.jsonl"):
+            with self.subTest(extra=extra):
+                if not self.overlay.exists():
+                    self.ready()
+                path = self.annotations / extra
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("mine\n", encoding="utf-8")
+                done = self.tool("check_generated")
+                self.assertEqual(done.returncode, 1)
+                self.assertIn(f"annotations/{extra.removesuffix('/x.json')}: not a", done.stderr)
+                path.unlink()
+                if path.parent.name == "sub":
+                    path.parent.rmdir()
+        self.assertEqual(self.tool("check_generated").returncode, 0)
 
     def test_it_fails_on_a_stale_export(self):
         self.ready()
         (self.companion / CURATION).write_text('{"curated": "again"}\n', encoding="utf-8")
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
-        self.assertIn(f"{CURATION}: changed since the shards were exported", done.stderr)
+        self.assertIn(f"{CURATION}: changed since the annotations were exported", done.stderr)
 
     def test_it_fails_on_an_export_that_records_no_input(self):
         self.ready()
@@ -795,11 +922,11 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("format.version", done.stderr)
 
-    def test_it_fails_on_a_shard_set_that_names_another_source(self):
+    def test_it_fails_on_annotations_that_name_another_source(self):
         self.assertEqual(self.init(), 0)
-        self.shards.mkdir()
-        self.shard().write_bytes(overlay_shards.shard_bytes(
-            overlay_shards.convert(document(source_id="other-pdf")))["1.2.jsonl"])
+        self.annotation().parent.mkdir(parents=True)
+        self.annotation().write_bytes(overlay_shards.file_bytes(
+            overlay_shards.convert(document(source_id="other-pdf")))[FILE.removeprefix("annotations/")])
         self.assertEqual(self.sync(), 0)
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)
@@ -813,7 +940,7 @@ class TestCheckGenerated(OverlayCase):
                               cwd=str(self.companion), capture_output=True, text=True, timeout=300, env=env)
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
 
-    def test_build_site_publishes_the_shards_at_the_site_root(self):
+    def test_build_site_publishes_the_annotations_at_the_site_root(self):
         """The other tool a reader runs, on the directory `sync` just wrote."""
         self.ready()
         config = overlay_config.load(self.overlay / "overlay.config.json")
@@ -825,11 +952,12 @@ class TestCheckGenerated(OverlayCase):
             done = self.tool("build_site")
             self.assertEqual(done.returncode, 0, f"run {run}: {done.stdout + done.stderr}")
         self.assertEqual(index.read_text(encoding="utf-8").count("<!-- formal-companion-overlay-link -->"), 1)
-        self.assertEqual((site / "annotations" / "1.2.jsonl").read_bytes(), self.shard().read_bytes())
-        self.assertEqual((site / config.mount / "GENERATED.json").read_bytes(),
-                         (self.overlay / "GENERATED.json").read_bytes())
+        self.assertEqual((site / FILE).read_bytes(), self.annotation().read_bytes())
+        for name in ("GENERATED.json", BUNDLE):
+            self.assertEqual((site / config.mount / name).read_bytes(), (self.overlay / name).read_bytes())
         receipt = json.loads((site / config.mount / "receipt.json").read_text(encoding="utf-8"))
-        self.assertEqual([row["path"] for row in receipt["annotations"]["files"]], ["1.2.jsonl"])
+        self.assertEqual([row["path"] for row in receipt["annotations"]["files"]],
+                         [FILE.removeprefix("annotations/")])
         self.assertEqual(list(self.overlay.rglob("__pycache__")), [])
 
     def test_serve_help_runs_from_the_copy(self):

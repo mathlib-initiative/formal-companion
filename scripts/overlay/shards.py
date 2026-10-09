@@ -1,10 +1,10 @@
-"""Convert an annotation document into the overlay's Literature Links shards.
+"""Convert an annotation document into the overlay's Literature Links annotation files.
 
 New code, implementing section 7 of the overlay contract (`docs/overlay.md`).
 The exporters resolve a companion's curation into one annotation document
 (`vendor/formal_companion_annotations`); the overlay reads Literature Links
-(`vendor/literature_links`), one link per annotation, stored as JSONL shards,
-one file per book section.  :func:`convert` is the whole mapping:
+(`vendor/literature_links`), one annotation per file, one folder per book
+section.  :func:`convert` is the whole mapping:
 
 * one record per (region, item, linked declaration), for every link role the
   viewer shows, and one target-less record per region of an item that links
@@ -14,14 +14,18 @@ one file per book section.  :func:`convert` is the whole mapping:
   fractions of the displayed page from the top left (a quad region becomes
   its bounding box, the quads kept in the extension);
 * ``target``: the rendered page (``href#fragment``, or the fallback page),
-  relative to the shard, and a ``repository`` pin of the declaration;
+  relative to the annotation's own file, and a ``repository`` pin of the
+  declaration;
 * ``kind``, ``label``, ``status``, ``note`` and ``id`` from the item, its
   coverage and the link;
 * everything else the viewer shows under one extension, :data:`NAMESPACE`.
+
+:func:`file_names` names the files, the same way on every OS.
 """
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import math
 import re
@@ -35,14 +39,19 @@ from pathlib import Path, PurePosixPath
 from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from literature_links import discovery
 
-__all__ = ["DIRECTORY", "NAMESPACE", "ROLES", "SHARD_FILE", "Conversion", "convert", "scan_problems",
-           "section_of", "shard_bytes"]
+__all__ = ["ANNOTATION_FILE", "DIRECTORY", "NAMESPACE", "ROLES", "SECTION_DIR", "Conversion",
+           "annotation_bytes", "convert", "file_bytes", "file_names", "scan_problems", "section_of"]
 
 #: The one extension key every record carries (docs/overlay.md section 7).
 NAMESPACE = "org.mathlib-initiative.formal-companion.overlay"
-#: Where the shards live, relative to the companion root, and what a shard is called.
+#: Where the annotation files live, relative to the companion root: one folder per
+#: section, one ``<name>.json`` per annotation, no name longer than :data:`MAX_NAME`.
 DIRECTORY = "annotations"
-SHARD_FILE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]*\.jsonl\Z")
+SECTION_DIR = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]*\Z")
+ANNOTATION_FILE = re.compile(r"[0-9A-Za-z_-][0-9A-Za-z._-]{0,114}\.json\Z")
+MAX_NAME = 120
+#: How many hex digits of sha256 a hashed name ends with.
+HASH_DIGITS = 10
 #: Link roles in the order the viewer lists them.
 ROLES = ("key", "attributed", "support", "example", "helper")
 #: The page boxes whose normalized coordinates are the displayed page's.
@@ -55,19 +64,24 @@ FRAGMENT_SAFE = "!'()*-._~"
 _CLUSTER_SECTION = re.compile(r"\bSection (\d+)\.(\d+)")
 _DOTTED = re.compile(r"(\d+)\.(\d+)")
 _HTTPS = re.compile(r"https://[^\s#\\]+\Z")
+_UNSAFE = re.compile(r"[^A-Za-z0-9._-]")
+#: Device names Windows reserves whatever the extension (`nul.json` is `NUL`).
+_RESERVED = re.compile(r"(?:con|prn|aux|nul|com[0-9]|lpt[0-9])\Z", re.IGNORECASE)
 
 
 @dataclass
 class Conversion:
-    """The shards, by section, and what the conversion could not carry."""
+    """The records by section, their files, and what the conversion could not carry."""
 
-    shards: dict[str, list[dict]] = field(default_factory=dict)
+    sections: dict[str, list[dict]] = field(default_factory=dict)
+    #: ``{"<section>/<name>.json": record}``, in file order.
+    files: dict[str, dict] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
     counts: collections.Counter = field(default_factory=collections.Counter)
 
     @property
     def records(self) -> list[dict]:
-        return [record for name in sorted(self.shards) for record in self.shards[name]]
+        return list(self.files.values())
 
 
 # ---------------------------------------------------------------------------
@@ -106,12 +120,12 @@ def item_label(item: dict) -> str:
 
 
 def section_of(item: dict, clusters: dict) -> str:
-    """The shard an item's records go to.
+    """The section folder an item's records go to.
 
     A number with three or more parts names its section (``1.2.7`` is in
     ``1.2``); otherwise the item's own ``section`` or a cluster locator that
     says ``Section N.M``; otherwise ``other`` (a two-part number such as
-    ``3.4`` may be an equation or a section, so it names no shard).
+    ``3.4`` may be an equation or a section, so it names no section).
     """
     parts = str(item.get("number") or "").split(".")
     if len(parts) >= 3 and parts[0].isdigit() and parts[1].isdigit():
@@ -311,7 +325,8 @@ class _Converter:
         companion = doc.get("companion") or {}
         self.commit = companion.get("commit")
         self.repo_url = repo_url(companion.get("repo"))
-        self.up = "../" * len(PurePosixPath(directory).parts)
+        # An annotation file sits in <directory>/<section>/: this far below the site root.
+        self.up = "../" * (len(PurePosixPath(directory).parts) + 1)
         self.declarations = _by_id(doc.get("declarations"))
         self.snippets = _by_id(doc.get("snippets"), "declaration")
         self.destinations = _by_id(doc.get("destinations"), "declaration")
@@ -351,7 +366,7 @@ class _Converter:
         return pin
 
     def target(self, decl: dict, ext: dict) -> dict:
-        """The rendered page relative to the shard, else the source file (an unlinked card)."""
+        """The rendered page relative to the annotation's file, else the source file (an unlinked card)."""
         dest = self.destinations.get(decl["id"])
         uri = None
         if dest is not None:
@@ -433,10 +448,18 @@ class _Converter:
                     self.out.problems.append(f"{location['id']}: item {item_id!r} is not an item of the source")
                     continue
                 self.add(item, location, region_id, page, rect, quads, order, pages[item_id])
-        for records in self.out.shards.values():
+        for section, records in sorted(self.out.sections.items()):
             records.sort(key=_order)
-        self.out.counts["records"] = sum(len(r) for r in self.out.shards.values())
-        self.out.counts["shards"] = len(self.out.shards)
+            try:
+                names = file_names(records, self.out.counts)
+            except ValueError as exc:
+                self.out.problems.append(f"{section}: {exc}")
+                continue
+            for name, record in zip(names, records):
+                self.out.files[f"{section}/{name}"] = record
+        self.out.files = dict(sorted(self.out.files.items()))
+        self.out.counts["records"] = sum(len(r) for r in self.out.sections.values())
+        self.out.counts["sections"] = len(self.out.sections)
         return self.out
 
     def add(self, item: dict, location: dict, region_id: str, page: int, rect: list[float], quads,
@@ -457,7 +480,7 @@ class _Converter:
         verdicts = self.verdicts.get(item["id"], [])
         if verdicts:
             common["verdicts"] = [self.verdict(v) for v in verdicts]
-        shard = self.out.shards.setdefault(section_of(item, self.clusters), [])
+        section = self.out.sections.setdefault(section_of(item, self.clusters), [])
         if not links:
             record = dict(base, id=item["id"])
             if status == "not_formalized":
@@ -467,7 +490,7 @@ class _Converter:
             if item.get("clusters"):
                 common["clusters"] = list(item["clusters"])
             record["extensions"] = {NAMESPACE: common}
-            shard.append(record)
+            section.append(record)
             self.out.counts["target_less_records"] += 1
             return
         for link in links:
@@ -500,7 +523,7 @@ class _Converter:
             if status:
                 record["status"] = status
             record["extensions"] = {NAMESPACE: ext}
-            shard.append(record)
+            section.append(record)
             self.out.counts[f"records.{link['role']}"] += 1
 
 
@@ -515,7 +538,7 @@ def _order(record: dict) -> tuple:
 
 
 def convert(doc: dict, *, source_id: str | None = None, directory: str = DIRECTORY) -> Conversion:
-    """Every Literature Links record the overlay needs, grouped into shards by book section."""
+    """Every Literature Links record the overlay needs, by book section, each with its file name."""
     return _Converter(doc, source_id, directory).records()
 
 
@@ -523,26 +546,82 @@ def convert(doc: dict, *, source_id: str | None = None, directory: str = DIRECTO
 # the files
 # ---------------------------------------------------------------------------
 
-def line(record: dict) -> str:
-    """One canonical JSONL line: sorted keys, no spaces, UTF-8 as written."""
-    return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+def name_key(record: dict) -> str:
+    """``<item>__<role>__<declaration>``, or ``<item>`` for a record with no target, unsanitised."""
+    ext = record["extensions"][NAMESPACE]
+    if "role" not in ext:
+        return ext["item"]
+    return f"{ext['item']}__{ext['role']}__{ext['declaration']['id']}"
 
 
-def shard_bytes(conversion: Conversion) -> dict[str, bytes]:
-    """``{"<section>.jsonl": bytes}``: one canonical line per record, a final newline."""
-    return {f"{name}.jsonl": "".join(line(r) + "\n" for r in records).encode("utf-8")
-            for name, records in sorted(conversion.shards.items())}
+def _hashed(stem: str, key: str) -> str:
+    suffix = "-" + hashlib.sha256(key.encode("utf-8")).hexdigest()[:HASH_DIGITS]
+    return stem[:MAX_NAME - len(".json") - len(suffix)] + suffix + ".json"
+
+
+def file_names(records: list[dict], counts: collections.Counter | None = None) -> list[str]:
+    """One file name per record of one section folder, in the records' order.
+
+    The name is :func:`name_key` with every character outside
+    ``[A-Za-z0-9._-]`` (and a leading ``.``) replaced by ``-``, then ``.json``.
+    A name longer than :data:`MAX_NAME`, a Windows device name, and every name
+    that would equal another one ignoring case end instead in ``-`` and the
+    first :data:`HASH_DIGITS` hex digits of the sha256 of the full key,
+    truncated to fit.  The full key is the unsanitised key, followed by
+    ``@<region>`` when one item drawn in several regions gives several
+    records the same key.
+    """
+    keys = [name_key(record) for record in records]
+    shared = collections.Counter(keys)
+    full = [key if shared[key] == 1 else f"{key}@{record['extensions'][NAMESPACE]['region']}"
+            for key, record in zip(keys, records)]
+    if len(set(full)) != len(full):
+        raise ValueError(f"two records share the key {collections.Counter(full).most_common(1)[0][0]!r}")
+    stems = []
+    for key in keys:
+        stem = _UNSAFE.sub("-", key)
+        stems.append("-" + stem[1:] if stem.startswith(".") else stem)
+    long = [len(stem) + len(".json") > MAX_NAME for stem in stems]
+    hashed = [too_long or bool(_RESERVED.fullmatch(stem.split(".", 1)[0])) for stem, too_long in zip(stems, long)]
+    while True:
+        names = [_hashed(stem, key) if h else stem + ".json" for stem, key, h in zip(stems, full, hashed)]
+        groups: dict[str, list[int]] = collections.defaultdict(list)
+        for index, name in enumerate(names):
+            groups[name.lower()].append(index)
+        clashing = [index for group in groups.values() if len(group) > 1 for index in group if not hashed[index]]
+        if not clashing:
+            break
+        for index in clashing:
+            hashed[index] = True
+    for group in groups.values():
+        if len(group) > 1:
+            raise ValueError(f"{len(group)} records hash to the file name {names[group[0]]!r}")
+    if counts is not None:
+        counts["files_truncated"] += sum(long)
+        counts["files_hashed"] += sum(hashed)
+    return names
+
+
+def annotation_bytes(record: dict) -> bytes:
+    """One annotation file: canonical JSON, sorted keys, two-space indent, UTF-8, a final newline."""
+    return (json.dumps(record, sort_keys=True, indent=2, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+
+
+def file_bytes(conversion: Conversion) -> dict[str, bytes]:
+    """``{"<section>/<name>.json": bytes}``, one file per record, in file order."""
+    return {path: annotation_bytes(record) for path, record in conversion.files.items()}
 
 
 def scan_problems(files: dict[str, bytes]) -> list[str]:
-    """What the vendored ``literature_links`` scan says about these shards, one line each."""
-    with tempfile.TemporaryDirectory(prefix="cf-overlay-shards-") as tmp:
+    """What the vendored ``literature_links`` scan says about these files, one line each."""
+    with tempfile.TemporaryDirectory(prefix="cf-overlay-annotations-") as tmp:
         root = Path(tmp).resolve()
         for name, raw in files.items():
-            (root / name).write_bytes(raw)
+            path = root.joinpath(*PurePosixPath(name).parts)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(raw)
         found = discovery.collect([root])
         out = [f"{p.path.replace(str(root) + '/', '')}: {p.message} [{p.code}]" for p in found.problems]
-        expected = sum(raw.count(b"\n") for raw in files.values())
-        if not out and len(found.records) != expected:
-            out.append(f"the scan read {len(found.records)} annotations from {expected} lines")
+        if not out and len(found.records) != len(files):
+            out.append(f"the scan read {len(found.records)} annotations from {len(files)} files")
     return out

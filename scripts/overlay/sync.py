@@ -9,14 +9,16 @@ New code, implementing sections 2, 5 and 6 of the overlay contract
 * **sync** copies every file under `templates/overlay/runtime/` into
   `pdf-overlay/` byte for byte, adds the vendored Literature Links package as
   `pdf-overlay/tools/literature_links/`, deletes what a previous
-  `GENERATED.json` listed and the templates no longer have, and writes
-  `GENERATED.json`, which also records the shard list: the shards in
-  `<companion>/annotations/` with their sha256, because the viewer cannot list
-  a directory.  It substitutes nothing (contract rule 2), which is why a
-  second sync is a no-op and why `tools/check_generated.py` can verify the
-  whole directory with the standard library alone.
+  `GENERATED.json` listed and the templates no longer have, writes the bundle
+  (every annotation file in `<companion>/annotations/` with its path, in file
+  order, so the viewer reads them in one fetch) and writes `GENERATED.json`,
+  which records the files' count and manifest sha256 and the bundle's sha256.
+  It substitutes nothing (contract rule 2), which is why a second sync is a
+  no-op and why `tools/check_generated.py` can verify the whole directory
+  with the standard library alone.
 * **check** is `sync --check` plus the config rules, the Literature Links scan
-  of every shard, the curation inputs' hashes and the overlay's own rules.
+  of every annotation file, the curation inputs' hashes and the overlay's own
+  rules.
 
 Rule 5 of section 1 is the exception to "never write to a companion repo", and
 it is narrow: these commands write under `<companion>/pdf-overlay/` and, for
@@ -48,27 +50,30 @@ from overlay import config as overlay_config
 from overlay import shards as overlay_shards
 
 __all__ = [
-    "ANNOTATIONS_DIRNAME", "FORMAT_PACKAGE", "GENERATED_NAME", "GENERATED_SCHEMA",
-    "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES", "LINKS_RELATIVE",
-    "OVERLAY_DIRNAME", "SyncResult", "annotations_dir", "check", "digest", "format_pin",
-    "generated_document", "generated_files", "generator_commit", "init", "overlay_dir",
-    "overlay_problems", "record_annotations", "runtime_root", "shard_entries", "sync",
-    "sync_problems", "template_files",
+    "ANNOTATIONS_DIRNAME", "BUNDLE_NAME", "BUNDLE_SCHEMA", "FORMAT_PACKAGE", "GENERATED_NAME",
+    "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES",
+    "LINKS_RELATIVE", "OVERLAY_DIRNAME", "SyncResult", "annotation_files", "annotations_dir",
+    "bundle_bytes", "bundle_differences", "bundle_files", "check", "digest", "format_pin", "generated_document", "generated_files",
+    "generator_commit", "init", "manifest_sha256", "overlay_dir", "overlay_problems",
+    "record_annotations", "runtime_root", "sync", "sync_problems", "template_files",
 ]
 
 #: The one directory a companion gets, and the file in it that is not copied.
 OVERLAY_DIRNAME = "pdf-overlay"
 GENERATED_NAME = "GENERATED.json"
 INSTANCE_FILES = (overlay_config.CONFIG_NAME,)
-#: The shard directory, relative to the companion root (contract section 2).
+#: The annotation directory, relative to the companion root (contract section 2).
 ANNOTATIONS_DIRNAME = overlay_shards.DIRECTORY
+#: The bundle `sync` writes beside `GENERATED.json`: every annotation file, for the viewer.
+BUNDLE_NAME = "annotations.bundle.json"
+BUNDLE_SCHEMA = "formal-companion/overlay-annotations"
 
 GENERATED_SCHEMA = "formal-companion/overlay-generated"
-GENERATED_SCHEMA_VERSION = 2
+GENERATED_SCHEMA_VERSION = 3
 GENERATOR_NAME = "formal-companion"
 
 #: The Literature Links release the overlay reads: the vendored package, shipped
-#: whole under `pdf-overlay/tools/` so a companion's CI validates its shards
+#: whole under `pdf-overlay/tools/` so a companion's CI validates its annotations
 #: with nothing but CPython.
 FORMAT_PACKAGE = "literature-links"
 LINKS_PACKAGE = "literature_links"
@@ -169,7 +174,8 @@ def generator_commit() -> str | None:
 
 
 def empty_annotations() -> dict:
-    return {"directory": ANNOTATIONS_DIRNAME, "extension": overlay_shards.NAMESPACE, "shards": []}
+    return {"count": 0, "directory": ANNOTATIONS_DIRNAME, "extension": overlay_shards.NAMESPACE,
+            "manifest_sha256": manifest_sha256({})}
 
 
 def generated_document(files: dict[str, bytes], *, commit: str | None,
@@ -219,7 +225,7 @@ def overlay_dir(companion: str | Path) -> Path:
 
 
 def annotations_dir(companion: str | Path) -> Path:
-    """`<companion>/annotations`, the shard directory, under the same refusals."""
+    """`<companion>/annotations`, the annotation directory, under the same refusals."""
     return _companion_subdir(companion, ANNOTATIONS_DIRNAME)
 
 
@@ -333,36 +339,73 @@ def _dump(document: dict) -> bytes:
 
 
 # ---------------------------------------------------------------------------
-# the shards
+# the annotation files and the bundle
 # ---------------------------------------------------------------------------
 
-def shard_entries(companion: str | Path) -> tuple[list[dict], list[str]]:
-    """``(entries, problems)``: every shard in the shard directory, scanned.
+def annotation_files(companion: str | Path) -> tuple[dict[str, bytes], list[str]]:
+    """``(files, problems)``: ``{path relative to the companion: bytes}`` of every annotation file.
 
-    An entry is ``{path, sha256, records}`` with ``path`` relative to the
-    companion root.  The directory holds shards and nothing else: a file that
-    is not ``<name>.jsonl``, a subdirectory or a link is a problem, and so is
-    anything the vendored ``literature_links`` scan reports.
+    The directory holds ``<section>/<name>.json`` files and nothing else:
+    anything else (a file outside a section folder, a nested folder, a link,
+    a name the export would not write) is a problem, and so is anything the
+    vendored ``literature_links`` scan reports.
     """
     directory = annotations_dir(companion)
+    files: dict[str, bytes] = {}
+    problems: list[str] = []
     if not directory.is_dir():
-        return [], []
-    entries, problems, paths = [], [], []
+        return files, problems
     for entry in sorted(os.scandir(directory), key=lambda e: e.name):
-        mode = entry.stat(follow_symlinks=False).st_mode
         relative = f"{ANNOTATIONS_DIRNAME}/{entry.name}"
-        if not stat.S_ISREG(mode) or not overlay_shards.SHARD_FILE.fullmatch(entry.name):
-            problems.append(f"{relative}: not a shard; {ANNOTATIONS_DIRNAME}/ holds only <name>.jsonl files")
+        if not entry.is_dir(follow_symlinks=False) or not overlay_shards.SECTION_DIR.fullmatch(entry.name):
+            problems.append(f"{relative}: not a section folder; {ANNOTATIONS_DIRNAME}/ holds only "
+                            "<section>/<name>.json files")
             continue
-        raw = Path(entry.path).read_bytes()
-        entries.append({"path": relative, "records": sum(1 for line in raw.split(b"\n") if line.strip(b" \t")),
-                        "sha256": digest(raw)})
-        paths.append(Path(entry.path))
-    if paths:
+        for child in sorted(os.scandir(entry.path), key=lambda e: e.name):
+            if not stat.S_ISREG(child.stat(follow_symlinks=False).st_mode) \
+                    or not overlay_shards.ANNOTATION_FILE.fullmatch(child.name):
+                problems.append(f"{relative}/{child.name}: not an annotation file")
+                continue
+            files[f"{relative}/{child.name}"] = Path(child.path).read_bytes()
+    if files:
         root = str(directory.parent) + os.sep
         problems += [f"{p.path.replace(root, '')}: {p.message} [{p.code}]"
-                     for p in discovery.collect(paths).problems]
-    return entries, problems
+                     for p in discovery.collect([directory]).problems]
+    return dict(sorted(files.items())), problems
+
+
+def manifest_sha256(files: dict[str, bytes]) -> str:
+    """The sha256 of ``<sha256>  <path>`` lines sorted by path: what `sha256sum` prints for the files."""
+    return digest("".join(f"{digest(raw)}  {path}\n" for path, raw in sorted(files.items())).encode("utf-8"))
+
+
+def bundle_bytes(files: dict[str, bytes]) -> bytes:
+    """Every annotation file with its path, in file order: one line per annotation."""
+    rows = [json.dumps({"annotation": json.loads(raw), "path": path}, sort_keys=True, separators=(",", ":"),
+                       ensure_ascii=False, allow_nan=False) for path, raw in sorted(files.items())]
+    head = json.dumps({"schema": BUNDLE_SCHEMA, "schema_version": 1, "directory": ANNOTATIONS_DIRNAME,
+                       "count": len(rows)}, separators=(",", ":"))[:-1]
+    return (head + ',"annotations":[\n' + ",\n".join(rows) + "\n]}\n").encode("utf-8")
+
+
+def bundle_files(raw: bytes) -> dict[str, bytes] | None:
+    """``{path: bytes}`` of the annotation files a bundle holds, or None when it is not one."""
+    try:
+        rows = json.loads(raw.decode("utf-8"))["annotations"]
+        return {row["path"]: overlay_shards.annotation_bytes(row["annotation"]) for row in rows}
+    except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return None
+
+
+def bundle_differences(held: dict[str, bytes] | None, files: dict[str, bytes]) -> list[str]:
+    """Each annotation file the bundle does not hold exactly, by path; empty when it holds them all."""
+    if held is None:
+        return [f"{BUNDLE_NAME} is not a readable bundle; run `cf overlay sync`"]
+    out = [f"{path}: not in {BUNDLE_NAME}" for path in sorted(set(files) - set(held))]
+    out += [f"{path}: in {BUNDLE_NAME} but not on disk" for path in sorted(set(held) - set(files))]
+    out += [f"{path}: differs from {BUNDLE_NAME}" for path in sorted(set(held) & set(files))
+            if held[path] != files[path]]
+    return out
 
 
 def _write_record(overlay: Path, document: dict) -> None:
@@ -375,14 +418,14 @@ def _write_record(overlay: Path, document: dict) -> None:
 def record_annotations(companion: str | Path, annotations: dict) -> Path:
     """Write ``annotations`` as `GENERATED.json`'s `annotations` block, keeping the rest.
 
-    `cf overlay export` calls it with the export, its inputs and the shards it
+    `cf overlay export` calls it with the export, its inputs and the files it
     wrote.  Before any sync there is no runtime yet, and the record lists no
-    file until `cf overlay sync` copies them.
+    file until `cf overlay sync` copies them; a record of an older version
+    keeps its file list, so the next sync still knows what it wrote.
     """
     overlay = overlay_dir(companion)
     previous = _previous(overlay)
-    if previous is not None and previous.get("schema") == GENERATED_SCHEMA \
-            and previous.get("schema_version") == GENERATED_SCHEMA_VERSION:
+    if previous is not None and previous.get("schema") == GENERATED_SCHEMA:
         document = dict(previous, annotations=annotations)
     else:
         document = generated_document({}, commit=generator_commit(), annotations=annotations)
@@ -391,29 +434,32 @@ def record_annotations(companion: str | Path, annotations: dict) -> Path:
     return overlay / GENERATED_NAME
 
 
-def _annotations_for_sync(companion: str | Path, previous: dict | None) -> dict:
-    """The `annotations` block a sync writes: the shards on disk, the export's facts kept.
+def _annotations_for_sync(companion: str | Path, previous: dict | None) -> tuple[dict, bytes]:
+    """The `annotations` block a sync writes, and the bundle: the files on disk, the export's facts kept.
 
-    Shards `cf overlay export` wrote are its output: one that changed since is
-    refused here rather than recorded, so a hand edit cannot be blessed by a
-    sync and then pass the companion's CI.
+    Files `cf overlay export` wrote are its output: a set that changed since
+    is refused here rather than recorded, so a hand edit cannot be blessed by
+    a sync and then pass the companion's CI.
     """
     old = (previous or {}).get("annotations")
     old = old if isinstance(old, dict) else {}
-    entries, problems = shard_entries(companion)
+    files, problems = annotation_files(companion)
     if problems:
         raise CfError(problems[0], hint="; ".join(problems[1:4]) or
-                      "fix or re-export the shards; `cf overlay export` writes them")
+                      "fix or re-export the annotations; `cf overlay export` writes them")
     block = {k: v for k, v in old.items() if k in ("export", "inputs")}
-    if "export" in block:
-        recorded = {row.get("path"): row.get("sha256") for row in old.get("shards") or []
-                    if isinstance(row, dict)}
-        found = {row["path"]: row["sha256"] for row in entries}
-        if recorded != found:
-            changed = sorted(p for p in set(recorded) | set(found) if recorded.get(p) != found.get(p))
-            raise CfError(f"{changed[0]} is not what `cf overlay export` wrote",
-                          hint="re-run `cf overlay export`; exported shards are not edited by hand")
-    return dict(sorted({**empty_annotations(), **block, "shards": entries}.items()))
+    if "export" in block and (old.get("count"), old.get("manifest_sha256")) != (len(files), manifest_sha256(files)):
+        # The last bundle names the file when it holds what the export wrote.
+        bundle = overlay_dir(companion) / BUNDLE_NAME
+        held = bundle_files(bundle.read_bytes()) if bundle.is_file() else None
+        named = bundle_differences(held, files) \
+            if held is not None and manifest_sha256(held) == old.get("manifest_sha256") else []
+        raise CfError(f"{named[0] if named else ANNOTATIONS_DIRNAME + '/'}: not what `cf overlay export` wrote",
+                      hint="re-run `cf overlay export`; exported annotations are not edited by hand")
+    bundle = bundle_bytes(files)
+    block.update(count=len(files), manifest_sha256=manifest_sha256(files),
+                 bundle={"path": BUNDLE_NAME, "sha256": digest(bundle)})
+    return dict(sorted({**empty_annotations(), **block}.items())), bundle
 
 
 # ---------------------------------------------------------------------------
@@ -468,7 +514,7 @@ class SyncResult:
 
 
 def sync(companion: str | Path) -> SyncResult:
-    """Copy the runtime into `pdf-overlay/` and write `GENERATED.json` with the shard list."""
+    """Copy the runtime into `pdf-overlay/`, write the bundle, and write `GENERATED.json`."""
     overlay = overlay_dir(companion)
     generated = generated_files()
     record = _previous(overlay)
@@ -478,7 +524,7 @@ def sync(companion: str | Path) -> SyncResult:
         raise CfError(f"{overlay} holds something that is not an ordinary file: {odd[0]}",
                       hint="; ".join(odd[1:]) or "remove it and re-run")
 
-    known = set(generated) | set(previous) | set(INSTANCE_FILES) | {GENERATED_NAME}
+    known = set(generated) | set(previous) | set(INSTANCE_FILES) | {GENERATED_NAME, BUNDLE_NAME}
     unexpected = sorted(set(present) - known)
     if unexpected:
         rest = (f"the other {len(unexpected) - 1}: {', '.join(unexpected[1:])}"
@@ -486,11 +532,11 @@ def sync(companion: str | Path) -> SyncResult:
                 "pdf-overlay/ is generated; keep your own files outside it")
         raise CfError(f"{overlay} holds a file no previous GENERATED.json listed: "
                       f"{unexpected[0]}", hint=rest)
-    annotations = _annotations_for_sync(companion, record)
+    annotations, bundle = _annotations_for_sync(companion, record)
 
     result = SyncResult(overlay=overlay)
     for relative in sorted(set(previous) - set(generated) - set(INSTANCE_FILES)):
-        if relative == GENERATED_NAME or relative not in present:
+        if relative in (GENERATED_NAME, BUNDLE_NAME) or relative not in present:
             continue
         path = _resolve_inside(overlay, relative, f"the previous {GENERATED_NAME}")
         path.unlink()
@@ -504,6 +550,11 @@ def sync(companion: str | Path) -> SyncResult:
             continue
         write_file(path, raw)
         result.written.append(relative)
+    if present.get(BUNDLE_NAME) == digest(bundle):
+        result.unchanged.append(BUNDLE_NAME)
+    else:
+        write_file(_resolve_inside(overlay, BUNDLE_NAME, "the bundle"), bundle)
+        result.written.append(BUNDLE_NAME)
 
     document = generated_document(generated, commit=generator_commit(), annotations=annotations)
     target = overlay / GENERATED_NAME
@@ -516,7 +567,7 @@ def sync(companion: str | Path) -> SyncResult:
 
 
 def sync_problems(companion: str | Path) -> list[str]:
-    """`sync --check`: every missing, changed or extra file and shard, read-only."""
+    """`sync --check`: every missing, changed or extra file and annotation file, read-only."""
     overlay = overlay_dir(companion)
     if not overlay.is_dir():
         return [f"{OVERLAY_DIRNAME}/ does not exist; run `cf overlay sync`"]
@@ -528,7 +579,7 @@ def sync_problems(companion: str | Path) -> list[str]:
     for relative in sorted(set(expected) & set(present)):
         if expected[relative] != present[relative]:
             out.append(f"changed: {relative}")
-    for relative in sorted(set(present) - set(expected) - set(INSTANCE_FILES) - {GENERATED_NAME}):
+    for relative in sorted(set(present) - set(expected) - set(INSTANCE_FILES) - {GENERATED_NAME, BUNDLE_NAME}):
         out.append(f"extra: {relative}")
 
     path = overlay / GENERATED_NAME
@@ -555,22 +606,24 @@ def sync_problems(companion: str | Path) -> list[str]:
             out.append(f"{GENERATED_NAME} records the wrong sha256 for {relative}")
 
     block = record.get("annotations") if isinstance(record.get("annotations"), dict) else {}
-    recorded = {row.get("path"): row.get("sha256") for row in block.get("shards") or []
-                if isinstance(row, dict)}
-    entries, _problems = shard_entries(companion)
-    found = {row["path"]: row["sha256"] for row in entries}
-    for relative in sorted(set(recorded) - set(found)):
-        out.append(f"missing shard: {relative}")
-    for relative in sorted(set(found) - set(recorded)):
-        out.append(f"{GENERATED_NAME} does not list the shard {relative}")
-    for relative in sorted(set(found) & set(recorded)):
-        if found[relative] != recorded[relative]:
-            out.append(f"changed shard: {relative}")
+    files, _problems = annotation_files(companion)
+    if (block.get("count"), block.get("manifest_sha256")) != (len(files), manifest_sha256(files)):
+        out.append(f"changed annotations: {ANNOTATIONS_DIRNAME}/ holds {len(files)} files, not the "
+                   f"{block.get('count')} {GENERATED_NAME} records by manifest sha256")
+    bundle = overlay / BUNDLE_NAME
+    recorded = (block.get("bundle") or {}).get("sha256") if isinstance(block.get("bundle"), dict) else None
+    if not bundle.is_file():
+        out.append(f"missing: {BUNDLE_NAME}")
+    else:
+        raw = bundle.read_bytes()
+        if digest(raw) != recorded:
+            out.append(f"changed: {BUNDLE_NAME}")
+        out += bundle_differences(bundle_files(raw), files)
     return out
 
 
 # ---------------------------------------------------------------------------
-# check: the config, the shards, the inputs and the overlay's own rules
+# check: the config, the annotations, the inputs and the overlay's own rules
 # ---------------------------------------------------------------------------
 
 def target_problems(path: str, record: dict) -> list[str]:
@@ -592,25 +645,22 @@ def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
     root = Path(companion).expanduser().resolve()
     out: list[str] = []
     sources: dict[str, dict] = {}
-    entries, _problems = shard_entries(companion)
-    for entry in entries:
-        for line in (root / entry["path"]).read_text(encoding="utf-8").split("\n"):
-            if not line.strip(" \t"):
-                continue
-            record = json.loads(line)
-            source = record.get("source") or {}
-            ext = (source.get("extensions") or {}).get(overlay_shards.NAMESPACE) or {}
-            if source.get("type") != "pdf" or ext.get("source_id") != source_id:
-                continue
-            sources.setdefault(json.dumps(source, sort_keys=True), source)
-            count = ext.get("physical_page_count")
-            page = (record.get("location") or {}).get("page")
-            if isinstance(count, int) and isinstance(page, int) and page > count:
-                out.append(f"{entry['path']}: {record.get('id')!r} is on page {page}, past the "
-                           f"source's {count} pages")
-            out += target_problems(entry["path"], record)
+    files, _problems = annotation_files(companion)
+    for path, raw in files.items():
+        record = json.loads(raw)
+        source = record.get("source") or {}
+        ext = (source.get("extensions") or {}).get(overlay_shards.NAMESPACE) or {}
+        if source.get("type") != "pdf" or ext.get("source_id") != source_id:
+            continue
+        sources.setdefault(json.dumps(source, sort_keys=True), source)
+        count = ext.get("physical_page_count")
+        page = (record.get("location") or {}).get("page")
+        if isinstance(count, int) and isinstance(page, int) and page > count:
+            out.append(f"{path}: {record.get('id')!r} is on page {page}, past the "
+                       f"source's {count} pages")
+        out += target_problems(path, record)
     if not sources:
-        out.append(f"no shard holds a record of the PDF {source_id!r}, which "
+        out.append(f"no annotation is a record of the PDF {source_id!r}, which "
                    f"{overlay_config.CONFIG_NAME} names")
     elif len(sources) > 1:
         out.append(f"the records of {source_id!r} carry {len(sources)} different sources; "
@@ -631,10 +681,10 @@ def inputs_problems(companion: str | Path, record: dict) -> list[str]:
     for row in block.get("inputs") or []:
         path = root / row["path"]
         if not path.is_file():
-            out.append(f"{row['path']}: gone since the shards were exported from it; "
+            out.append(f"{row['path']}: gone since the annotations were exported from it; "
                        "re-run `cf overlay export`")
         elif digest(path.read_bytes()) != row["sha256"]:
-            out.append(f"{row['path']}: changed since the shards were exported from it; "
+            out.append(f"{row['path']}: changed since the annotations were exported from it; "
                        "re-run `cf overlay export` and `cf overlay sync`")
     return out
 
@@ -643,14 +693,14 @@ def check(companion: str | Path) -> list[str]:
     """Every problem `cf overlay check` reports, one line each."""
     overlay = overlay_dir(companion)
     out = sync_problems(companion)
-    entries, problems = shard_entries(companion)
+    files, problems = annotation_files(companion)
     out += problems
-    if not entries:
-        out.append(f"{ANNOTATIONS_DIRNAME}/ holds no shard; `cf overlay export` writes them")
+    if not files:
+        out.append(f"{ANNOTATIONS_DIRNAME}/ holds no annotation file; `cf overlay export` writes them")
     out += inputs_problems(companion, _previous(overlay) or {})
     config_path = overlay / overlay_config.CONFIG_NAME
     found = overlay_config.load_problems(config_path)
     out += found
-    if found or problems or not entries:
+    if found or problems or not files:
         return out
     return out + overlay_problems(companion, overlay_config.load(config_path).source_id)

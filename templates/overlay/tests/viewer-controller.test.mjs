@@ -3,8 +3,8 @@
  *
  * Every run here drives `bootstrapViewer` with a fake document built from the
  * real `runtime/viewer/index.html`, a fetch that serves a synthetic
- * `overlay.config.json`, a synthetic `GENERATED.json`, synthetic Literature
- * Links shards and synthetic PDF bytes, and a fake PDF.js. The pure half is
+ * `overlay.config.json`, a synthetic `GENERATED.json`, a synthetic bundle of
+ * Literature Links annotations and synthetic PDF bytes, and a fake PDF.js. The pure half is
  * covered in viewer-core.test.mjs.
  */
 import assert from "node:assert/strict";
@@ -13,6 +13,7 @@ import test from "node:test";
 import { NAMESPACE, sha256Hex } from "../runtime/viewer/viewer-core.js";
 import { bootstrapViewer, isViewerShortcut, rememberedPage } from "../runtime/viewer/viewer.js";
 import {
+  BUNDLE_URL,
   FakeOption,
   ORIGIN,
   PAGE_URL,
@@ -24,18 +25,17 @@ import {
   fire,
   jsonResponse,
   makeConfig,
+  bundleText,
   makeGenerated,
-  makeShards,
+  makeSections,
   memoryStorage,
   notFound,
-  shardText,
   shellHtml,
   throwingStorage,
 } from "./fixtures.mjs";
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
 const SHELL = await shellHtml();
-const SHARD_URLS = [`${ORIGIN}/annotations/1.jsonl`, `${ORIGIN}/annotations/2.jsonl`];
 
 /** Node has no `Option` constructor; `setOptions` builds its rows with one. */
 function withOption(t) {
@@ -54,16 +54,16 @@ function pdfResponse(bytes = PDF_BYTES, { contentType = "application/pdf", ok = 
 
 async function start({
   config = makeConfig(),
-  shards = makeShards(PDF_SHA256),
+  sections = makeSections(PDF_SHA256),
   generated = undefined,
   documentRef = fakeDocument(SHELL),
   locationRef = { hash: "" },
   pdf = () => pdfResponse(),
   pdfjs = fakePdfjs(),
-  served = {},
+  served = undefined,
   storage = memoryStorage(),
 } = {}) {
-  const record = generated === undefined ? await makeGenerated(shards) : generated;
+  const record = generated === undefined ? await makeGenerated(sections) : generated;
   const urls = [];
   const historyRef = { replaceState: (_state, _title, url) => urls.push(url) };
   const fetched = [];
@@ -78,10 +78,8 @@ async function start({
     if (url === PDF_ROUTE) {
       return pdf();
     }
-    for (const [shardPath, records] of Object.entries(shards)) {
-      if (url === `${ORIGIN}/${shardPath}`) {
-        return jsonResponse(served[shardPath] ?? shardText(records));
-      }
+    if (url === BUNDLE_URL) {
+      return jsonResponse(served ?? bundleText(sections));
     }
     throw new Error(`the viewer asked for ${url}`);
   };
@@ -120,11 +118,11 @@ async function selectPageRegion(documentRef, state, regionId) {
 
 // --- start-up ---------------------------------------------------------------
 
-test("start-up: the config, the shard list, each shard and the route are fetched", async (t) => {
+test("start-up: the config, GENERATED.json, the one bundle and the route are fetched", async (t) => {
   withOption(t);
   const { fetched, pdfjs } = await start();
   assert.deepEqual(fetched.map((call) => call.url),
-                   ["../overlay.config.json", "../GENERATED.json", ...SHARD_URLS, PDF_ROUTE]);
+                   ["../overlay.config.json", "../GENERATED.json", BUNDLE_URL, PDF_ROUTE]);
   for (const call of fetched) {
     assert.deepEqual(call.options, { cache: "no-store", credentials: "same-origin" });
   }
@@ -149,17 +147,17 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
 
 test("start-up: refused data leaves an error on the page, not a blank one", async (t) => {
   withOption(t);
-  const shards = makeShards(PDF_SHA256);
+  const sections = makeSections(PDF_SHA256);
   for (const [options, pattern] of [
     [{ config: makeConfig({ pdf: { route: "/files/notes.pdf" } }) }, /pdf\.route/],
     [{ generated: null }, /Unable to load \.\.\/GENERATED\.json \(404\)/],
     [{ generated: {} }, /no annotations block/],
-    [{ config: makeConfig({ source_id: "src:nowhere" }) }, /No shard holds a record of the PDF "src:nowhere"/],
-    [{ served: { "annotations/2.jsonl": "{}\n" } }, /annotations\/2\.jsonl has sha256 [a-f\d]{64}; GENERATED\.json records/],
+    [{ config: makeConfig({ source_id: "src:nowhere" }) }, /No annotation is a record of the PDF "src:nowhere"/],
+    [{ served: "{}\n" }, /annotations\.bundle\.json has sha256 [a-f\d]{64}; GENERATED\.json records/],
   ]) {
     const documentRef = fakeDocument(SHELL);
-    const generated = options.generated === undefined ? await makeGenerated(shards) : options.generated;
-    await assert.rejects(() => start({ ...options, documentRef, generated, shards }), pattern);
+    const generated = options.generated === undefined ? await makeGenerated(sections) : options.generated;
+    await assert.rejects(() => start({ ...options, documentRef, generated, sections }), pattern);
     assert.equal(el(documentRef, "error").hidden, false);
     assert.match(el(documentRef, "error").textContent, pattern);
     assert.equal(el(documentRef, "workspace").hidden, true);
@@ -167,21 +165,28 @@ test("start-up: refused data leaves an error on the page, not a blank one", asyn
   }
 });
 
-test("start-up: a shard that matches its sha256 but is not JSONL is refused by line", async (t) => {
+test("start-up: a bundle that matches its sha256 but is not a bundle is refused", async (t) => {
   withOption(t);
-  const shards = makeShards(PDF_SHA256);
-  const broken = { ...shards };
-  const generated = await makeGenerated(shards);
-  generated.annotations.shards[1].sha256 = await sha256Hex(new TextEncoder().encode("{oops\n"));
-  await assert.rejects(() => start({ generated, served: { "annotations/2.jsonl": "{oops\n" }, shards: broken }),
-                       /annotations\/2\.jsonl:1 is not JSON/);
+  const sections = makeSections(PDF_SHA256);
+  for (const [text, pattern] of [["{oops\n", /annotations\.bundle\.json is not JSON/],
+                                 ["[]\n", /is not a formal-companion\/overlay-annotations bundle/]]) {
+    const generated = await makeGenerated(sections, text);
+    await assert.rejects(() => start({ generated, sections, served: text }), pattern);
+  }
+});
+
+test("start-up: each record's target resolves against its own file's URL", async (t) => {
+  withOption(t);
+  const { result } = await start();
+  const [key] = result.state.index.items.get("item:theorem-1.1").cards;
+  assert.equal(key.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
 });
 
 test("start-up: a record that cannot be placed is reported in the page notice", async (t) => {
   withOption(t);
-  const shards = makeShards(PDF_SHA256);
-  shards["annotations/2.jsonl"][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
-  const { documentRef, result } = await start({ shards });
+  const sections = makeSections(PDF_SHA256);
+  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  const { documentRef, result } = await start({ sections });
   assert.equal(el(documentRef, "notice").hidden, false);
   assert.match(el(documentRef, "notice").textContent, /^1 region\(s\) could not be placed/);
   assert.equal(result.state.index.pages.has(5), false);
@@ -193,7 +198,7 @@ test("start-up: a record that cannot be placed is reported in the page notice", 
 test("pdf: a hash mismatch stops before PDF.js and says so on the page", async (t) => {
   withOption(t);
   const pdfjs = fakePdfjs();
-  const { documentRef, result } = await start({ pdfjs, shards: makeShards(fakeSha256("9")) });
+  const { documentRef, result } = await start({ pdfjs, sections: makeSections(fakeSha256("9")) });
   assert.equal(pdfjs.calls.length, 0, "PDF.js must not see unverified bytes");
   assert.equal(result.state.pdfDocument, null);
   assert.equal(el(documentRef, "workspace").hidden, true);
@@ -298,14 +303,14 @@ test("rendered: a region opens the item its curation names first, and never an e
   const choices = el(documentRef, "item-choices");
   assert.deepEqual(choices.children.map((button) => button.textContent), ["Remark 7.1 and equation (7)", "Equation 7"]);
   assert.equal(el(documentRef, "item-label").textContent, "Remark 7.1 and equation (7)");
-  const shards = makeShards(PDF_SHA256);
-  for (const record of shards["annotations/2.jsonl"]) {
+  const sections = makeSections(PDF_SHA256);
+  for (const record of sections[2]) {
     const ext = record.extensions?.[NAMESPACE];
     if (ext?.region === "loc:0005") {
       ext.region_items = ["item:equation-7", "item:remark-7.1"];
     }
   }
-  const second = await start({ shards });
+  const second = await start({ sections });
   await selectPageRegion(second.documentRef, second.result.state, "loc:0005");
   assert.deepEqual(el(second.documentRef, "item-choices").children.map((button) => button.textContent),
                    ["Equation 7", "Remark 7.1 and equation (7)"]);

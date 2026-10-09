@@ -6,8 +6,8 @@ template generalises: that script carried one book's sha256, byte count, URLs,
 cache file name and route as constants, pinned one toolchain and one package
 manifest, and ran one companion's build steps. Everything specific now comes
 from `pdf-overlay/overlay.config.json` and the `source` of the Literature Links
-shards `GENERATED.json` lists (read through `overlay_shards.py`), both found
-from this file's own path.
+annotations in the bundle `GENERATED.json` records (read through
+`overlay_annotations.py`), both found from this file's own path.
 
 `docs/overlay.md` section 5 is the contract; section 1 rule 4 is why
 the PDF is cached under an ignored directory and served only on loopback at one
@@ -46,7 +46,7 @@ import urllib.request
 sys.dont_write_bytecode = True
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-import overlay_shards  # noqa: E402  (beside this file in pdf-overlay/tools/)
+import overlay_annotations  # noqa: E402  (beside this file in pdf-overlay/tools/)
 
 try:                      # POSIX only; Windows is refused with one line below
     import fcntl
@@ -134,7 +134,7 @@ class Config:
 
 @dataclass(frozen=True)
 class SourceRecord:
-    """The PDF identity, from the `source` of the shards' records."""
+    """The PDF identity, from the `source` of the annotations."""
 
     id: str
     title: str
@@ -417,12 +417,12 @@ def load_source_record(overlay: Path, config: Config) -> SourceRecord:
     the extension's.
     """
     try:
-        source = overlay_shards.pdf_source(overlay, config.source_id)
-    except overlay_shards.ShardError as error:
+        source = overlay_annotations.pdf_source(overlay, config.source_id)
+    except overlay_annotations.AnnotationError as error:
         fail(str(error))
     label = f"source {config.source_id}"
     pin = source.get("pin") if isinstance(source.get("pin"), dict) else {}
-    ext = overlay_shards.extension(source)
+    ext = overlay_annotations.extension(source)
     digest = pin.get("sha256")
     if not isinstance(digest, str) or not HEX64.fullmatch(digest):
         fail(f"{label}: the pin carries no lowercase sha256")
