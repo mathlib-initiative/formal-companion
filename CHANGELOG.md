@@ -84,12 +84,13 @@ release has something to say.
   `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
   written by hand for one book, and reads Literature Links 1.0.0 (vendored as
   `vendor/literature_links/` at commit `ef8449d`). `export` converts an
-  exporter's document into one `annotations/<section>/<name>.json` file per
-  annotation, one folder per book section (`overlay.shards`; the extension key
+  exporter's document into one `annotations/<section>/[<item>/]<name>.json`
+  file per annotation, one folder per book section and per item with several,
+  shared members in `_defaults.json` (`overlay.shards`, `overlay.defaults`; the extension key
   `org.mathlib-initiative.formal-companion.overlay` carries what the core
   fields cannot) and records the curation inputs it read; `sync` copies the
   viewer, the tools, PDF.js and the Literature Links package byte for byte,
-  writes `annotations.bundle.json` (every file, for the viewer's one fetch)
+  writes `annotations.bundle.json` (every record, defaults applied, for the viewer's one fetch)
   and records them, the files' manifest sha256 and the bundle's in
   `GENERATED.json`; a companion's CI runs
   `python3 pdf-overlay/tools/check_generated.py`, which validates every file,
