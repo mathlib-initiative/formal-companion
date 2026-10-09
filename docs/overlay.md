@@ -150,8 +150,8 @@ bytecode writing off.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/` but the bundle; the `format`
   block against the shipped package's version; the config; `annotations/`
-  holding only the layout of section 7, each file as `export` writes it, as
-  many annotations as recorded and every file at the recorded manifest sha256;
+  holding only the layout of section 7, each file as a recorded export writes
+  it, as many annotations as recorded and every file at the manifest sha256;
   the bundle at its recorded sha256 and equal to the records the shipped
   `literature_links` scan reads (each one that differs, is missing or is
   extra is named); the scan finding no problem, with a record of the config's

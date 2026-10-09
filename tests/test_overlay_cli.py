@@ -658,13 +658,16 @@ class TestSync(OverlayCase):
 
     def test_it_records_hand_written_annotations_when_nothing_exported_them(self):
         self.assertEqual(self.init(), 0)
-        conversion = overlay_shards.convert(document())
+        record = overlay_shards.convert(document()).records[0]
         self.annotation().parent.mkdir(parents=True)
-        self.annotation().write_bytes(overlay_shards.file_bytes(conversion)[FILE.removeprefix("annotations/")])
+        self.annotation().write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         self.assertEqual(self.sync(), 0)
         block = self.record()["annotations"]
         self.assertNotIn("export", block)
         self.assertEqual(block["count"], 1)
+        self.assertEqual(self.sync("--check"), 0)
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_it_refuses_an_exported_file_edited_by_hand_and_names_it(self):
         self.ready()
