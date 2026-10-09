@@ -61,20 +61,6 @@ Run everything by path: `python3 scripts/cf.py <command> …`. `cf.py` puts
 `scripts/` on `sys.path` and discovers `cfcmd` modules with pkgutil, so a new
 command is a new file — never a new entrypoint.
 
-**The pin and the bump.** `vendor/formal_companion_annotations/`, sealed by
-`vendor/formal_companion_annotations.manifest.json`, is the *whole* of this
-repository's dependency on the annotation format. Nothing outside `vendor/`
-states the format's `schema` value or its major version: code reads
-`formal_companion_annotations.vocab`, and a generated `pdf-overlay/`, which
-cannot import the package, reads the schema file `cf overlay sync` copies out
-of the release (`pdf-overlay/schema/annotations.schema.json`) and records the
-release in `GENERATED.json`'s `format` block. The format repository moves
-ahead on its own and its next major renames the identity, so a bump must be
-`scripts/annotations/sync_format.py <checkout> vX.Y.Z`, the suite, and then
-`cf overlay export` + `cf overlay sync` in each companion — and nothing else.
-`tests/test_format_pin.py` fails on a second copy of the identity;
-`docs/overlay.md`, "Upgrading the format", is the walkthrough.
-
 **`scripts/sources/` is code, `sources/` is workspace data.** The repo's own
 `.gitignore` carries the workspace patterns, so `sources/` would hide the whole
 stage-1 package from git; the `!scripts/sources/` negation is what stops it.
@@ -112,10 +98,13 @@ Those two lines move together or not at all.
 - **One vocabulary.** `scripts/cflib/vocab.py` is the only definition of the
   enums; `references/vocabulary.md` documents them. A new value is a change to
   both, plus a mapping entry for the converted baseline. The exception is the
-  annotation format: its enums, and nine sets it shares with the skill, are
-  defined by the vendored `formal_companion_annotations.vocab`; `cflib.vocab`
-  keeps copies of the nine for the skill's stages, and
-  `tests/test_vendored_format.py` checks that they equal the format's.
+  annotation format: its enums are defined by the vendored
+  `formal_companion_annotations.vocab` and are the format's own; `cflib.vocab`
+  keeps the skill's sets for its stages and maps onto the format's values
+  where a document is written, and `tests/test_vendored_format.py` checks that
+  every value the skill writes is one the format admits (containment, not
+  equality). What the format does not carry (ledger verdicts, finding kinds)
+  goes under `x_` keys.
 - **One item grammar, one namespace rule.** `scripts/cflib/items.py`. Never
   write another item regex; never let an unparseable id become a key. Parsing
   is whitespace-tolerant and produces a *reject list* callers must report. An

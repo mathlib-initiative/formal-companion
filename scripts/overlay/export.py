@@ -95,7 +95,7 @@ def export(companion: str | Path, *, convention: str, commit: str,
         problems = V.check(doc, text=text, canonical=True).problems
         if problems:
             raise CfError("the exported document does not validate, so it was not "
-                          "written", hint="; ".join(problems[:5]))
+                          "written", hint="; ".join(map(str, problems[:5])))
         overlay.mkdir(parents=True, exist_ok=True)
         _replace(target, text)
     finally:

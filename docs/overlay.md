@@ -119,7 +119,7 @@ names its own file, and lists it in `GENERATED.json` `files` with its sha256
 like every other synced file. A companion can therefore validate its document
 with any Draft 2020-12 validator offline, and the schema it validates against
 is the schema `cf overlay check` validates against — there is no second copy to
-drift. `tests/test_format_pin.py` compares the two byte for byte.
+drift.
 
 The name carries no major version on purpose. The generated runtime reads the
 document identity it accepts out of that file — the `schema` value from its
@@ -127,7 +127,7 @@ document identity it accepts out of that file — the `schema` value from its
 its `properties.schema_version.pattern` — so a release that renames the
 identity changes the file's contents and nothing else. No file under
 `templates/overlay/runtime/` may carry an annotation schema identity or a
-format major as a literal, and `tests/test_format_pin.py` fails on one.
+format major as a literal.
 
 ## 3. `overlay.config.json`, version 1
 
@@ -416,7 +416,7 @@ node --test templates/overlay/tests/*.test.mjs
 `sync_format.py` replaces `vendor/formal_companion_annotations/` and rewrites
 its manifest; commit the two together. The suite is where a release that
 changed something shows up — `tests/test_vendored_format.py` seals the bytes,
-`tests/test_format_pin.py` holds the pin, and the exporters' tests say whether
+and the exporters' tests say whether
 the documents this skill writes still validate.
 
 Then, in each companion, in this order:

@@ -11,11 +11,11 @@ New code, testing scripts/annotations/export/ and `cf export`
 * **reproduction tests** against the pinned reference companions, skipped
   unless the environment names them:
 
-      CF_MT        a measure_theory checkout at 00a2438
+      CF_MT        a measure_theory checkout at 2cd263a
       CF_MT_BUILD  its Lake build's lib/lean directory (default: <CF_MT>/.lake/build/lib/lean);
                    without the .ilean of the one module with anonymous instances, three
                    declarations lack their generated ``lean_name`` and the test says so
-      CF_TML       a tao-measure-lean checkout at f158509
+      CF_TML       a tao-measure-lean checkout at 677ada1
       CF_TML_SITE  its rendered literate site (default: <CF_TML>/_site when present)
       CF_TAO_PDF   the published edition's PDF (sha256 64498329...)
 
@@ -25,9 +25,9 @@ New code, testing scripts/annotations/export/ and `cf export`
   Each exporter must reproduce <CF_M3_REFERENCE_DIR>/<companion>.annotations.json.gz
   record for record.  The references are the exporters' own output, regenerated
   when a difference was deliberate; :data:`DELIBERATE` records what changed
-  against the prototype documents docs/annotations.md section 10 was written
-  from, and the one environment-dependent field (the pdftotext version) is
-  compared after normalisation.
+  against the prototype documents the format was first written from, and the
+  one environment-dependent field (the pdftotext version) is compared after
+  normalisation.
 """
 from __future__ import annotations
 
@@ -66,8 +66,8 @@ from annotations.export import attribution_table, common, docstring_tags, site_p
 from annotations.export.pdftext import PdfText                     # noqa: E402
 from cflib.errors import CfError                                   # noqa: E402
 
-MT_COMMIT = "00a24385c4f6ae24e80d9fc3ac05b45dbd5ea448"
-TML_COMMIT = "f1585095dc91cf04c0a67b17de0b0f13351ced10"
+MT_COMMIT = "2cd263ac48d81b1270d67bf5ab7783018a35309a"
+TML_COMMIT = "677ada107bd4fd49d7e10469c72f38699a251289"
 PUBLISHED_SHA = "64498329b65eea0145b3dec77ace89bc9f34df82ed4f35dd7c467125c2a3dfec"
 
 #: What the references changed against the prototype documents, deliberately.
@@ -133,9 +133,9 @@ def write_json(path: Path, obj) -> None:
 
 
 def valid_and_quiet(case: unittest.TestCase, doc: dict) -> None:
-    """The document validates with --canonical semantics and raises no warning."""
+    """The document validates canonically, passes the external-urls lint, and raises no warning."""
     text = V.canonical_dumps(V.canonicalize(doc))
-    report = V.check(V.loads(text), text=text, canonical=True)
+    report = V.check(V.loads(text), text=text, canonical=True, lints=common.LINTS)
     case.assertEqual(report.problems, [])
     case.assertEqual(report.warnings, [])
 
@@ -278,12 +278,12 @@ def make_attribution_table_repo(root: Path) -> str:
     ledger_bytes = (root / "source-formalization-ledger.json").read_bytes()
     ledger_sha = sha256(ledger_bytes)
     write_json(data / "target-refinement.json", {
-        "schema": "x/target-refinement", "schema_version": 1, "method": "agent_semantic_curation",
+        "schema": "x/target-refinement", "schema_version": 2, "method": "agent_semantic_curation",
         "ledger_sha256": ledger_sha,
         "provenance": {"confirmed_by_human": False, "nodes_curated": 2,
                        "note": "Drafted by one curator agent. Batch b (section 1.1, 5 items in 3 source nodes) "
-                               "was curated the same way. 3 items carry entries; 2 carry none: 1 are formalised "
-                               "only by anonymous examples, Exercise 1.1.3 by nothing. Nothing else."},
+                               "was curated the same way; the coverage entries say which items no declaration "
+                               "states in full."},
         "entries": [
             {"region_id": "region:batch-a:p007:def-1.1.1:01", "item_id": "item:batch-a:def-1.1.1",
              "formalization_ids": ["Demo.Box", "Demo.Box.left", "Demo.Box.volume"],
@@ -292,6 +292,16 @@ def make_attribution_table_repo(root: Path) -> str:
              "formalization_ids": ["Demo.volume_add"], "key_formalization_ids": ["Demo.volume_add"]},
             {"region_id": "region:batch-a:p008:rem-volume:01", "item_id": "item:batch-a:rem-volume",
              "formalization_ids": ["Demo.Box.volume"], "key_formalization_ids": ["Demo.Box.volume"]},
+            # coverage entries: a class, the declarations it admits, no key, the curator's note
+            {"region_id": "region:batch-a:p008:ex-1.1.3:01", "item_id": "item:batch-a:ex-1.1.3",
+             "coverage": "support_only", "formalization_ids": ["Demo.volume_add"], "key_formalization_ids": [],
+             "note": "support only: volume_add states Theorem 1.1.2, which the exercise asks the reader to use"},
+            {"region_id": "region:batch-a:p009:ex-1.1.3:01", "item_id": "item:batch-a:ex-1.1.3",
+             "coverage": "support_only", "formalization_ids": ["Demo.volume_add"], "key_formalization_ids": [],
+             "note": "support only: volume_add states Theorem 1.1.2, which the exercise asks the reader to use"},
+            {"region_id": "region:batch-b:p009:rem-1.1.4:01", "item_id": "item:batch-b:rem-1.1.4",
+             "coverage": "partial_only", "formalization_ids": ["Demo.Box.volume"], "key_formalization_ids": [],
+             "note": "partial only: Box.volume states the first half of the remark; the bound is not stated"},
         ]})
     write_json(data / "declaration-snippets.json", {
         "schema": "x/declaration-snippets", "schema_version": 1, "missing": [], "snippets": {
@@ -349,6 +359,12 @@ class TestAttributionTableExport(unittest.TestCase):
     def test_it_validates_canonically_without_a_warning(self):
         valid_and_quiet(self, self.doc)
         self.assertEqual(self.report.problems, [])
+
+    def test_the_profiles_are_exactly_the_ones_the_document_uses(self):
+        # clusters and companion.graph (graph), snippets and destinations (site), verdicts and source.role
+        # (audit), the ordinal changelog (history)
+        self.assertEqual(self.doc["profiles"], {"audit": "1.0", "graph": "1.0", "history": "1.0", "site": "1.0"})
+        self.assertEqual(self.report.counts["profiles"], self.doc["profiles"])
 
     def test_the_source_takes_the_offset_from_the_ledger_prose_and_the_edition_from_the_flags(self):
         src = self.doc["sources"][0]
@@ -422,20 +438,39 @@ class TestAttributionTableExport(unittest.TestCase):
         self.assertEqual(clusters["src:1.1:additivity"]["items"],
                          ["equation-1.1", "exercise-1.1.3", "remark-1.1.4", "theorem-1.1.2"])
 
-    def test_fallback_items_and_the_coverage_the_note_names(self):
+    def test_coverage_entries_give_the_class_the_note_and_the_links_the_class_admits(self):
+        items, links = by_id(self.doc, "items"), by_id(self.doc, "links")
+        # support_only: the listed declaration is a support link; the two regions' entries merge into one
+        self.assertEqual(items["exercise-1.1.3"]["coverage"], "support_only")
+        self.assertTrue(items["exercise-1.1.3"]["coverage_note"].startswith("support only:"))
+        support = links["exercise-1.1.3/support/Demo.volume_add"]
+        self.assertEqual((support["role"], support["provenance"]), ("support", "prov-target-refinement"))
+        self.assertNotIn("relation", support)
+        # partial_only: the listed declaration is an attributed link with relation part (the note says no special case)
+        self.assertEqual(items["remark-1.1.4"]["coverage"], "partial_only")
+        partial = links["remark-1.1.4/attributed/Demo.Box.volume"]
+        self.assertEqual((partial["role"], partial["relation"]), ("attributed", "part"))
+        self.assertEqual(self.report.bent["item.coverage_from_table"]["count"], 2)
+        self.assertEqual(self.report.counts["coverage_entries"],
+                         {"partial_only": 1, "partial_only/attributed": 1, "support_only": 1,
+                          "support_only/support": 1})
+
+    def test_an_item_with_clusters_and_no_links_is_the_fallback_and_carries_no_flag(self):
         items = by_id(self.doc, "items")
-        self.assertTrue(items["exercise-1.1.3"]["cluster_fallback"])
-        self.assertEqual(items["exercise-1.1.3"]["coverage"], "not_formalized")
-        self.assertEqual(items["remark-1.1.4"]["coverage"], "example_only")
-        self.assertTrue(items["equation-1.1"]["cluster_fallback"])
+        # the equation split off Theorem 1.1.2's label has no entry: shown through its clusters, no coverage
+        self.assertEqual(items["equation-1.1"]["clusters"], ["src:1.1:additivity"])
+        self.assertNotIn("cluster_fallback", items["equation-1.1"])
+        self.assertFalse(any("cluster_fallback" in i for i in self.doc["items"]))
         self.assertNotIn("coverage", items["equation-1.1"])
-        self.assertEqual(self.report.bent["item.coverage_from_prose"]["count"], 2)
-        self.assertEqual(self.report.lossy["item.coverage_unclassified"]["count"], 1)   # equation-1.1
+        self.assertEqual(self.report.counts["items_with_clusters_and_no_links"], 1)
+        self.assertEqual(self.report.lossy["item.coverage_unclassified"]["examples"], ["equation-1.1"])
 
     def test_the_verdict_carries_its_resolution_from_prose_and_git(self):
         verdict = by_id(self.doc, "verdicts")["verdict:theorem-1.1.2"]
         self.assertEqual(verdict["sub"], "ii")
-        self.assertEqual(verdict["ledger_verdict"], "ATTRIBUTION_GAP")
+        self.assertNotIn("ledger_verdict", verdict)
+        self.assertEqual(verdict["x_ledger_verdict"], "ATTRIBUTION_GAP")
+        self.assertEqual(self.report.bent["verdict.x_ledger_verdict"]["count"], 1)
         res = verdict["resolution"]
         self.assertEqual(res["state"], "fixed")
         self.assertEqual(res["pr"], 3)
@@ -493,23 +528,87 @@ class TestAttributionTableExport(unittest.TestCase):
             cf_main.main(["export"])
 
 
-class TestCoverageFromNote(unittest.TestCase):
-    """The refinement note's per-item classes, parsed rather than typed in."""
+class TestCoverageEntries(unittest.TestCase):
+    """The table's coverage entries (schema version 2), each class on a variant of the synthetic companion."""
 
-    # synthetic: the sentence shapes coverage_from_note reads, with made-up numbers and items
-    NOTE = ("Batch q (section 9.3, 12 items in 4 source nodes) was drafted on 2001-02-03. 5 items carry "
-            "entries; 7 carry none: 3 are formalised only by anonymous examples, Lemma 9.3.18 by nothing, "
-            "and Example 9.3.2, Corollary 9.3.5 and Theorem 9.3.11 have one named declaration that only "
-            "supports them (a made-up aside). Other batches: elsewhere.")
+    @staticmethod
+    def set_entry(root: Path, item_id: str, **fields) -> None:
+        def change(table):
+            for e in table["entries"]:
+                if e["item_id"] == item_id:
+                    e.update(fields)
+        edit_json(root / "pdf-overlay" / "data" / "target-refinement.json", change)
 
-    def test_it_reads_the_section_the_count_and_the_named_classes(self):
-        section, named, total = attribution_table.coverage_from_note(self.NOTE)
-        self.assertEqual((section, total), ("9.3", 7))
-        self.assertEqual(named, {"lemma-9.3.18": "not_formalized", "example-9.3.2": "support_only",
-                                 "corollary-9.3.5": "support_only", "theorem-9.3.11": "support_only"})
+    def test_a_note_that_says_special_case_sets_the_relation(self):
+        root, commit = at_variant(self, lambda r: self.set_entry(
+            r, "item:batch-b:rem-1.1.4", note="partial only: Box.volume states the special case of one box"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(by_id(doc, "links")["remark-1.1.4/attributed/Demo.Box.volume"]["relation"], "special_case")
+        self.assertEqual(report.bent["link.relation_from_note"]["examples"], ["remark-1.1.4"])
 
-    def test_a_note_that_does_not_say_gives_nothing(self):
-        self.assertIsNone(attribution_table.coverage_from_note("Drafted by one curator agent."))
+    def test_not_formalized_lists_nothing_and_the_item_falls_back_to_its_clusters(self):
+        root, commit = at_variant(self, lambda r: self.set_entry(
+            r, "item:batch-a:ex-1.1.3", coverage="not_formalized", formalization_ids=[], note="nothing"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        item = by_id(doc, "items")["exercise-1.1.3"]
+        self.assertEqual((item["coverage"], item["coverage_note"]), ("not_formalized", "nothing"))
+        self.assertFalse(any(ln["item"] == "exercise-1.1.3" for ln in doc["links"]))
+        self.assertEqual(report.counts["items_with_clusters_and_no_links"], 2)
+        # classified, so not counted as unclassified
+        self.assertEqual(report.lossy["item.coverage_unclassified"]["examples"], ["equation-1.1"])
+
+    def test_example_only_and_private_only_take_the_roles_i5_admits(self):
+        def mutate(root):
+            self.set_entry(root, "item:batch-a:ex-1.1.3", coverage="example_only",
+                           formalization_ids=["example:demo-volume-nonneg", "Demo.volume_add"],
+                           note="example only: the worked example states it")
+            self.set_entry(root, "item:batch-b:rem-1.1.4", coverage="private_only",
+                           formalization_ids=["private:Demo.Basic:Demo/Basic.lean:L99:helper_bound"],
+                           note="private only: helper_bound states it")
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        links = by_id(doc, "links")
+        hashed = next(d["id"] for d in doc["declarations"] if d["anonymous"] and not d.get("unlocated"))
+        self.assertEqual(links[f"exercise-1.1.3/example/{hashed}"]["role"], "example")
+        # a named theorem under example_only is not what the class names: a support link, reported
+        self.assertEqual(links["exercise-1.1.3/support/Demo.volume_add"]["role"], "support")
+        self.assertEqual(report.bent["link.support_role_from_coverage_class"]["count"], 1)
+        self.assertEqual(links["remark-1.1.4/key/private:Demo.Basic:Demo.helper_bound"]["role"], "key")
+        self.assertEqual(report.counts["coverage_entries"]["private_only/key"], 1)
+
+    def test_a_coverage_entry_with_key_ids_or_disagreeing_regions_is_reported(self):
+        root, commit = at_variant(self, lambda r: self.set_entry(
+            r, "item:batch-b:rem-1.1.4", key_formalization_ids=["Demo.Box.volume"]))
+        _doc, report = at_export(root, commit)
+        self.assertTrue(any("names key ids" in p for p in report.problems))
+
+        def disagree(root):
+            def change(table):
+                table["entries"][4]["coverage"] = "not_formalized"
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json", change)
+        root, commit = at_variant(self, disagree)
+        doc, report = at_export(root, commit)
+        self.assertTrue(any("disagree on coverage" in p for p in report.problems))
+        self.assertNotIn("coverage", by_id(doc, "items")["exercise-1.1.3"])
+
+    def test_a_version_1_table_is_refused(self):
+        root, commit = at_variant(self, lambda r: edit_json(
+            r / "pdf-overlay" / "data" / "target-refinement.json", lambda o: o.update(schema_version=1)))
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("schema_version 1", caught.exception.message)
+        self.assertIn("version 2", caught.exception.message)
+
+    def test_a_coverage_note_with_a_url_is_dropped_and_reported(self):
+        root, commit = at_variant(self, lambda r: self.set_entry(
+            r, "item:batch-a:ex-1.1.3", note="support only, see https://example.org/why"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertNotIn("coverage_note", by_id(doc, "items")["exercise-1.1.3"])
+        self.assertTrue(any("external-urls" in p for p in report.problems))
 
 
 # ---------------------------------------------------------------------------
@@ -750,6 +849,38 @@ class TestDocstringTagsExport(unittest.TestCase):
         finally:
             page.write_text(kept, encoding="utf-8")
 
+    def test_pages_the_manifest_leaves_out_are_counted_not_refused(self):
+        # the producer chooses the pages it pins: a generated fragment on disk is not a refusal
+        extra = self.site / "Demo" / "Section_1_1" / "_lazy" / "states" / "0123.html"
+        extra.parent.mkdir(parents=True)
+        extra.write_text("<html><body>a lazy state</body></html>", encoding="utf-8")
+        try:
+            doc, report = docstring_tags.export(self.root, self.commit, site=self.site, **self.options)
+        finally:
+            shutil.rmtree(self.site / "Demo" / "Section_1_1" / "_lazy")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.counts["site"]["html_pages_on_disk_not_pinned"], 1)
+        self.assertEqual(len(by_id(doc, "sources")["demo-site"]["page_hashes"]), 3)
+
+    def test_the_profiles_are_exactly_the_ones_the_document_uses(self):
+        # destinations (site); a source's role is core, so no audit without a verdict; one anonymous example
+        # takes no ordinal, so no history
+        self.assertEqual(self.doc["profiles"], {"site": "1.0"})
+        self.assertNotIn("changelog", self.doc)
+        self.assertNotIn("graph", self.doc["profiles"])
+        self.assertEqual(self.doc["sources"][0]["role"], "audited")
+
+    def test_an_anonymous_example_that_states_an_item_keys_it_and_the_item_is_formalized(self):
+        # the tag on the example says it states Example 1.1.9: a key link, and the class says so
+        # (not example_only, which is for examples linked with role example)
+        example = next(d for d in self.doc["declarations"] if d["anonymous"])
+        self.assertEqual(example["kind"], "example")
+        self.assertEqual(by_id(self.doc, "links")[f"example-1.1.9/key/{example['id']}"]["role"], "key")
+        self.assertEqual(by_id(self.doc, "items")["example-1.1.9"]["coverage"], "formalized")
+        self.assertEqual(self.report.counts["items"]["items_stated_by_an_anonymous_example_given_coverage_formalized"],
+                         ["example-1.1.9"])
+        self.assertNotIn("coverage", by_id(self.doc, "items")["definition-1.1.1"])
+
     def test_site_pages_writes_the_pin_the_exporter_reads(self):
         out = scratch(self) / "pages.json"
         stderr = io.StringIO()
@@ -787,6 +918,33 @@ class TestDocstringTagsExport(unittest.TestCase):
             cf_main.main(["export", "site-pages", str(self.site), "--out", str(self.site / "pages.json")])
         self.assertIn("inside the site", caught.exception.message)
         self.assertFalse((self.site / "pages.json").exists())
+
+    def test_site_pages_exclude_leaves_generated_pages_out_and_the_exporter_counts_them(self):
+        # a render that splits pages into fragments: the pin leaves them out, docstring-tags --site counts them
+        lazy = self.site / "Demo" / "Section_1_1" / "_lazy"
+        (lazy / "states").mkdir(parents=True)
+        (lazy / "states" / "0123.html").write_text("<html><body>a lazy state</body></html>", encoding="utf-8")
+        out = scratch(self) / "pages.json"
+        try:
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                status = cf_main.main(["export", "site-pages", str(self.site), "--out", str(out),
+                                       "--exclude", "*/_lazy/*", "--source-id", "demo-site",
+                                       "--title", "the demo site", "--rendered-at", "2026-09-02T00:00:00Z"])
+            doc, report = docstring_tags.export(self.root, self.commit, site=self.site,
+                                                **dict(self.options, site_pages=out))
+            everything = [p["path"] for p in site_pages.manifest(self.site)["pages"]]
+            with self.assertRaises(common.ExportError) as caught:
+                site_pages.manifest(self.site, exclude=("*.html",))
+        finally:
+            shutil.rmtree(lazy)
+        self.assertEqual(status, 0)
+        handmade = json.loads(self.pin.read_text(encoding="utf-8"))
+        handmade.pop("note")
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8")), handmade)
+        self.assertEqual(report.counts["site"]["html_pages_on_disk_not_pinned"], 1)
+        self.assertEqual(record_diff(doc, self.doc), [])
+        self.assertIn("Demo/Section_1_1/_lazy/states/0123.html", everything)
+        self.assertIn("--exclude", caught.exception.message)
 
     def test_the_command_runs_end_to_end(self):
         out = scratch(self) / "demo.annotations.json"
@@ -866,8 +1024,11 @@ class TestTheSubPartRenderer(unittest.TestCase):
                            ("(i)–(iii)", ("i-iii", None)), ("(i),(ii)", ("i,ii", None)),
                            ("(i), (iii)", ("i,iii", None)), ("(i) and (iii)", ("i,iii", None)),
                            ("(i)/(ii)", ("i,ii", None)), (" (Finite additivity)", ("", None)),
-                           ("(Finite additivity)", ("", "(Finite additivity)")), ("(ii')", ("", "(ii')")),
-                           ("(i)-(ii')", ("", "(i)-(ii')")), (", book p. 6", ("", None)), ("", ("", None))):
+                           ("(Finite additivity)", ("", "(Finite additivity)")),
+                           # a primed part keeps its prime; a shape outside the grammar is refused
+                           ("(ii')", ("ii'", None)), ("(b'')", ("b''", None)), ("(i)-(ii')", ("i-ii'", None)),
+                           ("(ii*)", ("", "(ii*)")), ("(i)-(ii*)", ("", "(i)-(ii*)")),
+                           (", book p. 6", ("", None)), ("", ("", None))):
             with self.subTest(text=text):
                 sub, _rest, refused = common.render_sub(text)
                 self.assertEqual((sub, refused), want)
@@ -920,12 +1081,38 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
         self.assertNotIn("title_source", bare)
 
     def test_a_sub_part_the_format_cannot_carry_is_dropped_and_reported(self):
-        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(ii')", "b"))
+        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(ii*)", "b"))
         doc, report = at_export(root, commit)
         valid_and_quiet(self, doc)
         self.assertNotIn("sub", by_id(doc, "items")["remark-1.1.4"])
         self.assertEqual(len(report.problems), 1)
-        self.assertIn("(ii')", report.problems[0])
+        self.assertIn("(ii*)", report.problems[0])
+
+    def test_a_primed_sub_part_is_carried_with_its_prime(self):
+        root, commit = at_variant(self, lambda r: set_label(r, "item:batch-b:rem-1.1.4", "Remark 1.1.4(b')", "b"))
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(by_id(doc, "items")["remark-1.1.4-b'"]["sub"], "b'")
+        self.assertIn("remark-1.1.4-b'/attributed/Demo.Box.volume", by_id(doc, "links"))
+
+    def test_an_item_the_table_keys_to_an_anonymous_example_is_formalized(self):
+        def mutate(root):
+            def change(table):
+                e = table["entries"][1]                                    # Theorem 1.1.2
+                e["formalization_ids"].append("example:demo-volume-nonneg")
+                e["key_formalization_ids"].append("example:demo-volume-nonneg")
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json", change)
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        hashed = next(d["id"] for d in doc["declarations"] if d["anonymous"] and not d.get("unlocated"))
+        self.assertEqual(by_id(doc, "links")[f"theorem-1.1.2/key/{hashed}"]["role"], "key")
+        self.assertEqual(by_id(doc, "items")["theorem-1.1.2"]["coverage"], "formalized")
+        self.assertEqual(report.counts["items_stated_by_an_anonymous_example_given_coverage_formalized"],
+                         ["theorem-1.1.2"])
+        # the class is the table's where it gives one: a named key alone writes no coverage
+        self.assertNotIn("coverage", by_id(doc, "items")["definition-1.1.1"])
 
     def test_a_formalization_id_the_ledger_lacks_is_a_refusal_naming_the_file(self):
         def mutate(root):
@@ -1102,133 +1289,6 @@ def coverage_entry(root: Path, item_id: str, coverage: str, fids=(), note: str |
                 e.clear()
                 e.update(entry, region_id=here)
     edit_json(refinement(root), change)
-
-
-class TestVersionTwoCoverageEntries(unittest.TestCase):
-    """A refinement entry that gives no key declaration says which class the item is instead.
-
-    Every class becomes links and an item ``coverage`` that satisfy I5 (an
-    ``attributed`` link needs a ``key`` link), and the curation's own word and
-    note ride along in ``x_`` keys where the format's enum has no value for
-    them (docs/exporters.md section 1).
-    """
-
-    ANON = "example:demo-volume-nonneg"
-
-    def export_with(self, coverage: str, fids=(), note: str | None = None):
-        root, commit = at_variant(self, lambda r: coverage_entry(
-            r, "item:batch-a:thm-1.1.2", coverage, fids, note))
-        doc, report = at_export(root, commit)
-        valid_and_quiet(self, doc)
-        self.assertEqual(report.problems, [])
-        return doc, report
-
-    def links_of(self, doc, iid: str) -> dict[str, str]:
-        return {link["declaration"]: link["role"] for link in doc["links"] if link["item"] == iid}
-
-    def test_partial_only_links_its_declarations_without_claiming_a_key(self):
-        doc, report = self.export_with("partial_only", ["Demo.volume_add"], "states one part only")
-        item = by_id(doc, "items")["theorem-1.1.2"]
-        self.assertEqual(item["coverage"], "partial")
-        self.assertEqual(item["x_coverage"], "partial_only")
-        self.assertEqual(item["x_coverage_note"], "states one part only")
-        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {"Demo.volume_add": "support"})
-        self.assertEqual(report.bent["item.coverage_from_table"]["count"], 1)
-        self.assertEqual(report.bent["item.x_coverage_class"]["examples"],
-                         ["theorem-1.1.2: partial_only -> partial"])
-
-    def test_support_only_links_a_named_declaration_as_support(self):
-        doc, _report = self.export_with("support_only", ["Demo.volume_add"], "supports it")
-        item = by_id(doc, "items")["theorem-1.1.2"]
-        self.assertEqual(item["coverage"], "support_only")
-        self.assertNotIn("x_coverage", item)                     # the format spells this one itself
-        self.assertEqual(item["x_coverage_note"], "supports it")
-        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {"Demo.volume_add": "support"})
-
-    def test_support_only_links_an_anonymous_example_as_an_example(self):
-        doc, _report = self.export_with("support_only", [self.ANON])
-        anon = next(d for d in doc["declarations"] if self.ANON in d.get("legacy_ids", []))
-        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {anon["id"]: "example"})
-        self.assertEqual(by_id(doc, "items")["theorem-1.1.2"]["coverage"], "support_only")
-
-    def test_example_only_links_the_examples(self):
-        doc, _report = self.export_with("example_only", [self.ANON], "only an example states it")
-        anon = next(d for d in doc["declarations"] if self.ANON in d.get("legacy_ids", []))
-        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {anon["id"]: "example"})
-        self.assertEqual(by_id(doc, "items")["theorem-1.1.2"]["coverage"], "example_only")
-
-    def test_private_only_keys_the_private_declarations(self):
-        doc, report = self.export_with("private_only", ["private:Demo.Basic:Demo/Basic.lean:L99:helper_bound"])
-        item = by_id(doc, "items")["theorem-1.1.2"]
-        self.assertEqual(item["coverage"], "formalized")
-        self.assertEqual(item["x_coverage"], "private_only")
-        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {"private:Demo.Basic:Demo.helper_bound": "key"})
-        self.assertIn("private_only -> formalized", report.bent["item.x_coverage_class"]["examples"][0])
-
-    def test_not_formalized_links_nothing(self):
-        doc, _report = self.export_with("not_formalized", [], "nothing states it")
-        item = by_id(doc, "items")["theorem-1.1.2"]
-        self.assertEqual(item["coverage"], "not_formalized")
-        self.assertEqual(self.links_of(doc, "theorem-1.1.2"), {})
-        self.assertTrue(item["cluster_fallback"])                # it still has a populated cluster to show
-
-    def test_regions_that_disagree_give_the_item_the_strongest_class(self):
-        def mutate(root):
-            coverage_entry(root, "item:batch-a:ex-1.1.3", "not_formalized", [],
-                           region="region:batch-a:p008:ex-1.1.3:01")
-            coverage_entry(root, "item:batch-a:ex-1.1.3", "support_only", ["Demo.volume_add"], "supports it",
-                           region="region:batch-a:p009:ex-1.1.3:01")
-        root, commit = at_variant(self, mutate)
-        doc, report = at_export(root, commit)
-        valid_and_quiet(self, doc)
-        self.assertEqual(report.problems, [])
-        item = by_id(doc, "items")["exercise-1.1.3"]
-        self.assertEqual(item["coverage"], "support_only")
-        self.assertEqual(report.lossy["item.coverage_regions_disagree"]["examples"],
-                         ["exercise-1.1.3: ['not_formalized', 'support_only'] -> support_only"])
-
-    def test_a_curated_region_beside_an_attribution_leaves_the_item_formalized(self):
-        def mutate(root):
-            coverage_entry(root, "item:batch-a:def-1.1.1", "support_only", ["Demo.volume_add"], "supports it",
-                           region="region:batch-a:p007:def-1.1.1:01")
-        root, commit = at_variant(self, mutate)
-        doc, report = at_export(root, commit)
-        valid_and_quiet(self, doc)
-        item = by_id(doc, "items")["definition-1.1.1"]
-        self.assertNotIn("coverage", item)
-        self.assertEqual(self.links_of(doc, "definition-1.1.1")["Demo.volume_add"], "support")
-        self.assertEqual(self.links_of(doc, "definition-1.1.1")["Demo.Box"], "key")
-        self.assertIn("formalized", report.lossy["item.coverage_regions_disagree"]["examples"][0])
-
-    def test_one_declaration_reached_twice_keeps_the_stronger_role(self):
-        def mutate(root):
-            coverage_entry(root, "item:batch-a:def-1.1.1", "support_only", ["Demo.Box"], "supports it",
-                           region="region:batch-a:p007:def-1.1.1:01")
-        root, commit = at_variant(self, mutate)
-        doc, _report = at_export(root, commit)
-        valid_and_quiet(self, doc)
-        self.assertEqual(self.links_of(doc, "definition-1.1.1")["Demo.Box"], "key")
-        self.assertNotIn("definition-1.1.1/support/Demo.Box", by_id(doc, "links"))
-
-    def test_a_class_the_convention_does_not_define_is_a_refusal(self):
-        root, commit = at_variant(self, lambda r: coverage_entry(r, "item:batch-a:thm-1.1.2", "mostly", []))
-        with self.assertRaises(common.ExportError) as caught:
-            at_export(root, commit)
-        self.assertIn("'mostly'", caught.exception.message)
-        self.assertIn("support_only", caught.exception.hint)
-
-    def test_a_version_one_table_still_reads_its_classes_from_the_note(self):
-        # the version the prose parse is for: no entry carries a class, so nothing changed
-        self.assertEqual(TestAttributionTableExport.report.counts["refinement_schema_version"], 1)
-        self.assertEqual(TestAttributionTableExport.report.bent["item.coverage_from_prose"]["count"], 2)
-        self.assertEqual(TestAttributionTableExport.report.counts["items_by_curation_class"], {})
-        self.assertNotIn("item.coverage_from_table", TestAttributionTableExport.report.bent)
-
-    def test_a_version_two_table_does_not_classify_from_the_note_as_well(self):
-        doc, report = self.export_with("support_only", ["Demo.volume_add"])
-        self.assertEqual(report.counts["refinement_schema_version"], 2)
-        self.assertNotIn("item.coverage_from_prose", report.bent)
-        self.assertNotIn("coverage", by_id(doc, "items")["remark-1.1.4"])
 
 
 class TestTheConfigurableInputLayout(unittest.TestCase):
@@ -1415,6 +1475,11 @@ class TestTheExportCommandReviewFixes(unittest.TestCase):
         self.assertEqual(sorted(f for f in flags if f not in docs), [])
 
 
+def git_commit_head(root: Path) -> str:
+    return subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], check=True,
+                          capture_output=True, text=True).stdout.strip()
+
+
 def dt_variant(case: unittest.TestCase, lean_1: str, lean_2: str = "namespace Demo\nend Demo\n", *,
                adapter: str = DT_ADAPTER, pages=None):
     """A docstring-tags companion with these two files, exported without the site; ``(doc, report)``."""
@@ -1448,15 +1513,34 @@ class TestDocstringTagsReviewFixes(unittest.TestCase):
 
     def test_a_sub_part_outside_the_grammar_is_dropped_and_reported(self):
         doc, report = dt_variant(self, dt_lean(
-            "/-- `Exercise 1.1.3(ii')`. -/\ntheorem a : True := trivial",
+            "/-- `Exercise 1.1.3(ii*)`. -/\ntheorem a : True := trivial",
             "/-- `Lemma 1.2.5(Finite additivity)`. -/\ntheorem b : True := trivial",
             "/-- `Lemma 1.2.5 (Finite additivity)`. -/\ntheorem c : True := trivial"))
         valid_and_quiet(self, doc)
         self.assertEqual([ln.get("sub") for ln in doc["links"]], [None, None, None])
         # the two attached parentheticals are refused sub-parts; the spaced one is a title
         self.assertEqual(len(report.problems), 2)
-        self.assertIn("(ii')", report.problems[0])
+        self.assertIn("(ii*)", report.problems[0])
         self.assertIn("(Finite additivity)", report.problems[1])
+
+    def test_a_primed_part_keeps_its_prime_and_a_two_item_tag_pairs_the_items(self):
+        # the format's mapping notes, section 1: `(b')` is sub b'; a declaration that states a lemma and the
+        # exercise that proves it gets two key links, and the items are the same content
+        doc, report = dt_variant(self, dt_lean(
+            "/-- `Lemma 1.2.5(b') / Exercise 1.1.3`. -/\ntheorem a : True := trivial",
+            "/-- `Exercise 1.1.3(c'')`. -/\ntheorem b : True := trivial"))
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        links = by_id(doc, "links")
+        self.assertEqual(links["lemma-1.2.5/key/Demo.a/b'"]["sub"], "b'")
+        self.assertEqual(links["exercise-1.1.3/key/Demo.a"]["role"], "key")
+        self.assertEqual(links["exercise-1.1.3/key/Demo.b/c''"]["sub"], "c''")
+        items = by_id(doc, "items")
+        self.assertEqual(items["lemma-1.2.5"]["relations"], {"same_as": ["exercise-1.1.3"]})
+        self.assertEqual(items["exercise-1.1.3"]["relations"], {"same_as": ["lemma-1.2.5"]})
+        self.assertEqual(report.counts["items"]["items_paired_by_one_declaration"],
+                         [{"decl": "Demo.a", "items": ["exercise-1.1.3", "lemma-1.2.5"]}])
+        self.assertEqual(report.counts["sub_fixes_over_adapter"], [])
 
     def test_an_in_text_neighbour_is_kept_beside_a_page_and_prose_is_not_a_kind(self):
         doc, report = dt_variant(self, dt_lean(
@@ -1548,6 +1632,139 @@ class TestDocstringTagsReviewFixes(unittest.TestCase):
 
 
 
+class TestDocstringTagsWithoutPdfOrSite(unittest.TestCase):
+    """A companion whose edition the producer does not hold: a source pinned by identifiers, items by number."""
+
+    UNPINNED = dict(name="demo", repo_id="git.example.org/demo/demo", source_id="demo-book",
+                    source_title="A Demo Book", source_edition="first", source_revision="first printing, 2026",
+                    source_doi="10.1000/demo-book", source_isbn=("9781234567897",))
+
+    @classmethod
+    def setUpClass(cls):
+        cls.base = Path(tempfile.mkdtemp(prefix="cf-export-nopdf-", dir=os.environ.get("CF_TEST_TMP") or None))
+        cls.root = cls.base / "repo"
+        cls.commit, _pdf, _xref, _pin, _site = make_docstring_tags_repo(cls.root)
+        cls.config = cls.base / "adapter.yaml"
+        cls.config.write_text(DT_ADAPTER, encoding="utf-8")
+        cls.doc, cls.report = docstring_tags.export(cls.root, cls.commit, adapter_config=cls.config, **cls.UNPINNED)
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.base, ignore_errors=True)
+
+    def test_it_validates_as_a_core_only_document(self):
+        valid_and_quiet(self, self.doc)
+        # no destinations, no verdict (a source's role is core): nothing profile-owned, so no profiles
+        self.assertNotIn("profiles", self.doc)
+        self.assertNotIn("destinations", self.doc)
+        self.assertEqual(self.doc["sources"][0]["role"], "audited")
+        self.assertEqual([p["id"] for p in self.doc["provenance"]], ["prov-docstring-tag"])
+        self.assertEqual(self.report.counts["profiles"], {})
+
+    def test_the_edition_is_a_pdf_source_pinned_by_its_identifiers(self):
+        src = self.doc["sources"]
+        self.assertEqual(len(src), 1)
+        self.assertEqual((src[0]["kind"], src[0]["revision"], src[0]["edition"]),
+                         ("pdf", "first printing, 2026", "first"))
+        self.assertEqual(src[0]["identifiers"], {"doi": "10.1000/demo-book", "isbn": ["9781234567897"]})
+        for absent in ("sha256", "media_type", "physical_page_count", "printed_page_offset", "text_layer"):
+            self.assertNotIn(absent, src[0])
+        self.assertIn("identifiers name it", src[0]["x_note"])
+        self.assertIn("pinned by its identifiers", self.report.lossy["source.bytes_unpinned"]["detail"])
+        self.assertEqual(self.report.lossy["source.bytes_unpinned"]["count"], 1)
+
+    def test_without_an_identifier_the_edition_is_an_other_source(self):
+        doc, report = docstring_tags.export(self.root, self.commit, adapter_config=self.config,
+                                            **dict(self.UNPINNED, source_doi=None, source_isbn=()))
+        valid_and_quiet(self, doc)
+        src = doc["sources"][0]
+        self.assertEqual((src["kind"], src["media_type"], src["revision"]),
+                         ("other", "application/pdf", "first printing, 2026"))
+        self.assertNotIn("identifiers", src)
+        self.assertIn("`other` source", report.lossy["source.bytes_unpinned"]["detail"])
+        # a PDF by medium still: a tag's page is kept on its link
+        self.assertEqual(by_id(doc, "links")["exercise-1.1.3/key/Demo.ex_113/ii"]["pages"]["first"], 12)
+
+    def test_numbered_items_are_located_by_their_number_alone(self):
+        items = by_id(self.doc, "items")
+        # I4 is for passages: no location, quote or pages is written for a numbered item
+        for absent in ("quote", "pages"):
+            self.assertNotIn(absent, items["definition-1.1.1"])
+        self.assertEqual(self.doc["locations"], [])
+        self.assertNotIn("item.quote_from_tag", self.report.bent)
+        self.assertEqual(self.report.counts["items"]["numbered_without_own_anchor"],
+                         sum(1 for i in self.doc["items"] if i["form"] == "numbered"))
+        self.assertEqual(self.report.counts["items"]["unanchored_passages"], [])
+        # a backticked tag's parenthetical sits outside the tag: it is the link's note, not a title
+        self.assertNotIn("title", items["definition-1.1.1"])
+        self.assertEqual(by_id(self.doc, "links")["definition-1.1.1/key/Demo.IsBox"]["note"], "Boxes")
+        self.assertNotIn("item.title_from_tag", self.report.bent)
+        self.assertIn("located by its number alone", by_id(self.doc, "provenance")["prov-docstring-tag"]["note"])
+
+    def test_a_bare_tag_s_parenthetical_is_the_item_s_title_when_its_tags_agree(self):
+        base = scratch(self)
+        root = base / "repo"
+        make_docstring_tags_repo(root, dt_lean(
+            "/-- Definition 1.1.1 (Boxes). A box. -/\ndef IsBox : Prop := True",
+            "/-- Lemma 1.1.2 (Additivity) / Exercise 1.1.4 -/\ntheorem t : True := trivial",
+            "/-- Lemma 1.1.2 (Finite additivity) -/\ntheorem u : True := trivial"))
+        config = base / "adapter.yaml"
+        config.write_text(DT_ADAPTER.replace("require_backticks: true", "require_backticks: false"),
+                          encoding="utf-8")
+        doc, report = docstring_tags.export(root, git_commit_head(root), adapter_config=config, **self.UNPINNED)
+        valid_and_quiet(self, doc)
+        items = by_id(doc, "items")
+        self.assertEqual((items["definition-1.1.1"]["title"], items["definition-1.1.1"]["title_source"]),
+                         ("Boxes", "producer"))
+        self.assertNotIn("title", items["lemma-1.1.2"])                       # its two tags disagree
+        self.assertNotIn("title", items["exercise-1.1.4"])
+        self.assertEqual(report.counts["headings"]["title_disagreements"],
+                         [{"item": "lemma-1.1.2", "titles": ["Additivity", "Finite additivity"]}])
+        self.assertEqual(report.bent["item.title_from_tag"]["count"], 1)
+
+    def test_pages_are_kept_unchecked_on_a_pdf_media_type_and_a_passage_needs_a_page(self):
+        links = by_id(self.doc, "links")
+        self.assertEqual(links["exercise-1.1.3/key/Demo.ex_113/ii"]["pages"]["first"], 12)
+        # three tags name a page: the exercise, the in-text passage and the helper
+        self.assertEqual(self.report.counts["links"]["link_quote_check"], {"pages_unchecked_without_pdf": 3})
+        # the in-text passage with a page is keyed by page and title; the one placed by a neighbour cannot be
+        paged = by_id(self.doc, "items")[ids.passage_page_id(12, '"every box is elementary" as the book says')]
+        self.assertEqual(paged["pages"], {"first": 12, "basis": "printed", "anchor": "own", "raw": "book p. 12"})
+        self.assertEqual([p for p in self.report.problems if "cannot be anchored without the PDF" in p],
+                         ["Demo.Placed: the in-text passage 'In-text definition, Exercise 1.1.3' cannot be "
+                          "anchored without the PDF's text layer; no item was written"])
+
+    def test_a_source_that_is_not_a_pdf_by_media_type_carries_no_pages(self):
+        doc, report = docstring_tags.export(self.root, self.commit, adapter_config=self.config,
+                                            **dict(self.UNPINNED, source_media_type="text/plain"))
+        valid_and_quiet(self, doc)
+        self.assertTrue(all("pages" not in ln for ln in doc["links"]))
+        self.assertEqual(report.lossy["link.pages_without_pdf"]["count"], 3)
+        self.assertFalse(any(i["form"] == "passage" for i in doc["items"]))
+
+    def test_without_a_pdf_the_source_flags_are_required(self):
+        with self.assertRaises(common.ExportError) as caught:
+            docstring_tags.export(self.root, self.commit, adapter_config=self.config, name="demo",
+                                  repo_id="git.example.org/demo/demo", source_id="demo-book")
+        self.assertIn("--source-title, --source-revision", caught.exception.message)
+        with self.assertRaises(common.ExportError):
+            docstring_tags.export(self.root, self.commit, adapter_config=self.config, xref=self.base / "x",
+                                  **self.UNPINNED)
+
+    def test_the_command_runs_without_a_pdf(self):
+        out = scratch(self) / "demo.annotations.json"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = cf_main.main(["export", "docstring-tags", str(self.root), "--commit", self.commit,
+                                   "--adapter-config", str(self.config), "--out", str(out), "--name", "demo",
+                                   "--repo-id", "git.example.org/demo/demo", "--source-id", "demo-book",
+                                   "--source-title", "A Demo Book", "--source-revision", "first printing, 2026"])
+        self.assertEqual(status, 1, stderr.getvalue())        # the neighbour-placed passage is a recorded problem
+        text = out.read_text(encoding="utf-8")
+        self.assertEqual(V.validate(V.loads(text), text=text, canonical=True, lints=common.LINTS), [])
+        self.assertIn("profiles: core only", stdout.getvalue())
+
+
 class TestCompanionIdentity(unittest.TestCase):
     """companion.repo is host/org/name from the remote, never a scheme or a .git suffix."""
 
@@ -1627,7 +1844,7 @@ def normalise_environment(doc: dict) -> dict:
     return doc
 
 
-@unittest.skipUnless(env_path("CF_MT"), "set CF_MT to the measure_theory checkout at 00a2438")
+@unittest.skipUnless(env_path("CF_MT"), "set CF_MT to the measure_theory checkout at 2cd263a")
 class TestMeasureTheoryReproduction(unittest.TestCase):
 
     def test_the_exporter_reproduces_the_reference_record_for_record(self):
@@ -1650,7 +1867,7 @@ class TestMeasureTheoryReproduction(unittest.TestCase):
 
 
 @unittest.skipUnless(env_path("CF_TML") and env_path("CF_TAO_PDF"),
-                     "set CF_TML to the tao-measure-lean checkout at f158509 and CF_TAO_PDF to the published PDF")
+                     "set CF_TML to the tao-measure-lean checkout at 677ada1 and CF_TAO_PDF to the published PDF")
 @unittest.skipUnless(shutil.which("pdftotext"), "needs poppler's pdftotext")
 class TestTaoMeasureLeanReproduction(unittest.TestCase):
 
@@ -1693,8 +1910,8 @@ class TestTheReferencesAreWhatTheyClaim(unittest.TestCase):
         mt, tml = load_reference(self, "measure_theory"), load_reference(self, "tao-measure-lean")
         self.assertEqual({k: len(mt[k]) for k in ("items", "declarations", "links", "locations", "destinations",
                                                    "memberships", "artifacts", "snippets", "verdicts")},
-                         {"items": 432, "declarations": 3565, "links": 627, "locations": 509,
-                          "destinations": 2884, "memberships": 5093, "artifacts": 61, "snippets": 542,
+                         {"items": 432, "declarations": 3552, "links": 1066, "locations": 509,
+                          "destinations": 3181, "memberships": 5393, "artifacts": 61, "snippets": 897,
                           "verdicts": 11})
         self.assertEqual({k: len(tml[k]) for k in ("items", "declarations", "links", "locations", "destinations",
                                                     "unattributed")},

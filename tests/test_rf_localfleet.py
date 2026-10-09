@@ -1224,6 +1224,46 @@ class TestRunSafety(unittest.TestCase):
             self._run("--i-have-consent", "--stage", "raise")
         self.assertIn("--smoke-verified", str(ctx.exception))
 
+    def test_raise_monitor_and_stop_act_on_the_running_fleet_alone(self):
+        """`--stage raise` re-ran preflight, transfer, verify and smoke (#7)."""
+        from cflib.yamlio import read_yaml
+
+        earlier = ("PREFLIGHT", "TRANSFER", "VERIFY", "SMOKE")
+        for stage in ("raise", "monitor", "stop"):
+            with self.subTest(stage=stage):
+                rc, out = self._run_loud("--stage", stage, "--smoke-verified",
+                                         "--workers", "4", "--reviewers", "3")
+                self.assertEqual(rc, 0, out)
+                self.assertIn(f"---- {stage.upper()} ", out)
+                for other in earlier:
+                    self.assertNotIn(f"---- {other} ", out)
+                run = read_yaml(self.ws["run_dir"] / "run.yaml")["run"]
+                self.assertEqual(run["stages_planned"], [stage])
+                if stage == "raise":
+                    self.assertLess(-1, out.find("tend-control budget"))
+                    self.assertLess(out.find("tend-control budget"),
+                                    out.find("tend-control limits"))
+
+    def test_the_default_stage_still_runs_up_to_the_smoke_test(self):
+        rc, out = self._run_loud()
+        self.assertEqual(rc, 0, out)
+        for stage in ("PREFLIGHT", "TRANSFER", "VERIFY", "SMOKE"):
+            self.assertIn(f"---- {stage} ", out)
+        self.assertNotIn("---- RAISE ", out)
+
+    def test_force_resends_tasks_over_a_moved_entrypoint(self):
+        rc, out = self._run_loud("--stage", "transfer")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("moved past", out)
+        rc, out = self._run_loud("--stage", "transfer", "--force")
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("moved past", out)
+        self.assertIn("rsync", out)
+
+    def _run_loud(self, *extra):
+        return cf("run", "demo", "--host", "testbox", "--workspace", str(self.root),
+                  "--i-have-consent", *extra)
+
     def test_executing_with_a_missing_component_is_refused(self):
         with self.assertRaises(CfError) as ctx:
             self._run("--i-have-consent", "--execute")

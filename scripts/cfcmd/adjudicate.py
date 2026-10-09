@@ -161,9 +161,9 @@ def run(args) -> int:
         compat.update_state(
             paths, names[0],
             lambda st, _r=report, _c=counts: compat.state_section(st, "adjudication", {
-                "accepted": _r["accepted"],
-                "refuted": _r["refuted"],
-                "contested": _r["contested"],
+                "accepted": _r["ledger"]["accepted"],
+                "refuted": _r["ledger"]["refuted"],
+                "contested": _r["ledger"]["contested"],
                 # the names `cf status` reads (cflib.state.summary_row)
                 "confirmed": _c.get("CONFIRMED_CONTENT", 0),
                 "attribution_gap": _c.get("ATTRIBUTION_GAP", 0),
@@ -175,8 +175,7 @@ def run(args) -> int:
                 "errors": len(_r.get("errors") or []),
             }),
         )
-        print("%s: %d accepted, %d refuted, %d contested"
-              % (names[0], report["accepted"], report["refuted"], report["contested"]))
+        print(transcribe_mod.summary(report))
         for f in report["files"]:
             print("  %s" % f)
         return 0 if not report.get("errors") else 1

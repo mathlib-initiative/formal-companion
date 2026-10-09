@@ -161,6 +161,7 @@ def document(*, page_count: int = 12, region_page: int = 7,
             "actor": "tool", "at": "2026-09-26", "confirmed_by_human": False,
             "id": "prov-1", "method": "pipeline",
         }],
+        "profiles": {"site": fmt.ANNOTATION_PROFILE_VERSIONS["site"]},
         "sources": [source],
     }
 
