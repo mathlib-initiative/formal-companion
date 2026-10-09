@@ -74,13 +74,18 @@ from .api import Adapter, AdapterError, register, sha_of_files
 from .base import make_row
 from .itemtag import kinds_from_labels
 
-#: measure_theory's layout; overridable per companion in adapter.yaml.
-DEFAULT_FILES = {
-    "target_refinement": "pdf-overlay/data/target-refinement.json",
-    "declaration_snippets": "pdf-overlay/data/declaration-snippets.json",
-    "ledger": "source-formalization-ledger.json",
+#: The layouts the curation is found in, as (data directory, official-source
+#: record), current first: measure_theory moved from ``pdf-overlay/data/`` to
+#: ``attribution/``.  The first whose directory holds JSON is the default.
+LAYOUTS = (("attribution", "attribution/official-source.json"),
+           ("pdf-overlay/data", "pdf-overlay/official-source.json"))
+#: File names inside that directory; every path is overridable in adapter.yaml.
+DATA_FILES = {
+    "target_refinement": "target-refinement.json",
+    "declaration_snippets": "declaration-snippets.json",
 }
-DEFAULT_GEOMETRY_GLOB = "pdf-overlay/data/geometry-batch-*.json"
+DEFAULT_LEDGER = "source-formalization-ledger.json"
+GEOMETRY_GLOB = "geometry-batch-*.json"
 
 BARE_SORRY = re.compile(r"\bsorry\b")
 
@@ -192,29 +197,37 @@ class AttributionTableAdapter(Adapter):
     #: constant lives with the adapter that reads those files.
     DETECT_SCORE = 0.98
 
-    @classmethod
-    def _overlay(cls, repo: str | Path) -> tuple[list, bool]:
-        """``(pdf-overlay/data/*.json, official-source.json exists)``."""
+    @staticmethod
+    def layout(repo: str | Path) -> tuple[str, str]:
+        """``(data directory, official-source record)``: the first of :data:`LAYOUTS` holding JSON."""
         root = Path(repo)
-        data = root / "pdf-overlay" / "data"
-        files = sorted(data.glob("*.json")) if data.is_dir() else []
-        return files, (root / "pdf-overlay" / "official-source.json").exists()
+        for data, official in LAYOUTS:
+            if any((root / data).glob("*.json")):
+                return data, official
+        return LAYOUTS[0]
+
+    @classmethod
+    def _overlay(cls, repo: str | Path) -> tuple[list, bool, str, str]:
+        """``(<data>/*.json, official-source.json exists, data, official)``."""
+        root = Path(repo)
+        data, official = cls.layout(root)
+        return sorted((root / data).glob("*.json")), (root / official).exists(), data, official
 
     @classmethod
     def detect(cls, repo: str | Path) -> tuple[float, dict]:
-        files, official = cls._overlay(repo)
-        if not (files and official):
+        files, present, data, official = cls._overlay(repo)
+        if not (files and present):
             return 0.0, {}
         return cls.DETECT_SCORE, {
-            "reason": f"{len(files)} pdf-overlay/data/*.json + official-source.json",
-            "files": ["pdf-overlay/data", "pdf-overlay/official-source.json"],
+            "reason": f"{len(files)} {data}/*.json + official-source.json",
+            "files": [data, official],
         }
 
     @classmethod
     def explain(cls, repo: str | Path) -> list[str]:
-        files, official = cls._overlay(repo)
-        return [f"attribution table: pdf-overlay/data/*.json: {len(files)}; "
-                f"pdf-overlay/official-source.json: {'present' if official else 'absent'}"]
+        files, present, data, official = cls._overlay(repo)
+        return [f"attribution table: {data}/*.json: {len(files)}; "
+                f"{official}: {'present' if present else 'absent'}"]
 
     # -- config ------------------------------------------------------------
     def validate_config(self) -> None:
@@ -227,6 +240,11 @@ class AttributionTableAdapter(Adapter):
                 raise AdapterError(
                     f"{self.source}: {field} not found at {path}",
                     hint=f"set {field}: <repo-relative path> in adapter.yaml")
+        if not self._geometry_files(repo):
+            raise AdapterError(
+                f"{self.source}: geometry_glob {', '.join(self._geometry_patterns(repo))} "
+                f"matches no file in {repo}",
+                hint="set geometry_glob: <repo-relative glob> in adapter.yaml")
         policy = self.cross_check_policy()
         if policy not in CROSS_CHECK_POLICIES:
             raise AdapterError(
@@ -235,21 +253,24 @@ class AttributionTableAdapter(Adapter):
                      "there is no value that omits a declaration quietly")
 
     def _path(self, repo: Path, field: str) -> Path:
-        return repo / str(self.config.get(field) or DEFAULT_FILES[field])
+        return repo / str(self.config.get(field) or f"{self.layout(repo)[0]}/{DATA_FILES[field]}")
+
+    def _geometry_patterns(self, repo: Path) -> list[str]:
+        raw = self.config.get("geometry_glob", self.config.get("geometry_globs"))
+        if not raw:
+            return [f"{self.layout(repo)[0]}/{GEOMETRY_GLOB}"]
+        return [str(raw)] if isinstance(raw, str) else [str(g) for g in raw]
 
     def _geometry_files(self, repo: Path) -> list[Path]:
-        raw = self.config.get("geometry_glob", self.config.get("geometry_globs"))
-        patterns = [DEFAULT_GEOMETRY_GLOB] if not raw else (
-            [str(raw)] if isinstance(raw, str) else [str(g) for g in raw])
         out: dict[str, Path] = {}
-        for pattern in patterns:
+        for pattern in self._geometry_patterns(repo):
             for p in sorted(repo.glob(pattern)):
                 if p.is_file():
                     out[str(p)] = p
         return list(out.values())
 
     def _ledger_path(self, repo: Path) -> Path | None:
-        rel = self.config.get("ledger", DEFAULT_FILES["ledger"])
+        rel = self.config.get("ledger", DEFAULT_LEDGER)
         if not rel:
             return None
         path = repo / str(rel)
@@ -502,7 +523,7 @@ class AttributionTableAdapter(Adapter):
         excludes, minus anything this repository's git ignores.
 
         Not adapter.yaml's ``glob:``.  That one selects this convention's
-        EXPORT (``pdf-overlay/data/*.json``), and pointing the cross-check at it
+        EXPORT (``attribution/*.json``), and pointing the cross-check at it
         would have it compare the table against itself.
         """
         path = self.resolve_repo(repo)

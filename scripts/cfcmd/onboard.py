@@ -48,7 +48,7 @@ from cflib.jsonio import atomic_write
 #: Sensible starting points per adapter kind; edit adapter.yaml afterwards.
 DEFAULTS = {
     "docstring_tags": {"glob": "**/*.lean", "anchor": "docstring", "granularity": "item"},
-    "attribution_table": {"glob": "pdf-overlay/data/*.json", "anchor": "ledger", "granularity": "item"},
+    "attribution_table": {"glob": "attribution/*.json", "anchor": "ledger", "granularity": "item"},
     # A blueprint has no printed pages to anchor to: its manuscript IS the .tex.
     "blueprint_tex": {"glob": "blueprint/**/*.tex", "anchor": "none", "granularity": "item"},
     "ledger_nodes": {"glob": "source-formalization-ledger.json", "anchor": "ledger", "granularity": "node"},
