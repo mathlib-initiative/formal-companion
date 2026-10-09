@@ -416,9 +416,9 @@ class AdapterLoadingTest(unittest.TestCase):
                                        dir=os.environ.get("CF_TEST_TMP") or None))
         self.addCleanup(shutil.rmtree, parent, ignore_errors=True)
         repo = parent / "companion"
-        exports = repo / "pdf-overlay" / "data"
+        exports = repo / "attribution"
         exports.mkdir(parents=True)
-        for name in ("target-refinement.json", "declaration-snippets.json"):
+        for name in ("target-refinement.json", "declaration-snippets.json", "geometry-batch-a.json"):
             (exports / name).write_text("{}", encoding="utf-8")
         cfg_path = parent / "adapter.yaml"
         for path, kind in ((TEMPLATES / "docstring_tags.tao-measure-lean.yaml", "docstring_tags"),

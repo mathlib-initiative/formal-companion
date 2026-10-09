@@ -712,16 +712,20 @@ def _s2_ledger_source(repo: Path) -> list[SourceClaim]:
         pdf_hints=hints, confidence=0.95)]
 
 
+#: Where an attribution-table companion keeps its official-source record, current first.
+OFFICIAL_SOURCE_PATHS = ("attribution/official-source.json", "pdf-overlay/official-source.json")
+
+
 def _s3_official_source(repo: Path) -> list[SourceClaim]:
-    """S3 -- ``pdf-overlay/official-source.json``: sha, download URL, book page."""
-    path = repo / "pdf-overlay" / "official-source.json"
-    data = _read_json(path)
+    """S3 -- ``attribution/official-source.json`` (or ``pdf-overlay/``): sha, download URL, book page."""
+    rel = next((r for r in OFFICIAL_SOURCE_PATHS if (repo / r).is_file()), OFFICIAL_SOURCE_PATHS[0])
+    data = _read_json(repo / rel)
     if not isinstance(data, dict):
         return []
     urls = tuple(u for u in [data.get("canonical_pdf_url"), data.get("final_pdf_url")] if u)
     book_page = str(data.get("legacy_page_url") or data.get("canonical_page_url") or "")
     return [SourceClaim(
-        signal="official_source_json", path="pdf-overlay/official-source.json",
+        signal="official_source_json", path=rel,
         sha256=str(data.get("sha256") or ""),
         bytes=(int(data["bytes"]) if data.get("bytes") is not None else None),
         urls=urls, book_page_url=book_page,

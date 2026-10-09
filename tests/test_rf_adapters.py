@@ -1244,6 +1244,31 @@ def _copy_repo(repo: Path, prefix: str) -> Path:
     return dest
 
 
+class TestTheAttributionLayout(unittest.TestCase):
+    """The curation under `attribution/` (measure_theory's current layout) is found with no paths set."""
+
+    def test_detection_discovery_and_the_dry_run_find_it(self):
+        old = _attribution_repo(tmpdir("cf-rf-adapters-layout-"))
+        repo = _copy_repo(old, "cf-rf-adapters-layout-new-")
+        (repo / "pdf-overlay" / "data").rename(repo / "attribution")
+        (repo / "pdf-overlay" / "official-source.json").rename(repo / "attribution" / "official-source.json")
+        kind, score, evidence = discovery.detect_adapter(repo)
+        self.assertEqual((kind, score), ("attribution_table", 0.98))
+        self.assertEqual(evidence["files"], ["attribution", "attribution/official-source.json"])
+        claim = next(c for c in discovery.discover_sources(repo) if c.signal == "official_source_json")
+        self.assertEqual(claim.path, "attribution/official-source.json")
+        moved, before = (_attribution_adapter(r).dry_run(sources={"s": SHA}) for r in (repo, old))
+        for field in ("rows", "key_rows", "geometry_items", "curated_entries", "missing_snippet"):
+            self.assertEqual(moved[field], before[field], field)
+        self.assertEqual(moved["rows"], 3)
+
+    def test_a_geometry_glob_matching_nothing_is_refused(self):
+        repo = _attribution_repo(tmpdir("cf-rf-adapters-stale-glob-"))
+        with self.assertRaises(adapters_api.AdapterError) as caught:
+            _attribution_adapter(repo, geometry_glob="attribution/geometry-batch-*.json")
+        self.assertIn("matches no file", str(caught.exception))
+
+
 class TestTheCrossCheckEdgeCases(unittest.TestCase):
     """Shapes the main fixture does not carry, each on its own copy of it."""
 
