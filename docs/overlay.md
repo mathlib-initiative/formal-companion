@@ -8,9 +8,9 @@ one companion is data the viewer and the tools read at run time:
 
 | path in the companion | written by | what it holds |
 |---|---|---|
-| `annotations/<section>/<name>.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) annotations, one link per file, one folder per book section (section 7) |
+| `annotations/<section>/[<item>/]<name>.json`, `_defaults.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) annotations, one link per file, one folder per book section, with folder defaults (section 7) |
 | `pdf-overlay/overlay.config.json` | `cf overlay init`, then edited | presentation and local-build settings (section 3) |
-| `pdf-overlay/annotations.bundle.json` | `cf overlay sync` | every annotation file with its path, in file order: what the viewer reads, in one fetch (section 6) |
+| `pdf-overlay/annotations.bundle.json` | `cf overlay sync` | every annotation as the reader reads it, defaults applied, with its file's path, in file order: what the viewer reads, in one fetch (section 6) |
 | `pdf-overlay/GENERATED.json` | `cf overlay sync` (and `export`) | the generator commit, the Literature Links release, the sha256 of every copied file, and the annotation files' count, manifest sha256 and bundle sha256 (section 6) |
 
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
@@ -95,7 +95,7 @@ carry the same rules and patterns, held together by `tests/test_overlay_config.p
 At start-up it fetches `../overlay.config.json`, then `../GENERATED.json`,
 then the bundle its `annotations` block names (one fetch), checking it against
 its recorded sha256. Each annotation's base URL is its own file's in the
-published site (`<site root>/annotations/<section>/<name>.json`, the site
+published site (`<site root>/annotations/<section>/[<item>/]<name>.json`, the site
 root `../` once per `site.mount` component, plus one), since Literature Links
 resolves a relative reference against the file that holds the annotation.
 It keeps the records whose `source` is a PDF with the config's `source_id`;
@@ -142,18 +142,19 @@ bytecode writing off.
   loopback.
 - **`build_site.py`**: publish `viewer/`, `vendor/`, `overlay.config.json`,
   `GENERATED.json` and the bundle into `<output_root>/<mount>/`, and the
-  annotation files (exactly the bundle's) into
-  `<output_root>/annotations/<section>/`: their relative targets are relative
+  annotation files and their `_defaults.json` (exactly the bundle's records)
+  into `<output_root>/annotations/`: their relative targets are relative
   to this published site layout, not to the repository; replace both
-  atomically (refusing a site directory that holds anything but section
-  folders of annotation files), insert the index link, write `receipt.json`.
+  atomically (refusing a site directory that does not have the layout of
+  section 7), insert the index link, write `receipt.json`.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/` but the bundle; the `format`
   block against the shipped package's version; the config; `annotations/`
-  holding only `<section>/<name>.json` files, as many as recorded and with the
-  recorded manifest sha256; the bundle at its recorded sha256 and equal to the
-  files (each file that differs, is missing or is extra is named); every file
-  passing the shipped `literature_links` scan, with a record of the config's
+  holding only the layout of section 7, each file as `export` writes it, as
+  many annotations as recorded and every file at the recorded manifest sha256;
+  the bundle at its recorded sha256 and equal to the records the shipped
+  `literature_links` scan reads (each one that differs, is missing or is
+  extra is named); the scan finding no problem, with a record of the config's
   PDF; every recorded curation input (at least one when an export is
   recorded) at its recorded sha256, so a stale export fails CI.
 - **`overlay_annotations.py`**: reads `GENERATED.json`'s annotations block,
@@ -201,7 +202,7 @@ cf overlay check <companion>
     "export": {"convention": "attribution-table", "commit": "<companion commit>", "source_id": "..."},
     "inputs": [{"path": "<curation file>", "sha256": "..."}],
     "count": 1332,
-    "manifest_sha256": "<sha256 of `sha256sum` lines of the files, sorted by path>",
+    "manifest_sha256": "<sha256 of `sha256sum` lines of the files, `_defaults.json` included, sorted by path>",
     "bundle": {"path": "annotations.bundle.json", "sha256": "..."}
   }
 }
@@ -211,7 +212,7 @@ The manifest is `cd <companion> && find annotations -type f | LC_ALL=C sort |
 xargs sha256sum | sha256sum`. The bundle is
 `{"schema": "formal-companion/overlay-annotations", "schema_version": 1,
 "directory", "count", "annotations": [{"path", "annotation"}, ...]}`, one
-annotation per line, in path order.
+annotation per line, in path order, folder defaults applied.
 
 `format.tag` appears when the vendored revision is a tagged release.
 `export` and `inputs` appear when `cf overlay export` wrote the files; with
@@ -251,13 +252,25 @@ Everything else the viewer needs is under the extension key
 
 The section folder is the item number's first two parts (`1.2.7` is `1.2`);
 otherwise the item's section or a cluster locator's `Section N.M`; otherwise
-`other` (a two-part number may be an equation's). Each file is one record as
-canonical JSON (sorted keys, two-space indent, UTF-8, a final newline), named
-`<item>__<role>__<declaration>.json`, or `<item>.json` for a record with no
-target, every character outside `[A-Za-z0-9._-]` (and a leading `.`) replaced
-by `-`. A name longer than 120 characters, a Windows device name (`con`,
-`nul`, ...), and every name that equals another one in its folder ignoring
-case instead ends in `-` and the first 10 hex digits of the sha256 of the
-full unsanitised key, truncated to fit; the key is followed by `@<region>`
-when one item drawn in several regions gives several records the same key.
-A record the conversion cannot carry stops the export.
+`other` (a two-part number may be an equation's). An item with one record is
+a file `<item>__<role>__<declaration>.json`, or `<item>.json` for a record
+with no target; an item with several is a folder `<item>/` of
+`<role>__<declaration>.json` files. Every character outside `[A-Za-z0-9._-]`
+(and a leading `.`) is replaced by `-`. A name longer than 120 characters, a
+Windows device name (`con`, `nul`, ...), `_defaults.json`, and every name
+that equals another one in its folder ignoring case instead ends in `-` and
+the first 10 hex digits of the sha256 of the full unsanitised key, truncated
+to fit; the key is followed by `@<region>` when one item drawn in several
+regions gives several records the same key.
+
+`scripts/overlay/defaults.py` writes the files with Literature Links folder
+defaults: `annotations/_defaults.json` holds what all records share and an
+item folder's `_defaults.json` what its records share beyond that (a member
+equal in all, or an object in a strict majority, recursively; no field is
+named). Each record is written as the merge patch over its defaults (`null`
+removes an inherited member). References are compared resolved and written
+relative to each file. Files list `$schema, id, kind, label, status, note,
+source, location, target, extensions` first, `type` first below, two-space
+indent, UTF-8, arrays of scalars on one line. The files are read back with
+the vendored reader before anything is written; a record the conversion
+cannot carry, or files that do not read back as the records, stop the export.
