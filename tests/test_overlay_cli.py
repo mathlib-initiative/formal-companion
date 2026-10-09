@@ -477,6 +477,17 @@ class TestExport(OverlayCase):
         self.assertEqual(self.sync(), 0)
         self.assertEqual(self.record()["schema_version"], 3)
 
+    def test_it_refuses_folder_defaults_above_the_annotation_directory_before_it_writes(self):
+        self.ready()
+        before = self.annotation().read_bytes(), self.record()
+        for text in ('{"note": "from above"}\n', "[]\n"):
+            with self.subTest(text=text):
+                (self.companion / "_defaults.json").write_text(text, encoding="utf-8")
+                with self.assertRaises(CfError) as caught:
+                    self.export(document(region_page=8))
+                self.assertIn("_defaults.json: ", caught.exception.message)
+                self.assertEqual((self.annotation().read_bytes(), self.record()), before)
+
     def test_it_refuses_a_symlinked_annotation_directory(self):
         self.assertEqual(self.init(), 0)
         elsewhere = self.root / "elsewhere"
@@ -668,6 +679,22 @@ class TestSync(OverlayCase):
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
         self.assertIn("annotations/notes.txt", caught.exception.message)
+
+    def test_it_refuses_folder_defaults_above_the_annotation_directory(self):
+        self.assertEqual(self.init(), 0)
+        for exported in (False, True):
+            if exported:
+                self.export()
+            for stray in (self.companion / "_defaults.json", self.root / "_defaults.json"):
+                with self.subTest(exported=exported, above=stray.parent.name):
+                    stray.write_text('{"note": "from above"}\n', encoding="utf-8")
+                    try:
+                        with self.assertRaises(CfError) as caught:
+                            overlay_sync.sync(self.companion)
+                    finally:
+                        stray.unlink()
+                    self.assertIn("_defaults.json: folder defaults outside annotations/", caught.exception.message)
+        self.assertEqual(self.sync(), 0)
 
     def test_it_removes_a_file_a_previous_manifest_listed(self):
         self.ready()
@@ -924,6 +951,14 @@ class TestCheckGenerated(OverlayCase):
         defaults.write_bytes(defaults.read_bytes().replace(b"Lemma 1.2.4", b"Lemma 1.2.3") + b"\n")
         done = self.tool("check_generated")
         self.assertIn("annotations/1.2/lemma-1.2.3/_defaults.json: not as `cf overlay export` writes it", done.stderr)
+
+    def test_it_names_folder_defaults_above_the_annotation_directory(self):
+        self.ready()
+        (self.companion / "_defaults.json").write_text('{"note": "from above"}\n', encoding="utf-8")
+        self.reseal()
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("_defaults.json: folder defaults outside annotations/", done.stderr)
 
     def test_it_names_a_missing_and_a_stale_annotation_file(self):
         self.ready()

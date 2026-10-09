@@ -240,6 +240,8 @@ def read_records(root: Path, directory: str) -> tuple[dict[str, dict[str, Any]],
     collection = discovery.collect([base])
     problems = [f"{p.path.replace(str(root.resolve()) + os.sep, '')}: {p.message} [{p.code}]"
                 for p in collection.problems]
+    problems += [f"{str(path).replace(str(root.resolve()) + os.sep, '')}: folder defaults outside {directory}/ apply "
+                 f"to its annotations; remove it" for path in discovery.inherit({}, base)[1]]
     return {f"{directory}/{r.path.relative_to(base).as_posix()}": r.annotation for r in collection.records}, problems
 
 
