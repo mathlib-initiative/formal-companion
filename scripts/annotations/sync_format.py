@@ -1,29 +1,33 @@
-"""Vendor one tagged release of formal-companion-annotations into vendor/.
+"""Vendor one revision of an annotation format package into vendor/.
 
 New code, for the switchover to formal-companion-annotations (CLAUDE.md
-section 2).  The annotation format is its own repository; the skill carries
-one release's package under ``vendor/formal_companion_annotations/`` and a
-sealed manifest beside it, ``vendor/formal_companion_annotations.manifest.json``:
-the upstream URL, the tag, the commit it names, the version, and the sha256 of
-every vendored file.  ``tests/test_vendored_format.py`` fails on any byte that
-differs from the manifest, so the copy is never edited here: a change to the
-format is a release upstream, then this script, then the skill's own changes.
+section 2).  Two format packages are vendored, each as one upstream revision
+copied byte for byte under ``vendor/<package>/`` and sealed by
+``vendor/<package>.manifest.json`` (upstream, commit, version, the tag when
+there is one, and the sha256 of every vendored file):
 
-Run by the maintainer, by path, against a local checkout of the upstream
-repository that has the tag::
+* ``formal_companion_annotations``, the document format the exporters and
+  the skill's stages read and write;
+* ``literature_links``, the format the generated PDF overlay reads
+  (``docs/overlay.md``): ``src/literature_links/`` plus
+  ``schema/companion.schema.json``, which the package looks for in its own
+  ``schema/`` directory.
 
-    python3 scripts/annotations/sync_format.py <formal-companion-annotations checkout> v1.0.0
+``tests/test_vendored_format.py`` and ``tests/test_vendored_links.py`` fail
+on any vendored byte that differs from its manifest, so a copy is never edited
+here: a change to a format is a revision upstream, then this script.  Run it
+by path against a local checkout of the upstream repository::
 
-A release candidate is tagged ``vMAJOR.MINOR.PATCHrcN`` (``v1.0.0rc1``) and is
-vendored the same way; the manifest then names that tag and the package's
-``__version__`` must be ``1.0.0rc1``.
+    python3 scripts/annotations/sync_format.py <checkout> v1.0.0rc2
+    python3 scripts/annotations/sync_format.py <checkout> <full commit id> --package literature_links
 
-It copies the package as the tag has it (``git ls-tree`` and ``git cat-file``
-through :mod:`cflib.gitsafe`, never the checkout's working tree), checks each
-file against the tag's blob id, checks that the package's ``__version__`` is
-the tag's, and then replaces the vendored tree and the manifest.  ``--check``
-changes nothing: it exits 1 unless the vendored tree matches the manifest and
-the manifest matches the tag in the checkout.
+The revision is an annotated release tag ``vMAJOR.MINOR.PATCH`` (or
+``vMAJOR.MINOR.PATCHrcN``), whose version the package's ``__version__`` must
+equal, or a full commit id for a release not tagged yet, in which case the
+manifest names no tag.  Files are read from git through :mod:`cflib.gitsafe`,
+never from the working tree, and each is checked against its blob id.
+``--check`` changes nothing: it exits 1 unless the vendored tree matches the
+manifest and the manifest matches the revision.
 """
 from __future__ import annotations
 
@@ -34,6 +38,7 @@ import re
 import shutil
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 _SCRIPTS = Path(__file__).resolve().parent.parent
@@ -44,15 +49,36 @@ from cflib import gitsafe                                           # noqa: E402
 
 SKILL = _SCRIPTS.parent
 VENDOR = SKILL / "vendor"
-PACKAGE = "formal_companion_annotations"
-TARGET = VENDOR / PACKAGE
-MANIFEST = VENDOR / f"{PACKAGE}.manifest.json"
-UPSTREAM = "https://github.com/mathlib-initiative/formal-companion-annotations"
-#: Where the package sits in the upstream tree.
-SOURCE = f"src/{PACKAGE}"
+
+
+@dataclass(frozen=True)
+class Package:
+    """One vendored package: its upstream, its directory there, and the files it carries besides."""
+
+    name: str
+    upstream: str
+    source: str
+    #: Upstream files copied to the same relative path inside ``vendor/<name>/``.
+    extra_files: tuple[str, ...] = ()
+    license: str = "Apache-2.0"
+
+
+PACKAGES = {
+    "formal_companion_annotations": Package(
+        "formal_companion_annotations",
+        "https://github.com/mathlib-initiative/formal-companion-annotations",
+        "src/formal_companion_annotations"),
+    "literature_links": Package(
+        "literature_links",
+        "https://github.com/mathlib-initiative/literature-links",
+        "src/literature_links",
+        extra_files=("schema/companion.schema.json",)),
+}
+DEFAULT_PACKAGE = "formal_companion_annotations"
 #: A release tag: ``vMAJOR.MINOR.PATCH``, or a release candidate ``vMAJOR.MINOR.PATCHrcN``
 #: (PEP 440 spelling, as the package's ``__version__`` writes it).
 _TAG = re.compile(r"v(?P<version>[0-9]+\.[0-9]+\.[0-9]+(?:rc[1-9][0-9]*)?)")
+_COMMIT = re.compile(r"[0-9a-f]{40}")
 _VERSION = re.compile(r'^__version__ = "([^"]+)"$', re.M)
 
 
@@ -65,7 +91,7 @@ def blob_id(data: bytes) -> str:
     return hashlib.sha1(b"blob %d\0" % len(data) + data).hexdigest()
 
 
-def vendored_files(root: Path = TARGET) -> dict[str, str]:
+def vendored_files(root: Path) -> dict[str, str]:
     """``{path relative to the package: sha256}`` of every vendored file, bytecode left out."""
     out: dict[str, str] = {}
     for path in sorted(root.rglob("*")):
@@ -82,76 +108,115 @@ def git(checkout: Path, *args: str) -> str:
     return proc.stdout
 
 
-def release(checkout: Path, tag: str) -> tuple[str, dict[str, bytes]]:
-    """The commit ``tag`` names and the package's files at it, each checked against its blob id."""
-    if _TAG.fullmatch(tag) is None:
-        raise SystemExit(f"{tag}: not a release tag (vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCHrcN)")
-    if git(checkout, "cat-file", "-t", f"refs/tags/{tag}").strip() != "tag":
-        raise SystemExit(f"{tag}: not an annotated tag in {checkout}")
-    commit = git(checkout, "rev-parse", "--verify", f"refs/tags/{tag}^{{commit}}").strip()
-    files: dict[str, bytes] = {}
-    for line in git(checkout, "ls-tree", "-r", "--full-tree", commit, "--", SOURCE).splitlines():
-        meta, path = line.split("\t", 1)
+def resolve(checkout: Path, revision: str) -> tuple[str, str | None]:
+    """``(commit, tag)`` of a release tag or a full commit id; the tag is None for a commit id."""
+    if _TAG.fullmatch(revision):
+        if git(checkout, "cat-file", "-t", f"refs/tags/{revision}").strip() != "tag":
+            raise SystemExit(f"{revision}: not an annotated tag in {checkout}")
+        return git(checkout, "rev-parse", "--verify", f"refs/tags/{revision}^{{commit}}").strip(), revision
+    if _COMMIT.fullmatch(revision):
+        if git(checkout, "cat-file", "-t", revision).strip() != "commit":
+            raise SystemExit(f"{revision}: not a commit in {checkout}")
+        return revision, None
+    raise SystemExit(f"{revision}: not a release tag (vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCHrcN) "
+                     "nor a full 40-hex commit id")
+
+
+def _blobs(checkout: Path, commit: str, path: str) -> list[tuple[str, bytes]]:
+    """``(upstream path, bytes)`` of every file at or under ``path``, each checked against its blob id."""
+    out = []
+    for line in git(checkout, "ls-tree", "-r", "--full-tree", commit, "--", path).splitlines():
+        meta, name = line.split("\t", 1)
         mode, kind, oid = meta.split()
         if kind != "blob" or mode not in ("100644", "100755"):
-            raise SystemExit(f"{path}: not a regular file at {tag}")
+            raise SystemExit(f"{name}: not a regular file at {commit[:12]}")
         data = git(checkout, "cat-file", "blob", oid).encode("utf-8")
         if blob_id(data) != oid:
-            raise SystemExit(f"{path}: the bytes read back are not the blob {oid} (not UTF-8 text?)")
-        files[path[len(SOURCE) + 1:]] = data
+            raise SystemExit(f"{name}: the bytes read back are not the blob {oid} (not UTF-8 text?)")
+        out.append((name, data))
+    return out
+
+
+def release(checkout: Path, revision: str, package: Package = PACKAGES[DEFAULT_PACKAGE],
+            ) -> tuple[str, str | None, str, dict[str, bytes]]:
+    """``(commit, tag, version, files)`` of ``package`` at ``revision``."""
+    commit, tag = resolve(checkout, revision)
+    files = {name[len(package.source) + 1:]: data for name, data in _blobs(checkout, commit, package.source)}
     if not files:
-        raise SystemExit(f"{SOURCE}/ is empty at {tag}")
-    found = _VERSION.search(files["__init__.py"].decode("utf-8"))
-    version = _TAG.fullmatch(tag)["version"]
-    if found is None or found.group(1) != version:
-        raise SystemExit(f"{tag}: the package says __version__ {found and found.group(1)!r}, not {version!r}")
-    return commit, files
+        raise SystemExit(f"{package.source}/ is empty at {revision}")
+    for extra in package.extra_files:
+        found = [data for name, data in _blobs(checkout, commit, extra) if name == extra]
+        if not found:
+            raise SystemExit(f"{extra} is not a file at {revision}")
+        if extra in files:
+            raise SystemExit(f"{extra} would replace a file of {package.source}/")
+        files[extra] = found[0]
+    match = _VERSION.search(files.get("__init__.py", b"").decode("utf-8"))
+    if match is None:
+        raise SystemExit(f"{revision}: {package.source}/__init__.py states no __version__")
+    version = match.group(1)
+    if tag is not None and version != _TAG.fullmatch(tag)["version"]:
+        raise SystemExit(f"{tag}: the package says __version__ {version!r}, "
+                         f"not {_TAG.fullmatch(tag)['version']!r}")
+    return commit, tag, version, files
 
 
-def manifest_for(tag: str, commit: str, files: dict[str, bytes]) -> dict:
-    return {
-        "upstream": UPSTREAM,
-        "tag": tag,
+def manifest_for(tag: str | None, commit: str, version: str, files: dict[str, bytes],
+                 package: Package = PACKAGES[DEFAULT_PACKAGE]) -> dict:
+    out = {
+        "upstream": package.upstream,
         "commit": commit,
-        "version": _TAG.fullmatch(tag)["version"],
-        "source": SOURCE,
-        "license": "Apache-2.0",
+        "version": version,
+        "source": package.source,
+        "license": package.license,
         "files": {rel: sha256(data) for rel, data in sorted(files.items())},
     }
+    if tag is not None:
+        out["tag"] = tag
+    if package.extra_files:
+        out["extra_files"] = list(package.extra_files)
+    return out
 
 
-def write(manifest: dict, files: dict[str, bytes]) -> None:
-    VENDOR.mkdir(exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=VENDOR) as tmp:
-        staged = Path(tmp) / PACKAGE
+def write(manifest: dict, files: dict[str, bytes], package: str, vendor: Path = VENDOR) -> None:
+    target = vendor / package
+    vendor.mkdir(exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=vendor) as tmp:
+        staged = Path(tmp) / package
         for rel, data in files.items():
             (staged / rel).parent.mkdir(parents=True, exist_ok=True)
             (staged / rel).write_bytes(data)
         if vendored_files(staged) != manifest["files"]:
             raise SystemExit("the staged copy does not match its own manifest")
-        if TARGET.exists():
-            shutil.rmtree(TARGET)
-        staged.rename(TARGET)
-    MANIFEST.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        if target.exists():
+            shutil.rmtree(target)
+        staged.rename(target)
+    (vendor / f"{package}.manifest.json").write_text(
+        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Vendor a formal-companion-annotations release.")
-    parser.add_argument("checkout", type=Path, help="a local checkout of formal-companion-annotations")
-    parser.add_argument("tag", help="the release tag, vMAJOR.MINOR.PATCH (or vMAJOR.MINOR.PATCHrcN for a "
-                                    "release candidate)")
+def main(argv: list[str] | None = None, vendor: Path = VENDOR) -> int:
+    parser = argparse.ArgumentParser(description="Vendor one revision of an annotation format package.")
+    parser.add_argument("checkout", type=Path, help="a local checkout of the package's upstream repository")
+    parser.add_argument("revision", help="a release tag, vMAJOR.MINOR.PATCH (or vMAJOR.MINOR.PATCHrcN), or the "
+                                         "full commit id of a release that is not tagged yet")
+    parser.add_argument("--package", choices=sorted(PACKAGES), default=DEFAULT_PACKAGE,
+                        help=f"the package to vendor (default {DEFAULT_PACKAGE})")
     parser.add_argument("--check", action="store_true",
-                        help="change nothing; exit 1 unless vendor/ is exactly this release")
+                        help="change nothing; exit 1 unless vendor/ is exactly this revision")
     args = parser.parse_args(argv)
-    commit, files = release(args.checkout.resolve(), args.tag)
-    manifest = manifest_for(args.tag, commit, files)
+    package = PACKAGES[args.package]
+    commit, tag, version, files = release(args.checkout.resolve(), args.revision, package)
+    manifest = manifest_for(tag, commit, version, files, package)
+    label = f"{tag} ({commit[:12]})" if tag else commit[:12]
     if args.check:
-        current = json.loads(MANIFEST.read_text(encoding="utf-8")) if MANIFEST.is_file() else None
-        ok = current == manifest and vendored_files() == manifest["files"]
-        print(f"vendor/{PACKAGE}: {'is' if ok else 'is NOT'} {args.tag} ({commit[:12]})")
+        path = vendor / f"{package.name}.manifest.json"
+        current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+        ok = current == manifest and vendored_files(vendor / package.name) == manifest["files"]
+        print(f"vendor/{package.name}: {'is' if ok else 'is NOT'} {label}")
         return 0 if ok else 1
-    write(manifest, files)
-    print(f"vendor/{PACKAGE}: {args.tag} ({commit[:12]}), {len(files)} files; "
+    write(manifest, files, package.name, vendor)
+    print(f"vendor/{package.name}: {label}, version {version}, {len(files)} files; "
           f"now run the suite and commit vendor/ with the manifest")
     return 0
 

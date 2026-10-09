@@ -38,8 +38,9 @@ docs/proposals/            designs not yet built (pdf-to-companion.md)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
 vendor/              formal_companion_annotations/: one release of the annotation
-                     format (formal-companion-annotations), byte for byte, sealed
-                     by its manifest; never edited here
+                     format (formal-companion-annotations), and literature_links/:
+                     the Literature Links format the overlay reads; each byte for
+                     byte, sealed by its manifest; never edited here
 evals/               trigger evals: prompts as data, run by hand
 bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
@@ -72,8 +73,8 @@ Those two lines move together or not at all.
   has a fallback reader for the subset the skill writes — including the nested
   `sources:` / `page_map_to:` maps and the folded scalars the registry uses. Do
   not add a dependency without changing this paragraph. `vendor/` is not one:
-  it holds one release of formal-companion-annotations, itself standard library
-  only, copied into the tree (section 2), so a clone still runs with nothing
+  it holds one revision each of formal-companion-annotations and Literature
+  Links, both standard library only, copied into the tree (section 2), so a clone still runs with nothing
   installed.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
