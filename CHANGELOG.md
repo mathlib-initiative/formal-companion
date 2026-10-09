@@ -80,7 +80,7 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
-- `cf overlay init|sync|check|export|geometry|destinations`: a companion's
+- `cf overlay init|sync|check|export`: a companion's
   `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
   written by hand for one book, and reads Literature Links 1.0.0 (vendored as
   `vendor/literature_links/` at commit `6d41ac6`). `export` converts an

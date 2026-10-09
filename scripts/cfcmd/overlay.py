@@ -8,43 +8,25 @@ section 6 of `docs/overlay.md`:
     cf overlay sync <companion> --check
     cf overlay check <companion>
     cf overlay export <companion> --convention attribution-table --commit <sha>
-    cf overlay geometry --pdf notes.pdf --first 7 --last 9 --source-id notes-pdf \\
-        --verifier-id agent:reviewer-1 --method agent_visual --out fragment.json
-    cf overlay destinations --site <built site> --doc <document> --out fragment.json
 
 It is the one command that writes into a companion repository, and it writes
 only under `<companion>/pdf-overlay/` and, for `export`, the shard directory
 `<companion>/annotations/` (contract rule 5, CLAUDE.md S4, CONTRIBUTING.md
-invariant 3, SKILL.md rule 10).  `geometry` and `destinations`
-write a document FRAGMENT wherever the user says and touch no companion at all.
+invariant 3, SKILL.md rule 10).
 
 No workspace is needed: a companion's overlay is generated from this checkout
 and the companion's own data, so `cf overlay` runs in a clone with nothing
 set up -- the same reason `cf sources validate-registry` takes no workspace.
-
-`geometry` and `destinations` are the producers' own parsers mounted here with
-``parents=``, so the flags, their defaults and their help have one definition,
-in `scripts/overlay/geometry.py` and `scripts/overlay/destinations.py`; this
-module rebuilds the command line from the parsed namespace and calls the
-producer's own ``main``, so the behaviour has one definition too.
 """
 from __future__ import annotations
 
-import argparse
 from pathlib import Path
 
 from cflib import log
 from cflib.errors import CfError
 
-from overlay import destinations as overlay_destinations
 from overlay import export as overlay_export
-from overlay import geometry as overlay_geometry
 from overlay import sync as overlay_sync
-
-#: Built once and reused: `register` mounts them as parents and `run` reads
-#: their actions back to rebuild the producer's argv.
-GEOMETRY_PARSER = overlay_geometry.build_parser()
-DESTINATIONS_PARSER = overlay_destinations.build_parser()
 
 
 def register(subparsers) -> None:
@@ -86,40 +68,12 @@ def register(subparsers) -> None:
                      help="everything after a bare `--` is passed to `cf export` "
                           "unchanged (--data-dir, --ledger, --pdf, ...)")
 
-    sub.add_parser("geometry", parents=[GEOMETRY_PARSER], add_help=False,
-                   help="item headings and regions from a PDF text layer, as "
-                        "annotation records")
-    sub.add_parser("destinations", parents=[DESTINATIONS_PARSER], add_help=False,
-                   help="declaration destinations from a built Verso literate site")
-
-
-def producer_argv(parser: argparse.ArgumentParser, args) -> list[str]:
-    """The command line *args* carries, for a parser mounted with ``parents=``.
-
-    Only what differs from the parser's own default is emitted, so the
-    producer applies its defaults itself and the two can never drift.
-    """
-    argv: list[str] = []
-    for action in parser._actions:                           # noqa: SLF001 - no public API
-        if not action.option_strings or isinstance(action, argparse._HelpAction):  # noqa: SLF001
-            continue
-        value = getattr(args, action.dest, None)
-        if value is None or value == action.default:
-            continue
-        flag = action.option_strings[-1]
-        if action.nargs == 0:                                # store_true and friends
-            argv.append(flag)
-        else:
-            argv += [flag, str(value)]
-    return argv
-
 
 def run(args) -> int:
     command = getattr(args, "overlay_command", None)
     if not command:
         raise CfError("say which overlay subcommand to run",
-                      hint="cf overlay init | sync | check | export | geometry | "
-                           "destinations (`cf overlay --help`)")
+                      hint="cf overlay init | sync | check | export (`cf overlay --help`)")
     return _DISPATCH[command](args)
 
 
@@ -175,19 +129,9 @@ def _export(args) -> int:
     return 0
 
 
-def _geometry(args) -> int:
-    return overlay_geometry.main(producer_argv(GEOMETRY_PARSER, args))
-
-
-def _destinations(args) -> int:
-    return overlay_destinations.main(producer_argv(DESTINATIONS_PARSER, args))
-
-
 _DISPATCH = {
     "init": _init,
     "sync": _sync,
     "check": _check,
     "export": _export,
-    "geometry": _geometry,
-    "destinations": _destinations,
 }

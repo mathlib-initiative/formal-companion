@@ -23,8 +23,7 @@ skill's other tools keep the annotation document format of
 the other.
 
 **Contents**: 1 rules · 2 layout · 3 `overlay.config.json` · 4 the viewer ·
-5 the runtime tools · 6 `cf overlay` and `GENERATED.json` · 7 the shards ·
-8 producers
+5 the runtime tools · 6 `cf overlay` and `GENERATED.json` · 7 the shards
 
 ## 1. Rules
 
@@ -62,7 +61,7 @@ templates/overlay/
     vendor/pdfjs/
   tests/                       node --test suites (not copied)
 scripts/overlay/
-  config.py   sync.py   export.py   shards.py   geometry.py   destinations.py
+  config.py   sync.py   export.py   shards.py
 scripts/cfcmd/overlay.py
 ```
 
@@ -157,7 +156,6 @@ cf overlay init <companion> --source-id ID --title T [--file-name F] [--force]
 cf overlay export <companion> --convention attribution-table --commit SHA [--source-id ID] [-- <cf export args>]
 cf overlay sync <companion> [--check]
 cf overlay check <companion>
-cf overlay geometry ... ; cf overlay destinations ...
 ```
 
 - `export` runs `cf export` into a temporary file, validates the document,
@@ -233,10 +231,3 @@ otherwise `other` (a two-part number may be an equation's). Lines are sorted
 by page, position, region, the item's place in the region, item, role and id,
 written as canonical JSON (sorted keys, no spaces), each ending in a newline. A
 record the conversion cannot carry stops the export.
-
-## 8. Producers
-
-`cf overlay geometry` (item regions from a PDF text layer) and
-`cf overlay destinations` (declaration anchors in a built Verso site) write
-fragments of the annotation document format for an exporter to read; they
-touch no companion.

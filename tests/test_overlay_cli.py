@@ -847,7 +847,7 @@ class TestTheCommand(OverlayCase):
         with quiet():
             self.assertNotEqual(cf("overlay"), 0)
 
-    def test_the_producers_are_mounted_with_their_own_flags(self):
+    def test_the_subcommands_are_init_sync_check_and_export(self):
         import argparse
 
         parser = argparse.ArgumentParser(prog="cf")
@@ -858,20 +858,7 @@ class TestTheCommand(OverlayCase):
         for action in overlay._actions:                      # noqa: SLF001 - no public API
             if isinstance(action, argparse._SubParsersAction):   # noqa: SLF001
                 children = dict(action.choices)
-        self.assertEqual(set(children), {"init", "sync", "check", "export", "geometry", "destinations"})
-        flags = {opt for act in children["geometry"]._actions   # noqa: SLF001
-                 for opt in act.option_strings}
-        for flag in ("--pdf", "--bbox-xhtml", "--first", "--last", "--kinds", "--section",
-                     "--source-id", "--verifier-id", "--method", "--out"):
-            self.assertIn(flag, flags)
-
-    def test_a_producer_argv_is_rebuilt_from_the_namespace(self):
-        from cfcmd import overlay as cfcmd_overlay
-
-        parser = cfcmd_overlay.DESTINATIONS_PARSER
-        args = parser.parse_args(["--site", "site", "--doc", "d.json", "--out", "o.json"])
-        self.assertEqual(sorted(cfcmd_overlay.producer_argv(parser, args)),
-                         sorted(["--doc", "d.json", "--out", "o.json", "--site", "site"]))
+        self.assertEqual(set(children), {"init", "sync", "check", "export"})
 
     def test_overlay_dir_refuses_a_pdf_overlay_that_is_a_file(self):
         self.overlay.write_text("not a directory\n", encoding="utf-8")
