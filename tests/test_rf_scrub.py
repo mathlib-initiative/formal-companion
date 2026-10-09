@@ -157,11 +157,20 @@ RULES: dict[str, tuple] = {
         "citation into one is unresolvable for every reader"),
 }
 
-#: (file, rule, why). Four entries, and `test_every_allowlist_entry_is_needed`
-#: fails on a fifth that has gone stale.
+#: (file, rule, why). Six entries, and `test_every_allowlist_entry_is_needed`
+#: fails on a seventh that has gone stale.
 ALLOWLIST: tuple[tuple[str, str, str], ...] = (
     ("tests/test_rf_scrub.py", "*",
      "this file spells out every pattern it forbids"),
+    ("templates/overlay/runtime/vendor/pdfjs/pdf.min.mjs", "session_uuid",
+     "a minified release of PDF.js, copied byte for byte from pdfjs-dist and "
+     "pinned by sha256 (its PINNED.md, and the overlay gate); the uuid is a "
+     "constant Mozilla compiled in, it names nobody here, and the bytes may "
+     "not be edited to pass a check"),
+    ("templates/overlay/runtime/vendor/pdfjs/pdf.worker.min.mjs", "absolute_home",
+     "the same release's worker: `/home/web_user` is Pyodide's own virtual "
+     "filesystem root inside PDF.js, not a path on anybody's machine, and "
+     "these bytes may not be edited either"),
     ("tests/test_rf_core.py", "desktop_home",
      "it asserts that the shipped files and the workspace template no longer "
      "name that directory, which means naming it"),
@@ -268,6 +277,9 @@ FOREIGN_TOKENS: tuple[tuple[str, str], ...] = (
      "a step of that render recipe"),
     ("scripts/check_lazy_pages.py",
      "the same companion's check that the _lazy/ rewrite lost no text, the last step of that render recipe"),
+    ("schema/companion.schema.json",
+     "the Literature Links repository's schema, which sync_format.py vendors as "
+     "vendor/literature_links/schema/companion.schema.json"),
 )
 
 #: `docs/design/archive/` names the modules of the REJECTED model on purpose:
@@ -339,6 +351,15 @@ FORBIDDEN_SUFFIXES = (".lean", ".olean", ".ilean", ".pdf", ".djvu", ".epub",
                       ".html", ".htm", ".png", ".jpg", ".jpeg", ".gif", ".webp",
                       ".tif", ".tiff", ".ppm", ".pgm", ".pbm")
 
+#: The one directory whose `.html` is a TEMPLATE, not a rendered page: the
+#: overlay viewer's own page, which `cf overlay sync` copies verbatim into a
+#: companion (`docs/overlay.md` section 4). It is static and generic -- its
+#: title and heading are placeholders `viewer.js` replaces from the config --
+#: so it carries no book, no companion and nothing anybody rendered. The
+#: exception is this prefix and nothing else: a `.html` anywhere else in the
+#: tree is still a rendered page nobody needs committed.
+HTML_TEMPLATE_PREFIX = "templates/overlay/runtime/viewer/"
+
 #: Names an exporter or a workspace (`cflib.paths`) writes.
 FORBIDDEN_NAME = re.compile(r"""(?x)
       \.annotations\.json(?:\.gz)?$   | \.export-(?:report|stats)\.json$
@@ -380,7 +401,8 @@ def shape_problems(rel: str, size: int, payload) -> list[str]:
     """`payload()` is called only for a gzip, so the tree scan reads nothing else."""
     name = rel.rsplit("/", 1)[-1].lower()
     problems = []
-    if name.endswith(FORBIDDEN_SUFFIXES):
+    if name.endswith(FORBIDDEN_SUFFIXES) and not (
+            name.endswith((".html", ".htm")) and rel.startswith(HTML_TEMPLATE_PREFIX)):
         problems.append(f"{rel}: a {name.rsplit('.', 1)[-1]} file (Lean, a book, a "
                         f"rendered page or an image; generate it in a temporary "
                         f"directory instead)")
@@ -438,6 +460,13 @@ class TestNoCompanionDataByItsShape(unittest.TestCase):
                                        lambda: packed))
         self.assertTrue(shape_problems("m9/Basic.lean", 120, never))
         self.assertTrue(shape_problems("m9/page-012.png", 120, never))
+        # the html exception is that one directory and nothing around it
+        self.assertEqual(shape_problems(HTML_TEMPLATE_PREFIX + "index.html",
+                                        4_000, never), [])
+        self.assertTrue(shape_problems("templates/overlay/runtime/index.html",
+                                       4_000, never))
+        self.assertTrue(shape_problems("tests/data/m3/site/Notes/index.html",
+                                       4_000, never))
         self.assertTrue(shape_problems("m3/tml-site-pages.json", 900, never))
         # what tests/data legitimately holds today
         self.assertEqual(shape_problems("tests/data/m1/measure_theory.truth.json",

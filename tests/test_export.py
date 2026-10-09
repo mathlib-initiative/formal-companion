@@ -385,6 +385,8 @@ class TestAttributionTableExport(unittest.TestCase):
         self.assertNotIn("legacy_ids", items["equation-1.1"])
         loc = by_id(self.doc, "locations")["theorem-1.1.2@p008"]
         self.assertEqual(loc["items"], ["equation-1.1", "theorem-1.1.2"])
+        self.assertEqual(loc["x_item_order"], ["theorem-1.1.2", "equation-1.1"], "the order the label names them in")
+        self.assertNotIn("x_item_order", by_id(self.doc, "locations")["exercise-1.1.3@p009"])
         # the unnumbered region is a passage titled by the producer, keyed by printed page and title
         pid = ids.passage_page_id(6, "Remark on volume")
         self.assertEqual(items[pid]["title_source"], "producer")
@@ -1263,6 +1265,87 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
                          ["theorem-1.1.2: volume (Demo/Basic.lean)"])
 
 
+class TestTheConfigurableInputLayout(unittest.TestCase):
+    """--data-dir, --ledger and --official-source move the three paths the convention does not fix."""
+
+    @staticmethod
+    def move(root: Path, src: str, dst: str) -> None:
+        (root / dst).parent.mkdir(parents=True, exist_ok=True)
+        (root / src).rename(root / dst)
+
+    def test_the_data_directory_can_live_anywhere_in_the_checkout(self):
+        root, commit = at_variant(self, lambda r: self.move(r, "pdf-overlay/data", "exports/overlay"))
+        doc, report = attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                               source_id="demo-pdf", source_title="A Demo Book",
+                                               data_dir="exports/overlay")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        inputs = [i["path"] for i in by_id(doc, "provenance")["prov-target-refinement"]["inputs"]]
+        self.assertIn("exports/overlay/target-refinement.json", inputs)
+        self.assertIn("exports/overlay/geometry-batch-a.json",
+                      [i["path"] for i in by_id(doc, "provenance")["prov-geometry-a"]["inputs"]])
+
+    def test_the_ledger_can_live_anywhere_and_the_graph_names_where(self):
+        root, commit = at_variant(self, lambda r: self.move(r, "source-formalization-ledger.json",
+                                                            "graph/ledger.json"))
+        doc, report = attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                               source_id="demo-pdf", source_title="A Demo Book",
+                                               ledger="graph/ledger.json")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(doc["companion"]["graph"]["path"], "graph/ledger.json")
+
+    def test_the_official_source_record_can_live_anywhere(self):
+        root, commit = at_variant(self, lambda r: self.move(r, "pdf-overlay/official-source.json",
+                                                            "pdf-overlay/pdf.json"))
+        doc, report = attribution_table.export(root, commit, name="demo", repo_id="git.example.org/demo/demo",
+                                               source_id="demo-pdf", source_title="A Demo Book",
+                                               official_source="pdf-overlay/pdf.json")
+        valid_and_quiet(self, doc)
+        self.assertEqual(report.problems, [])
+        self.assertEqual(doc["sources"][0]["bytes"], 1234)
+
+    def test_a_missing_input_names_the_flag_that_moves_it(self):
+        root = scratch(self) / "repo"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        for kwargs, words in (({"data_dir": "nowhere"}, "--data-dir"),
+                              ({"ledger": "nowhere.json"}, "--ledger"),
+                              ({"official_source": "nowhere.json"}, "--official-source")):
+            with self.subTest(**kwargs), self.assertRaises(common.ExportError) as caught:
+                attribution_table.export(root, commit, name="demo", repo_id="x/y/z", source_id="demo-pdf",
+                                         source_title="t", **kwargs)
+            self.assertIn(words, (caught.exception.hint or "") + caught.exception.message)
+
+    def test_a_path_outside_the_checkout_is_refused(self):
+        root = scratch(self) / "repo"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        for value in ("/etc", "../elsewhere", "pdf-overlay/../../data", ""):
+            with self.subTest(value=value), self.assertRaises(common.ExportError) as caught:
+                attribution_table.export(root, commit, name="demo", repo_id="x/y/z", source_id="demo-pdf",
+                                         source_title="t", data_dir=value)
+            self.assertIn("--data-dir", caught.exception.message)
+
+    def test_the_command_passes_all_three_flags_through(self):
+        def mutate(r):
+            self.move(r, "pdf-overlay/data", "exports/overlay")
+            self.move(r, "source-formalization-ledger.json", "graph/ledger.json")
+            self.move(r, "pdf-overlay/official-source.json", "exports/pdf.json")
+        root, commit = at_variant(self, mutate)
+        out = scratch(self) / "moved.annotations.json"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = cf_main.main(["export", "attribution-table", str(root), "--commit", commit,
+                                   "--out", str(out), "--repo-id", "git.example.org/demo/demo",
+                                   "--source-id", "demo-pdf", "--source-title", "A Demo Book",
+                                   "--data-dir", "exports/overlay", "--ledger", "graph/ledger.json",
+                                   "--official-source", "exports/pdf.json"])
+        self.assertEqual(status, 0, stderr.getvalue())
+        doc = json.loads(out.read_text(encoding="utf-8"))
+        self.assertEqual(doc["companion"]["graph"]["path"], "graph/ledger.json")
+
+
 class TestTheExportCommandReviewFixes(unittest.TestCase):
     """Review items 3 and 7: the backstop, and nothing written under the checkout."""
 
@@ -1617,6 +1700,17 @@ class TestCompanionIdentity(unittest.TestCase):
                           ("", None), ("not a url", None)):
             with self.subTest(url=url):
                 self.assertEqual(common.repo_id_from_url(url), want)
+
+    def test_a_checkout_with_no_remote_or_an_unparsable_one_is_a_refusal(self):
+        root = scratch(self) / "pinned-copy"
+        root.mkdir()
+        commit = make_attribution_table_repo(root)
+        for remote in (None, "not a url"):
+            if remote:
+                subprocess.run(["git", "-C", str(root), "remote", "add", "origin", remote], check=True)
+            with self.subTest(remote=remote), self.assertRaises(common.ExportError) as caught:
+                attribution_table.export(root, commit, source_id="demo-pdf", source_title="A Demo Book")
+            self.assertIn("no origin remote", caught.exception.message)
 
 
 # ---------------------------------------------------------------------------

@@ -6,7 +6,9 @@ with a subcommand per companion convention.  It needs no workspace: it reads a
 checkout at a pinned commit, plus the outside inputs a convention needs, and
 writes the document in canonical form beside a report of what did not fit.
 
-    cf export attribution-table <checkout> --commit <sha> --out <doc.json>
+    cf export attribution-table <checkout> --commit <sha> --out <doc.json> \\
+        [--data-dir pdf-overlay/data] [--ledger source-formalization-ledger.json] \\
+        [--official-source pdf-overlay/official-source.json]
     cf export docstring-tags <checkout> --commit <sha> --pdf <the anchor edition> \\
         --xref <xref.json> --site-pages <pages.json> [--site <rendered site>] --out <doc.json>
     cf export docstring-tags <checkout> --commit <sha> --source-id <id> --source-title <title> \\
@@ -46,6 +48,16 @@ def register(subparsers) -> None:
     at.add_argument("--lean-build", type=Path, metavar="DIR",
                     help="a Lake build's lib/lean directory whose .ilean files name anonymous instances "
                          "(default: <checkout>/.lake/build/lib/lean)")
+    at.add_argument("--data-dir", metavar="DIR",
+                    help="the overlay data directory, relative to the checkout: the geometry batches, the "
+                         "target refinement, the verdicts, the destinations and the declaration snippets "
+                         "(default: pdf-overlay/data)")
+    at.add_argument("--ledger", metavar="FILE",
+                    help="the source-formalization ledger, relative to the checkout "
+                         "(default: source-formalization-ledger.json)")
+    at.add_argument("--official-source", metavar="FILE",
+                    help="the PDF's download record, relative to the checkout "
+                         "(default: pdf-overlay/official-source.json)")
     dt = sub.add_parser("docstring-tags",
                         help="a docstring-tagged companion plus its literate site's index and page manifest")
     _common_arguments(dt)
@@ -135,7 +147,9 @@ def run(args) -> int:
     try:
         if args.export_command == "attribution-table":
             from annotations.export import attribution_table
-            doc, report = attribution_table.export(checkout, args.commit, lean_build=args.lean_build, **options)
+            doc, report = attribution_table.export(checkout, args.commit, lean_build=args.lean_build,
+                                                   data_dir=args.data_dir, ledger=args.ledger,
+                                                   official_source=args.official_source, **options)
         else:
             from annotations.export import docstring_tags
             for flag in ("pdf", "xref", "site_pages"):

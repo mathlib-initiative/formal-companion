@@ -80,6 +80,25 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- `cf overlay init|sync|check|export`: a companion's
+  `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
+  written by hand for one book, and reads Literature Links 1.0.0 (vendored as
+  `vendor/literature_links/` at commit `6d41ac6`). `export` converts an
+  exporter's document into one `annotations/<section>.jsonl` shard per book
+  section (`overlay.shards`; the extension key
+  `org.mathlib-initiative.formal-companion.overlay` carries what the core
+  fields cannot) and records the curation inputs it read; `sync` copies the
+  viewer, the tools, PDF.js and the Literature Links package byte for byte and
+  records them and the shard list in `GENERATED.json`; a companion's CI runs
+  `python3 pdf-overlay/tools/check_generated.py`, which validates every shard
+  and fails on a stale export. `docs/overlay.md` is the contract. This is the
+  **one exception** to "never write to a companion repo" (`CLAUDE.md`
+  section 4, `CONTRIBUTING.md` invariant 3, `SKILL.md` rule 10): `init`,
+  `sync` and `export` write under `pdf-overlay/` and `annotations/` only.
+- `scripts/annotations/sync_format.py --package literature_links`, and a full
+  commit id in place of a tag for a release not tagged yet.
+- `cf export attribution-table` lists the curation files it read in its
+  report (`counts.inputs`).
 - `adapters.leanbuild`: declarations come from the companion's Lake build where it
   verifies, else from the text; `lean_source` counts which; `CF_LEAN_SOURCE=text` forces text.
 - `cf export site-pages <site> --out <pages.json>`: writes the page manifest

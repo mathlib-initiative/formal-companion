@@ -64,7 +64,7 @@ normalised title plus a compatible edition token.
 |---|---|---|---|---|
 | **S1** | project metadata | `formalization.yaml` → `sources:` | title, authors, ISBN and URLs parsed out of the free-text `id`, licence from `license` | 0.8 |
 | **S2** | formalization ledger | `source-formalization-ledger.json` → `source: {kind, path, revision, sha256}` | `sha256` (authoritative), a PDF path hint, edition label from `revision` | 0.95 |
-| **S3** | official-source record | `pdf-overlay/official-source.json` | `sha256`, download and book-page URLs, byte count | 0.95 |
+| **S3** | official-source record | `attribution/official-source.json`, else `pdf-overlay/official-source.json` | `sha256`, download and book-page URLs, byte count | 0.95 |
 | **S4** | graph metadata | `graph.json` → `metadata.sources[]` | title, PDF hint, an offset hint parsed from a `page_offset_note`, a scope hint | 0.7 |
 | **S5** | prose | `CLAUDE.md`, `AGENTS.md`, `README.md`, `docs/**/*.md` | truncated sha **prefixes**, full shas, URLs, quoted `*.pdf` paths, offset sentences, the anchor-edition sentence | 0.5 |
 | **S6** | filesystem | `sources/*.pdf`, `.lake/official-pdf/*.pdf`, `pdf-overlay/vendor/**/*.pdf`, other `*.pdf` outside `.lake/packages/` | PDF paths, and a real `sha256` once fingerprinted | 0.6 |
@@ -274,15 +274,17 @@ The three inputs have defaults and are named here only to override them:
 
 ```yaml
 adapter: attribution_table
-glob: "pdf-overlay/data/*.json"
-target_refinement:     pdf-overlay/data/target-refinement.json      # entries[] -> formalization ids
-declaration_snippets:  pdf-overlay/data/declaration-snippets.json   # decl -> {file, line, text}
-geometry_glob:         "pdf-overlay/data/geometry-batch-*.json"     # item labels + page regions
+glob: "attribution/*.json"
+target_refinement:     attribution/target-refinement.json      # entries[] -> formalization ids
+declaration_snippets:  attribution/declaration-snippets.json   # decl -> {file, line, text}
+geometry_glob:         "attribution/geometry-batch-*.json"     # item labels + page regions
 ledger:                source-formalization-ledger.json
 ```
 
-Detection: `pdf-overlay/data/*.json` **and** `pdf-overlay/official-source.json`
-both present → 0.98.
+Detection: `attribution/*.json` **and** `attribution/official-source.json`
+both present (or the older `pdf-overlay/data/` and `pdf-overlay/official-source.json`)
+→ 0.98. The defaults follow whichever directory holds JSON; a `geometry_glob`
+that matches no file is refused.
 
 Two limits to state in `state.json` rather than discover later:
 
@@ -375,7 +377,7 @@ keyed on (repo commit, adapter sha) alone would silently reproduce the pre-fix
 table.
 
 ```yaml
-key_files: [source-formalization-ledger.json, pdf-overlay/data/target-refinement.json]
+key_files: [source-formalization-ledger.json, attribution/target-refinement.json]
 stale_since_commit: null   # set when the repo moves ahead of its exported ledger
 ```
 
@@ -638,13 +640,13 @@ candidate, anchor by `single_candidate` at confidence 1.0.
 adapter: attribution_table
 granularity: item
 sources: {default: tao-measure-gsm126-published, map: []}
-glob: "pdf-overlay/data/*.json"       # the three inputs keep their defaults
+glob: "attribution/*.json"            # the three inputs keep their defaults
 anchor: ledger                        # helper ids embed :L<n>: — keep docstring line counts
 write_policy: read_only
 owner: "external"
 # added by hand: the export shas that must re-key an extraction, the repo's
 # sorry policy, and the cascade a Lean change triggers
-key_files: [source-formalization-ledger.json, pdf-overlay/data/target-refinement.json]
+key_files: [source-formalization-ledger.json, attribution/target-refinement.json]
 sorry: {exercise_sorry: none}
 post_change_cascade: "<repin command> <root> <commit>"
 ```

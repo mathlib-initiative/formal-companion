@@ -30,10 +30,21 @@ sources:
   default: tao-measure-gsm126-published
   map: []
 
-# The exported artifacts, repo-relative. Defaults match measure_theory's layout.
-target_refinement: pdf-overlay/data/target-refinement.json
-declaration_snippets: pdf-overlay/data/declaration-snippets.json
-geometry_glob: "pdf-overlay/data/geometry-batch-*.json"
+# The exported artifacts, repo-relative: measure_theory's layout. Left out, they
+# default to attribution/, or to the older pdf-overlay/data/ when only that exists.
+#
+# `cf export attribution-table` reads the same artifacts and takes the three
+# paths that are not fixed by the convention as flags, also repo-relative
+# (docs/exporters.md section 1):
+#
+#   --data-dir attribution                           the directory below
+#   --ledger source-formalization-ledger.json        the `ledger` below
+#   --official-source attribution/official-source.json
+#
+# A repo whose layout differs needs those flags, not a new convention.
+target_refinement: attribution/target-refinement.json
+declaration_snippets: attribution/declaration-snippets.json
+geometry_glob: "attribution/geometry-batch-*.json"
 ledger: source-formalization-ledger.json
 
 # Page anchors come from the overlay geometry, not from the source: the item's
