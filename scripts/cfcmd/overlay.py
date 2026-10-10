@@ -10,7 +10,7 @@ section 6 of `docs/overlay.md`:
     cf overlay export <companion> --convention attribution-table --commit <sha>
 
 It is the one command that writes into a companion repository, and it writes
-only under `<companion>/pdf-overlay/` and, for `export`, the shard directory
+only under `<companion>/pdf-overlay/` and, for `export`, the annotation directory
 `<companion>/annotations/` (contract rule 5, CLAUDE.md S4, CONTRIBUTING.md
 invariant 3, SKILL.md rule 10).
 
@@ -45,18 +45,18 @@ def register(subparsers) -> None:
                       help="overwrite a config that is already there")
 
     syn = sub.add_parser("sync", help="copy the runtime into pdf-overlay/ and write "
-                                      "GENERATED.json with the shard list")
+                                      "the annotation bundle and GENERATED.json")
     syn.add_argument("companion", type=Path, help="the companion's checkout")
     syn.add_argument("--check", action="store_true", dest="check_only",
                      help="write nothing; exit 1 naming every missing, changed or "
                           "extra file")
 
     chk = sub.add_parser("check", help="verify the generated directory, the config, the "
-                                       "shards and the curation inputs they were exported from")
+                                       "annotations and the curation inputs they were exported from")
     chk.add_argument("companion", type=Path, help="the companion's checkout")
 
     exp = sub.add_parser("export", help="run a cf export convention and write its Literature "
-                                        "Links shards into annotations/")
+                                        "Links annotations into annotations/")
     exp.add_argument("companion", type=Path, help="the companion's checkout")
     exp.add_argument("--convention", required=True, choices=list(overlay_export.CONVENTIONS),
                      help="which cf export subcommand writes this companion's document")
@@ -114,15 +114,15 @@ def _check(args) -> int:
                   f"{args.companion}/{overlay_sync.OVERLAY_DIRNAME}")
         return 1
     log.ok(f"{args.companion}/{overlay_sync.OVERLAY_DIRNAME} is generated and configured, and "
-           f"its shards are valid and current")
+           f"its annotations are valid and current")
     return 0
 
 
 def _export(args) -> int:
     result = overlay_export.export(args.companion, convention=args.convention, commit=args.commit,
                                    source_id=args.source_id, extra=args.exporter_args)
-    log.ok(f"wrote {len(result.shards)} shards, {sum(result.shards.values())} records, "
-           f"into {result.directory}")
+    log.ok(f"wrote {sum(result.sections.values())} annotation files in {len(result.sections)} "
+           f"section folders into {result.directory}")
     for name in result.deleted:
         log.detail(f"deleted {name}")
     log.info(f"next: `cf overlay sync {args.companion}`, then `cf overlay check {args.companion}`")

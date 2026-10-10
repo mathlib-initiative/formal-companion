@@ -29,13 +29,23 @@ def _validate(args: argparse.Namespace) -> int:
         item_status = 0
         warnings: list[dict[str, str]] = []
         problems: list[dict[str, str]] = []
+        applied: tuple[Path, ...] = ()
         try:
             text = path.read_bytes().decode("utf-8")
             document = companion.loads(text)
-            report = companion.check(document)
-            problems = [asdict(problem) for problem in report.problems]
-            warnings = [asdict(warning) for warning in report.warnings]
-            item_status = 1 if problems else 0
+            failures: list[companion.Problem] = []
+            if path.name == discovery.DEFAULTS:
+                failures = [companion.Problem("DEFAULTS", "$", "a defaults file is not an annotation")]
+            elif isinstance(document, dict):
+                document, applied, failures = discovery.inherit(document, path)
+            if failures:
+                problems = [asdict(problem) for problem in failures]
+                item_status = 1 if all(problem.code == "DEFAULTS" for problem in failures) else 2
+            else:
+                report = companion.check(document)
+                problems = [asdict(problem) for problem in report.problems]
+                warnings = [asdict(warning) for warning in report.warnings]
+                item_status = 1 if problems else 0
         except (OSError, ValueError, RecursionError) as exc:
             item_status = 2
             code = "IO" if isinstance(exc, (OSError, UnicodeError)) else "JSON"
@@ -43,6 +53,7 @@ def _validate(args: argparse.Namespace) -> int:
         status = max(status, item_status)
         if args.format == "json":
             _write_json(json.dumps({"document": str(path), "valid": not problems, "status": item_status,
+                                   "defaults": [str(file) for file in applied],
                                    "problems": problems, "warnings": warnings}, ensure_ascii=True, allow_nan=False) + "\n")
         else:
             for problem in problems:
@@ -63,7 +74,8 @@ def _scan(args: argparse.Namespace) -> int:
                   "files": [str(path) for path in collection.files],
                   "records": [{"annotation": record.annotation,
                                "origin": {"path": str(record.path), "pointer": record.pointer,
-                                          "line": record.line, "base_uri": record.base_uri}}
+                                          "line": record.line, "base_uri": record.base_uri,
+                                          "defaults": [str(file) for file in record.defaults]}}
                               for record in collection.records],
                   "problems": [asdict(problem) for problem in collection.problems]}
         _write_json(companion.dumps(result))

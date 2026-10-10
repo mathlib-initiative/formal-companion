@@ -1,16 +1,16 @@
 {
-  "commit": "6d41ac6974346c95e02f06f0d894b1770e1d9b39",
+  "commit": "ef8449d814eee24a565e688fed8ade849d4aca48",
   "extra_files": [
     "schema/companion.schema.json"
   ],
   "files": {
     "__init__.py": "a34a8efe249dcd9ff4b51539ab93758cd8deaf3d94bdced10e995acc413c4e1f",
     "__main__.py": "42e1507a2bd4e3ab9e856c59434480b58aeb4babddd1afb0efa0191d7bf119e1",
-    "cli.py": "60f87ce6ac9ab393193eb5510f812822e4ef8d9d5f7885992ecd4eca64387835",
-    "companion.py": "1ed1bfa094aa38dd8452944a60ec5e7972ccfc47688c376df1439a08a65ab41f",
-    "discovery.py": "03a2f304d317b783921f7572eb47e790a650c97c5d6b9d7ac364f9cb690a5cc3",
+    "cli.py": "fffde7586f3155b95e3985e1c54c89b7133ab0f0fa641ec003bd9c500bb9d74c",
+    "companion.py": "03b6f9ed93bfb8e0a0f1e3ff9389adad1c716c33ea0f60d014d0de52acdc0ad5",
+    "discovery.py": "2097e677a8dc7a3c4796a96d0f5109a12f0bcb1e2ee2ec37c3430542660c7215",
     "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "schema/companion.schema.json": "82ba7153e1d335ead818c0d52b99f6322a39157b2102ee026121d11fd207bacb",
+    "schema/companion.schema.json": "382b1b5374c5b1fb0eac323e1a43bc06b897abe232179f6b99daa6789196715f",
     "schemacheck.py": "6f27dd5f70506ce69fbe78b731d99ff27dadd4f191362df26c2ed1efb2369b97"
   },
   "license": "Apache-2.0",

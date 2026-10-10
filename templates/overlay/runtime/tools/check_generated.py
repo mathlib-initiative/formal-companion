@@ -23,10 +23,14 @@ It reports, one line per problem, and exits 1 when there is one:
   files' patterns, and the skill's `tests/test_overlay_config.py` fails when
   one of the strings differs or when the three disagree on any config in its
   table;
-* the shard directory `GENERATED.json`'s `annotations` block names holds
-  exactly the shards it lists, each with its recorded sha256, and every shard
-  passes the shipped `literature_links` scan; at least one record is of the
-  PDF the config's `source_id` names;
+* the annotation directory `GENERATED.json`'s `annotations` block names
+  holds only `<section>/[<item>/]<name>.json` files and their
+  `_defaults.json`, each as `cf overlay export` writes it, as many annotations
+  as it records and every file with its manifest sha256; the shipped
+  `literature_links` scan reads them with no problem; the bundle beside it
+  has its recorded sha256 and holds exactly the records that scan reads,
+  defaults applied (each one it does not hold is named); at least one record
+  is of the PDF the config's `source_id` names;
 * every curation input the export read still has the sha256 recorded for it,
   so a companion that changed its curation and did not re-export fails here.
 """
@@ -49,7 +53,7 @@ GENERATED_NAME = "GENERATED.json"
 CONFIG_SCHEMA = "formal-companion/overlay-config"
 CONFIG_SCHEMA_VERSION = 1
 GENERATED_SCHEMA = "formal-companion/overlay-generated"
-GENERATED_SCHEMA_VERSION = 2
+GENERATED_SCHEMA_VERSION = 3
 #: The distribution `GENERATED.json`'s `format` block must name, and where
 #: `cf overlay sync` ships its package.
 FORMAT_PACKAGE = "literature-links"
@@ -100,7 +104,7 @@ _VERSION = re.compile(r'^__version__ = "([^"]+)"$', re.M)
 sys.dont_write_bytecode = True
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-import overlay_shards  # noqa: E402  (beside this file in pdf-overlay/tools/)
+import overlay_annotations  # noqa: E402  (beside this file in pdf-overlay/tools/)
 
 
 # ---------------------------------------------------------------------------
@@ -387,7 +391,12 @@ def generated_problems(overlay: Path, record: Any) -> tuple[list[str], list[str]
         if found != want:
             out.append(f"{relative}: sha256 {found}, but {GENERATED_NAME} records {want}")
 
+    block = record.get("annotations")
+    bundle = block.get("bundle") if isinstance(block, dict) else None
     allowed = set(listed) | set(instance) | {GENERATED_NAME}
+    if isinstance(bundle, dict) and isinstance(bundle.get("path"), str) \
+            and overlay_annotations.BUNDLE_FILE.match(bundle["path"]):
+        allowed.add(bundle["path"])
     for relative, mode in sorted(_walk(overlay).items()):
         if relative in allowed:
             continue
@@ -413,50 +422,38 @@ def _walk(overlay: Path) -> dict[str, int]:
 
 
 def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
-    """The shards against `GENERATED.json`, the shipped scan, the config's source, and the inputs."""
+    """The annotation files against `GENERATED.json` and the bundle, the shipped scan, the source, the inputs."""
     try:
-        block = overlay_shards.annotations_block(overlay)
-    except overlay_shards.ShardError as error:
+        block = overlay_annotations.annotations_block(overlay)
+    except overlay_annotations.AnnotationError as error:
         return [str(error)]
     root = overlay.parent
     directory = root.joinpath(*PurePosixPath(block["directory"]).parts)
     out: list[str] = []
-    listed = {row["path"]: row for row in block["shards"]}
-    if not listed:
-        out.append(f"{GENERATED_NAME}.annotations lists no shard; `cf overlay export` writes them")
+    if not block["count"]:
+        out.append(f"{GENERATED_NAME}.annotations records no annotation file; `cf overlay export` writes them")
     if directory.is_symlink() or not directory.is_dir():
         return out + [f"{block['directory']}/: not an ordinary directory"]
-    for name, mode in sorted(_walk(directory).items()):
-        relative = f"{block['directory']}/{name}"
-        if relative not in listed:
-            kind = "a symlink" if stat.S_ISLNK(mode) else "not a shard"
-            out.append(f"{relative}: {kind} {GENERATED_NAME} lists; the shard directory holds "
-                       f"only the shards")
-    present = []
-    for relative, row in sorted(listed.items()):
-        try:
-            raw = read_bytes(root.joinpath(*PurePosixPath(relative).parts), relative)
-        except Unreadable as error:
-            out.append(str(error))
-            continue
-        found = hashlib.sha256(raw).hexdigest()
-        if found != row["sha256"]:
-            out.append(f"{relative}: sha256 {found}, but {GENERATED_NAME} records {row['sha256']}")
-        present.append(root.joinpath(*PurePosixPath(relative).parts))
-    if present:
-        try:
-            from literature_links import discovery
-        except ImportError as error:                         # pragma: no cover
-            return out + [f"tools/literature_links: cannot import it: {error}"]
-        collection = discovery.collect(present)
-        for problem in collection.problems:
-            path = problem.path.replace(str(root.resolve()) + os.sep, "")
-            out.append(f"{path}: {problem.message} [{problem.code}]")
-        if source_id is not None and not any(
-                overlay_shards.extension(r.annotation["source"]).get("source_id") == source_id
-                for r in collection.records if r.annotation["source"].get("type") == "pdf"):
-            out.append(f"no shard holds a record of the PDF {source_id!r}, which "
-                       f"{CONFIG_NAME} names")
+    files, layout = overlay_annotations.disk_files(root, block["directory"])
+    out += layout + overlay_annotations.form_problems(files)
+    found = overlay_annotations.manifest_sha256(files)
+    count = overlay_annotations.annotation_count(files)
+    if (count, found) != (block["count"], block["manifest_sha256"]):
+        out.append(f"{block['directory']}/: {count} annotations in {len(files)} files with manifest sha256 "
+                   f"{found}, but {GENERATED_NAME} records {block['count']} with {block['manifest_sha256']}")
+    records, scanned = overlay_annotations.read_records(root, block["directory"]) if files else ({}, [])
+    out += scanned
+    try:
+        entries = overlay_annotations.read_bundle(overlay, block)
+    except overlay_annotations.AnnotationError as error:
+        out.append(str(error))
+    else:
+        out += overlay_annotations.bundle_problems(entries, records)
+    if files and source_id is not None and not any(
+            overlay_annotations.extension(r["source"]).get("source_id") == source_id
+            for r in records.values() if r["source"].get("type") == "pdf"):
+        out.append(f"no annotation is a record of the PDF {source_id!r}, which "
+                   f"{CONFIG_NAME} names")
     out += inputs_problems(root, block.get("inputs"), exported="export" in block)
     return out
 
@@ -482,10 +479,10 @@ def inputs_problems(root: Path, inputs: Any, *, exported: bool = False) -> list[
         try:
             raw = read_bytes(root.joinpath(*PurePosixPath(row["path"]).parts), row["path"])
         except Unreadable as error:
-            out.append(f"{error}; the shards were exported from it: re-run `cf overlay export`")
+            out.append(f"{error}; the annotations were exported from it: re-run `cf overlay export`")
             continue
         if hashlib.sha256(raw).hexdigest() != row["sha256"]:
-            out.append(f"{row['path']}: changed since the shards were exported from it; "
+            out.append(f"{row['path']}: changed since the annotations were exported from it; "
                        f"re-run `cf overlay export` and `cf overlay sync`")
     return out
 
@@ -527,8 +524,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="check_generated.py",
         description="Verify that pdf-overlay/ is the directory formal-companion "
-                    "generated, that its config fits it, and that the shards it lists "
-                    "are current and valid.")
+                    "generated, that its config fits it, and that the annotations it "
+                    "records are current and valid.")
     parser.add_argument("--overlay", metavar="DIR",
                         help="the pdf-overlay directory (default: the one holding "
                              "this script)")

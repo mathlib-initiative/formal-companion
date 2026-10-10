@@ -1,12 +1,13 @@
 /**
  * The overlay viewer's DOM controller.
  *
- * It fetches `../overlay.config.json`, then `../GENERATED.json` for the shard
- * list, then every Literature Links shard it lists (each checked against its
- * recorded sha256), and takes every per-companion value from them: the page
+ * It fetches `../overlay.config.json`, then `../GENERATED.json`, then the
+ * annotation bundle it records (checked against its recorded sha256): every
+ * Literature Links annotation file with its path, in one fetch. It takes
+ * every per-companion value from them: the page
  * title and heading, the back link, the PDF route and its sha256, the pages,
- * the regions, the items, the cards, the verdicts. The pure half (the shard
- * list, the records, geometry, href rules, hashing) is in viewer-core.js, so
+ * the regions, the items, the cards, the verdicts. The pure half (the bundle,
+ * the records, geometry, href rules, hashing) is in viewer-core.js, so
  * `node --test` reaches it without a DOM; this file keeps the injectable
  * `fetch` / `document` / `storage` seams the tests drive it through.
  *
@@ -27,12 +28,12 @@ import {
   declarationVerdictDisplay,
   groupCards,
   paginateCards,
-  parseShard,
+  parseBundle,
   preferredItemId,
   provenanceText,
   quadToViewport,
   readConfig,
-  readShardList,
+  readAnnotationsBlock,
   sha256Hex,
   verdictNote,
   verifyPdfBytes,
@@ -85,26 +86,26 @@ export async function loadConfig(fetchImpl = globalThis.fetch, url = CONFIG_URL)
 }
 
 /**
- * Read the shard list from `GENERATED.json`, fetch every shard it names from
- * the site root and check its sha256, then index the records. A shard that
- * does not match its recorded sha256 is a refusal: the page and the data it
- * was generated with are out of step.
+ * Read `GENERATED.json`, fetch the bundle it records (beside it) and check its
+ * sha256, then index the records, each with the URL of its own file under the
+ * site root: Literature Links resolves a relative target against the file
+ * that holds the annotation. A bundle that does not match its recorded sha256
+ * is a refusal: the page and the data it was generated with are out of step.
  */
-export async function loadShards(config, fetchImpl = globalThis.fetch, cryptoProvider = globalThis.crypto,
-                                 pageUrl = globalThis.location?.href, generatedUrl = GENERATED_URL) {
-  const list = readShardList(parseJsonBytes(await checkedFetch(generatedUrl, fetchImpl), "GENERATED.json"));
+export async function loadAnnotations(config, fetchImpl = globalThis.fetch, cryptoProvider = globalThis.crypto,
+                                      pageUrl = globalThis.location?.href, generatedUrl = GENERATED_URL) {
+  const block = readAnnotationsBlock(parseJsonBytes(await checkedFetch(generatedUrl, fetchImpl), "GENERATED.json"));
+  const bundleUrl = new URL(block.bundle.path, new URL(generatedUrl, pageUrl)).href;
+  const bytes = await checkedFetch(bundleUrl, fetchImpl);
+  const actual = await sha256Hex(bytes, cryptoProvider);
+  if (actual !== block.bundle.sha256) {
+    throw new Error(`${block.bundle.path} has sha256 ${actual}; GENERATED.json records ${block.bundle.sha256}.`);
+  }
   // siteRoot is relative to the viewer's own directory, where pageUrl is.
   const base = new URL(config.siteRoot, pageUrl).href;
-  const shards = await Promise.all(list.shards.map(async (shard) => {
-    const url = new URL(shard.path, base).href;
-    const bytes = await checkedFetch(url, fetchImpl);
-    const actual = await sha256Hex(bytes, cryptoProvider);
-    if (actual !== shard.sha256) {
-      throw new Error(`${shard.path} has sha256 ${actual}; GENERATED.json records ${shard.sha256}.`);
-    }
-    return { path: shard.path, records: parseShard(decodeUtf8(bytes, shard.path), shard.path), url };
-  }));
-  return { index: buildIndex(shards, config, { pageOrigin: new URL(pageUrl).origin }), shards };
+  const files = parseBundle(decodeUtf8(bytes, block.bundle.path), block)
+    .map(({ annotation, path }) => ({ path, records: [annotation], url: new URL(path, base).href }));
+  return { files, index: buildIndex(files, config, { pageOrigin: new URL(pageUrl).origin }) };
 }
 
 /**
@@ -524,7 +525,7 @@ export async function bootstrapViewer({
     state.config = await loadConfig(fetchImpl, configUrl);
     applyConfig(state.config);
     ui.status.textContent = "Loading the annotations…";
-    state.index = (await loadShards(state.config, fetchImpl, cryptoProvider, pageUrl, generatedUrl)).index;
+    state.index = (await loadAnnotations(state.config, fetchImpl, cryptoProvider, pageUrl, generatedUrl)).index;
   } catch (error) {
     ui.workspace.hidden = true;
     ui.status.textContent = "The overlay data was not loaded.";
