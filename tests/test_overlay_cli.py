@@ -427,15 +427,56 @@ class TestExport(OverlayCase):
         self.assertEqual((block["count"], block["manifest_sha256"]), (1, overlay_sync.manifest_sha256(files)))
         self.assertIn(renamed, next(iter(files.values())).decode("utf-8"))
 
-    def test_it_records_nothing_when_the_files_on_disk_are_not_the_ones_it_wrote(self):
-        self.ready()
-        before = self.record()
-        with mock.patch.object(overlay_sync, "write_file", lambda path, raw: None):
+    def test_it_records_the_export_before_it_writes_so_sync_refuses_what_a_failed_write_left(self):
+        self.assertEqual(self.init(), 0)
+        real = overlay_sync.write_file
+
+        def lost(path, raw):
+            if self.annotations not in path.parents:
+                real(path, raw)
+
+        with mock.patch.object(overlay_sync, "write_file", lost):
             with self.assertRaises(CfError) as caught:
-                self.export(document(region_page=8))
+                self.export()
         self.assertIn("not the ones the export wrote", caught.exception.message)
         self.assertIn(FILE, caught.exception.hint)
-        self.assertEqual(self.record(), before)
+        block = self.record()["annotations"]
+        self.assertEqual((block["export"]["convention"], block["count"]), ("attribution-table", 1))
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
+
+    def test_an_export_that_dies_writing_a_file_has_recorded_itself_so_sync_refuses_what_it_left(self):
+        self.assertEqual(self.init(), 0)
+        real = overlay_sync.write_file
+
+        def full(path, raw):
+            if self.annotations in path.parents:
+                raise OSError("no space left on device")
+            real(path, raw)
+
+        with mock.patch.object(overlay_sync, "write_file", full):
+            with self.assertRaises(OSError):
+                self.export()
+        block = self.record()["annotations"]
+        self.assertEqual((block["export"]["convention"], block["count"]), ("attribution-table", 1))
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
+
+    def test_an_export_that_dies_removing_a_file_has_recorded_itself_so_sync_refuses_what_it_left(self):
+        self.assertEqual(self.init(), 0)
+        stale = self.annotations / "9.9" / "old.json"
+        stale.parent.mkdir(parents=True)
+        stale.write_text(json.dumps(overlay_shards.convert(document()).records[0]), encoding="utf-8")
+        with mock.patch.object(Path, "unlink", side_effect=OSError("died")):
+            with self.assertRaises(OSError):
+                self.export()
+        self.assertIn("export", self.record()["annotations"])
+        self.assertTrue(stale.is_file())
+        with self.assertRaises(CfError) as caught:
+            overlay_sync.sync(self.companion)
+        self.assertIn("not what `cf overlay export` wrote", caught.exception.message)
 
     def test_it_refuses_anything_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         for extra in ("README.md", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/.hidden.json",
@@ -477,6 +518,17 @@ class TestExport(OverlayCase):
         self.assertEqual(self.sync(), 0)
         self.assertEqual(self.record()["schema_version"], 3)
 
+    def test_it_refuses_folder_defaults_above_the_annotation_directory_before_it_writes(self):
+        self.ready()
+        before = self.annotation().read_bytes(), self.record()
+        for text in ('{"note": "from above"}\n', "[]\n"):
+            with self.subTest(text=text):
+                (self.companion / "_defaults.json").write_text(text, encoding="utf-8")
+                with self.assertRaises(CfError) as caught:
+                    self.export(document(region_page=8))
+                self.assertIn("_defaults.json: ", caught.exception.message)
+                self.assertEqual((self.annotation().read_bytes(), self.record()), before)
+
     def test_it_refuses_a_symlinked_annotation_directory(self):
         self.assertEqual(self.init(), 0)
         elsewhere = self.root / "elsewhere"
@@ -486,6 +538,18 @@ class TestExport(OverlayCase):
             self.export()
         self.assertIn("symlink", caught.exception.message)
         self.assertEqual(list(elsewhere.iterdir()), [])
+
+    def test_it_refuses_a_link_inside_the_annotation_directory_and_removes_nothing_through_it(self):
+        self.ready()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "x.json").write_bytes(self.annotation().read_bytes())
+        (self.annotations / "1.2" / "evil").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(CfError) as caught:
+            self.export(document(region_page=8))
+        self.assertIn("annotations/1.2/evil", caught.exception.message)
+        self.assertTrue((outside / "x.json").is_file())
+        self.assertIn("annotations/1.2/evil: not an annotation file", self.tool("check_generated").stderr)
 
     def test_a_failed_export_leaves_the_files_alone(self):
         self.ready()
@@ -517,6 +581,16 @@ class TestExport(OverlayCase):
             self.export(doc)
         self.assertIn("TrimBox", caught.exception.hint)
         self.assertEqual(self.annotation().read_bytes(), before)
+
+    def test_a_folder_the_layout_refuses_stops_the_export_before_it_writes(self):
+        self.ready()
+        before = self.annotation().read_bytes(), self.record()
+        with mock.patch.object(overlay_shards, "section_of", lambda item, clusters: "٣.٤"):
+            with self.assertRaises(CfError) as caught:
+                self.export(document(region_page=8))
+        self.assertIn("٣.٤: ", caught.exception.hint)
+        self.assertEqual((self.annotation().read_bytes(), self.record()), before)
+        self.assertEqual(tree(self.annotations), {FILE.removeprefix("annotations/")})
 
     def test_it_refuses_a_document_without_the_configured_source(self):
         self.assertEqual(self.init(), 0)
@@ -638,13 +712,16 @@ class TestSync(OverlayCase):
 
     def test_it_records_hand_written_annotations_when_nothing_exported_them(self):
         self.assertEqual(self.init(), 0)
-        conversion = overlay_shards.convert(document())
+        record = overlay_shards.convert(document()).records[0]
         self.annotation().parent.mkdir(parents=True)
-        self.annotation().write_bytes(overlay_shards.file_bytes(conversion)[FILE.removeprefix("annotations/")])
+        self.annotation().write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
         self.assertEqual(self.sync(), 0)
         block = self.record()["annotations"]
         self.assertNotIn("export", block)
         self.assertEqual(block["count"], 1)
+        self.assertEqual(self.sync("--check"), 0)
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 0, done.stderr)
 
     def test_it_refuses_an_exported_file_edited_by_hand_and_names_it(self):
         self.ready()
@@ -661,6 +738,19 @@ class TestSync(OverlayCase):
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
         self.assertIn(FILE, caught.exception.message)
+        self.assertNotIn("read from it", "".join(overlay_sync.read_annotations(self.companion).problems))
+
+    def test_it_refuses_a_file_that_does_not_hold_exactly_one_annotation(self):
+        self.assertEqual(self.init(), 0)
+        record = overlay_shards.convert(document()).records[0]
+        self.annotation().parent.mkdir(parents=True)
+        self.annotation().with_name("one.json").write_text(json.dumps(record), encoding="utf-8")
+        for held in ([record, dict(record, id="second")], []):
+            with self.subTest(held=len(held)):
+                self.annotation().write_text(json.dumps(held), encoding="utf-8")
+                with self.assertRaises(CfError) as caught:
+                    overlay_sync.sync(self.companion)
+                self.assertIn(f"{FILE}: {len(held)} annotations", caught.exception.message)
 
     def test_it_refuses_a_file_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         self.ready()
@@ -668,6 +758,22 @@ class TestSync(OverlayCase):
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
         self.assertIn("annotations/notes.txt", caught.exception.message)
+
+    def test_it_refuses_folder_defaults_above_the_annotation_directory(self):
+        self.assertEqual(self.init(), 0)
+        for exported in (False, True):
+            if exported:
+                self.export()
+            for stray in (self.companion / "_defaults.json", self.root / "_defaults.json"):
+                with self.subTest(exported=exported, above=stray.parent.name):
+                    stray.write_text('{"note": "from above"}\n', encoding="utf-8")
+                    try:
+                        with self.assertRaises(CfError) as caught:
+                            overlay_sync.sync(self.companion)
+                    finally:
+                        stray.unlink()
+                    self.assertIn("_defaults.json: folder defaults outside annotations/", caught.exception.message)
+        self.assertEqual(self.sync(), 0)
 
     def test_it_removes_a_file_a_previous_manifest_listed(self):
         self.ready()
@@ -760,6 +866,14 @@ class TestSyncCheck(OverlayCase):
         self.assertIn(f"{BUNDLE} is not a readable bundle; run `cf overlay sync`", problems)
         (self.overlay / BUNDLE).unlink()
         self.assertIn(f"missing: {BUNDLE}", overlay_sync.sync_problems(self.companion))
+
+    def test_it_names_what_sync_refuses_in_the_annotations_and_check_names_it_once(self):
+        self.ready()
+        (self.companion / "_defaults.json").write_text("{}\n", encoding="utf-8")
+        line = "_defaults.json: folder defaults outside annotations/ apply to its annotations; remove it"
+        self.assertIn(line, overlay_sync.sync_problems(self.companion))
+        self.assertEqual(self.sync("--check"), 1)
+        self.assertEqual(self.check()[1].count(line), 1)
 
     def test_it_reports_a_format_block_that_is_not_the_vendored_release(self):
         self.ready()
@@ -925,6 +1039,14 @@ class TestCheckGenerated(OverlayCase):
         done = self.tool("check_generated")
         self.assertIn("annotations/1.2/lemma-1.2.3/_defaults.json: not as `cf overlay export` writes it", done.stderr)
 
+    def test_it_names_folder_defaults_above_the_annotation_directory(self):
+        self.ready()
+        (self.companion / "_defaults.json").write_text('{"note": "from above"}\n', encoding="utf-8")
+        self.reseal()
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn("_defaults.json: folder defaults outside annotations/", done.stderr)
+
     def test_it_names_a_missing_and_a_stale_annotation_file(self):
         self.ready()
         stale = self.annotations / "9.9" / "old.json"
@@ -959,6 +1081,7 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn(f"{FILE}: ", done.stderr)
         self.assertIn("[SCHEMA]", done.stderr)
+        self.assertNotIn("read from it", done.stderr)
 
     def test_it_fails_on_an_extra_file_that_is_not_an_annotation_file(self):
         for extra in ("notes.txt", "1.2/notes.txt", "1.2/sub/deeper/x.json", "1.2.jsonl", "1.2/_defaults.json"):
@@ -1038,6 +1161,17 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual([row["path"] for row in receipt["annotations"]["files"]],
                          [FILE.removeprefix("annotations/")])
         self.assertEqual(list(self.overlay.rglob("__pycache__")), [])
+
+    def test_build_site_publishes_the_folder_defaults_with_the_annotations(self):
+        self.ready(self.two_records())
+        config = overlay_config.load(self.overlay / "overlay.config.json")
+        site = self.companion.joinpath(*config.output_root.split("/"))
+        site.mkdir(parents=True)
+        (site / config.index).write_text("<!doctype html><html><body><p>site</p></body></html>\n", encoding="utf-8")
+        done = self.tool("build_site")
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertEqual({p: (site / "annotations" / p).read_bytes() for p in tree(site / "annotations")},
+                         {p: (self.annotations / p).read_bytes() for p in tree(self.annotations)})
 
     def test_serve_help_runs_from_the_copy(self):
         self.ready()

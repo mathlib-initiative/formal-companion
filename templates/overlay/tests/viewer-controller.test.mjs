@@ -62,6 +62,7 @@ async function start({
   pdfjs = fakePdfjs(),
   served = undefined,
   storage = memoryStorage(),
+  windowRef = undefined,
 } = {}) {
   const record = generated === undefined ? await makeGenerated(sections) : generated;
   const urls = [];
@@ -92,6 +93,7 @@ async function start({
     pageUrl: PAGE_URL,
     pdfjsLoader: async () => pdfjs,
     storage,
+    windowRef,
   });
   return { documentRef, fetched, hashes: urls, pdfjs, result, storage };
 }
@@ -177,9 +179,12 @@ test("start-up: a bundle that matches its sha256 but is not a bundle is refused"
 
 test("start-up: each record's target resolves against its own file's URL", async (t) => {
   withOption(t);
-  const { result } = await start();
+  const sections = makeSections(PDF_SHA256);
+  const record = sections[1].find((entry) => entry.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  record.target = { ...record.target, uri: "beside.html" };
+  const { result } = await start({ sections });
   const [key] = result.state.index.items.get("item:theorem-1.1").cards;
-  assert.equal(key.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
+  assert.equal(key.href, `${ORIGIN}/annotations/1/beside.html`);
 });
 
 test("start-up: a record that cannot be placed is reported in the page notice", async (t) => {
@@ -385,6 +390,23 @@ test("navigation: the page is remembered under the configured storage key", asyn
   assert.equal(hashed.result.state.currentPage, 4);
   assert.equal(rememberedPage("k", { locationRef: { hash: "#page=3" }, storage: null }), 3);
   assert.equal(rememberedPage("k", { locationRef: { hash: "#x" }, storage: memoryStorage() }), null);
+});
+
+test("navigation: an edited #page= hash changes the page", async (t) => {
+  withOption(t);
+  const listeners = {};
+  const windowRef = { addEventListener: (type, listener) => { listeners[type] = listener; } };
+  const locationRef = { hash: "" };
+  const { hashes, result } = await start({ locationRef, windowRef });
+  locationRef.hash = "#page=5";
+  listeners.hashchange();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(result.state.currentPage, 5);
+  assert.equal(hashes.at(-1), "#page=5");
+  locationRef.hash = "#elsewhere";
+  listeners.hashchange();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(result.state.currentPage, 5, "a hash that names no page changes nothing");
 });
 
 test("navigation: a storage that throws on every access never breaks the viewer", async (t) => {

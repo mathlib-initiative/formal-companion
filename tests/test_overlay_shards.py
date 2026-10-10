@@ -281,10 +281,12 @@ class TestTheFiles(unittest.TestCase):
                           "1.3": ["exercise-1.3.1"], "other": ["lemma-2.1", "passage-p5"]})
 
     def test_section_of(self):
-        clusters = {"c": {"locator": "Section 4.2, Lemma 4.2.1"}, "d": {"locator": "pp. 3-4"}}
+        clusters = {"c": {"locator": "Section 4.2, Lemma 4.2.1"}, "d": {"locator": "pp. 3-4"},
+                    "e": {"locator": "Section １.２"}}
         for item, section in (({"number": "1.2.7"}, "1.2"), ({"number": "1.2.7", "clusters": ["c"]}, "1.2"),
                               ({"number": "1.1", "clusters": ["c"]}, "4.2"), ({"section": "Section 3.1"}, "3.1"),
-                              ({"number": "3.4"}, "other"), ({"clusters": ["d"]}, "other"), ({}, "other")):
+                              ({"number": "3.4"}, "other"), ({"clusters": ["d"]}, "other"), ({}, "other"),
+                              ({"section": "٣.٤"}, "other"), ({"clusters": ["e"]}, "other")):
             with self.subTest(item=item):
                 self.assertEqual(shards.section_of(item, clusters), section)
 

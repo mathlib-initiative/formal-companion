@@ -505,7 +505,8 @@ export function locatorText(locator) {
     return "";
   }
   if (text(locator.text)) {
-    return text(locator.text);
+    // Curated locators write ranges the LaTeX way: "pp. 46--49".
+    return text(locator.text).replace(/(\d)--(?=\d)/g, "$1–");
   }
   const printed = pageList(locator.printed);
   const physical = pageList(locator.physical);

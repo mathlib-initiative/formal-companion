@@ -15,6 +15,7 @@ module, with the standard library alone.
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -240,6 +241,11 @@ def read_records(root: Path, directory: str) -> tuple[dict[str, dict[str, Any]],
     collection = discovery.collect([base])
     problems = [f"{p.path.replace(str(root.resolve()) + os.sep, '')}: {p.message} [{p.code}]"
                 for p in collection.problems]
+    problems += [f"{str(path).replace(str(root.resolve()) + os.sep, '')}: folder defaults outside {directory}/ apply "
+                 f"to its annotations; remove it" for path in discovery.inherit({}, base)[1]]
+    read = collections.Counter(r.path for r in collection.records)
+    problems += [f"{directory}/{path.relative_to(base).as_posix()}: {read[path]} annotations read from it, not one"
+                 for path in collection.files if read[path] != 1 and not collection.problems]
     return {f"{directory}/{r.path.relative_to(base).as_posix()}": r.annotation for r in collection.records}, problems
 
 
