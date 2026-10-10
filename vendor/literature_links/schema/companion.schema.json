@@ -40,7 +40,7 @@
           }
         }
       ],
-      "description": "The formal destination: a reference, or an object with uri, pin and extensions. Absent means no formal counterpart. This name does not mean the W3C annotation target."
+      "description": "The formal destination: a reference, or an object with uri, pin and extensions. Absent means the record links nothing. This name does not mean the W3C annotation target."
     },
     "location": {
       "type": "object",
@@ -103,13 +103,20 @@
       "if": {
         "properties": {
           "source": {
+            "type": "object",
             "properties": {
               "type": {
                 "const": "pdf"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           }
-        }
+        },
+        "required": [
+          "source"
+        ]
       },
       "then": {
         "properties": {
@@ -130,13 +137,20 @@
       "if": {
         "properties": {
           "source": {
+            "type": "object",
             "properties": {
               "type": {
                 "const": "latex"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           }
-        }
+        },
+        "required": [
+          "source"
+        ]
       },
       "then": {
         "properties": {
@@ -157,13 +171,20 @@
       "if": {
         "properties": {
           "source": {
+            "type": "object",
             "properties": {
               "type": {
                 "const": "html"
               }
-            }
+            },
+            "required": [
+              "type"
+            ]
           }
-        }
+        },
+        "required": [
+          "source"
+        ]
       },
       "then": {
         "properties": {
@@ -260,7 +281,7 @@
         "label": {
           "type": "string",
           "minLength": 1,
-          "description": "A literal label in the file. The validator does not expand macros."
+          "description": "A literal label in the document. The validator does not expand macros."
         },
         "lines": {
           "type": "array",
@@ -676,6 +697,25 @@
           },
           "then": {
             "$ref": "#/$defs/repository_pin"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "generic"
+              }
+            },
+            "required": [
+              "type"
+            ]
+          },
+          "then": {
+            "properties": {
+              "url": {
+                "$ref": "#/$defs/reference"
+              }
+            }
           }
         }
       ],
