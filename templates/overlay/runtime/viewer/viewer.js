@@ -216,7 +216,7 @@ export async function bootstrapViewer({
       "error", "status", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
       "zoom-out", "zoom-in", "zoom", "zoom-value",
-      "rotate-left", "rotate-right", "rotation-value",
+      "rotate-left", "rotate-right", "rotation-value", "toggle-faithfulness",
       "page-stage", "pdf-canvas", "overlay",
       "selection-empty", "selection", "item-choices", "item-label", "item-locator",
       "verdict-notes", "coverage-note", "provenance-note", "fallback-note",
@@ -229,6 +229,7 @@ export async function bootstrapViewer({
     cardPage: 1,
     config: null,
     currentPage: 1,
+    faithfulness: false,
     index: null,
     pdfDocument: null,
     region: null,
@@ -273,7 +274,7 @@ export async function bootstrapViewer({
 
   function renderVerdictNotes(item) {
     ui["verdict-notes"].replaceChildren();
-    for (const verdict of item.verdicts) {
+    for (const verdict of state.faithfulness ? item.verdicts : []) {
       const shown = verdictNote(verdict);
       const note = documentRef.createElement("p");
       note.className = shown.className;
@@ -360,7 +361,7 @@ export async function bootstrapViewer({
       mark.textContent = badge;
       row.append(mark);
     }
-    if (card.verdict) {
+    if (card.verdict && state.faithfulness) {
       const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
       const mark = documentRef.createElement("span");
       mark.className = `target-badge verdict-badge ${display.className}`;
@@ -499,6 +500,22 @@ export async function bootstrapViewer({
     rememberPage(state.config.storageKey, state.currentPage, { historyRef, storage });
   }
 
+  /** Verdicts are hidden until asked for; the choice is remembered beside the page. */
+  function showFaithfulness(shown) {
+    state.faithfulness = shown;
+    ui["toggle-faithfulness"].setAttribute("aria-pressed", String(shown));
+    ui["toggle-faithfulness"].textContent = shown ? "Hide faithfulness" : "Show faithfulness";
+    try {
+      storage?.setItem(`${state.config.storageKey}-faithfulness`, shown ? "1" : "0");
+    } catch {
+      // Storage may be blocked (private mode); the button still works for this visit.
+    }
+    if (state.selected) {
+      renderVerdictNotes(state.selected);
+      renderCards();
+    }
+  }
+
   async function changePage(requested) {
     if (!state.pdfDocument) {
       return;
@@ -539,6 +556,14 @@ export async function bootstrapViewer({
     ? `${state.index.warnings.length} region(s) could not be placed and are not shown. `
       + state.index.warnings[0]
     : "");
+  ui["toggle-faithfulness"].hidden = ![...state.index.items.values()].some(
+    (item) => item.verdicts.length || item.cards.some((card) => card.verdict),
+  );
+  try {
+    showFaithfulness(storage?.getItem(`${state.config.storageKey}-faithfulness`) === "1");
+  } catch {
+    // Unreadable storage leaves verdicts hidden.
+  }
   ui.status.textContent = "Overlay data read. Loading and verifying the loopback PDF…";
   clearError();
   try {
@@ -575,6 +600,7 @@ export async function bootstrapViewer({
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
   ui["rotate-left"].addEventListener("click", () => rotate(-90));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
+  ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
   for (const filter of [ui["role-filter"], ui["target-filter"]]) {
     filter.addEventListener("input", () => {
       state.cardPage = 1;
