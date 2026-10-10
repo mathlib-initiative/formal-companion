@@ -254,9 +254,30 @@ test("rendered: selecting a region shows its item's cards, grouped in role order
   assert.equal(polygon.attributes.points, "150,100 450,100 450,200 150,200");
 });
 
+test("rendered: verdicts stay hidden until the faithfulness button is pressed, and the choice is remembered", async (t) => {
+  withOption(t);
+  const storage = memoryStorage();
+  const { documentRef, result } = await start({ storage });
+  const button = el(documentRef, "toggle-faithfulness");
+  const badges = () => cardsShown(documentRef).flatMap((card) => card.children)
+    .filter((child) => String(child.className).includes("verdict-badge")).length;
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.deepEqual([button.hidden, button.attributes["aria-pressed"], button.textContent], [false, "false", "Show faithfulness"]);
+  assert.deepEqual([el(documentRef, "verdict-notes").children.length, badges()], [0, 0]);
+  await fire(button, "click");
+  assert.deepEqual([button.attributes["aria-pressed"], button.textContent], ["true", "Hide faithfulness"]);
+  assert.deepEqual([el(documentRef, "verdict-notes").children.length, badges()], [1, 2]);
+  assert.equal(storage.getItem("notes-overlay-page-faithfulness"), "1");
+  const again = await start({ storage });
+  assert.equal(again.result.state.faithfulness, true);
+  await fire(el(again.documentRef, "toggle-faithfulness"), "click");
+  assert.deepEqual([again.result.state.faithfulness, storage.getItem("notes-overlay-page-faithfulness")], [false, "0"]);
+});
+
 test("rendered: verdict badges mark a repaired declaration faithful and an old one superseded", async (t) => {
   withOption(t);
   const { documentRef, result } = await start();
+  await fire(el(documentRef, "toggle-faithfulness"), "click");
   await selectPageRegion(documentRef, result.state, "loc:0001");
   const badges = cardsShown(documentRef)
     .flatMap((card) => card.children)
