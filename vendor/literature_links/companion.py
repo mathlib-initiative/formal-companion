@@ -7,7 +7,6 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
-from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -188,11 +187,8 @@ def check(document: Any) -> Report:
         if width <= 0 or height <= 0:
             report.problems.append(Problem("PDF_RECT", "$.location.rect",
                                            "width and height must be positive"))
-        # Exact decimal arithmetic avoids accepting .9 + .10000000000000002
-        # because a binary floating-point sum happens to round to 1.
-        outside = (Fraction(str(x)) + Fraction(str(width)) > 1
-                   or Fraction(str(y)) + Fraction(str(height)) > 1)
-        if outside:
+        # Double sums, as the specification says: every language computes the same answer.
+        if float(x) + float(width) > 1 or float(y) + float(height) > 1:
             report.problems.append(Problem("PDF_RECT", "$.location.rect",
                                            "rectangle must stay within the page"))
     elif mode == "latex" and "lines" in location:
@@ -234,9 +230,14 @@ _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def _rebased(reference: str, base: str) -> str:
-    if _SCHEME.match(reference) or reference.startswith("/"):
+    # An empty reference is invalid and must stay so.
+    if not reference or _SCHEME.match(reference) or reference.startswith("/"):
         return reference
-    if reference.startswith(("#", "?")):
+    base = base.partition("#")[0]
+    if reference.startswith("#"):
+        return base + reference
+    base = base.partition("?")[0]
+    if reference.startswith("?"):
         return base + reference
     return base[:base.rfind("/") + 1] + reference
 
