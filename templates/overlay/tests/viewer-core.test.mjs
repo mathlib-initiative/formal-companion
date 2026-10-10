@@ -1,8 +1,8 @@
 /**
- * The overlay viewer's pure half, against synthetic shards and configs.
+ * The overlay viewer's pure half, against synthetic annotation files and configs.
  *
  * Everything the contract (docs/overlay.md section 4) says the viewer builds
- * from the shards is checked here: the shard list, the refusals, geometry,
+ * from the annotations is checked here: the bundle, the refusals, geometry,
  * link ordering, one card per link however many regions repeat it, status and
  * note, the href rules, verdict display and sha256 verification. The
  * controller tests are in viewer-controller.test.mjs.
@@ -28,7 +28,7 @@ import {
   groupCards,
   locatorText,
   paginateCards,
-  parseShard,
+  parseBundle,
   pdfSource,
   pointToViewport,
   preferredItemId,
@@ -36,7 +36,7 @@ import {
   provenanceText,
   quadToViewport,
   readConfig,
-  readShardList,
+  readAnnotationsBlock,
   recordRegion,
   resolutionText,
   safeBackLinkHref,
@@ -58,17 +58,18 @@ import {
   fakeSha256,
   fakeViewport,
   makeConfig,
+  annotationFiles,
+  bundleText,
+  fileInputs,
   makeGenerated,
-  makeShards,
-  shardInputs,
-  shardText,
+  makeSections,
 } from "./fixtures.mjs";
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
 
-function fixture(shards = makeShards(PDF_SHA256), configOverrides = {}) {
+function fixture(sections = makeSections(PDF_SHA256), configOverrides = {}) {
   const config = readConfig(makeConfig(configOverrides));
-  return { config, index: buildIndex(shardInputs(shards), config, { pageOrigin: ORIGIN }) };
+  return { config, index: buildIndex(fileInputs(sections), config, { pageOrigin: ORIGIN }) };
 }
 
 function cardsOf(index, itemId) {
@@ -106,53 +107,71 @@ test("config: a wrong schema, version, missing field, unsafe route or mount is r
   assert.throws(() => siteRootFor(""), /site\.mount/);
 });
 
-// --- the shard list ---------------------------------------------------------
+// --- the bundle -------------------------------------------------------------
 
-test("shard list: the paths and sha256 come from GENERATED.json's annotations block", async () => {
-  const generated = await makeGenerated(makeShards(PDF_SHA256));
-  const list = readShardList(generated);
-  assert.equal(list.directory, "annotations");
-  assert.deepEqual(list.shards.map((row) => row.path), ["annotations/1.jsonl", "annotations/2.jsonl"]);
-  assert.match(list.shards[0].sha256, /^[a-f\d]{64}$/);
+test("bundle: GENERATED.json's annotations block names it, its sha256 and the file count", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const block = readAnnotationsBlock(await makeGenerated(sections));
+  assert.equal(block.directory, "annotations");
+  assert.equal(block.count, annotationFiles(sections).length);
+  assert.equal(block.bundle.path, "annotations.bundle.json");
+  assert.match(block.bundle.sha256, /^[a-f\d]{64}$/);
 });
 
-test("shard list: an absent block, an empty list or an unsafe path is refused", () => {
-  const row = { path: "annotations/1.jsonl", sha256: fakeSha256("a") };
+test("bundle: an absent block, no file or an unsafe bundle path is refused", () => {
+  const bundle = { path: "annotations.bundle.json", sha256: fakeSha256("a") };
+  const good = { bundle, count: 1, directory: "annotations", manifest_sha256: fakeSha256("m") };
   for (const [generated, pattern] of [
     [{}, /no annotations block/],
-    [{ annotations: { directory: "../x", shards: [row] } }, /annotations\.directory/],
-    [{ annotations: { directory: "annotations", shards: [] } }, /lists no shard/],
-    [{ annotations: { directory: "annotations", shards: [{ ...row, path: "annotations/../x.jsonl" }] } },
-     /shards\[0\]/],
-    [{ annotations: { directory: "annotations", shards: [{ ...row, path: "other/1.jsonl" }] } }, /shards\[0\]/],
-    [{ annotations: { directory: "annotations", shards: [{ ...row, path: "annotations/1.json" }] } },
-     /shards\[0\]/],
-    [{ annotations: { directory: "annotations", shards: [{ ...row, sha256: "x" }] } }, /shards\[0\]/],
+    [{ annotations: { ...good, directory: "../x" } }, /annotations\.directory/],
+    [{ annotations: { ...good, count: 0 } }, /records no annotation file/],
+    [{ annotations: { ...good, bundle: { ...bundle, path: "../x.json" } } }, /annotations\.bundle/],
+    [{ annotations: { ...good, bundle: { ...bundle, sha256: "x" } } }, /annotations\.bundle/],
+    [{ annotations: { ...good, bundle: undefined } }, /annotations\.bundle/],
   ]) {
-    assert.throws(() => readShardList(generated), pattern);
+    assert.throws(() => readAnnotationsBlock(generated), pattern);
   }
 });
 
-test("shards: one annotation per nonblank line, and anything else names its line", () => {
-  const records = makeShards(PDF_SHA256)["annotations/1.jsonl"];
-  assert.deepEqual(parseShard(`\n${shardText(records)}  \n`, "a.jsonl"), records);
-  assert.throws(() => parseShard('{"a": 1}\n{oops\n', "a.jsonl"), /a\.jsonl:2 is not JSON/);
-  assert.throws(() => parseShard("[1]\n", "a.jsonl"), /a\.jsonl:1 is not an annotation object/);
+test("bundle: every annotation with its path in file order, and anything else refused", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const block = readAnnotationsBlock(await makeGenerated(sections));
+  assert.deepEqual(parseBundle(bundleText(sections), block), annotationFiles(sections));
+  const files = annotationFiles(sections);
+  const of = (annotations, extra = {}) => JSON.stringify({ annotations, count: annotations.length,
+                                                           directory: "annotations",
+                                                           schema: "formal-companion/overlay-annotations", ...extra });
+  for (const [text, pattern] of [
+    ["{oops", /annotations\.bundle\.json is not JSON/],
+    [of(files, { schema: "x" }), /is not a formal-companion\/overlay-annotations bundle/],
+    [of(files, { directory: "other" }), /bundle of annotations\//],
+    [of([{ ...files[0], path: "annotations/1.jsonl" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/1/x/y/z.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/1/x/_defaults.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/_defaults.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/../1/x.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], path: "annotations/1/.x.json" }]), /annotations\[0\]/],
+    [of([{ ...files[0], annotation: [1] }]), /annotations\[0\]/],
+    [of(files.slice(1)), /holds \d+ annotations; GENERATED\.json records \d+/],
+  ]) {
+    assert.throws(() => parseBundle(text, block), pattern);
+  }
+  const inItem = [{ ...files[0], path: "annotations/1.1/theorem-1.1/key__A.json" }];
+  assert.deepEqual(parseBundle(of(inItem), { ...block, count: 1 }), inItem, "a record in its item's folder");
 });
 
 // --- the source -------------------------------------------------------------
 
 test("source: the PDF is the records' source the config names, one sha256 for all", () => {
-  const shards = shardInputs(makeShards(PDF_SHA256));
-  assert.equal(pdfSource(shards, SOURCE_ID).pin.sha256, PDF_SHA256);
-  assert.equal(pdfSource(shards, OTHER_SOURCE_ID).pin.sha256, fakeSha256("e"));
-  assert.throws(() => pdfSource(shards, "src:nowhere"), /No shard holds a record of the PDF "src:nowhere"/);
-  const split = makeShards(PDF_SHA256);
-  split["annotations/2.jsonl"][0].source = { ...split["annotations/2.jsonl"][0].source,
-                                            pin: { sha256: fakeSha256("1"), type: "book" } };
-  assert.throws(() => pdfSource(shardInputs(split), SOURCE_ID), /two different PDFs/);
-  const unpinned = makeShards("not a digest");
-  assert.throws(() => pdfSource(shardInputs(unpinned), SOURCE_ID), /pins no sha256/);
+  const files = fileInputs(makeSections(PDF_SHA256));
+  assert.equal(pdfSource(files, SOURCE_ID).pin.sha256, PDF_SHA256);
+  assert.equal(pdfSource(files, OTHER_SOURCE_ID).pin.sha256, fakeSha256("e"));
+  assert.throws(() => pdfSource(files, "src:nowhere"), /No annotation is a record of the PDF "src:nowhere"/);
+  const split = makeSections(PDF_SHA256);
+  split[2][0].source = { ...split[2][0].source, pin: { sha256: fakeSha256("1"), type: "book" } };
+  assert.throws(() => pdfSource(fileInputs(split), SOURCE_ID), /two different PDFs/);
+  const unpinned = makeSections("not a digest");
+  assert.throws(() => pdfSource(fileInputs(unpinned), SOURCE_ID), /pins no sha256/);
 });
 
 // --- geometry ---------------------------------------------------------------
@@ -220,11 +239,11 @@ test("index: pages carry the regions of this PDF only, and name their items", ()
   assert.equal(index.regions.some((region) => region.itemIds.includes("elsewhere")), false);
 });
 
-test("index: a region lists its items in the curation's order, not the shards'", () => {
+test("index: a region lists its items in the curation's order, not the files'", () => {
   const { index } = fixture();
   const [region] = index.pages.get(7);
   assert.deepEqual(region.itemIds, ["item:remark-7.1", "item:equation-7"],
-                   "region_items names the remark first; the shard holds the equation first");
+                   "region_items names the remark first; the equation's file comes first");
   assert.equal(region.label, "Remark 7.1 and equation (7) + Equation 7");
   assert.equal(preferredItemId(region, index.items), "item:remark-7.1");
 });
@@ -237,11 +256,41 @@ test("index: a click opens the first item with a card, else the first item", () 
   assert.equal(preferredItemId({ itemIds: [] }, items), null);
 });
 
+test("index: the regions on a page are in reading order, whatever order the files came in", () => {
+  const sections = makeSections(PDF_SHA256);
+  const files = fileInputs(sections);
+  const config = readConfig(makeConfig());
+  const forward = buildIndex(files, config, { pageOrigin: ORIGIN });
+  const backward = buildIndex([...files].reverse(), config, { pageOrigin: ORIGIN });
+  for (const index of [forward, backward]) {
+    assert.deepEqual(index.pages.get(2).map((region) => region.id), ["loc:0001", "loc:0004"]);
+  }
+  sections[1][0].location = { page: 2, rect: [0.8, 0.4, 0.1, 0.1] };
+  const beside = buildIndex(fileInputs(sections), config, { pageOrigin: ORIGIN });
+  assert.deepEqual(beside.pages.get(2).map((region) => region.id), ["loc:0004", "loc:0001"],
+                   "on one line, left before right: the region sits where its first record put it");
+});
+
+test("index: the cards of one role are in record id order, whatever order the files came in", () => {
+  const sections = makeSections(PDF_SHA256);
+  const theorem = sections[1].find((record) => record.extensions[NAMESPACE].role === "key");
+  const second = JSON.parse(JSON.stringify(theorem));
+  second.id = theorem.id.replace("volume_nonneg", "a_first");
+  second.target.pin.declaration = "Notes.Box.a_first";
+  sections[2].push(second);
+  const config = readConfig(makeConfig());
+  for (const files of [fileInputs(sections), fileInputs(sections).reverse()]) {
+    const keys = buildIndex(files, config, { pageOrigin: ORIGIN }).items.get("item:theorem-1.1").cards
+      .filter((card) => card.role === "key").map((card) => card.id);
+    assert.deepEqual(keys, [second.id, theorem.id]);
+  }
+});
+
 test("index: a record that cannot be placed is dropped with a warning, not guessed", () => {
-  const shards = makeShards(PDF_SHA256);
-  shards["annotations/2.jsonl"][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
-  shards["annotations/1.jsonl"][5].location = { page: 40, rect: [0.1, 0.1, 0.1, 0.1] };
-  const { index } = fixture(shards);
+  const sections = makeSections(PDF_SHA256);
+  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  sections[1][5].location = { page: 40, rect: [0.1, 0.1, 0.1, 0.1] };
+  const { index } = fixture(sections);
   assert.equal(index.warnings.length, 2);
   assert.match(index.warnings.join("\n"), /item:exercise-3\.1: .*off the page/);
   assert.match(index.warnings.join("\n"), /page 40 is past the source's 12 pages/);
@@ -263,7 +312,7 @@ test("index: a card carries its snippet, link, badges and declaration verdict", 
   assert.equal(key.fullName, "Notes.Box.volume_nonneg");
   assert.equal(key.module, "Notes.Box");
   assert.equal(key.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`,
-               "a relative target resolves against the shard, which sits at the site root");
+               "a relative target resolves against its own file, in a section folder at the site root");
   assert.deepEqual(key.snippet, { line: 12, text: "theorem volume_nonneg (b : Box) : 0 <= b.volume" });
   assert.deepEqual(key.verdict, { note: "repaired in place", status: "fixed", verdict: "faithful" });
   assert.equal(key.relation, "exact");
@@ -303,8 +352,8 @@ test("index: status, note, verdicts, locator and clusters ride on the item", () 
   assert.deepEqual(exercise.cards, []);
   assert.deepEqual(exercise.clusterIds, ["cluster:sets"]);
   assert.equal(exercise.coverage, "");
-  const absent = makeShards(PDF_SHA256);
-  absent["annotations/2.jsonl"][0].status = { pin: { type: "repository" }, value: "not_formalized" };
+  const absent = makeSections(PDF_SHA256);
+  absent[2][0].status = { pin: { type: "repository" }, value: "not_formalized" };
   assert.equal(fixture(absent).index.items.get("item:exercise-3.1").coverage, "not_formalized");
 });
 
@@ -370,19 +419,23 @@ test("summary: the line above the cards states the status or a count", () => {
 
 // --- hrefs ------------------------------------------------------------------
 
-test("href: a target resolves against its shard and must be https or this site", () => {
-  const shard = `${ORIGIN}/annotations/1.jsonl`;
-  assert.equal(targetHref("../A/index.html#x", shard, ORIGIN), `${ORIGIN}/A/index.html#x`);
-  assert.equal(targetHref({ uri: "B.html" }, shard, ORIGIN), `${ORIGIN}/annotations/B.html`);
-  assert.equal(targetHref("https://docs.example.invalid/A.html#a%22b", shard, ORIGIN),
+test("href: a target resolves against its own file and must be https or this site", () => {
+  const file = `${ORIGIN}/annotations/1.1/theorem-1.1.json`;
+  assert.equal(targetHref("../../A/index.html#x", file, ORIGIN), `${ORIGIN}/A/index.html#x`);
+  assert.equal(targetHref({ uri: "B.html" }, file, ORIGIN), `${ORIGIN}/annotations/1.1/B.html`);
+  assert.equal(targetHref("../A.html", file, ORIGIN), `${ORIGIN}/annotations/A.html`,
+               "one ../ short stays inside annotations/");
+  assert.equal(targetHref("../../../A/index.html#x", `${ORIGIN}/annotations/1.1/theorem-1.1/key__A.json`, ORIGIN),
+               `${ORIGIN}/A/index.html#x`, "from an item folder, one ../ more");
+  assert.equal(targetHref("https://docs.example.invalid/A.html#a%22b", file, ORIGIN),
                "https://docs.example.invalid/A.html#a%22b");
   for (const bad of ["javascript:alert(1)", "JavaScript:alert(1)", "data:text/html,x",
                      "http://elsewhere.example.invalid/x", "//elsewhere.example.invalid/x",
                      "https://user:pw@docs.example.invalid/", "a b.html", "a\\b.html", "", null, 7, {}]) {
-    assert.equal(targetHref(bad, shard, ORIGIN), null, `${JSON.stringify(bad)} must not be a link`);
+    assert.equal(targetHref(bad, file, ORIGIN), null, `${JSON.stringify(bad)} must not be a link`);
   }
   // A plain-http site is this site only when the page is served from it.
-  assert.equal(targetHref("../A.html", shard, "http://other.invalid:1"), null);
+  assert.equal(targetHref("../../A.html", file, "http://other.invalid:1"), null);
   assert.equal(safeHttpsUrl("https://a.invalid/x"), "https://a.invalid/x");
   assert.equal(safeHttpsUrl("https://a.invalid/x#y"), null);
 });

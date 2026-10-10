@@ -35,7 +35,7 @@ these are the four that bite hardest.
    build one, and run every `git` against one through `cflib.gitsafe` — a repo
    that can set `core.fsmonitor` can name a program for you to execute. One
    command is exempt, narrowly: `cf overlay init`, `cf overlay sync` and
-   `cf overlay export` write `<companion>/pdf-overlay/` and the shard
+   `cf overlay export` write `<companion>/pdf-overlay/` and the annotation
    directory `<companion>/annotations/` and nowhere else, refusing either when
    it is a symlink or resolves outside the companion, and running no git
    there at all (`docs/overlay.md` rule 5).

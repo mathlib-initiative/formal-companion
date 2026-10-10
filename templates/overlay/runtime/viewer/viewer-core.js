@@ -1,13 +1,13 @@
 /**
- * The overlay viewer's pure functions: the shard list, the Literature Links
- * records, coordinate conversion, the href rules and sha256 verification.
+ * The overlay viewer's pure functions: the annotation bundle, the Literature
+ * Links records, coordinate conversion, the href rules and sha256 verification.
  *
  * Nothing here touches the DOM, so `node --test` exercises all of it; viewer.js
  * holds the controller. Nothing here is specific to one companion either: every
  * per-book value arrives as data, from `overlay.config.json`
- * (docs/overlay.md section 3), from `GENERATED.json`'s shard list and from the
- * shards, and a value this module cannot read is an error or a warning with a
- * message, never a guess.
+ * (docs/overlay.md section 3), from `GENERATED.json`'s annotations block and
+ * from the bundle, and a value this module cannot read is an error or a
+ * warning with a message, never a guess.
  */
 
 // --- the files --------------------------------------------------------------
@@ -15,7 +15,7 @@
 export const CONFIG_SCHEMA = "formal-companion/overlay-config";
 export const CONFIG_SCHEMA_VERSION = 1;
 export const CONFIG_URL = "../overlay.config.json";
-/** The shard list: `GENERATED.json`'s `annotations` block (docs/overlay.md section 2). */
+/** `GENERATED.json`: its `annotations` block names the bundle (docs/overlay.md section 2). */
 export const GENERATED_URL = "../GENERATED.json";
 /** The extension key the overlay's records carry its own facts under. */
 export const NAMESPACE = "org.mathlib-initiative.formal-companion.overlay";
@@ -167,8 +167,9 @@ export function safeBackLinkHref(value) {
 
 /**
  * Where a record's `target` leads, or null. Literature Links resolves a
- * relative reference against the URL of the shard that holds the record
- * (the specification's "References"), so `baseUrl` is the shard's URL. The
+ * relative reference against the file that holds the annotation (the
+ * specification's "References"), so `baseUrl` is the URL of the annotation's
+ * own file, `<site root>/<directory>/<section>/[<item>/]<name>.json`. The
  * result is used only when it is an `https:` URL or an `http(s):` URL of the
  * page's own origin: a `javascript:`, `data:` or foreign plain-`http:` target
  * is never a link.
@@ -245,8 +246,8 @@ export function readConfig(raw) {
     backLink: { href: backHref, text: text(backLink.text) || DEFAULT_BACK_LINK.text },
     lede: text(raw.lede),
     pdfRoute: route,
-    // build_site.py publishes the shards at the site root, the same place
-    // relative to the built pages as in the repository; it is this far up.
+    // build_site.py publishes the annotation files at the site root, the same
+    // place relative to the built pages as in the repository; it is this far up.
     siteRoot: siteRootFor(site.mount ?? DEFAULT_MOUNT),
     sourceId,
     storageKey: text(raw.storage_key) || DEFAULT_STORAGE_KEY,
@@ -255,9 +256,14 @@ export function readConfig(raw) {
   };
 }
 
-// --- the shard list and the shards ------------------------------------------
+// --- the bundle -------------------------------------------------------------
 
-const SHARD_NAME = /^[0-9A-Za-z][0-9A-Za-z._-]*\.jsonl$/;
+export const BUNDLE_SCHEMA = "formal-companion/overlay-annotations";
+const SECTION_NAME = /^[0-9A-Za-z][0-9A-Za-z._-]*$/;
+const ITEM_NAME = /^[0-9A-Za-z_-][0-9A-Za-z._-]{0,119}$/;
+const ANNOTATION_NAME = /^[0-9A-Za-z_-][0-9A-Za-z._-]{0,114}\.json$/;
+/** The bundle sits beside `GENERATED.json`. */
+const BUNDLE_NAME = /^[0-9A-Za-z][0-9A-Za-z._-]*\.json$/;
 
 function safeRelative(value) {
   return typeof value === "string" && value !== "" && !value.includes("\\")
@@ -265,11 +271,12 @@ function safeRelative(value) {
 }
 
 /**
- * The shards `GENERATED.json` lists: `[{path, sha256}]`, each path inside the
- * recorded directory. A browser cannot list a directory, so this list is how
- * the viewer finds them, and each sha256 is checked when the shard arrives.
+ * `GENERATED.json`'s `annotations` block: the annotation directory, the number
+ * of files and the bundle `{path, sha256}`, its path relative to
+ * `GENERATED.json`. A browser cannot list a directory; the bundle holds every
+ * file, and its sha256 is checked when it arrives.
  */
-export function readShardList(generated) {
+export function readAnnotationsBlock(generated) {
   const block = isObject(generated) ? generated.annotations : null;
   if (!isObject(block)) {
     fail("GENERATED.json has no annotations block; `cf overlay export` and `cf overlay sync` write it.");
@@ -277,41 +284,48 @@ export function readShardList(generated) {
   if (!safeRelative(block.directory)) {
     fail("GENERATED.json names no relative annotations.directory.");
   }
-  const shards = asArray(block.shards).map((row, index) => {
-    const path = isObject(row) ? row.path : null;
-    const sha256 = isObject(row) ? text(row.sha256) : "";
-    const name = typeof path === "string" ? path.slice(block.directory.length + 1) : "";
-    if (!safeRelative(path) || !path.startsWith(`${block.directory}/`) || !SHARD_NAME.test(name)
-        || !/^[a-f\d]{64}$/.test(sha256)) {
-      fail(`GENERATED.json annotations.shards[${index}] is not {path: <directory>/<name>.jsonl, sha256}.`);
-    }
-    return { path, sha256 };
-  });
-  if (!shards.length) {
-    fail("GENERATED.json lists no shard; `cf overlay export` writes them.");
+  if (!Number.isInteger(block.count) || block.count < 1) {
+    fail("GENERATED.json records no annotation file; `cf overlay export` writes them.");
   }
-  return { directory: block.directory, shards };
+  const bundle = isObject(block.bundle) ? block.bundle : {};
+  if (!BUNDLE_NAME.test(text(bundle.path)) || !/^[a-f\d]{64}$/.test(text(bundle.sha256))) {
+    fail("GENERATED.json annotations.bundle is not {path, sha256}; `cf overlay sync` writes it.");
+  }
+  return { bundle: { path: bundle.path, sha256: bundle.sha256 }, count: block.count, directory: block.directory };
 }
 
-/** The annotations of one JSONL shard, one per nonblank line. */
-export function parseShard(source, label) {
-  const records = [];
-  source.split("\n").forEach((line, index) => {
-    if (!line.replace(/[ \t\r]/g, "")) {
-      return;
+/**
+ * The bundle's annotations, `[{path, annotation}]` in file order, folder
+ * defaults applied. Each path is `<directory>/<section>/[<item>/]<name>.json`,
+ * the file the annotation's relative references resolve against.
+ */
+export function parseBundle(source, block) {
+  let value;
+  try {
+    value = JSON.parse(source);
+  } catch (error) {
+    fail(`${block.bundle.path} is not JSON (${error instanceof Error ? error.message : error}).`);
+  }
+  if (!isObject(value) || value.schema !== BUNDLE_SCHEMA || value.directory !== block.directory
+      || !Array.isArray(value.annotations)) {
+    fail(`${block.bundle.path} is not a ${BUNDLE_SCHEMA} bundle of ${block.directory}/.`);
+  }
+  const prefix = `${block.directory}/`;
+  const rows = value.annotations.map((row, index) => {
+    const path = isObject(row) ? row.path : null;
+    const parts = typeof path === "string" && path.startsWith(prefix) ? path.slice(prefix.length).split("/") : [];
+    const name = parts[parts.length - 1];
+    if (!safeRelative(path) || (parts.length !== 2 && parts.length !== 3) || !SECTION_NAME.test(parts[0])
+        || !parts.slice(1, -1).every((part) => ITEM_NAME.test(part)) || !ANNOTATION_NAME.test(name)
+        || name === "_defaults.json" || !isObject(row.annotation)) {
+      fail(`${block.bundle.path} annotations[${index}] is not {path: <directory>/<section>/[<item>/]<name>.json, annotation}.`);
     }
-    let value;
-    try {
-      value = JSON.parse(line);
-    } catch (error) {
-      fail(`${label}:${index + 1} is not JSON (${error instanceof Error ? error.message : error}).`);
-    }
-    if (!isObject(value)) {
-      fail(`${label}:${index + 1} is not an annotation object.`);
-    }
-    records.push(value);
+    return { annotation: row.annotation, path };
   });
-  return records;
+  if (rows.length !== block.count || value.count !== block.count) {
+    fail(`${block.bundle.path} holds ${rows.length} annotations; GENERATED.json records ${block.count}.`);
+  }
+  return rows;
 }
 
 // --- geometry (Literature Links' PDF location) -------------------------------
@@ -591,6 +605,7 @@ function card(record, ext, context) {
   };
 }
 
+/** By role, then by record id, so the order does not depend on the order the files came in. */
 function orderCards(cards) {
   return cards
     .map((entry, index) => ({ entry, index }))
@@ -598,7 +613,8 @@ function orderCards(cards) {
       const a = LINK_ROLES.indexOf(left.entry.role);
       const b = LINK_ROLES.indexOf(right.entry.role);
       const rank = (a < 0 ? LINK_ROLES.length : a) - (b < 0 ? LINK_ROLES.length : b);
-      return rank !== 0 ? rank : left.index - right.index;
+      const byId = left.entry.id < right.entry.id ? -1 : left.entry.id > right.entry.id ? 1 : 0;
+      return rank || byId || left.index - right.index;
     })
     .map(({ entry }) => entry);
 }
@@ -613,10 +629,10 @@ function ofSource(record, sourceId) {
  * extension carries its `source_id`. Every such record must cite the same
  * bytes; two different sha256 under one id is a refusal.
  */
-export function pdfSource(shards, sourceId) {
+export function pdfSource(files, sourceId) {
   let found = null;
-  for (const shard of asArray(shards)) {
-    for (const record of asArray(shard.records)) {
+  for (const file of asArray(files)) {
+    for (const record of asArray(file.records)) {
       if (!ofSource(record, sourceId)) {
         continue;
       }
@@ -630,7 +646,7 @@ export function pdfSource(shards, sourceId) {
     }
   }
   if (!found) {
-    fail(`No shard holds a record of the PDF ${JSON.stringify(sourceId)}, which overlay.config.json `
+    fail(`No annotation is a record of the PDF ${JSON.stringify(sourceId)}, which overlay.config.json `
          + "names.");
   }
   if (!/^[a-f\d]{64}$/.test(found.sha256)) {
@@ -641,7 +657,8 @@ export function pdfSource(shards, sourceId) {
 
 /**
  * The page → region → item → card index the viewer renders, built purely from
- * the shards (`[{url, records}]`) and the configuration.
+ * the annotation files (`[{url, records}]`, each url the file's own) and the
+ * configuration.
  *
  * A record is one link: its region is its `location`, its item and region ids
  * are the extension's, and a record with a `target` adds one card to its item
@@ -649,8 +666,8 @@ export function pdfSource(shards, sourceId) {
  * per record this build could not place; such a record is dropped, never
  * guessed at.
  */
-export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
-  const source = pdfSource(shards, config.sourceId);
+export function buildIndex(files, config, { pageOrigin = "" } = {}) {
+  const source = pdfSource(files, config.sourceId);
   const pin = isObject(source.pin) ? source.pin : {};
   const sourceExt = extensionOf(source);
   const pageCount = Number.isInteger(sourceExt.physical_page_count) ? sourceExt.physical_page_count : null;
@@ -658,9 +675,9 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
   const regions = new Map();
   const seen = new Map();
   const warnings = [];
-  for (const shard of asArray(shards)) {
-    const context = { baseUrl: shard.url, pageOrigin, stripPrefix: config.stripPrefix ?? "" };
-    for (const record of asArray(shard.records)) {
+  for (const file of asArray(files)) {
+    const context = { baseUrl: file.url, pageOrigin, stripPrefix: config.stripPrefix ?? "" };
+    for (const record of asArray(file.records)) {
       if (!ofSource(record, config.sourceId)) {
         continue;
       }
@@ -669,7 +686,7 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
       try {
         place = recordRegion(record);
       } catch (error) {
-        warnings.push(`${text(record.id) || shard.url}: ${error instanceof Error ? error.message : error}`);
+        warnings.push(`${text(record.id) || file.url}: ${error instanceof Error ? error.message : error}`);
         continue;
       }
       if (pageCount !== null && place.page > pageCount) {
@@ -715,7 +732,7 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
   }
   const pages = new Map();
   for (const region of regions.values()) {
-    // The curation's order (the item the region's own label names first), not shard order.
+    // The curation's order (the item the region's own label names first), not file order.
     const rank = (id) => (region.order.includes(id) ? region.order.indexOf(id) : region.order.length);
     region.itemIds = region.itemIds
       .map((id, index) => ({ id, index }))
@@ -727,6 +744,16 @@ export function buildIndex(shards, config, { pageOrigin = "" } = {}) {
       pages.set(region.page, []);
     }
     pages.get(region.page).push(region);
+  }
+  // Reading order on each page, top to bottom and then left to right, whatever order the files came in.
+  const corner = (region) => region.quads.flat().reduce(([y, x], point) => [Math.min(y, point[1]), Math.min(x, point[0])],
+    [Infinity, Infinity]);
+  for (const regionsOnPage of pages.values()) {
+    regionsOnPage.sort((left, right) => {
+      const [ly, lx] = corner(left);
+      const [ry, rx] = corner(right);
+      return ly - ry || lx - rx || (left.id < right.id ? -1 : left.id > right.id ? 1 : 0);
+    });
   }
   return {
     bytes: Number.isInteger(sourceExt.bytes) ? sourceExt.bytes : null,

@@ -186,7 +186,7 @@
       "type": "string",
       "minLength": 1,
       "pattern": "^[^\\u0000-\\u0020\\u007f-\\u00a0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000]+(?![\\s\\S])",
-      "description": "A URI or IRI reference without White_Space or controls. A relative one resolves against the file that holds the annotation."
+      "description": "A URI or IRI reference without White_Space or controls. A relative one resolves against the file that holds it: the annotation file, or the folder defaults file it came from."
     },
     "extensions": {
       "type": "object",

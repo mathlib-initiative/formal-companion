@@ -17,8 +17,8 @@ fourth reader, outside the three-way table because it is deliberately laxer in
 two documented places; what is checked of it is the direction: nothing
 `config.py` accepts may be a config `serve.py` refuses.
 
-The last class holds the strings the shard readers retype: the overlay's
-extension key and the shard file pattern.
+The last class holds the strings the annotation readers retype: the overlay's
+extension key, the annotation file layout and the bundle's schema.
 
 Everything here is synthetic: a source id, a page title and a file name that
 belong to no edition and no companion.
@@ -311,28 +311,41 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertIn(f'CONFIG_SCHEMA = "{overlay_config.CONFIG_SCHEMA}"', viewer)
 
 
-class TestTheReadersAgreeOnTheShards(unittest.TestCase):
-    """The extension key and the shard file pattern, written once per reader.
+class TestTheReadersAgreeOnTheAnnotations(unittest.TestCase):
+    """The extension key, the file layout and the bundle schema, written once per reader.
 
-    The producer (`scripts/overlay/shards.py`), the runtime tools
-    (`tools/overlay_shards.py`) and the viewer each spell them, because none
-    of them may import another; a key that drifts is a viewer that finds no
-    item, region or card in any record.
+    The producer (`scripts/overlay/shards.py` and `sync.py`), the runtime
+    tools (`tools/overlay_annotations.py`) and the viewer each spell them,
+    because none of them may import another; a key that drifts is a viewer
+    that finds no item, region or card in any record.
     """
 
-    def test_the_namespace_is_one_string(self):
-        from overlay import shards as overlay_shards
-        viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
-        tools = (RUNTIME / "tools" / "overlay_shards.py").read_text(encoding="utf-8")
-        self.assertIn(f'NAMESPACE = "{overlay_shards.NAMESPACE}"', viewer)
-        self.assertIn(f'NAMESPACE = "{overlay_shards.NAMESPACE}"', tools)
+    def sources(self) -> tuple[str, str]:
+        return ((RUNTIME / "tools" / "overlay_annotations.py").read_text(encoding="utf-8"),
+                (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8"))
 
-    def test_the_shard_file_pattern_is_one_pattern(self):
+    def test_the_namespace_and_the_bundle_schema_are_one_string_each(self):
         from overlay import shards as overlay_shards
-        tools = (RUNTIME / "tools" / "overlay_shards.py").read_text(encoding="utf-8")
-        viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
-        self.assertIn(overlay_shards.SHARD_FILE.pattern, tools)
-        self.assertIn("/^[0-9A-Za-z][0-9A-Za-z._-]*\\.jsonl$/", viewer)
+        tools, viewer = self.sources()
+        for reader in (tools, viewer):
+            self.assertIn(f'NAMESPACE = "{overlay_shards.NAMESPACE}"', reader)
+            self.assertIn(f'BUNDLE_SCHEMA = "{overlay_sync.BUNDLE_SCHEMA}"', reader)
+
+    def test_the_section_and_file_patterns_are_one_pattern_each(self):
+        from overlay import shards as overlay_shards
+        tools, viewer = self.sources()
+        for pattern in (overlay_shards.SECTION_DIR.pattern, overlay_shards.ITEM_DIR.pattern,
+                        overlay_shards.ANNOTATION_FILE.pattern):
+            self.assertIn(pattern, tools)
+            self.assertIn("/^" + pattern.removesuffix("\\Z") + "$/", viewer)
+
+    def test_the_tools_check_files_against_the_form_the_export_writes(self):
+        from overlay import defaults as overlay_defaults
+        tools = load_tool("overlay_annotations")
+        self.assertEqual((tools.TOP, tools.DEFAULTS), (overlay_defaults.TOP, overlay_defaults.DEFAULTS))
+        value = {"extensions": {"x": {"b": [1, "é"], "type": "t", "a": [{"type": "q", "z": None}, []]}}, "zz": {},
+                 "location": {"rect": [0.24, 0.47, 0.5, 0.16], "page": 1}, "id": "i", "$schema": "s", "kind": "k"}
+        self.assertEqual(tools.file_bytes(value), overlay_defaults.dumps(value))
 
     def test_build_site_publishes_what_the_viewer_reads(self):
         self.assertEqual(set(BUILD_SITE.INSTANCE_FILES),

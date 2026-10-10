@@ -9,11 +9,12 @@ and refused to run against anything else. Everything specific now comes from
 file's own path; the inventory is whatever `cf overlay sync` copied under
 `viewer/` and `vendor/`.
 
-`docs/overlay.md` section 5 is the contract -- copy the viewer, the config and
-`GENERATED.json` into `<output_root>/<mount>/` and the Literature Links shards
-into `<output_root>/<annotations directory>/`. The shards' relative target
-references are relative to this published site layout (`../<page>` from the
-shard directory is a page of `<output_root>`), not to the repository, where
+`docs/overlay.md` section 5 is the contract -- copy the viewer, the config,
+`GENERATED.json` and the annotation bundle into `<output_root>/<mount>/` and
+the Literature Links annotation files, with their `_defaults.json`, into
+`<output_root>/<annotations directory>/`. Their relative target
+references are relative to this published site layout (`../../<page>` from a
+section folder is a page of `<output_root>`), not to the repository, where
 they resolve to nothing; replace a previous copy atomically; insert or replace one marked
 link block in the index; write `receipt.json`. It never runs the build:
 `serve.py --build` does that first.
@@ -41,7 +42,7 @@ from typing import Any, NoReturn
 sys.dont_write_bytecode = True
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-import overlay_shards  # noqa: E402  (beside this file in pdf-overlay/tools/)
+import overlay_annotations  # noqa: E402  (beside this file in pdf-overlay/tools/)
 
 
 CONFIG_NAME = "overlay.config.json"
@@ -51,7 +52,7 @@ RECEIPT_SCHEMA = "formal-companion/overlay-site-receipt"
 RECEIPT_NAME = "receipt.json"
 #: The directories of the generated runtime a site needs, in copy order.
 RUNTIME_ROOTS = ("viewer", "vendor")
-#: The two files the viewer reads at run time: the config, and the shard list.
+#: The files the viewer reads at run time beside the bundle: the config, and the record.
 INSTANCE_FILES = (CONFIG_NAME, GENERATED_NAME)
 LINK_START = "<!-- formal-companion-overlay-link -->"
 LINK_END = "<!-- /formal-companion-overlay-link -->"
@@ -280,39 +281,37 @@ def load_config(overlay: Path) -> Config:
     )
 
 
-def collect_shards(overlay: Path, config: Config) -> tuple[str, dict[str, bytes]]:
-    """``(directory, {file name: bytes})``: every shard `GENERATED.json` lists, at its recorded sha256.
+def collect_annotations(overlay: Path, config: Config) -> tuple[str, str, dict[str, bytes]]:
+    """``(directory, bundle path, {path in the directory: bytes})``: the files whose records the bundle holds.
 
-    A shard that no longer matches its record is refused rather than
-    published: the viewer checks the same sha256 and would refuse it later.
+    The bundle must have its recorded sha256 and hold exactly the records the
+    shipped reader reads from the files on disk; anything else is refused
+    rather than published: the viewer checks the same sha256 and would refuse
+    it later.
     """
     try:
-        block = overlay_shards.annotations_block(overlay)
-    except overlay_shards.ShardError as error:
+        block = overlay_annotations.annotations_block(overlay)
+        entries = overlay_annotations.read_bundle(overlay, block)
+        overlay_annotations.pdf_source(overlay, config.source_id)
+    except overlay_annotations.AnnotationError as error:
         fail(str(error))
-    out: dict[str, bytes] = {}
-    for row in block["shards"]:
-        path = overlay.parent.joinpath(*PurePosixPath(row["path"]).parts)
-        raw = require_regular(path, row["path"]).read_bytes()
-        if sha256(raw) != row["sha256"]:
-            fail(f"{row['path']}: sha256 {sha256(raw)}, but {GENERATED_NAME} records {row['sha256']}; "
-                 f"re-run `cf overlay sync`")
-        out[PurePosixPath(row["path"]).name] = raw
-    if not out:
-        fail(f"{GENERATED_NAME} lists no shard; `cf overlay export` writes them")
-    try:
-        overlay_shards.pdf_source(overlay, config.source_id)
-    except overlay_shards.ShardError as error:
-        fail(str(error))
-    return block["directory"], out
+    files, problems = overlay_annotations.disk_files(overlay.parent, block["directory"])
+    records, scanned = overlay_annotations.read_records(overlay.parent, block["directory"]) if files else ({}, [])
+    problems += scanned + overlay_annotations.bundle_problems(entries, records)
+    if problems:
+        fail(f"{problems[0]}; re-run `cf overlay sync`")
+    if not files:
+        fail(f"{GENERATED_NAME} records no annotation file; `cf overlay export` writes them")
+    prefix = block["directory"] + "/"
+    return block["directory"], block["bundle"]["path"], {p[len(prefix):]: raw for p, raw in files.items()}
 
 
 # ---------------------------------------------------------------------------
 # what is copied
 # ---------------------------------------------------------------------------
 
-def collect_runtime(overlay: Path) -> dict[str, bytes]:
-    """{mount-relative path: bytes} for the runtime and the two instance files."""
+def collect_runtime(overlay: Path, bundle: str) -> dict[str, bytes]:
+    """{mount-relative path: bytes} for the runtime, the two instance files and the bundle."""
     contents: dict[str, bytes] = {}
     for root_name in RUNTIME_ROOTS:
         root = require_directory(overlay / root_name, f"runtime directory {root_name}")
@@ -338,7 +337,7 @@ def collect_runtime(overlay: Path) -> dict[str, bytes]:
                         fail(f"cannot read {relative}: {error}")
                 else:
                     fail(f"the generated runtime contains a non-regular file: {relative}")
-    for name in INSTANCE_FILES:
+    for name in (*INSTANCE_FILES, bundle):
         contents[name] = require_regular(overlay / name, name).read_bytes()
     if not any(name.startswith("viewer/") for name in contents):
         fail("the generated runtime holds no viewer file to publish")
@@ -395,13 +394,13 @@ def linked_index(raw: bytes, href: str, text: str) -> bytes:
 
 
 def receipt_value(config: Config, contents: dict[str, bytes], href: str,
-                  index_raw: bytes, directory: str, shards: dict[str, bytes]) -> dict[str, Any]:
+                  index_raw: bytes, directory: str, annotations: dict[str, bytes]) -> dict[str, Any]:
     """Every file this run wrote, by sha256: the contract's `receipt.json`."""
     return {
         "annotations": {
             "directory": directory,
             "files": [{"bytes": len(raw), "path": name, "sha256": sha256(raw)}
-                      for name, raw in sorted(shards.items())],
+                      for name, raw in sorted(annotations.items())],
         },
         "files": [
             {"bytes": len(raw), "path": path, "sha256": sha256(raw)}
@@ -511,13 +510,13 @@ def clear_stale_staging(parent: Path, leaf: str) -> None:
             fail(f"cannot remove the stale staging tree {entry.path}: {error}")
 
 
-def only_shards(target: Path) -> None:
-    """Refuse to replace a directory of the site that is not a shard directory."""
-    for entry in os.scandir(target):
-        mode = entry.stat(follow_symlinks=False).st_mode
-        if not (stat.S_ISREG(mode) and overlay_shards.SHARD_NAME.fullmatch(entry.name)):
-            fail(f"the built site already has {target}, which holds {entry.name}; the shards "
-                 f"are published there, so it may hold only *.jsonl shards")
+def only_annotations(target: Path) -> None:
+    """Refuse to replace a directory of the site that is not an annotation directory."""
+    _files, odd = overlay_annotations.walk(target)
+    if odd:
+        fail(f"the built site already has {target}, which holds {odd[0]}; the annotations are published "
+             f"there, so it may hold only <section>/[<item>/]<name>.json files and their "
+             f"{overlay_annotations.DEFAULTS}")
 
 
 def install_directory(output_root: Path, relative: str, contents: dict[str, bytes],
@@ -526,7 +525,7 @@ def install_directory(output_root: Path, relative: str, contents: dict[str, byte
 
     A previous copy is replaced whatever state it is in, after ``guard`` (when
     given) has accepted it: the mount is output this tool owns, so it is never
-    a reason to stop; the shard directory is checked to be one.
+    a reason to stop; the annotation directory is checked to be one.
     """
     parts = PurePosixPath(relative).parts
     parent = ensure_output_directory(output_root, parts[:-1])
@@ -572,10 +571,10 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
     require_directory(overlay, "overlay directory")
     root = overlay.parent
     config = load_config(overlay)
-    contents = collect_runtime(overlay)
-    directory, shards = collect_shards(overlay, config)
+    directory, bundle, annotations = collect_annotations(overlay, config)
+    contents = collect_runtime(overlay, bundle)
     if PurePosixPath(directory).parts[0] == PurePosixPath(config.mount).parts[0]:
-        fail(f"the shard directory {directory} and the mount {config.mount} would overlap")
+        fail(f"the annotation directory {directory} and the mount {config.mount} would overlap")
 
     output_parts = PurePosixPath(config.output_root).parts
     current = root
@@ -599,17 +598,17 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
 
     href = link_href(config)
     final_index = linked_index(index_path.read_bytes(), href, config.link_text)
-    receipt_raw = canonical_json(receipt_value(config, contents, href, final_index, directory, shards))
+    receipt_raw = canonical_json(receipt_value(config, contents, href, final_index, directory, annotations))
     token = token_factory()
     if not re.fullmatch(r"[0-9a-f]{16}", token):
         fail("temporary token provider did not return 16 lowercase hex digits")
-    install_directory(output_root, directory, shards, token, guard=only_shards)
+    install_directory(output_root, directory, annotations, token, guard=only_annotations)
     install_directory(output_root, config.mount, {**contents, RECEIPT_NAME: receipt_raw}, token)
     write_atomic(index_path, final_index)
 
     mount_root = output_root.joinpath(*PurePosixPath(config.mount).parts)
-    shard_root = output_root.joinpath(*PurePosixPath(directory).parts)
-    for root, files in ((mount_root, contents), (shard_root, shards)):
+    annotation_root = output_root.joinpath(*PurePosixPath(directory).parts)
+    for root, files in ((mount_root, contents), (annotation_root, annotations)):
         for relative, expected in files.items():
             written = root.joinpath(*PurePosixPath(relative).parts)
             if written.read_bytes() != expected:             # pragma: no cover
@@ -622,7 +621,7 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
         "annotations": directory,
         "files": len(contents),
         "index": config.index,
-        "shards": len(shards),
+        "annotation_files": len(annotations),
         "link_href": href,
         "mount": config.mount,
         "output_root": config.output_root,
