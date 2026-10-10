@@ -362,6 +362,8 @@ test("locator: the cluster locator, else the printed and physical pages", () => 
                "Section 1.1, Definition 1.1.1");
   assert.equal(locatorText({ physical: [21, 25], printed: [5, 9] }), "printed pp. 5, 9, PDF pp. 21, 25");
   assert.equal(locatorText({ physical: [3] }), "PDF p. 3");
+  assert.equal(locatorText({ text: "printed pp. 46--49: Exercises 1.6.7--1.6.9 -- see p. 3" }),
+               "printed pp. 46–49: Exercises 1.6.7–1.6.9 -- see p. 3");
   assert.equal(locatorText(undefined), "");
 });
 

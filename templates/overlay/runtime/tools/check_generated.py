@@ -14,7 +14,7 @@ It reports, one line per problem, and exits 1 when there is one:
 
 * every file `GENERATED.json` lists exists, is an ordinary file, and has the
   sha256 recorded for it, and `pdf-overlay/` holds nothing else but
-  `GENERATED.json` and the instance file `overlay.config.json`;
+  `GENERATED.json`, the bundle and the instance file `overlay.config.json`;
 * `GENERATED.json`'s `format` block names the Literature Links release whose
   package `cf overlay sync` shipped in `tools/literature_links/`;
 * `overlay.config.json` satisfies section 3 -- the same rules as the skill's
@@ -25,7 +25,7 @@ It reports, one line per problem, and exits 1 when there is one:
   table;
 * the annotation directory `GENERATED.json`'s `annotations` block names
   holds only `<section>/[<item>/]<name>.json` files and their
-  `_defaults.json`, each as `cf overlay export` writes it, as many annotations
+  `_defaults.json`, each as a recorded export writes it, as many annotations
   as it records and every file with its manifest sha256; the shipped
   `literature_links` scan reads them with no problem; the bundle beside it
   has its recorded sha256 and holds exactly the records that scan reads,
@@ -435,7 +435,7 @@ def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
     if directory.is_symlink() or not directory.is_dir():
         return out + [f"{block['directory']}/: not an ordinary directory"]
     files, layout = overlay_annotations.disk_files(root, block["directory"])
-    out += layout + overlay_annotations.form_problems(files)
+    out += layout + (overlay_annotations.form_problems(files) if "export" in block else [])
     found = overlay_annotations.manifest_sha256(files)
     count = overlay_annotations.annotation_count(files)
     if (count, found) != (block["count"], block["manifest_sha256"]):

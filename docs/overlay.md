@@ -62,7 +62,7 @@ templates/overlay/
     vendor/pdfjs/
   tests/                       node --test suites (not copied)
 scripts/overlay/
-  config.py   sync.py   export.py   shards.py
+  config.py   sync.py   export.py   shards.py   defaults.py
 scripts/cfcmd/overlay.py
 ```
 
@@ -76,8 +76,8 @@ pdf-overlay/GENERATED.json annotations.bundle.json overlay.config.json README.md
 
 The annotation files live at the repository root, not in `pdf-overlay/`: they
 are the companion's annotations, which any Literature Links reader can scan,
-and the overlay is one reader of them. `annotations/` holds section folders of
-annotation files and nothing else.
+and the overlay is one reader of them. `annotations/` holds a `_defaults.json`,
+section folders of annotation files and nothing else.
 
 ## 3. `overlay.config.json`, version 1
 
@@ -150,8 +150,8 @@ bytecode writing off.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/` but the bundle; the `format`
   block against the shipped package's version; the config; `annotations/`
-  holding only the layout of section 7, each file as `export` writes it, as
-  many annotations as recorded and every file at the recorded manifest sha256;
+  holding only the layout of section 7, each file as a recorded export writes
+  it, as many annotations as recorded and every file at the manifest sha256;
   the bundle at its recorded sha256 and equal to the records the shipped
   `literature_links` scan reads (each one that differs, is missing or is
   extra is named); the scan finding no problem, with a record of the config's
@@ -176,17 +176,19 @@ cf overlay check <companion>
   changed only in case survives a case-insensitive filesystem (and a
   `<section>.jsonl` shard of the earlier layout that a previous
   `GENERATED.json` lists, at its sha256); anything else there stops it before
-  it writes. Only when the files on disk are exactly the ones it wrote does it
-  record the export, the files' count and manifest sha256 in `GENERATED.json`.
+  it writes. It records the export, the files' count and manifest sha256 in
+  `GENERATED.json` before it removes or writes a file, so `sync` refuses what
+  an export that died left.
 - `sync` copies the runtime and `vendor/literature_links/` (as
   `tools/literature_links/`), removes what a previous record listed and the
   templates dropped, refuses unlisted files, writes the bundle and records
   it. Files `export` wrote that changed since are refused, not recorded
   (named, when the last bundle holds the export); files nothing exported are
   recorded as they are.
-- `sync --check` is read-only; `check` adds the config, the scan, the inputs'
-  hashes and the overlay's rules (one PDF per `source_id`, pages within its
-  `physical_page_count`, targets `https:` or relative and inside the site).
+- `sync --check` is read-only and includes the scan; `check` adds the config,
+  the inputs' hashes and the overlay's rules (one PDF per `source_id`, pages
+  within its `physical_page_count`, targets `https:` or relative and inside
+  the site).
 
 ```json
 {

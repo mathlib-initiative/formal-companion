@@ -32,6 +32,7 @@ companion at all.  The one git call is in THIS checkout, read-only through
 """
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
 import os
@@ -56,8 +57,8 @@ __all__ = [
     "ANNOTATIONS_DIRNAME", "BUNDLE_NAME", "BUNDLE_SCHEMA", "FORMAT_PACKAGE", "GENERATED_NAME",
     "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES",
     "LINKS_RELATIVE", "OVERLAY_DIRNAME", "Annotations", "SyncResult", "annotation_count", "annotation_files",
-    "annotations_dir", "bundle_bytes", "bundle_differences", "bundle_records", "check", "digest", "format_pin",
-    "generated_document", "generated_files", "generator_commit", "init", "manifest_sha256", "overlay_dir",
+    "annotations_dir", "bundle_bytes", "bundle_differences", "bundle_records", "check", "defaults_above", "digest",
+    "format_pin", "generated_document", "generated_files", "generator_commit", "init", "manifest_sha256", "overlay_dir",
     "overlay_problems", "read_annotations", "record_annotations", "runtime_root", "sync", "sync_problems",
     "template_files",
 ]
@@ -357,6 +358,15 @@ class Annotations:
     problems: list[str]
 
 
+def defaults_above(directory: Path) -> list[str]:
+    """One problem per `_defaults.json` above the annotation directory: the reader applies them to its records."""
+    root = str(directory.parent) + os.sep
+    _merged, applied, unusable = discovery.inherit({}, directory)
+    return [f"{p.path.replace(root, '')}: {p.message} [{p.code}]" for p in unusable] + [
+        f"{str(path).replace(root, '')}: folder defaults outside {ANNOTATIONS_DIRNAME}/ apply to its annotations; "
+        "remove it" for path in applied]
+
+
 def read_annotations(companion: str | Path) -> Annotations:
     """Every file of the annotation directory, every record the reader reads from it, and the problems.
 
@@ -368,12 +378,18 @@ def read_annotations(companion: str | Path) -> Annotations:
     found, _folders, odd = overlay_shards.walk(directory)
     problems = [f"{ANNOTATIONS_DIRNAME}/{relative}: not an annotation file; {ANNOTATIONS_DIRNAME}/ holds only "
                 f"<section>/[<item>/]<name>.json files and their {overlay_shards.DEFAULTS}" for relative in odd]
+    problems += defaults_above(directory)
     files = {f"{ANNOTATIONS_DIRNAME}/{relative}": path.read_bytes() for relative, path in found.items()}
     records: dict[str, dict] = {}
     if files:
         collection = discovery.collect([directory])
         root = str(directory.parent) + os.sep
-        problems += [f"{p.path.replace(root, '')}: {p.message} [{p.code}]" for p in collection.problems]
+        problems += [line for p in collection.problems
+                     if (line := f"{p.path.replace(root, '')}: {p.message} [{p.code}]") not in problems]
+        read = collections.Counter(r.path for r in collection.records)
+        problems += [f"{ANNOTATIONS_DIRNAME}/{path.relative_to(directory).as_posix()}: {read[path]} annotations "
+                     "read from it, not one" for path in collection.files
+                     if read[path] != 1 and not collection.problems]
         records = {f"{ANNOTATIONS_DIRNAME}/{r.path.relative_to(directory).as_posix()}": r.annotation
                    for r in collection.records}
     return Annotations(files, dict(sorted(records.items())), problems)
@@ -447,7 +463,7 @@ def record_annotations(companion: str | Path, annotations: dict) -> Path:
     """Write ``annotations`` as `GENERATED.json`'s `annotations` block, keeping the rest.
 
     `cf overlay export` calls it with the export, its inputs and the files it
-    wrote.  Before any sync there is no runtime yet, and the record lists no
+    writes.  Before any sync there is no runtime yet, and the record lists no
     file until `cf overlay sync` copies them; a record of an older version
     keeps its file list, so the next sync still knows what it wrote.
     """
@@ -637,13 +653,14 @@ def sync_problems(companion: str | Path) -> list[str]:
 
     block = record.get("annotations") if isinstance(record.get("annotations"), dict) else {}
     found = read_annotations(companion)
+    out += found.problems
     count = annotation_count(found.files)
     if (block.get("count"), block.get("manifest_sha256")) != (count, manifest_sha256(found.files)):
         out.append(f"changed annotations: {ANNOTATIONS_DIRNAME}/ holds {count} annotations in "
                    f"{len(found.files)} files, not the {block.get('count')} {GENERATED_NAME} records by "
                    f"manifest sha256")
     out += [f"{path}: not as `cf overlay export` writes it" for path, raw in found.files.items()
-            if _form(raw) not in (None, raw)]
+            if "export" in block and _form(raw) not in (None, raw)]
     bundle = overlay / BUNDLE_NAME
     recorded = (block.get("bundle") or {}).get("sha256") if isinstance(block.get("bundle"), dict) else None
     if not bundle.is_file():
@@ -726,7 +743,7 @@ def check(companion: str | Path) -> list[str]:
     overlay = overlay_dir(companion)
     out = sync_problems(companion)
     files, problems = annotation_files(companion)
-    out += problems
+    out += [line for line in problems if line not in out]
     if not files:
         out.append(f"{ANNOTATIONS_DIRNAME}/ holds no annotation file; `cf overlay export` writes them")
     out += inputs_problems(companion, _previous(overlay) or {})
