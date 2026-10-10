@@ -83,7 +83,7 @@ release has something to say.
 - `cf overlay init|sync|check|export`: a companion's
   `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
   written by hand for one book, and reads Literature Links 1.0.0 (vendored as
-  `vendor/literature_links/` at commit `ef8449d`). `export` converts an
+  `vendor/literature_links/` at tag `v1.0.0`). `export` converts an
   exporter's document into one `annotations/<section>/[<item>/]<name>.json`
   file per annotation, one folder per book section and per item with several,
   shared members in `_defaults.json` (`overlay.shards`, `overlay.defaults`; the extension key

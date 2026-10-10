@@ -47,7 +47,7 @@ def _validate(args: argparse.Namespace) -> int:
                 warnings = [asdict(warning) for warning in report.warnings]
                 item_status = 1 if problems else 0
         except (OSError, ValueError, RecursionError) as exc:
-            item_status = 2
+            item_status, applied = 2, ()
             code = "IO" if isinstance(exc, (OSError, UnicodeError)) else "JSON"
             problems = [{"code": code, "path": "$", "message": str(exc)}]
         status = max(status, item_status)
@@ -56,8 +56,9 @@ def _validate(args: argparse.Namespace) -> int:
                                    "defaults": [str(file) for file in applied],
                                    "problems": problems, "warnings": warnings}, ensure_ascii=True, allow_nan=False) + "\n")
         else:
+            note = f" (with defaults from {', '.join(map(str, applied))})" if applied else ""
             for problem in problems:
-                print(f"{path}: {problem['path']}: {problem['message']} [{problem['code']}]",
+                print(f"{path}: {problem['path']}: {problem['message']}{note} [{problem['code']}]",
                       file=sys.stderr if item_status == 2 else sys.stdout)
             if not problems:
                 print(f"{path}: ok (1 annotation, {document['source']['type']})")
@@ -89,14 +90,15 @@ def _scan(args: argparse.Namespace) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     """Run an offline command; return 0 on success, 1 on invalid data, 2 on error."""
-    parser = argparse.ArgumentParser(prog="literature-links",
+    # No abbreviations: a prefix that works today would break when an option is added.
+    parser = argparse.ArgumentParser(prog="literature-links", allow_abbrev=False,
                                      description="Validate and scan Literature Links annotations.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    validation = subparsers.add_parser("validate", help="validate single annotations")
+    validation = subparsers.add_parser("validate", allow_abbrev=False, help="validate single annotations")
     validation.add_argument("documents", nargs="+", type=Path)
     validation.add_argument("--format", choices=("text", "json"), default="text", help="JSON emits one report per input")
-    scanning = subparsers.add_parser("scan", help="read annotations from JSON and JSONL files")
+    scanning = subparsers.add_parser("scan", allow_abbrev=False, help="read annotations from JSON and JSONL files")
     scanning.add_argument("paths", nargs="+", type=Path)
     scanning.add_argument("--include", action="append", help="select root-relative file patterns (repeatable)")
     scanning.add_argument("--exclude", action="append", default=[], help="exclude root-relative file patterns (repeatable)")
