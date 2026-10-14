@@ -11,8 +11,8 @@ formalization and for the tags.
 The pipeline is called the lean-companion pipeline here. Commands written
 `lc ...` are proposed names; no `lc` program exists. Commands written `cf ...`
 are this repository's CLI and exist unless the sentence says otherwise. Where
-`lc` lives is open (section 8, question 4). The default is this repository
-after its rename, which needs the no-write rules of section 1.1 narrowed.
+`lc` lives is open (section 8, question 4). The default is this repository,
+which needs the no-write rules of section 1.1 narrowed.
 
 **Contents**: 0 conventions of this document · 1 what exists today · 2 the
 pipeline · 3 the quality model · 4 data flow through the annotation document ·
@@ -320,7 +320,7 @@ the agentbox claude bridge:
 
 The four-edge checklist is the fix for a measured miss. The 2026-09-08 sign-off
 asked only whether a crop began at the heading, took in the next item or was
-cut off at the bottom, which are vertical bounds.
+cut off at the bottom, which are vertical bounds (records not published).
 10 of the 60 §1.7 regions passed it wrong: nine right-edge clips and the
 Exercise 1.7.13 overrun (`$MT` commits 73efa81 and fb67a73).
 
@@ -512,8 +512,8 @@ Agents, on tend and agentbox through `cf run` with a new `author` preset, once
 M0b's smoke test has run:
 
 - One author per section, chained on the predecessor's `.olean` files, as in
-  the `$TML` chapter-1 skeleton campaign (a Workflow script kept in session
-  history, not in a repository).
+  the `$TML` chapter-1 skeleton campaign (a Workflow script, not in a
+  repository).
 - A reviewer on a book-neutral rewrite of ff-core's adversarial reviewer
   prompt. The source prompt is Tao-specific: it quotes `$MT`'s blueprint slices against
   the Lean, tells the reviewer to read them from disk, and contains
@@ -564,7 +564,8 @@ Gate, run out of tree:
   ... := volume` shape when rows carry a body and a stage table exists
   (`scripts/detect/def_coverage.py`). The Lean tier's order-violation and
   same-stage-primitive analysis catches proxies reached through the closure,
-  such as the Definition 1.2.2 case (`$MT` PR #9; `$TD/adam-detector/README.md`).
+  such as the Definition 1.2.2 case (`$MT` PR #9; the differential
+  workspace's detector notes, not published).
 - **The stage table is complete.** Every Mathlib module in the closure of a key
   Definition's declaration is placed in the table or explicitly marked
   foundations. A module the table does not place defaults to stage 0, which
@@ -669,7 +670,8 @@ replaced by the walk above. In full:
    not increase), and no declaration is removed.
 
 New work: the gate; the laundering check; per-declaration harvest (the ff-core
-gaps run completed 0 of 14 tasks and stranded 1,074 inserted lines);
+gaps run completed 0 of 14 tasks and stranded 1,074 inserted lines; records
+not published);
 stall detection; backend adapters; a backend-neutral cost record.
 
 ### 2.8 S7: attribution
@@ -823,7 +825,7 @@ would label a changed def body unchanged; the sampled-attack selector.
   pass vacuously: S0's spot check gets a page off by one, S3's verifier gets
   notation flips, S8's claims check gets a wrong count (section 3.4). The
   findings gate itself once passed a flipped inequality and a running head with
-  a placeholder witness.
+  a placeholder witness (records not published).
 - Model-tier recall is unmeasured today. The only recall figure in this
   repository is the model-free tier on the synthetic booklet: precision 1.00,
   recall 0.50 (`README.md`). M2 and M3 measure it.
@@ -1087,11 +1089,10 @@ M0a:
 
 - The cost tool moves into this repository. Today it is the 30-line
   `reports/fleet-cost.py` of the §1.7 re-run workspace, which issue #11 names
-  (as 40 lines). That workspace sits in a session scratch directory on the
-  laptop, which a purge would lose. It reads only Claude transcripts at one
-  Opus price. It is extended to parse Codex session logs (attack-vac runs on
-  codex, `scripts/plan/presets.py`)
-  and to price by model id.
+  (as 40 lines). That workspace is not in any repository. It reads only
+  Claude transcripts at one Opus price. It is extended to parse Codex session
+  logs (attack-vac runs on codex, `scripts/plan/presets.py`) and to price by
+  model id.
 - It follows issue #11's design: harvest writes priced totals into each fleet's
   `RECEIPT.json`, with prices in `workspace.yaml`.
 - It reproduces a recorded total within 1% from retained transcripts: the §1.7
@@ -1323,9 +1324,9 @@ adjudication-only comparisons.
 | first full differential run: $2,698.82 for 383 tasks | issue #11 for the dollars; the cost report in the §1.7 re-run workspace for the task count | Opus 5 list prices; cache reads 85% of the bill; $7.05 a task |
 | §1.7 differential re-run: $358.10 for 47 tasks | the same two sources | same pricing; $7.62 a task; a first attempt, s17, was paused at 4 of 47 tasks after $219.55 |
 | attack cost per task | none | unmeasured; attack-vac runs on codex, which the $7.05 to $7.62 does not price |
-| ff-core Tao campaign: $1,639.46 recorded | ff-core's orchestrator databases, not published | the notes say about $985 or $1,050; input-token accounting was broken (about 74 input tokens and no cache per session) |
+| ff-core Tao campaign: $1,639.46 recorded | ff-core's orchestrator databases, not published | unpublished campaign notes say about $985 or $1,050; input-token accounting was broken (about 74 input tokens and no cache per session) |
 | ff-core pilot: $528.14 | ff-core's orchestrator databases, not published | the section count comes from another source; refined an existing draft |
-| ff-core gapfill: $304.31 recorded; 23 gaps closed at a $102.44 mid-run snapshot | ff-core's orchestrator databases (recorded) and campaign notes (snapshot), not published | 81 to 90% infrastructure mortality over the run; the separate gaps3 run reached 96% |
+| ff-core gapfill: $304.31 recorded; 23 gaps closed at a $102.44 mid-run snapshot | ff-core's orchestrator databases (recorded) and campaign notes (snapshot), not published | 81 to 90% infrastructure mortality over the run; the separate gaps3 run reached 96% (records not published) |
 | `$TML` PR #5: 42 proofs | `$TML` merge d21dbac | local Claude Code Workflow runs on a Max subscription; no dollar figure |
 | WikiLean enumeration and matching: $1.32 to $1.54 per article | `$WIKILEAN/docs/token_budget.md` | article-sized units, not book sections |
 | adjudication of 10 findings: 225 agents, 5.9 h | `references/workflow-patterns.md` | local Workflow, limit failures included |
@@ -1399,7 +1400,7 @@ maintainer.
   mutations are the mitigation. The provisional bars (0.8, 11 of 14) may have
   to move.
 - **Cost.** Attack cost is unmeasured and dominates the envelope. The cost tool
-  exists only in a session scratch directory today.
+  is not yet in any repository.
 - **Unrecorded provenance** of `$MT`'s front half (section 1.3). The workspace
   behind it could change the data model or save weeks.
 - **Substrate fragility.** Open issues #6, #7, #9, #10, #11; `cf run --execute`
@@ -1407,7 +1408,8 @@ maintainer.
   smoke test; tend was checked only shallowly and still enforces strict tool
   schemas; fleets died at 129 of 225 and 70 of 114 on session limits
   (`references/traps.md` D1). Lake builds per worktree need a thread cap: on
-  a 16-core, 30 GB host ten workers with unbounded threads reached load 52,
+  a 16-core, 30 GB host ten workers with unbounded threads reached load 52
+  (records not published),
   and on the 96-core `cf run` host the limit is the session cap, not CPU
   (`references/runbook-server.md` §5).
 - **The laundering check may miss shapes** it was not written for, and the
@@ -1440,12 +1442,11 @@ maintainer.
 2. Should the pipeline ask for the workspace behind `$MT`'s front half?
 3. Annotations v1.1: approve the three keys, or keep the fallbacks? And may
    `POLICY.md` §1 name the release document's capped anchors as an exception?
-4. **Where `lc` lives.** The default is this repository after the
-   lean-companion rename, with `CLAUDE.md` §4, `CONTRIBUTING.md` invariant 3
-   and `SKILL.md` rule 10 narrowed in the same commit so that "never write to a
-   companion repo" means a repository the pipeline did not generate. The
-   alternative is a separate repository that calls this one's gates by path and
-   leaves those rules as they are. Does the rename happen before or after M0?
+4. **Where `lc` lives.** The default is this repository, with `CLAUDE.md`
+   §4, `CONTRIBUTING.md` invariant 3 and `SKILL.md` rule 10 narrowed in the
+   same commit so that "never write to a companion repo" means a repository
+   the pipeline did not generate. The alternative is a separate repository
+   that calls this one's gates by path and leaves those rules as they are.
 5. Budget: what per-chapter cap applies once M0b measures attack cost? If the
    cap binds, do pre-freeze attacks cover every item, or in-text items and
    Definitions first?
