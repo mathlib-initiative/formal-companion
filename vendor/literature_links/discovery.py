@@ -1,10 +1,10 @@
-"""Read annotations from local JSON and JSONL files (docs/companion.md, "Discovery")."""
+"""Read annotations from local JSON and JSONL files (docs/tools.md, "Discovery")."""
 from __future__ import annotations
 
 import fnmatch
 import os
 import stat
-from dataclasses import dataclass, field
+from dataclasses import KW_ONLY, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -16,20 +16,25 @@ __all__ = ["DEFAULTS", "Collection", "Problem", "Record", "collect", "inherit"]
 # The file name of folder defaults (docs/companion.md, "Folder defaults").
 DEFAULTS = "_defaults.json"
 
+# Files read one annotation per line; other files hold one JSON value.
+_LINES = (".jsonl", ".ndjson")
+
+# Before 2.0 an array in a JSON file was read as several annotations, so name it.
+_ONE_PER_FILE = "a JSON file holds one annotation, an object, not an array"
+
 
 @dataclass
 class Record:
-    """An annotation and its origin; ``pointer`` is relative to its JSON value.
+    """An annotation and its origin.
 
-    A standalone JSON annotation and every JSONL row use the empty pointer.
-    Array members use ``/0``, ``/1``, and so on. JSONL origins additionally
-    provide their one-based physical line number. ``annotation`` has its folder
+    ``line`` is the one-based physical line of a JSONL record, and None in a
+    JSON file, which holds one annotation. ``annotation`` has its folder
     defaults applied; ``defaults`` lists their files, outermost first.
     """
 
     annotation: dict[str, Any]
     path: Path
-    pointer: str
+    _: KW_ONLY
     line: int | None = None
     defaults: tuple[Path, ...] = ()
 
@@ -164,9 +169,20 @@ def inherit(annotation: dict[str, Any], path: Path | str) -> tuple[dict[str, Any
 _TOO_DEEP = "JSON nesting exceeds this implementation's recursion limit"
 
 
-def _origin(path: Path, pointer: str = "", line: int | None = None) -> str:
-    result = str(path) + "#" + pointer
-    return result if line is None else f"{result} (line {line})"
+def _rows(path: Path, text: str) -> list[tuple[int | None, str]]:
+    """The JSON texts in a file: each nonblank JSONL line with its number, or the whole file."""
+    if path.suffix.lower() not in _LINES:
+        return [(None, text)]
+    # CRLF, CR and LF end lines. splitlines() would also split strings at U+2028.
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return [(line, row) for line, row in enumerate(lines, 1) if row.strip(" \t")]
+
+
+def _shape(value: Any, line: int | None) -> str | None:
+    """Why ``value``, a JSON file or the JSONL row at ``line``, is not an annotation; None if it may be."""
+    if isinstance(value, dict):
+        return None
+    return _ONE_PER_FILE if line is None and isinstance(value, list) else "each annotation must be a JSON object"
 
 
 def _read(path: Path, result: Collection, defaults: _Defaults) -> None:
@@ -175,53 +191,33 @@ def _read(path: Path, result: Collection, defaults: _Defaults) -> None:
     except (OSError, UnicodeError) as exc:
         result.problems.append(Problem("IO", str(path), str(exc)))
         return
-
-    def record(value: Any, pointer: str = "", line: int | None = None) -> None:
-        origin = _origin(path, pointer, line)
-        if not isinstance(value, dict):
-            result.problems.append(Problem("SHAPE", origin,
-                                           "each annotation must be a JSON object"))
-            return
+    for line, row in _rows(path, text):
+        origin = str(path) if line is None else f"{path} (line {line})"
+        try:
+            value = companion.loads(row)
+        except companion.LoadError as exc:
+            result.problems.append(Problem("JSON", origin, str(exc)))
+            continue
+        shape = _shape(value, line)
+        if shape:
+            result.problems.append(Problem("SHAPE", origin, shape))
+            continue
         chain = defaults.chain(path)
         if chain is None:
-            return
+            continue
         try:
             value = _apply(value, path, chain)
         except RecursionError:
             result.problems.append(Problem("JSON", origin, _TOO_DEEP))
-            return
+            continue
         applied = tuple(file for file, _ in chain)
         findings = companion.check(value).problems
         if findings:
             note = f" (with defaults from {', '.join(map(str, applied))})" if applied else ""
             for finding in findings:
                 result.problems.append(Problem(finding.code, f"{origin} {finding.path}", finding.message + note))
-            return
-        result.records.append(Record(value, path, pointer, line, applied))
-
-    if path.suffix.lower() in (".jsonl", ".ndjson"):
-        # splitlines() would incorrectly split valid strings containing U+2028.
-        for line, row in enumerate(text.split("\n"), 1):
-            if not row.strip(" \t"):
-                continue
-            try:
-                value = companion.loads(row)
-            except companion.LoadError as exc:
-                result.problems.append(Problem("JSON", _origin(path, line=line), str(exc)))
-                continue
-            record(value, line=line)
-        return
-
-    try:
-        value = companion.loads(text)
-    except companion.LoadError as exc:
-        result.problems.append(Problem("JSON", str(path), str(exc)))
-        return
-    if isinstance(value, list):
-        for index, annotation in enumerate(value):
-            record(annotation, pointer=f"/{index}")
-    else:
-        record(value)
+            continue
+        result.records.append(Record(value, path, line=line, defaults=applied))
 
 
 def collect(paths: Iterable[Path | str], *, include: Iterable[str] | None = None,
@@ -255,7 +251,7 @@ def collect(paths: Iterable[Path | str], *, include: Iterable[str] | None = None
         if includes is not None:
             if not _matches(relative, includes):
                 return
-        elif not explicit and path.suffix.lower() not in (".json", ".jsonl", ".ndjson"):
+        elif not explicit and path.suffix.lower() not in (".json", *_LINES):
             return
         try:
             resolved = path.resolve(strict=True)
@@ -285,7 +281,7 @@ def collect(paths: Iterable[Path | str], *, include: Iterable[str] | None = None
                 walk(child, root)
             elif stat.S_ISREG(mode):
                 select(child, relative)
-            elif ((includes is None and child.suffix.lower() in (".json", ".jsonl", ".ndjson"))
+            elif ((includes is None and child.suffix.lower() in (".json", *_LINES))
                   or (includes is not None and _matches(relative, includes))):
                 result.problems.append(Problem("PATH", str(child),
                                                "selected input is not a regular file"))

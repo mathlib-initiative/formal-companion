@@ -203,7 +203,14 @@ class Validator:
             if hits != 1:
                 yield path, f"must match exactly one alternative (oneOf), matched {hits}"
         if "not" in schema and self.is_valid(inst, schema["not"]):
-            yield path, "matches a shape that is not allowed here (not)"
+            banned = schema["not"]
+            if (isinstance(inst, dict) and isinstance(banned, dict) and banned.keys() == {"required"}
+                    and len(banned["required"]) > 1):
+                *rest, last = map(repr, banned["required"])
+                both = "both" if len(rest) == 1 else "all of"
+                yield path, f"must not have {both} {', '.join(rest)} and {last}"
+            else:
+                yield path, "matches a shape that is not allowed here (not)"
         if "if" in schema:
             if self.is_valid(inst, schema["if"]):
                 if "then" in schema:

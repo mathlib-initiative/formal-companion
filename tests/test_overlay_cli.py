@@ -740,17 +740,18 @@ class TestSync(OverlayCase):
         self.assertIn(FILE, caught.exception.message)
         self.assertNotIn("read from it", "".join(overlay_sync.read_annotations(self.companion).problems))
 
-    def test_it_refuses_a_file_that_does_not_hold_exactly_one_annotation(self):
+    def test_it_refuses_a_file_that_holds_an_array(self):
         self.assertEqual(self.init(), 0)
         record = overlay_shards.convert(document()).records[0]
         self.annotation().parent.mkdir(parents=True)
         self.annotation().with_name("one.json").write_text(json.dumps(record), encoding="utf-8")
-        for held in ([record, dict(record, id="second")], []):
+        for held in ([record, dict(record, id="second")], [record], []):
             with self.subTest(held=len(held)):
                 self.annotation().write_text(json.dumps(held), encoding="utf-8")
                 with self.assertRaises(CfError) as caught:
                     overlay_sync.sync(self.companion)
-                self.assertIn(f"{FILE}: {len(held)} annotations", caught.exception.message)
+                self.assertEqual(f"{FILE}: a JSON file holds one annotation, an object, not an array [SHAPE]",
+                                 caught.exception.message)
 
     def test_it_refuses_a_file_in_the_annotation_directory_that_is_not_an_annotation_file(self):
         self.ready()
