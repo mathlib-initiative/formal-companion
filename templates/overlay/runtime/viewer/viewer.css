@@ -220,6 +220,11 @@ kbd {
   text-decoration: underline;
 }
 
+/* With no back link, no divider either: the bar starts with the title. */
+.back-link[hidden] + .topbar-sep {
+  display: none;
+}
+
 .topbar-sep {
   flex: none;
   width: 1px;
@@ -1089,9 +1094,29 @@ kbd {
   color: var(--text);
 }
 
-/* The hero: the first key declaration, its statement in full. */
-.hero {
-  margin-top: 26px;
+/* The key declarations: one card each, its statement in full. */
+.key-section {
+  margin-top: 22px;
+}
+
+.key-count {
+  margin-bottom: 10px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.key-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.key-card + .key-card {
+  margin-top: 22px;
+}
+
+.key-list + .more {
+  margin-top: 14px;
 }
 
 .eyebrow {
@@ -1162,7 +1187,7 @@ kbd {
   display: block;
   margin-top: 4px;
   font-family: var(--mono);
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   line-height: 1.35;
   overflow-wrap: anywhere;
@@ -1193,8 +1218,7 @@ kbd {
 }
 
 /* Each source line is a block whose wrapped continuations hang 4ch inside its own indentation. */
-.lean .ln,
-.row-preview .ln {
+.lean .ln {
   display: block;
   padding-left: var(--ind, 4ch);
   text-indent: calc(-1 * var(--ind, 4ch));
@@ -1229,20 +1253,22 @@ kbd {
   margin-top: 6px;
 }
 
-/* Folded lists: more key declarations, then related ones. */
-.fold {
-  margin-top: 28px;
+/* Related declarations: after a rule, quieter, one link per line. */
+.related {
+  margin-top: 36px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line-strong);
 }
 
-.fold-head {
+.related-head {
   display: flex;
   align-items: center;
   gap: 8px;
   min-height: 28px;
-  padding-bottom: 6px;
+  padding-bottom: 4px;
 }
 
-.fold-head h3 {
+.related-head h3 {
   color: var(--faint);
   font-size: 11px;
   font-weight: 600;
@@ -1250,13 +1276,13 @@ kbd {
   text-transform: uppercase;
 }
 
-.fold-role {
+.related-role {
   font-weight: 400;
   letter-spacing: 0;
   text-transform: none;
 }
 
-.fold-head .count {
+.related-head .count {
   color: var(--faint);
   font-size: 11px;
 }
@@ -1272,120 +1298,53 @@ kbd {
   font-size: 12.5px;
 }
 
-.rows {
+.related-list {
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.row {
-  border-top: 1px solid var(--line);
-}
-
-.row-button {
-  display: block;
-  width: calc(100% + 16px);
-  margin: 0 -8px;
-  padding: 10px 8px;
-  border-radius: 6px;
-  text-align: left;
-}
-
-.row-button:hover {
-  background: var(--hover);
-}
-
-.row-top {
+.related-link {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
+  margin: 0 -8px;
+  padding: 5px 8px;
+  border-radius: 6px;
+  color: var(--muted);
+  text-decoration: none;
 }
 
-.row-name {
+a.related-link:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+a.related-link:hover .related-name .leaf {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.related-name {
   min-width: 0;
   font-family: var(--mono);
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: 12.5px;
   overflow-wrap: anywhere;
 }
 
-.row-kind {
+.related-name .leaf {
+  font-weight: 600;
+}
+
+.related-tag {
   display: inline-flex;
   flex: none;
   align-items: center;
   gap: 6px;
   color: var(--faint);
-  font-size: 12px;
+  font-size: 11.5px;
   white-space: nowrap;
-}
-
-/* A chevron says the row opens; it turns down when it is open. */
-.row-button[aria-expanded] .row-kind::after {
-  content: "›";
-  display: inline-block;
-  width: 8px;
-  color: var(--faint);
-  font-size: 14px;
-  line-height: 1;
-  text-align: center;
-  transition: transform 120ms;
-}
-
-.row-button[aria-expanded="true"] .row-kind::after {
-  transform: rotate(90deg);
-}
-
-.row-preview {
-  display: block;
-  max-height: calc(2 * 1.55em);
-  margin-top: 3px;
-  overflow: hidden;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12.5px;
-  line-height: 1.55;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-}
-
-@supports ((-webkit-mask-image: linear-gradient(#000, transparent)) or (mask-image: linear-gradient(#000, transparent))) {
-  .row-preview {
-    -webkit-mask-image: linear-gradient(#000 55%, transparent);
-    mask-image: linear-gradient(#000 55%, transparent);
-  }
-}
-
-.row-body {
-  padding: 0 0 14px;
-}
-
-.row-body .lean {
-  margin-top: 0;
-  font-size: 13px;
-}
-
-.row-foot {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 8px;
-  font-size: 12px;
-}
-
-.row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 10px;
-  min-width: 0;
-  color: var(--muted);
-}
-
-.row-foot .source-link,
-.row-foot .no-link {
-  font-size: 12.5px;
 }
 
 .more {
@@ -1408,7 +1367,7 @@ kbd {
   font-size: 14px;
 }
 
-.fold .empty-line {
+.related .empty-line {
   padding: 10px 0;
   font-size: 13px;
 }
@@ -1446,7 +1405,7 @@ kbd {
     padding: 20px 16px 72px;
   }
 
-  .hero {
+  .key-section {
     margin-top: 16px;
   }
 }

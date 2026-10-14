@@ -26,7 +26,6 @@ export const MAX_JSON_BYTES = 64 * 1024 * 1024;
 /** `pdf.route` must start with this and carry no `..` (the contract's section 3). */
 export const ROUTE_PREFIX = "/__";
 
-export const DEFAULT_BACK_LINK = Object.freeze({ href: "../../index.html", text: "Back to the site" });
 export const DEFAULT_MOUNT = "pdf-overlay";
 export const DEFAULT_STORAGE_KEY = "formal-companion-overlay-page";
 
@@ -145,7 +144,7 @@ export function safeHttpsUrl(value) {
 
 /**
  * The back link's own `href`, or null. It is the one href the config supplies,
- * and its default (`../../index.html`) climbs out of the mount: a relative path
+ * and it usually climbs out of the mount (`../../index.html`): a relative path
  * is accepted with its `..` segments and an `https:` URL whole, but a
  * scheme-bearing (`javascript:`, `data:`), protocol-relative or root-absolute
  * value is refused so the header can never carry a live link the config
@@ -238,12 +237,14 @@ export function readConfig(raw) {
     fail(`overlay.config.json has pdf.route ${JSON.stringify(route)}; a route starts with `
          + `"${ROUTE_PREFIX}" and carries no "..".`);
   }
-  const backLink = isObject(raw.back_link) ? raw.back_link : DEFAULT_BACK_LINK;
-  const backHref = safeBackLinkHref(backLink.href) ?? DEFAULT_BACK_LINK.href;
+  // No back_link, or one whose href is refused, is no back link: the top bar starts with the title.
+  const back = isObject(raw.back_link) ? raw.back_link : {};
+  const backHref = safeBackLinkHref(back.href);
+  const backText = text(back.text);
   const display = isObject(raw.display) ? raw.display : {};
   const site = isObject(raw.site) ? raw.site : {};
   return {
-    backLink: { href: backHref, text: text(backLink.text) || DEFAULT_BACK_LINK.text },
+    backLink: backHref && backText ? { href: backHref, text: backText } : null,
     lede: text(raw.lede),
     pdfRoute: route,
     // build_site.py publishes the annotation files at the site root, the same
@@ -822,9 +823,32 @@ export function splitName(name) {
   return cut > 0 ? [value.slice(0, cut + 1), value.slice(cut + 1)] : ["", value];
 }
 
-/** The card the item view leads with: the first key card, in card order, or null. */
-export function heroCard(item) {
+/** An item's first key card, in card order, or null: the name the page index and the peek show. */
+export function firstKeyCard(item) {
   return asArray(item?.cards).find((entry) => entry.role === "key") ?? null;
+}
+
+/**
+ * An item's cards as the item view lists them: `keys`, each shown with its
+ * statement, and `related`, every other role, one line each.
+ */
+export function splitCards(item) {
+  const cards = asArray(item?.cards);
+  return {
+    keys: cards.filter((entry) => entry.role === "key"),
+    related: cards.filter((entry) => entry.role !== "key"),
+  };
+}
+
+/** The role more than half of `cards` share, said once in the Related heading; "" when none does. */
+export function sharedRole(cards) {
+  const list = asArray(cards);
+  const counts = new Map();
+  for (const entry of list) {
+    counts.set(entry.role, (counts.get(entry.role) ?? 0) + 1);
+  }
+  const [role, most] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  return role && most * 2 > list.length ? role : "";
 }
 
 /** How a region draws its item: "formalized" (solid), "partial" (dashed) or "quiet" (dotted). */
@@ -839,7 +863,7 @@ export function regionCoverage(item) {
   if (coverage === "not_formalized" || coverage === "out_of_scope") {
     return "quiet";
   }
-  return heroCard(item) ? "formalized" : "quiet";
+  return firstKeyCard(item) ? "formalized" : "quiet";
 }
 
 /** Verdict kinds, most serious first: the order a region's stroke picks from. */
@@ -871,7 +895,7 @@ export function regionVerdict(items) {
 /** How many passages a page has, and how many of them a key declaration states. */
 export function pageSummary(items) {
   const list = asArray(items);
-  return { passages: list.length, withKey: list.filter((item) => heroCard(item)).length };
+  return { passages: list.length, withKey: list.filter((item) => firstKeyCard(item)).length };
 }
 
 /** The count line under the page index's heading. */
