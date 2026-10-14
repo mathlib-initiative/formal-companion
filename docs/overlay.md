@@ -169,6 +169,8 @@ cf overlay sync <companion> [--check]
 cf overlay check <companion>
 ```
 
+- `init` writes `pdf-overlay/overlay.config.json`. Commit it before `export`,
+  which refuses a dirty checkout; SHA is that commit.
 - `export` runs `cf export` into a temporary file, validates the document,
   converts it (section 7), scans every file with the vendored
   `literature_links`, and only then replaces the contents of `annotations/`
