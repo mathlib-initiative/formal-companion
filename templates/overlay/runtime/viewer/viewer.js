@@ -213,11 +213,6 @@ const CONTROLS_ROOM = 64;
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-/** The badges a card shows; "fallback" and "unlinked" are said by its source link instead. */
-function shownBadges(card) {
-  return card.badges.filter((badge) => badge !== "fallback" && badge !== "unlinked");
-}
-
 function setClass(node, name, on) {
   if (node?.classList?.toggle) {
     node.classList.toggle(name, Boolean(on));
@@ -250,12 +245,12 @@ export async function bootstrapViewer({
       "previous-page", "next-page", "page-number", "page-count",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
       "page-scroller", "page-stage", "pdf-canvas", "overlay", "region-bar", "region-peek",
-      "details", "selection-empty", "index-heading", "index-meta", "page-index", "legend",
+      "details", "selection-empty", "index-heading", "index-meta", "page-jump", "page-index", "legend",
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
       "item-head", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
       "hero", "also-section", "also-count", "also-list", "also-more",
-      "related-section", "related-count", "related-list", "target-filter",
+      "related-section", "related-heading", "related-count", "related-list", "filter-empty", "target-filter",
       "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note",
     ].map((id) => [id, element(documentRef, id)]),
   );
@@ -321,6 +316,8 @@ export async function bootstrapViewer({
     ui["page-lede"].hidden = !config.lede;
     ui["back-link"].textContent = config.backLink.text;
     ui["back-link"].setAttribute("href", config.backLink.href);
+    // The stylesheet draws a "←" before the link, unless its text already starts with one.
+    setClass(ui["back-link"], "has-arrow", /^\s*[←‹<]/u.test(config.backLink.text));
   }
 
   // --- the page: its regions and their items, in reading order ---------------
@@ -364,27 +361,65 @@ export async function bootstrapViewer({
     }
   }
 
-  /** A declaration name: its namespace faint (fainter still when it repeats the row above), its leaf strong. */
-  function nameNode(name, className, previous = null) {
+  /**
+   * A declaration name: its namespace faint (fainter still when it repeats the
+   * row above), its leaf strong. With `breaks`, a long name may wrap after a
+   * namespace dot or a leaf underscore; one-line places (the page index) pass false.
+   */
+  function nameNode(name, className, previous = null, { breaks = true } = {}) {
     const node = make("span", className);
     const [namespace, leaf] = splitName(name);
-    if (namespace) {
-      const part = make("span", namespace === previous ? "ns ditto" : "ns");
-      for (const piece of namespace.split(/(?<=\.)/)) {
-        part.append(piece, make("wbr"));
+    const pieces = (part, value, cut) => {
+      for (const piece of breaks ? value.split(cut) : [value]) {
+        part.append(piece);
+        if (breaks) {
+          part.append(make("wbr"));
+        }
       }
-      node.append(part);
+      return part;
+    };
+    if (namespace) {
+      node.append(pieces(make("span", namespace === previous ? "ns ditto" : "ns"), namespace, /(?<=\.)/));
     }
-    node.append(make("span", "leaf", leaf));
+    node.append(pieces(make("span", "leaf"), leaf, /(?<=_)(?=.)/));
     return node;
   }
 
-  /** A Lean statement, lightly tinted; the text is the snippet's, exactly. */
+  /**
+   * A Lean statement, lightly tinted; the text is the snippet's, exactly. Each
+   * source line is its own block, so a line too long for the panel wraps under
+   * its own indentation (a hanging indent), not back at the left edge.
+   */
   function leanNode(source, tag = "pre", className = "lean") {
     const node = make(tag, className);
+    let line = null;
+    let indent = 0;
+    let leading = false;
+    const open = () => {
+      line = make("span", "ln");
+      node.append(line);
+      indent = 0;
+      leading = true;
+    };
+    // Each line keeps its "\n", so the statement's text is the snippet's, exactly.
+    const close = () => line?.style.setProperty?.("--ind", `${indent + 4}ch`);
+    let broken = true;
     for (const [kind, value] of leanTokens(source)) {
-      node.append(kind === "tx" ? value : make("span", `tk-${kind}`, value));
+      for (const part of value.split(/(?<=\n)/)) {
+        if (broken) {
+          close();
+          open();
+        }
+        if (leading) {
+          const spaces = /^ */.exec(part)[0].length;
+          indent += spaces;
+          leading = spaces === part.length;
+        }
+        line.append(kind === "tx" ? part : make("span", `tk-${kind}`, part));
+        broken = part.endsWith("\n");
+      }
     }
+    close();
     return node;
   }
 
@@ -439,11 +474,37 @@ export async function bootstrapViewer({
     return entry;
   }
 
+  /** On a page with no passages: buttons to the nearest pages that have some. */
+  function renderPageJump(empty) {
+    const pages = empty ? [...state.index.pages.keys()].sort((a, b) => a - b) : [];
+    const before = pages.filter((page) => page < state.currentPage).at(-1);
+    const after = pages.find((page) => page > state.currentPage);
+    const jump = (page, text) => {
+      const button = make("button", "text-button", text);
+      button.type = "button";
+      button.addEventListener("click", async () => {
+        await changePage(page);
+        focusQuietly(ui["index-heading"]);
+      });
+      return button;
+    };
+    const buttons = [];
+    if (before !== undefined) {
+      buttons.push(jump(before, after === undefined ? `‹ Previous passage: p. ${before}` : `‹ p. ${before}`));
+    }
+    if (after !== undefined) {
+      buttons.push(jump(after, `Next passage: p. ${after} ›`));
+    }
+    ui["page-jump"].replaceChildren(...buttons);
+    ui["page-jump"].hidden = !buttons.length;
+  }
+
   function renderIndex() {
     const entries = pageEntries();
     const items = entries.map((entry) => entry.item);
     ui["index-heading"].textContent = `Page ${state.currentPage}`;
     ui["index-meta"].textContent = pageSummaryText(items);
+    renderPageJump(!entries.length);
     ui["page-index"].setAttribute("aria-label", `Passages on page ${state.currentPage}`);
     ui["page-index"].replaceChildren();
     ui["page-index"].hidden = !entries.length;
@@ -453,7 +514,10 @@ export async function bootstrapViewer({
       row.type = "button";
       row.dataset.regionId = region.id;
       row.dataset.itemId = item.id;
-      row.append(make("span", `dot coverage-${item.coverage || "unknown"}`));
+      // The same mark as the region's outline and the legend: solid, dashed or dotted.
+      const mark = make("span", `swatch mini ${regionCoverage(item)}`);
+      mark.title = coverageWord(item.coverage) || "No key declaration";
+      row.append(mark);
       const cell = make("span", "index-label");
       const label = make("span", "index-title", labelParts(item.label).title);
       label.title = item.label;
@@ -468,7 +532,7 @@ export async function bootstrapViewer({
       const hero = heroCard(item);
       const right = make("span", hero ? "index-decl" : "index-decl is-empty");
       if (hero) {
-        right.append(nameNode(hero.name, "decl"));
+        right.append(nameNode(hero.name, "decl", null, { breaks: false }));
         if (item.cards.length > 1) {
           right.append(make("span", "more", ` +${item.cards.length - 1}`));
         }
@@ -477,7 +541,10 @@ export async function bootstrapViewer({
           : "No declaration linked";
       }
       row.append(right);
-      row.addEventListener("click", () => selectRegion(region, item.id));
+      row.addEventListener("click", () => {
+        selectRegion(region, item.id);
+        focusQuietly(ui["item-label"]);
+      });
       row.addEventListener("mouseenter", () => setHot(region.id));
       row.addEventListener("mouseleave", () => setHot(null));
       row.addEventListener("focus", () => setHot(region.id));
@@ -532,6 +599,20 @@ export async function bootstrapViewer({
     ui["item-position"].textContent = at >= 0 ? `${at + 1} of ${entries.length}` : "";
     ui["previous-item"].disabled = at <= 0;
     ui["next-item"].disabled = at < 0 || at >= entries.length - 1;
+  }
+
+  /** Move focus without scrolling, when the control that had it is about to be hidden or disabled. */
+  function focusQuietly(node) {
+    node?.focus?.({ preventScroll: true });
+  }
+
+  /** Back to the page index, with focus on the row of the item that was open. */
+  function backToPage() {
+    const was = state.selected?.id;
+    selectRegion(null);
+    const row = [...(ui["page-index"].children ?? [])].map((li) => li.children?.[0])
+      .find((button) => button?.dataset?.itemId === was);
+    focusQuietly(row ?? ui["index-heading"]);
   }
 
   function stepItem(delta) {
@@ -592,7 +673,7 @@ export async function bootstrapViewer({
     if (verdict) {
       left.append(verdict);
     }
-    for (const badge of shownBadges(card)) {
+    for (const badge of card.badges) {
       left.append(make("span", badge.startsWith("sorry") ? "tag is-sorry" : "tag", badge));
     }
     row.append(left, sourceLink(card));
@@ -622,7 +703,7 @@ export async function bootstrapViewer({
   }
 
   /** One card as a row: a button that opens its statement, and the statement's body below it. */
-  function cardRow(card, { previous, preview, related }) {
+  function cardRow(card, { previous, preview, sharedRole }) {
     const li = make("li", "row");
     const button = make("button", "row-button");
     button.type = "button";
@@ -638,7 +719,7 @@ export async function bootstrapViewer({
       const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
       kind.append(make("span", `dot verdict-dot ${display.className}`));
     }
-    kind.append(related ? [card.role, card.kind].filter(Boolean).join(" · ") : card.kind);
+    kind.append(card.role === sharedRole ? card.kind : [card.role, card.kind].filter(Boolean).join(" · "));
     top.append(name, kind);
     button.append(top);
     let previewNode = null;
@@ -661,7 +742,7 @@ export async function bootstrapViewer({
       }
       const foot = make("div", "row-foot");
       const meta = make("span", "row-meta");
-      const words = [card.relation, ...shownBadges(card)].filter(Boolean);
+      const words = [card.relation, ...card.badges].filter(Boolean);
       if (words.length) {
         meta.append(words.join(" · "));
       }
@@ -720,17 +801,30 @@ export async function bootstrapViewer({
     ui["also-section"].hidden = !keys.length;
     ui["also-count"].textContent = String(query ? shownKeys.length : keys.length);
     const capped = state.alsoAll ? shownKeys : shownKeys.slice(0, ALSO_ROWS);
-    fillRows(ui["also-list"], capped, { preview: true, related: false });
+    fillRows(ui["also-list"], capped, { preview: true, sharedRole: "key" });
     const hidden = shownKeys.length - capped.length;
     ui["also-more"].hidden = hidden <= 0;
     ui["also-more"].textContent = hidden > 0 ? `Show ${hidden} more` : "";
 
     ui["related-section"].hidden = !related.length && !filtered;
+    // The role most related cards share is said once, in the heading; a row
+    // says its role only when it is another one.
+    const counts = new Map();
+    for (const card of related) {
+      counts.set(card.role, (counts.get(card.role) ?? 0) + 1);
+    }
+    const [common, most] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+    const shared = common && most * 2 > related.length ? common : "";
+    ui["related-heading"].replaceChildren("Related");
+    if (shared) {
+      ui["related-heading"].append(make("span", "fold-role", ` · ${shared}`));
+    }
     ui["related-count"].textContent = String(query ? shownRelated.length : related.length);
     ui["target-filter"].hidden = !filtered;
+    ui["filter-empty"].hidden = !query || shownKeys.length + shownRelated.length > 0;
     const page = paginateCards(shownRelated, state.cardPage, CARD_PAGE_SIZE);
     state.cardPage = page.page;
-    fillRows(ui["related-list"], page.items, { preview: false, related: true });
+    fillRows(ui["related-list"], page.items, { preview: false, sharedRole: shared });
     ui["related-pager"].hidden = page.pageCount <= 1;
     const first = (page.page - 1) * CARD_PAGE_SIZE + 1;
     ui["target-page"].textContent = page.total
@@ -763,6 +857,7 @@ export async function bootstrapViewer({
     }
     setClass(ui.overlay, "has-selection", region);
     hidePeek();
+    setHot(null);
     renderItemChoices(region);
     selectItem(region ? itemId ?? preferredItemId(region, state.index.items) : null);
     updateBar();
@@ -899,8 +994,9 @@ export async function bootstrapViewer({
             selectRegion(region);
           }
         });
+        // The selected region is the passage being read: hovering it adds nothing to light up.
         polygon.addEventListener("pointerenter", (event) => {
-          if (event.pointerType !== "touch") {
+          if (event.pointerType !== "touch" && state.region?.id !== region.id) {
             showPeek(region);
             setHot(region.id);
           }
@@ -910,7 +1006,7 @@ export async function bootstrapViewer({
           setHot(null);
         });
         polygon.addEventListener("focus", () => {
-          if (polygon.matches?.(":focus-visible")) {
+          if (polygon.matches?.(":focus-visible") && state.region?.id !== region.id) {
             showPeek(region);
             setHot(region.id);
           }
@@ -941,14 +1037,16 @@ export async function bootstrapViewer({
     const displayed = page.getViewport({ rotation: own, scale: 1 });
     const viewport = page.getViewport({ rotation: (own + state.rotation) % 360, scale: state.zoom / 100 });
     const deviceScale = Math.max(1, globalThis.devicePixelRatio || 1);
-    const canvas = ui["pdf-canvas"];
-    canvas.width = Math.ceil(viewport.width * deviceScale);
-    canvas.height = Math.ceil(viewport.height * deviceScale);
-    canvas.style.width = `${viewport.width}px`;
-    canvas.style.height = `${viewport.height}px`;
-    ui["page-stage"].style.width = `${viewport.width}px`;
-    ui["page-stage"].style.height = `${viewport.height}px`;
-    const context = canvas.getContext("2d", { alpha: false });
+    // Render off screen, so the page on screen stays until the next one is ready:
+    // no blank or black frame on a page turn, a zoom or a rotation.
+    const off = documentRef.createElement("canvas");
+    off.width = Math.ceil(viewport.width * deviceScale);
+    off.height = Math.ceil(viewport.height * deviceScale);
+    const context = off.getContext("2d", { alpha: false });
+    if (context?.fillRect) {
+      context.fillStyle = "#fff";
+      context.fillRect(0, 0, off.width, off.height);
+    }
     state.renderTask = page.render({
       canvasContext: context,
       transform: deviceScale === 1 ? null : [deviceScale, 0, 0, deviceScale, 0, 0],
@@ -965,8 +1063,21 @@ export async function bootstrapViewer({
     if (epoch !== state.renderEpoch) {
       return;
     }
+    const canvas = ui["pdf-canvas"];
+    canvas.width = off.width;
+    canvas.height = off.height;
+    canvas.getContext("2d", { alpha: false })?.drawImage?.(off, 0, 0);
+    canvas.style.width = `${viewport.width}px`;
+    canvas.style.height = `${viewport.height}px`;
+    ui["page-stage"].style.width = `${viewport.width}px`;
+    ui["page-stage"].style.height = `${viewport.height}px`;
+    ui["page-stage"].hidden = false;
     hidePeek();
     renderOverlay(displayed, viewport);
+    if (state.region) {
+      // A zoom or a rotation keeps the selected passage in view.
+      scrollRegionIntoView(state.region);
+    }
     ui["page-number"].value = String(state.currentPage);
     ui["page-count"].textContent = `/ ${state.pdfDocument.numPages}`;
     ui["previous-page"].disabled = state.currentPage <= 1;
@@ -980,7 +1091,6 @@ export async function bootstrapViewer({
   function showFaithfulness(shown) {
     state.faithfulness = shown;
     ui["toggle-faithfulness"].setAttribute("aria-pressed", String(shown));
-    ui["toggle-faithfulness"].textContent = shown ? "Hide faithfulness" : "Show faithfulness";
     try {
       storage?.setItem(`${state.config.storageKey}-faithfulness`, shown ? "1" : "0");
     } catch {
@@ -1058,6 +1168,10 @@ export async function bootstrapViewer({
       : 1;
     state.rotation = 0;
     state.zoom = 100;
+    // The controls show the real page and count from the start, never "/ 0".
+    ui["page-number"].value = String(state.currentPage);
+    ui["page-number"].max = String(state.pdfDocument.numPages);
+    ui["page-count"].textContent = `/ ${state.pdfDocument.numPages}`;
     ui.workspace.hidden = false;
     selectRegion(null);
     await renderPage();
@@ -1074,9 +1188,15 @@ export async function bootstrapViewer({
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
-  ui["back-to-page"].addEventListener("click", () => selectRegion(null));
-  ui["previous-item"].addEventListener("click", () => stepItem(-1));
-  ui["next-item"].addEventListener("click", () => stepItem(1));
+  ui["back-to-page"].addEventListener("click", backToPage);
+  for (const [id, delta, other] of [["previous-item", -1, "next-item"], ["next-item", 1, "previous-item"]]) {
+    ui[id].addEventListener("click", () => {
+      stepItem(delta);
+      if (ui[id].disabled) {
+        focusQuietly(ui[other].disabled ? ui["item-label"] : ui[other]);
+      }
+    });
+  }
   ui["also-more"].addEventListener("click", () => {
     state.alsoAll = true;
     renderCards();
@@ -1112,7 +1232,10 @@ export async function bootstrapViewer({
     else if (event.key === "+" || event.key === "=") changeZoom(state.zoom + 10);
     else if (event.key === "-") changeZoom(state.zoom - 10);
     else if (event.key.toLowerCase() === "r") rotate(90);
-    else if (event.key === "Escape") selectRegion(null);
+    else if (event.key === "Escape") {
+      if (state.selected && ui.details.contains?.(documentRef.activeElement)) backToPage();
+      else selectRegion(null);
+    }
   });
   // An edited `#page=` in the address bar; the viewer's own replaceState fires no hashchange.
   windowRef?.addEventListener?.("hashchange", () => {

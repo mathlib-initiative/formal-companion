@@ -23,12 +23,12 @@
   <body>
     <a class="skip-link" href="#page-scroller">Skip to the PDF</a>
     <header class="topbar">
-      <a id="back-link" class="back-link" href="../../index.html">← Back to the site</a>
+      <a id="back-link" class="back-link" href="../../index.html">Back to the site</a>
       <span class="topbar-sep" aria-hidden="true"></span>
       <h1 id="page-heading">Source and formalization overlay</h1>
       <button id="toggle-faithfulness" class="switch" type="button" aria-pressed="false" hidden>Show faithfulness</button>
       <details id="status-chip" class="status-chip">
-        <summary>
+        <summary aria-labelledby="status">
           <span id="status-glyph" class="status-glyph" aria-hidden="true"></span>
           <span id="status" class="status-text" role="status" aria-live="polite">Loading…</span>
         </summary>
@@ -40,18 +40,31 @@
       </details>
     </header>
 
-    <main id="viewer-main" class="main">
+    <main class="main">
       <p id="error" class="error" role="alert" hidden></p>
 
       <section id="workspace" class="workspace" aria-label="PDF inspection workspace" hidden>
         <div class="viewer-column">
+          <nav class="toolbar" aria-label="PDF controls">
+            <button id="previous-page" class="icon" type="button" aria-label="Previous page">‹</button>
+            <input id="page-number" type="number" inputmode="numeric" min="1" value="1" aria-label="Page">
+            <span id="page-count" class="page-count"></span>
+            <button id="next-page" class="icon" type="button" aria-label="Next page">›</button>
+            <span class="toolbar-sep" aria-hidden="true"></span>
+            <button id="zoom-out" class="icon" type="button" aria-label="Zoom out">−</button>
+            <output id="zoom-value" class="zoom-value" aria-label="Zoom">100%</output>
+            <button id="zoom-in" class="icon" type="button" aria-label="Zoom in">+</button>
+            <span class="toolbar-sep" aria-hidden="true"></span>
+            <button id="rotate-right" class="icon" type="button" aria-label="Rotate clockwise">↻</button>
+          </nav>
+
           <div
             id="page-scroller"
             class="page-scroller"
             tabindex="0"
             aria-label="Rendered PDF page with selectable source regions"
           >
-            <div id="page-stage" class="page-stage">
+            <div id="page-stage" class="page-stage" hidden>
               <canvas id="pdf-canvas" aria-label="Rendered PDF page"></canvas>
               <svg
                 id="overlay"
@@ -64,25 +77,13 @@
               <div id="region-peek" class="region-peek" aria-hidden="true" hidden></div>
             </div>
           </div>
-
-          <nav class="toolbar" aria-label="PDF controls">
-            <button id="previous-page" class="icon" type="button" aria-label="Previous page">‹</button>
-            <input id="page-number" type="number" inputmode="numeric" min="1" value="1" aria-label="Page">
-            <span id="page-count" class="page-count">/ 0</span>
-            <button id="next-page" class="icon" type="button" aria-label="Next page">›</button>
-            <span class="toolbar-sep" aria-hidden="true"></span>
-            <button id="zoom-out" class="icon" type="button" aria-label="Zoom out">−</button>
-            <output id="zoom-value" class="zoom-value" aria-label="Zoom">100%</output>
-            <button id="zoom-in" class="icon" type="button" aria-label="Zoom in">+</button>
-            <span class="toolbar-sep" aria-hidden="true"></span>
-            <button id="rotate-right" class="icon" type="button" aria-label="Rotate clockwise">↻</button>
-          </nav>
         </div>
 
         <aside id="details" class="details-column" aria-label="Lean counterparts">
           <div id="selection-empty" class="page-view">
-            <h2 id="index-heading" class="index-heading">Page 1</h2>
+            <h2 id="index-heading" class="index-heading" tabindex="-1">Page 1</h2>
             <p id="index-meta" class="index-meta"></p>
+            <p id="page-jump" class="page-jump" hidden></p>
             <p id="page-lede" class="lede">
               Inspect the verified source PDF and the declarations attributed to its items.
             </p>
@@ -101,14 +102,14 @@
               <button id="back-to-page" class="text-button" type="button">← Page 1</button>
               <div class="stepper">
                 <button id="previous-item" class="icon" type="button" aria-label="Previous passage">‹</button>
-                <span id="item-position"></span>
+                <span id="item-position" aria-live="polite"></span>
                 <button id="next-item" class="icon" type="button" aria-label="Next passage">›</button>
               </div>
             </div>
             <div id="item-choices" class="item-choices" hidden></div>
 
             <header id="item-head" class="item-head">
-              <h3 id="item-label" class="item-label"></h3>
+              <h2 id="item-label" class="item-label" tabindex="-1"></h2>
               <div class="item-meta">
                 <p id="target-summary" class="target-summary"></p>
                 <p id="item-locator" class="item-locator"></p>
@@ -121,7 +122,7 @@
 
             <section id="also-section" class="fold" aria-labelledby="also-heading" hidden>
               <div class="fold-head">
-                <h4 id="also-heading">Also states it</h4>
+                <h3 id="also-heading">Also states it</h3>
                 <span id="also-count" class="count"></span>
               </div>
               <ul id="also-list" class="rows"></ul>
@@ -130,8 +131,8 @@
 
             <section id="related-section" class="fold" aria-labelledby="related-heading" hidden>
               <div class="fold-head">
-                <h4 id="related-heading">Related</h4>
-                <span id="related-count" class="count"></span>
+                <h3 id="related-heading">Related</h3>
+                <span id="related-count" class="count" aria-live="polite"></span>
                 <input
                   id="target-filter"
                   class="filter"
@@ -143,6 +144,7 @@
                 >
               </div>
               <ul id="related-list" class="rows"></ul>
+              <p id="filter-empty" class="empty-line" hidden>No declaration matches.</p>
               <nav id="related-pager" class="pagination" aria-label="Related declaration pages" hidden>
                 <button id="previous-targets" class="icon" type="button" aria-label="Previous declarations">‹</button>
                 <output id="target-page" aria-live="polite"></output>

@@ -112,13 +112,14 @@ From the records alone it builds:
 - items: one per extension `item`, labelled by `label`, with `status` as its
   coverage word, `note` as its coverage note, the extension's `locator` (its
   `text`, else its printed and physical pages, less the segment that repeats
-  the label) and `verdicts` (each one line: kind, summary and resolution,
+  the label and cut at the first `;` or ` / `, on one line) and `verdicts` (each one line: kind, summary and resolution,
   shown only on request), and one footer line naming the link `provenance`
   methods and whether a person reviewed the links and verdicts;
 - cards: one per record with a `target`, once per item however many regions
   repeat it, in the order key, attributed, support, example, helper (then by
   record id), shown as the first key card with its statement, then the other
-  key cards and the rest as rows that open, each list headed by its count,
+  key cards and the rest as rows that open, each list headed by its count
+  (and by the role, when every related card has the same one),
   with the extension's snippet, destination resolution and
   fallback label, declaration kind and flags, and declaration verdict. The target resolves against the
   annotation file's URL and becomes a link only when it is `https:` or a
@@ -127,7 +128,8 @@ From the records alone it builds:
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
   order the files came in; with nothing selected the panel lists the page's
-  items in that order, with how many a key declaration states.
+  items in that order, with how many a key declaration states, and a page
+  with none points to the nearest pages that have some.
 
 A record it cannot place is dropped with a notice, never guessed at. Every
 string reaches the DOM through `textContent` or attribute setters.
