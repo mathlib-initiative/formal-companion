@@ -75,7 +75,7 @@ def _safe_id(value: str, kind: str = "id") -> str:
 
 
 def skill_root() -> Path:
-    """The companion-faithfulness repo root (parent of scripts/)."""
+    """The formal-companion repo root (parent of scripts/)."""
     return Path(__file__).resolve().parents[2]
 
 

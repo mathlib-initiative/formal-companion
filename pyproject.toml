@@ -1,4 +1,4 @@
-# Machine-readable requirements for companion-faithfulness.
+# Machine-readable requirements for formal-companion.
 #
 # The runtime contract was stated in README.md prose and enforced nowhere: no
 # `requires-python`, no dependency declaration, and nothing a tool could read.
@@ -21,13 +21,13 @@
 # two adoption blockers.
 
 [project]
-name = "companion-faithfulness"
+name = "formal-companion"
 version = "0.2.0"                        # kept in step with scripts/cflib/__init__.py
-description = "Audit Lean 4 book companions against the sources they formalise (findings only)."
+description = "Audit Lean 4 book companions against the sources they formalize, and generate their PDF overlays."
 readme = "README.md"
 requires-python = ">=3.11"               # scripts/cf.py enforces the same floor at startup
 license = { text = "Apache-2.0" }
-authors = [{ name = "the companion-faithfulness contributors" }]
+authors = [{ name = "the formal-companion contributors" }]
 keywords = ["lean4", "mathlib", "formalization", "audit", "faithfulness"]
 classifiers = [
   "License :: OSI Approved :: Apache Software License",

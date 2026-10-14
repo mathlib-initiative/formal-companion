@@ -104,7 +104,7 @@ Overrides exist and are the exception: `cf sources set <id> offset=16`,
 
 | | holds | git |
 |---|---|---|
-| the skill repo (`companion-faithfulness/`) | code, templates, docs, the source **registry** (metadata only) | committed, may be shared |
+| the skill repo (`formal-companion/`) | code, templates, docs, the source **registry** (metadata only) | committed, may be shared |
 | the workspace | source text, page images, statement tables, corpus, ledgers, reports | local repo, **no remote**, source material gitignored |
 
 Source text, page images and crops never enter the skill repo. Workspace data

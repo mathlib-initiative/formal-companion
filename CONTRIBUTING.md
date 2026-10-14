@@ -110,8 +110,7 @@ moving detail into `references/`.
   **why**; the repo's voice is plain, past-tense and specific about the failure
   a change prevents.
 - Do not commit anything from a workspace directory, and do not `git add -A`.
-- End a commit message with the `Co-Authored-By:` line naming the model that
-  wrote the change, if one did.
+- Commit messages carry no AI attribution lines.
 - Green on `python3 -m unittest discover -s tests` before you open it.
 - Reviewers: no private-companion data or book text in any commit or message
   (item 4 above); `CF_SCRUB_RANGE=origin/master..HEAD python3 -m pytest -q
