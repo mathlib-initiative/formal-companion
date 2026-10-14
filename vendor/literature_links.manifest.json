@@ -1,21 +1,20 @@
 {
-  "commit": "3d5f60c14cc0057e99fed837f84ed07c4fe71da1",
+  "commit": "3ad716af885ca7ebe8091f824fca829e03492f00",
   "extra_files": [
     "schema/companion.schema.json"
   ],
   "files": {
     "__init__.py": "a34a8efe249dcd9ff4b51539ab93758cd8deaf3d94bdced10e995acc413c4e1f",
     "__main__.py": "42e1507a2bd4e3ab9e856c59434480b58aeb4babddd1afb0efa0191d7bf119e1",
-    "cli.py": "99766da8abfd43bfdb3b8e8c8d4b0475f834ac02a9e0c3d694427f346cbe35d7",
-    "companion.py": "1355f385a6a5e9ad8c09543c2c558935083a306ea99d4bc98acfabfea2f54593",
-    "discovery.py": "36a59707138ce743c95e786e88fbf1bddaa94d2c0a1202631677650ceefab408",
+    "cli.py": "d58dd81592728025edf216139fa811d438ca30ea652d09a95b9917e22507c4d7",
+    "companion.py": "4026d28b70cc8a8597b79d5a00652589c5d128c68c92e6020142c14354f57ad6",
+    "discovery.py": "927dc4f55b696cd01412df605b4da986d8b077ee7fbfa75079069a18632a7c1d",
     "py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-    "schema/companion.schema.json": "ebb0369a69e5bfd981e955673172f6d25033a073bcfaff80d50660f94ccdcd28",
-    "schemacheck.py": "6f27dd5f70506ce69fbe78b731d99ff27dadd4f191362df26c2ed1efb2369b97"
+    "schema/companion.schema.json": "46fd5aea961ec81611382bc842406eb9eb3b64aebaae8516cb2b962243239b00",
+    "schemacheck.py": "dc32a7352efe07bb54a8fe6642aad24b7d95c86e21c59fb64186ad327a1f8e2a"
   },
   "license": "Apache-2.0",
   "source": "src/literature_links",
-  "tag": "v1.0.0",
   "upstream": "https://github.com/mathlib-initiative/literature-links",
   "version": "1.0.0"
 }
