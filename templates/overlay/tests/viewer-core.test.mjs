@@ -21,31 +21,40 @@ import {
   VERDICT_KINDS,
   VERDICT_LABELS,
   buildIndex,
-  cardSummaryText,
   cardsMatching,
   coverageSummary,
+  coverageWord,
   declarationVerdictDisplay,
-  groupCards,
+  heroCard,
+  labelParts,
+  leanTokens,
+  locatorTail,
   locatorText,
+  pageSummary,
+  pageSummaryText,
   paginateCards,
   parseBundle,
   pdfSource,
   pointToViewport,
   preferredItemId,
   provenanceLabel,
-  provenanceText,
   quadToViewport,
   readConfig,
   readAnnotationsBlock,
   recordRegion,
+  regionCoverage,
+  regionVerdict,
   resolutionText,
+  reviewFooter,
   safeBackLinkHref,
   safeHttpsUrl,
   sha256Hex,
   siteRootFor,
+  splitName,
   targetHref,
   verdictDisplay,
-  verdictNote,
+  verdictFooter,
+  verdictLine,
   verifyPdfBytes,
 } from "../runtime/viewer/viewer-core.js";
 import {
@@ -367,20 +376,43 @@ test("locator: the cluster locator, else the printed and physical pages", () => 
   assert.equal(locatorText(undefined), "");
 });
 
-test("provenance: each card carries its link's, and the item line counts key and attributed", () => {
+test("provenance: each card carries its link's method and whether a person reviewed it", () => {
   const { index } = fixture();
   const theorem = index.items.get("item:theorem-1.1");
   assert.deepEqual(theorem.cards.map((card) => card.provenance), [
     "curation, unconfirmed", "curation, unconfirmed", "curation, unconfirmed", "pipeline, confirmed",
     "curation, unconfirmed",
   ]);
-  assert.equal(provenanceText(theorem),
-               "1 key declaration for this result (2 attributed); curation, unconfirmed; pipeline, confirmed.");
-  assert.equal(provenanceText(index.items.get("item:definition-2.1")), "", "no provenance, no line");
-  assert.equal(provenanceText({ cards: [{ provenance: "curation, unconfirmed", role: "support" }] }),
-               "Links: curation, unconfirmed.");
+  assert.deepEqual(theorem.cards.map((card) => [card.provenanceMethod, card.reviewed]), [
+    ["curation", false], ["curation", false], ["curation", false], ["pipeline", true], ["curation", false],
+  ]);
+  const [definition] = index.items.get("item:definition-2.1").cards;
+  assert.deepEqual([definition.provenanceMethod, definition.reviewed], ["", null]);
   assert.equal(provenanceLabel({ method: "curation" }), "curation");
   assert.equal(provenanceLabel({ confirmed_by_human: true }), "");
+});
+
+test("footer: one line says how the links were made and whether anyone reviewed them", () => {
+  const { index } = fixture();
+  const theorem = index.items.get("item:theorem-1.1");
+  assert.equal(reviewFooter(theorem), "Curation and pipeline links, partly reviewed.");
+  assert.equal(reviewFooter(theorem, { faithfulness: true }),
+               "Curation and pipeline links and machine verdicts, partly reviewed.");
+  assert.equal(reviewFooter(index.items.get("item:definition-2.1")), "Links.");
+  assert.equal(reviewFooter(index.items.get("item:exercise-3.1"), { faithfulness: true }), "");
+  const curated = { cards: [{ provenanceMethod: "curation", reviewed: false }], verdicts: [] };
+  assert.equal(reviewFooter(curated), "Curation links, unreviewed.");
+  const machine = { cards: [{ provenanceMethod: "", reviewed: false }],
+                    verdicts: [{ status: "unconfirmed", verdict: "faithful" }] };
+  assert.equal(reviewFooter(machine, { faithfulness: true }), "Links and machine verdicts, unreviewed.");
+  assert.equal(reviewFooter(machine), "Links, unreviewed.");
+  const reviewed = { cards: [{ provenanceMethod: "curation", reviewed: true }],
+                     verdicts: [{ status: "human_confirmed", verdict: "proxy" }] };
+  assert.equal(reviewFooter(reviewed, { faithfulness: true }), "Curation links and machine verdicts, reviewed.");
+  assert.equal(reviewFooter({ cards: [], verdicts: [{ status: "unconfirmed", verdict: "proxy" }] },
+                            { faithfulness: true }), "Machine verdicts, unreviewed.");
+  assert.equal(verdictFooter([machine, curated]), "Machine verdicts, unreviewed.");
+  assert.equal(verdictFooter([curated]), "");
 });
 
 // --- coverage and the summary line ------------------------------------------
@@ -419,16 +451,6 @@ test("coverage: the stylesheet has a colour for every value and every verdict ki
   }
   assert.ok(css.includes(".verdict-badge.verdict-fixed"));
 });
-
-test("summary: the line above the cards states the status or a count", () => {
-  assert.equal(cardSummaryText({ coverage: "not_formalized", shown: 0 }), "Not formalized.");
-  assert.equal(cardSummaryText({ shown: 5 }), "5 linked declarations.");
-  assert.equal(cardSummaryText({ shown: 1 }), "1 linked declaration.");
-  assert.equal(cardSummaryText({ shown: 0 }), "No declaration is linked to this item.");
-  assert.equal(cardSummaryText({ coverage: "a-new-word", shown: 2 }), "2 linked declarations.");
-});
-
-// --- hrefs ------------------------------------------------------------------
 
 test("href: a target resolves against its own file and must be https or this site", () => {
   const file = `${ORIGIN}/annotations/1.1/theorem-1.1.json`;
@@ -483,18 +505,22 @@ test("verdicts: a repaired declaration reads faithful and an unchanged one super
                    { className: "verdict-proxy", label: "proxy definition" });
 });
 
-test("verdicts: the note ends with the adjudication method, the status and the resolution", () => {
+test("verdicts: a line is the kind, the summary and the resolution, never 'unconfirmed'", () => {
   const { index } = fixture();
   const [verdict] = index.items.get("item:theorem-1.1").verdicts;
-  assert.deepEqual(verdictNote(verdict), {
-    className: "verdict-note verdict-fixed",
-    text: "Faithfulness: fixed: statement deviation (medium). The box bound was stated for closed boxes only. "
-      + "[adjudication, fixed; fixed, PR #7]",
-    title: "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler",
+  assert.deepEqual(verdictLine(verdict), {
+    className: "verdict-fixed",
+    kind: "fixed",
+    label: "fixed: statement deviation (medium)",
+    resolution: "fixed, PR #7",
+    statusWord: "",
+    summary: "The box bound was stated for closed boxes only.",
+    title: "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler\nadjudication",
   });
-  const bare = verdictNote({ severity: "none", status: "human_confirmed", summary: "S.", verdict: "proxy" });
-  assert.equal(bare.text, "Faithfulness: proxy definition. S. [human confirmed]");
-  assert.equal(bare.title, "");
+  const open = verdictLine({ severity: "none", status: "unconfirmed", summary: "S.", verdict: "faithful" });
+  assert.deepEqual([open.label, open.statusWord, open.kind, open.title], ["faithful", "", "faithful", ""]);
+  assert.equal(verdictLine({ status: "human_confirmed", summary: "S.", verdict: "proxy" }).statusWord,
+               "human confirmed");
 });
 
 test("verdicts: a resolution adds one line, and an open verdict adds none", () => {
@@ -525,7 +551,7 @@ test("pdf: the bytes are verified against the pinned sha256", async () => {
 
 // --- the card list ----------------------------------------------------------
 
-test("cards: filtering, paging and grouping keep the role order", () => {
+test("cards: filtering and paging keep the role order", () => {
   const { index } = fixture();
   const cards = cardsOf(index, "item:theorem-1.1");
   assert.equal(cardsMatching(cards, { role: "key" }).length, 1);
@@ -539,7 +565,96 @@ test("cards: filtering, paging and grouping keep the role order", () => {
   assert.equal(paginateCards(cards, 99, 2).page, 3);
   assert.equal(paginateCards([], 1, 2).pageCount, 1);
   assert.throws(() => paginateCards(cards, 1, 0), /positive integer/);
-  assert.deepEqual(groupCards(cards).map((group) => group.role), LINK_ROLES);
-  const doubled = groupCards([cards[0], { ...cards[1], role: "key" }, cards[2]]);
-  assert.deepEqual(doubled.map((group) => [group.role, group.cards.length]), [["key", 2], ["support", 1]]);
+});
+
+// --- the bridge view --------------------------------------------------------
+
+test("labels: a trailing parenthetical that names something becomes the subtitle", () => {
+  assert.deepEqual(labelParts("Definition 1.1.1 (Intervals, boxes, elementary sets)"),
+                   { subtitle: "Intervals, boxes, elementary sets", title: "Definition 1.1.1" });
+  assert.deepEqual(labelParts("Equation (1.1)"), { subtitle: "", title: "Equation (1.1)" });
+  assert.deepEqual(labelParts("Remark 7.1 and equation (7)"), { subtitle: "", title: "Remark 7.1 and equation (7)" });
+  assert.deepEqual(labelParts("Théorème 2 (Énoncé)"), { subtitle: "Énoncé", title: "Théorème 2" });
+  assert.deepEqual(labelParts(""), { subtitle: "", title: "" });
+});
+
+test("labels: the locator drops the segment that repeats the label, and only that", () => {
+  assert.equal(locatorTail("Display 9.3", "Display 9.3, p. 9, in section 3.2"), "p. 9, in section 3.2");
+  assert.equal(locatorTail("Definition 3.3", "Section 3, Definition 3.3, p. 18"), "Section 3, p. 18");
+  const long = "Section 1.1, Definition 1.1.1 and Exercises 1.1.1 and 1.1.4, printed pp. 5 and 9, PDF pp. 21 and 25.";
+  assert.equal(locatorTail("Definition 1.1.1 (Intervals, boxes)", long), long, "nothing repeats the label");
+  assert.equal(locatorTail("Lemma 2", "Lemma 2"), "");
+  assert.equal(locatorTail("Lemma 2", ""), "");
+});
+
+test("names: a declaration splits into its namespace and its leaf", () => {
+  assert.deepEqual(splitName("Elementary.SourceInterval.left"), ["Elementary.SourceInterval.", "left"]);
+  assert.deepEqual(splitName("theorem_1_1"), ["", "theorem_1_1"]);
+  assert.deepEqual(splitName("example:0123456789ab"), ["", "example:0123456789ab"]);
+  assert.deepEqual(splitName(undefined), ["", ""]);
+});
+
+test("coverage: one word per status for the pill, and none for an unknown one", () => {
+  for (const value of COVERAGE_VALUES) {
+    assert.ok(coverageWord(value), `${value} has no word`);
+  }
+  assert.equal(coverageWord("formalized"), "Formalized");
+  assert.equal(coverageWord("example_only"), "Examples only");
+  assert.equal(coverageWord("mostly"), "");
+});
+
+test("hero and regions: the first key card leads, and coverage picks the stroke", () => {
+  const { index } = fixture();
+  const theorem = index.items.get("item:theorem-1.1");
+  assert.equal(heroCard(theorem).fullName, "Notes.Box.volume_nonneg");
+  assert.equal(heroCard(index.items.get("item:definition-2.1")), null);
+  assert.equal(regionCoverage(theorem), "formalized");
+  assert.equal(regionCoverage(index.items.get("item:definition-2.1")), "partial");
+  assert.equal(regionCoverage(index.items.get("item:exercise-3.1")), "quiet");
+  assert.equal(regionCoverage(index.items.get("plain-link")), "quiet", "no status and no key card");
+  assert.equal(regionCoverage({ cards: [{ role: "key" }], coverage: "" }), "formalized");
+  assert.equal(regionCoverage({ cards: [{ role: "key" }], coverage: "not_formalized" }), "quiet");
+});
+
+test("regions: the stroke shows the most serious open verdict, else fixed, else none", () => {
+  const item = (...verdicts) => ({ cards: [], verdicts });
+  assert.equal(regionVerdict([item({ status: "unconfirmed", verdict: "faithful" }),
+                              item({ status: "unconfirmed", verdict: "proxy" })]), "proxy");
+  assert.equal(regionVerdict([item({ status: "unconfirmed", verdict: "convention" },
+                                   { status: "contested", verdict: "deviation" })]), "deviation");
+  assert.equal(regionVerdict([item({ status: "fixed", verdict: "deviation" })]), "fixed");
+  assert.equal(regionVerdict([item()]), null);
+  assert.equal(regionVerdict([{ cards: [{ verdict: { status: "unconfirmed", verdict: "attribution_gap" } }],
+                                verdicts: [] }]), "attribution_gap", "cards speak when the item has none");
+});
+
+test("page: the count line counts passages and those a key declaration states", () => {
+  const { index } = fixture();
+  const items = ["item:theorem-1.1", "item:definition-2.1", "item:exercise-3.1"].map((id) => index.items.get(id));
+  assert.deepEqual(pageSummary(items), { passages: 3, withKey: 1 });
+  assert.equal(pageSummaryText(items), "3 passages · 1 with a key declaration");
+  assert.equal(pageSummaryText(items.slice(0, 1)), "1 passage · 1 with a key declaration");
+  assert.equal(pageSummaryText([]), "No highlighted passages on this page.");
+});
+
+test("lean: the tint runs join back to the snippet exactly", () => {
+  const samples = [
+    "theorem volume_nonneg (b : Box) : 0 <= b.volume",
+    "abbrev ElementarySet (d : ℕ) :=\n  {s : Set (EuclideanSpace ℝ (Fin d)) // IsElementary s}",
+    "structure SourceBox (d : ℕ) where\n  /-- The coordinate intervals of the box. -/\n  sides : Fin d → SourceInterval",
+    "… moment B 0 (axialDensity h n v u p) eta = 0 -- trailing\nfun x => by simp",
+    "/- unterminated",
+    "",
+    "deftheorem by.x x.by by' by_ Typeα Type* Prop→Sort",
+  ];
+  for (const sample of samples) {
+    assert.equal(leanTokens(sample).map(([, part]) => part).join(""), sample);
+  }
+  assert.deepEqual(leanTokens("theorem t : Prop := by simp"),
+                   [["kw", "theorem"], ["tx", " t : "], ["kw", "Prop"], ["tx", " := "], ["kw", "by"], ["tx", " simp"]]);
+  assert.deepEqual(leanTokens("a -- note\nb"), [["tx", "a "], ["cm", "-- note"], ["tx", "\nb"]]);
+  assert.deepEqual(leanTokens("x /-- doc -/ y"), [["tx", "x "], ["cm", "/-- doc -/"], ["tx", " y"]]);
+  assert.deepEqual(leanTokens("… f"), [["el", "…"], ["tx", " f"]]);
+  const words = leanTokens("deftheorem by.x x.by by' by_ Typeα Type* Prop→Sort");
+  assert.deepEqual(words.filter(([kind]) => kind === "kw").map(([, part]) => part), ["Type", "Prop", "Sort"]);
 });

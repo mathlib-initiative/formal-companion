@@ -14,7 +14,6 @@ import { NAMESPACE, sha256Hex } from "../runtime/viewer/viewer-core.js";
 import { bootstrapViewer, isViewerShortcut, rememberedPage } from "../runtime/viewer/viewer.js";
 import {
   BUNDLE_URL,
-  FakeOption,
   ORIGIN,
   PAGE_URL,
   PDF_BYTES,
@@ -36,17 +35,6 @@ import {
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
 const SHELL = await shellHtml();
-
-/** Node has no `Option` constructor; `setOptions` builds its rows with one. */
-function withOption(t) {
-  const had = "Option" in globalThis;
-  globalThis.Option ??= FakeOption;
-  t.after(() => {
-    if (!had) {
-      delete globalThis.Option;
-    }
-  });
-}
 
 function pdfResponse(bytes = PDF_BYTES, { contentType = "application/pdf", ok = true, status = 200 } = {}) {
   return jsonResponse(bytes, { contentType, ok, status });
@@ -102,8 +90,58 @@ function el(documentRef, id) {
   return documentRef.elements.get(id);
 }
 
-function cardsShown(documentRef) {
-  return el(documentRef, "target-groups").children.flatMap((section) => section.children[1].children);
+/** The text a node shows: its own, or its children's joined (strings count as text). */
+function textOf(node) {
+  if (typeof node === "string") {
+    return node;
+  }
+  return (node?.textContent ?? "") + (node?.children ?? []).map(textOf).join("");
+}
+
+function polygonOf(documentRef, regionId) {
+  return el(documentRef, "overlay").children.find((child) => child.dataset.regionId === regionId);
+}
+
+function indexRows(documentRef) {
+  return el(documentRef, "page-index").children.map((li) => li.children[0]);
+}
+
+function itemTitle(documentRef) {
+  return el(documentRef, "item-label").children[0]?.textContent;
+}
+
+function rows(documentRef, id) {
+  return el(documentRef, id).children;
+}
+
+function rowName(row) {
+  return textOf(row.children[0].children[0].children[0]);
+}
+
+function rowKind(row) {
+  return textOf(row.children[0].children[0].children[1]);
+}
+
+/** Every card verdict shown in the item view, as `text|class`. */
+function verdictMarks(documentRef) {
+  const found = [];
+  const walk = (node) => {
+    if (typeof node !== "object" || !node) {
+      return;
+    }
+    if (String(node.className).includes("card-verdict")) {
+      found.push(`${node.textContent}|${node.className}`);
+    }
+    (node.children ?? []).forEach(walk);
+  };
+  ["hero", "also-list", "related-list"].forEach((id) => walk(el(documentRef, id)));
+  return found;
+}
+
+async function turnTo(documentRef, page) {
+  const input = el(documentRef, "page-number");
+  input.value = String(page);
+  await fire(input, "change");
 }
 
 async function selectPageRegion(documentRef, state, regionId) {
@@ -120,8 +158,7 @@ async function selectPageRegion(documentRef, state, regionId) {
 
 // --- start-up ---------------------------------------------------------------
 
-test("start-up: the config, GENERATED.json, the one bundle and the route are fetched", async (t) => {
-  withOption(t);
+test("start-up: the config, GENERATED.json, the one bundle and the route are fetched", async () => {
   const { fetched, pdfjs } = await start();
   assert.deepEqual(fetched.map((call) => call.url),
                    ["../overlay.config.json", "../GENERATED.json", BUNDLE_URL, PDF_ROUTE]);
@@ -133,8 +170,7 @@ test("start-up: the config, GENERATED.json, the one bundle and the route are fet
   assert.deepEqual(pdfjs.calls[0].data, PDF_BYTES);
 });
 
-test("start-up: the shell's placeholders are replaced from the configuration", async (t) => {
-  withOption(t);
+test("start-up: the shell's placeholders are replaced from the configuration", async () => {
   const { documentRef } = await start();
   assert.equal(documentRef.title, "Elementary sets: source overlay (synthetic)");
   assert.equal(el(documentRef, "page-heading").textContent, "Elementary sets: source overlay (synthetic)");
@@ -144,11 +180,10 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   assert.equal(el(documentRef, "workspace").hidden, false);
   assert.equal(el(documentRef, "error").hidden, true);
   assert.equal(el(documentRef, "notice").hidden, true);
-  assert.match(el(documentRef, "status").textContent, /^Verified PDF · page 1 of 12$/);
+  assert.equal(el(documentRef, "status").textContent, "Verified PDF");
 });
 
-test("start-up: refused data leaves an error on the page, not a blank one", async (t) => {
-  withOption(t);
+test("start-up: refused data leaves an error on the page, not a blank one", async () => {
   const sections = makeSections(PDF_SHA256);
   for (const [options, pattern] of [
     [{ config: makeConfig({ pdf: { route: "/files/notes.pdf" } }) }, /pdf\.route/],
@@ -163,12 +198,11 @@ test("start-up: refused data leaves an error on the page, not a blank one", asyn
     assert.equal(el(documentRef, "error").hidden, false);
     assert.match(el(documentRef, "error").textContent, pattern);
     assert.equal(el(documentRef, "workspace").hidden, true);
-    assert.equal(el(documentRef, "status").textContent, "The overlay data was not loaded.");
+    assert.equal(el(documentRef, "status").textContent, "Data not loaded");
   }
 });
 
-test("start-up: a bundle that matches its sha256 but is not a bundle is refused", async (t) => {
-  withOption(t);
+test("start-up: a bundle that matches its sha256 but is not a bundle is refused", async () => {
   const sections = makeSections(PDF_SHA256);
   for (const [text, pattern] of [["{oops\n", /annotations\.bundle\.json is not JSON/],
                                  ["[]\n", /is not a formal-companion\/overlay-annotations bundle/]]) {
@@ -177,8 +211,7 @@ test("start-up: a bundle that matches its sha256 but is not a bundle is refused"
   }
 });
 
-test("start-up: each record's target resolves against its own file's URL", async (t) => {
-  withOption(t);
+test("start-up: each record's target resolves against its own file's URL", async () => {
   const sections = makeSections(PDF_SHA256);
   const record = sections[1].find((entry) => entry.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
   record.target = { ...record.target, uri: "beside.html" };
@@ -187,32 +220,30 @@ test("start-up: each record's target resolves against its own file's URL", async
   assert.equal(key.href, `${ORIGIN}/annotations/1/beside.html`);
 });
 
-test("start-up: a record that cannot be placed is reported in the page notice", async (t) => {
-  withOption(t);
+test("start-up: a record that cannot be placed is reported in the page notice", async () => {
   const sections = makeSections(PDF_SHA256);
   sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
   const { documentRef, result } = await start({ sections });
   assert.equal(el(documentRef, "notice").hidden, false);
-  assert.match(el(documentRef, "notice").textContent, /^1 region\(s\) could not be placed/);
+  assert.match(el(documentRef, "notice").textContent, /^ⓘ 1 region\(s\) could not be placed/);
   assert.equal(result.state.index.pages.has(5), false);
   assert.equal(el(documentRef, "workspace").hidden, false, "the rest of the overlay still opens");
 });
 
 // --- the PDF ----------------------------------------------------------------
 
-test("pdf: a hash mismatch stops before PDF.js and says so on the page", async (t) => {
-  withOption(t);
+test("pdf: a hash mismatch stops before PDF.js and says so on the page", async () => {
   const pdfjs = fakePdfjs();
   const { documentRef, result } = await start({ pdfjs, sections: makeSections(fakeSha256("9")) });
   assert.equal(pdfjs.calls.length, 0, "PDF.js must not see unverified bytes");
   assert.equal(result.state.pdfDocument, null);
   assert.equal(el(documentRef, "workspace").hidden, true);
   assert.match(el(documentRef, "error").textContent, /Loopback PDF SHA-256 is/);
-  assert.equal(el(documentRef, "status").textContent, "The verified loopback PDF was not opened.");
+  assert.equal(el(documentRef, "status").textContent, "PDF not verified");
+  assert.equal(el(documentRef, "status-glyph").textContent, "!");
 });
 
-test("pdf: a 404, a wrong media type and a wrong byte count are all refused", async (t) => {
-  withOption(t);
+test("pdf: a 404, a wrong media type and a wrong byte count are all refused", async () => {
   for (const [pdf, pattern] of [
     [() => pdfResponse(PDF_BYTES, { ok: false, status: 404 }), /loopback PDF \(404\)/],
     [() => pdfResponse(PDF_BYTES, { contentType: "text/html" }), /unexpected media type text\/html/],
@@ -224,49 +255,134 @@ test("pdf: a 404, a wrong media type and a wrong byte count are all refused", as
   }
 });
 
-// --- regions, items and cards ----------------------------------------------
+// --- the page index ---------------------------------------------------------
 
-test("rendered: selecting a region shows its item's cards, grouped in role order", async (t) => {
-  withOption(t);
+test("index: with nothing selected the panel lists the page's passages", async () => {
+  const { documentRef } = await start();
+  assert.equal(el(documentRef, "selection-empty").hidden, false);
+  assert.equal(el(documentRef, "index-heading").textContent, "Page 1");
+  assert.equal(el(documentRef, "index-meta").textContent, "No highlighted passages on this page.");
+  assert.equal(el(documentRef, "page-index").hidden, true);
+  await turnTo(documentRef, 2);
+  assert.equal(el(documentRef, "index-heading").textContent, "Page 2");
+  assert.equal(el(documentRef, "index-meta").textContent, "2 passages · 2 with a key declaration");
+  assert.equal(el(documentRef, "page-index").attributes["aria-label"], "Passages on page 2");
+  assert.deepEqual(indexRows(documentRef).map((row) => [textOf(row.children[1]), textOf(row.children[2])]), [
+    ["Theorem 1.1", "Box.volume_nonneg +4"],
+    ["A remark on unions", "Internal.aux"],
+  ]);
+  await turnTo(documentRef, 5);
+  assert.deepEqual(indexRows(documentRef).map((row) => textOf(row.children[2])), ["No declaration linked"]);
+  await turnTo(documentRef, 3);
+  assert.deepEqual(indexRows(documentRef).map((row) => textOf(row.children[2])), ["Support only"]);
+});
+
+test("index: a row lights its region, a region lights its row and shows a peek, and a click selects", async () => {
+  const { documentRef, result } = await start();
+  await turnTo(documentRef, 2);
+  const [row] = indexRows(documentRef);
+  const polygon = polygonOf(documentRef, "loc:0001");
+  await fire(row, "mouseenter");
+  assert.match(polygon.className, /\bis-hot\b/);
+  await fire(row, "mouseleave");
+  assert.doesNotMatch(polygon.className, /\bis-hot\b/);
+  await fire(polygon, "pointerenter", { pointerType: "mouse" });
+  assert.match(row.className, /\bis-hot\b/);
+  const peek = el(documentRef, "region-peek");
+  assert.equal(peek.hidden, false);
+  assert.deepEqual(peek.children.map(textOf), ["Theorem 1.1", "Box.volume_nonneg", "+4"]);
+  assert.deepEqual([peek.style.left, peek.style.top], ["150px", "94px"]);
+  await fire(polygon, "pointerleave");
+  assert.equal(peek.hidden, true);
+  await fire(polygon, "pointerenter", { pointerType: "touch" });
+  assert.equal(peek.hidden, true, "touch has no hover");
+  await fire(row, "click");
+  assert.equal(result.state.region.id, "loc:0001");
+  assert.equal(itemTitle(documentRef), "Theorem 1.1");
+});
+
+// --- the item view ----------------------------------------------------------
+
+test("item: the head, then the hero's statement, then the other cards as rows", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(el(documentRef, "selection").hidden, false);
   assert.equal(el(documentRef, "selection-empty").hidden, true);
-  assert.equal(el(documentRef, "item-label").textContent, "Theorem 1.1");
-  assert.equal(el(documentRef, "item-locator").textContent, "Chapter 1, Theorem 1.1");
-  assert.equal(el(documentRef, "provenance-note").hidden, false);
-  assert.equal(el(documentRef, "provenance-note").textContent,
-               "1 key declaration for this result (2 attributed); curation, unconfirmed; pipeline, confirmed.");
-  assert.equal(el(documentRef, "target-summary").textContent,
-               "Formalized: a key declaration states it.");
-  assert.deepEqual(el(documentRef, "target-groups").children.map((section) => section.children[0].textContent),
-                   ["key", "attributed", "support", "example", "helper"]);
-  const cards = cardsShown(documentRef);
-  assert.deepEqual(cards.map((card) => card.children[0].textContent), [
-    "Box.volume_nonneg", "Box.volume_mono", "Set.inter_sub", "example:0123456789ab", "Set.union_comm",
+  assert.equal(itemTitle(documentRef), "Theorem 1.1");
+  assert.equal(el(documentRef, "item-label").children.length, 1, "no subtitle");
+  assert.equal(el(documentRef, "item-locator").textContent, "Chapter 1", "the label is not repeated");
+  assert.equal(el(documentRef, "item-locator").title, "Chapter 1, Theorem 1.1");
+  const pill = el(documentRef, "target-summary");
+  assert.deepEqual([pill.textContent, pill.title, pill.className, pill.hidden],
+                   ["Formalized", "Formalized: a key declaration states it.", "target-summary coverage-formalized", false]);
+  const [eyebrow, name, pre] = el(documentRef, "hero").children;
+  assert.equal(textOf(eyebrow.children[0]), "theorem");
+  const link = eyebrow.children[1];
+  assert.deepEqual([link.tagName, link.textContent, link.attributes.href, link.title],
+                   ["A", "View in source ↗", `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`,
+                    "Notes.Box.volume_nonneg"]);
+  assert.equal(textOf(name), "Box.volume_nonneg");
+  assert.equal(pre.tagName, "PRE");
+  assert.equal(textOf(pre), "theorem volume_nonneg (b : Box) : 0 <= b.volume");
+  assert.deepEqual([pre.children[0].className, pre.children[0].textContent], ["tk-kw", "theorem"]);
+  assert.equal(el(documentRef, "also-section").hidden, true, "one key card: the hero is all of them");
+  assert.equal(el(documentRef, "related-section").hidden, false);
+  assert.equal(el(documentRef, "related-count").textContent, "4");
+  assert.deepEqual(rows(documentRef, "related-list").map((row) => [rowName(row), rowKind(row)]), [
+    ["Box.volume_mono", "attributed · theorem"],
+    ["Set.inter_sub", "support · theorem"],
+    ["example:0123456789ab", "example · example"],
+    ["Set.union_comm", "helper · theorem"],
   ]);
-  assert.equal(cards[0].children[0].tagName, "A");
-  assert.equal(cards[0].children[0].attributes.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
-  assert.equal(cards[3].children[0].tagName, "SPAN", "an unlinked card is not a link");
-  assert.ok(cards[0].children.some((child) => child.className === "target-snippet"));
+  assert.equal(el(documentRef, "related-pager").hidden, true, "one page of rows has no pager");
+  assert.equal(el(documentRef, "target-filter").hidden, true, "five cards need no filter");
+  assert.equal(el(documentRef, "provenance-note").textContent, "Curation and pipeline links, partly reviewed.");
+  assert.equal(el(documentRef, "region-bar").hidden, false);
+  assert.deepEqual([el(documentRef, "region-bar").style.top, el(documentRef, "region-bar").style.height],
+                   ["100px", "100px"]);
   // The region is drawn through the displayed page: a quarter of 600 pt across, an eighth of 800 down.
-  const polygon = el(documentRef, "overlay").children.find((child) => child.dataset.regionId === "loc:0001");
+  const polygon = polygonOf(documentRef, "loc:0001");
   assert.equal(polygon.attributes.points, "150,100 450,100 450,200 150,200");
+  assert.equal(polygon.dataset.coverage, "formalized");
+  assert.match(el(documentRef, "overlay").className, /\bhas-selection\b/);
 });
 
-test("rendered: verdicts stay hidden until the faithfulness button is pressed, and the choice is remembered", async (t) => {
-  withOption(t);
+test("item: a row opens its statement, its source link and its badges", async () => {
+  const { documentRef, result } = await start();
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const [mono, , example, helper] = rows(documentRef, "related-list");
+  const button = mono.children[0];
+  const body = mono.children[1];
+  assert.deepEqual([button.tagName, button.attributes["aria-expanded"], body.hidden], ["BUTTON", "false", true]);
+  assert.equal(button.attributes["aria-controls"], body.id);
+  await fire(button, "click");
+  assert.deepEqual([button.attributes["aria-expanded"], body.hidden], ["true", false]);
+  const link = body.children.at(-1).children[1];
+  assert.deepEqual([link.tagName, link.textContent, link.title, link.attributes.href],
+                   ["A", "View in source · module page", "module page (fallback)", `${ORIGIN}/Notes/Box/index.html`]);
+  await fire(button, "click");
+  assert.deepEqual([button.attributes["aria-expanded"], body.hidden], ["false", true]);
+  await fire(example.children[0], "click");
+  const [meta, noLink] = example.children[1].children.at(-1).children;
+  assert.deepEqual([noLink.tagName, noLink.textContent], ["SPAN", "No rendered page"]);
+  assert.equal(textOf(meta), "anonymous", "no 'unlinked' badge: the missing link says it");
+  await fire(helper.children[0], "click");
+  assert.equal(textOf(helper.children[1].children.at(-1).children[0]), "sorry: exercise");
+});
+
+test("item: verdicts stay hidden until the faithfulness switch is pressed, and the choice is remembered", async () => {
   const storage = memoryStorage();
   const { documentRef, result } = await start({ storage });
   const button = el(documentRef, "toggle-faithfulness");
-  const badges = () => cardsShown(documentRef).flatMap((card) => card.children)
-    .filter((child) => String(child.className).includes("verdict-badge")).length;
   await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.deepEqual([button.hidden, button.attributes["aria-pressed"], button.textContent], [false, "false", "Show faithfulness"]);
-  assert.deepEqual([el(documentRef, "verdict-notes").children.length, badges()], [0, 0]);
+  assert.deepEqual([el(documentRef, "verdict-notes").children.length, verdictMarks(documentRef).length], [0, 0]);
+  assert.equal(polygonOf(documentRef, "loc:0001").dataset.verdict, undefined);
   await fire(button, "click");
   assert.deepEqual([button.attributes["aria-pressed"], button.textContent], ["true", "Hide faithfulness"]);
-  assert.deepEqual([el(documentRef, "verdict-notes").children.length, badges()], [1, 2]);
+  assert.equal(el(documentRef, "verdict-notes").children.length, 1);
+  assert.deepEqual(verdictMarks(documentRef), ["faithful|card-verdict verdict-badge verdict-faithful"]);
+  assert.equal(polygonOf(documentRef, "loc:0001").dataset.verdict, "fixed");
   assert.equal(storage.getItem("notes-overlay-page-faithfulness"), "1");
   const again = await start({ storage });
   assert.equal(again.result.state.faithfulness, true);
@@ -274,61 +390,67 @@ test("rendered: verdicts stay hidden until the faithfulness button is pressed, a
   assert.deepEqual([again.result.state.faithfulness, storage.getItem("notes-overlay-page-faithfulness")], [false, "0"]);
 });
 
-test("rendered: verdict badges mark a repaired declaration faithful and an old one superseded", async (t) => {
-  withOption(t);
+test("item: a verdict is one line of kind, summary and resolution, and the footer says it is unreviewed", async () => {
   const { documentRef, result } = await start();
   await fire(el(documentRef, "toggle-faithfulness"), "click");
   await selectPageRegion(documentRef, result.state, "loc:0001");
-  const badges = cardsShown(documentRef)
-    .flatMap((card) => card.children)
-    .filter((child) => String(child.className).includes("verdict-badge"))
-    .map((child) => `${child.textContent}|${child.className}`);
-  assert.deepEqual(badges, [
-    "faithful|target-badge verdict-badge verdict-faithful",
-    "statement deviation, superseded|target-badge verdict-badge verdict-deviation",
+  const [line] = el(documentRef, "verdict-notes").children;
+  assert.deepEqual(line.children.map((child) => `${child.textContent}|${child.className}`), [
+    "fixed: statement deviation (medium)|verdict-badge verdict-fixed",
+    "The box bound was stated for closed boxes only.|verdict-summary",
+    "fixed, PR #7|faint",
   ]);
-  const [note] = el(documentRef, "verdict-notes").children;
-  assert.match(note.className, /verdict-fixed/);
-  assert.equal(note.textContent, "Faithfulness: fixed: statement deviation (medium). The box bound was stated "
-               + "for closed boxes only. [adjudication, fixed; fixed, PR #7]");
-  assert.equal(note.title, "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler");
+  assert.equal(line.title, "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler\nadjudication");
+  assert.doesNotMatch(textOf(line), /Faithfulness:|unconfirmed|\[/);
+  const [mono] = rows(documentRef, "related-list");
+  await fire(mono.children[0], "click");
+  assert.deepEqual(verdictMarks(documentRef), [
+    "faithful|card-verdict verdict-badge verdict-faithful",
+    "statement deviation, superseded|card-verdict verdict-badge verdict-deviation",
+  ]);
+  assert.equal(el(documentRef, "provenance-note").textContent,
+               "Curation and pipeline links and machine verdicts, partly reviewed.");
+  await fire(documentRef, "keydown", { key: "Escape" });
+  assert.equal(el(documentRef, "index-footer").textContent, "Machine verdicts, unreviewed.");
+  assert.deepEqual(el(documentRef, "verdict-legend").children.map(textOf), ["fixed"]);
 });
 
-test("rendered: a status states what applies, with its class and its note", async (t) => {
-  withOption(t);
+test("item: a status states what applies, with its class and its note", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0002");
-  assert.equal(el(documentRef, "item-label").textContent, "Definition 2.1");
-  assert.equal(el(documentRef, "target-summary").textContent,
-               "Supported only by declarations that state a neighboring item.");
-  assert.equal(el(documentRef, "target-summary").className, "target-summary coverage-summary coverage-support_only");
+  assert.equal(itemTitle(documentRef), "Definition 2.1");
+  const pill = el(documentRef, "target-summary");
+  assert.deepEqual([pill.textContent, pill.title, pill.className],
+                   ["Support only", "Supported only by declarations that state a neighboring item.",
+                    "target-summary coverage-support_only"]);
   assert.equal(el(documentRef, "coverage-note").hidden, false);
   assert.equal(el(documentRef, "coverage-note").textContent,
                "The companion states the neighbouring box lemma, not this definition.");
-  assert.equal(el(documentRef, "fallback-note").hidden, true);
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Set.inter_sub"]);
+  assert.deepEqual(el(documentRef, "hero").children.map(textOf), ["No key declaration states this passage."]);
+  assert.deepEqual(rows(documentRef, "related-list").map((row) => row.children[0].children[0].children[0].title),
+                   ["Notes.Set.inter_sub"]);
+  assert.equal(polygonOf(documentRef, "loc:0002").dataset.coverage, "partial");
 });
 
-test("rendered: an item that links nothing says so and names its cluster", async (t) => {
-  withOption(t);
+test("item: an item that links nothing says so and names its cluster", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0003");
-  assert.equal(el(documentRef, "item-label").textContent, "Exercise 3.1");
-  assert.equal(el(documentRef, "target-summary").textContent, "No declaration is linked to this item.");
-  assert.equal(el(documentRef, "fallback-note").hidden, false);
-  assert.equal(el(documentRef, "fallback-note").textContent,
-               "No declaration is linked to this item; its ledger cluster: cluster:sets.");
+  assert.equal(itemTitle(documentRef), "Exercise 3.1");
+  assert.deepEqual([el(documentRef, "target-summary").textContent, el(documentRef, "target-summary").hidden], ["", true]);
+  assert.deepEqual(el(documentRef, "hero").children.map(textOf),
+                   ["No Lean declaration is linked to this passage.", "Ledger cluster cluster:sets"]);
   assert.equal(el(documentRef, "provenance-note").hidden, true);
-  assert.deepEqual(cardsShown(documentRef), []);
+  assert.equal(el(documentRef, "also-section").hidden, true);
+  assert.equal(el(documentRef, "related-section").hidden, true);
+  assert.equal(polygonOf(documentRef, "loc:0003").dataset.coverage, "quiet");
 });
 
-test("rendered: a region opens the item its curation names first, and never an empty one first", async (t) => {
-  withOption(t);
+test("item: a region opens the item its curation names first, and never an empty one first", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0005");
   const choices = el(documentRef, "item-choices");
   assert.deepEqual(choices.children.map((button) => button.textContent), ["Remark 7.1 and equation (7)", "Equation 7"]);
-  assert.equal(el(documentRef, "item-label").textContent, "Remark 7.1 and equation (7)");
+  assert.equal(itemTitle(documentRef), "Remark 7.1 and equation (7)", "a parenthetical with no letter stays");
   const sections = makeSections(PDF_SHA256);
   for (const record of sections[2]) {
     const ext = record.extensions?.[NAMESPACE];
@@ -340,49 +462,78 @@ test("rendered: a region opens the item its curation names first, and never an e
   await selectPageRegion(second.documentRef, second.result.state, "loc:0005");
   assert.deepEqual(el(second.documentRef, "item-choices").children.map((button) => button.textContent),
                    ["Equation 7", "Remark 7.1 and equation (7)"]);
-  assert.equal(el(second.documentRef, "item-label").textContent, "Remark 7.1 and equation (7)",
+  assert.equal(itemTitle(second.documentRef), "Remark 7.1 and equation (7)",
                "the equation has no card, so the remark opens");
-  assert.equal(cardsShown(second.documentRef).length, 1);
+  assert.equal(textOf(el(second.documentRef, "hero").children[1]), "Box.volume_nonneg");
 });
 
-test("rendered: a region with two items offers a choice, and the choice switches the cards", async (t) => {
-  withOption(t);
+test("item: a region with two items offers a choice, and the choice switches the cards", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0004");
   const choices = el(documentRef, "item-choices");
   assert.equal(choices.hidden, false);
   assert.deepEqual(choices.children.map((button) => button.textContent), ["A remark on unions", "Theorem 1.1"]);
-  assert.equal(el(documentRef, "item-label").textContent, "A remark on unions");
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Internal.aux"]);
+  assert.equal(itemTitle(documentRef), "A remark on unions");
+  const [eyebrow, name] = el(documentRef, "hero").children;
+  assert.equal(name.title, "Notes.Internal.aux");
+  assert.deepEqual(eyebrow.children[0].children.map(textOf), ["lemma", "private"]);
   await fire(choices.children[1], "click");
-  assert.equal(el(documentRef, "item-label").textContent, "Theorem 1.1");
-  assert.equal(cardsShown(documentRef).length, 5);
+  assert.equal(itemTitle(documentRef), "Theorem 1.1");
+  assert.equal(rows(documentRef, "related-list").length, 4);
   assert.deepEqual(choices.children.map((button) => button.attributes["aria-pressed"]), ["false", "true"]);
 });
 
-test("rendered: the role filter and the search narrow the card list", async (t) => {
-  withOption(t);
+test("item: the strip steps through the page's passages and returns to the page", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0001");
-  const role = el(documentRef, "role-filter");
-  assert.deepEqual(role.children.map((option) => option.value),
-                   ["", "attributed", "example", "helper", "key", "support"]);
-  role.value = "support";
-  await fire(role, "input");
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Set.inter_sub"]);
-  role.value = "";
-  const search = el(documentRef, "target-filter");
-  search.value = "volume";
-  await fire(search, "input");
-  assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title),
-                   ["Notes.Box.volume_nonneg", "Notes.Box.volume_mono"]);
-  assert.equal(el(documentRef, "target-page").textContent, "Page 1 of 1");
+  assert.equal(el(documentRef, "back-to-page").textContent, "← Page 2");
+  assert.equal(el(documentRef, "item-position").textContent, "1 of 2");
+  assert.deepEqual([el(documentRef, "previous-item").disabled, el(documentRef, "next-item").disabled], [true, false]);
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(itemTitle(documentRef), "A remark on unions");
+  assert.equal(result.state.region.id, "loc:0004");
+  assert.equal(el(documentRef, "item-position").textContent, "2 of 2");
+  assert.equal(el(documentRef, "next-item").disabled, true);
+  await fire(el(documentRef, "back-to-page"), "click");
+  assert.equal(result.state.region, null);
+  assert.equal(el(documentRef, "selection").hidden, true);
+  assert.equal(el(documentRef, "region-bar").hidden, true);
+});
+
+test("item: past twenty cards a filter narrows both lists, and the related rows page by 25", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  for (let n = 0; n < 30; n += 1) {
+    const name = `Notes.Fill.f${String(n).padStart(2, "0")}`;
+    const copy = structuredClone(key);
+    copy.id = `item:theorem-1.1/attributed/${name}`;
+    copy.target.pin.declaration = name;
+    const ext = copy.extensions[NAMESPACE];
+    ext.role = "attributed";
+    ext.declaration = { id: name, kind: "def" };
+    delete ext.snippet;
+    sections[1].push(copy);
+  }
+  const { documentRef, result } = await start({ sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const filter = el(documentRef, "target-filter");
+  assert.equal(filter.hidden, false);
+  assert.equal(el(documentRef, "related-count").textContent, "34");
+  assert.equal(rows(documentRef, "related-list").length, 25);
+  assert.equal(el(documentRef, "related-pager").hidden, false);
+  assert.equal(el(documentRef, "target-page").textContent, "1–25 of 34");
+  await fire(el(documentRef, "next-targets"), "click");
+  assert.equal(el(documentRef, "target-page").textContent, "26–34 of 34");
+  filter.value = "f2";
+  await fire(filter, "input");
+  assert.equal(el(documentRef, "related-count").textContent, "10");
+  assert.equal(el(documentRef, "related-pager").hidden, true);
+  assert.deepEqual(rows(documentRef, "related-list").slice(0, 2).map(rowName), ["Fill.f20", "Fill.f21"]);
 });
 
 // --- navigation and the remembered page -------------------------------------
 
-test("navigation: the buttons and the page input move, and clear the selection", async (t) => {
-  withOption(t);
+test("navigation: the buttons and the page input move, and clear the selection", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(el(documentRef, "selection").hidden, false);
@@ -399,8 +550,7 @@ test("navigation: the buttons and the page input move, and clear the selection",
   assert.equal(el(documentRef, "next-page").disabled, true);
 });
 
-test("navigation: the page is remembered under the configured storage key", async (t) => {
-  withOption(t);
+test("navigation: the page is remembered under the configured storage key", async () => {
   const storage = memoryStorage();
   const { hashes } = await start({ storage });
   assert.equal(storage.getItem("notes-overlay-page"), "1");
@@ -413,8 +563,7 @@ test("navigation: the page is remembered under the configured storage key", asyn
   assert.equal(rememberedPage("k", { locationRef: { hash: "#x" }, storage: memoryStorage() }), null);
 });
 
-test("navigation: an edited #page= hash changes the page", async (t) => {
-  withOption(t);
+test("navigation: an edited #page= hash changes the page", async () => {
   const listeners = {};
   const windowRef = { addEventListener: (type, listener) => { listeners[type] = listener; } };
   const locationRef = { hash: "" };
@@ -430,8 +579,7 @@ test("navigation: an edited #page= hash changes the page", async (t) => {
   assert.equal(result.state.currentPage, 5, "a hash that names no page changes nothing");
 });
 
-test("navigation: a storage that throws on every access never breaks the viewer", async (t) => {
-  withOption(t);
+test("navigation: a storage that throws on every access never breaks the viewer", async () => {
   const storage = throwingStorage();
   assert.equal(rememberedPage("notes-overlay-page", { locationRef: { hash: "" }, storage }), null);
   const { documentRef, result } = await start({ storage });
@@ -443,8 +591,7 @@ test("navigation: a storage that throws on every access never breaks the viewer"
 
 // --- the keyboard -----------------------------------------------------------
 
-test("keyboard: the shortcuts work bare and are ignored with a modifier or in an input", async (t) => {
-  withOption(t);
+test("keyboard: the shortcuts work bare and are ignored with a modifier or in an input", async () => {
   const { documentRef, result } = await start();
   await fire(documentRef, "keydown", { key: "ArrowRight" });
   assert.equal(result.state.currentPage, 2);
@@ -474,8 +621,7 @@ test("keyboard: the shortcut test is the predicate's own, so both halves agree",
   assert.equal(isViewerShortcut(null), false);
 });
 
-test("escape clears the selected region and Enter on a region selects it", async (t) => {
-  withOption(t);
+test("escape clears the selected region and Enter on a region selects it", async () => {
   const { documentRef, result } = await start();
   const region = await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(result.state.region.id, region.id);
@@ -499,6 +645,10 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
   assert.doesNotMatch(SHELL, /type=["']file|Choose PDF|pdf-file/);
   assert.doesNotMatch(SHELL, /<script(?![^>]*\ssrc=)/, "no inline script");
   assert.doesNotMatch(SHELL, /<style|\sstyle=/, "no inline style");
+  for (const gone of ["Verified loopback PDF", "Source item", "keyboard-help", "role-filter", "rotate-left",
+                      'id="zoom"', "Find declaration"]) {
+    assert.ok(!SHELL.includes(gone), `the shell still has ${gone}`);
+  }
   const { readFile } = await import("node:fs/promises");
   const { VIEWER_DIR } = await import("./fixtures.mjs");
   const path = await import("node:path");
@@ -510,8 +660,7 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
   }
 });
 
-test("shell: a back link the config spells as javascript: never reaches the header", async (t) => {
-  withOption(t);
+test("shell: a back link the config spells as javascript: never reaches the header", async () => {
   const { documentRef } = await start({ config: makeConfig({ back_link: { href: "javascript:alert(1)", text: "Back" } }) });
   assert.equal(el(documentRef, "back-link").attributes.href, "../../index.html");
   assert.equal(el(documentRef, "back-link").textContent, "Back");
@@ -519,8 +668,7 @@ test("shell: a back link the config spells as javascript: never reaches the head
   assert.equal(el(offsite.documentRef, "back-link").attributes.href, "../../index.html");
 });
 
-test("shell: the title and heading are placeholders the configuration replaces", async (t) => {
-  withOption(t);
+test("shell: the title and heading are placeholders the configuration replaces", async () => {
   const placeholder = /Source and formalization overlay/;
   assert.match(SHELL, placeholder);
   const { documentRef } = await start({ config: makeConfig({ lede: "", title: "Another title" }) });
