@@ -51,14 +51,15 @@ The exporter reads, at the pinned commit,
 | `<data-dir>/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
 | `<official-source>` | the PDF source's URLs, bytes and retrieval time |
 | every tracked `.lean` file | every declaration (`adapters.leanparse`), the statement-hash ids and signatures of anonymous ones (`formal_companion_annotations.ids`), the section 5.1 cut for named ones |
-| the Lean file the ledger names for each id the refinement lists | its `snippet` (`adapters.leansnippets`, measure_theory's `extract_declaration_snippets.py` rule: the keyword through the `:=` of a proof, a definition's body, a field at its line under its structure's header, an `example:<slug>` by its tag comment; past 14 lines cut and marked `…`, `truncated`); an id it cannot locate gets none and is listed in the report's `snippets_unlocated` |
+| the tracked Lean file the ledger names for each id the refinement lists | its `snippet` (`adapters.leansnippets`, the rule of `extract_declaration_snippets.py` at measure_theory ef0a424: the keyword through the `:=` of a proof, a definition's body, a field at its line under its structure's header, an `example:<slug>` by its tag comment; past 14 lines cut and marked `…`, `truncated`); an id it cannot locate gets none and is listed in the report's `snippets_unlocated` |
 | a Lake build's `lib/lean` (`--lean-build`, default `<checkout>/.lake/build/lib/lean`) | an anonymous instance's generated name as `lean_name`, when the `.ilean` postdates the file's last commit |
 
 When that build's trace hashes match a file's text, its declarations are read
 from the build (`.ilean`, and the literate JSON beside `lib/`) instead of
 parsed; the report's `lean_source` counts files by origin. A
 `<data-dir>/declaration-snippets.json` is not read; the report's
-`ignored_inputs` names it.
+`ignored_inputs` names it, and `cf export` and `cf overlay export` warn of it
+and of any `snippets_unlocated`.
 
 Three of those paths are flags, so a companion that keeps the same data
 somewhere else needs no new convention. Each is **relative to the checkout**,
@@ -311,7 +312,7 @@ The references written against the withdrawn `v1.0.0` tag (at `00a2438` and
 regenerated at these pins; the reproduction tests skip until they are. A
 measure_theory reference written while snippets were read from its
 `declaration-snippets.json` differs at `2cd263a` in two definition snippets
-(that file predates the rule that stops a body at an `example:` tag comment)
+(that file predates the rule that stops a body at an `example` tag comment)
 and must be regenerated too.
 
 `python3 -m unittest tests.test_export` does the same comparison record for

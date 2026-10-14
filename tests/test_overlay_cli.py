@@ -182,11 +182,12 @@ class _Exporter:
     """A stand-in for the `cf export` child: it records argv, writes a document and a report."""
 
     def __init__(self, doc: dict | None = None, *, returncode: int = 0,
-                 text: str | None = None, inputs: tuple[str, ...] = (CURATION,)):
+                 text: str | None = None, inputs: tuple[str, ...] = (CURATION,), counts: dict | None = None):
         self.doc = doc
         self.returncode = returncode
         self.text = text
         self.inputs = inputs
+        self.counts = counts or {}
         self.argv: list[str] = []
 
     def __call__(self, argv):
@@ -197,7 +198,7 @@ class _Exporter:
                 else canonical(self.doc if self.doc is not None else document()),
                 encoding="utf-8")
             Path(argv[argv.index("--report") + 1]).write_text(json.dumps(
-                {"counts": {"inputs": [{"path": p} for p in self.inputs]}}), encoding="utf-8")
+                {"counts": {"inputs": [{"path": p} for p in self.inputs], **self.counts}}), encoding="utf-8")
         return subprocess.CompletedProcess(list(argv), self.returncode, "", "no data here")
 
 
@@ -369,6 +370,22 @@ class TestExport(OverlayCase):
         for flag in ("--out", "--report"):
             out = Path(exporter.argv[exporter.argv.index(flag) + 1])
             self.assertNotIn(self.companion, out.parents, "cf export refuses a path inside the checkout")
+
+    def test_it_relays_the_warnings_of_the_export_report(self):
+        self.assertEqual(self.init(), 0)
+        counts = {"ignored_inputs": ["pdf-overlay/data/declaration-snippets.json"],
+                  "snippets_unlocated": ["Notes.gone"]}
+        self.assertEqual(self.export().warnings, [])
+        real = overlay_export.export
+        with mock.patch.object(overlay_export, "export",
+                               lambda *a, **k: real(*a, runner=_Exporter(counts=counts), **k)), \
+                quiet() as (_out, err):
+            code = cf("overlay", "export", str(self.companion), "--convention", "attribution-table",
+                      "--commit", "b" * 40)
+        self.assertEqual(code, 0)
+        self.assertIn("warn pdf-overlay/data/declaration-snippets.json is not read", err.getvalue())
+        self.assertIn("warn no snippet for 1 of the ids the refinement lists", err.getvalue())
+        self.assertIn("Notes.gone", err.getvalue())
 
     def test_an_input_outside_the_companion_is_not_recorded(self):
         self.assertEqual(self.init(), 0)

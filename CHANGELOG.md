@@ -38,10 +38,12 @@ release has something to say.
 - The attribution-table convention no longer has a `declaration-snippets.json`.
   `cf export attribution-table` and the `attribution_table` adapter cut each
   snippet from the Lean file the ledger names (`adapters.leansnippets`, a port
-  of measure_theory's `extract_declaration_snippets.py`; same text, lines and
-  `…` truncation), so the file is not an input in `GENERATED.json` and the
-  adapter's `declaration_snippets` setting is gone. A leftover file is ignored
-  and named (`ignored_inputs` in the export report, `ignored` in the dry run).
+  of `extract_declaration_snippets.py` at measure_theory ef0a424; same text,
+  lines and `…` truncation), so the file is not an input in `GENERATED.json`
+  and the adapter's `declaration_snippets` setting is gone. A leftover file is
+  ignored and named (`ignored_inputs` in the export report, `ignored` in the
+  dry run); `cf export` and `cf overlay export` warn of it and of any id they
+  cannot locate (`snippets_unlocated`).
   The adapter now needs the ledger, and its key hashes the Lean it cuts from
   (`snippet_files_sha` for `snippets_sha`).
 - The vendored annotation format is the release candidate

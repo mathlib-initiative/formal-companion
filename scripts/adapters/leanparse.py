@@ -11,7 +11,7 @@ the measurement is in the design record, not in any document here):
   tao-measure-lean's ``make_verso_tables.py``
       comment-depth tracking that survives ``/--`` and ``--``, the upward
       docstring attach that skips attribute lines, and the body rule.
-  measure_theory's ``extract_declaration_snippets.py``
+  ``extract_declaration_snippets.py`` at measure_theory ef0a424
       namespace/section tracking for fully qualified names and def bodies.
 
 Each :class:`Decl` also carries the NAMED ``section Foo`` blocks it sits inside
