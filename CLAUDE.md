@@ -269,8 +269,8 @@ into a companion repo.
 Commit your own files with a message that says what changed and why. Do not
 push, do not rewrite history, do not commit anything from a workspace
 directory, and do not run `git add -A` — this repo is edited by several agents
-at once; add the paths you own. Commit messages carry no AI attribution
-lines.
+at once; add the paths you own. Do not add Co-Authored-By or "Generated
+with" trailers.
 
 ## End-to-end demonstration
 
