@@ -22,20 +22,30 @@ import {
   CONFIG_URL,
   GENERATED_URL,
   MAX_JSON_BYTES,
+  VERDICT_LABELS,
   buildIndex,
-  cardSummaryText,
   cardsMatching,
+  coverageSummary,
+  coverageWord,
   declarationVerdictDisplay,
-  groupCards,
+  heroCard,
+  labelParts,
+  leanTokens,
+  locatorTail,
+  pageSummaryText,
   paginateCards,
   parseBundle,
   preferredItemId,
-  provenanceText,
   quadToViewport,
   readConfig,
   readAnnotationsBlock,
+  regionCoverage,
+  regionVerdict,
+  reviewFooter,
   sha256Hex,
-  verdictNote,
+  splitName,
+  verdictFooter,
+  verdictLine,
   verifyPdfBytes,
 } from "./viewer-core.js";
 
@@ -191,6 +201,29 @@ export function isViewerShortcut(event) {
   return !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
 }
 
+
+/** Statements longer than this many lines are clamped, with a "Show all" button. */
+const STATEMENT_LINES = 14;
+/** The "Also states it" list shows this many rows before "Show N more". */
+const ALSO_ROWS = 10;
+/** Above this many cards, the item view offers a filter by name. */
+const FILTER_ABOVE = 20;
+/** Room the floating PDF controls take at the bottom of the PDF pane. */
+const CONTROLS_ROOM = 64;
+
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+/** The badges a card shows; "fallback" and "unlinked" are said by its source link instead. */
+function shownBadges(card) {
+  return card.badges.filter((badge) => badge !== "fallback" && badge !== "unlinked");
+}
+
+function setClass(node, name, on) {
+  if (node?.classList?.toggle) {
+    node.classList.toggle(name, Boolean(on));
+  }
+}
+
 export async function bootstrapViewer({
   configUrl = CONFIG_URL,
   cryptoProvider = globalThis.crypto,
@@ -213,24 +246,28 @@ export async function bootstrapViewer({
   const ui = Object.fromEntries(
     [
       "back-link", "page-heading", "page-lede",
-      "error", "status", "notice", "workspace",
+      "error", "status", "status-glyph", "status-chip", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
-      "zoom-out", "zoom-in", "zoom", "zoom-value",
-      "rotate-left", "rotate-right", "rotation-value", "toggle-faithfulness",
-      "page-stage", "pdf-canvas", "overlay",
-      "selection-empty", "selection", "item-choices", "item-label", "item-locator",
-      "verdict-notes", "coverage-note", "provenance-note", "fallback-note",
-      "role-filter", "role-filter-wrap", "target-filter",
-      "target-summary", "target-groups",
-      "previous-targets", "next-targets", "target-page",
+      "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
+      "page-scroller", "page-stage", "pdf-canvas", "overlay", "region-bar", "region-peek",
+      "details", "selection-empty", "index-heading", "index-meta", "page-index", "legend",
+      "verdict-legend", "index-footer",
+      "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
+      "item-head", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
+      "hero", "also-section", "also-count", "also-list", "also-more",
+      "related-section", "related-count", "related-list", "target-filter",
+      "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note",
     ].map((id) => [id, element(documentRef, id)]),
   );
   const state = {
+    alsoAll: false,
+    boxes: new Map(),
     cardPage: 1,
     config: null,
     currentPage: 1,
     faithfulness: false,
     index: null,
+    openCards: new Set(),
     pdfDocument: null,
     region: null,
     renderEpoch: 0,
@@ -239,6 +276,19 @@ export async function bootstrapViewer({
     selected: null,
     zoom: 100,
   };
+  let bodyCount = 0;
+
+  /** An element with a class and text, both optional; every string goes in as text. */
+  function make(tag, className, value) {
+    const node = documentRef.createElement(tag);
+    if (className) {
+      node.className = className;
+    }
+    if (value !== undefined) {
+      node.textContent = value;
+    }
+    return node;
+  }
 
   function showError(error) {
     ui.error.textContent = error instanceof Error ? error.message : String(error);
@@ -250,39 +300,211 @@ export async function bootstrapViewer({
     ui.error.textContent = "";
   }
 
+  /** The status chip: "loading", "ok" or "bad", and its one line of text. */
+  function setStatus(kind, message) {
+    ui.status.textContent = message;
+    ui["status-glyph"].textContent = kind === "ok" ? "✓" : kind === "bad" ? "!" : "";
+    ui["status-chip"].className = `status-chip is-${kind}`;
+  }
+
   function setNotice(message) {
     ui.notice.hidden = !message;
-    ui.notice.textContent = message ?? "";
+    ui.notice.textContent = message ? `ⓘ ${message}` : "";
   }
 
   function applyConfig(config) {
     // Every per-companion string on the shell, written as text, never as markup.
     documentRef.title = config.title;
     ui["page-heading"].textContent = config.title;
+    ui["page-heading"].title = config.title;
     ui["page-lede"].textContent = config.lede;
     ui["page-lede"].hidden = !config.lede;
     ui["back-link"].textContent = config.backLink.text;
     ui["back-link"].setAttribute("href", config.backLink.href);
   }
 
-  function setOptions(select, values) {
-    select.replaceChildren(new Option("All", ""));
-    for (const value of [...new Set(values.filter(Boolean))].sort()) {
-      select.append(new Option(value, value));
+  // --- the page: its regions and their items, in reading order ---------------
+
+  function pageRegions() {
+    return state.index?.pages.get(state.currentPage) ?? [];
+  }
+
+  /**
+   * Every item on the page once, with the first region that shows it: the
+   * page index's rows and the order the stepper walks.
+   */
+  function pageEntries() {
+    const seen = new Set();
+    return pageRegions().flatMap((region) => region.itemIds.filter((itemId) => !seen.has(itemId)
+      && seen.add(itemId)).map((itemId) => ({ item: state.index.items.get(itemId), region })));
+  }
+
+  function regionItems(region) {
+    return region.itemIds.map((itemId) => state.index.items.get(itemId));
+  }
+
+  /** The stroke of a region's items: solid, dashed or dotted, from the best-covered item. */
+  function coverageOfRegion(region) {
+    const kinds = regionItems(region).map(regionCoverage);
+    return ["formalized", "partial"].find((kind) => kinds.includes(kind)) ?? "quiet";
+  }
+
+  function polygonsOf(regionId) {
+    return [...(ui.overlay.children ?? [])].filter((polygon) => polygon.dataset?.regionId === regionId);
+  }
+
+  /** Light a region from the panel, or a row from the page; null puts them all out. */
+  function setHot(regionId) {
+    for (const polygon of ui.overlay.children ?? []) {
+      setClass(polygon, "is-hot", regionId && polygon.dataset?.regionId === regionId);
+    }
+    for (const row of ui["page-index"].children ?? []) {
+      const button = row.children?.[0];
+      setClass(button, "is-hot", regionId && button?.dataset?.regionId === regionId);
     }
   }
 
-  function renderVerdictNotes(item) {
-    ui["verdict-notes"].replaceChildren();
-    for (const verdict of state.faithfulness ? item.verdicts : []) {
-      const shown = verdictNote(verdict);
-      const note = documentRef.createElement("p");
-      note.className = shown.className;
-      note.title = shown.title;
-      note.textContent = shown.text;
-      ui["verdict-notes"].append(note);
+  /** A declaration name: its namespace faint (fainter still when it repeats the row above), its leaf strong. */
+  function nameNode(name, className, previous = null) {
+    const node = make("span", className);
+    const [namespace, leaf] = splitName(name);
+    if (namespace) {
+      const part = make("span", namespace === previous ? "ns ditto" : "ns");
+      for (const piece of namespace.split(/(?<=\.)/)) {
+        part.append(piece, make("wbr"));
+      }
+      node.append(part);
     }
+    node.append(make("span", "leaf", leaf));
+    return node;
   }
+
+  /** A Lean statement, lightly tinted; the text is the snippet's, exactly. */
+  function leanNode(source, tag = "pre", className = "lean") {
+    const node = make(tag, className);
+    for (const [kind, value] of leanTokens(source)) {
+      node.append(kind === "tx" ? value : make("span", `tk-${kind}`, value));
+    }
+    return node;
+  }
+
+  /** A statement block, clamped past STATEMENT_LINES lines with a button to show the rest. */
+  function statementNodes(source) {
+    const pre = leanNode(source);
+    if (source.split("\n").length <= STATEMENT_LINES) {
+      return [pre];
+    }
+    setClass(pre, "is-clamped", true);
+    const button = make("button", "text-button show-all", "Show all");
+    button.type = "button";
+    button.setAttribute("aria-expanded", "false");
+    let clamped = true;
+    button.addEventListener("click", () => {
+      clamped = !clamped;
+      setClass(pre, "is-clamped", clamped);
+      button.setAttribute("aria-expanded", String(!clamped));
+      button.textContent = clamped ? "Show all" : "Show less";
+    });
+    return [pre, button];
+  }
+
+  /** "View in source ↗", its module-page fallback, or plain text when nothing is rendered. */
+  function sourceLink(card) {
+    if (!card.href) {
+      return make("span", "no-link", "No rendered page");
+    }
+    const link = make("a", "source-link", card.resolution === "fallback"
+      ? "View in source · module page" : "View in source ↗");
+    link.setAttribute("href", card.href);
+    link.title = card.resolution === "fallback" ? card.fallbackLabel || card.fullName : card.fullName;
+    return link;
+  }
+
+  /** A card's declaration verdict, when verdicts are shown: a dot and its label, the note as title. */
+  function cardVerdict(card, className = "card-verdict") {
+    if (!state.faithfulness || !card.verdict) {
+      return null;
+    }
+    const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
+    const mark = make("span", `${className} verdict-badge ${display.className}`, display.label);
+    mark.title = card.verdict.note;
+    return mark;
+  }
+
+  // --- the page index (nothing selected) --------------------------------------
+
+  function legendEntry(className, label) {
+    const entry = make("span", "legend-entry");
+    entry.append(make("i", className), label);
+    return entry;
+  }
+
+  function renderIndex() {
+    const entries = pageEntries();
+    const items = entries.map((entry) => entry.item);
+    ui["index-heading"].textContent = `Page ${state.currentPage}`;
+    ui["index-meta"].textContent = pageSummaryText(items);
+    ui["page-index"].setAttribute("aria-label", `Passages on page ${state.currentPage}`);
+    ui["page-index"].replaceChildren();
+    ui["page-index"].hidden = !entries.length;
+    ui.legend.hidden = !entries.length;
+    for (const { item, region } of entries) {
+      const row = make("button", "index-row");
+      row.type = "button";
+      row.dataset.regionId = region.id;
+      row.dataset.itemId = item.id;
+      row.append(make("span", `dot coverage-${item.coverage || "unknown"}`));
+      const cell = make("span", "index-label");
+      const label = make("span", "index-title", labelParts(item.label).title);
+      label.title = item.label;
+      cell.append(label);
+      const verdict = state.faithfulness ? regionVerdict([item]) : null;
+      if (verdict) {
+        const dot = make("span", `dot verdict-dot verdict-${verdict}`);
+        dot.title = VERDICT_LABELS[verdict] ?? verdict;
+        cell.append(dot);
+      }
+      row.append(cell);
+      const hero = heroCard(item);
+      const right = make("span", hero ? "index-decl" : "index-decl is-empty");
+      if (hero) {
+        right.append(nameNode(hero.name, "decl"));
+        if (item.cards.length > 1) {
+          right.append(make("span", "more", ` +${item.cards.length - 1}`));
+        }
+      } else {
+        right.textContent = item.cards.length ? coverageWord(item.coverage) || "No key declaration"
+          : "No declaration linked";
+      }
+      row.append(right);
+      row.addEventListener("click", () => selectRegion(region, item.id));
+      row.addEventListener("mouseenter", () => setHot(region.id));
+      row.addEventListener("mouseleave", () => setHot(null));
+      row.addEventListener("focus", () => setHot(region.id));
+      row.addEventListener("blur", () => setHot(null));
+      const li = make("li");
+      li.append(row);
+      ui["page-index"].append(li);
+    }
+    ui.legend.replaceChildren(
+      legendEntry("swatch formalized", "Formalized"),
+      legendEntry("swatch partial", "Partial"),
+      legendEntry("swatch quiet", "No key declaration"),
+    );
+    const kinds = state.faithfulness
+      ? [...new Set(items.map((item) => regionVerdict([item])).filter(Boolean))] : [];
+    ui["verdict-legend"].replaceChildren(...kinds.map((kind) => {
+      const entry = make("span", "legend-entry");
+      entry.append(make("span", `dot verdict-dot verdict-${kind}`), VERDICT_LABELS[kind] ?? kind);
+      return entry;
+    }));
+    ui["verdict-legend"].hidden = !kinds.length;
+    const footer = state.faithfulness ? verdictFooter(items) : "";
+    ui["index-footer"].textContent = footer;
+    ui["index-footer"].hidden = !footer;
+  }
+
+  // --- the item view -----------------------------------------------------------
 
   function renderItemChoices(region) {
     ui["item-choices"].replaceChildren();
@@ -293,100 +515,193 @@ export async function bootstrapViewer({
     }
     for (const itemId of items) {
       const item = state.index.items.get(itemId);
-      const button = documentRef.createElement("button");
+      const button = make("button", "item-choice", labelParts(item.label).title);
       button.type = "button";
-      button.className = "item-choice";
+      button.title = item.label;
       button.dataset.itemId = itemId;
-      button.textContent = item.label;
       button.setAttribute("aria-pressed", String(state.selected?.id === itemId));
       button.addEventListener("click", () => selectItem(itemId));
       ui["item-choices"].append(button);
     }
   }
 
-  function selectRegion(region) {
-    state.region = region;
-    for (const polygon of ui.overlay.querySelectorAll?.(".overlay-region") ?? []) {
-      polygon.setAttribute("aria-pressed", String(region?.id === polygon.dataset.regionId));
-    }
-    renderItemChoices(region);
-    selectItem(region ? preferredItemId(region, state.index.items) : null);
+  function renderNavStrip(item) {
+    const entries = pageEntries();
+    const at = entries.findIndex((entry) => entry.item.id === item.id);
+    ui["back-to-page"].textContent = `← Page ${state.currentPage}`;
+    ui["item-position"].textContent = at >= 0 ? `${at + 1} of ${entries.length}` : "";
+    ui["previous-item"].disabled = at <= 0;
+    ui["next-item"].disabled = at < 0 || at >= entries.length - 1;
   }
 
-  function selectItem(itemId) {
-    const item = itemId ? state.index.items.get(itemId) ?? null : null;
-    state.selected = item;
-    state.cardPage = 1;
-    ui["selection-empty"].hidden = Boolean(item);
-    ui.selection.hidden = !item;
-    for (const button of ui["item-choices"].children ?? []) {
-      button.setAttribute?.("aria-pressed", String(button.dataset?.itemId === itemId));
+  function stepItem(delta) {
+    const entries = pageEntries();
+    const at = entries.findIndex((entry) => entry.item.id === state.selected?.id);
+    const next = entries[at + delta];
+    if (at >= 0 && next) {
+      selectRegion(next.region, next.item.id);
     }
-    if (!item) {
-      return;
+  }
+
+  function renderHead(item) {
+    const parts = labelParts(item.label);
+    ui["item-label"].replaceChildren(make("span", "item-title", parts.title));
+    if (parts.subtitle) {
+      ui["item-label"].append(make("span", "item-subtitle", parts.subtitle));
     }
-    ui["item-label"].textContent = item.label;
-    ui["item-locator"].textContent = item.locator;
-    renderVerdictNotes(item);
+    const word = coverageWord(item.coverage);
+    ui["target-summary"].className = item.coverage
+      ? `target-summary coverage-${item.coverage}` : "target-summary";
+    ui["target-summary"].textContent = word;
+    ui["target-summary"].title = coverageSummary(item.coverage);
+    ui["target-summary"].hidden = !word;
+    const tail = locatorTail(item.label, item.locator);
+    ui["item-locator"].textContent = tail;
+    ui["item-locator"].title = item.locator;
+    ui["item-locator"].hidden = !tail;
     ui["coverage-note"].hidden = !item.coverageNote;
     ui["coverage-note"].textContent = item.coverageNote;
-    const provenance = provenanceText(item);
-    ui["provenance-note"].hidden = !provenance;
-    ui["provenance-note"].textContent = provenance;
-    const clusters = item.cards.length ? [] : item.clusterIds;
-    ui["fallback-note"].hidden = !clusters.length;
-    ui["fallback-note"].textContent = clusters.length
-      ? `No declaration is linked to this item; its ledger cluster: ${clusters.join(", ")}.`
-      : "";
-    setOptions(ui["role-filter"], item.roles);
-    ui["role-filter"].value = "";
-    ui["role-filter-wrap"].hidden = item.roles.length < 2;
-    ui["target-filter"].value = "";
-    renderCards();
   }
 
-  function cardElement(card) {
-    const row = documentRef.createElement("li");
-    row.className = "target-card";
-    const title = documentRef.createElement(card.href ? "a" : "span");
-    title.textContent = card.name;
-    title.title = card.fullName;
-    if (card.href) {
-      title.setAttribute("href", card.href);
+  function renderVerdictNotes(item) {
+    ui["verdict-notes"].replaceChildren();
+    for (const verdict of state.faithfulness ? item.verdicts : []) {
+      const shown = verdictLine(verdict);
+      const line = make("p", "verdict-line");
+      line.title = shown.title;
+      line.append(make("span", `verdict-badge ${shown.className}`, shown.label));
+      if (shown.summary) {
+        line.append(make("span", "verdict-summary", shown.summary));
+      }
+      for (const quiet of [shown.resolution, shown.statusWord]) {
+        if (quiet) {
+          line.append(make("span", "faint", quiet));
+        }
+      }
+      ui["verdict-notes"].append(line);
     }
-    row.append(title);
-    for (const badge of card.badges) {
-      const mark = documentRef.createElement("span");
-      mark.className = "target-badge";
-      mark.textContent = badge;
-      row.append(mark);
+    ui["verdict-notes"].hidden = !ui["verdict-notes"].children?.length;
+  }
+
+  /** The eyebrow of the hero: kind, verdict and badges on the left, the source link on the right. */
+  function eyebrow(card) {
+    const row = make("div", "eyebrow");
+    const left = make("span", "eyebrow-left");
+    left.append(make("span", "kind", card.kind || "declaration"));
+    const verdict = cardVerdict(card);
+    if (verdict) {
+      left.append(verdict);
     }
-    if (card.verdict && state.faithfulness) {
-      const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
-      const mark = documentRef.createElement("span");
-      mark.className = `target-badge verdict-badge ${display.className}`;
-      mark.textContent = display.label;
-      mark.title = card.verdict.note;
-      row.append(mark);
+    for (const badge of shownBadges(card)) {
+      left.append(make("span", badge.startsWith("sorry") ? "tag is-sorry" : "tag", badge));
     }
-    const meta = [card.kind, card.module, card.relation, card.fallbackLabel, card.note]
-      .filter(Boolean)
-      .join(" · ");
-    if (meta) {
-      const line = documentRef.createElement("span");
-      line.className = "target-meta";
-      line.textContent = meta;
-      row.append(line);
-    }
-    if (card.snippet?.text) {
-      const pre = documentRef.createElement("pre");
-      pre.className = "target-snippet";
-      const code = documentRef.createElement("code");
-      code.textContent = card.snippet.text;
-      pre.append(code);
-      row.append(pre);
-    }
+    row.append(left, sourceLink(card));
     return row;
+  }
+
+  function renderHero(item) {
+    ui.hero.replaceChildren();
+    const hero = heroCard(item);
+    if (hero) {
+      const name = nameNode(hero.name, "decl-name");
+      name.title = hero.fullName;
+      ui.hero.append(eyebrow(hero), name);
+      if (hero.snippet?.text) {
+        ui.hero.append(...statementNodes(hero.snippet.text));
+      }
+    } else if (item.cards.length) {
+      ui.hero.append(make("p", "empty-line", "No key declaration states this passage."));
+    } else {
+      ui.hero.append(make("p", "empty-line is-strong", "No Lean declaration is linked to this passage."));
+      if (item.clusterIds.length) {
+        const line = make("p", "cluster-line", "Ledger cluster ");
+        line.append(make("code", "cluster-ids", item.clusterIds.join(", ")));
+        ui.hero.append(line);
+      }
+    }
+  }
+
+  /** One card as a row: a button that opens its statement, and the statement's body below it. */
+  function cardRow(card, { previous, preview, related }) {
+    const li = make("li", "row");
+    const button = make("button", "row-button");
+    button.type = "button";
+    const bodyId = `card-body-${++bodyCount}`;
+    button.setAttribute("aria-controls", bodyId);
+    const open = state.openCards.has(card.id);
+    button.setAttribute("aria-expanded", String(open));
+    const top = make("span", "row-top");
+    const name = nameNode(card.name, "row-name", previous);
+    name.title = card.fullName;
+    const kind = make("span", "row-kind");
+    if (state.faithfulness && card.verdict) {
+      const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
+      kind.append(make("span", `dot verdict-dot ${display.className}`));
+    }
+    kind.append(related ? [card.role, card.kind].filter(Boolean).join(" · ") : card.kind);
+    top.append(name, kind);
+    button.append(top);
+    let previewNode = null;
+    if (preview && card.snippet?.text) {
+      previewNode = leanNode(card.snippet.text, "span", "row-preview");
+      previewNode.hidden = open;
+      button.append(previewNode);
+    }
+    const body = make("div", "row-body");
+    body.id = bodyId;
+    body.hidden = !open;
+    let built = false;
+    const build = () => {
+      if (built) {
+        return;
+      }
+      built = true;
+      if (card.snippet?.text) {
+        body.append(...statementNodes(card.snippet.text));
+      }
+      const foot = make("div", "row-foot");
+      const meta = make("span", "row-meta");
+      const words = [card.relation, ...shownBadges(card)].filter(Boolean);
+      if (words.length) {
+        meta.append(words.join(" · "));
+      }
+      const verdict = cardVerdict(card);
+      if (verdict) {
+        meta.append(verdict);
+      }
+      foot.append(meta, sourceLink(card));
+      body.append(foot);
+    };
+    if (open) {
+      build();
+    }
+    button.addEventListener("click", () => {
+      const opening = !state.openCards.has(card.id);
+      if (opening) {
+        state.openCards.add(card.id);
+        build();
+      } else {
+        state.openCards.delete(card.id);
+      }
+      button.setAttribute("aria-expanded", String(opening));
+      body.hidden = !opening;
+      if (previewNode) {
+        previewNode.hidden = opening;
+      }
+      setClass(li, "is-open", opening);
+    });
+    setClass(li, "is-open", open);
+    li.append(button, body);
+    return li;
+  }
+
+  function fillRows(list, cards, options) {
+    list.replaceChildren();
+    let previous = null;
+    for (const card of cards) {
+      list.append(cardRow(card, { ...options, previous }));
+      previous = splitName(card.name)[0] || null;
+    }
   }
 
   function renderCards() {
@@ -394,30 +709,165 @@ export async function bootstrapViewer({
     if (!item) {
       return;
     }
-    const matched = cardsMatching(item.cards, {
-      query: ui["target-filter"].value,
-      role: ui["role-filter"].value,
-    });
-    const page = paginateCards(matched, state.cardPage, CARD_PAGE_SIZE);
+    const filtered = item.cards.length > FILTER_ABOVE;
+    const query = filtered ? ui["target-filter"].value : "";
+    const hero = heroCard(item);
+    const keys = item.cards.filter((card) => card.role === "key" && card !== hero);
+    const related = item.cards.filter((card) => card.role !== "key");
+    const shownKeys = cardsMatching(keys, { query });
+    const shownRelated = cardsMatching(related, { query });
+
+    ui["also-section"].hidden = !keys.length;
+    ui["also-count"].textContent = String(query ? shownKeys.length : keys.length);
+    const capped = state.alsoAll ? shownKeys : shownKeys.slice(0, ALSO_ROWS);
+    fillRows(ui["also-list"], capped, { preview: true, related: false });
+    const hidden = shownKeys.length - capped.length;
+    ui["also-more"].hidden = hidden <= 0;
+    ui["also-more"].textContent = hidden > 0 ? `Show ${hidden} more` : "";
+
+    ui["related-section"].hidden = !related.length && !filtered;
+    ui["related-count"].textContent = String(query ? shownRelated.length : related.length);
+    ui["target-filter"].hidden = !filtered;
+    const page = paginateCards(shownRelated, state.cardPage, CARD_PAGE_SIZE);
     state.cardPage = page.page;
-    ui["target-summary"].className = item.coverage
-      ? `target-summary coverage-summary coverage-${item.coverage}`
-      : "target-summary";
-    ui["target-summary"].textContent = cardSummaryText({ coverage: item.coverage, shown: page.total });
-    ui["target-page"].textContent = `Page ${page.page} of ${page.pageCount}`;
+    fillRows(ui["related-list"], page.items, { preview: false, related: true });
+    ui["related-pager"].hidden = page.pageCount <= 1;
+    const first = (page.page - 1) * CARD_PAGE_SIZE + 1;
+    ui["target-page"].textContent = page.total
+      ? `${first}–${first + page.items.length - 1} of ${page.total}` : "";
     ui["previous-targets"].disabled = page.page <= 1;
     ui["next-targets"].disabled = page.page >= page.pageCount;
-    ui["target-groups"].replaceChildren();
-    for (const group of groupCards(page.items)) {
-      const section = documentRef.createElement("section");
-      section.className = "target-group";
-      const heading = documentRef.createElement("h4");
-      heading.textContent = group.role || "unclassified";
-      const list = documentRef.createElement("ul");
-      list.className = "target-list";
-      list.append(...group.cards.map(cardElement));
-      section.append(heading, list);
-      ui["target-groups"].append(section);
+  }
+
+  function renderFooter(item) {
+    const footer = reviewFooter(item, { faithfulness: state.faithfulness });
+    ui["provenance-note"].textContent = footer;
+    ui["provenance-note"].hidden = !footer;
+  }
+
+  function renderItem(item) {
+    renderNavStrip(item);
+    renderHead(item);
+    renderVerdictNotes(item);
+    renderHero(item);
+    renderCards();
+    renderFooter(item);
+  }
+
+  // --- selection -----------------------------------------------------------------
+
+  function selectRegion(region, itemId = null) {
+    state.region = region;
+    for (const polygon of ui.overlay.children ?? []) {
+      polygon.setAttribute("aria-pressed", String(region?.id === polygon.dataset?.regionId));
+    }
+    setClass(ui.overlay, "has-selection", region);
+    hidePeek();
+    renderItemChoices(region);
+    selectItem(region ? itemId ?? preferredItemId(region, state.index.items) : null);
+    updateBar();
+    if (region) {
+      scrollRegionIntoView(region);
+    }
+  }
+
+  function selectItem(itemId) {
+    const item = itemId ? state.index.items.get(itemId) ?? null : null;
+    state.selected = item;
+    state.cardPage = 1;
+    state.alsoAll = false;
+    state.openCards = new Set();
+    ui["selection-empty"].hidden = Boolean(item);
+    ui.selection.hidden = !item;
+    for (const button of ui["item-choices"].children ?? []) {
+      button.setAttribute?.("aria-pressed", String(button.dataset?.itemId === itemId));
+    }
+    ui["target-filter"].value = "";
+    if (item) {
+      renderItem(item);
+    } else {
+      renderIndex();
+    }
+    ui.details.scrollTop = 0;
+  }
+
+  // --- the page's marks: the margin bar, the peek, the scroll ------------------
+
+  function updateBar() {
+    const box = state.region ? state.boxes.get(state.region.id) : null;
+    ui["region-bar"].hidden = !box;
+    if (box) {
+      ui["region-bar"].style.top = `${box.y}px`;
+      ui["region-bar"].style.height = `${box.height}px`;
+    }
+  }
+
+  function hidePeek() {
+    ui["region-peek"].hidden = true;
+  }
+
+  function showPeek(region) {
+    const box = state.boxes.get(region.id);
+    if (!box || state.region?.id === region.id) {
+      hidePeek();
+      return;
+    }
+    const item = state.index.items.get(preferredItemId(region, state.index.items));
+    const peek = ui["region-peek"];
+    peek.replaceChildren(make("span", "peek-label", labelParts(item.label).title));
+    const hero = heroCard(item);
+    if (hero) {
+      peek.append(make("span", "peek-name", hero.name));
+      if (item.cards.length > 1) {
+        peek.append(make("span", "peek-more", `+${item.cards.length - 1}`));
+      }
+    } else {
+      peek.append(make("span", "peek-more",
+                       item.cards.length ? coverageWord(item.coverage) || "No key declaration" : "No declaration linked"));
+    }
+    peek.hidden = false;
+    const stageWidth = Number.parseFloat(ui["page-stage"].style.width) || 0;
+    const width = peek.offsetWidth || 0;
+    const height = peek.offsetHeight || 0;
+    const left = Math.max(0, Math.min(box.x, stageWidth - width));
+    const above = box.y - 6 - height;
+    peek.style.left = `${left}px`;
+    peek.style.top = `${above >= 0 ? above : box.y + box.height + 6}px`;
+  }
+
+  function scrollRegionIntoView(region) {
+    const box = state.boxes.get(region.id);
+    const scroller = ui["page-scroller"];
+    if (!box || typeof scroller.getBoundingClientRect !== "function") {
+      return;
+    }
+    const stage = ui["page-stage"].getBoundingClientRect();
+    const frame = scroller.getBoundingClientRect();
+    const top = stage.top - frame.top + scroller.scrollTop + box.y;
+    const bottom = top + box.height;
+    const visibleBottom = scroller.scrollTop + scroller.clientHeight - CONTROLS_ROOM;
+    if (top >= scroller.scrollTop && bottom <= visibleBottom) {
+      return;
+    }
+    const reduce = windowRef?.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    scroller.scrollTo?.({
+      behavior: reduce ? "auto" : "smooth",
+      top: Math.max(0, (top + bottom) / 2 - (scroller.clientHeight - CONTROLS_ROOM) / 2),
+    });
+  }
+
+  /** Each region's stroke: coverage always, and its verdict when verdicts are shown. */
+  function decorateRegions() {
+    for (const region of pageRegions()) {
+      const verdict = state.faithfulness ? regionVerdict(regionItems(region)) : null;
+      for (const polygon of polygonsOf(region.id)) {
+        polygon.dataset.coverage = coverageOfRegion(region);
+        if (verdict) {
+          polygon.dataset.verdict = verdict;
+        } else {
+          delete polygon.dataset.verdict;
+        }
+      }
     }
   }
 
@@ -426,15 +876,18 @@ export async function bootstrapViewer({
     ui.overlay.setAttribute("viewBox", `0 0 ${viewport.width} ${viewport.height}`);
     ui.overlay.setAttribute("width", String(viewport.width));
     ui.overlay.setAttribute("height", String(viewport.height));
-    for (const region of state.index.pages.get(state.currentPage) ?? []) {
+    state.boxes = new Map();
+    for (const region of pageRegions()) {
+      let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
       for (const quad of region.quads) {
-        const polygon = documentRef.createElementNS("http://www.w3.org/2000/svg", "polygon");
+        const points = quadToViewport(quad, displayed, viewport);
+        for (const [x, y] of points) {
+          [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+        }
+        const polygon = documentRef.createElementNS(SVG_NS, "polygon");
         polygon.classList.add("overlay-region");
         polygon.dataset.regionId = region.id;
-        polygon.setAttribute(
-          "points",
-          quadToViewport(quad, displayed, viewport).map(([x, y]) => `${x},${y}`).join(" "),
-        );
+        polygon.setAttribute("points", points.map(([x, y]) => `${x},${y}`).join(" "));
         polygon.setAttribute("tabindex", "0");
         polygon.setAttribute("role", "button");
         polygon.setAttribute("aria-label", region.label);
@@ -446,9 +899,33 @@ export async function bootstrapViewer({
             selectRegion(region);
           }
         });
+        polygon.addEventListener("pointerenter", (event) => {
+          if (event.pointerType !== "touch") {
+            showPeek(region);
+            setHot(region.id);
+          }
+        });
+        polygon.addEventListener("pointerleave", () => {
+          hidePeek();
+          setHot(null);
+        });
+        polygon.addEventListener("focus", () => {
+          if (polygon.matches?.(":focus-visible")) {
+            showPeek(region);
+            setHot(region.id);
+          }
+        });
+        polygon.addEventListener("blur", () => {
+          hidePeek();
+          setHot(null);
+        });
         ui.overlay.append(polygon);
       }
+      state.boxes.set(region.id, { height: y1 - y0, width: x1 - x0, x: x0, y: y0 });
     }
+    setClass(ui.overlay, "has-selection", state.region);
+    decorateRegions();
+    updateBar();
   }
 
   async function renderPage() {
@@ -488,15 +965,14 @@ export async function bootstrapViewer({
     if (epoch !== state.renderEpoch) {
       return;
     }
+    hidePeek();
     renderOverlay(displayed, viewport);
     ui["page-number"].value = String(state.currentPage);
-    ui["page-count"].textContent = `of ${state.pdfDocument.numPages}`;
+    ui["page-count"].textContent = `/ ${state.pdfDocument.numPages}`;
     ui["previous-page"].disabled = state.currentPage <= 1;
     ui["next-page"].disabled = state.currentPage >= state.pdfDocument.numPages;
     ui["zoom-value"].textContent = `${state.zoom}%`;
-    ui["rotation-value"].textContent = `${state.rotation}°`;
-    ui.status.textContent =
-      `Verified PDF · page ${state.currentPage} of ${state.pdfDocument.numPages}`;
+    setStatus("ok", "Verified PDF");
     rememberPage(state.config.storageKey, state.currentPage, { historyRef, storage });
   }
 
@@ -510,9 +986,11 @@ export async function bootstrapViewer({
     } catch {
       // Storage may be blocked (private mode); the button still works for this visit.
     }
+    decorateRegions();
     if (state.selected) {
-      renderVerdictNotes(state.selected);
-      renderCards();
+      renderItem(state.selected);
+    } else if (state.index) {
+      renderIndex();
     }
   }
 
@@ -527,7 +1005,6 @@ export async function bootstrapViewer({
 
   async function changeZoom(requested) {
     state.zoom = Math.min(Math.max(Number(requested) || 100, 50), 250);
-    ui.zoom.value = String(state.zoom);
     await renderPage();
   }
 
@@ -539,14 +1016,13 @@ export async function bootstrapViewer({
   // A refusal is an error message on the page, never a blank page: the two data
   // files are loaded inside this guard so the shell always says what went wrong.
   try {
-    ui.status.textContent = "Loading the overlay configuration…";
+    setStatus("loading", "Loading…");
     state.config = await loadConfig(fetchImpl, configUrl);
     applyConfig(state.config);
-    ui.status.textContent = "Loading the annotations…";
     state.index = (await loadAnnotations(state.config, fetchImpl, cryptoProvider, pageUrl, generatedUrl)).index;
   } catch (error) {
     ui.workspace.hidden = true;
-    ui.status.textContent = "The overlay data was not loaded.";
+    setStatus("bad", "Data not loaded");
     showError(error);
     throw error;
   }
@@ -564,7 +1040,6 @@ export async function bootstrapViewer({
   } catch {
     // Unreadable storage leaves verdicts hidden.
   }
-  ui.status.textContent = "Overlay data read. Loading and verifying the loopback PDF…";
   clearError();
   try {
     const { bytes } = await loadPdfBytes(state.config, state.index, fetchImpl, cryptoProvider);
@@ -588,25 +1063,28 @@ export async function bootstrapViewer({
     await renderPage();
   } catch (error) {
     ui.workspace.hidden = true;
-    ui.status.textContent = "The verified loopback PDF was not opened.";
+    setStatus("bad", "PDF not verified");
     showError(error);
   }
 
   ui["previous-page"].addEventListener("click", () => changePage(state.currentPage - 1));
   ui["next-page"].addEventListener("click", () => changePage(state.currentPage + 1));
   ui["page-number"].addEventListener("change", () => changePage(ui["page-number"].value));
-  ui.zoom.addEventListener("input", () => changeZoom(ui.zoom.value));
   ui["zoom-out"].addEventListener("click", () => changeZoom(state.zoom - 10));
   ui["zoom-in"].addEventListener("click", () => changeZoom(state.zoom + 10));
-  ui["rotate-left"].addEventListener("click", () => rotate(-90));
   ui["rotate-right"].addEventListener("click", () => rotate(90));
   ui["toggle-faithfulness"].addEventListener("click", () => showFaithfulness(!state.faithfulness));
-  for (const filter of [ui["role-filter"], ui["target-filter"]]) {
-    filter.addEventListener("input", () => {
-      state.cardPage = 1;
-      renderCards();
-    });
-  }
+  ui["back-to-page"].addEventListener("click", () => selectRegion(null));
+  ui["previous-item"].addEventListener("click", () => stepItem(-1));
+  ui["next-item"].addEventListener("click", () => stepItem(1));
+  ui["also-more"].addEventListener("click", () => {
+    state.alsoAll = true;
+    renderCards();
+  });
+  ui["target-filter"].addEventListener("input", () => {
+    state.cardPage = 1;
+    renderCards();
+  });
   ui["previous-targets"].addEventListener("click", () => {
     state.cardPage -= 1;
     renderCards();
@@ -614,6 +1092,16 @@ export async function bootstrapViewer({
   ui["next-targets"].addEventListener("click", () => {
     state.cardPage += 1;
     renderCards();
+  });
+  for (const lit of [ui["item-head"], ui.hero]) {
+    lit.addEventListener("mouseenter", () => setHot(state.region?.id ?? null));
+    lit.addEventListener("mouseleave", () => setHot(null));
+  }
+  // The status chip's note closes on a click anywhere else.
+  documentRef.addEventListener("click", (event) => {
+    if (ui["status-chip"].open && !ui["status-chip"].contains?.(event.target)) {
+      ui["status-chip"].open = false;
+    }
   });
   documentRef.addEventListener("keydown", (event) => {
     if (!isViewerShortcut(event)) {
@@ -633,6 +1121,7 @@ export async function bootstrapViewer({
   });
   return { state, ui };
 }
+
 
 if (typeof document !== "undefined") {
   const start = () =>

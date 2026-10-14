@@ -110,21 +110,24 @@ From the records alone it builds:
   the extension's `region_items` order; a click opens the first item with a
   card;
 - items: one per extension `item`, labelled by `label`, with `status` as its
-  coverage line, `note` as its coverage note, the extension's `locator` (its
-  `text`, else its printed and physical pages) and `verdicts` (each ending
-  `[<provenance method>, <status>; <resolution>]`), and a line naming the
-  key and attributed counts and each link `provenance` (method, confirmed
-  or unconfirmed);
+  coverage word, `note` as its coverage note, the extension's `locator` (its
+  `text`, else its printed and physical pages, less the segment that repeats
+  the label) and `verdicts` (each one line: kind, summary and resolution,
+  shown only on request), and one footer line naming the link `provenance`
+  methods and whether a person reviewed the links and verdicts;
 - cards: one per record with a `target`, once per item however many regions
   repeat it, in the order key, attributed, support, example, helper (then by
-  record id), with the extension's snippet, destination resolution and
+  record id), shown as the first key card with its statement, then the other
+  key cards and the rest as rows that open, each list headed by its count,
+  with the extension's snippet, destination resolution and
   fallback label, declaration kind and flags, and declaration verdict. The target resolves against the
   annotation file's URL and becomes a link only when it is `https:` or a
   page of the same origin, and only when the extension says it is a rendered
   page;
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
-  order the files came in.
+  order the files came in; with nothing selected the panel lists the page's
+  items in that order, with how many a key declaration states.
 
 A record it cannot place is dropped with a notice, never guessed at. Every
 string reaches the DOM through `textContent` or attribute setters.
