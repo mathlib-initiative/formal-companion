@@ -6,8 +6,8 @@ three kinds; two ship in version one:
 
 ``docstring_tags``      declarations whose docstring opens with a book tag,
                         backticked or bare (tao-measure-lean, teorth/analysis).
-``attribution_table``   a machine-readable item->declaration map plus
-                        statement snippets (measure_theory's overlay data).
+``attribution_table``   a machine-readable item->declaration map, its
+                        statements cut from the Lean (measure_theory's overlay data).
 ``blueprint_tex``       a leanblueprint manuscript: ``\\lean{}`` / ``\\leanok``
                         inside the statement environments of blueprint/**/*.tex.
 ``ledger_nodes``        a source-node ledger, usable only after an item-level

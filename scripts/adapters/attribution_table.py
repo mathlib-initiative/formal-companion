@@ -17,6 +17,9 @@ Generalisations over the original cell (docs/design/stage_map.md Stage 2):
   label the grammar refuses is reported rather than silently relabelled;
 * ``statement`` is the signature and ``body`` the definition body, instead of
   one blob;
+* the statement text is cut from the Lean file the ledger names for each
+  declaration (``adapters.leansnippets``), not read from
+  ``declaration-snippets.json``, which is ignored when a repo still has it;
 * ``key()`` includes the ledger and target-refinement shas
   (the design critique: "the extract key must include ledger sha and
   target-refinement sha for ledger repos"), and the dry run reports when the
@@ -69,7 +72,7 @@ from typing import Iterator, Mapping, Sequence
 from cflib import items as cf_items
 from cflib.hashing import sha256_file
 
-from . import leanbuild, leanparse
+from . import leanbuild, leanparse, leansnippets
 from .api import Adapter, AdapterError, register, sha_of_files
 from .base import make_row
 from .itemtag import kinds_from_labels
@@ -82,8 +85,9 @@ LAYOUTS = (("attribution", "attribution/official-source.json"),
 #: File names inside that directory; every path is overridable in adapter.yaml.
 DATA_FILES = {
     "target_refinement": "target-refinement.json",
-    "declaration_snippets": "declaration-snippets.json",
 }
+#: The snippets file the curation once shipped; read no more, and named in the dry run when present.
+RETIRED_SNIPPETS = "declaration-snippets.json"
 DEFAULT_LEDGER = "source-formalization-ledger.json"
 GEOMETRY_GLOB = "geometry-batch-*.json"
 
@@ -179,7 +183,7 @@ class LeanClaim:
 
 @register
 class AttributionTableAdapter(Adapter):
-    """Companions that ship an item -> declaration map plus statement snippets."""
+    """Companions that ship an item -> declaration map; the statements are cut from their Lean."""
 
     kind = "attribution_table"
 
@@ -234,12 +238,16 @@ class AttributionTableAdapter(Adapter):
         if not self.config.get("repo"):
             raise AdapterError(f"{self.source}: 'repo' is required")
         repo = Path(str(self.config["repo"])).expanduser()
-        for field in ("target_refinement", "declaration_snippets"):
-            path = self._path(repo, field)
-            if not path.is_file():
-                raise AdapterError(
-                    f"{self.source}: {field} not found at {path}",
-                    hint=f"set {field}: <repo-relative path> in adapter.yaml")
+        path = self._path(repo, "target_refinement")
+        if not path.is_file():
+            raise AdapterError(
+                f"{self.source}: target_refinement not found at {path}",
+                hint="set target_refinement: <repo-relative path> in adapter.yaml")
+        if self._ledger_path(repo) is None:
+            raise AdapterError(
+                f"{self.source}: no ledger at {repo / str(self.config.get('ledger') or DEFAULT_LEDGER)}",
+                hint="the statements are cut from the Lean file the ledger names for each declaration; "
+                     "set ledger: <repo-relative path> in adapter.yaml")
         if not self._geometry_files(repo):
             raise AdapterError(
                 f"{self.source}: geometry_glob {', '.join(self._geometry_patterns(repo))} "
@@ -353,9 +361,13 @@ class AttributionTableAdapter(Adapter):
         # bare sorry as `exercise`; otherwise it is an unfinished `gap`.
         exercise_permanent = str(self.get("sorry.exercise_sorry", "permanent")).lower() != "none"
         refinement = json.loads(self._path(repo, "target_refinement").read_text(encoding="utf-8"))
-        snippets = json.loads(
-            self._path(repo, "declaration_snippets").read_text(encoding="utf-8")).get("snippets", {})
-        ledger_kinds = self._ledger_kinds(repo)
+        ledger = self._ledger(repo)
+        try:
+            snippets, _unlocated = leansnippets.cut(refinement, ledger, leansnippets.reader(repo))
+        except leansnippets.SnippetError as exc:
+            raise AdapterError(f"{self.source}: {exc}") from exc
+        ledger_kinds = {n["id"]: str(n.get("kind") or "")
+                        for n in ledger.get("formalization_nodes", []) if n.get("id")}
 
         rows: list[dict] = []
         missing: list[dict] = []
@@ -480,13 +492,15 @@ class AttributionTableAdapter(Adapter):
         return report, self._scan_rows(unionable, regions, source_id, source_sha,
                                        exercise_permanent)
 
-    def _ledger_kinds(self, repo: Path) -> dict[str, str]:
+    def _ledger(self, repo: Path) -> dict:
         path = self._ledger_path(repo)
-        if path is None:
-            return {}
-        ledger = json.loads(path.read_text(encoding="utf-8"))
-        return {n["id"]: str(n.get("kind") or "")
-                for n in ledger.get("formalization_nodes", []) if n.get("id")}
+        return {} if path is None else json.loads(path.read_text(encoding="utf-8"))
+
+    def _snippet_files(self, repo: Path) -> list[Path]:
+        """The Lean files the snippets are cut from: the ledger's file for each id the refinement lists."""
+        refinement = json.loads(self._path(repo, "target_refinement").read_text(encoding="utf-8"))
+        paths = {repo / str(file) for _id, file in leansnippets.wanted(refinement, self._ledger(repo)) if file}
+        return sorted(p for p in paths if p.is_file())
 
     # -- the cross-check against the Lean sources --------------------------
     def cross_check_policy(self) -> str:
@@ -715,6 +729,10 @@ class AttributionTableAdapter(Adapter):
             "unnumbered_labels": len(rejects),
             "rejects": rejects[:50],
             "missing": missing[:50],
+            # a snippets file the curation still ships is not read: the statements come from the Lean
+            "ignored": [rel for rel in (str(self.config.get("declaration_snippets")
+                                            or f"{self.layout(path)[0]}/{RETIRED_SNIPPETS}"),)
+                        if (path / rel).is_file()],
             # The table against the Lean sources it claims to describe. `cf
             # extract` and `cf onboard` turn `omissions` into a warning naming
             # every declaration: an export that omits a declaration the repo
@@ -735,7 +753,8 @@ class AttributionTableAdapter(Adapter):
         fp = super().key_inputs()
         refinement_path = self._path(path, "target_refinement")
         fp["target_refinement_sha"] = sha256_file(refinement_path)
-        fp["snippets_sha"] = sha256_file(self._path(path, "declaration_snippets"))
+        # the statements are cut from these files, so their bytes change the rows
+        fp["snippet_files_sha"] = sha_of_files(self._snippet_files(path), path)
         fp["geometry_shas"] = {str(p.relative_to(path)): sha256_file(p)
                                for p in self._geometry_files(path)}
         ledger_path = self._ledger_path(path)

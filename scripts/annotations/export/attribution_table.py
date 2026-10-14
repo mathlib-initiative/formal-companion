@@ -10,7 +10,6 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
                                                 schema version 2: coverage entries (a class,
                                                 the declarations the class admits, a note)
     pdf-overlay/data/faithfulness-verdicts.json adjudicated verdicts per region
-    pdf-overlay/data/declaration-snippets.json  statement text per declaration
     pdf-overlay/data/destinations.json          where each ledger node is rendered
     pdf-overlay/official-source.json            the PDF's download record
     source-formalization-ledger.json            the graph authority: source nodes,
@@ -22,11 +21,12 @@ docs/proposals/pdf-to-companion.md section 5.4.  The convention is the one
 
 Every file is read as it is; the Lean sources are scanned at the pinned commit
 with ``adapters.leanbuild`` (every declaration, its namespace and privacy) and
-``formal_companion_annotations.ids`` (statement-hash ids and signatures), and a
-local build's ``.ilean`` gives an anonymous instance its generated name when
-the build postdates the file's last commit.  What the format cannot carry is counted in
-the report's ``lossy`` and ``bent`` buckets rather than dropped in silence;
-docs/exporters.md lists the buckets.
+``formal_companion_annotations.ids`` (statement-hash ids and signatures), the
+snippet of each declaration the refinement lists is cut from them by
+``adapters.leansnippets``, and a local build's ``.ilean`` gives an anonymous
+instance its generated name when the build postdates the file's last commit.
+What the format cannot carry is counted in the report's ``lossy`` and ``bent``
+buckets rather than dropped in silence; docs/exporters.md lists the buckets.
 
 Two differences from the prototype are deliberate and documented in
 tests/test_export.py: the PDF is named through the skill's registry (one id
@@ -40,7 +40,7 @@ import math
 import re
 from pathlib import Path
 
-from adapters import leanbuild
+from adapters import leanbuild, leansnippets
 from cflib import vendored  # noqa: F401  (vendor/ on sys.path)
 from formal_companion_annotations import ids
 from cflib import items as cf_items
@@ -56,7 +56,6 @@ LAYOUT = {
     "geometry_glob": "geometry-batch-?.json",
     "refinement": "target-refinement.json",
     "verdicts": "faithfulness-verdicts.json",
-    "snippets": "declaration-snippets.json",
     "destinations": "destinations.json",
     "official": "pdf-overlay/official-source.json",
     "ledger": "source-formalization-ledger.json",
@@ -64,6 +63,8 @@ LAYOUT = {
     "ledger_tool": "scripts/source_formalization_ledger.py",
     "geometry_tool": "scripts/overlay_geometry_from_layout.py",
 }
+#: The file the snippets were once read from; a checkout that still has it is told it is ignored.
+RETIRED_SNIPPETS = "declaration-snippets.json"
 #: The three layout keys an export may move, and the flag that moves each.
 MOVABLE_LAYOUT = {"data": "--data-dir", "ledger": "--ledger", "official": "--official-source"}
 RFC8118 = vocab.CONFORMS_TO_PDF
@@ -178,7 +179,7 @@ class AttributionTableExport:
             if value is not None:
                 self.layout[key] = common.repo_relative(value, MOVABLE_LAYOUT[key])
         self.data = self.repo / self.layout["data"]
-        for rel in ("refinement", "verdicts", "snippets", "destinations"):
+        for rel in ("refinement", "verdicts", "destinations"):
             if not (self.data / self.layout[rel]).is_file():
                 raise ExportError(f"{self.repo} has no {self.layout['data']}/{self.layout[rel]}",
                                   hint="the attribution-table convention needs the overlay data files; "
@@ -193,11 +194,17 @@ class AttributionTableExport:
         self.batches = {p.stem: load(p) for p in self.batch_paths}
         self.refinement = load(self.data / self.layout["refinement"])
         self.verdicts_in = load(self.data / self.layout["verdicts"])
-        self.snippets_in = load(self.data / self.layout["snippets"])
         self.dest_in = load(self.data / self.layout["destinations"])
         self.official = load(self.repo / self.layout["official"])
         self.ledger = load(self.repo / self.layout["ledger"])
         self.ledger_lock = file_lock(self.repo, self.layout["ledger"])
+        try:
+            # the Lean at the pinned commit: pinned_checkout refused a tree that differs from it
+            self.snippets_in, self.snippets_unlocated = leansnippets.cut(
+                self.refinement, self.ledger, leansnippets.reader(self.repo))
+        except leansnippets.SnippetError as exc:
+            raise ExportError(str(exc), hint=f"every formalization node {self.layout['ledger']} gives a file "
+                                             "must name a Lean file of the checkout") from exc
         # the record arrays, keyed by id
         self.items: dict[str, dict] = {}
         self.locations: dict[str, dict] = {}
@@ -593,7 +600,7 @@ class AttributionTableExport:
                     rec = {"id": lid, "id_source": "name", "name": lid, "kind": FIELD_KIND[kind],
                            "module": n["module"], "file": n["file"], "private": False, "anonymous": False,
                            "parent": lid.rsplit(".", 1)[0]}
-                    snip = self.snippets_in["snippets"].get(lid)
+                    snip = self.snippets_in.get(lid)
                     if snip:
                         rec["line"] = snip["line"]
                     pending_fields.append((rec, None))
@@ -968,8 +975,9 @@ class AttributionTableExport:
 
     # -- snippets and destinations ------------------------------------------------------
     def build_snippets(self) -> None:
-        for fid, s in self.snippets_in["snippets"].items():
-            did = self.decl_of(fid, f"{self.layout['data']}/{self.layout['snippets']}")
+        """One snippet per declaration the refinement lists, cut from the Lean (``adapters.leansnippets``)."""
+        for fid, s in self.snippets_in.items():
+            did = self.decl_of(fid, f"{self.layout['data']}/{self.layout['refinement']}")
             dec = self.declarations[did]
             if s["file"] != dec["file"]:
                 raise ExportError(f"snippet {fid} is in {s['file']}, the declaration in {dec['file']}")
@@ -1200,7 +1208,7 @@ class AttributionTableExport:
         rels += [f"{self.layout['data']}/{p.stem}.sources.json" for p in self.batch_paths
                  if p.with_name(p.stem + ".sources.json").is_file()]
         rels += [f"{self.layout['data']}/{self.layout[k]}"
-                 for k in ("refinement", "verdicts", "snippets", "destinations")]
+                 for k in ("refinement", "verdicts", "destinations")]
         rels += [self.layout["official"], self.layout["ledger"]]
         return [file_lock(self.repo, rel) for rel in sorted(set(rels))]
 
@@ -1250,6 +1258,9 @@ class AttributionTableExport:
         counts["verdict_resolutions"] = {v["id"]: v.get("resolution", "(none: open)") for v in doc["verdicts"]}
         counts["snippets_line_differs_from_scan"] = len(self.snippet_line_diff)
         counts["snippets_truncated"] = sum(1 for s in doc["snippets"] if s.get("truncated"))
+        counts["snippets_unlocated"] = list(self.snippets_unlocated)
+        if (self.data / RETIRED_SNIPPETS).is_file():
+            counts["ignored_inputs"] = [f"{self.layout['data']}/{RETIRED_SNIPPETS}"]
         counts["anonymous_at_head"] = len(self.anon)
         counts["comment_tags_mapped_to_ledger"] = len(self.tag_to_decl)
         counts["named_scanned_at_head"] = len(self.named)

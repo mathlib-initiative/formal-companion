@@ -5,7 +5,7 @@ New code, testing scripts/annotations/export/ and `cf export`
 
 * **unit tests** over two synthetic companions built in a temporary git
   repository: a tiny attribution table (two geometry batches, a refinement, a
-  ledger, snippets, destinations, one verdict) and two docstring-tagged Lean
+  ledger, destinations, one verdict) and two docstring-tagged Lean
   files with an injected PDF text layer, a cross-reference index and a
   two-page site.  Always run.
 * **reproduction tests** against the pinned reference companions, skipped
@@ -303,12 +303,6 @@ def make_attribution_table_repo(root: Path) -> str:
              "coverage": "partial_only", "formalization_ids": ["Demo.Box.volume"], "key_formalization_ids": [],
              "note": "partial only: Box.volume states the first half of the remark; the bound is not stated"},
         ]})
-    write_json(data / "declaration-snippets.json", {
-        "schema": "x/declaration-snippets", "schema_version": 1, "missing": [], "snippets": {
-            "Demo.Box": {"file": "Demo/Basic.lean", "line": 4, "text": "structure Box where"},
-            "Demo.Box.left": {"file": "Demo/Basic.lean", "line": 5, "text": "left : Nat"},
-            "Demo.volume_add": {"file": "Demo/Basic.lean", "line": 11,
-                                "text": "theorem volume_add (b : Box) : b.volume = b.volume …"}}})
     write_json(data / "destinations.json", {
         "schema": "x/pdf-overlay-destinations", "schema_version": 1,
         "ledger": {"path": "source-formalization-ledger.json", "sha256": ledger_sha, "bytes": len(ledger_bytes)},
@@ -491,7 +485,22 @@ class TestAttributionTableExport(unittest.TestCase):
         self.assertEqual(self.report.lossy["provenance.geometry_tool_missing"]["count"], 1)
 
     def test_snippets_destinations_and_the_graph_pin(self):
-        self.assertTrue(by_id(self.doc, "snippets")["snippet:Demo.volume_add"]["truncated"])
+        # one snippet per declaration the refinement lists, cut from the Lean at the commit
+        snippets = by_id(self.doc, "snippets")
+        self.assertEqual(sorted(snippets), ["snippet:Demo.Box", "snippet:Demo.Box.left", "snippet:Demo.Box.volume",
+                                            "snippet:Demo.volume_add"])
+        self.assertEqual((snippets["snippet:Demo.volume_add"]["line"], snippets["snippet:Demo.volume_add"]["text"]),
+                         (12, "theorem volume_add (b : Box) : b.volume = b.volume := rfl"))
+        self.assertEqual(snippets["snippet:Demo.Box.volume"]["text"],
+                         "def Box.volume (b : Box) : Nat := b.right - b.left")
+        # a field has no declaration line of its own at HEAD: it takes its snippet's
+        self.assertEqual(snippets["snippet:Demo.Box.left"]["text"], "structure Box where\n  …\n  left : Nat")
+        self.assertEqual(by_id(self.doc, "declarations")["Demo.Box.left"]["line"], 5)
+        self.assertFalse(any(s.get("truncated") for s in snippets.values()))
+        self.assertEqual(self.report.counts["snippets_unlocated"], [])
+        self.assertNotIn("ignored_inputs", self.report.counts)
+        self.assertNotIn("pdf-overlay/data/declaration-snippets.json",
+                         [i["path"] for i in self.report.counts["inputs"]])
         dests = by_id(self.doc, "destinations")
         self.assertEqual(dests["verso_literate:Demo.Box"]["fragment"], "Demo___Box")
         self.assertEqual(dests["verso_literate:moddoc:Demo.Basic"]["artifact"], "moddoc:Demo.Basic")
@@ -1116,6 +1125,64 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
         # the class is the table's where it gives one: a named key alone writes no coverage
         self.assertNotIn("coverage", by_id(doc, "items")["definition-1.1.1"])
 
+    def test_snippets_are_cut_from_the_lean_at_the_commit(self):
+        tail = ("-- `example:demo-tagged`\n"
+                "example (b : Box) : b.volume = b.volume := by\n  rfl\n\n"
+                "/-- Twice the volume. -/\n"
+                "def Box.double (b : Box) : Nat :=\n  b.volume + b.volume\n\n"
+                "/-- Too long to show whole. -/\n"
+                "theorem long_statement (b : Box)\n"
+                + "".join(f"    (h{k} : b.left ≤ b.right + {k})\n" for k in range(14))
+                + "    : True := trivial\n\nend Demo\n")
+        new = {"example:demo-tagged": "anonymous example", "Demo.Box.double": "definition",
+               "Demo.long_statement": "theorem"}
+
+        def mutate(root):
+            lean = root / "Demo" / "Basic.lean"
+            lean.write_text(lean.read_text(encoding="utf-8").replace("end Demo\n", tail), encoding="utf-8")
+            edit_json(root / "source-formalization-ledger.json", lambda o: o["formalization_nodes"].extend(
+                {"id": i, "kind": k, "module": "Demo.Basic", "file": "Demo/Basic.lean"} for i, k in new.items()))
+            relock_ledger(root)
+            # the ledger places example:demo-unlocated in Demo/Basic.lean, which carries no such tag
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
+                      lambda o: o["entries"][1]["formalization_ids"].extend([*new, "example:demo-unlocated"]))
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        valid_and_quiet(self, doc)
+        snippets = {s["declaration"]: s for s in doc["snippets"]}
+        tagged = snippets[next(d["id"] for d in doc["declarations"]
+                               if "example:demo-tagged" in d.get("legacy_ids", []) + [d["id"]])]
+        self.assertEqual((tagged["line"], tagged["text"]), (25, "example (b : Box) : b.volume = b.volume := by"))
+        self.assertEqual((snippets["Demo.Box.double"]["line"], snippets["Demo.Box.double"]["text"]),
+                         (29, "def Box.double (b : Box) : Nat :=\n  b.volume + b.volume"))
+        long = snippets["Demo.long_statement"]
+        self.assertEqual((long["line"], long["truncated"]), (33, True))
+        self.assertEqual(long["text"].split("\n")[-1], "  …")
+        self.assertEqual(report.counts["snippets_truncated"], 1)
+        # an id the Lean does not carry gets no snippet, and the report names it
+        self.assertEqual(report.counts["snippets_unlocated"], ["example:demo-unlocated"])
+        self.assertNotIn("example:demo-unlocated", snippets)
+
+    def test_a_leftover_snippets_file_is_ignored_and_reported(self):
+        def mutate(root):
+            write_json(root / "pdf-overlay" / "data" / "declaration-snippets.json", {"snippets": {
+                "Demo.volume_add": {"file": "Demo/Basic.lean", "line": 1, "text": "stale"}}})
+        root, commit = at_variant(self, mutate)
+        doc, report = at_export(root, commit)
+        snippet = by_id(doc, "snippets")["snippet:Demo.volume_add"]
+        self.assertEqual((snippet["line"], snippet["text"]),
+                         (12, "theorem volume_add (b : Box) : b.volume = b.volume := rfl"))
+        self.assertEqual(report.counts["ignored_inputs"], ["pdf-overlay/data/declaration-snippets.json"])
+        self.assertEqual(report.problems, [])
+
+    def test_a_ledger_file_outside_the_checkout_is_a_refusal(self):
+        root, commit = at_variant(self, lambda r: edit_json(
+            r / "source-formalization-ledger.json",
+            lambda o: o["formalization_nodes"][3].update(file="../Basic.lean")))   # Demo.volume_add
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("../Basic.lean", caught.exception.message)
+
     def test_a_formalization_id_the_ledger_lacks_is_a_refusal_naming_the_file(self):
         def mutate(root):
             edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
@@ -1125,20 +1192,13 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
             at_export(root, commit)
         self.assertIn("target-refinement.json", caught.exception.message)
         self.assertIn("Demo.not_in_the_ledger", caught.exception.message)
-        for name, change in (("declaration-snippets.json",
-                              lambda o: o["snippets"].update({"Demo.gone": {"file": "Demo/Basic.lean", "line": 1,
-                                                                            "text": "x"}})),
-                             ("destinations.json",
-                              lambda o: o["destinations"].append({"formalization_id": "Demo.gone",
-                                                                  "resolution": "fallback",
-                                                                  "fallback_href": "Demo/Basic/",
-                                                                  "fallback_label": "module page"}))):
-            with self.subTest(file=name):
-                root, commit = at_variant(self, lambda r, n=name, c=change: edit_json(
-                    r / "pdf-overlay" / "data" / n, c))
-                with self.assertRaises(common.ExportError) as caught:
-                    at_export(root, commit)
-                self.assertIn(name, caught.exception.message)
+        root, commit = at_variant(self, lambda r: edit_json(
+            r / "pdf-overlay" / "data" / "destinations.json",
+            lambda o: o["destinations"].append({"formalization_id": "Demo.gone", "resolution": "fallback",
+                                                "fallback_href": "Demo/Basic/", "fallback_label": "module page"})))
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("destinations.json", caught.exception.message)
 
     def test_a_public_field_of_a_private_structure_names_its_parent_by_id(self):
         private = "private structure Secret where\n  x : Nat\n\nend Demo\n"
