@@ -62,13 +62,13 @@ export const VERDICT_LABELS = Object.freeze({
  * verbatim. No value is ever guessed: an unknown one shows no summary.
  */
 export const COVERAGE_SUMMARIES = Object.freeze({
-  example_only: "Formalised only by anonymous examples; no named declaration is attributed to it.",
-  formalized: "Formalised in this companion: a key declaration states it.",
-  not_formalized: "Not formalised in this companion.",
-  out_of_scope: "Outside the scope this companion set itself.",
-  partial: "Formalised only in part: the attributed declarations state a special case or one part of it.",
+  example_only: "Formalized only by anonymous examples; no named declaration is attributed to it.",
+  formalized: "Formalized: a key declaration states it.",
+  not_formalized: "Not formalized.",
+  out_of_scope: "Outside the stated scope of the formalization.",
+  partial: "Formalized in part or in a different form; see the faithfulness verdict, if any.",
   private_only: "Stated only by a private declaration.",
-  support_only: "Supported only by declarations that state a neighbouring item.",
+  support_only: "Supported only by declarations that state a neighboring item.",
 });
 
 /** Every status `COVERAGE_SUMMARIES` has a line for, sorted. */
