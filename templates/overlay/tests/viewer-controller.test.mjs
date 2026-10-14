@@ -459,6 +459,20 @@ test("item: a statement is clamped by the lines it wraps to, not only by its sou
                    ["lean is-clamped", "Show all"]);
 });
 
+test("item: a line's closing colon is kept with the word before it", async () => {
+  const text = "theorem t (x : ℝ) (hx : 0 < x) :\n    (h : Prop) :\n    a_name_longer_than_sixteen :\n    x = x :=\n  rfl :";
+  const sections = makeSections(PDF_SHA256);
+  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  key.extensions[NAMESPACE].snippet.text = text;
+  const { documentRef, result } = await start({ sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const [[, , pre]] = keyCards(documentRef);
+  assert.equal(textOf(pre), text, "the statement's text is the snippet's, exactly");
+  const kept = pre.children.map((line) => line.children.filter((child) => child.className === "nb"));
+  assert.deepEqual(kept.map((spans) => spans.map(textOf)), [["x) :"], ["Prop) :"], [], [], ["rfl :"]]);
+  assert.deepEqual(kept[1][0].children.map((child) => child.className ?? child), ["tk-kw", ") :"]);
+});
+
 test("item: verdicts stay hidden until the faithfulness switch is pressed, and the choice is remembered", async () => {
   const storage = memoryStorage();
   const { documentRef, result } = await start({ storage });
