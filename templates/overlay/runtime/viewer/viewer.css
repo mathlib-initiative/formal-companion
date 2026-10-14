@@ -1099,10 +1099,34 @@ kbd {
   margin-top: 22px;
 }
 
-.key-count {
+/* The count and the filter, on one line above the cards. */
+.key-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
   margin-bottom: 10px;
+}
+
+.key-count {
+  margin: 0;
   color: var(--faint);
   font-size: 12.5px;
+}
+
+.filter {
+  width: 160px;
+  height: 28px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  font-size: 12.5px;
+}
+
+.filter-empty {
+  margin-bottom: 10px;
 }
 
 .key-list {
@@ -1287,17 +1311,6 @@ kbd {
   font-size: 11px;
 }
 
-.filter {
-  width: 160px;
-  height: 28px;
-  margin-left: auto;
-  padding: 0 8px;
-  border: 1px solid var(--line-strong);
-  border-radius: 6px;
-  background: var(--surface);
-  font-size: 12.5px;
-}
-
 .related-list {
   margin: 0;
   padding: 0;
@@ -1314,6 +1327,10 @@ kbd {
   border-radius: 6px;
   color: var(--muted);
   text-decoration: none;
+}
+
+.related-link.is-unlinked {
+  color: var(--faint);
 }
 
 a.related-link:hover {
@@ -1365,11 +1382,6 @@ a.related-link:hover .related-name .leaf {
 .empty-line {
   color: var(--muted);
   font-size: 14px;
-}
-
-.related .empty-line {
-  padding: 10px 0;
-  font-size: 13px;
 }
 
 .empty-line.is-strong {

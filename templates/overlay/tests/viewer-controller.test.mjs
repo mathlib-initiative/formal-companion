@@ -366,6 +366,7 @@ test("item: the head, then each key card with its statement, then the related ro
   assert.equal(line.className, "ln", "each source line is a block");
   assert.deepEqual([line.children[0].className, line.children[0].textContent], ["tk-kw", "theorem"]);
   assert.equal(el(documentRef, "key-count").hidden, true, "one key card needs no count");
+  assert.equal(el(documentRef, "key-head").hidden, true, "and with no filter either, no line for them");
   assert.equal(el(documentRef, "key-more").hidden, true);
   assert.equal(el(documentRef, "key-note").hidden, true);
   assert.equal(el(documentRef, "related-section").hidden, false);
@@ -373,7 +374,7 @@ test("item: the head, then each key card with its statement, then the related ro
   assert.deepEqual(rows(documentRef, "related-list").map((row) => [rowName(row), rowKind(row)]), [
     ["Box.volume_mono", "attributed · theorem · module page"],
     ["Set.inter_sub", "support · theorem"],
-    ["example:0123456789ab", "example · example"],
+    ["example:0123456789ab", "example · no page"],
     ["Set.union_comm", "helper · theoremsorry"],
   ]);
   assert.equal(el(documentRef, "related-pager").hidden, true, "one page of rows has no pager");
@@ -401,8 +402,10 @@ test("item: a related row is one plain link to its source, with no statement", a
   assert.ok(!JSON.stringify(rows(documentRef, "related-list").map(textOf)).includes("theorem volume"),
             "no statement in a related row");
   const unlinked = example.children[0];
-  assert.deepEqual([unlinked.tagName, unlinked.attributes.href], ["SPAN", undefined]);
+  assert.deepEqual([unlinked.tagName, unlinked.className, unlinked.attributes.href],
+                   ["SPAN", "related-link is-unlinked", undefined]);
   assert.equal(unlinked.title, "example:0123456789ab\nanonymous\nNo rendered page");
+  assert.equal(rowKind(example), "example · no page", "a row with nowhere to go says so, and its kind once");
   assert.equal(rowKind(helper), "helper · theoremsorry", "a sorry is tagged on the row");
   assert.equal(helper.children[0].title, "Notes.Set.union_comm\nsorry: exercise");
 });
@@ -425,7 +428,8 @@ test("item: past eight key cards the rest wait behind a button that hands focus 
   const { result } = await start({ documentRef, sections });
   await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.deepEqual([el(documentRef, "key-count").hidden, el(documentRef, "key-count").textContent],
-                   [false, "12 declarations"]);
+                   [false, "12 key declarations"]);
+  assert.equal(el(documentRef, "key-head").hidden, false, "the count's line shows");
   assert.equal(keyCards(documentRef).length, 8);
   assert.ok(keyCards(documentRef).every((card) => card[2]?.tagName === "PRE"), "every key card has its statement");
   const more = el(documentRef, "key-more");
@@ -435,6 +439,24 @@ test("item: past eight key cards the rest wait behind a button that hands focus 
   assert.equal(more.hidden, true);
   assert.deepEqual(focused.map((node) => textOf(node.children[1])), ["Part.p07"],
                    "focus moves to the first card the button showed");
+});
+
+test("item: a statement is clamped by the lines it wraps to, not only by its source lines", async () => {
+  const statement = async (text) => {
+    const sections = makeSections(PDF_SHA256);
+    const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+    key.extensions[NAMESPACE].snippet.text = text;
+    const { documentRef, result } = await start({ sections });
+    await selectPageRegion(documentRef, result.state, "loc:0001");
+    const [[, , pre, button]] = keyCards(documentRef);
+    return [pre.className, button?.textContent];
+  };
+  assert.deepEqual(await statement(`theorem long : ${"a + ".repeat(250)}a = a`), ["lean is-clamped", "Show all"],
+                   "one 1000-character line wraps far past fourteen lines");
+  assert.deepEqual(await statement(Array.from({ length: 14 }, (_, n) => `  h${n} : a = a`).join("\n")),
+                   ["lean", undefined], "fourteen short lines fit");
+  assert.deepEqual(await statement(Array.from({ length: 15 }, (_, n) => `  h${n} : a = a`).join("\n")),
+                   ["lean is-clamped", "Show all"]);
 });
 
 test("item: verdicts stay hidden until the faithfulness switch is pressed, and the choice is remembered", async () => {
@@ -588,6 +610,11 @@ test("item: past twenty cards a filter narrows both lists, and the related rows 
   await selectPageRegion(documentRef, result.state, "loc:0001");
   const filter = el(documentRef, "target-filter");
   assert.equal(filter.hidden, false);
+  assert.equal(el(documentRef, "key-head").hidden, false, "one key card, but the filter's line shows");
+  assert.match(SHELL, /<div id="key-head" class="key-head" hidden>\s*<p id="key-count"[^>]*><\/p>\s*<input\s+id="target-filter"/,
+               "the filter sits beside the key count, above the key cards it narrows");
+  assert.doesNotMatch(SHELL.slice(SHELL.indexOf('id="related-section"')), /id="target-filter"|id="filter-empty"/,
+                      "not in the Related head, after every key card");
   assert.equal(el(documentRef, "related-count").textContent, "34");
   assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · attributed"],
                    "the role most rows share is said once");
@@ -607,6 +634,30 @@ test("item: past twenty cards a filter narrows both lists, and the related rows 
   await fire(filter, "input");
   assert.equal(el(documentRef, "filter-empty").hidden, false, "an empty match says so");
   assert.equal(el(documentRef, "related-count").textContent, "0");
+});
+
+test("item: a related row whose role and kind are one word says it once", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const mono = sections[1].find((record) => record.id === "item:theorem-1.1/attributed/Notes.Box.volume_mono");
+  const copy = (role, name, kind) => {
+    const record = structuredClone(mono);
+    record.id = `item:theorem-1.1/${role}/${name}`;
+    record.target.pin.declaration = name;
+    const ext = record.extensions[NAMESPACE];
+    ext.role = role;
+    ext.declaration = { id: name, kind };
+    delete ext.declaration_verdict;
+    return record;
+  };
+  for (let n = 0; n < 4; n += 1) {
+    sections[1].push(copy("attributed", `Notes.Box.a${n}`, "theorem"));
+  }
+  sections[1].push(copy("example", "Notes.Box.ex", "example"));
+  const { documentRef, result } = await start({ sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · attributed"]);
+  const row = rows(documentRef, "related-list").find((li) => rowName(li) === "Box.ex");
+  assert.equal(rowKind(row), "example · module page");
 });
 
 test("focus: leaving the item view puts focus on the row of the item that was open", async () => {
