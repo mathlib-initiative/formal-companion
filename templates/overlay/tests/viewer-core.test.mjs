@@ -399,6 +399,15 @@ test("coverage: every value has its own one-line summary, and an unknown one has
   assert.equal(coverageSummary(undefined), "");
 });
 
+test("coverage: a summary describes the item, not whose Lean it is or how far it falls short", () => {
+  for (const value of COVERAGE_VALUES) {
+    assert.doesNotMatch(COVERAGE_SUMMARIES[value], /this companion|special case/i, `${value}'s summary`);
+  }
+  assert.equal(coverageSummary("formalized"), "Formalized: a key declaration states it.");
+  assert.equal(coverageSummary("partial"),
+               "Formalized in part or in a different form; see the faithfulness verdict, if any.");
+});
+
 test("coverage: the stylesheet has a colour for every value and every verdict kind", async () => {
   const css = await readFile(path.join(VIEWER_DIR, "viewer.css"), "utf8");
   for (const value of COVERAGE_VALUES) {
@@ -412,7 +421,7 @@ test("coverage: the stylesheet has a colour for every value and every verdict ki
 });
 
 test("summary: the line above the cards states the status or a count", () => {
-  assert.equal(cardSummaryText({ coverage: "not_formalized", shown: 0 }), "Not formalised in this companion.");
+  assert.equal(cardSummaryText({ coverage: "not_formalized", shown: 0 }), "Not formalized.");
   assert.equal(cardSummaryText({ shown: 5 }), "5 linked declarations.");
   assert.equal(cardSummaryText({ shown: 1 }), "1 linked declaration.");
   assert.equal(cardSummaryText({ shown: 0 }), "No declaration is linked to this item.");
