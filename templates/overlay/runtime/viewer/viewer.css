@@ -1248,6 +1248,10 @@ kbd {
   text-indent: calc(-1 * var(--ind, 4ch));
 }
 
+.lean .nb {
+  white-space: nowrap;
+}
+
 .lean.is-clamped {
   max-height: calc(14 * 1.65em + 24px);
   max-height: calc(14lh + 24px);

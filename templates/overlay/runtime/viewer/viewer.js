@@ -208,6 +208,8 @@ export function isViewerShortcut(event) {
 const STATEMENT_LINES = 14;
 /** About how many characters of a statement fit on one line of the panel before it wraps. */
 const STATEMENT_COLUMNS = 70;
+/** A line's closing " :" and the word before it, kept on one line so the colon never wraps alone. */
+const CLOSING_COLON = /(?<!\S)\S{1,16} :(?=\n|$)/g;
 /** The key declarations show this many cards before "Show N more". */
 const KEY_CARDS = 8;
 /** Above this many cards, the item view offers a filter by name. */
@@ -410,6 +412,10 @@ export async function bootstrapViewer({
     };
     // Each line keeps its "\n", so the statement's text is the snippet's, exactly.
     const close = () => line?.style.setProperty?.("--ind", `${indent + 4}ch`);
+    // Where each closing-colon span starts and ends, in turn; `nb` is the one open.
+    const cuts = [...source.matchAll(CLOSING_COLON)].flatMap((match) => [match.index, match.index + match[0].length]);
+    let nb = null;
+    let at = 0;
     let broken = true;
     for (const [kind, value] of leanTokens(source)) {
       for (const part of value.split(/(?<=\n)/)) {
@@ -422,7 +428,18 @@ export async function bootstrapViewer({
           indent += spaces;
           leading = spaces === part.length;
         }
-        line.append(kind === "tx" ? part : make("span", `tk-${kind}`, part));
+        for (let rest = part; rest;) {
+          for (; cuts.length && cuts[0] <= at; cuts.shift()) {
+            nb = nb ? null : make("span", "nb");
+            if (nb) {
+              line.append(nb);
+            }
+          }
+          const piece = cuts.length ? rest.slice(0, cuts[0] - at) : rest;
+          (nb ?? line).append(kind === "tx" ? piece : make("span", `tk-${kind}`, piece));
+          at += piece.length;
+          rest = rest.slice(piece.length);
+        }
         broken = part.endsWith("\n");
       }
     }
