@@ -32,7 +32,6 @@ companion at all.  The one git call is in THIS checkout, read-only through
 """
 from __future__ import annotations
 
-import collections
 import hashlib
 import json
 import os
@@ -48,6 +47,7 @@ from cflib import __version__, gitsafe, vendored  # noqa: F401  (vendor/ on sys.
 from cflib.errors import CfError
 from cflib.paths import skill_root, templates_dir
 from literature_links import discovery
+from literature_links.companion import normalize
 
 from overlay import config as overlay_config
 from overlay import defaults
@@ -386,10 +386,6 @@ def read_annotations(companion: str | Path) -> Annotations:
         root = str(directory.parent) + os.sep
         problems += [line for p in collection.problems
                      if (line := f"{p.path.replace(root, '')}: {p.message} [{p.code}]") not in problems]
-        read = collections.Counter(r.path for r in collection.records)
-        problems += [f"{ANNOTATIONS_DIRNAME}/{path.relative_to(directory).as_posix()}: {read[path]} annotations "
-                     "read from it, not one" for path in collection.files
-                     if read[path] != 1 and not collection.problems]
         records = {f"{ANNOTATIONS_DIRNAME}/{r.path.relative_to(directory).as_posix()}": r.annotation
                    for r in collection.records}
     return Annotations(files, dict(sorted(records.items())), problems)
@@ -679,8 +675,7 @@ def sync_problems(companion: str | Path) -> list[str]:
 
 def target_problems(path: str, record: dict) -> list[str]:
     """A target the viewer can open: an `https:` URL, or a relative reference that stays in the site."""
-    target = record.get("target")
-    uri = target.get("uri") if isinstance(target, dict) else target
+    uri = (normalize(record).get("target") or {}).get("uri")
     if uri is None or _HTTPS.fullmatch(uri):
         return []
     if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", uri) or uri.startswith(("/", "\\")):
