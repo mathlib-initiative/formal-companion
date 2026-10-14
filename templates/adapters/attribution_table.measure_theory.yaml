@@ -2,12 +2,11 @@
 #
 # Copy into a workspace as companions/<name>/adapter.yaml and edit `repo`.
 # measure_theory carries no book tags in its docstrings; the item -> declaration
-# map is an exported artifact produced by a curation pass, and the statements
-# come from a snippets export:
+# map is an exported artifact produced by a curation pass, and each statement is
+# cut from the Lean file the ledger names for it:
 #
 #   geometry-batch-{a..d}.json  region_id -> item label + PDF page (visually signed off)
 #   target-refinement.json      region_id -> formalization_ids (+ key_formalization_ids)
-#   declaration-snippets.json   id -> {file, line, text}
 #   source-formalization-ledger.json  id -> {kind, module, file}
 #
 # Measured against a real attribution-table repo (measure_theory at 9afe70f):
@@ -43,7 +42,6 @@ sources:
 #
 # A repo whose layout differs needs those flags, not a new convention.
 target_refinement: attribution/target-refinement.json
-declaration_snippets: attribution/declaration-snippets.json
 geometry_glob: "attribution/geometry-batch-*.json"
 ledger: source-formalization-ledger.json
 
@@ -71,14 +69,15 @@ lean_scan:
     - "**/.lake/**/*.lean"
 
 # Every file whose sha must force a re-extract at an unchanged commit. The
-# adapter already hashes the four exports above; list anything else here.
+# adapter already hashes the exports above and the Lean the statements are cut
+# from; list anything else here.
 # Without this, a fix that renames a theorem is invisible until the external
 # pipeline re-exports, and `cf extract` would replay the pre-fix table.
 key_files: []
 
 sorry:
-  # This repo has no permanent exercise sorries: a `sorry` in an exported
-  # snippet is an unfinished gap, and is classified as one.
+  # This repo has no permanent exercise sorries: a `sorry` in a cut
+  # statement is an unfinished gap, and is classified as one.
   exercise_sorry: none
 
 write_policy: read_only
