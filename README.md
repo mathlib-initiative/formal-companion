@@ -1,23 +1,73 @@
-# companion-faithfulness
+# formal-companion
 
-A Claude Code skill that audits Lean 4 / Mathlib **book companions** against the
-sources they formalise, and produces challenged, routed findings.
+Two tools for Lean 4 / Mathlib **book companions**: an audit that checks a
+companion against the sources it formalizes, and a generator for its PDF
+overlay, which shows a source with each item linked to the declarations that
+formalize it. It ships the `cf` CLI and installs as the Claude Code skill
+`companion-faithfulness`.
 
-A companion is a Lean repository whose declarations claim to formalise the
-numbered items of one or more textbooks. This skill finds the declarations that
+A companion is a Lean repository whose declarations claim to formalize the
+numbered items of one or more textbooks. The audit finds the declarations that
 are provable but are not the source's statement — an extra hypothesis, a missing
 quantifier, a vacuous theorem, a proxy definition — plus the items nobody
-formalised, and drives them through an adversarial review before anyone is
+formalized, and drives them through an adversarial review before anyone is
 told about them.
 
-**Version one is findings-only**: it stops at challenged findings, routed to
+**The audit reports findings only**: it stops at challenged findings, routed to
 each repo's owner, and a report whose every number is recomputed from the
 corpus. Fix-PR authoring, merge review and camera-ready audits are out of
-scope, with the extension points left clean.
+scope, with the extension points left clean. The overlay generator is the one
+part that writes into a companion, and it writes only the companion's
+`pdf-overlay/` and `annotations/`.
 
-## The model in one paragraph
+## PDF overlay
 
-The unit of organisation is a **companion with a list of sources**, not a book
+`cf overlay` generates a companion's PDF overlay: a viewer, served on
+loopback, that shows the source PDF with each item outlined and the
+declarations linked to it. It writes two directories in the companion:
+
+- `annotations/`: the companion's
+  [Literature Links](https://github.com/mathlib-initiative/literature-links)
+  annotations, one annotation per file, one folder per book section and per
+  item with several;
+- `pdf-overlay/`: the viewer, its tools and PDF.js, copied verbatim, plus the
+  annotation bundle the viewer reads and `GENERATED.json`, which records the
+  sha256 of every copied file and of the annotations.
+
+```sh
+cf overlay init <companion> --source-id <id> --title <title>   # pdf-overlay/overlay.config.json
+git -C <companion> add pdf-overlay && git -C <companion> commit -m "Add the overlay config"   # export needs a clean checkout; <sha> is this commit
+cf overlay export <companion> --convention attribution-table --commit <sha>   # annotations/
+cf overlay sync <companion>       # copy the runtime, write the bundle and GENERATED.json
+cf overlay check <companion>      # read-only: the copies, the bundle and the curation inputs
+```
+
+A companion's CI runs `python3 pdf-overlay/tools/check_generated.py`, which
+needs only CPython and the checkout. The PDF is never copied or committed.
+`docs/overlay.md` is the contract.
+
+## How it fits together
+
+`cf` (`scripts/cf.py`) dispatches to one module per command in
+`scripts/cfcmd/`. Those call stage packages under `scripts/`, which share
+`scripts/cflib/` (paths, JSON, hashing, the source registry). The **audit**
+runs `onboard` (which runs `extract`) and `pair`, then `detect-proxies` (no
+model) or `plan-run`, `run` and `harvest` (the findings gate), then `tally`,
+`adjudicate` (models, through `workflows/`), `route` and `report`. It writes
+only to a workspace directory outside this repository, never to a companion.
+The **overlay** (`scripts/overlay/`, `scripts/annotations/export/`) reads a
+companion's Lean and curation files, writes Literature Links annotations to
+its `annotations/`, and copies the viewer (`templates/overlay/runtime/`) into
+its `pdf-overlay/`. It needs no workspace; any faithfulness verdicts it shows
+come from files committed in the companion, never from an audit workspace.
+`ingest` and `inventory` are the first two stages of an experimental
+PDF-to-companion pipeline (`docs/pipeline.md`). `vendor/` holds Literature
+Links 1.0.0 and the legacy annotation format the exporters write as an
+intermediate step.
+
+## Companions, sources and workspaces
+
+The unit of organization is a **companion with a list of sources**, not a book
 with a list of companions. A **workspace** holds N companions and M sources; a
 differential is possible exactly where two companions' source lists overlap.
 **Nothing about a source is typed in**: `cf onboard <repo>` reads the
@@ -39,9 +89,11 @@ docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inve
 docs/overlay.md   the contract for the generated companion PDF overlay (`cf overlay`)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
 registry/         the shipped source registry (metadata only, never book text)
-vendor/           formal_companion_annotations/ (the annotation format) and
-                  literature_links/ (Literature Links, which the overlay reads),
-                  byte for byte, each sealed by its manifest; never edited here
+vendor/           literature_links/ (Literature Links 1.0.0, which the overlay
+                  writes and reads) and formal_companion_annotations/ (the
+                  legacy intermediate format that `cf export` writes and
+                  `cf overlay export` converts to Literature Links), byte for
+                  byte, each sealed by its manifest; never edited here
 evals/            trigger evals: prompts as data, run by hand against the skill
 bin/cf            the PATH shim; it resolves back to this checkout
 scripts/cf.py     the workspace CLI; subcommands live in scripts/cfcmd/
@@ -53,12 +105,17 @@ scripts/<stage>/  adapters, sources, pair, plan, gate, run, harvest, ledger, rou
                   PDF-to-companion pipeline: pipeline.yaml, stage receipts, and
                   stages S0 ingest and S1 inventory)
 scripts/annotations/
-                  the skill's tooling around the format (not a stage): the two
-                  companion exporters behind `cf export`, the tag review behind
-                  `cf review-tags` (docs/exporters.md) and sync_format.py, which
-                  vendors a release; the format itself (schema, checker, id
-                  rules) is vendor/formal_companion_annotations/
+                  the skill's tooling around the legacy format (not a stage):
+                  the two companion exporters behind `cf export`, the tag review
+                  behind `cf review-tags` (docs/exporters.md) and sync_format.py,
+                  which vendors a release; the legacy format itself (schema,
+                  checker, id rules) is vendor/formal_companion_annotations/
+scripts/overlay/  the overlay generator behind `cf overlay`: config, export,
+                  sync, annotation files and folder defaults (docs/overlay.md)
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
+templates/overlay/
+                  runtime/, copied verbatim into a companion's pdf-overlay/ (the
+                  viewer, its tools and schemas, PDF.js), and tests/ (its node suites)
 workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline
 ```
@@ -70,11 +127,11 @@ directory outside it.
 ## Install
 
 ```sh
-SKILL=~/skills/companion-faithfulness          # anywhere you like
+SKILL=~/skills/formal-companion               # anywhere you like
 git clone <this repo's url> "$SKILL"
 
 # 1. let Claude Code load it as a skill
-ln -s "$SKILL" ~/.claude/skills/companion-faithfulness
+mkdir -p ~/.claude/skills && ln -s "$SKILL" ~/.claude/skills/companion-faithfulness
 
 # 2. put `cf` on PATH -- a symlink, not a copy: the shim resolves back to this
 #    checkout, and every command the skill prints is spelled `cf <command>`
@@ -334,7 +391,7 @@ Rules the directory enforces:
 
 ## What has been exercised, and what has not
 
-This is one book's audit generalised, not a tool proven over many. Being exact
+This is one book's audit generalized, not a tool proven over many. Being exact
 about which is which:
 
 - **Exercised on two real companions of one book**, two editions and a shared
@@ -358,9 +415,9 @@ about which is which:
   anything here, and the five runs that produced the baseline pre-date this
   code. The local Workflow fleet (`cf run <id> --local`, under ~100 items) is
   the fleet path that has been driven from this repo.
-- **Not generalised yet, and where a second book will hurt first**: a numbering
+- **Not generalized yet, and where a second book will hurt first**: a numbering
   grammar that is not `<Kind> <n>.<n>`, a source whose items are not headed by
-  a capitalised kind word, and a companion convention no adapter recognises.
+  a capitalized kind word, and a companion convention no adapter recognizes.
   `SKILL.md`'s "Experimental and unverified" section is the short list.
 
 ## Tests
@@ -368,6 +425,7 @@ about which is which:
 ```sh
 python3 -m unittest discover -s "$SKILL/tests"        # the documented gate
 python3 -m pytest -q "$SKILL/tests"                   # same suite; conftest pins HOME
+node --test "$SKILL"/templates/overlay/tests/*.test.mjs   # the overlay viewer's suite
 ```
 
 Regression tests that read local baselines are skipped unless you name them:
@@ -393,8 +451,9 @@ script, and `cf sources validate-registry`.
 
 ## Status
 
-v1: findings only. `fix`, `review-pr`, `camera-ready` and `publish-verdicts`
-are designed and documented but not implemented. Of the PDF-to-companion
+The audit reports findings only; `cf overlay` writes only a companion's
+`pdf-overlay/` and `annotations/`. `fix`, `review-pr`, `camera-ready` and
+`publish-verdicts` are designed and documented but not implemented. Of the PDF-to-companion
 pipeline (`docs/proposals/pdf-to-companion.md`), the deterministic parts of S0
 and S1 are built (`docs/pipeline.md`); its agents and stages S2 to S9 are not. See `SKILL.md` for the hard
 rules, `docs/design/stage_map.md` for the data model, `CONTRIBUTING.md` for how

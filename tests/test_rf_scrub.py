@@ -487,7 +487,12 @@ SCRUB_RANGE = os.environ.get("CF_SCRUB_RANGE", "")
 MESSAGE_RULES: dict[str, tuple] = {
     "session_trailer": (
         lambda text: re.findall(r"(?mi)^(?:claude|codex)-session:.*$", text),
-        "a session trailer is a session id (CLAUDE.md S1); end with Co-Authored-By"),
+        "a session trailer is a session id (CLAUDE.md S1); drop it"),
+    "ai_attribution": (
+        lambda text: re.findall(
+            r"(?mi)^(?:co-authored-by:.*\b(?:claude|codex|openai|copilot|gpt)\b.*"
+            r"|.*generated with \[?claude code.*)$", text),
+        "no Co-Authored-By or 'Generated with' trailer (CLAUDE.md S8)"),
 }
 
 
@@ -577,7 +582,8 @@ class TestABranchCarriesNothingInAnyCommit(unittest.TestCase):
         git("commit", "-q", "-m", "add the reference data")
         git("rm", "-q", "-r", "tests")
         git("commit", "-q", "-m", "drop the reference data\n\n"
-                              "Claude-Session: synthetic-session\n")
+                              "Claude-Session: synthetic-session\n"
+                              "Co-Authored-By: Claude <noreply@example.invalid>\n")
 
         self.assertEqual(git("ls-files").split(), ["README.md"],
                          "the last tree is clean, as a squash merge would land it")
@@ -586,6 +592,7 @@ class TestABranchCarriesNothingInAnyCommit(unittest.TestCase):
         self.assertIn("once unpacked", found)
         self.assertIn("absolute_home", found)
         self.assertIn("session_trailer", found)
+        self.assertIn("ai_attribution", found)
         self.assertEqual(scan_range(repo, "HEAD..HEAD"), [])
 
 

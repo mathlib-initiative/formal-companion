@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""cf -- the companion-faithfulness workspace CLI.
+"""cf -- the formal-companion CLI.
 
 New code (CLAUDE.md S5 is the contract for adding one).  Run it through the
 shim on PATH, or by path:
@@ -142,7 +142,9 @@ def build_parser():
     """The argument parser and the {command: module} dispatch table."""
     parser = argparse.ArgumentParser(
         prog="cf",
-        description="Audit Lean book companions against their sources (findings only).",
+        description=("Audit Lean book companions against their sources, and generate their PDF overlays.\n"
+                     "The audit reports findings only; `cf overlay` writes only a companion's\n"
+                     "pdf-overlay/ and annotations/."),
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )

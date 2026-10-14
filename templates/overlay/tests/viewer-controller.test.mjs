@@ -238,7 +238,7 @@ test("rendered: selecting a region shows its item's cards, grouped in role order
   assert.equal(el(documentRef, "provenance-note").textContent,
                "1 key declaration for this result (2 attributed); curation, unconfirmed; pipeline, confirmed.");
   assert.equal(el(documentRef, "target-summary").textContent,
-               "Formalised in this companion: a key declaration states it.");
+               "Formalized: a key declaration states it.");
   assert.deepEqual(el(documentRef, "target-groups").children.map((section) => section.children[0].textContent),
                    ["key", "attributed", "support", "example", "helper"]);
   const cards = cardsShown(documentRef);
@@ -300,7 +300,7 @@ test("rendered: a status states what applies, with its class and its note", asyn
   await selectPageRegion(documentRef, result.state, "loc:0002");
   assert.equal(el(documentRef, "item-label").textContent, "Definition 2.1");
   assert.equal(el(documentRef, "target-summary").textContent,
-               "Supported only by declarations that state a neighbouring item.");
+               "Supported only by declarations that state a neighboring item.");
   assert.equal(el(documentRef, "target-summary").className, "target-summary coverage-summary coverage-support_only");
   assert.equal(el(documentRef, "coverage-note").hidden, false);
   assert.equal(el(documentRef, "coverage-note").textContent,

@@ -37,7 +37,7 @@ iso_now = cf_state.now
 
 
 def skill_root() -> Path:
-    """The companion-faithfulness checkout (never a workspace directory)."""
+    """The formal-companion checkout (never a workspace directory)."""
     return cf_paths.skill_root()
 
 
