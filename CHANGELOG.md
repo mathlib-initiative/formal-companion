@@ -80,6 +80,20 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- `display.minimal` in `overlay.config.json` (default `false`): the viewer
+  shows the source, its outlines and the linked declarations with their
+  statements, and drops the PDF notice, the keyboard help, the search box and
+  role filter, the plain "formalized" sentence, the provenance and
+  ledger-cluster notes, card badges and metadata, a pager over one page of
+  cards and a role heading over cards that are all key declarations; the
+  status line stays for screen readers only. An error, a status that qualifies
+  the links and an item that links nothing still say so. Escape and Tab/Enter
+  on a region keep working but go undescribed. `config.py`, `check_generated.py`,
+  `serve.py`, `build_site.py` and the schema accept it, and
+  `tests/test_overlay_config.py` now holds `build_site.py` to the table too.
+- Each toolbar button names its shortcut in a tooltip and in
+  `aria-keyshortcuts`, and a test presses every advertised key and clicks its
+  button and requires the same result.
 - `cf overlay init|sync|check|export`: a companion's
   `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
   written by hand for one book, and reads Literature Links (vendored as
@@ -341,6 +355,9 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- The viewer's shortcuts ignored a key typed with Shift, so `+` never zoomed
+  on a layout that types it with Shift; Shift now disqualifies a named key
+  such as ArrowRight only.
 - `cf run --include-sources` re-transfers a companion with `--delete`, making the earlier read-only copy writable first, so the files a later commit deleted no longer stay on the host and fail the tree digest; a refused digest now names the extra, missing and changed paths (#6).
 - `cf export attribution-table` marks an equation's title as the producer's
   (`title_source: producer`); in measure_theory `equation-1.2` and

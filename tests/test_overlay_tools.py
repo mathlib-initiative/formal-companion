@@ -351,6 +351,13 @@ class TestTheConfigIsTheContract(OverlayToolsTestCase):
                 with self.assertRaisesRegex(error, r"unknown keys \['nickname'\]"):
                     module.load_config(self.companion.overlay)
 
+    def test_display_minimal_must_be_true_or_false_in_both_tools(self):
+        self.companion.write_config(display={"minimal": "yes"})
+        for module, error in ((SERVE, SERVE.OverlayError), (BUILD, BUILD.BuildError)):
+            with self.subTest(tool=module.__name__):
+                with self.assertRaisesRegex(error, r"display\.minimal: expected true or false"):
+                    module.load_config(self.companion.overlay)
+
     def test_a_missing_required_key_names_itself(self):
         value = self.companion.config_value()
         del value["source_id"]

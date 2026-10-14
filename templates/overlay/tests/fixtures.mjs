@@ -294,10 +294,21 @@ export function fakeElement(tag = "div") {
       this.attributes[name] = value;
     },
   };
+  const classes = () => String(element.className).split(" ").filter(Boolean);
   element.classList = {
     add(...names) {
-      const have = String(element.className).split(" ").filter(Boolean);
-      element.className = [...new Set([...have, ...names])].join(" ");
+      element.className = [...new Set([...classes(), ...names])].join(" ");
+    },
+    contains(name) {
+      return classes().includes(name);
+    },
+    remove(...names) {
+      element.className = classes().filter((name) => !names.includes(name)).join(" ");
+    },
+    toggle(name, force) {
+      const on = force ?? !classes().includes(name);
+      if (on) element.classList.add(name); else element.classList.remove(name);
+      return on;
     },
   };
   return element;

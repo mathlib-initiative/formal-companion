@@ -184,8 +184,18 @@ export function rememberPage(storageKey, page, { storage, historyRef } = {}) {
 }
 
 /** A keydown the viewer acts on: no modifier held, and focus outside an input. */
+/**
+ * Whether a keydown is one of the viewer's shortcuts: no Ctrl, Alt or Command
+ * held, focus outside a form field, and Shift only where it types the key
+ * itself (`+` on many layouts), never with a named key such as ArrowRight.
+ */
 export function isViewerShortcut(event) {
-  if (!event || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+  if (!event || event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  // Shift is how many layouts type `+`, so it only disqualifies a named key
+  // such as ArrowRight, never a character.
+  if (event.shiftKey && String(event.key ?? "").length !== 1) {
     return false;
   }
   return !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
@@ -217,11 +227,11 @@ export async function bootstrapViewer({
       "previous-page", "next-page", "page-number", "page-count",
       "zoom-out", "zoom-in", "zoom", "zoom-value",
       "rotate-left", "rotate-right", "rotation-value", "toggle-faithfulness",
-      "page-stage", "pdf-canvas", "overlay",
+      "pdf-notice", "keyboard-help", "page-stage", "pdf-canvas", "overlay",
       "selection-empty", "selection", "item-choices", "item-label", "item-locator",
       "verdict-notes", "coverage-note", "provenance-note", "fallback-note",
-      "role-filter", "role-filter-wrap", "target-filter",
-      "target-summary", "target-groups",
+      "role-filter", "role-filter-wrap", "target-filter", "target-filter-wrap",
+      "target-summary", "target-groups", "target-pagination",
       "previous-targets", "next-targets", "target-page",
     ].map((id) => [id, element(documentRef, id)]),
   );
@@ -263,6 +273,13 @@ export async function bootstrapViewer({
     ui["page-lede"].hidden = !config.lede;
     ui["back-link"].textContent = config.backLink.text;
     ui["back-link"].setAttribute("href", config.backLink.href);
+    // `display.minimal` keeps the source, its outlines and the linked declarations,
+    // and drops the explanations around them; an error still shows.
+    ui["pdf-notice"].hidden = config.minimal;
+    ui["target-filter-wrap"].hidden = config.minimal;
+    // The toolbar buttons name their own shortcuts; Escape and Tab/Enter on a
+    // region follow the usual conventions and go undescribed.
+    ui["keyboard-help"].hidden = config.minimal;
   }
 
   function setOptions(select, values) {
@@ -331,16 +348,17 @@ export async function bootstrapViewer({
     ui["coverage-note"].hidden = !item.coverageNote;
     ui["coverage-note"].textContent = item.coverageNote;
     const provenance = provenanceText(item);
-    ui["provenance-note"].hidden = !provenance;
+    // A minimal overlay leaves out how the links were curated; the links speak for themselves.
+    ui["provenance-note"].hidden = !provenance || state.config.minimal;
     ui["provenance-note"].textContent = provenance;
     const clusters = item.cards.length ? [] : item.clusterIds;
-    ui["fallback-note"].hidden = !clusters.length;
+    ui["fallback-note"].hidden = !clusters.length || state.config.minimal;
     ui["fallback-note"].textContent = clusters.length
       ? `No declaration is linked to this item; its ledger cluster: ${clusters.join(", ")}.`
       : "";
     setOptions(ui["role-filter"], item.roles);
     ui["role-filter"].value = "";
-    ui["role-filter-wrap"].hidden = item.roles.length < 2;
+    ui["role-filter-wrap"].hidden = item.roles.length < 2 || state.config.minimal;
     ui["target-filter"].value = "";
     renderCards();
   }
@@ -355,7 +373,7 @@ export async function bootstrapViewer({
       title.setAttribute("href", card.href);
     }
     row.append(title);
-    for (const badge of card.badges) {
+    for (const badge of state.config.minimal ? [] : card.badges) {
       const mark = documentRef.createElement("span");
       mark.className = "target-badge";
       mark.textContent = badge;
@@ -369,7 +387,7 @@ export async function bootstrapViewer({
       mark.title = card.verdict.note;
       row.append(mark);
     }
-    const meta = [card.kind, card.module, card.relation, card.fallbackLabel, card.note]
+    const meta = state.config.minimal ? "" : [card.kind, card.module, card.relation, card.fallbackLabel, card.note]
       .filter(Boolean)
       .join(" · ");
     if (meta) {
@@ -403,16 +421,24 @@ export async function bootstrapViewer({
     ui["target-summary"].className = item.coverage
       ? `target-summary coverage-summary coverage-${item.coverage}`
       : "target-summary";
-    ui["target-summary"].textContent = cardSummaryText({ coverage: item.coverage, shown: page.total });
+    ui["target-summary"].textContent = cardSummaryText({
+      coverage: item.coverage, minimal: state.config.minimal, shown: page.total,
+    });
+    ui["target-summary"].hidden = !ui["target-summary"].textContent;
+    ui["target-pagination"].hidden = state.config.minimal && page.pageCount <= 1;
     ui["target-page"].textContent = `Page ${page.page} of ${page.pageCount}`;
     ui["previous-targets"].disabled = page.page <= 1;
     ui["next-targets"].disabled = page.page >= page.pageCount;
     ui["target-groups"].replaceChildren();
+    // A minimal overlay leaves the heading off only when every card is a key
+    // declaration; a lone "support" or "example" heading still says what the cards are.
+    const oneRole = state.config.minimal && item.roles.length === 1 && item.roles[0] === "key";
     for (const group of groupCards(page.items)) {
       const section = documentRef.createElement("section");
       section.className = "target-group";
       const heading = documentRef.createElement("h4");
       heading.textContent = group.role || "unclassified";
+      heading.hidden = oneRole;
       const list = documentRef.createElement("ul");
       list.className = "target-list";
       list.append(...group.cards.map(cardElement));
@@ -497,6 +523,8 @@ export async function bootstrapViewer({
     ui["rotation-value"].textContent = `${state.rotation}°`;
     ui.status.textContent =
       `Verified PDF · page ${state.currentPage} of ${state.pdfDocument.numPages}`;
+    // Out of sight in a minimal overlay, but still the live region a screen reader hears.
+    ui.status.classList.toggle("visually-hidden", state.config.minimal);
     rememberPage(state.config.storageKey, state.currentPage, { historyRef, storage });
   }
 
@@ -546,6 +574,7 @@ export async function bootstrapViewer({
     state.index = (await loadAnnotations(state.config, fetchImpl, cryptoProvider, pageUrl, generatedUrl)).index;
   } catch (error) {
     ui.workspace.hidden = true;
+    ui.status.classList.remove("visually-hidden");
     ui.status.textContent = "The overlay data was not loaded.";
     showError(error);
     throw error;
@@ -588,6 +617,7 @@ export async function bootstrapViewer({
     await renderPage();
   } catch (error) {
     ui.workspace.hidden = true;
+    ui.status.classList.remove("visually-hidden");
     ui.status.textContent = "The verified loopback PDF was not opened.";
     showError(error);
   }

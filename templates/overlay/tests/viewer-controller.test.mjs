@@ -145,6 +145,105 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   assert.equal(el(documentRef, "error").hidden, true);
   assert.equal(el(documentRef, "notice").hidden, true);
   assert.match(el(documentRef, "status").textContent, /^Verified PDF · page 1 of 12$/);
+  assert.equal(el(documentRef, "status").hidden, false);
+  assert.equal(el(documentRef, "pdf-notice").hidden, false);
+  assert.equal(el(documentRef, "target-filter-wrap").hidden, false);
+  assert.equal(el(documentRef, "keyboard-help").hidden, false);
+});
+
+test("minimal: the explanations go; the source, its outlines and the links stay", async (t) => {
+  withOption(t);
+  const config = makeConfig({ display: { minimal: true, strip_prefix: "Notes." } });
+  const { documentRef, result } = await start({ config });
+  assert.equal(el(documentRef, "workspace").hidden, false);
+  assert.equal(el(documentRef, "pdf-notice").hidden, true);
+  assert.equal(el(documentRef, "status").hidden, false, "a screen reader still hears the page");
+  assert.ok(el(documentRef, "status").classList.contains("visually-hidden"), "but it is out of sight");
+  assert.match(el(documentRef, "status").textContent, /^Verified PDF · page 1 of 12$/);
+  assert.equal(el(documentRef, "target-filter-wrap").hidden, true);
+  assert.equal(el(documentRef, "keyboard-help").hidden, true, "the toolbar buttons name their shortcuts");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(el(documentRef, "provenance-note").hidden, true, "how the links were curated is left out");
+  assert.equal(el(documentRef, "role-filter-wrap").hidden, true, "no filters, by role or by name");
+  assert.equal(el(documentRef, "target-summary").hidden, true);
+  assert.equal(el(documentRef, "target-pagination").hidden, true, "one page of cards needs no pager");
+  const cards = cardsShown(documentRef);
+  assert.equal(cards.length, 5);
+  assert.equal(cards[0].children[0].attributes.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
+  for (const card of cards) {
+    assert.deepEqual(card.children.map((child) => child.className).filter(
+      (name) => name === "target-badge" || name === "target-meta"), [], "no badge and no metadata line");
+  }
+  assert.ok(cards[0].children.some((child) => child.className === "target-snippet"), "the statement stays");
+  assert.ok(el(documentRef, "target-groups").children.every((section) => !section.children[0].hidden),
+            "five roles are still told apart");
+  await selectPageRegion(documentRef, result.state, "loc:0002");
+  assert.equal(el(documentRef, "target-groups").children.length, 1);
+  assert.equal(el(documentRef, "target-groups").children[0].children[0].hidden, false,
+               "a lone support heading still says what the card is");
+  assert.equal(el(documentRef, "target-summary").hidden, false);
+  assert.equal(el(documentRef, "target-summary").textContent,
+               "Supported only by declarations that state a neighboring item.", "a qualifying status stays");
+  await selectPageRegion(documentRef, result.state, "loc:0004");
+  assert.equal(el(documentRef, "target-groups").children.length, 1);
+  assert.equal(el(documentRef, "target-groups").children[0].children[0].hidden, true,
+               "cards that are all key declarations need no heading");
+  assert.equal(el(documentRef, "target-summary").hidden, true, "nor a 'formalized' sentence");
+});
+
+test("minimal: a long card list keeps its pager", async (t) => {
+  withOption(t);
+  const sections = makeSections(PDF_SHA256);
+  const base = sections[1][0];
+  for (let i = 0; i < 30; i += 1) {
+    sections[1].push({ ...base, id: `${base.id}-copy-${String(i).padStart(2, "0")}` });
+  }
+  const { documentRef, result } = await start({ config: makeConfig({ display: { minimal: true } }), sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(el(documentRef, "target-pagination").hidden, false);
+  assert.equal(el(documentRef, "target-page").textContent, "Page 1 of 2");
+  await fire(el(documentRef, "next-targets"), "click");
+  assert.equal(el(documentRef, "target-page").textContent, "Page 2 of 2", "every card stays reachable");
+});
+
+test("minimal: a record that cannot be placed is still reported", async (t) => {
+  withOption(t);
+  const sections = makeSections(PDF_SHA256);
+  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  const { documentRef } = await start({ config: makeConfig({ display: { minimal: true } }), sections });
+  assert.equal(el(documentRef, "notice").hidden, false);
+  assert.match(el(documentRef, "notice").textContent, /^1 region\(s\) could not be placed/);
+});
+
+test("minimal: the faithfulness button and the verdicts still work", async (t) => {
+  withOption(t);
+  const { documentRef, result } = await start({ config: makeConfig({ display: { minimal: true } }) });
+  const button = el(documentRef, "toggle-faithfulness");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(button.hidden, false);
+  await fire(button, "click");
+  const badges = cardsShown(documentRef).flatMap((card) => card.children)
+    .filter((child) => String(child.className).includes("verdict-badge")).length;
+  assert.deepEqual([el(documentRef, "verdict-notes").children.length, badges], [1, 2]);
+});
+
+test("minimal: an item that links nothing still says so", async (t) => {
+  withOption(t);
+  const { documentRef, result } = await start({ config: makeConfig({ display: { minimal: true } }) });
+  await selectPageRegion(documentRef, result.state, "loc:0003");
+  assert.equal(el(documentRef, "target-summary").hidden, false);
+  assert.equal(el(documentRef, "target-summary").textContent, "No declaration is linked to this item.");
+  assert.equal(el(documentRef, "fallback-note").hidden, true, "the ledger cluster is bookkeeping");
+});
+
+test("minimal: a refused PDF still shows its status and its error", async (t) => {
+  withOption(t);
+  const { documentRef } = await start({ config: makeConfig({ display: { minimal: true } }),
+                                        sections: makeSections(fakeSha256("9")) });
+  assert.equal(el(documentRef, "status").hidden, false);
+  assert.equal(el(documentRef, "status").classList.contains("visually-hidden"), false, "a failure is shown, not just read");
+  assert.equal(el(documentRef, "status").textContent, "The verified loopback PDF was not opened.");
+  assert.equal(el(documentRef, "error").hidden, false);
 });
 
 test("start-up: refused data leaves an error on the page, not a blank one", async (t) => {
@@ -249,6 +348,10 @@ test("rendered: selecting a region shows its item's cards, grouped in role order
   assert.equal(cards[0].children[0].attributes.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`);
   assert.equal(cards[3].children[0].tagName, "SPAN", "an unlinked card is not a link");
   assert.ok(cards[0].children.some((child) => child.className === "target-snippet"));
+  assert.equal(el(documentRef, "target-pagination").hidden, false, "the default overlay keeps its pager");
+  assert.ok(el(documentRef, "target-groups").children.every((section) => !section.children[0].hidden),
+            "and every role heading");
+  assert.equal(el(documentRef, "status").classList.contains("visually-hidden"), false);
   // The region is drawn through the displayed page: a quarter of 600 pt across, an eighth of 800 down.
   const polygon = el(documentRef, "overlay").children.find((child) => child.dataset.regionId === "loc:0001");
   assert.equal(polygon.attributes.points, "150,100 450,100 450,200 150,200");
@@ -306,6 +409,7 @@ test("rendered: a status states what applies, with its class and its note", asyn
   assert.equal(el(documentRef, "coverage-note").textContent,
                "The companion states the neighbouring box lemma, not this definition.");
   assert.equal(el(documentRef, "fallback-note").hidden, true);
+  assert.equal(el(documentRef, "target-groups").children[0].children[0].hidden, false);
   assert.deepEqual(cardsShown(documentRef).map((card) => card.children[0].title), ["Notes.Set.inter_sub"]);
 });
 
@@ -454,6 +558,9 @@ test("keyboard: the shortcuts work bare and are ignored with a modifier or in an
   assert.equal(result.state.zoom, 110);
   await fire(documentRef, "keydown", { key: "-" });
   assert.equal(result.state.zoom, 100);
+  await fire(documentRef, "keydown", { key: "+", shiftKey: true });
+  assert.equal(result.state.zoom, 110, "Shift is how a US keyboard types +");
+  await fire(documentRef, "keydown", { key: "-" });
   await fire(documentRef, "keydown", { key: "r" });
   assert.equal(result.state.rotation, 90);
   for (const modifier of ["ctrlKey", "metaKey", "altKey", "shiftKey"]) {
@@ -466,11 +573,34 @@ test("keyboard: the shortcuts work bare and are ignored with a modifier or in an
   assert.equal(result.state.currentPage, 1);
 });
 
+test("keyboard: every shortcut a button advertises does what the button does", async (t) => {
+  withOption(t);
+  const advertised = [...SHELL.matchAll(/<button\b[^>]*>/g)]
+    .map(([tag]) => [tag.match(/\sid="([^"]+)"/)?.[1], tag.match(/\saria-keyshortcuts="([^"]+)"/)?.[1]])
+    .filter(([id, keys]) => id && keys);
+  assert.ok(advertised.length >= 5, "the toolbar advertises its shortcuts");
+  const snapshot = (state) => [state.currentPage, state.zoom, state.rotation];
+  for (const [id, keys] of advertised) {
+    const clicked = await start({ locationRef: { hash: "#page=5" } });
+    await fire(el(clicked.documentRef, id), "click");
+    assert.notDeepEqual(snapshot(clicked.result.state), [5, 100, 0], `#${id} does something`);
+    for (const token of keys.split(" ")) {
+      const key = token === "Plus" ? "+" : token;
+      const pressed = await start({ locationRef: { hash: "#page=5" } });
+      await fire(pressed.documentRef, "keydown", { key, shiftKey: key === "+" || /^[A-Z]$/.test(key) });
+      assert.deepEqual(snapshot(pressed.result.state), snapshot(clicked.result.state), `${token} on #${id}`);
+    }
+  }
+});
+
 test("keyboard: the shortcut test is the predicate's own, so both halves agree", () => {
   assert.equal(isViewerShortcut({ key: "ArrowRight", target: {} }), true);
   assert.equal(isViewerShortcut({ ctrlKey: true, key: "ArrowRight", target: {} }), false);
   assert.equal(isViewerShortcut({ key: "ArrowRight", metaKey: true, target: {} }), false);
   assert.equal(isViewerShortcut({ key: "r", target: { tagName: "INPUT" } }), false);
+  assert.equal(isViewerShortcut({ key: "+", shiftKey: true, target: {} }), true, "a shifted character counts");
+  assert.equal(isViewerShortcut({ key: "ArrowRight", shiftKey: true, target: {} }), false,
+               "a shifted named key does not");
   assert.equal(isViewerShortcut(null), false);
 });
 
@@ -497,6 +627,16 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
   assert.match(SHELL, /connect-src 'self'/);
   assert.match(SHELL, /object-src 'none'/);
   assert.doesNotMatch(SHELL, /type=["']file|Choose PDF|pdf-file/);
+  const advertised = Object.fromEntries([...SHELL.matchAll(
+    /<button id="([\w-]+)"[^>]*\stitle="[^"]*\(([^)]+)\)"[^>]*\saria-keyshortcuts="([^"]+)"/g,
+  )].map(([, id, shown, keys]) => [id, { keys, shown }]));
+  assert.deepEqual(advertised, {
+    "next-page": { keys: "ArrowRight", shown: "→" },
+    "previous-page": { keys: "ArrowLeft", shown: "←" },
+    "rotate-right": { keys: "R", shown: "R" },
+    "zoom-in": { keys: "Plus =", shown: "+" },
+    "zoom-out": { keys: "-", shown: "−" },
+  }, "each toolbar shortcut is named on its button");
   assert.doesNotMatch(SHELL, /<script(?![^>]*\ssrc=)/, "no inline script");
   assert.doesNotMatch(SHELL, /<style|\sstyle=/, "no inline style");
   const { readFile } = await import("node:fs/promises");
