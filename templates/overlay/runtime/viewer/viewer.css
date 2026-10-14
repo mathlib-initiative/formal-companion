@@ -10,8 +10,8 @@
   --surface: #ffffff;
   --stage: #e7e5df;
   --text: #1c1b19;
-  --muted: #69655d;
-  --faint: #8f8a80;
+  --muted: #58544d;
+  --faint: #706c64;
   --ghost: #bdb8ae;
   --line: #e6e3dc;
   --line-strong: #d6d2c9;
@@ -22,17 +22,17 @@
   --bridge-soft: rgba(61, 85, 201, 0.10);
   --kw: #7a4a8c;
   --ok: #2d7d55;
-  --warn: #a86b12;
+  --warn: #986110;
   --violet: #6f52b5;
   --bad: #b8382c;
   --bad-soft: #fbecea;
-  --neutral: #8a857c;
+  --neutral: #706c65;
   --shadow: 0 1px 2px rgba(20, 18, 14, 0.06), 0 8px 24px rgba(20, 18, 14, 0.10);
   /* On the page, which is white in both themes. */
   --on-page-bridge: #3d55c9;
   --on-page-soft: rgba(61, 85, 201, 0.10);
   --on-page-hot: rgba(61, 85, 201, 0.26);
-  --region-stroke: rgba(184, 110, 18, 0.70);
+  --region-stroke: #b86e12;
   --region-fill: rgba(240, 170, 40, 0.10);
   --region-fill-hover: rgba(240, 170, 40, 0.20);
   --region-quiet: rgba(105, 101, 93, 0.70);
@@ -48,7 +48,7 @@
     --stage: #0e0f11;
     --text: #e9e7e2;
     --muted: #a39f97;
-    --faint: #7a7771;
+    --faint: #8f8c87;
     --ghost: #4f4c47;
     --line: #2a2d32;
     --line-strong: #383c42;
@@ -78,7 +78,7 @@
   --stage: #0e0f11;
   --text: #e9e7e2;
   --muted: #a39f97;
-  --faint: #7a7771;
+  --faint: #8f8c87;
   --ghost: #4f4c47;
   --line: #2a2d32;
   --line-strong: #383c42;
@@ -157,6 +157,10 @@ h4 {
   margin: 0;
 }
 
+[tabindex="-1"]:focus {
+  outline: none;
+}
+
 :focus-visible {
   outline: 2px solid var(--bridge);
   outline-offset: 2px;
@@ -205,6 +209,10 @@ kbd {
   font-size: 13px;
   text-decoration: none;
   white-space: nowrap;
+}
+
+.back-link:not(.has-arrow)::before {
+  content: "← ";
 }
 
 .back-link:hover {
@@ -263,7 +271,7 @@ kbd {
   height: 16px;
   margin-top: -8px;
   border-radius: 999px;
-  background: var(--line-strong);
+  background: var(--neutral);
 }
 
 .switch::after {
@@ -472,7 +480,7 @@ kbd {
 }
 
 .overlay.has-selection .overlay-region {
-  opacity: 0.45;
+  opacity: 0.6;
 }
 
 .overlay.has-selection .overlay-region:hover,
@@ -668,33 +676,6 @@ kbd {
   background: var(--tone, var(--neutral));
 }
 
-/* Coverage tones: the pill, the index dots. */
-.target-summary.coverage-formalized,
-.dot.coverage-formalized {
-  --tone: var(--ok);
-}
-
-.target-summary.coverage-partial,
-.target-summary.coverage-support_only,
-.target-summary.coverage-example_only,
-.target-summary.coverage-private_only,
-.dot.coverage-partial,
-.dot.coverage-support_only,
-.dot.coverage-example_only,
-.dot.coverage-private_only {
-  --tone: var(--warn);
-}
-
-.target-summary.coverage-not_formalized,
-.dot.coverage-not_formalized {
-  --tone: var(--bad);
-}
-
-.target-summary.coverage-out_of_scope,
-.dot.coverage-out_of_scope {
-  --tone: var(--neutral);
-}
-
 /* Verdict tones: the verdict pill, a card's verdict, the dots. */
 .verdict-badge.verdict-faithful,
 .verdict-dot.verdict-faithful {
@@ -761,6 +742,13 @@ kbd {
   font-size: 12.5px;
 }
 
+.page-jump {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  margin-top: 10px;
+}
+
 .lede {
   margin-top: 10px;
   color: var(--muted);
@@ -787,7 +775,7 @@ kbd {
 
 .index-row {
   display: grid;
-  grid-template-columns: 8px minmax(96px, max-content) minmax(0, 1fr);
+  grid-template-columns: 14px minmax(96px, max-content) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   width: calc(100% + 16px);
@@ -825,14 +813,27 @@ kbd {
   white-space: nowrap;
 }
 
+/* One line: the name gives way to an ellipsis, and its "+N" stays. */
 .index-decl {
+  display: flex;
+  align-items: baseline;
   min-width: 0;
   overflow: hidden;
   color: var(--muted);
   font-family: var(--mono);
   font-size: 12.5px;
-  text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.index-decl .decl {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.index-decl.is-empty {
+  display: block;
+  text-overflow: ellipsis;
 }
 
 .index-decl .ns {
@@ -840,7 +841,9 @@ kbd {
 }
 
 .index-decl .more {
+  flex: none;
   color: var(--faint);
+  white-space: pre;
 }
 
 .index-decl.is-empty {
@@ -886,6 +889,12 @@ kbd {
   background: none;
 }
 
+/* The index rows' mark: the legend's swatch, smaller. */
+.swatch.mini {
+  width: 14px;
+  height: 9px;
+}
+
 .keys {
   margin-top: 20px;
   color: var(--faint);
@@ -896,7 +905,6 @@ kbd {
   color: var(--muted);
 }
 
-.index-footer,
 .page-view .foot {
   margin-top: 10px;
 }
@@ -993,7 +1001,7 @@ kbd {
 
 .item-meta {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px 8px;
   margin-top: 6px;
@@ -1014,18 +1022,43 @@ kbd {
   white-space: nowrap;
 }
 
-.target-summary::before {
+/* The pill's mark is the region's: solid amber, dashed amber or dotted gray. */
+.target-summary::before,
+.target-summary.coverage-not_formalized::before,
+.target-summary.coverage-out_of_scope::before {
   content: "";
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--tone, var(--neutral));
+  flex: none;
+  width: 12px;
+  height: 8px;
+  border: 1.5px dotted var(--region-quiet);
+  border-radius: 2px;
 }
 
+.target-summary.coverage-formalized::before,
+.target-summary.coverage-partial::before,
+.target-summary.coverage-support_only::before,
+.target-summary.coverage-example_only::before,
+.target-summary.coverage-private_only::before {
+  border: 1.5px solid var(--region-stroke);
+  background: var(--region-fill);
+}
+
+.target-summary.coverage-partial::before,
+.target-summary.coverage-support_only::before,
+.target-summary.coverage-example_only::before,
+.target-summary.coverage-private_only::before {
+  border-style: dashed;
+}
+
+/* One line; the full locator is the title. */
 .item-locator {
+  flex: 1 1 0;
   min-width: 0;
+  overflow: hidden;
   color: var(--muted);
   font-size: 12.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .coverage-note {
@@ -1159,6 +1192,14 @@ kbd {
   tab-size: 2;
 }
 
+/* Each source line is a block whose wrapped continuations hang 4ch inside its own indentation. */
+.lean .ln,
+.row-preview .ln {
+  display: block;
+  padding-left: var(--ind, 4ch);
+  text-indent: calc(-1 * var(--ind, 4ch));
+}
+
 .lean.is-clamped {
   max-height: calc(14 * 1.65em + 24px);
   max-height: calc(14lh + 24px);
@@ -1201,12 +1242,18 @@ kbd {
   padding-bottom: 6px;
 }
 
-.fold-head h4 {
+.fold-head h3 {
   color: var(--faint);
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.fold-role {
+  font-weight: 400;
+  letter-spacing: 0;
+  text-transform: none;
 }
 
 .fold-head .count {
@@ -1273,6 +1320,22 @@ kbd {
   white-space: nowrap;
 }
 
+/* A chevron says the row opens; it turns down when it is open. */
+.row-button[aria-expanded] .row-kind::after {
+  content: "›";
+  display: inline-block;
+  width: 8px;
+  color: var(--faint);
+  font-size: 14px;
+  line-height: 1;
+  text-align: center;
+  transition: transform 120ms;
+}
+
+.row-button[aria-expanded="true"] .row-kind::after {
+  transform: rotate(90deg);
+}
+
 .row-preview {
   display: block;
   max-height: calc(2 * 1.55em);
@@ -1291,10 +1354,6 @@ kbd {
     -webkit-mask-image: linear-gradient(#000 55%, transparent);
     mask-image: linear-gradient(#000 55%, transparent);
   }
-}
-
-.row-preview .tk-kw {
-  color: inherit;
 }
 
 .row-body {
@@ -1347,6 +1406,11 @@ kbd {
 .empty-line {
   color: var(--muted);
   font-size: 14px;
+}
+
+.fold .empty-line {
+  padding: 10px 0;
+  font-size: 13px;
 }
 
 .empty-line.is-strong {

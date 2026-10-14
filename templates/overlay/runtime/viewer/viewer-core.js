@@ -442,11 +442,12 @@ export function verdictLine(verdict) {
   const severity = text(verdict.severity) && verdict.severity !== "none" ? ` (${verdict.severity})` : "";
   const provenance = isObject(verdict.provenance) ? verdict.provenance : {};
   const status = text(verdict.status);
+  // A fixed verdict's label already says "fixed"; its resolution need not say it again.
+  const resolution = resolutionText(verdict.resolution);
   return {
     className: display.className,
-    kind: status === "fixed" ? "fixed" : text(verdict.verdict),
     label: `${display.label}${severity}`,
-    resolution: resolutionText(verdict.resolution),
+    resolution: status === "fixed" ? resolution.replace(/^fixed(, |$)/, "") : resolution,
     statusWord: status && status !== "unconfirmed" && status !== "fixed" ? status.replace(/_/g, " ") : "",
     summary: text(verdict.summary),
     title: [...asArray(verdict.evidence), text(provenance.note), text(provenance.method)]
@@ -507,16 +508,6 @@ export function locatorText(locator) {
   return [printed && `printed ${printed}`, physical && `PDF ${physical}`].filter(Boolean).join(", ");
 }
 
-/** `<method>, confirmed|unconfirmed` of a link's provenance, or "". */
-export function provenanceLabel(provenance) {
-  if (!isObject(provenance) || !text(provenance.method)) {
-    return "";
-  }
-  const confirmed = typeof provenance.confirmed_by_human === "boolean"
-    ? `, ${provenance.confirmed_by_human ? "confirmed" : "unconfirmed"}` : "";
-  return `${text(provenance.method)}${confirmed}`;
-}
-
 /** The item a click on the region opens: the first that has a card, else the first. */
 export function preferredItemId(region, items) {
   const ids = asArray(region?.itemIds);
@@ -548,12 +539,6 @@ function card(record, ext, context) {
   if (text(declaration.sorry) && declaration.sorry !== "none") {
     badges.push(`sorry: ${declaration.sorry}`);
   }
-  if (destination?.resolution === "fallback") {
-    badges.push("fallback");
-  }
-  if (!href) {
-    badges.push("unlinked");
-  }
   const snippet = isObject(ext.snippet) && text(ext.snippet.text)
     ? { line: Number.isInteger(ext.snippet.line) ? ext.snippet.line : null, text: ext.snippet.text }
     : null;
@@ -574,7 +559,6 @@ function card(record, ext, context) {
     kind: text(declaration.kind),
     module: text(pin.module),
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
-    provenance: provenanceLabel(ext.provenance),
     provenanceMethod: isObject(ext.provenance) ? text(ext.provenance.method) : "",
     reviewed: isObject(ext.provenance) && typeof ext.provenance.confirmed_by_human === "boolean"
       ? ext.provenance.confirmed_by_human : null,
@@ -709,7 +693,6 @@ export function buildIndex(files, config, { pageOrigin = "" } = {}) {
   }
   for (const item of items.values()) {
     item.cards = orderCards(item.cards);
-    item.roles = [...new Set(item.cards.map((entry) => entry.role))];
   }
   const pages = new Map();
   for (const region of regions.values()) {
@@ -752,12 +735,8 @@ export function buildIndex(files, config, { pageOrigin = "" } = {}) {
 // --- the card list ----------------------------------------------------------
 
 export function cardsMatching(cards, filters = {}) {
-  const role = text(filters.role);
   const query = text(filters.query).toLocaleLowerCase();
   return asArray(cards).filter((entry) => {
-    if (role && entry.role !== role) {
-      return false;
-    }
     if (!query) {
       return true;
     }
@@ -803,32 +782,37 @@ export function coverageWord(coverage) {
 /** The statuses whose region is drawn dashed: something, but not a key statement of the item. */
 const PARTIAL_COVERAGE = Object.freeze(["partial", "support_only", "example_only", "private_only"]);
 
+/** A parenthetical that numbers rather than names: "(A.1)", "(3.2b)", "(ii)", "(c)". */
+const NUMBERING = /^(?:\p{L}?[\d.]*\d\p{L}?|[ivxlc]+|\p{L})$/iu;
+
 /**
  * A label's title and its trailing parenthetical, when that names something:
- * "Definition 1.1.1 (Intervals, boxes)" is "Definition 1.1.1" over
- * "Intervals, boxes", while "Equation (1.1)" stays whole.
+ * "Theorem 2 (Main estimate)" is "Theorem 2" over "Main estimate", while
+ * "Equation (1.1)", "Equation (A.1)" and "Exercise 4 (c)" stay whole.
  */
 export function labelParts(label) {
   const whole = text(label);
   const match = /^(.*\S)\s+\(([^()]*\p{L}[^()]*)\)$/u.exec(whole);
-  return match ? { subtitle: match[2].trim(), title: match[1] } : { subtitle: "", title: whole };
+  return match && !NUMBERING.test(match[2].trim())
+    ? { subtitle: match[2].trim(), title: match[1] } : { subtitle: "", title: whole };
 }
 
 /**
- * The locator without the label it repeats: the comma-separated segments of
- * the locator, less one equal to the label or to its title. A locator that
- * never repeats the label is returned whole, and one that is only the label
- * is "".
+ * The locator without the label it repeats, and only its first locator: the
+ * comma-separated segments, less one equal to the label or to its title, cut
+ * at the first ";" or " / " that starts another. A locator that never repeats
+ * the label is kept whole up to that cut, and one that is only the label is "".
  */
 export function locatorTail(label, locator) {
   const full = text(locator);
   if (!full) {
     return "";
   }
+  const head = full.split(/\s*;\s+|\s+\/\s+/)[0].trim() || full;
   const drop = new Set([text(label), labelParts(label).title].filter(Boolean));
-  const parts = full.split(", ");
+  const parts = head.split(", ");
   const kept = parts.filter((part) => !drop.has(part));
-  return kept.length === parts.length ? full : kept.join(", ");
+  return kept.length === parts.length ? head : kept.join(", ");
 }
 
 /** `[namespace with its trailing ".", leaf]` of a declaration name; a name with no "." is all leaf. */
@@ -945,15 +929,21 @@ export function reviewFooter(item, { faithfulness = false } = {}) {
     return "";
   }
   const methods = [...new Set(cards.map((entry) => text(entry.provenanceMethod)).filter(Boolean))];
-  const links = cards.length ? (methods.length ? `${methods.join(" and ")} links` : "links") : "";
-  const subject = [links, verdicts.length ? "machine verdicts" : ""].filter(Boolean).join(" and ");
   const flags = [...cards.map((entry) => (typeof entry.reviewed === "boolean" ? entry.reviewed : null)),
                  ...verdicts.map(verdictReviewed)];
-  return `${subject.charAt(0).toUpperCase()}${subject.slice(1)}${reviewSuffix(flags)}`;
+  const suffix = reviewSuffix(flags);
+  if (!methods.length && !verdicts.length && suffix === ".") {
+    // "Links." says nothing the page does not.
+    return "";
+  }
+  const links = cards.length ? (methods.length ? `${methods.join(" and ")} links` : "links") : "";
+  const subject = [links, verdicts.length ? "machine verdicts" : ""].filter(Boolean).join(" and ");
+  return `${subject.charAt(0).toUpperCase()}${subject.slice(1)}${suffix}`;
 }
 
 const LEAN_KEYWORDS = new Set([
-  "theorem", "lemma", "def", "abbrev", "structure", "class", "instance", "inductive", "where", "fun", "let",
+  "theorem", "lemma", "def", "abbrev", "structure", "class", "instance", "inductive", "example", "axiom",
+  "opaque", "noncomputable", "private", "protected", "partial", "unsafe", "deriving", "where", "fun", "let",
   "have", "show", "by", "from", "with", "match", "if", "then", "else", "Prop", "Type", "Sort",
 ]);
 /** What may not stand next to a keyword: an identifier character, ASCII or not. */

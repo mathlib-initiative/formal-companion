@@ -37,7 +37,6 @@ import {
   pdfSource,
   pointToViewport,
   preferredItemId,
-  provenanceLabel,
   quadToViewport,
   readConfig,
   readAnnotationsBlock,
@@ -311,7 +310,6 @@ test("index: one card per link, ordered key, attributed, support, example, helpe
   const cards = cardsOf(index, "item:theorem-1.1");
   assert.deepEqual(cards.map((card) => card.role), LINK_ROLES,
                    "two regions repeat each link, and the item still has five cards");
-  assert.deepEqual(index.items.get("item:theorem-1.1").roles, LINK_ROLES);
 });
 
 test("index: a card carries its snippet, link, badges and declaration verdict", () => {
@@ -327,11 +325,12 @@ test("index: a card carries its snippet, link, badges and declaration verdict", 
   assert.equal(key.relation, "exact");
   assert.deepEqual(key.badges, []);
   assert.equal(attributed.href, `${ORIGIN}/Notes/Box/index.html`);
-  assert.deepEqual(attributed.badges, ["fallback"]);
+  assert.deepEqual(attributed.badges, [], "a fallback is said by the source link, not a badge");
+  assert.equal(attributed.resolution, "fallback");
   assert.equal(attributed.fallbackLabel, "module page (fallback)");
   assert.equal(support.href, "https://notes.example.invalid/api/Notes/Set.html#Notes___Set___inter_sub");
   assert.equal(example.href, null, "a target with no rendered page is not a link");
-  assert.deepEqual(example.badges, ["anonymous", "unlinked"]);
+  assert.deepEqual(example.badges, ["anonymous"], "a missing link is said by the source link, not a badge");
   assert.equal(example.fullName, "example:0123456789ab");
   assert.deepEqual(helper.badges, ["sorry: exercise"]);
   const [aux] = cardsOf(index, "item:remark-4.1");
@@ -379,17 +378,11 @@ test("locator: the cluster locator, else the printed and physical pages", () => 
 test("provenance: each card carries its link's method and whether a person reviewed it", () => {
   const { index } = fixture();
   const theorem = index.items.get("item:theorem-1.1");
-  assert.deepEqual(theorem.cards.map((card) => card.provenance), [
-    "curation, unconfirmed", "curation, unconfirmed", "curation, unconfirmed", "pipeline, confirmed",
-    "curation, unconfirmed",
-  ]);
   assert.deepEqual(theorem.cards.map((card) => [card.provenanceMethod, card.reviewed]), [
     ["curation", false], ["curation", false], ["curation", false], ["pipeline", true], ["curation", false],
   ]);
   const [definition] = index.items.get("item:definition-2.1").cards;
   assert.deepEqual([definition.provenanceMethod, definition.reviewed], ["", null]);
-  assert.equal(provenanceLabel({ method: "curation" }), "curation");
-  assert.equal(provenanceLabel({ confirmed_by_human: true }), "");
 });
 
 test("footer: one line says how the links were made and whether anyone reviewed them", () => {
@@ -398,7 +391,7 @@ test("footer: one line says how the links were made and whether anyone reviewed 
   assert.equal(reviewFooter(theorem), "Curation and pipeline links, partly reviewed.");
   assert.equal(reviewFooter(theorem, { faithfulness: true }),
                "Curation and pipeline links and machine verdicts, partly reviewed.");
-  assert.equal(reviewFooter(index.items.get("item:definition-2.1")), "Links.");
+  assert.equal(reviewFooter(index.items.get("item:definition-2.1")), "", "a bare \"Links.\" says nothing");
   assert.equal(reviewFooter(index.items.get("item:exercise-3.1"), { faithfulness: true }), "");
   const curated = { cards: [{ provenanceMethod: "curation", reviewed: false }], verdicts: [] };
   assert.equal(reviewFooter(curated), "Curation links, unreviewed.");
@@ -510,15 +503,18 @@ test("verdicts: a line is the kind, the summary and the resolution, never 'uncon
   const [verdict] = index.items.get("item:theorem-1.1").verdicts;
   assert.deepEqual(verdictLine(verdict), {
     className: "verdict-fixed",
-    kind: "fixed",
     label: "fixed: statement deviation (medium)",
-    resolution: "fixed, PR #7",
+    resolution: "PR #7",
     statusWord: "",
     summary: "The box bound was stated for closed boxes only.",
     title: "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler\nadjudication",
   });
   const open = verdictLine({ severity: "none", status: "unconfirmed", summary: "S.", verdict: "faithful" });
-  assert.deepEqual([open.label, open.statusWord, open.kind, open.title], ["faithful", "", "faithful", ""]);
+  assert.deepEqual([open.label, open.statusWord, open.title], ["faithful", "", ""]);
+  assert.equal(verdictLine({ resolution: { state: "fixed" }, status: "fixed", verdict: "proxy" }).resolution, "",
+               "a fixed verdict does not say fixed twice");
+  assert.equal(verdictLine({ resolution: { pr: 2, state: "fixed" }, status: "unconfirmed", verdict: "proxy" }).resolution,
+               "fixed, PR #2");
   assert.equal(verdictLine({ status: "human_confirmed", summary: "S.", verdict: "proxy" }).statusWord,
                "human confirmed");
 });
@@ -554,7 +550,6 @@ test("pdf: the bytes are verified against the pinned sha256", async () => {
 test("cards: filtering and paging keep the role order", () => {
   const { index } = fixture();
   const cards = cardsOf(index, "item:theorem-1.1");
-  assert.equal(cardsMatching(cards, { role: "key" }).length, 1);
   assert.equal(cardsMatching(cards, { query: "volume" }).length, 2);
   assert.equal(cardsMatching(cards, { query: "Notes.Set" }).length, 3);
   assert.equal(cardsMatching(cards, { query: "nothing here" }).length, 0);
@@ -570,26 +565,36 @@ test("cards: filtering and paging keep the role order", () => {
 // --- the bridge view --------------------------------------------------------
 
 test("labels: a trailing parenthetical that names something becomes the subtitle", () => {
-  assert.deepEqual(labelParts("Definition 1.1.1 (Intervals, boxes, elementary sets)"),
-                   { subtitle: "Intervals, boxes, elementary sets", title: "Definition 1.1.1" });
-  assert.deepEqual(labelParts("Equation (1.1)"), { subtitle: "", title: "Equation (1.1)" });
+  assert.deepEqual(labelParts("Definition 2.1 (Boxes, unions, volumes)"),
+                   { subtitle: "Boxes, unions, volumes", title: "Definition 2.1" });
+  assert.deepEqual(labelParts("Theorem 2 (Main estimate)"), { subtitle: "Main estimate", title: "Theorem 2" });
+  for (const numbered of ["Equation (1.1)", "Equation (A.1)", "Equation (B.12)", "Equation (3.2b)", "Theorem 2 (ii)",
+                          "Exercise 4 (c)"]) {
+    assert.deepEqual(labelParts(numbered), { subtitle: "", title: numbered }, `${numbered} numbers, it does not name`);
+  }
   assert.deepEqual(labelParts("Remark 7.1 and equation (7)"), { subtitle: "", title: "Remark 7.1 and equation (7)" });
   assert.deepEqual(labelParts("Théorème 2 (Énoncé)"), { subtitle: "Énoncé", title: "Théorème 2" });
   assert.deepEqual(labelParts(""), { subtitle: "", title: "" });
 });
 
 test("labels: the locator drops the segment that repeats the label, and only that", () => {
-  assert.equal(locatorTail("Display 9.3", "Display 9.3, p. 9, in section 3.2"), "p. 9, in section 3.2");
-  assert.equal(locatorTail("Definition 3.3", "Section 3, Definition 3.3, p. 18"), "Section 3, p. 18");
-  const long = "Section 1.1, Definition 1.1.1 and Exercises 1.1.1 and 1.1.4, printed pp. 5 and 9, PDF pp. 21 and 25.";
-  assert.equal(locatorTail("Definition 1.1.1 (Intervals, boxes)", long), long, "nothing repeats the label");
+  assert.equal(locatorTail("Display 4.2", "Display 4.2, p. 7, in section 2.1"), "p. 7, in section 2.1");
+  assert.equal(locatorTail("Lemma 5", "Part 2, Lemma 5, p. 11"), "Part 2, p. 11");
+  const long = "Part 3, Lemma 3.4 and Exercises 3.4.1 and 3.4.6, printed pp. 12 and 14, PDF pp. 30 and 32.";
+  assert.equal(locatorTail("Lemma 3.4 (Unions of boxes)", long), long, "nothing repeats the label");
   assert.equal(locatorTail("Lemma 2", "Lemma 2"), "");
   assert.equal(locatorTail("Lemma 2", ""), "");
 });
 
+test("labels: the locator stops where a second locator starts", () => {
+  assert.equal(locatorTail("Exercise 6.1", "Part 6.2; second reading: Lemma 6.3 and Exercise 6.1"), "Part 6.2");
+  assert.equal(locatorTail("Exercise 6.1", "Part 6.2, Exercise 6.1 / Part 6.4 slice, p. 40"), "Part 6.2");
+  assert.equal(locatorTail("Exercise 6.1", "; only a second"), "; only a second", "nothing before the cut keeps it all");
+});
+
 test("names: a declaration splits into its namespace and its leaf", () => {
-  assert.deepEqual(splitName("Elementary.SourceInterval.left"), ["Elementary.SourceInterval.", "left"]);
-  assert.deepEqual(splitName("theorem_1_1"), ["", "theorem_1_1"]);
+  assert.deepEqual(splitName("Notes.Box.volume_nonneg"), ["Notes.Box.", "volume_nonneg"]);
+  assert.deepEqual(splitName("theorem_2_4"), ["", "theorem_2_4"]);
   assert.deepEqual(splitName("example:0123456789ab"), ["", "example:0123456789ab"]);
   assert.deepEqual(splitName(undefined), ["", ""]);
 });
@@ -640,9 +645,10 @@ test("page: the count line counts passages and those a key declaration states", 
 test("lean: the tint runs join back to the snippet exactly", () => {
   const samples = [
     "theorem volume_nonneg (b : Box) : 0 <= b.volume",
-    "abbrev ElementarySet (d : ℕ) :=\n  {s : Set (EuclideanSpace ℝ (Fin d)) // IsElementary s}",
-    "structure SourceBox (d : ℕ) where\n  /-- The coordinate intervals of the box. -/\n  sides : Fin d → SourceInterval",
-    "… moment B 0 (axialDensity h n v u p) eta = 0 -- trailing\nfun x => by simp",
+    "abbrev BoxSet (d : ℕ) :=\n  {s : Set (Fin d → ℝ) // IsBoxUnion s}",
+    "structure Box (d : ℕ) where\n  /-- The sides of the box. -/\n  sides : Fin d → Interval",
+    "… volume (b.shift v) = volume b -- trailing\nfun x => by simp",
+    "noncomputable instance : Inhabited Box := ⟨default⟩\nexample : True := trivial",
     "/- unterminated",
     "",
     "deftheorem by.x x.by by' by_ Typeα Type* Prop→Sort",
@@ -657,4 +663,7 @@ test("lean: the tint runs join back to the snippet exactly", () => {
   assert.deepEqual(leanTokens("… f"), [["el", "…"], ["tx", " f"]]);
   const words = leanTokens("deftheorem by.x x.by by' by_ Typeα Type* Prop→Sort");
   assert.deepEqual(words.filter(([kind]) => kind === "kw").map(([, part]) => part), ["Type", "Prop", "Sort"]);
+  const heads = leanTokens("private noncomputable def f\nexample : True\nprotected axiom a\nexamples");
+  assert.deepEqual(heads.filter(([kind]) => kind === "kw").map(([, part]) => part),
+                   ["private", "noncomputable", "def", "example", "protected", "axiom"]);
 });

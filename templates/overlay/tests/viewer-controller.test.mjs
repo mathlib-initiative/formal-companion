@@ -181,6 +181,8 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   assert.equal(el(documentRef, "error").hidden, true);
   assert.equal(el(documentRef, "notice").hidden, true);
   assert.equal(el(documentRef, "status").textContent, "Verified PDF");
+  assert.deepEqual([el(documentRef, "page-number").value, el(documentRef, "page-count").textContent], ["1", "/ 12"]);
+  assert.equal(el(documentRef, "page-stage").hidden, false, "the page shows once it is drawn");
 });
 
 test("start-up: refused data leaves an error on the page, not a blank one", async () => {
@@ -299,6 +301,35 @@ test("index: a row lights its region, a region lights its row and shows a peek, 
   await fire(row, "click");
   assert.equal(result.state.region.id, "loc:0001");
   assert.equal(itemTitle(documentRef), "Theorem 1.1");
+  await fire(polygon, "pointerenter", { pointerType: "mouse" });
+  assert.equal(peek.hidden, true, "the selected passage gets no peek");
+  assert.doesNotMatch(polygon.className, /\bis-hot\b/, "and is not lit by its own hover");
+});
+
+test("index: a row's mark is the region's swatch, and its name stays on one line", async () => {
+  const { documentRef } = await start();
+  await turnTo(documentRef, 2);
+  const [row] = indexRows(documentRef);
+  assert.deepEqual([row.children[0].className, row.children[0].title], ["swatch mini formalized", "Formalized"]);
+  const walk = (node) => (typeof node === "object" ? [node.tagName, ...(node.children ?? []).flatMap(walk)] : []);
+  assert.ok(!walk(row.children[2]).includes("WBR"), "no break points in an index row's name");
+  await turnTo(documentRef, 3);
+  assert.equal(indexRows(documentRef)[0].children[0].className, "swatch mini partial");
+});
+
+test("index: a page with no passages offers the nearest pages that have some", async () => {
+  const { documentRef, result } = await start();
+  const pages = [...result.state.index.pages.keys()].sort((a, b) => a - b);
+  const jump = el(documentRef, "page-jump");
+  assert.equal(jump.hidden, false);
+  assert.deepEqual(jump.children.map((button) => button.textContent), [`Next passage: p. ${pages[0]} ›`]);
+  await fire(jump.children[0], "click");
+  assert.equal(result.state.currentPage, pages[0]);
+  assert.equal(jump.hidden, true, "a page with passages needs no jump");
+  const after = pages.at(-1) + 1;
+  await turnTo(documentRef, after);
+  assert.equal(result.state.currentPage, after);
+  assert.deepEqual(jump.children.map((button) => button.textContent), [`‹ Previous passage: p. ${pages.at(-1)}`]);
 });
 
 // --- the item view ----------------------------------------------------------
@@ -324,7 +355,9 @@ test("item: the head, then the hero's statement, then the other cards as rows", 
   assert.equal(textOf(name), "Box.volume_nonneg");
   assert.equal(pre.tagName, "PRE");
   assert.equal(textOf(pre), "theorem volume_nonneg (b : Box) : 0 <= b.volume");
-  assert.deepEqual([pre.children[0].className, pre.children[0].textContent], ["tk-kw", "theorem"]);
+  const [line] = pre.children;
+  assert.equal(line.className, "ln", "each source line is a block");
+  assert.deepEqual([line.children[0].className, line.children[0].textContent], ["tk-kw", "theorem"]);
   assert.equal(el(documentRef, "also-section").hidden, true, "one key card: the hero is all of them");
   assert.equal(el(documentRef, "related-section").hidden, false);
   assert.equal(el(documentRef, "related-count").textContent, "4");
@@ -375,11 +408,12 @@ test("item: verdicts stay hidden until the faithfulness switch is pressed, and t
   const { documentRef, result } = await start({ storage });
   const button = el(documentRef, "toggle-faithfulness");
   await selectPageRegion(documentRef, result.state, "loc:0001");
-  assert.deepEqual([button.hidden, button.attributes["aria-pressed"], button.textContent], [false, "false", "Show faithfulness"]);
+  const label = button.textContent;
+  assert.deepEqual([button.hidden, button.attributes["aria-pressed"]], [false, "false"]);
   assert.deepEqual([el(documentRef, "verdict-notes").children.length, verdictMarks(documentRef).length], [0, 0]);
   assert.equal(polygonOf(documentRef, "loc:0001").dataset.verdict, undefined);
   await fire(button, "click");
-  assert.deepEqual([button.attributes["aria-pressed"], button.textContent], ["true", "Hide faithfulness"]);
+  assert.deepEqual([button.attributes["aria-pressed"], button.textContent], ["true", label], "the label never changes");
   assert.equal(el(documentRef, "verdict-notes").children.length, 1);
   assert.deepEqual(verdictMarks(documentRef), ["faithful|card-verdict verdict-badge verdict-faithful"]);
   assert.equal(polygonOf(documentRef, "loc:0001").dataset.verdict, "fixed");
@@ -398,7 +432,7 @@ test("item: a verdict is one line of kind, summary and resolution, and the foote
   assert.deepEqual(line.children.map((child) => `${child.textContent}|${child.className}`), [
     "fixed: statement deviation (medium)|verdict-badge verdict-fixed",
     "The box bound was stated for closed boxes only.|verdict-summary",
-    "fixed, PR #7|faint",
+    "PR #7|faint",
   ]);
   assert.equal(line.title, "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler\nadjudication");
   assert.doesNotMatch(textOf(line), /Faithfulness:|unconfirmed|\[/);
@@ -418,6 +452,9 @@ test("item: a verdict is one line of kind, summary and resolution, and the foote
 test("item: a status states what applies, with its class and its note", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0002");
+  assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · support"],
+                   "one role for every related card is said once, in the heading");
+  assert.deepEqual(rows(documentRef, "related-list").map(rowKind), ["theorem"]);
   assert.equal(itemTitle(documentRef), "Definition 2.1");
   const pill = el(documentRef, "target-summary");
   assert.deepEqual([pill.textContent, pill.title, pill.className],
@@ -519,6 +556,9 @@ test("item: past twenty cards a filter narrows both lists, and the related rows 
   const filter = el(documentRef, "target-filter");
   assert.equal(filter.hidden, false);
   assert.equal(el(documentRef, "related-count").textContent, "34");
+  assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · attributed"],
+                   "the role most rows share is said once");
+  assert.deepEqual(rows(documentRef, "related-list").slice(0, 2).map(rowKind), ["theorem", "def"]);
   assert.equal(rows(documentRef, "related-list").length, 25);
   assert.equal(el(documentRef, "related-pager").hidden, false);
   assert.equal(el(documentRef, "target-page").textContent, "1–25 of 34");
@@ -529,6 +569,32 @@ test("item: past twenty cards a filter narrows both lists, and the related rows 
   assert.equal(el(documentRef, "related-count").textContent, "10");
   assert.equal(el(documentRef, "related-pager").hidden, true);
   assert.deepEqual(rows(documentRef, "related-list").slice(0, 2).map(rowName), ["Fill.f20", "Fill.f21"]);
+  assert.equal(el(documentRef, "filter-empty").hidden, true);
+  filter.value = "nothing has this name";
+  await fire(filter, "input");
+  assert.equal(el(documentRef, "filter-empty").hidden, false, "an empty match says so");
+  assert.equal(el(documentRef, "related-count").textContent, "0");
+});
+
+test("focus: leaving the item view puts focus on the row of the item that was open", async () => {
+  const documentRef = fakeDocument(SHELL);
+  const focused = [];
+  const create = documentRef.createElement;
+  const focusable = (node, name) => Object.assign(node, { focus: () => focused.push(name(node)) });
+  documentRef.createElement = (tag) => focusable(create(tag), (node) => `${node.tagName}:${node.dataset.itemId ?? ""}`);
+  for (const id of ["item-label", "index-heading", "previous-item", "next-item"]) {
+    focusable(el(documentRef, id), () => id);
+  }
+  const { result } = await start({ documentRef });
+  await turnTo(documentRef, 2);
+  await fire(indexRows(documentRef)[1], "click");
+  assert.deepEqual(focused.splice(0), ["item-label"], "opening a row moves focus to the item's heading");
+  await fire(el(documentRef, "back-to-page"), "click");
+  assert.deepEqual(focused.splice(0), [`BUTTON:${result.state.index.pages.get(2)[1].itemIds[0]}`]);
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  await fire(el(documentRef, "next-item"), "click");
+  assert.equal(el(documentRef, "next-item").disabled, true);
+  assert.deepEqual(focused.splice(0), ["previous-item"], "a stepper button that turns disabled hands focus on");
 });
 
 // --- navigation and the remembered page -------------------------------------
