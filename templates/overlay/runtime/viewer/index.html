@@ -120,16 +120,8 @@
             <div id="verdict-notes" class="verdict-notes"></div>
 
             <section id="key-section" class="key-section" aria-label="Key declarations">
-              <p id="key-count" class="key-count" hidden></p>
-              <div id="key-note" class="key-note" hidden></div>
-              <ol id="key-list" class="key-list"></ol>
-              <button id="key-more" class="text-button more" type="button" hidden></button>
-            </section>
-
-            <section id="related-section" class="related" aria-labelledby="related-heading" hidden>
-              <div class="related-head">
-                <h3 id="related-heading">Related</h3>
-                <span id="related-count" class="count" aria-live="polite"></span>
+              <div id="key-head" class="key-head" hidden>
+                <p id="key-count" class="key-count" hidden></p>
                 <input
                   id="target-filter"
                   class="filter"
@@ -140,8 +132,18 @@
                   hidden
                 >
               </div>
+              <p id="filter-empty" class="empty-line filter-empty" hidden>No declaration matches.</p>
+              <div id="key-note" class="key-note" hidden></div>
+              <ol id="key-list" class="key-list"></ol>
+              <button id="key-more" class="text-button more" type="button" hidden></button>
+            </section>
+
+            <section id="related-section" class="related" aria-labelledby="related-heading" hidden>
+              <div class="related-head">
+                <h3 id="related-heading">Related</h3>
+                <span id="related-count" class="count" aria-live="polite"></span>
+              </div>
               <ul id="related-list" class="related-list"></ul>
-              <p id="filter-empty" class="empty-line" hidden>No declaration matches.</p>
               <nav id="related-pager" class="pagination" aria-label="Related declaration pages" hidden>
                 <button id="previous-targets" class="icon" type="button" aria-label="Previous declarations">‹</button>
                 <output id="target-page" aria-live="polite"></output>

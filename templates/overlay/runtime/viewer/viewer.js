@@ -206,6 +206,8 @@ export function isViewerShortcut(event) {
 
 /** Statements longer than this many lines are clamped, with a "Show all" button. */
 const STATEMENT_LINES = 14;
+/** About how many characters of a statement fit on one line of the panel before it wraps. */
+const STATEMENT_COLUMNS = 70;
 /** The key declarations show this many cards before "Show N more". */
 const KEY_CARDS = 8;
 /** Above this many cards, the item view offers a filter by name. */
@@ -251,7 +253,7 @@ export async function bootstrapViewer({
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
       "item-head", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
-      "key-section", "key-count", "key-note", "key-list", "key-more",
+      "key-section", "key-head", "key-count", "key-note", "key-list", "key-more",
       "related-section", "related-heading", "related-count", "related-list", "filter-empty", "target-filter",
       "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note",
     ].map((id) => [id, element(documentRef, id)]),
@@ -428,10 +430,15 @@ export async function bootstrapViewer({
     return node;
   }
 
-  /** A statement block, clamped past STATEMENT_LINES lines with a button to show the rest. */
+  /**
+   * A statement block, clamped past STATEMENT_LINES lines with a button to
+   * show the rest. A long line counts as the lines it wraps to.
+   */
   function statementNodes(source) {
     const pre = leanNode(source);
-    if (source.split("\n").length <= STATEMENT_LINES) {
+    const lines = source.split("\n")
+      .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / STATEMENT_COLUMNS)), 0);
+    if (lines <= STATEMENT_LINES) {
       return [pre];
     }
     setClass(pre, "is-clamped", true);
@@ -461,12 +468,12 @@ export async function bootstrapViewer({
   }
 
   /** A card's declaration verdict, when verdicts are shown: a dot and its label, the note as title. */
-  function cardVerdict(card, className = "card-verdict") {
+  function cardVerdict(card) {
     if (!state.faithfulness || !card.verdict) {
       return null;
     }
     const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
-    const mark = make("span", `${className} verdict-badge ${display.className}`, display.label);
+    const mark = make("span", `card-verdict verdict-badge ${display.className}`, display.label);
     mark.title = card.verdict.note;
     return mark;
   }
@@ -720,7 +727,8 @@ export async function bootstrapViewer({
 
   /**
    * A related declaration on one line: a plain link to its source, with its
-   * name and a tag (its role when the heading does not say it, and its kind).
+   * name and a tag (its role when the heading does not say it, its kind when
+   * that is not the same word, and "no page" when it has nowhere to go).
    */
   function relatedRow(card, { previous, shared }) {
     const li = make("li", "related-row");
@@ -739,7 +747,9 @@ export async function bootstrapViewer({
       dot.title = card.verdict.note ? `${display.label}: ${card.verdict.note}` : display.label;
       tag.append(dot);
     }
-    const words = [card.role === shared ? "" : card.role, card.kind, fallback ? "module page" : ""];
+    const role = card.role === shared ? "" : card.role;
+    const words = [role, card.kind === role ? "" : card.kind, fallback ? "module page" : "",
+                   card.href ? "" : "no page"];
     tag.append(words.filter(Boolean).join(" · "));
     if (card.badges.some((badge) => badge.startsWith("sorry"))) {
       tag.append(make("span", "tag is-sorry", "sorry"));
@@ -766,8 +776,8 @@ export async function bootstrapViewer({
     ui["key-list"].hidden = !capped.length;
     // A neutral count, only when there is more than one: no heading says what the cards state.
     ui["key-count"].hidden = keys.length < 2;
-    ui["key-count"].textContent = query ? `${shownKeys.length} of ${keys.length} declarations`
-      : `${keys.length} declarations`;
+    ui["key-count"].textContent = query ? `${shownKeys.length} of ${keys.length} key declarations`
+      : `${keys.length} key declarations`;
     const hidden = shownKeys.length - capped.length;
     ui["key-more"].hidden = hidden <= 0;
     ui["key-more"].textContent = hidden > 0 ? `Show ${hidden} more` : "";
@@ -782,6 +792,8 @@ export async function bootstrapViewer({
     }
     ui["related-count"].textContent = String(query ? shownRelated.length : related.length);
     ui["target-filter"].hidden = !filtered;
+    // The count and the filter share a line above the key cards; with neither, no line.
+    ui["key-head"].hidden = ui["key-count"].hidden && !filtered;
     ui["filter-empty"].hidden = !query || shownKeys.length + shownRelated.length > 0;
     const page = paginateCards(shownRelated, state.cardPage, CARD_PAGE_SIZE);
     state.cardPage = page.page;

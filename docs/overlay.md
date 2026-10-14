@@ -83,11 +83,11 @@ section folders of annotation files and nothing else.
 ## 3. `overlay.config.json`, version 1
 
 Unchanged: `schema`, `schema_version`, `source_id`, `title`, `pdf` and `site`
-are required; `lede`, `back_link`, `display.strip_prefix`, `storage_key`,
+are required; `lede`, `display.strip_prefix`, `storage_key`,
 `pdf.cache_dir`, `pdf.route`, `site.output_root`, `site.index`, `site.mount`,
 `site.link_text`, `build.commands` (default: none) and `serve` have defaults;
-unknown keys are errors. With no `back_link` (or one whose `href` the viewer
-refuses) the top bar shows no back link. `source_id` names the PDF the overlay shows: the
+unknown keys are errors. `back_link` is optional: with none, or one whose
+`href` the viewer refuses, the top bar shows no back link. `source_id` names the PDF the overlay shows: the
 `source_id` in its records' source extension (section 7). `scripts/overlay/config.py`,
 `runtime/schema/overlay-config-v1.schema.json` and `runtime/tools/check_generated.py`
 carry the same rules and patterns, held together by `tests/test_overlay_config.py`.
@@ -119,10 +119,11 @@ From the records alone it builds:
 - cards: one per record with a `target`, once per item however many regions
   repeat it, in the order key, attributed, support, example, helper (then by
   record id), shown as one card per key declaration, each with its statement
-  (eight, then a button for the rest; a count when there are two or more,
-  never a heading that says what they state), then the rest under "Related":
-  one line each, a plain link to its source with no statement, headed by
-  its count (and by the role more than half of them share),
+  (eight, then a button for the rest; "N key declarations" when there are
+  two or more, never a heading that says what they state), then the rest
+  under "Related": one line each, a plain link to its source with no
+  statement, headed by its count (and by the role more than half of them
+  share),
   with the extension's snippet, destination resolution and
   fallback label, declaration kind and flags, and declaration verdict. The target resolves against the
   annotation file's URL and becomes a link only when it is `https:` or a
