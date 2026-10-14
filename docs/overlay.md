@@ -16,12 +16,13 @@ one companion is data the viewer and the tools read at run time:
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
 which needs nothing but CPython and the checkout.
 
-The overlay reads **Literature Links 1.0.0** only, vendored under
-`vendor/literature_links/` (sealed by `vendor/literature_links.manifest.json`)
-and shipped to companions as `pdf-overlay/tools/literature_links/`. The
-skill's other tools keep the annotation document format of
-`vendor/formal_companion_annotations/`; `cf overlay export` converts one into
-the other.
+The overlay reads **Literature Links** at commit
+`3ad716af885ca7ebe8091f824fca829e03492f00` only (untagged: version 1.0.0 with
+unreleased changes), vendored under `vendor/literature_links/` (sealed by
+`vendor/literature_links.manifest.json`) and shipped to companions as
+`pdf-overlay/tools/literature_links/`. The skill's other tools keep the
+annotation document format of `vendor/formal_companion_annotations/`;
+`cf overlay export` converts one into the other.
 
 **Contents**: 1 rules · 2 layout · 3 `overlay.config.json` · 4 the viewer ·
 5 the runtime tools · 6 `cf overlay` and `GENERATED.json` · 7 the annotation files

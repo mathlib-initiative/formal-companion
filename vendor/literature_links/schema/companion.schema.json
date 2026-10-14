@@ -267,13 +267,23 @@
             "maximum": 1
           },
           "description": "[x, y, width, height] as fractions of the displayed CropBox after the page's rotation, from the top-left. It has positive size and fits the page (checked outside this schema)."
+        },
+        "quote": {
+          "$ref": "#/$defs/quote",
+          "description": "A quotation in the extracted text of this page, as the specification defines it."
         }
       },
       "additionalProperties": false,
       "required": [
         "page"
       ],
-      "description": "A page, optionally with a rectangle."
+      "not": {
+        "required": [
+          "rect",
+          "quote"
+        ]
+      },
+      "description": "A page, optionally with a rectangle or a quotation, not both."
     },
     "latex_location": {
       "type": "object",

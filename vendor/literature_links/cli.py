@@ -1,4 +1,4 @@
-"""Offline commands for single annotations: validate and scan."""
+"""Offline commands: validate files and scan files and folders."""
 from __future__ import annotations
 
 import argparse
@@ -6,10 +6,15 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
+from typing import Any
 
 from . import __version__, companion, discovery
+from .companion import Problem
 
 __all__ = ["main"]
+
+# Problems that are not about the data: they exit 2, the others 1.
+_OPERATIONAL = {"IO", "JSON", "NO_ANNOTATIONS", "SYMLINK", "PATH"}
 
 
 def _write_json(text: str) -> None:
@@ -22,60 +27,90 @@ def _write_json(text: str) -> None:
         binary.write(text.encode("utf-8"))
 
 
+def _status(problems: list[Problem]) -> int:
+    return 2 if any(problem.code in _OPERATIONAL for problem in problems) else 1 if problems else 0
+
+
+def _check_row(value: Any, line: int | None, path: Path) -> tuple[dict[str, Any] | None, tuple[Path, ...],
+                                                                  list[Problem]]:
+    """The merged annotation or None, the defaults files applied, and the problems."""
+    shape = discovery._shape(value, line)
+    if shape:
+        return None, (), [Problem("SHAPE", "$", shape)]
+    merged, applied, failures = discovery.inherit(value, path)
+    if merged is None:
+        return None, (), failures
+    return merged, applied, companion.check(merged).problems
+
+
+def _check_file(path: Path) -> tuple[list[Problem], tuple[Path, ...], list[str]]:
+    """Check each annotation in ``path``: the problems, the defaults files applied and the source types."""
+    if path.name == discovery.DEFAULTS:
+        return [Problem("DEFAULTS", "$", "a defaults file is not an annotation")], (), []
+    rows = discovery._rows(path, path.read_bytes().decode("utf-8"))
+    if not rows:
+        return [Problem("NO_ANNOTATIONS", "$", "the file holds no annotations")], (), []
+    problems: list[Problem] = []
+    reported: set[Problem] = set()
+    applied: tuple[Path, ...] = ()
+    types: list[str] = []
+    for line, row in rows:
+        try:
+            merged, files, found = _check_row(companion.loads(row), line, path)
+        except companion.LoadError as exc:
+            merged, files, found = None, (), [Problem("JSON", "$", str(exc))]
+        applied = files or applied
+        if merged is not None and not found:
+            types.append(merged["source"]["type"])
+        for problem in found:
+            if not problem.path.startswith("$"):
+                # A defaults file's problem names that file: report it once, not for every row.
+                if problem in reported:
+                    continue
+                reported.add(problem)
+            elif line is not None:
+                problem = Problem(problem.code, f"line {line} {problem.path}", problem.message)
+            problems.append(problem)
+    return problems, applied, types
+
+
 def _validate(args: argparse.Namespace) -> int:
     """Report every input, including after unreadable files; status 2 wins."""
     status = 0
     for path in args.documents:
-        item_status = 0
-        warnings: list[dict[str, str]] = []
-        problems: list[dict[str, str]] = []
         applied: tuple[Path, ...] = ()
+        types: list[str] = []
         try:
-            text = path.read_bytes().decode("utf-8")
-            document = companion.loads(text)
-            failures: list[companion.Problem] = []
-            if path.name == discovery.DEFAULTS:
-                failures = [companion.Problem("DEFAULTS", "$", "a defaults file is not an annotation")]
-            elif isinstance(document, dict):
-                document, applied, failures = discovery.inherit(document, path)
-            if failures:
-                problems = [asdict(problem) for problem in failures]
-                item_status = 1 if all(problem.code == "DEFAULTS" for problem in failures) else 2
-            else:
-                report = companion.check(document)
-                problems = [asdict(problem) for problem in report.problems]
-                warnings = [asdict(warning) for warning in report.warnings]
-                item_status = 1 if problems else 0
+            found, applied, types = _check_file(path)
         except (OSError, ValueError, RecursionError) as exc:
-            item_status, applied = 2, ()
             code = "IO" if isinstance(exc, (OSError, UnicodeError)) else "JSON"
-            problems = [{"code": code, "path": "$", "message": str(exc)}]
+            found = [Problem(code, "$", str(exc))]
+        item_status = _status(found)
         status = max(status, item_status)
+        problems = [asdict(problem) for problem in found]
         if args.format == "json":
             _write_json(json.dumps({"document": str(path), "valid": not problems, "status": item_status,
                                    "defaults": [str(file) for file in applied],
-                                   "problems": problems, "warnings": warnings}, ensure_ascii=True, allow_nan=False) + "\n")
+                                   "problems": problems, "warnings": []}, ensure_ascii=True, allow_nan=False) + "\n")
         else:
             note = f" (with defaults from {', '.join(map(str, applied))})" if applied else ""
             for problem in problems:
                 print(f"{path}: {problem['path']}: {problem['message']}{note} [{problem['code']}]",
                       file=sys.stderr if item_status == 2 else sys.stdout)
             if not problems:
-                print(f"{path}: ok (1 annotation, {document['source']['type']})")
+                count = f"{len(types)} annotation{'s' if len(types) != 1 else ''}"
+                print(f"{path}: ok ({count}, {', '.join(dict.fromkeys(types))})")
     return status
 
 
 def _scan(args: argparse.Namespace) -> int:
     collection = discovery.collect(args.paths, include=args.include, exclude=args.exclude)
-    operational = {"IO", "JSON", "NO_ANNOTATIONS", "SYMLINK", "PATH"}
-    status = (2 if any(problem.code in operational for problem in collection.problems)
-              else 1 if collection.problems else 0)
+    status = _status(collection.problems)
     if args.format == "json":
         result = {"valid": not collection.problems, "status": status,
                   "files": [str(path) for path in collection.files],
                   "records": [{"annotation": record.annotation,
-                               "origin": {"path": str(record.path), "pointer": record.pointer,
-                                          "line": record.line, "base_uri": record.base_uri,
+                               "origin": {"path": str(record.path), "line": record.line, "base_uri": record.base_uri,
                                           "defaults": [str(file) for file in record.defaults]}}
                               for record in collection.records],
                   "problems": [asdict(problem) for problem in collection.problems]}
@@ -95,7 +130,8 @@ def main(argv: list[str] | None = None) -> int:
                                      description="Validate and scan Literature Links annotations.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     subparsers = parser.add_subparsers(dest="command", required=True)
-    validation = subparsers.add_parser("validate", allow_abbrev=False, help="validate single annotations")
+    validation = subparsers.add_parser("validate", allow_abbrev=False,
+                                       help="check JSON files, one annotation each, and JSONL files, one per line")
     validation.add_argument("documents", nargs="+", type=Path)
     validation.add_argument("--format", choices=("text", "json"), default="text", help="JSON emits one report per input")
     scanning = subparsers.add_parser("scan", allow_abbrev=False, help="read annotations from JSON and JSONL files")

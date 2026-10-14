@@ -13,7 +13,7 @@ from typing import Any
 from .schemacheck import Validator
 
 __all__ = ["SCHEMA_PATH", "LoadError", "Problem", "Report", "check", "dumps", "load_schema", "loads", "merge",
-           "rebase", "validate"]
+           "normalize", "rebase", "validate"]
 
 _HERE = Path(__file__).resolve().parent
 _PACKAGE_SCHEMA = _HERE / "schema" / "companion.schema.json"
@@ -202,6 +202,26 @@ def check(document: Any) -> Report:
 def validate(document: Any) -> list[str]:
     """Return each problem as a ``path: message`` string. An empty list means valid."""
     return [str(problem) for problem in check(document).problems]
+
+
+def normalize(annotation: dict[str, Any]) -> dict[str, Any]:
+    """Copy ``annotation`` with ``target`` and ``status`` as objects, so readers handle one shape.
+
+    A string ``target`` becomes ``{"uri": target}`` and a string ``status``
+    becomes ``{"value": status}``. Everything else is copied unchanged, so an
+    already normal record comes back equal. ``annotation`` must be a dict;
+    beyond that this does not validate. Normalize a record after its folder
+    defaults are applied: a written string replaces an inherited object, but a
+    written object merges with it.
+    """
+    if not isinstance(annotation, dict):
+        raise TypeError("normalize takes one annotation object")
+    result = copy.deepcopy(annotation)
+    if isinstance(result.get("target"), str):
+        result["target"] = {"uri": result["target"]}
+    if isinstance(result.get("status"), str):
+        result["status"] = {"value": result["status"]}
+    return result
 
 
 def merge(inherited: dict[str, Any], written: dict[str, Any]) -> dict[str, Any]:
