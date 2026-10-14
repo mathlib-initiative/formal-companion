@@ -80,6 +80,18 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
             found = discovery.collect([tmp])
         self.assertEqual((len(found.records), found.problems), (1, []))
 
+    def test_a_json_file_holds_one_annotation(self):
+        """The overlay counts one annotation per file because the reader refuses an array."""
+        good = {"source": {"type": "pdf", "uri": "book.pdf"}, "target": "a.lean", "status": "formalized"}
+        with tempfile.TemporaryDirectory() as tmp:
+            for held in ([good], []):
+                (Path(tmp) / "a.json").write_text(json.dumps(held), encoding="utf-8")
+                found = discovery.collect([tmp])
+                self.assertEqual(([r.annotation for r in found.records], [p.code for p in found.problems]),
+                                 ([], ["SHAPE"]))
+        self.assertEqual(companion.normalize(good), dict(good, target={"uri": "a.lean"},
+                                                         status={"value": "formalized"}))
+
     def test_every_import_goes_through_the_bootstrap(self):
         offenders = []
         for path in sorted([*SCRIPTS.rglob("*.py"), *(SKILL / "tests").glob("*.py")]):
