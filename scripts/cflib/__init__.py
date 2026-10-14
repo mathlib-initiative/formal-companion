@@ -1,4 +1,4 @@
-"""Shared library for the companion-faithfulness workspace CLI.
+"""Shared library for the formal-companion CLI.
 
 Import from here, not from sibling stage packages:
 

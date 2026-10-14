@@ -1,22 +1,22 @@
 ---
 name: companion-faithfulness
-description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalises — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — it reads repositories and reports on them, it never edits Lean or repairs a proof.
+description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalizes — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — the audit reads repositories and reports findings, and never edits Lean or repairs a proof; the one command that writes into a companion is `cf overlay`, and it writes only pdf-overlay/ and annotations/.
 ---
 
 # Companion faithfulness audits
 
-A *companion* is a Lean repository whose declarations claim to formalise the
+A *companion* is a Lean repository whose declarations claim to formalize the
 numbered items of one or more **sources** — textbooks, lecture notes, a
 preprint. A *faithfulness* defect is a declaration that is
 provable-but-not-the-source's-statement: a hypothesis the book does not have, a
 quantifier the book does not have, a vacuous statement, a proxy definition, or
-an item nobody formalised at all. This skill automates the audit that finds
+an item nobody formalized at all. This skill automates the audit that finds
 them: discover each companion's sources, prepare them, extract each companion's
 statement table, pair items per source, plan and run fleets, gate and harvest
 the results, tally, adjudicate adversarially, route to owners and report with
 verified numbers.
 
-**Version one is findings-only.** It stops at challenged, routed findings and a
+**The audit is findings-only.** It stops at challenged, routed findings and a
 verified report. Authoring fix PRs, reviewing merges and camera-ready audits
 are deliberately out of scope; the extension points exist but the commands do
 not.
@@ -52,7 +52,7 @@ Do **not** use it to fix Lean proofs, to review a PR, or to answer a single
 
 ## Workspaces, companions and sources
 
-The unit of organisation is a **companion with a list of sources**, not a book
+The unit of organization is a **companion with a list of sources**, not a book
 with a list of companions. A **workspace** is the directory you work in: it
 holds N companions and M sources, in any arrangement. A companion is audited
 against every source in its list; a **differential is possible exactly where
@@ -88,7 +88,7 @@ page is exactly the defect class this audit exists to find.
 | which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven repo signals, `references/onboarding-contract.md` §0) plus whatever the adapter itself claims — a leanblueprint's manuscript IS its `.tex` tree, so its adapter claims it |
 | which edition | sha256 of the actual source bytes, looked up in `registry/sources.yaml` |
 | the page offset | the mode of the running-head votes, with a confidence; below 0.9 it refuses (`cflib.inference.MIN_OFFSET_CONFIDENCE`) |
-| the item kinds | the capitalised words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
+| the item kinds | the capitalized words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
 | the numbering depth | how many numeric segments this source's own headings carry, stored as `numbering`; a deeper label is a reject, never a truncation (`cflib.inference.infer_numbering`) |
 | whether the table is the book | items found against the slots the numbering itself counts; below 0.6 it refuses (`cflib.inference.MIN_ITEM_COMPLETENESS`) |
 | the errata URL | the registry, corroborated by the book page the repo cites; fetched with `curl`, raw HTML kept. A URL the REPO supplies waits for `--fetch-errata`: the page reaches workers as authoritative text. The render keeps the **mathematics** — a formula served as an `<img>` becomes its TeX — and names any entry that still reads as emptied |
@@ -104,14 +104,14 @@ Overrides exist and are the exception: `cf sources set <id> offset=16`,
 
 | | holds | git |
 |---|---|---|
-| the skill repo (`companion-faithfulness/`) | code, templates, docs, the source **registry** (metadata only) | committed, may be shared |
+| the skill repo (`formal-companion/`) | code, templates, docs, the source **registry** (metadata only) | committed, may be shared |
 | the workspace | source text, page images, statement tables, corpus, ledgers, reports | local repo, **no remote**, source material gitignored |
 
 Source text, page images and crops never enter the skill repo. Workspace data
 is never committed to a companion repo. Companion repos are never written to at
 all. Staying local is not the same as being unshareable: `cf share export`
 hands over the campaign's conclusions — ledger rows, routed findings, tallies,
-receipts, source metadata — with every quote redacted to (page, normalised
+receipts, source metadata — with every quote redacted to (page, normalized
 length, sha256, and at most a quarter of the quote's words from each end, none
 at all below fourteen words).
 
@@ -211,7 +211,7 @@ actually has, and is generated from the parsers themselves.
 | `export docstring-tags <checkout> --commit <sha> [--pdf <file>] [--xref <file> --site-pages <file> [--site <dir>]] --out <file>` | the same for a docstring-tagged companion: the tags through the `docstring_tags` adapter, headings and quotes located in the PDF's text layer, the literate site's index and page manifest as one site source; with `--site` every anchor is checked against its page. Without `--pdf` the edition is a `pdf` source pinned by its identifiers (`--source-doi`, `--source-isbn`; an `other` source with `--source-media-type` when it has none), named by `--source-id`, `--source-title` and `--source-revision`, and numbered items are located by their numbers alone; without `--xref`/`--site-pages` there is no site source |
 | `export site-pages <site> --out <file> [--source-id ID] [--title T] [--path P] [--rendered-at TIME] [--exclude GLOB]...` | write a rendered literate site's page manifest, the pin `export docstring-tags --site-pages` reads: every HTML page with its sha256 and bytes, less those an `--exclude` glob matches (generated fragments, `'*/_lazy/*'`), and the site digest; reads no checkout |
 | `review-tags <document> [--json]` | the known attribution defects a document's key links carry: items keyed only to where they sit, keys on a structure field or projection, keys borrowed from a neighbouring item or shared with no owner, book-content tag spellings a fold script hides, the document's own attribution-gap verdicts; `--keep-pattern` and `--hide-pattern` are the fold script's rules |
-| `overlay init \| sync \| check \| export` | generate a companion's `pdf-overlay/` and its Literature Links annotations, and keep both honest: `cf overlay init <companion> --source-id ID --title T` writes the config, `cf overlay export <companion> --convention attribution-table --commit SHA` runs an exporter and writes one `annotations/<section>/[<item>/]<name>.json` per annotation, `cf overlay sync <companion>` copies the viewer, tools, schemas, PDF.js and the Literature Links package byte for byte and writes the annotation bundle and `GENERATED.json` (`--check` is read-only and includes the scan), and `cf overlay check <companion>` adds the curation inputs' hashes and the overlay rules. **The one command that writes into a companion repo**, and only under `pdf-overlay/` and `annotations/` (`docs/overlay.md` rule 5). Needs no workspace |
+| `overlay init \| sync \| check \| export` | generate a companion's `pdf-overlay/` and its Literature Links annotations, and keep both honest: `cf overlay init <companion> --source-id ID --title T` writes the config, which is committed before `export` because `export` refuses a dirty checkout (SHA is that commit), `cf overlay export <companion> --convention attribution-table --commit SHA` runs an exporter and writes one `annotations/<section>/[<item>/]<name>.json` per annotation, `cf overlay sync <companion>` copies the viewer, tools, schemas, PDF.js and the Literature Links package byte for byte and writes the annotation bundle and `GENERATED.json` (`--check` is read-only and includes the scan), and `cf overlay check <companion>` adds the curation inputs' hashes and the overlay rules. **The one command that writes into a companion repo**, and only under `pdf-overlay/` and `annotations/` (`docs/overlay.md` rule 5). Needs no workspace |
 
 Deleted: `cf book` — a source is discovered, and re-prepared by
 `cf sources refresh`. Out of scope in v1 (documented, not implemented): `fix`,
@@ -286,7 +286,7 @@ needs neither.
 
 1. **Quote gate.** A finding that quotes a source must carry a `book_quote`
    that really occurs in that source's `sources/<source_id>/text.txt`
-   (normalised, ≥25 characters). The gate runs from **outside** the tree the
+   (normalized, ≥25 characters). The gate runs from **outside** the tree the
    worker edits, and pre-merge also checks that the changed files are only that
    task's finding and task file. A gate the worker can edit proves nothing.
 2. **Witness gate.** In attack mode every CONTENT/VACUITY finding carries a
@@ -312,7 +312,7 @@ needs neither.
    skill repo or a companion repo. The registry holds metadata and URLs only.
    A download happens only with `--download` **and** a registry licence note
    that permits fetching from the author's own site; nothing is ever
-   redistributed. Exports redact quotes to (page, normalised length, sha256,
+   redistributed. Exports redact quotes to (page, normalized length, sha256,
    and at most a quarter of the quote's words from each end, none at all below
    fourteen words) by default. Quote at most a sentence or two of a source in
    any artifact. `POLICY.md` is the whole rule and `registry/README.md` is how
@@ -383,7 +383,7 @@ trigger you have just hit, not the list.
 
 - `references/traps.md` — the trap → fix index. Read **before your first run on
   a new book**: the anchor edition is not the bundled edition, offset
-  confidence, summarised errata, Workflow args, session limits, tend's strict
+  confidence, summarized errata, Workflow args, session limits, tend's strict
   schema.
 - `references/onboarding-contract.md` — what a repo must expose for discovery
   to succeed, per convention, and the seven obligations of Stage 0. Read
@@ -401,7 +401,7 @@ trigger you have just hit, not the list.
   rule for adversarial verification. Read **before editing `workflows/`**.
 - `references/runbook-server.md` — the tend + agentbox procedure, the 1/1 smoke
   test and the failure modes. Read **before a server fleet**.
-- `references/review-patterns.md` — the defect-pattern catalogue (P9–P13) the
+- `references/review-patterns.md` — the defect-pattern catalog (P9–P13) the
   attack prompts are built from.
 - `registry/README.md` — the shipped source registry and a workspace's overlay;
   `POLICY.md` is the licence rule it implements.

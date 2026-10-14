@@ -4,15 +4,15 @@
 so.** This document designs a pipeline that takes one PDF and produces a
 companion of the kind the measure_theory companion for Tao's measure theory
 book is: Lean statements tagged to book items, proofs, a PDF overlay, a
-literate site and a verdict layer. Swarms of agents do the work. Deterministic
+literate site and a verdict layer. Agents draft each stage; deterministic
 gates and adversarial review decide what is accepted, both for the
-formalisation and for the tags.
+formalization and for the tags.
 
 The pipeline is called the lean-companion pipeline here. Commands written
 `lc ...` are proposed names; no `lc` program exists. Commands written `cf ...`
 are this repository's CLI and exist unless the sentence says otherwise. Where
-`lc` lives is open (section 8, question 4). The default is this repository
-after its rename, which needs the no-write rules of section 1.1 narrowed.
+`lc` lives is open (section 8, question 4). The default is this repository,
+which needs the no-write rules of section 1.1 narrowed.
 
 **Contents**: 0 conventions of this document · 1 what exists today · 2 the
 pipeline · 3 the quality model · 4 data flow through the annotation document ·
@@ -31,12 +31,9 @@ means nothing to a second reader (`CLAUDE.md` §1). The placeholders are:
 | `$AUTOFORM` | the installed Autoform plugin (MIT) | 0.4.4; a 0.6.1 checkout exists at 57d268a, not installed |
 | `$WIKILEAN` | WikiLean | local checkout |
 | `$FFCORE` | ff-core | 4a60715 |
-| `$FFREPORT` | the archive of the ff-core Tao campaign (prompts, orchestrator databases, notes) | not a repository |
 | `$TD` | the three-way Tao differential workspace | not a repository |
 | `$MARATHON` | marathon-v2 | 6819566 |
 | `$BENCH` | lean-statement-bench | 73d659f |
-| `$NOTES` | the maintainer's notes directory (camera-ready tools, annotation prototypes, server handoffs) | not a repository |
-| `$LEAN` | the maintainer's local Lean projects, two of them reviewed by Autoform | not a repository |
 
 "Tao" means the published edition of the measure theory book, sha256
 `64498329...`, 265 pages (`registry/sources.yaml`). Every figure carries its
@@ -44,8 +41,7 @@ source in parentheses. A figure marked *estimate* was not measured. A figure
 marked *computed* was counted read-only over the named files on 2026-09-26.
 
 People are named by role, as `CLAUDE.md` §1 asks: **the maintainer** owns this
-repository and signs the human gates, **the measure_theory author** wrote
-`$MT`, and **a host's administrator** controls the accounts on a shared server.
+repository and signs the human gates.
 
 ## 1. What exists today
 
@@ -109,7 +105,7 @@ What this repository does not have:
 | `$MT` | output-stage scripts: `$MT/scripts/overlay_geometry_from_layout.py`, `$MT/scripts/pdf_overlay.py`, `$MT/scripts/extract_declaration_snippets.py`, `$MT/scripts/build_combined_site.py`, `$MT/scripts/official_pdf_workflow.py`, `$MT/pdf-overlay/viewer/` | all hard-coded to Tao (265 pages, the PDF and ledger shas, counts 77/2884/5093, the `MeasureTheory.Tao.` prefix); its front half is external and absent |
 | `$TML` | the skeleton-campaign pattern; the PR #5 verification recipe; `$TML/scripts/update_status_table.py`, `$TML/scripts/build_site.sh`, `$TML/scripts/slim_large_pages.py` | no geometry, no machine-readable verdicts |
 | `$WIKILEAN` | the enumerator prompt (`$WIKILEAN/site/batch_annotate.py`, `AGENT1_SYSTEM`); all-or-nothing re-anchoring (`$WIKILEAN/site/update_from_upstream.py`) | its two agents are sequential, not adversarial; its `decl_exists` (`$WIKILEAN/site/search_tools.py`) answers from WikiLean's decl-index shards or the live mathlib4_docs declaration data, not from a pinned Mathlib |
-| `$FFCORE`, `$FFREPORT` | measured failure modes; the adversarial reviewer prompt `$FFREPORT/prompts/reviewer-system-adversarial.md`; the faithfulness-first worker text `$FFCORE/src/ff_core/prompts/worker/v6/system.md` | frozen; text-only model layer (`$FFCORE/src/ff_core/llm/models/messages.py`); the reviewer prompt is Tao-specific and must be rewritten before reuse (section 2.6) |
+| `$FFCORE` | measured failure modes; ff-core's adversarial reviewer prompt (not published); the faithfulness-first worker text `$FFCORE/src/ff_core/prompts/worker/v6/system.md` | frozen; text-only model layer (`$FFCORE/src/ff_core/llm/models/messages.py`); the reviewer prompt is Tao-specific and must be rewritten before reuse (section 2.6) |
 | `$MARATHON` | an Aristotle fill backend (`$MARATHON/marathon/fill.py`) and leaves-first ordering (`$MARATHON/marathon/prover/dag.py`) | the prover has been off since 2026-07-18 (`.marathon/conductor/prover-control.json` in the live project); no measured fill rate; pricing undocumented |
 | `$BENCH` | bridgebench, a statement-equivalence checker | uncalibrated, rung 5 off, pinned to Lean v4.28.0 |
 
@@ -124,30 +120,9 @@ six exercise-tagged theorems carry no `sorry`: Exercise 1.1.17 is proved as a
 deliberate exception, and five others bridge or derive rather than solve
 (`$TML/README.md`, "The `sorry` convention").
 
-Who generated `$MT`'s front half is unconfirmed. That front half is the ledger,
-geometry batches a to c and the verifier ids, and behind them a blueprint
-`.tex`, a plan, `coverage.json` and a correspondence state. An ff-core instance
-run by the measure_theory author is likely:
-
-- 91 `$MT` commits from 2026-08-13 to 2026-08-19, among them eb6e9de (the
-  ledger) and a5d5ca0 (the overlay with batches a to d), are authored
-  `ff-agent <ff-agent@ff-server>`, and `ff-agent` is ff-core's own console
-  script (`$FFCORE/pyproject.toml`).
-- The verifier ids carry the prefix `verifier:ff-measure-theory--`.
-- ff-core lands work by fast-forward (`$FFCORE/src/ff_core/orchestrator/orchestrator.py`,
-  the worktree merge and the `--ff-only` publish), so a history with no merge
-  commits is what it would leave.
-- Its `worker_agent_command` (`$FFCORE/src/ff_core/orchestrator/config.py`)
-  runs external workers, and a Claude Code worker can read page images and mint
-  any id.
-
-The local checkout cannot settle it. It mints only uuid4 ids
-(`$FFCORE/src/ff_core/orchestrator/control_store.py`), while the verifier ids
-are UUIDv7, and its model layer is text-only. But its newest upstream commit is
-from 2026-07-15, a month before those commits, and the server copy was not
-checked. Until the measure_theory author confirms, this document says only that
-the generator is unconfirmed. `$NOTES/companion-annotations-2026-09-26/REPORT.md`
-now opens with a note to the same effect.
+`$MT`'s front half is the ledger, geometry batches a to c and the verifier
+ids, and behind them a blueprint `.tex`, a plan, `coverage.json` and a
+correspondence state. The provenance of that curation is not recorded here.
 
 ## 2. The pipeline
 
@@ -345,8 +320,7 @@ the agentbox claude bridge:
 
 The four-edge checklist is the fix for a measured miss. The 2026-09-08 sign-off
 asked only whether a crop began at the heading, took in the next item or was
-cut off at the bottom, which are vertical bounds
-(`$NOTES/camera-ready-2026-09-08-tools/batch-d-visual-signoff.workflow.js`).
+cut off at the bottom, which are vertical bounds (records not published).
 10 of the 60 §1.7 regions passed it wrong: nine right-edge clips and the
 Exercise 1.7.13 overrun (`$MT` commits 73efa81 and fb67a73).
 
@@ -538,11 +512,10 @@ Agents, on tend and agentbox through `cf run` with a new `author` preset, once
 M0b's smoke test has run:
 
 - One author per section, chained on the predecessor's `.olean` files, as in
-  the `$TML` chapter-1 skeleton campaign (a Workflow script kept in session
-  history, not in a repository).
-- A reviewer on a book-neutral rewrite of
-  `$FFREPORT/prompts/reviewer-system-adversarial.md`. The source prompt is
-  Tao-specific: it quotes the measure_theory author's blueprint slices against
+  the `$TML` chapter-1 skeleton campaign (a Workflow script, not in a
+  repository).
+- A reviewer on a book-neutral rewrite of ff-core's adversarial reviewer
+  prompt. The source prompt is Tao-specific: it quotes `$MT`'s blueprint slices against
   the Lean, tells the reviewer to read them from disk, and contains
   `\MathlibDecl`, a leak-canary string (section 4.5). The rewrite pairs the S3
   blueprint's statement with the Lean per declaration and keeps the verdicts
@@ -591,7 +564,8 @@ Gate, run out of tree:
   ... := volume` shape when rows carry a body and a stage table exists
   (`scripts/detect/def_coverage.py`). The Lean tier's order-violation and
   same-stage-primitive analysis catches proxies reached through the closure,
-  such as the Definition 1.2.2 case (`$MT` PR #9; `$TD/adam-detector/README.md`).
+  such as the Definition 1.2.2 case (`$MT` PR #9; the differential
+  workspace's detector notes, not published).
 - **The stage table is complete.** Every Mathlib module in the closure of a key
   Definition's declaration is placed in the table or explicitly marked
   foundations. A module the table does not place defaults to stage 0, which
@@ -696,9 +670,9 @@ replaced by the walk above. In full:
    not increase), and no declaration is removed.
 
 New work: the gate; the laundering check; per-declaration harvest (the ff-core
-gaps run completed 0 of 14 tasks and stranded 1,074 inserted lines,
-`$FFREPORT/FFCORE_FABLE_NOTES.md`); stall detection; backend adapters; a
-backend-neutral cost record.
+gaps run completed 0 of 14 tasks and stranded 1,074 inserted lines; records
+not published);
+stall detection; backend adapters; a backend-neutral cost record.
 
 ### 2.8 S7: attribution
 
@@ -831,11 +805,10 @@ would label a changed def body unchanged; the sampled-attack selector.
 - Deterministic gates decide acceptance. Model review never does on its own.
 - The evidence for this is measured. ff-core's original reviewer approved 174
   of 176 reviews, including five Exercise deletions; the adversarial reviewer
-  written in response approved 55 of 63 (recomputed from
-  `$FFREPORT/orchestrator-dbs/`; `$FFREPORT/FFCORE_FABLE_NOTES.md`). Autoform's
-  jury gave faithfulness 5 to all 31 nodes it reviewed across two local
-  projects (`$LEAN/alternating-analytic-formalization/review_status.json`, 20
-  nodes; `$LEAN/sunflower-formalization/review_status.json`, 11 nodes).
+  written in response approved 55 of 63 (recomputed from ff-core's
+  orchestrator databases, which are not published). Autoform's jury gave
+  faithfulness 5 to all 31 nodes it reviewed across two unpublished projects
+  (20 and 11 nodes).
 - Every defect finding needs a witness and a quote bound to the item's page
   (the findings gate binds within ±2 pages).
 - Polarity follows the cost of the error. Defect findings are refuted by
@@ -852,8 +825,7 @@ would label a changed def body unchanged; the sampled-attack selector.
   pass vacuously: S0's spot check gets a page off by one, S3's verifier gets
   notation flips, S8's claims check gets a wrong count (section 3.4). The
   findings gate itself once passed a flipped inequality and a running head with
-  a placeholder witness
-  (`$NOTES/companion-faithfulness-review-2026-09-19/REVIEW.md`).
+  a placeholder witness (records not published).
 - Model-tier recall is unmeasured today. The only recall figure in this
   repository is the model-free tier on the synthetic booklet: precision 1.00,
   recall 0.50 (`README.md`). M2 and M3 measure it.
@@ -1009,7 +981,7 @@ Until v1.1 is approved, the fallbacks are:
 
 Generation must not see the answers. The generator and review agents of S1 to
 S7 must not read `$MT`, `$TML`, `$TD`, teorth/analysis (on disk or on GitHub)
-or the measure_theory author's blueprint slices.
+or `$MT`'s blueprint slices.
 
 Tool allowlists cannot enforce this:
 
@@ -1026,15 +998,10 @@ So isolation has to come from the operating system, and what can be enforced
 depends on the host:
 
 - On the shared `cf run` host, a 96-core box (`references/runbook-server.md`
-  §5), whether the maintainer holds administrative rights is unrecorded, so
-  the plan assumes not. A VM user or a system container
-  there needs the host's administrator; a rootless container needs
-  unprivileged user namespaces, which the host may not allow. The same holds on
-  the ff-core box, which the maintainer does not administer either. Until an
-  administrator provisions a
-  sandbox account, or generation moves to a host the maintainer administers,
-  none of the rules below is enforced. That provisioning is M0c's first
-  dependency.
+  §5), isolation needs a sandbox account, a VM user or a system container; a
+  rootless container needs unprivileged user namespaces, which the host may not
+  allow. Until one is provisioned, none of the rules below is enforced. That
+  provisioning is M0c's first dependency.
 - The sandbox holds the agents, not only their tools. Claude Code and Codex run
   Bash and Read in the model client's own process, so the client runs inside
   the sandbox with its own agentbox install and a logged-in profile, which `cf`
@@ -1054,10 +1021,8 @@ depends on the host:
   identifiers, and the blueprint TeX macros (`\MathlibDecl`, `semanticnote`,
   `mathlibnote`). Any hit voids the run.
 - The `cf run` host may hold earlier read-only companion copies from
-  `--include-sources` audit runs, and the measure_theory author's blueprint
-  slices sat under `/home/<user>/blueprint-sections/` on the ff-core box
-  (`$FFREPORT/prompts/worker-system.md`). The run root is therefore always
-  fresh.
+  `--include-sources` audit runs, and a host may hold `$MT`'s blueprint
+  slices. The run root is therefore always fresh.
 
 Pretraining contamination cannot be sandboxed. teorth/analysis is public.
 Agreement with a reference is weaker evidence than disagreement.
@@ -1102,7 +1067,7 @@ scoring raw agreement, because the ground truth is imperfect (section 7).
 |---|---|---|---|
 | M0a | cost tool copied and extended, stage-receipt writer, pre-fix `$TML` commit identified | none | 2 to 3 days |
 | M0b | first live `cf run --execute` on tend and agentbox as a smoke test; attack cost measured on 20 items | M0a | under 1 week |
-| M0c | a sandbox account provisioned by a host administrator, then isolation and egress probes | host provisioning | about 1 week after provisioning |
+| M0c | a sandbox account provisioned on the generation host, then isolation and egress probes | host provisioning | about 1 week after provisioning |
 | M1 | S0 and S1 on the Tao PDF, Chapter 1, in the sandbox, doc v1 | M0c | 1 to 1.5 weeks |
 | M2a | §1.7 statements from the PDF: S3, S4, S5 and the minimal gates | M0a, M0c, M1 | 2 to 3 weeks |
 | M2b | §1.7 geometry, attribution and viewer: S2, S7, a minimal viewer | M2a | about 2 weeks |
@@ -1114,11 +1079,9 @@ scoring raw agreement, because the ground truth is imperfect (section 7).
 | M8 | a second, non-Tao source | M7 | about 2 weeks |
 
 Three asks run in parallel. Two gate nothing: the v1.1 proposal (section 4.3),
-and a message for the maintainer to send the measure_theory author asking who
-generated `$MT`'s front half (the 91 `ff-agent` commits, section 1.3) and for
-the pipeline workspace behind it (blueprint, plan, `coverage.json`,
-correspondence state). The third gates M0c: a host administrator provisions the
-sandbox account (section 4.5).
+and a request for the pipeline workspace behind `$MT`'s front half (blueprint,
+plan, `coverage.json`, correspondence state). The third gates M0c: the sandbox
+account is provisioned (section 4.5).
 
 ### 5.1 M0a, M0b, M0c: foundations
 
@@ -1126,12 +1089,10 @@ M0a:
 
 - The cost tool moves into this repository. Today it is the 30-line
   `reports/fleet-cost.py` of the §1.7 re-run workspace, which issue #11 names
-  (as 40 lines). That workspace sits in a session scratch directory on the
-  laptop, which a purge would lose, so a copy now sits in the maintainer's
-  notes (`$NOTES/companion-annotations-2026-09-26/prototypes/fleet-cost.py`).
-  It reads only Claude transcripts at one Opus price. It is extended to
-  parse Codex session logs (attack-vac runs on codex, `scripts/plan/presets.py`)
-  and to price by model id.
+  (as 40 lines). That workspace is not in any repository. It reads only
+  Claude transcripts at one Opus price. It is extended to parse Codex session
+  logs (attack-vac runs on codex, `scripts/plan/presets.py`) and to price by
+  model id.
 - It follows issue #11's design: harvest writes priced totals into each fleet's
   `RECEIPT.json`, with prices in `workspace.yaml`.
 - It reproduces a recorded total within 1% from retained transcripts: the §1.7
@@ -1151,17 +1112,16 @@ repository, so it runs as the runbook's smoke test
 `$TML` §1.7 items at that commit. $/task and model ids are recorded per preset.
 This figure replaces the $7 placeholder in every budget line.
 
-M0c starts once a host administrator has provisioned the sandbox account or
-container (section 4.5). Before the probes, a canary file is planted at every
-forbidden path on the host where the sandbox runs, so no probe can pass for
-want of a target.
+M0c starts once the sandbox account or container is provisioned (section
+4.5). Before the probes, a canary file is planted at every forbidden path on
+the host where the sandbox runs, so no probe can pass for want of a target.
 
 - Negative probes: agents in the sandbox try to list or read `/home/<user>/*`,
   other users' run roots, the planted canaries (at the blueprint-slice path and
   the companion-copy paths), and to `git clone` and `curl` teorth/analysis.
-  Every attempt fails, and the leak canary finds 0 hits. The real blueprint
-  slices are on the ff-core box, so a probe of them means something only in a
-  sandbox on that box.
+  Every attempt fails, and the leak canary finds 0 hits. A probe of the real
+  blueprint slices means something only in a sandbox on the host that holds
+  them.
 - Positive probes: one S5 author task and one challenge Workflow complete
   inside the sandbox, through its allowed egress.
 
@@ -1246,7 +1206,7 @@ M2b:
 
 ### 5.4 M3: calibration at chapter scale
 
-Exporters, promoted from `$NOTES/companion-annotations-2026-09-26/prototypes/`:
+Exporters, promoted from prototypes kept outside this repository:
 
 - The documents validate.
 - `$MT`: 432 items, 3,565 declarations, 627 links, 509 locations, 2,884
@@ -1314,7 +1274,7 @@ M5, Chapter 1 statements, tags and geometry in the sandbox:
 - Geometry IoU at least 0.9, matched per (item, page), for at least 95% of the
   reference regions. The reference is batch d's 60 adjudicated regions plus a
   stratified sample of 60 regions from batches a to c, adjudicated first:
-  batches a to c were never reviewed, and their generator is unconfirmed
+  batches a to c were never reviewed, and their provenance is not recorded
   (section 1.3). That adjudication is sized here, 60 regions, and priced once
   M2b has measured the cost per region.
 - Links against `$MT`'s 229 target-refinement entries, by M2b's item-level
@@ -1364,9 +1324,9 @@ adjudication-only comparisons.
 | first full differential run: $2,698.82 for 383 tasks | issue #11 for the dollars; the cost report in the §1.7 re-run workspace for the task count | Opus 5 list prices; cache reads 85% of the bill; $7.05 a task |
 | §1.7 differential re-run: $358.10 for 47 tasks | the same two sources | same pricing; $7.62 a task; a first attempt, s17, was paused at 4 of 47 tasks after $219.55 |
 | attack cost per task | none | unmeasured; attack-vac runs on codex, which the $7.05 to $7.62 does not price |
-| ff-core Tao campaign: $1,639.46 recorded | `$FFREPORT/orchestrator-dbs/` | the notes say about $985 or $1,050; input-token accounting was broken (about 74 input tokens and no cache per session) |
-| ff-core pilot: $528.14 | `$FFREPORT/orchestrator-dbs/` | the section count comes from another source; refined an existing draft |
-| ff-core gapfill: $304.31 recorded; 23 gaps closed at a $102.44 mid-run snapshot | `$FFREPORT/orchestrator-dbs/` (recorded); `$FFREPORT/FFCORE_FABLE_NOTES.md`, the 07:20Z entry (snapshot) | 81 to 90% infrastructure mortality over the run; the separate gaps3 run reached 96% (`$FFREPORT/INDEX.md`) |
+| ff-core Tao campaign: $1,639.46 recorded | ff-core's orchestrator databases, not published | unpublished campaign notes say about $985 or $1,050; input-token accounting was broken (about 74 input tokens and no cache per session) |
+| ff-core pilot: $528.14 | ff-core's orchestrator databases, not published | the section count comes from another source; refined an existing draft |
+| ff-core gapfill: $304.31 recorded; 23 gaps closed at a $102.44 mid-run snapshot | ff-core's orchestrator databases (recorded) and campaign notes (snapshot), not published | 81 to 90% infrastructure mortality over the run; the separate gaps3 run reached 96% (records not published) |
 | `$TML` PR #5: 42 proofs | `$TML` merge d21dbac | local Claude Code Workflow runs on a Max subscription; no dollar figure |
 | WikiLean enumeration and matching: $1.32 to $1.54 per article | `$WIKILEAN/docs/token_budget.md` | article-sized units, not book sections |
 | adjudication of 10 findings: 225 agents, 5.9 h | `references/workflow-patterns.md` | local Workflow, limit failures included |
@@ -1381,9 +1341,8 @@ $7.62 rates) are line-summed, one count per content block, so probably about
 These are estimates. The S5 attack and S9 lines use $7 a task as a placeholder
 until M0b; the recorded differential rates are $7.05 and $7.62 a task, and $7
 is not a bound. Item counts are Chapter 1's: about 605 items and 226 exercise
-items (computed over the `$TML` prototype export in
-`$NOTES/companion-annotations-2026-09-26/prototypes/` and over `$TML`'s
-Exercise tags; the 651-item total includes Chapter 2).
+items (computed over a prototype `$TML` export and over `$TML`'s Exercise
+tags; the 651-item total includes Chapter 2).
 
 | stage | estimate | basis |
 |---|---|---|
@@ -1435,25 +1394,23 @@ maintainer.
   264 findings at f158509 (A1 175, A3 42, A6 20, A4 16, A5 6, A2 5), and A3's
   entries flag whole numbered ranges as absent repo-wide. Every acceptance test
   adjudicates mismatches.
-- **Leakage.** The sandbox is untested until M0c, and M0c cannot start until a
-  host administrator provisions it. Pretraining contamination cannot be
-  removed.
+- **Leakage.** The sandbox is untested until M0c, and M0c cannot start until the
+  sandbox is provisioned. Pretraining contamination cannot be removed.
 - **Rubber-stamp review** (section 3.1). Deterministic gates and planted
   mutations are the mitigation. The provisional bars (0.8, 11 of 14) may have
   to move.
 - **Cost.** Attack cost is unmeasured and dominates the envelope. The cost tool
-  exists only in a session scratch directory today.
-- **Unknown provenance** of `$MT`'s front half: its generator is unconfirmed
-  (section 1.3). The measure_theory author's workspace could change the data
-  model or save weeks.
+  is not yet in any repository.
+- **Unrecorded provenance** of `$MT`'s front half (section 1.3). The workspace
+  behind it could change the data model or save weeks.
 - **Substrate fragility.** Open issues #6, #7, #9, #10, #11; `cf run --execute`
   has never run against tend and agentbox from this repository, so M0b is its
   smoke test; tend was checked only shallowly and still enforces strict tool
   schemas; fleets died at 129 of 225 and 70 of 114 on session limits
   (`references/traps.md` D1). Lake builds per worktree need a thread cap: on
-  the ff-core box (16 cores, 30 GB) ten workers with unbounded threads reached
-  load 52 (`$NOTES/CLOUDFLARE-SERVER-HANDOFF.md` sections 1 and 5), and on the 96-core
-  `cf run` host the limit is the session cap, not CPU
+  a 16-core, 30 GB host ten workers with unbounded threads reached load 52
+  (records not published),
+  and on the 96-core `cf run` host the limit is the session cap, not CPU
   (`references/runbook-server.md` §5).
 - **The laundering check may miss shapes** it was not written for, and the
   DumpDeps walk may misattribute auxiliaries or `have ... := sorry`. The M4
@@ -1482,23 +1439,20 @@ maintainer.
    (question 12). The choice also changes S6's targets, its invariant and its
    cost. Either way, conventions §4 lists signed per-item exceptions. There is
    no default until this is answered.
-2. Will you send the measure_theory author the request: who generated `$MT`'s
-   front half (the 91 `ff-agent` commits), and may the pipeline see the
-   workspace behind it?
+2. Should the pipeline ask for the workspace behind `$MT`'s front half?
 3. Annotations v1.1: approve the three keys, or keep the fallbacks? And may
    `POLICY.md` §1 name the release document's capped anchors as an exception?
-4. **Where `lc` lives.** The default is this repository after the
-   lean-companion rename, with `CLAUDE.md` §4, `CONTRIBUTING.md` invariant 3
-   and `SKILL.md` rule 10 narrowed in the same commit so that "never write to a
-   companion repo" means a repository the pipeline did not generate. The
-   alternative is a separate repository that calls this one's gates by path and
-   leaves those rules as they are. Does the rename happen before or after M0?
+4. **Where `lc` lives.** The default is this repository, with `CLAUDE.md`
+   §4, `CONTRIBUTING.md` invariant 3 and `SKILL.md` rule 10 narrowed in the
+   same commit so that "never write to a companion repo" means a repository
+   the pipeline did not generate. The alternative is a separate repository
+   that calls this one's gates by path and leaves those rules as they are.
 5. Budget: what per-chapter cap applies once M0b measures attack cost? If the
    cap binds, do pre-freeze attacks cover every item, or in-text items and
    Definitions first?
 6. Substrate: should all fleets run on the shared host through `cf run`, with
-   local Workflows kept for calibration outside the sandbox? Who provisions the
-   sandbox account there, or should generation run on a host you administer? Is
+   local Workflows kept for calibration outside the sandbox? How is the sandbox
+   account there provisioned, or should generation run on a dedicated host? Is
    the 16-session cap acceptable at chapter scale, given that both attack
    presets at once take all of it (section 6.3)?
 7. Who signs generator-authored conventions and moves verdicts to

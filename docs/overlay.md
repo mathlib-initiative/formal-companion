@@ -1,7 +1,7 @@
 # The generated PDF overlay
 
 A companion's PDF overlay shows a source PDF with its items outlined and, for
-each item, the declarations that formalise it. It is **generated**: the
+each item, the declarations that formalize it. It is **generated**: the
 viewer, its tools and their schemas are copied verbatim from
 `templates/overlay/runtime/` by `cf overlay sync`, and everything specific to
 one companion is data the viewer and the tools read at run time:
@@ -169,6 +169,8 @@ cf overlay sync <companion> [--check]
 cf overlay check <companion>
 ```
 
+- `init` writes `pdf-overlay/overlay.config.json`. Commit it before `export`,
+  which refuses a dirty checkout; SHA is that commit.
 - `export` runs `cf export` into a temporary file, validates the document,
   converts it (section 7), scans every file with the vendored
   `literature_links`, and only then replaces the contents of `annotations/`

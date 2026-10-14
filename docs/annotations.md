@@ -1,17 +1,20 @@
-# Annotation documents: `formal-companion/annotations`
+# Legacy annotation documents: `formal-companion/annotations`
 
-The annotation format's specification lives in its own repository,
-formal-companion-annotations
-(`github.com/mathlib-initiative/formal-companion-annotations`): the
-specification itself, the id rules as an algorithm and every enum value,
-each a document under that repository's `docs` directory, plus its JSON
-Schema and a language-neutral conformance suite. Every section number this
-repository cites is the specification's.
+This is a legacy intermediate format. `cf export` writes it, and
+`cf overlay export` converts it to
+[Literature Links](https://github.com/mathlib-initiative/literature-links), the
+format of a companion's `annotations/` and of the PDF overlay
+(`docs/overlay.md`).
 
-The skill carries one release of the format's package under `vendor/` (its
-manifest names the tag; at present the release candidate `v1.0.0rc2`, whose
-identifier is `formal-companion/annotations`, `schema_version` `1.0`) and
-imports it through `cflib.vendored`. The release candidate is not compatible
-with the withdrawn `v1.0.0`: the identifier, the id rules, the vocabulary and
-several fields changed (the format's changelog lists them), and documents
-written against that tag must be regenerated.
+Its specification is tag `legacy-v1.0.0rc2` of the Literature Links
+repository, which was formal-companion-annotations before the rename: the
+specification, the id rules as an algorithm and every enum value, each a
+document under that tag's `docs` directory, plus its JSON Schema and a
+language-neutral conformance suite. Every section number this repository cites
+for the legacy format is that specification's.
+
+The skill carries that release's package under
+`vendor/formal_companion_annotations/` (identifier
+`formal-companion/annotations`, `schema_version` `1.0`; its manifest records
+the tag under its original name, `v1.0.0rc2`) and imports it through
+`cflib.vendored`. It is not compatible with Literature Links 1.0.0.
