@@ -7,8 +7,8 @@ commit: {{ commit }}
 
 # docstring_tags     -- a book tag in the declaration docstring (tao-measure-lean,
 #                       teorth/analysis)
-# attribution_table  -- a machine-readable item -> declaration map plus snippets
-#                       (measure_theory pdf-overlay data)
+# attribution_table  -- a machine-readable item -> declaration map, statements cut
+#                       from the Lean (measure_theory pdf-overlay data)
 # blueprint_tex      -- a leanblueprint manuscript: \lean{} / \leanok inside the
 #                       statement environments of blueprint/**/*.tex
 # ledger_nodes       -- a source-node -> formalization ledger; needs an item-level

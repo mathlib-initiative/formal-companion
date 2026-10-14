@@ -269,14 +269,14 @@ qualified.
 
 ### `attribution_table`
 
-A machine-readable item→declaration map plus snippets, joined by the adapter.
-The three inputs have defaults and are named here only to override them:
+A machine-readable item→declaration map, joined by the adapter; each statement
+is cut from the Lean file the ledger names for it (`adapters.leansnippets`). The
+inputs have defaults and are named here only to override them:
 
 ```yaml
 adapter: attribution_table
 glob: "attribution/*.json"
 target_refinement:     attribution/target-refinement.json      # entries[] -> formalization ids
-declaration_snippets:  attribution/declaration-snippets.json   # decl -> {file, line, text}
 geometry_glob:         "attribution/geometry-batch-*.json"     # item labels + page regions
 ledger:                source-formalization-ledger.json
 ```
@@ -541,9 +541,8 @@ consent: { heavy_runs: required, recorded_in: run.yaml }
 - `branch_and_pr` unlocks the (post-v1) fix stage; the invariants gate runs
   first and opening or merging still waits for a human.
 - Repos whose data files are pinned by sha need their **cascade command**
-  recorded here, because a Lean change invalidates the ledger, the snippets,
-  the overlay manifest, the validator constants and the viewer's binding at
-  once.
+  recorded here, because a Lean change invalidates the ledger, the overlay
+  manifest, the validator constants and the viewer's binding at once.
 
 ---
 
