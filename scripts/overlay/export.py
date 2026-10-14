@@ -36,6 +36,7 @@ from typing import Callable, Sequence
 from cflib import log, vendored  # noqa: F401  (vendor/ on sys.path)
 from cflib.errors import CfError
 from cflib.paths import skill_root
+from annotations.export.common import report_warnings
 from formal_companion_annotations import validate as V
 from formal_companion_annotations import vocab
 
@@ -63,6 +64,8 @@ class ExportResult:
     sections: dict[str, int]
     deleted: list[str]
     counts: dict[str, int]
+    #: what the export's report says the user must see (``annotations.export.common.report_warnings``).
+    warnings: list[str]
 
 
 def run_cf_export(argv: Sequence[str]) -> subprocess.CompletedProcess:
@@ -254,4 +257,5 @@ def export(companion: str | Path, *, convention: str, commit: str, source_id: st
                       "GENERATED.json records; re-run it", hint="; ".join(wrong[:5]))
     sections = collections.Counter(PurePosixPath(path).parts[0] for path in conversion.files)
     return ExportResult(directory=directory, sections=dict(sorted(sections.items())),
-                        deleted=sorted(deleted), counts=dict(conversion.counts))
+                        deleted=sorted(deleted), counts=dict(conversion.counts),
+                        warnings=report_warnings(report.get("counts") or {}))

@@ -272,6 +272,16 @@ def write_report(path: Path, report: Report) -> None:
     atomic_write(path, json.dumps(report.to_dict(), indent=2, ensure_ascii=False) + "\n")
 
 
+def report_warnings(counts: dict) -> list[str]:
+    """What a report's counts say that the user must see though the export succeeded."""
+    out = [f"{rel} is not read; it can be deleted" for rel in counts.get("ignored_inputs") or []]
+    unlocated = counts.get("snippets_unlocated") or []
+    if unlocated:
+        out.append(f"no snippet for {len(unlocated)} of the ids the refinement lists (not in the Lean file "
+                   f"the ledger names): {', '.join(unlocated[:5])}" + (", …" if len(unlocated) > 5 else ""))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # the checkout
 # ---------------------------------------------------------------------------

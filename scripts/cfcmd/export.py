@@ -50,8 +50,7 @@ def register(subparsers) -> None:
                          "(default: <checkout>/.lake/build/lib/lean)")
     at.add_argument("--data-dir", metavar="DIR",
                     help="the overlay data directory, relative to the checkout: the geometry batches, the "
-                         "target refinement, the verdicts, the destinations and the declaration snippets "
-                         "(default: pdf-overlay/data)")
+                         "target refinement, the verdicts and the destinations (default: pdf-overlay/data)")
     at.add_argument("--ledger", metavar="FILE",
                     help="the source-formalization ledger, relative to the checkout "
                          "(default: source-formalization-ledger.json)")
@@ -186,6 +185,8 @@ def run(args) -> int:
     profiles = ", ".join(sorted(doc.get("profiles", {}))) or "core only"
     log.info(f"wrote {args.out} ({counts}; profiles: {profiles})")
     log.info(f"report {report_path}: {len(report.lossy)} lossy and {len(report.bent)} bent buckets")
+    for warning in common.report_warnings(report.counts):
+        log.warn(warning)
     status = 0
     for warning in checked.warnings:
         log.warn(f"{args.out}: warning: {warning} [{warning.code}]")
