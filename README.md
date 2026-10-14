@@ -28,13 +28,15 @@ declarations linked to it. It writes two directories in the companion:
 
 - `annotations/`: the companion's
   [Literature Links](https://github.com/mathlib-initiative/literature-links)
-  annotations, one link per file and one folder per book section;
+  annotations, one annotation per file, one folder per book section and per
+  item with several;
 - `pdf-overlay/`: the viewer, its tools and PDF.js, copied verbatim, plus the
   annotation bundle the viewer reads and `GENERATED.json`, which records the
   sha256 of every copied file and of the annotations.
 
 ```sh
 cf overlay init <companion> --source-id <id> --title <title>   # pdf-overlay/overlay.config.json
+git -C <companion> add pdf-overlay && git -C <companion> commit -m "Add the overlay config"   # export needs a clean checkout; <sha> is this commit
 cf overlay export <companion> --convention attribution-table --commit <sha>   # annotations/
 cf overlay sync <companion>       # copy the runtime, write the bundle and GENERATED.json
 cf overlay check <companion>      # read-only: the copies, the bundle and the curation inputs
@@ -56,10 +58,12 @@ only to a workspace directory outside this repository, never to a companion.
 The **overlay** (`scripts/overlay/`, `scripts/annotations/export/`) reads a
 companion's Lean and curation files, writes Literature Links annotations to
 its `annotations/`, and copies the viewer (`templates/overlay/runtime/`) into
-its `pdf-overlay/`. It needs no workspace and reads no audit results. `ingest`
-and `inventory` are the first two stages of an experimental PDF-to-companion
-pipeline (`docs/pipeline.md`). `vendor/` holds Literature Links 1.0.0 and the
-legacy annotation format the exporters write as an intermediate step.
+its `pdf-overlay/`. It needs no workspace; any faithfulness verdicts it shows
+come from files committed in the companion, never from an audit workspace.
+`ingest` and `inventory` are the first two stages of an experimental
+PDF-to-companion pipeline (`docs/pipeline.md`). `vendor/` holds Literature
+Links 1.0.0 and the legacy annotation format the exporters write as an
+intermediate step.
 
 ## Companions, sources and workspaces
 
