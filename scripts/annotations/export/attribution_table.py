@@ -63,8 +63,6 @@ LAYOUT = {
     "ledger_tool": "scripts/source_formalization_ledger.py",
     "geometry_tool": "scripts/overlay_geometry_from_layout.py",
 }
-#: The file the snippets were once read from; a checkout that still has it is told it is ignored.
-RETIRED_SNIPPETS = "declaration-snippets.json"
 #: The three layout keys an export may move, and the flag that moves each.
 MOVABLE_LAYOUT = {"data": "--data-dir", "ledger": "--ledger", "official": "--official-source"}
 RFC8118 = vocab.CONFORMS_TO_PDF
@@ -199,12 +197,13 @@ class AttributionTableExport:
         self.ledger = load(self.repo / self.layout["ledger"])
         self.ledger_lock = file_lock(self.repo, self.layout["ledger"])
         try:
-            # the Lean at the pinned commit: pinned_checkout refused a tree that differs from it
+            # Only the tracked Lean files, and a symlink only to one: pinned_checkout found those as
+            # the commit has them, and it cannot see an ignored file.
             self.snippets_in, self.snippets_unlocated = leansnippets.cut(
-                self.refinement, self.ledger, leansnippets.reader(self.repo))
+                self.refinement, self.ledger, leansnippets.reader(self.repo, self.lean_files()))
         except leansnippets.SnippetError as exc:
             raise ExportError(str(exc), hint=f"every formalization node {self.layout['ledger']} gives a file "
-                                             "must name a Lean file of the checkout") from exc
+                                             "must name a tracked Lean file of the checkout") from exc
         # the record arrays, keyed by id
         self.items: dict[str, dict] = {}
         self.locations: dict[str, dict] = {}
@@ -1259,8 +1258,8 @@ class AttributionTableExport:
         counts["snippets_line_differs_from_scan"] = len(self.snippet_line_diff)
         counts["snippets_truncated"] = sum(1 for s in doc["snippets"] if s.get("truncated"))
         counts["snippets_unlocated"] = list(self.snippets_unlocated)
-        if (self.data / RETIRED_SNIPPETS).is_file():
-            counts["ignored_inputs"] = [f"{self.layout['data']}/{RETIRED_SNIPPETS}"]
+        if (self.data / leansnippets.RETIRED_SNIPPETS).is_file():
+            counts["ignored_inputs"] = [f"{self.layout['data']}/{leansnippets.RETIRED_SNIPPETS}"]
         counts["anonymous_at_head"] = len(self.anon)
         counts["comment_tags_mapped_to_ledger"] = len(self.tag_to_decl)
         counts["named_scanned_at_head"] = len(self.named)

@@ -1175,6 +1175,37 @@ class TestAttributionTableReviewFixes(unittest.TestCase):
         self.assertEqual(report.counts["ignored_inputs"], ["pdf-overlay/data/declaration-snippets.json"])
         self.assertEqual(report.problems, [])
 
+    def test_the_command_warns_of_an_ignored_input_and_an_unlocated_id(self):
+        def mutate(root):
+            write_json(root / "pdf-overlay" / "data" / "declaration-snippets.json", {"snippets": {}})
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
+                      lambda o: o["entries"][1]["formalization_ids"].append("example:demo-unlocated"))
+        root, commit = at_variant(self, mutate)
+        out = scratch(self) / "demo.annotations.json"
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            status = cf_main.main(["export", "attribution-table", str(root), "--commit", commit,
+                                   "--out", str(out), "--repo-id", "git.example.org/demo/demo",
+                                   "--source-id", "demo-pdf", "--source-title", "A Demo Book"])
+        self.assertEqual(status, 0, stderr.getvalue())
+        self.assertIn("warn pdf-overlay/data/declaration-snippets.json is not read", stderr.getvalue())
+        self.assertIn("warn no snippet for 1 of the ids the refinement lists (not in the Lean file the ledger "
+                      "names): example:demo-unlocated", stderr.getvalue())
+
+    def test_a_ledger_file_git_ignores_is_a_refusal(self):
+        def mutate(root):
+            (root / ".gitignore").write_text("Scratch.lean\n", encoding="utf-8")
+            (root / "Scratch.lean").write_text("theorem scratch_thm : True := trivial\n", encoding="utf-8")
+            edit_json(root / "source-formalization-ledger.json", lambda o: o["formalization_nodes"].append(
+                {"id": "scratch_thm", "kind": "theorem", "module": "Scratch", "file": "Scratch.lean"}))
+            relock_ledger(root)
+            edit_json(root / "pdf-overlay" / "data" / "target-refinement.json",
+                      lambda o: o["entries"][1]["formalization_ids"].append("scratch_thm"))
+        root, commit = at_variant(self, mutate)
+        with self.assertRaises(common.ExportError) as caught:
+            at_export(root, commit)
+        self.assertIn("'Scratch.lean', which is not a tracked Lean file", caught.exception.message)
+
     def test_a_ledger_file_outside_the_checkout_is_a_refusal(self):
         root, commit = at_variant(self, lambda r: edit_json(
             r / "source-formalization-ledger.json",

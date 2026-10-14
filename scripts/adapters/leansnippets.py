@@ -1,11 +1,12 @@
 """Statement snippets of the declarations an attribution table names, cut from the companion's Lean.
 
-Ported from measure_theory's ``extract_declaration_snippets.py`` (``index_file``
-and ``build``), which wrote them to ``declaration-snippets.json``; that file is
-no longer read.  The tag of an ``example:<slug>`` id is found with the reader of
-measure_theory's ``source_formalization_ledger.py`` (``code_line_starts``,
-``declaration_body_end``, ``comment_ending_at``, ``example_tag`` and the example
-branch of ``DeclarationIndex``).  Both are ported rule for rule, because the
+Ported from ``extract_declaration_snippets.py`` at measure_theory ef0a424, the
+last commit that has it (``index_file`` and ``build``), which wrote them to
+``declaration-snippets.json``; that file is no longer read.  The tag of an
+``example:<slug>`` id is found with the reader of ``source_formalization_ledger.py``
+at measure_theory ef0a424 (``code_line_starts``, ``declaration_body_end``,
+``comment_ending_at``, ``example_tag`` and the example branch of
+``DeclarationIndex``).  Both are ported rule for rule, because the
 snippets must stay byte-identical: ``adapters.leanparse`` tracks comment depth,
 reads attributes and ends a body elsewhere, so it gives other text and lines.
 Consumers: ``adapters.attribution_table`` (docs/design/stage_map.md Stage 2)
@@ -16,15 +17,17 @@ from __future__ import annotations
 
 import re
 from pathlib import Path, PurePosixPath
-from typing import Callable
+from typing import Callable, Collection
 
-__all__ = ["SnippetError", "MAX_LINES", "MARKER", "index_text", "wanted", "cut", "reader"]
+__all__ = ["SnippetError", "MAX_LINES", "MARKER", "RETIRED_SNIPPETS", "index_text", "wanted", "cut", "reader"]
 
 #: a snippet longer than this is cut to its first MAX_LINES lines plus "\n  " + MARKER
 MAX_LINES = 14
 MARKER = "…"
+#: The file the companion once shipped the snippets in; not read, and named when a checkout still has it.
+RETIRED_SNIPPETS = "declaration-snippets.json"
 
-# -- extract_declaration_snippets.py ------------------------------------------
+# -- extract_declaration_snippets.py at measure_theory ef0a424 ---------------
 DECL_RE = re.compile(
     r"^(private\s+)?(protected\s+)?(noncomputable\s+)?"
     r"(theorem|lemma|def|abbrev|structure|class|instance|inductive)\s+([A-Za-z0-9_'.]+)"
@@ -36,7 +39,7 @@ FIELD_RE = re.compile(r"^\s{2,}([A-Za-z0-9_']+)\s*[:({\[]")
 STOP_RE = re.compile(r":=")
 EXAMPLE_START_RE = re.compile(r"(?:noncomputable\s+)?example\b|/- `example:")
 
-# -- source_formalization_ledger.py: the tag reader ------------------------------
+# -- source_formalization_ledger.py at measure_theory ef0a424: the tag reader ----
 EXAMPLE_HEADER_RE = re.compile(
     r"(?:@\[[^\]\n]*\]\s*)?(?:(?:private|protected|noncomputable|nonrec|unsafe|partial)\s+)*"
     r"example(?![^\s:({\[⦃])"
@@ -295,15 +298,23 @@ def cut(refinement: dict, ledger: dict, read: Callable[[str], str]) -> tuple[dic
     return snippets, sorted(missing)
 
 
-def reader(root: Path) -> Callable[[str], str]:
-    """Read a repo-relative file of the checkout at ``root``; anything outside it is a SnippetError."""
+def reader(root: Path, files: Collection[str] | None = None) -> Callable[[str], str]:
+    """Read a repo-relative file of the checkout at ``root``; anything outside it is a SnippetError.
+
+    With ``files`` (the checkout's tracked Lean files, repo-relative), a path not in it, or a
+    symlink to one not in it, is a SnippetError too.
+    """
     base = root.resolve()
+    allowed = None if files is None else frozenset(files)
 
     def read(rel: str) -> str:
         pure = PurePosixPath(str(rel))
         path = base.joinpath(*pure.parts)
-        if pure.is_absolute() or ".." in pure.parts or not path.resolve().is_relative_to(base):
+        target = path.resolve()
+        if pure.is_absolute() or ".." in pure.parts or not target.is_relative_to(base):
             raise SnippetError(f"the ledger names {rel!r}, which is not a file inside the checkout")
+        if allowed is not None and not {str(pure), target.relative_to(base).as_posix()} <= allowed:
+            raise SnippetError(f"the ledger names {rel!r}, which is not a tracked Lean file of the checkout")
         try:
             return path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError) as exc:

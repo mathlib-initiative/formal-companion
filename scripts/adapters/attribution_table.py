@@ -86,8 +86,6 @@ LAYOUTS = (("attribution", "attribution/official-source.json"),
 DATA_FILES = {
     "target_refinement": "target-refinement.json",
 }
-#: The snippets file the curation once shipped; read no more, and named in the dry run when present.
-RETIRED_SNIPPETS = "declaration-snippets.json"
 DEFAULT_LEDGER = "source-formalization-ledger.json"
 GEOMETRY_GLOB = "geometry-batch-*.json"
 
@@ -731,7 +729,7 @@ class AttributionTableAdapter(Adapter):
             "missing": missing[:50],
             # a snippets file the curation still ships is not read: the statements come from the Lean
             "ignored": [rel for rel in (str(self.config.get("declaration_snippets")
-                                            or f"{self.layout(path)[0]}/{RETIRED_SNIPPETS}"),)
+                                            or f"{self.layout(path)[0]}/{leansnippets.RETIRED_SNIPPETS}"),)
                         if (path / rel).is_file()],
             # The table against the Lean sources it claims to describe. `cf
             # extract` and `cf onboard` turn `omissions` into a warning naming

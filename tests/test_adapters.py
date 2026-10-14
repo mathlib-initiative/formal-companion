@@ -380,6 +380,12 @@ class LeanSnippetsTest(unittest.TestCase):
     def test_a_tagged_example_is_found_by_its_tag(self):
         self.assertEqual(self.found["example:demo-double"], (20, "example : double 2 = 4 := by"))
 
+    def test_a_definition_stops_at_an_example_tag_comment(self):
+        found = leansnippets.index_text("def triple (n : Nat) : Nat :=\n  n + n + n\n\n"
+                                        "/- `example:demo-x` -/\nexample : triple 1 = 3 := rfl\n")
+        self.assertEqual(found["triple"], (1, "def triple (n : Nat) : Nat :=\n  n + n + n"))
+        self.assertEqual(found["example:demo-x"], (5, "example : triple 1 = 3 := rfl"))
+
     def test_a_long_statement_is_truncated(self):
         line, text = self.found["Demo.long_statement"]
         self.assertEqual(line, 24)
@@ -406,11 +412,24 @@ class LeanSnippetsTest(unittest.TestCase):
         root = Path(tempfile.mkdtemp(prefix="cf-snippets-"))
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
         (root / "Demo.lean").write_text(SNIPPET_LEAN, encoding="utf-8")
+        outside = Path(tempfile.mkdtemp(prefix="cf-snippets-outside-"))
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        (outside / "Out.lean").write_text(SNIPPET_LEAN, encoding="utf-8")
+        (root / "Ignored.lean").write_text(SNIPPET_LEAN, encoding="utf-8")
+        (root / "Away.lean").symlink_to(outside / "Out.lean")
+        (root / "Alias.lean").symlink_to("Demo.lean")
+        (root / "ToIgnored.lean").symlink_to("Ignored.lean")
         read = leansnippets.reader(root)
         self.assertEqual(read("Demo.lean"), SNIPPET_LEAN)
-        for rel in ("../Demo.lean", "/etc/hosts", "Missing.lean"):
+        for rel in ("../Demo.lean", "/etc/hosts", "Missing.lean", "Away.lean"):
             with self.subTest(rel=rel), self.assertRaises(leansnippets.SnippetError):
                 read(rel)
+        # restricted to the tracked files: a symlink reads only a tracked file
+        tracked = leansnippets.reader(root, ["Demo.lean", "Alias.lean", "ToIgnored.lean", "Away.lean"])
+        self.assertEqual(tracked("Alias.lean"), SNIPPET_LEAN)
+        for rel in ("Ignored.lean", "ToIgnored.lean", "Away.lean"):
+            with self.subTest(rel=rel), self.assertRaises(leansnippets.SnippetError):
+                tracked(rel)
 
 
 def valid_row(**overrides) -> dict:
