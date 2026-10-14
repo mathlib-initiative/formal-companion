@@ -15,7 +15,8 @@ example, the minimum, and one deliberate breach per rule -- must be accepted or
 refused by all three alike.  `templates/overlay/runtime/tools/serve.py` is a
 fourth reader, outside the three-way table because it is deliberately laxer in
 two documented places; what is checked of it is the direction: nothing
-`config.py` accepts may be a config `serve.py` refuses.
+`config.py` accepts may be a config `serve.py` refuses.  `build_site.py` reads
+the same file before it publishes and is held to the same direction.
 
 The last class holds the strings the annotation readers retype: the overlay's
 extension key, the annotation file layout and the bundle's schema.
@@ -116,7 +117,7 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
         **minimal(),
         "lede": "One sentence under the heading.",
         "back_link": {"href": "../../index.html", "text": "Back to the site"},
-        "display": {"strip_prefix": "Notes."},
+        "display": {"strip_prefix": "Notes.", "minimal": True},
         "storage_key": "an-overlay-page-key",
         "pdf": {"file_name": "notes.pdf", "cache_dir": ".build/overlay-pdf",
                 "route": "/__overlay_pdf__/notes.pdf"},
@@ -126,6 +127,8 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
         "serve": {"host": "127.0.0.1", "port": 8111},
     }, True),
     ("an empty strip_prefix", with_("display.strip_prefix", ""), True),
+    ("a minimal overlay", with_("display.minimal", True), True),
+    ("minimal explicitly off", with_("display.minimal", False), True),
     ("no build commands at all", with_("build.commands", []), True),
     ("the IPv6 loopback", with_("serve.host", "::1"), True),
     ("another 127 address", with_("serve.host", "127.9.9.9"), True),
@@ -154,6 +157,8 @@ TABLE: tuple[tuple[str, dict, bool], ...] = (
     ("an unknown serve key", with_("serve", {"host": "127.0.0.1", "tls": True}), False),
     ("an unknown build key", with_("build", {"env": {}}), False),
     ("an unknown display key", with_("display", {"hide": "Notes."}), False),
+    ("minimal as a string", with_("display.minimal", "yes"), False),
+    ("minimal as a number", with_("display.minimal", 1), False),
     ("a back_link with no text", with_("back_link", {"href": "../../index.html"}), False),
     ("a back_link with an extra key", with_(
         "back_link", {"href": "../../index.html", "text": "Back", "rel": "up"}), False),
@@ -280,6 +285,19 @@ class TestTheThreeAgreeOnEveryConfigInTheTable(unittest.TestCase):
                     json.dumps(value), encoding="utf-8")
                 SERVE.load_config(root)          # raises OverlayError on a refusal
 
+    def test_build_site_py_accepts_everything_config_py_accepts(self):
+        """`build_site.py` reads the same file before it publishes, so the same holds."""
+        root = Path(tempfile.mkdtemp(prefix="cf-overlay-config-",
+                                     dir=os.environ.get("CF_TEST_TMP") or None))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        for name, value, valid in TABLE:
+            if not valid:
+                continue
+            with self.subTest(config=name):
+                (root / "overlay.config.json").write_text(
+                    json.dumps(value), encoding="utf-8")
+                BUILD_SITE.load_config(root)     # raises on a refusal
+
 
 class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
     def test_the_minimum_resolves_to_the_documented_defaults(self):
@@ -294,6 +312,10 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertEqual(config.storage_key, overlay_config.DEFAULT_STORAGE_KEY)
         self.assertEqual(config.back_link_href, overlay_config.DEFAULT_BACK_LINK["href"])
         self.assertEqual(config.back_link_text, overlay_config.DEFAULT_BACK_LINK["text"])
+
+    def test_minimal_is_off_unless_the_config_says_so(self):
+        self.assertIs(overlay_config.parse(minimal()).minimal, False)
+        self.assertIs(overlay_config.parse(with_("display.minimal", True)).minimal, True)
 
     def test_the_link_text_defaults_to_the_title(self):
         config = overlay_config.parse(minimal())

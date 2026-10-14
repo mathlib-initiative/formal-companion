@@ -69,7 +69,7 @@ SITE_KEYS = frozenset({"output_root", "index", "mount", "link_text"})
 BUILD_KEYS = frozenset({"commands"})
 SERVE_KEYS = frozenset({"host", "port"})
 BACK_LINK_KEYS = frozenset({"href", "text"})
-DISPLAY_KEYS = frozenset({"strip_prefix"})
+DISPLAY_KEYS = frozenset({"strip_prefix", "minimal"})
 
 #: One plain file name: no directory, no leading dot, no space.
 FILE_NAME_PATTERN = r"^[A-Za-z0-9_][A-Za-z0-9._-]*$"
@@ -135,6 +135,7 @@ class Config:
     build_commands: tuple[tuple[str, ...], ...]
     host: str
     port: int
+    minimal: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -264,12 +265,17 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         back_href = _string(back.get("href"), f"{label}.back_link.href", out)
         back_text = _string(back.get("text"), f"{label}.back_link.text", out)
 
-    strip_prefix = ""
+    strip_prefix, minimal = "", False
     if "display" in value:
         display = _keys(value["display"], DISPLAY_KEYS, frozenset(), f"{label}.display", out)
         if "strip_prefix" in display:
             strip_prefix = _string(display["strip_prefix"], f"{label}.display.strip_prefix",
                                    out, allow_empty=True)
+        if "minimal" in display:
+            if isinstance(display["minimal"], bool):
+                minimal = display["minimal"]
+            else:
+                out.append(f"{label}.display.minimal: expected true or false")
 
     file_name, cache_dir, route = "", DEFAULT_CACHE_DIR, ""
     if "pdf" in value:
@@ -335,7 +341,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
         back_link_text=back_text, strip_prefix=strip_prefix, storage_key=storage_key,
         file_name=file_name, cache_dir=cache_dir, route=route, output_root=output_root,
         index=index, mount=mount, link_text=link_text or title,
-        build_commands=commands, host=host, port=port,
+        build_commands=commands, host=host, port=port, minimal=minimal,
     )
 
 

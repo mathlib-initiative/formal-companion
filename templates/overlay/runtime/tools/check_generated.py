@@ -72,7 +72,7 @@ SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
 SERVE_KEYS = {"host", "port"}
 BACK_LINK_KEYS = {"href", "text"}
-DISPLAY_KEYS = {"strip_prefix"}
+DISPLAY_KEYS = {"strip_prefix", "minimal"}
 
 #: The four patterns, verbatim from the skill's scripts/overlay/config.py and
 #: from the overlay-config-v1 schema in the directory beside this one.
@@ -224,6 +224,8 @@ def config_problems(value: Any, label: str = CONFIG_NAME) -> list[str]:
         if "strip_prefix" in display:
             _string(display["strip_prefix"], f"{label}.display.strip_prefix", out,
                     allow_empty=True)
+        if "minimal" in display and not isinstance(display["minimal"], bool):
+            out.append(f"{label}.display.minimal: expected true or false")
 
     file_name = ""
     if "pdf" in value:

@@ -33,7 +33,7 @@
     </header>
 
     <main id="viewer-main">
-      <section class="file-gate" aria-labelledby="pdf-heading">
+      <section id="pdf-notice" class="file-gate" aria-labelledby="pdf-heading">
         <div>
           <h2 id="pdf-heading">Verified loopback PDF</h2>
           <p>
@@ -55,25 +55,31 @@
         <div class="viewer-column">
           <nav class="toolbar" aria-label="PDF controls">
             <div class="control-group">
-              <button id="previous-page" type="button" aria-label="Previous page">←</button>
+              <button id="previous-page" type="button" aria-label="Previous page"
+                      title="Previous page (←)" aria-keyshortcuts="ArrowLeft">←</button>
               <label for="page-number">Page</label>
               <input id="page-number" type="number" inputmode="numeric" min="1" value="1">
               <span id="page-count" aria-live="polite">of 0</span>
-              <button id="next-page" type="button" aria-label="Next page">→</button>
+              <button id="next-page" type="button" aria-label="Next page"
+                      title="Next page (→)" aria-keyshortcuts="ArrowRight">→</button>
             </div>
 
             <div class="control-group">
-              <button id="zoom-out" type="button" aria-label="Zoom out">−</button>
+              <button id="zoom-out" type="button" aria-label="Zoom out"
+                      title="Zoom out (−)" aria-keyshortcuts="-">−</button>
               <label for="zoom">Zoom</label>
               <input id="zoom" type="range" min="50" max="250" step="10" value="100">
               <output id="zoom-value" for="zoom">100%</output>
-              <button id="zoom-in" type="button" aria-label="Zoom in">+</button>
+              <button id="zoom-in" type="button" aria-label="Zoom in"
+                      title="Zoom in (+)" aria-keyshortcuts="Plus =">+</button>
             </div>
 
             <div class="control-group">
-              <button id="rotate-left" type="button" aria-label="Rotate counterclockwise">↶</button>
+              <button id="rotate-left" type="button" aria-label="Rotate counterclockwise"
+                      title="Rotate counterclockwise">↶</button>
               <output id="rotation-value" aria-label="Rotation">0°</output>
-              <button id="rotate-right" type="button" aria-label="Rotate clockwise">↷</button>
+              <button id="rotate-right" type="button" aria-label="Rotate clockwise"
+                      title="Rotate clockwise (R)" aria-keyshortcuts="R">↷</button>
             </div>
 
             <div class="control-group">
@@ -122,7 +128,7 @@
                   <option value="">All roles</option>
                 </select>
               </label>
-              <label class="search-filter">
+              <label id="target-filter-wrap" class="search-filter">
                 Find declaration
                 <input id="target-filter" type="search" autocomplete="off">
               </label>
@@ -131,7 +137,7 @@
             <p id="target-summary" class="target-summary" aria-live="polite"></p>
             <div id="target-groups"></div>
 
-            <nav class="pagination" aria-label="Declaration pages">
+            <nav id="target-pagination" class="pagination" aria-label="Declaration pages">
               <button id="previous-targets" type="button">Previous declarations</button>
               <output id="target-page" aria-live="polite"></output>
               <button id="next-targets" type="button">Next declarations</button>
@@ -140,10 +146,11 @@
         </aside>
       </section>
 
-      <details class="keyboard-help">
+      <details id="keyboard-help" class="keyboard-help">
         <summary>Keyboard controls</summary>
         <p>
-          With focus outside an input and no modifier key held: Left/Right changes page,
+          With focus outside an input and no Ctrl, Alt or Command key held (Shift only where
+          it types the key, as for +): Left/Right changes page,
           +/− changes zoom, R rotates, and Escape clears a selected region. Highlighted
           regions are buttons: Tab to one and press Enter or Space to select it.
         </p>

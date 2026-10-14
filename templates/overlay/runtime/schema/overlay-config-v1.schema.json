@@ -32,6 +32,10 @@
         "strip_prefix": {
           "description": "A declaration-name prefix the cards hide; the empty string hides nothing.",
           "type": "string"
+        },
+        "minimal": {
+          "description": "Show only the source, its outlines and the linked declarations with their statements: no PDF notice, visible status line, keyboard help, search box and role filter, plain 'formalized' sentence, provenance or ledger-cluster note, card badges or card metadata. Errors, qualifying statuses and an item that links nothing still show. Default false.",
+          "type": "boolean"
         }
       }
     },

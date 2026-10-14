@@ -85,6 +85,9 @@ test("config: the viewer reads what it needs and fills section 3's defaults", ()
   assert.equal(config.siteRoot, "../../");
   assert.equal(config.stripPrefix, "Notes.");
   assert.equal(config.storageKey, "notes-overlay-page");
+  assert.equal(config.minimal, false, "an overlay explains itself unless the config says otherwise");
+  assert.equal(readConfig(makeConfig({ display: { minimal: true } })).minimal, true);
+  assert.equal(readConfig(makeConfig({ display: { minimal: "yes" } })).minimal, false, "only true turns it on");
   const bare = readConfig({ pdf: { route: PDF_ROUTE }, schema: "formal-companion/overlay-config",
                             schema_version: 1, source_id: SOURCE_ID, title: "T" });
   assert.deepEqual(bare.backLink, DEFAULT_BACK_LINK);
@@ -426,6 +429,17 @@ test("summary: the line above the cards states the status or a count", () => {
   assert.equal(cardSummaryText({ shown: 1 }), "1 linked declaration.");
   assert.equal(cardSummaryText({ shown: 0 }), "No declaration is linked to this item.");
   assert.equal(cardSummaryText({ coverage: "a-new-word", shown: 2 }), "2 linked declarations.");
+});
+
+test("summary: a minimal overlay keeps only what qualifies the links", () => {
+  assert.equal(cardSummaryText({ coverage: "formalized", minimal: true, shown: 3 }), "");
+  assert.equal(cardSummaryText({ minimal: true, shown: 1 }), "");
+  assert.equal(cardSummaryText({ coverage: "support_only", minimal: true, shown: 1 }),
+               "Supported only by declarations that state a neighboring item.");
+  assert.equal(cardSummaryText({ coverage: "partial", minimal: true, shown: 2 }),
+               "Formalized in part or in a different form; see the faithfulness verdict, if any.");
+  assert.equal(cardSummaryText({ coverage: "not_formalized", minimal: true, shown: 0 }), "Not formalized.");
+  assert.equal(cardSummaryText({ minimal: true, shown: 0 }), "No declaration is linked to this item.");
 });
 
 // --- hrefs ------------------------------------------------------------------

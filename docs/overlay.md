@@ -83,13 +83,23 @@ section folders of annotation files and nothing else.
 ## 3. `overlay.config.json`, version 1
 
 Unchanged: `schema`, `schema_version`, `source_id`, `title`, `pdf` and `site`
-are required; `lede`, `back_link`, `display.strip_prefix`, `storage_key`,
-`pdf.cache_dir`, `pdf.route`, `site.output_root`, `site.index`, `site.mount`,
-`site.link_text`, `build.commands` (default: none) and `serve` have defaults;
-unknown keys are errors. `source_id` names the PDF the overlay shows: the
-`source_id` in its records' source extension (section 7). `scripts/overlay/config.py`,
-`runtime/schema/overlay-config-v1.schema.json` and `runtime/tools/check_generated.py`
-carry the same rules and patterns, held together by `tests/test_overlay_config.py`.
+are required; `lede`, `back_link`, `display.strip_prefix`, `display.minimal`,
+`storage_key`, `pdf.cache_dir`, `pdf.route`, `site.output_root`, `site.index`,
+`site.mount`, `site.link_text`, `build.commands` (default: none) and `serve`
+have defaults; unknown keys are errors. `display.minimal: true` shows only the
+source, its outlines and the linked declarations with their statements. It drops
+the PDF notice, the keyboard help (the toolbar buttons name their own shortcuts;
+Escape and Tab/Enter on a region go undescribed), the search box and role
+filter, the plain "formalized" sentence, the provenance and ledger-cluster
+notes, card badges and metadata, the pager over one page of cards and the role
+heading over cards that are all key declarations, and it keeps the status line
+only for screen readers. An error, a status that qualifies the links (support
+only, partial, ...) and an item that links nothing still say so. `source_id`
+names the PDF the overlay shows: the `source_id` in its records' source
+extension (section 7). `scripts/overlay/config.py`,
+`runtime/schema/overlay-config-v1.schema.json` and
+`runtime/tools/check_generated.py` carry the same rules and patterns, held
+together by `tests/test_overlay_config.py`.
 
 ## 4. The viewer (`runtime/viewer/`)
 

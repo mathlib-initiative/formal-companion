@@ -245,6 +245,7 @@ export function readConfig(raw) {
   return {
     backLink: { href: backHref, text: text(backLink.text) || DEFAULT_BACK_LINK.text },
     lede: text(raw.lede),
+    minimal: display.minimal === true,
     pdfRoute: route,
     // build_site.py publishes the annotation files at the site root, the same
     // place relative to the built pages as in the repository; it is this far up.
@@ -479,8 +480,15 @@ export function coverageSummary(coverage) {
   return COVERAGE_SUMMARIES[coverage] ?? "";
 }
 
-/** The line above the card list: the status speaks for the item, else a count. */
-export function cardSummaryText({ coverage = null, shown = 0 }) {
+/**
+ * The line above the card list: the status speaks for the item, else a count.
+ * A minimal overlay drops the count and the plain "formalized" sentence, where
+ * the cards speak for themselves, and keeps every status that qualifies them.
+ */
+export function cardSummaryText({ coverage = null, minimal = false, shown = 0 }) {
+  if (minimal && shown) {
+    return coverage && coverage !== "formalized" ? coverageSummary(coverage) : "";
+  }
   const summary = coverage ? coverageSummary(coverage) : "";
   if (summary) {
     return summary;
