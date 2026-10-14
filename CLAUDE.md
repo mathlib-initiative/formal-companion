@@ -37,10 +37,11 @@ docs/design/archive/       the design record it came from (historical)
 docs/proposals/            designs not yet built (pdf-to-companion.md)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
-vendor/              formal_companion_annotations/: one release of the annotation
-                     format (formal-companion-annotations), and literature_links/:
-                     the Literature Links format the overlay reads; each byte for
-                     byte, sealed by its manifest; never edited here
+vendor/              literature_links/: Literature Links 1.0.0, the format the
+                     overlay writes and reads; formal_companion_annotations/: the
+                     legacy intermediate format that `cf export` writes and
+                     `cf overlay export` converts to Literature Links; each byte
+                     for byte, sealed by its manifest; never edited here
 evals/               trigger evals: prompts as data, run by hand
 bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
@@ -50,11 +51,15 @@ scripts/cflib/       shared library (no stage logic, no network):
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
                      route, detect, report, recheck, score, share, cost, pipeline
-scripts/annotations/ the skill's tooling around the format, not a stage: export/
-                     (the companion exporters behind `cf export`), review_tags.py
-                     (`cf review-tags`), see docs/exporters.md, and sync_format.py,
-                     which vendors a release; the format itself (schema, checker,
-                     id rules) is vendor/formal_companion_annotations/
+scripts/annotations/ the skill's tooling around the legacy format, not a stage:
+                     export/ (the companion exporters behind `cf export`),
+                     review_tags.py (`cf review-tags`), see docs/exporters.md, and
+                     sync_format.py, which vendors a release; the legacy format
+                     itself (schema, checker, id rules) is
+                     vendor/formal_companion_annotations/
+scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
+templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
+                     tests/ holds its node --test suites
 templates/  workflows/  tests/  .github/workflows/
 ```
 
@@ -73,7 +78,7 @@ Those two lines move together or not at all.
   has a fallback reader for the subset the skill writes — including the nested
   `sources:` / `page_map_to:` maps and the folded scalars the registry uses. Do
   not add a dependency without changing this paragraph. `vendor/` is not one:
-  it holds one revision each of formal-companion-annotations and Literature
+  it holds one revision each of the legacy annotation format and Literature
   Links, both standard library only, copied into the tree (section 2), so a clone still runs with nothing
   installed.
 - No network in library code. The only exceptions are the errata fetcher
@@ -99,7 +104,7 @@ Those two lines move together or not at all.
 - **One vocabulary.** `scripts/cflib/vocab.py` is the only definition of the
   enums; `references/vocabulary.md` documents them. A new value is a change to
   both, plus a mapping entry for the converted baseline. The exception is the
-  annotation format: its enums are defined by the vendored
+  legacy annotation format: its enums are defined by the vendored
   `formal_companion_annotations.vocab` and are the format's own; `cflib.vocab`
   keeps the skill's sets for its stages and maps onto the format's values
   where a document is written, and `tests/test_vendored_format.py` checks that

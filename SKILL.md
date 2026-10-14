@@ -1,6 +1,6 @@
 ---
 name: companion-faithfulness
-description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalises — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — it reads repositories and reports on them, it never edits Lean or repairs a proof.
+description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalizes — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — the audit reads repositories and reports findings, and never edits Lean or repairs a proof; the one command that writes into a companion is `cf overlay`, and it writes only pdf-overlay/ and annotations/.
 ---
 
 # Companion faithfulness audits
@@ -16,7 +16,7 @@ statement table, pair items per source, plan and run fleets, gate and harvest
 the results, tally, adjudicate adversarially, route to owners and report with
 verified numbers.
 
-**Version one is findings-only.** It stops at challenged, routed findings and a
+**The audit is findings-only.** It stops at challenged, routed findings and a
 verified report. Authoring fix PRs, reviewing merges and camera-ready audits
 are deliberately out of scope; the extension points exist but the commands do
 not.
