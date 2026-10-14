@@ -15,7 +15,6 @@ import test from "node:test";
 import {
   COVERAGE_SUMMARIES,
   COVERAGE_VALUES,
-  DEFAULT_BACK_LINK,
   LINK_ROLES,
   NAMESPACE,
   VERDICT_KINDS,
@@ -25,7 +24,7 @@ import {
   coverageSummary,
   coverageWord,
   declarationVerdictDisplay,
-  heroCard,
+  firstKeyCard,
   labelParts,
   leanTokens,
   locatorTail,
@@ -48,6 +47,8 @@ import {
   safeBackLinkHref,
   safeHttpsUrl,
   sha256Hex,
+  sharedRole,
+  splitCards,
   siteRootFor,
   splitName,
   targetHref,
@@ -95,7 +96,8 @@ test("config: the viewer reads what it needs and fills section 3's defaults", ()
   assert.equal(config.storageKey, "notes-overlay-page");
   const bare = readConfig({ pdf: { route: PDF_ROUTE }, schema: "formal-companion/overlay-config",
                             schema_version: 1, source_id: SOURCE_ID, title: "T" });
-  assert.deepEqual(bare.backLink, DEFAULT_BACK_LINK);
+  assert.equal(bare.backLink, null, "no back_link is no back link");
+  assert.deepEqual(readConfig(makeConfig()).backLink, { href: "../../index.html", text: "Back to the notes" });
   assert.equal(bare.siteRoot, "../../", "the default mount is one directory deep");
   assert.equal(readConfig(makeConfig({ site: { mount: "tools/pdf-overlay" } })).siteRoot, "../../../");
 });
@@ -475,8 +477,8 @@ test("href: the back link keeps its .. but never a scheme the config smuggled in
     assert.equal(safeBackLinkHref(bad), null, `${bad} must be refused`);
   }
   const evil = readConfig(makeConfig({ back_link: { href: "javascript:alert(1)", text: "Back" } }));
-  assert.equal(evil.backLink.href, DEFAULT_BACK_LINK.href);
-  assert.equal(evil.backLink.text, "Back");
+  assert.equal(evil.backLink, null, "a refused href is no link, not a guessed one");
+  assert.equal(readConfig(makeConfig({ back_link: { href: "../../index.html", text: " " } })).backLink, null);
 });
 
 // --- verdicts ---------------------------------------------------------------
@@ -608,11 +610,19 @@ test("coverage: one word per status for the pill, and none for an unknown one", 
   assert.equal(coverageWord("mostly"), "");
 });
 
-test("hero and regions: the first key card leads, and coverage picks the stroke", () => {
+test("cards and regions: key cards apart from the rest, and coverage picks the stroke", () => {
   const { index } = fixture();
   const theorem = index.items.get("item:theorem-1.1");
-  assert.equal(heroCard(theorem).fullName, "Notes.Box.volume_nonneg");
-  assert.equal(heroCard(index.items.get("item:definition-2.1")), null);
+  assert.equal(firstKeyCard(theorem).fullName, "Notes.Box.volume_nonneg");
+  assert.equal(firstKeyCard(index.items.get("item:definition-2.1")), null);
+  const { keys, related } = splitCards(theorem);
+  assert.deepEqual(keys.map((card) => card.fullName), ["Notes.Box.volume_nonneg"]);
+  assert.deepEqual(related.map((card) => card.role), ["attributed", "support", "example", "helper"]);
+  assert.deepEqual(splitCards(null), { keys: [], related: [] });
+  assert.equal(sharedRole(related), "", "no role is more than half");
+  assert.equal(sharedRole([{ role: "support" }, { role: "support" }, { role: "helper" }]), "support");
+  assert.equal(sharedRole([{ role: "support" }, { role: "helper" }]), "");
+  assert.equal(sharedRole([]), "");
   assert.equal(regionCoverage(theorem), "formalized");
   assert.equal(regionCoverage(index.items.get("item:definition-2.1")), "partial");
   assert.equal(regionCoverage(index.items.get("item:exercise-3.1")), "quiet");

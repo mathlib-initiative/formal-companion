@@ -10,9 +10,10 @@
     <meta name="referrer" content="no-referrer">
     <!--
       This shell is static and generic: it names no source, no companion and no
-      page count. The title, the heading, the lede and the back link below are
-      placeholders that viewer.js replaces at run time with the values in
-      ../overlay.config.json, and every other string on the page comes from the
+      page count. The title, the heading and the lede below are placeholders
+      that viewer.js replaces at run time with the values in
+      ../overlay.config.json, which may also name a back link to show; every
+      other string on the page comes from the
       annotations. Nothing is substituted into this file when it is
       copied into a companion.
     -->
@@ -23,7 +24,7 @@
   <body>
     <a class="skip-link" href="#page-scroller">Skip to the PDF</a>
     <header class="topbar">
-      <a id="back-link" class="back-link" href="../../index.html">Back to the site</a>
+      <a id="back-link" class="back-link" hidden></a>
       <span class="topbar-sep" aria-hidden="true"></span>
       <h1 id="page-heading">Source and formalization overlay</h1>
       <button id="toggle-faithfulness" class="switch" type="button" aria-pressed="false" hidden>Show faithfulness</button>
@@ -118,19 +119,15 @@
             </header>
             <div id="verdict-notes" class="verdict-notes"></div>
 
-            <div id="hero" class="hero"></div>
-
-            <section id="also-section" class="fold" aria-labelledby="also-heading" hidden>
-              <div class="fold-head">
-                <h3 id="also-heading">Also states it</h3>
-                <span id="also-count" class="count"></span>
-              </div>
-              <ul id="also-list" class="rows"></ul>
-              <button id="also-more" class="text-button more" type="button" hidden></button>
+            <section id="key-section" class="key-section" aria-label="Key declarations">
+              <p id="key-count" class="key-count" hidden></p>
+              <div id="key-note" class="key-note" hidden></div>
+              <ol id="key-list" class="key-list"></ol>
+              <button id="key-more" class="text-button more" type="button" hidden></button>
             </section>
 
-            <section id="related-section" class="fold" aria-labelledby="related-heading" hidden>
-              <div class="fold-head">
+            <section id="related-section" class="related" aria-labelledby="related-heading" hidden>
+              <div class="related-head">
                 <h3 id="related-heading">Related</h3>
                 <span id="related-count" class="count" aria-live="polite"></span>
                 <input
@@ -143,7 +140,7 @@
                   hidden
                 >
               </div>
-              <ul id="related-list" class="rows"></ul>
+              <ul id="related-list" class="related-list"></ul>
               <p id="filter-empty" class="empty-line" hidden>No declaration matches.</p>
               <nav id="related-pager" class="pagination" aria-label="Related declaration pages" hidden>
                 <button id="previous-targets" class="icon" type="button" aria-label="Previous declarations">‹</button>

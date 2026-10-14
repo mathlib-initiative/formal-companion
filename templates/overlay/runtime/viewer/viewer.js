@@ -28,7 +28,7 @@ import {
   coverageSummary,
   coverageWord,
   declarationVerdictDisplay,
-  heroCard,
+  firstKeyCard,
   labelParts,
   leanTokens,
   locatorTail,
@@ -43,6 +43,8 @@ import {
   regionVerdict,
   reviewFooter,
   sha256Hex,
+  sharedRole,
+  splitCards,
   splitName,
   verdictFooter,
   verdictLine,
@@ -204,8 +206,8 @@ export function isViewerShortcut(event) {
 
 /** Statements longer than this many lines are clamped, with a "Show all" button. */
 const STATEMENT_LINES = 14;
-/** The "Also states it" list shows this many rows before "Show N more". */
-const ALSO_ROWS = 10;
+/** The key declarations show this many cards before "Show N more". */
+const KEY_CARDS = 8;
 /** Above this many cards, the item view offers a filter by name. */
 const FILTER_ABOVE = 20;
 /** Room the floating PDF controls take at the bottom of the PDF pane. */
@@ -249,20 +251,19 @@ export async function bootstrapViewer({
       "verdict-legend", "index-footer",
       "selection", "back-to-page", "previous-item", "next-item", "item-position", "item-choices",
       "item-head", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
-      "hero", "also-section", "also-count", "also-list", "also-more",
+      "key-section", "key-count", "key-note", "key-list", "key-more",
       "related-section", "related-heading", "related-count", "related-list", "filter-empty", "target-filter",
       "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note",
     ].map((id) => [id, element(documentRef, id)]),
   );
   const state = {
-    alsoAll: false,
     boxes: new Map(),
     cardPage: 1,
     config: null,
     currentPage: 1,
     faithfulness: false,
     index: null,
-    openCards: new Set(),
+    keysAll: false,
     pdfDocument: null,
     region: null,
     renderEpoch: 0,
@@ -271,7 +272,6 @@ export async function bootstrapViewer({
     selected: null,
     zoom: 100,
   };
-  let bodyCount = 0;
 
   /** An element with a class and text, both optional; every string goes in as text. */
   function make(tag, className, value) {
@@ -314,10 +314,15 @@ export async function bootstrapViewer({
     ui["page-heading"].title = config.title;
     ui["page-lede"].textContent = config.lede;
     ui["page-lede"].hidden = !config.lede;
-    ui["back-link"].textContent = config.backLink.text;
-    ui["back-link"].setAttribute("href", config.backLink.href);
-    // The stylesheet draws a "←" before the link, unless its text already starts with one.
-    setClass(ui["back-link"], "has-arrow", /^\s*[←‹<]/u.test(config.backLink.text));
+    // With no back link the top bar starts with the title; the stylesheet drops the divider too.
+    const back = config.backLink;
+    ui["back-link"].hidden = !back;
+    if (back) {
+      ui["back-link"].textContent = back.text;
+      ui["back-link"].setAttribute("href", back.href);
+      // The stylesheet draws a "←" before the link, unless its text already starts with one.
+      setClass(ui["back-link"], "has-arrow", /^\s*[←‹<]/u.test(back.text));
+    }
   }
 
   // --- the page: its regions and their items, in reading order ---------------
@@ -390,8 +395,8 @@ export async function bootstrapViewer({
    * source line is its own block, so a line too long for the panel wraps under
    * its own indentation (a hanging indent), not back at the left edge.
    */
-  function leanNode(source, tag = "pre", className = "lean") {
-    const node = make(tag, className);
+  function leanNode(source) {
+    const node = make("pre", "lean");
     let line = null;
     let indent = 0;
     let leading = false;
@@ -529,10 +534,10 @@ export async function bootstrapViewer({
         cell.append(dot);
       }
       row.append(cell);
-      const hero = heroCard(item);
-      const right = make("span", hero ? "index-decl" : "index-decl is-empty");
-      if (hero) {
-        right.append(nameNode(hero.name, "decl", null, { breaks: false }));
+      const lead = firstKeyCard(item);
+      const right = make("span", lead ? "index-decl" : "index-decl is-empty");
+      if (lead) {
+        right.append(nameNode(lead.name, "decl", null, { breaks: false }));
         if (item.cards.length > 1) {
           right.append(make("span", "more", ` +${item.cards.length - 1}`));
         }
@@ -664,7 +669,7 @@ export async function bootstrapViewer({
     ui["verdict-notes"].hidden = !ui["verdict-notes"].children?.length;
   }
 
-  /** The eyebrow of the hero: kind, verdict and badges on the left, the source link on the right. */
+  /** A key card's eyebrow: kind, verdict and badges on the left, the source link on the right. */
   function eyebrow(card) {
     const row = make("div", "eyebrow");
     const left = make("span", "eyebrow-left");
@@ -680,109 +685,68 @@ export async function bootstrapViewer({
     return row;
   }
 
-  function renderHero(item) {
-    ui.hero.replaceChildren();
-    const hero = heroCard(item);
-    if (hero) {
-      const name = nameNode(hero.name, "decl-name");
-      name.title = hero.fullName;
-      ui.hero.append(eyebrow(hero), name);
-      if (hero.snippet?.text) {
-        ui.hero.append(...statementNodes(hero.snippet.text));
-      }
-    } else if (item.cards.length) {
-      ui.hero.append(make("p", "empty-line", "No key declaration states this passage."));
-    } else {
-      ui.hero.append(make("p", "empty-line is-strong", "No Lean declaration is linked to this passage."));
-      if (item.clusterIds.length) {
-        const line = make("p", "cluster-line", "Ledger cluster ");
-        line.append(make("code", "cluster-ids", item.clusterIds.join(", ")));
-        ui.hero.append(line);
-      }
-    }
-  }
-
-  /** One card as a row: a button that opens its statement, and the statement's body below it. */
-  function cardRow(card, { previous, preview, sharedRole }) {
-    const li = make("li", "row");
-    const button = make("button", "row-button");
-    button.type = "button";
-    const bodyId = `card-body-${++bodyCount}`;
-    button.setAttribute("aria-controls", bodyId);
-    const open = state.openCards.has(card.id);
-    button.setAttribute("aria-expanded", String(open));
-    const top = make("span", "row-top");
-    const name = nameNode(card.name, "row-name", previous);
+  /** A key declaration: its eyebrow, its name, and its statement in full. */
+  function keyCard(card) {
+    const li = make("li", "key-card");
+    li.tabIndex = -1;
+    const name = nameNode(card.name, "decl-name");
     name.title = card.fullName;
-    const kind = make("span", "row-kind");
-    if (state.faithfulness && card.verdict) {
-      const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
-      kind.append(make("span", `dot verdict-dot ${display.className}`));
+    li.append(eyebrow(card), name);
+    if (card.snippet?.text) {
+      li.append(...statementNodes(card.snippet.text));
     }
-    kind.append(card.role === sharedRole ? card.kind : [card.role, card.kind].filter(Boolean).join(" · "));
-    top.append(name, kind);
-    button.append(top);
-    let previewNode = null;
-    if (preview && card.snippet?.text) {
-      previewNode = leanNode(card.snippet.text, "span", "row-preview");
-      previewNode.hidden = open;
-      button.append(previewNode);
-    }
-    const body = make("div", "row-body");
-    body.id = bodyId;
-    body.hidden = !open;
-    let built = false;
-    const build = () => {
-      if (built) {
-        return;
-      }
-      built = true;
-      if (card.snippet?.text) {
-        body.append(...statementNodes(card.snippet.text));
-      }
-      const foot = make("div", "row-foot");
-      const meta = make("span", "row-meta");
-      const words = [card.relation, ...card.badges].filter(Boolean);
-      if (words.length) {
-        meta.append(words.join(" · "));
-      }
-      const verdict = cardVerdict(card);
-      if (verdict) {
-        meta.append(verdict);
-      }
-      foot.append(meta, sourceLink(card));
-      body.append(foot);
-    };
-    if (open) {
-      build();
-    }
-    button.addEventListener("click", () => {
-      const opening = !state.openCards.has(card.id);
-      if (opening) {
-        state.openCards.add(card.id);
-        build();
-      } else {
-        state.openCards.delete(card.id);
-      }
-      button.setAttribute("aria-expanded", String(opening));
-      body.hidden = !opening;
-      if (previewNode) {
-        previewNode.hidden = opening;
-      }
-      setClass(li, "is-open", opening);
-    });
-    setClass(li, "is-open", open);
-    li.append(button, body);
     return li;
   }
 
-  function fillRows(list, cards, options) {
-    list.replaceChildren();
-    let previous = null;
-    for (const card of cards) {
-      list.append(cardRow(card, { ...options, previous }));
-      previous = splitName(card.name)[0] || null;
+  /** What the key list says when it has no card: no key one, or nothing linked at all. */
+  function renderKeyNote(item, keys) {
+    const note = ui["key-note"];
+    note.replaceChildren();
+    note.hidden = keys.length > 0;
+    if (keys.length) {
+      return;
     }
+    if (item.cards.length) {
+      note.append(make("p", "empty-line", "No key declaration states this passage."));
+      return;
+    }
+    note.append(make("p", "empty-line is-strong", "No Lean declaration is linked to this passage."));
+    if (item.clusterIds.length) {
+      const line = make("p", "cluster-line", "Ledger cluster ");
+      line.append(make("code", "cluster-ids", item.clusterIds.join(", ")));
+      note.append(line);
+    }
+  }
+
+  /**
+   * A related declaration on one line: a plain link to its source, with its
+   * name and a tag (its role when the heading does not say it, and its kind).
+   */
+  function relatedRow(card, { previous, shared }) {
+    const li = make("li", "related-row");
+    const row = card.href ? make("a", "related-link") : make("span", "related-link is-unlinked");
+    if (card.href) {
+      row.setAttribute("href", card.href);
+    }
+    const fallback = card.href && card.resolution === "fallback";
+    const where = fallback ? card.fallbackLabel || "module page" : card.href ? "" : "No rendered page";
+    row.title = [card.fullName, ...card.badges, where].filter(Boolean).join("\n");
+    const name = nameNode(card.name, "related-name", previous);
+    const tag = make("span", "related-tag");
+    if (state.faithfulness && card.verdict) {
+      const display = declarationVerdictDisplay(card.verdict.verdict, card.verdict.status);
+      const dot = make("span", `dot verdict-dot ${display.className}`);
+      dot.title = card.verdict.note ? `${display.label}: ${card.verdict.note}` : display.label;
+      tag.append(dot);
+    }
+    const words = [card.role === shared ? "" : card.role, card.kind, fallback ? "module page" : ""];
+    tag.append(words.filter(Boolean).join(" · "));
+    if (card.badges.some((badge) => badge.startsWith("sorry"))) {
+      tag.append(make("span", "tag is-sorry", "sorry"));
+    }
+    row.append(name, tag);
+    li.append(row);
+    return li;
   }
 
   function renderCards() {
@@ -792,39 +756,41 @@ export async function bootstrapViewer({
     }
     const filtered = item.cards.length > FILTER_ABOVE;
     const query = filtered ? ui["target-filter"].value : "";
-    const hero = heroCard(item);
-    const keys = item.cards.filter((card) => card.role === "key" && card !== hero);
-    const related = item.cards.filter((card) => card.role !== "key");
+    const { keys, related } = splitCards(item);
     const shownKeys = cardsMatching(keys, { query });
     const shownRelated = cardsMatching(related, { query });
 
-    ui["also-section"].hidden = !keys.length;
-    ui["also-count"].textContent = String(query ? shownKeys.length : keys.length);
-    const capped = state.alsoAll ? shownKeys : shownKeys.slice(0, ALSO_ROWS);
-    fillRows(ui["also-list"], capped, { preview: true, sharedRole: "key" });
+    renderKeyNote(item, keys);
+    const capped = state.keysAll ? shownKeys : shownKeys.slice(0, KEY_CARDS);
+    ui["key-list"].replaceChildren(...capped.map(keyCard));
+    ui["key-list"].hidden = !capped.length;
+    // A neutral count, only when there is more than one: no heading says what the cards state.
+    ui["key-count"].hidden = keys.length < 2;
+    ui["key-count"].textContent = query ? `${shownKeys.length} of ${keys.length} declarations`
+      : `${keys.length} declarations`;
     const hidden = shownKeys.length - capped.length;
-    ui["also-more"].hidden = hidden <= 0;
-    ui["also-more"].textContent = hidden > 0 ? `Show ${hidden} more` : "";
+    ui["key-more"].hidden = hidden <= 0;
+    ui["key-more"].textContent = hidden > 0 ? `Show ${hidden} more` : "";
 
     ui["related-section"].hidden = !related.length && !filtered;
     // The role most related cards share is said once, in the heading; a row
     // says its role only when it is another one.
-    const counts = new Map();
-    for (const card of related) {
-      counts.set(card.role, (counts.get(card.role) ?? 0) + 1);
-    }
-    const [common, most] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
-    const shared = common && most * 2 > related.length ? common : "";
+    const shared = sharedRole(related);
     ui["related-heading"].replaceChildren("Related");
     if (shared) {
-      ui["related-heading"].append(make("span", "fold-role", ` · ${shared}`));
+      ui["related-heading"].append(make("span", "related-role", ` · ${shared}`));
     }
     ui["related-count"].textContent = String(query ? shownRelated.length : related.length);
     ui["target-filter"].hidden = !filtered;
     ui["filter-empty"].hidden = !query || shownKeys.length + shownRelated.length > 0;
     const page = paginateCards(shownRelated, state.cardPage, CARD_PAGE_SIZE);
     state.cardPage = page.page;
-    fillRows(ui["related-list"], page.items, { preview: false, sharedRole: shared });
+    let previous = null;
+    ui["related-list"].replaceChildren(...page.items.map((card) => {
+      const row = relatedRow(card, { previous, shared });
+      previous = splitName(card.name)[0] || null;
+      return row;
+    }));
     ui["related-pager"].hidden = page.pageCount <= 1;
     const first = (page.page - 1) * CARD_PAGE_SIZE + 1;
     ui["target-page"].textContent = page.total
@@ -843,7 +809,6 @@ export async function bootstrapViewer({
     renderNavStrip(item);
     renderHead(item);
     renderVerdictNotes(item);
-    renderHero(item);
     renderCards();
     renderFooter(item);
   }
@@ -870,8 +835,7 @@ export async function bootstrapViewer({
     const item = itemId ? state.index.items.get(itemId) ?? null : null;
     state.selected = item;
     state.cardPage = 1;
-    state.alsoAll = false;
-    state.openCards = new Set();
+    state.keysAll = false;
     ui["selection-empty"].hidden = Boolean(item);
     ui.selection.hidden = !item;
     for (const button of ui["item-choices"].children ?? []) {
@@ -910,9 +874,9 @@ export async function bootstrapViewer({
     const item = state.index.items.get(preferredItemId(region, state.index.items));
     const peek = ui["region-peek"];
     peek.replaceChildren(make("span", "peek-label", labelParts(item.label).title));
-    const hero = heroCard(item);
-    if (hero) {
-      peek.append(make("span", "peek-name", hero.name));
+    const lead = firstKeyCard(item);
+    if (lead) {
+      peek.append(make("span", "peek-name", lead.name));
       if (item.cards.length > 1) {
         peek.append(make("span", "peek-more", `+${item.cards.length - 1}`));
       }
@@ -1197,9 +1161,12 @@ export async function bootstrapViewer({
       }
     });
   }
-  ui["also-more"].addEventListener("click", () => {
-    state.alsoAll = true;
+  ui["key-more"].addEventListener("click", () => {
+    // The button goes away, so focus moves to the first card it showed.
+    const at = ui["key-list"].children?.length ?? 0;
+    state.keysAll = true;
     renderCards();
+    focusQuietly(ui["key-list"].children?.[at]);
   });
   ui["target-filter"].addEventListener("input", () => {
     state.cardPage = 1;
@@ -1213,7 +1180,7 @@ export async function bootstrapViewer({
     state.cardPage += 1;
     renderCards();
   });
-  for (const lit of [ui["item-head"], ui.hero]) {
+  for (const lit of [ui["item-head"], ui["key-section"]]) {
     lit.addEventListener("mouseenter", () => setHot(state.region?.id ?? null));
     lit.addEventListener("mouseleave", () => setHot(null));
   }

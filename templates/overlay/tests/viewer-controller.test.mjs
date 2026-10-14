@@ -115,11 +115,16 @@ function rows(documentRef, id) {
 }
 
 function rowName(row) {
-  return textOf(row.children[0].children[0].children[0]);
+  return textOf(row.children[0].children[0]);
 }
 
 function rowKind(row) {
-  return textOf(row.children[0].children[0].children[1]);
+  return textOf(row.children[0].children[1]);
+}
+
+/** The key cards, as their `[eyebrow, name, statement, ...]` children. */
+function keyCards(documentRef) {
+  return el(documentRef, "key-list").children.map((card) => card.children);
 }
 
 /** Every card verdict shown in the item view, as `text|class`. */
@@ -134,7 +139,7 @@ function verdictMarks(documentRef) {
     }
     (node.children ?? []).forEach(walk);
   };
-  ["hero", "also-list", "related-list"].forEach((id) => walk(el(documentRef, id)));
+  ["key-list", "related-list"].forEach((id) => walk(el(documentRef, id)));
   return found;
 }
 
@@ -177,6 +182,7 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   assert.equal(el(documentRef, "page-lede").textContent, "Regions on the source, declarations in the companion.");
   assert.equal(el(documentRef, "back-link").textContent, "Back to the notes");
   assert.equal(el(documentRef, "back-link").attributes.href, "../../index.html");
+  assert.equal(el(documentRef, "back-link").hidden, false);
   assert.equal(el(documentRef, "workspace").hidden, false);
   assert.equal(el(documentRef, "error").hidden, true);
   assert.equal(el(documentRef, "notice").hidden, true);
@@ -334,7 +340,7 @@ test("index: a page with no passages offers the nearest pages that have some", a
 
 // --- the item view ----------------------------------------------------------
 
-test("item: the head, then the hero's statement, then the other cards as rows", async () => {
+test("item: the head, then each key card with its statement, then the related rows", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(el(documentRef, "selection").hidden, false);
@@ -346,7 +352,8 @@ test("item: the head, then the hero's statement, then the other cards as rows", 
   const pill = el(documentRef, "target-summary");
   assert.deepEqual([pill.textContent, pill.title, pill.className, pill.hidden],
                    ["Formalized", "Formalized: a key declaration states it.", "target-summary coverage-formalized", false]);
-  const [eyebrow, name, pre] = el(documentRef, "hero").children;
+  assert.equal(keyCards(documentRef).length, 1);
+  const [[eyebrow, name, pre]] = keyCards(documentRef);
   assert.equal(textOf(eyebrow.children[0]), "theorem");
   const link = eyebrow.children[1];
   assert.deepEqual([link.tagName, link.textContent, link.attributes.href, link.title],
@@ -358,14 +365,16 @@ test("item: the head, then the hero's statement, then the other cards as rows", 
   const [line] = pre.children;
   assert.equal(line.className, "ln", "each source line is a block");
   assert.deepEqual([line.children[0].className, line.children[0].textContent], ["tk-kw", "theorem"]);
-  assert.equal(el(documentRef, "also-section").hidden, true, "one key card: the hero is all of them");
+  assert.equal(el(documentRef, "key-count").hidden, true, "one key card needs no count");
+  assert.equal(el(documentRef, "key-more").hidden, true);
+  assert.equal(el(documentRef, "key-note").hidden, true);
   assert.equal(el(documentRef, "related-section").hidden, false);
   assert.equal(el(documentRef, "related-count").textContent, "4");
   assert.deepEqual(rows(documentRef, "related-list").map((row) => [rowName(row), rowKind(row)]), [
-    ["Box.volume_mono", "attributed · theorem"],
+    ["Box.volume_mono", "attributed · theorem · module page"],
     ["Set.inter_sub", "support · theorem"],
     ["example:0123456789ab", "example · example"],
-    ["Set.union_comm", "helper · theorem"],
+    ["Set.union_comm", "helper · theoremsorry"],
   ]);
   assert.equal(el(documentRef, "related-pager").hidden, true, "one page of rows has no pager");
   assert.equal(el(documentRef, "target-filter").hidden, true, "five cards need no filter");
@@ -380,27 +389,52 @@ test("item: the head, then the hero's statement, then the other cards as rows", 
   assert.match(el(documentRef, "overlay").className, /\bhas-selection\b/);
 });
 
-test("item: a row opens its statement, its source link and its badges", async () => {
+test("item: a related row is one plain link to its source, with no statement", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0001");
   const [mono, , example, helper] = rows(documentRef, "related-list");
-  const button = mono.children[0];
-  const body = mono.children[1];
-  assert.deepEqual([button.tagName, button.attributes["aria-expanded"], body.hidden], ["BUTTON", "false", true]);
-  assert.equal(button.attributes["aria-controls"], body.id);
-  await fire(button, "click");
-  assert.deepEqual([button.attributes["aria-expanded"], body.hidden], ["true", false]);
-  const link = body.children.at(-1).children[1];
-  assert.deepEqual([link.tagName, link.textContent, link.title, link.attributes.href],
-                   ["A", "View in source · module page", "module page (fallback)", `${ORIGIN}/Notes/Box/index.html`]);
-  await fire(button, "click");
-  assert.deepEqual([button.attributes["aria-expanded"], body.hidden], ["false", true]);
-  await fire(example.children[0], "click");
-  const [meta, noLink] = example.children[1].children.at(-1).children;
-  assert.deepEqual([noLink.tagName, noLink.textContent], ["SPAN", "No rendered page"]);
-  assert.equal(textOf(meta), "anonymous", "no 'unlinked' badge: the missing link says it");
-  await fire(helper.children[0], "click");
-  assert.equal(textOf(helper.children[1].children.at(-1).children[0]), "sorry: exercise");
+  const link = mono.children[0];
+  assert.deepEqual([mono.children.length, link.tagName, link.attributes.href, link.attributes["aria-expanded"]],
+                   [1, "A", `${ORIGIN}/Notes/Box/index.html`, undefined]);
+  assert.equal(link.title, "Notes.Box.volume_mono\nmodule page (fallback)");
+  assert.equal(rowKind(mono), "attributed · theorem · module page");
+  assert.ok(!JSON.stringify(rows(documentRef, "related-list").map(textOf)).includes("theorem volume"),
+            "no statement in a related row");
+  const unlinked = example.children[0];
+  assert.deepEqual([unlinked.tagName, unlinked.attributes.href], ["SPAN", undefined]);
+  assert.equal(unlinked.title, "example:0123456789ab\nanonymous\nNo rendered page");
+  assert.equal(rowKind(helper), "helper · theoremsorry", "a sorry is tagged on the row");
+  assert.equal(helper.children[0].title, "Notes.Set.union_comm\nsorry: exercise");
+});
+
+test("item: past eight key cards the rest wait behind a button that hands focus on", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  for (let n = 0; n < 11; n += 1) {
+    const name = `Notes.Part.p${String(n).padStart(2, "0")}`;
+    const copy = structuredClone(key);
+    copy.id = `item:theorem-1.1/key/${name}`;
+    copy.target.pin.declaration = name;
+    copy.extensions[NAMESPACE].declaration = { id: name, kind: "theorem" };
+    sections[1].push(copy);
+  }
+  const documentRef = fakeDocument(SHELL);
+  const focused = [];
+  const create = documentRef.createElement;
+  documentRef.createElement = (tag) => Object.assign(create(tag), { focus() { focused.push(this); } });
+  const { result } = await start({ documentRef, sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.deepEqual([el(documentRef, "key-count").hidden, el(documentRef, "key-count").textContent],
+                   [false, "12 declarations"]);
+  assert.equal(keyCards(documentRef).length, 8);
+  assert.ok(keyCards(documentRef).every((card) => card[2]?.tagName === "PRE"), "every key card has its statement");
+  const more = el(documentRef, "key-more");
+  assert.deepEqual([more.hidden, more.textContent], [false, "Show 4 more"]);
+  await fire(more, "click");
+  assert.equal(keyCards(documentRef).length, 12);
+  assert.equal(more.hidden, true);
+  assert.deepEqual(focused.map((node) => textOf(node.children[1])), ["Part.p07"],
+                   "focus moves to the first card the button showed");
 });
 
 test("item: verdicts stay hidden until the faithfulness switch is pressed, and the choice is remembered", async () => {
@@ -436,12 +470,10 @@ test("item: a verdict is one line of kind, summary and resolution, and the foote
   ]);
   assert.equal(line.title, "Notes/Box.lean:12\nsource page 2\ntwo independent readings and a reconciler\nadjudication");
   assert.doesNotMatch(textOf(line), /Faithfulness:|unconfirmed|\[/);
-  const [mono] = rows(documentRef, "related-list");
-  await fire(mono.children[0], "click");
-  assert.deepEqual(verdictMarks(documentRef), [
-    "faithful|card-verdict verdict-badge verdict-faithful",
-    "statement deviation, superseded|card-verdict verdict-badge verdict-deviation",
-  ]);
+  assert.deepEqual(verdictMarks(documentRef), ["faithful|card-verdict verdict-badge verdict-faithful"]);
+  const [dot] = rows(documentRef, "related-list")[0].children[0].children[1].children;
+  assert.equal(dot.className, "dot verdict-dot verdict-deviation", "a related row shows its verdict as a dot");
+  assert.match(dot.title, /^statement deviation, superseded/);
   assert.equal(el(documentRef, "provenance-note").textContent,
                "Curation and pipeline links and machine verdicts, partly reviewed.");
   await fire(documentRef, "keydown", { key: "Escape" });
@@ -463,8 +495,9 @@ test("item: a status states what applies, with its class and its note", async ()
   assert.equal(el(documentRef, "coverage-note").hidden, false);
   assert.equal(el(documentRef, "coverage-note").textContent,
                "The companion states the neighbouring box lemma, not this definition.");
-  assert.deepEqual(el(documentRef, "hero").children.map(textOf), ["No key declaration states this passage."]);
-  assert.deepEqual(rows(documentRef, "related-list").map((row) => row.children[0].children[0].children[0].title),
+  assert.deepEqual(el(documentRef, "key-note").children.map(textOf), ["No key declaration states this passage."]);
+  assert.equal(el(documentRef, "key-list").hidden, true);
+  assert.deepEqual(rows(documentRef, "related-list").map((row) => row.children[0].title.split("\n")[0]),
                    ["Notes.Set.inter_sub"]);
   assert.equal(polygonOf(documentRef, "loc:0002").dataset.coverage, "partial");
 });
@@ -474,10 +507,10 @@ test("item: an item that links nothing says so and names its cluster", async () 
   await selectPageRegion(documentRef, result.state, "loc:0003");
   assert.equal(itemTitle(documentRef), "Exercise 3.1");
   assert.deepEqual([el(documentRef, "target-summary").textContent, el(documentRef, "target-summary").hidden], ["", true]);
-  assert.deepEqual(el(documentRef, "hero").children.map(textOf),
+  assert.deepEqual(el(documentRef, "key-note").children.map(textOf),
                    ["No Lean declaration is linked to this passage.", "Ledger cluster cluster:sets"]);
   assert.equal(el(documentRef, "provenance-note").hidden, true);
-  assert.equal(el(documentRef, "also-section").hidden, true);
+  assert.deepEqual([el(documentRef, "key-list").hidden, el(documentRef, "key-count").hidden], [true, true]);
   assert.equal(el(documentRef, "related-section").hidden, true);
   assert.equal(polygonOf(documentRef, "loc:0003").dataset.coverage, "quiet");
 });
@@ -501,7 +534,7 @@ test("item: a region opens the item its curation names first, and never an empty
                    ["Equation 7", "Remark 7.1 and equation (7)"]);
   assert.equal(itemTitle(second.documentRef), "Remark 7.1 and equation (7)",
                "the equation has no card, so the remark opens");
-  assert.equal(textOf(el(second.documentRef, "hero").children[1]), "Box.volume_nonneg");
+  assert.equal(textOf(keyCards(second.documentRef)[0][1]), "Box.volume_nonneg");
 });
 
 test("item: a region with two items offers a choice, and the choice switches the cards", async () => {
@@ -511,7 +544,7 @@ test("item: a region with two items offers a choice, and the choice switches the
   assert.equal(choices.hidden, false);
   assert.deepEqual(choices.children.map((button) => button.textContent), ["A remark on unions", "Theorem 1.1"]);
   assert.equal(itemTitle(documentRef), "A remark on unions");
-  const [eyebrow, name] = el(documentRef, "hero").children;
+  const [[eyebrow, name]] = keyCards(documentRef);
   assert.equal(name.title, "Notes.Internal.aux");
   assert.deepEqual(eyebrow.children[0].children.map(textOf), ["lemma", "private"]);
   await fire(choices.children[1], "click");
@@ -558,7 +591,7 @@ test("item: past twenty cards a filter narrows both lists, and the related rows 
   assert.equal(el(documentRef, "related-count").textContent, "34");
   assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · attributed"],
                    "the role most rows share is said once");
-  assert.deepEqual(rows(documentRef, "related-list").slice(0, 2).map(rowKind), ["theorem", "def"]);
+  assert.deepEqual(rows(documentRef, "related-list").slice(0, 2).map(rowKind), ["theorem · module page", "def"]);
   assert.equal(rows(documentRef, "related-list").length, 25);
   assert.equal(el(documentRef, "related-pager").hidden, false);
   assert.equal(el(documentRef, "target-page").textContent, "1–25 of 34");
@@ -728,10 +761,20 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
 
 test("shell: a back link the config spells as javascript: never reaches the header", async () => {
   const { documentRef } = await start({ config: makeConfig({ back_link: { href: "javascript:alert(1)", text: "Back" } }) });
-  assert.equal(el(documentRef, "back-link").attributes.href, "../../index.html");
-  assert.equal(el(documentRef, "back-link").textContent, "Back");
+  assert.deepEqual([el(documentRef, "back-link").hidden, el(documentRef, "back-link").attributes.href], [true, undefined]);
   const offsite = await start({ config: makeConfig({ back_link: { href: "//notes.example.invalid/x.html", text: "Back" } }) });
-  assert.equal(el(offsite.documentRef, "back-link").attributes.href, "../../index.html");
+  assert.deepEqual([el(offsite.documentRef, "back-link").hidden, el(offsite.documentRef, "back-link").attributes.href],
+                   [true, undefined]);
+});
+
+test("shell: with no back link in the config the top bar starts with the title", async () => {
+  assert.match(SHELL, /<a id="back-link" class="back-link" hidden><\/a>/, "the shell names no link of its own");
+  const { documentRef } = await start({ config: makeConfig({ back_link: undefined }) });
+  assert.deepEqual([el(documentRef, "back-link").hidden, el(documentRef, "back-link").attributes.href,
+                    el(documentRef, "back-link").textContent], [true, undefined, ""]);
+  const css = await (await import("node:fs/promises")).readFile(
+    (await import("node:path")).join((await import("./fixtures.mjs")).VIEWER_DIR, "viewer.css"), "utf8");
+  assert.match(css, /\.back-link\[hidden\] \+ \.topbar-sep \{\s*display: none;/, "and no divider");
 });
 
 test("shell: the title and heading are placeholders the configuration replaces", async () => {

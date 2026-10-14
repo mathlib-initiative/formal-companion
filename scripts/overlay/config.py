@@ -41,7 +41,7 @@ from cflib.errors import CfError
 
 __all__ = [
     "BACK_LINK_KEYS", "BUILD_KEYS", "CONFIG_KEYS", "CONFIG_NAME", "CONFIG_SCHEMA",
-    "CONFIG_SCHEMA_VERSION", "Config", "DEFAULT_BACK_LINK", "DEFAULT_CACHE_DIR",
+    "CONFIG_SCHEMA_VERSION", "Config", "DEFAULT_CACHE_DIR",
     "DEFAULT_HOST", "DEFAULT_INDEX", "DEFAULT_MOUNT", "DEFAULT_OUTPUT_ROOT",
     "DEFAULT_PORT", "DEFAULT_STORAGE_KEY", "DISPLAY_KEYS", "FILE_NAME_PATTERN",
     "LOOPBACK_PATTERN", "PDF_KEYS", "PORT_MAX", "PORT_MIN", "RELATIVE_PATH_PATTERN",
@@ -96,9 +96,8 @@ DEFAULT_INDEX = "index.html"
 DEFAULT_MOUNT = "pdf-overlay"
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
-#: The viewer's own `DEFAULT_STORAGE_KEY` and `DEFAULT_BACK_LINK` (viewer-core.js).
+#: The viewer's own `DEFAULT_STORAGE_KEY` (viewer-core.js).
 DEFAULT_STORAGE_KEY = "formal-companion-overlay-page"
-DEFAULT_BACK_LINK = {"href": "../../index.html", "text": "Back to the site"}
 #: The directory half of the default `pdf.route`.
 ROUTE_DIR = "/__overlay_pdf__"
 
@@ -121,7 +120,7 @@ class Config:
     source_id: str
     title: str
     lede: str
-    back_link_href: str
+    back_link_href: str  # "" with no back_link: the viewer then shows no back link
     back_link_text: str
     strip_prefix: str
     storage_key: str
@@ -257,7 +256,7 @@ def _check(value: Any, label: str) -> tuple[list[str], Config]:
     storage_key = (_string(value["storage_key"], f"{label}.storage_key", out)
                    if "storage_key" in value else DEFAULT_STORAGE_KEY)
 
-    back_href, back_text = DEFAULT_BACK_LINK["href"], DEFAULT_BACK_LINK["text"]
+    back_href, back_text = "", ""
     if "back_link" in value:
         back = _keys(value["back_link"], BACK_LINK_KEYS, BACK_LINK_KEYS,
                      f"{label}.back_link", out)
