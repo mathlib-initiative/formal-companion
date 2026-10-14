@@ -336,7 +336,7 @@ class TestRepositoryFurniture(unittest.TestCase):
         text = (SKILL / "LICENSE").read_text(encoding="utf-8")
         self.assertIn("Apache License", text)
         self.assertIn("Version 2.0, January 2004", text)
-        self.assertIn("Copyright 2026 the companion-faithfulness contributors", text)
+        self.assertIn("Copyright 2026 the formal-companion contributors", text)
         self.assertNotIn("[name of copyright owner]", text)
 
     def test_pyproject_declares_the_runtime_contract(self):

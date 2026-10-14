@@ -1,7 +1,10 @@
-# companion-faithfulness
+# formal-companion
 
-A Claude Code skill that audits Lean 4 / Mathlib **book companions** against the
-sources they formalise, and produces challenged, routed findings.
+Two tools for Lean 4 / Mathlib **book companions**: an audit that checks a
+companion against the sources it formalizes, and a generator for its PDF
+overlay, which shows a source with each item linked to the declarations that
+formalize it. It ships the `cf` CLI and installs as the Claude Code skill
+`companion-faithfulness`.
 
 A companion is a Lean repository whose declarations claim to formalise the
 numbered items of one or more textbooks. This skill finds the declarations that
@@ -70,7 +73,7 @@ directory outside it.
 ## Install
 
 ```sh
-SKILL=~/skills/companion-faithfulness          # anywhere you like
+SKILL=~/skills/formal-companion               # anywhere you like
 git clone <this repo's url> "$SKILL"
 
 # 1. let Claude Code load it as a skill

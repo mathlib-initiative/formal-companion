@@ -12,7 +12,7 @@ wheels = [
 ]
 
 [[package]]
-name = "companion-faithfulness"
+name = "formal-companion"
 version = "0.2.0"
 source = { virtual = "." }
 

@@ -1,4 +1,4 @@
-# Contributor rules for companion-faithfulness
+# Contributor rules for formal-companion
 
 Read `SKILL.md` first for what the skill does, then
 `docs/design/stage_map.md` for the data model it is built on (workspaces,
@@ -264,8 +264,8 @@ into a companion repo.
 Commit your own files with a message that says what changed and why. Do not
 push, do not rewrite history, do not commit anything from a workspace
 directory, and do not run `git add -A` — this repo is edited by several agents
-at once; add the paths you own. End a commit message with the
-`Co-Authored-By:` line for the model that wrote the change.
+at once; add the paths you own. Commit messages carry no AI attribution
+lines.
 
 ## End-to-end demonstration
 
