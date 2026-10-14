@@ -492,7 +492,7 @@ MESSAGE_RULES: dict[str, tuple] = {
         lambda text: re.findall(
             r"(?mi)^(?:co-authored-by:.*\b(?:claude|codex|openai|copilot|gpt)\b.*"
             r"|.*generated with \[?claude code.*)$", text),
-        "commit messages carry no AI attribution lines (CLAUDE.md S8)"),
+        "no Co-Authored-By or 'Generated with' trailer (CLAUDE.md S8)"),
 }
 
 
