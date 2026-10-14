@@ -118,17 +118,16 @@ From the records alone it builds:
   methods and whether a person reviewed the links and verdicts;
 - cards: one per record with a `target`, once per item however many regions
   repeat it, in the order key, attributed, support, example, helper (then by
-  record id), shown as one card per key declaration, each with its statement
-  (eight, then a button for the rest; "N key declarations" when there are
-  two or more, never a heading that says what they state), then the rest
-  under "Related": one line each, a plain link to its source with no
-  statement, headed by its count (and by the role more than half of them
-  share),
-  with the extension's snippet, destination resolution and
-  fallback label, declaration kind and flags, and declaration verdict. The target resolves against the
-  annotation file's URL and becomes a link only when it is `https:` or a
-  page of the same origin, and only when the extension says it is a rendered
-  page;
+  record id), with the extension's snippet, destination resolution and
+  fallback label, declaration kind and flags, and declaration verdict. The
+  target resolves against the annotation file's URL and becomes a link only
+  when it is `https:` or a page of the same origin, and only when the
+  extension says it is a rendered page. The panel shows one card per key
+  declaration, each with its statement (eight, then a button for the rest;
+  "N key declarations" when there are two or more, never a heading that says
+  what they state), then the rest under "Related": one line each, a plain
+  link to its source with no statement, headed by its count (and by the role
+  more than half of them share);
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
   order the files came in; with nothing selected the panel lists the page's
