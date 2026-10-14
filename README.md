@@ -131,7 +131,7 @@ SKILL=~/skills/formal-companion               # anywhere you like
 git clone <this repo's url> "$SKILL"
 
 # 1. let Claude Code load it as a skill
-ln -s "$SKILL" ~/.claude/skills/companion-faithfulness
+mkdir -p ~/.claude/skills && ln -s "$SKILL" ~/.claude/skills/companion-faithfulness
 
 # 2. put `cf` on PATH -- a symlink, not a copy: the shim resolves back to this
 #    checkout, and every command the skill prints is spelled `cf <command>`
@@ -391,7 +391,7 @@ Rules the directory enforces:
 
 ## What has been exercised, and what has not
 
-This is one book's audit generalised, not a tool proven over many. Being exact
+This is one book's audit generalized, not a tool proven over many. Being exact
 about which is which:
 
 - **Exercised on two real companions of one book**, two editions and a shared
@@ -415,9 +415,9 @@ about which is which:
   anything here, and the five runs that produced the baseline pre-date this
   code. The local Workflow fleet (`cf run <id> --local`, under ~100 items) is
   the fleet path that has been driven from this repo.
-- **Not generalised yet, and where a second book will hurt first**: a numbering
+- **Not generalized yet, and where a second book will hurt first**: a numbering
   grammar that is not `<Kind> <n>.<n>`, a source whose items are not headed by
-  a capitalised kind word, and a companion convention no adapter recognises.
+  a capitalized kind word, and a companion convention no adapter recognizes.
   `SKILL.md`'s "Experimental and unverified" section is the short list.
 
 ## Tests

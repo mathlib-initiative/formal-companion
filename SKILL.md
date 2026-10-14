@@ -5,12 +5,12 @@ description: Audit a Lean 4 / Mathlib "book companion" repository against the so
 
 # Companion faithfulness audits
 
-A *companion* is a Lean repository whose declarations claim to formalise the
+A *companion* is a Lean repository whose declarations claim to formalize the
 numbered items of one or more **sources** — textbooks, lecture notes, a
 preprint. A *faithfulness* defect is a declaration that is
 provable-but-not-the-source's-statement: a hypothesis the book does not have, a
 quantifier the book does not have, a vacuous statement, a proxy definition, or
-an item nobody formalised at all. This skill automates the audit that finds
+an item nobody formalized at all. This skill automates the audit that finds
 them: discover each companion's sources, prepare them, extract each companion's
 statement table, pair items per source, plan and run fleets, gate and harvest
 the results, tally, adjudicate adversarially, route to owners and report with
@@ -52,7 +52,7 @@ Do **not** use it to fix Lean proofs, to review a PR, or to answer a single
 
 ## Workspaces, companions and sources
 
-The unit of organisation is a **companion with a list of sources**, not a book
+The unit of organization is a **companion with a list of sources**, not a book
 with a list of companions. A **workspace** is the directory you work in: it
 holds N companions and M sources, in any arrangement. A companion is audited
 against every source in its list; a **differential is possible exactly where
@@ -88,7 +88,7 @@ page is exactly the defect class this audit exists to find.
 | which book | the repo's `formalization.yaml` sources list, its ledger `source:` block, its `graph.json` metadata, its prose and its committed PDFs (seven repo signals, `references/onboarding-contract.md` §0) plus whatever the adapter itself claims — a leanblueprint's manuscript IS its `.tex` tree, so its adapter claims it |
 | which edition | sha256 of the actual source bytes, looked up in `registry/sources.yaml` |
 | the page offset | the mode of the running-head votes, with a confidence; below 0.9 it refuses (`cflib.inference.MIN_OFFSET_CONFIDENCE`) |
-| the item kinds | the capitalised words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
+| the item kinds | the capitalized words that really head numbered items in this source's text (case-folded, so an AMS `THEOREM 1.2` head counts) |
 | the numbering depth | how many numeric segments this source's own headings carry, stored as `numbering`; a deeper label is a reject, never a truncation (`cflib.inference.infer_numbering`) |
 | whether the table is the book | items found against the slots the numbering itself counts; below 0.6 it refuses (`cflib.inference.MIN_ITEM_COMPLETENESS`) |
 | the errata URL | the registry, corroborated by the book page the repo cites; fetched with `curl`, raw HTML kept. A URL the REPO supplies waits for `--fetch-errata`: the page reaches workers as authoritative text. The render keeps the **mathematics** — a formula served as an `<img>` becomes its TeX — and names any entry that still reads as emptied |
@@ -111,7 +111,7 @@ Source text, page images and crops never enter the skill repo. Workspace data
 is never committed to a companion repo. Companion repos are never written to at
 all. Staying local is not the same as being unshareable: `cf share export`
 hands over the campaign's conclusions — ledger rows, routed findings, tallies,
-receipts, source metadata — with every quote redacted to (page, normalised
+receipts, source metadata — with every quote redacted to (page, normalized
 length, sha256, and at most a quarter of the quote's words from each end, none
 at all below fourteen words).
 
@@ -286,7 +286,7 @@ needs neither.
 
 1. **Quote gate.** A finding that quotes a source must carry a `book_quote`
    that really occurs in that source's `sources/<source_id>/text.txt`
-   (normalised, ≥25 characters). The gate runs from **outside** the tree the
+   (normalized, ≥25 characters). The gate runs from **outside** the tree the
    worker edits, and pre-merge also checks that the changed files are only that
    task's finding and task file. A gate the worker can edit proves nothing.
 2. **Witness gate.** In attack mode every CONTENT/VACUITY finding carries a
@@ -312,7 +312,7 @@ needs neither.
    skill repo or a companion repo. The registry holds metadata and URLs only.
    A download happens only with `--download` **and** a registry licence note
    that permits fetching from the author's own site; nothing is ever
-   redistributed. Exports redact quotes to (page, normalised length, sha256,
+   redistributed. Exports redact quotes to (page, normalized length, sha256,
    and at most a quarter of the quote's words from each end, none at all below
    fourteen words) by default. Quote at most a sentence or two of a source in
    any artifact. `POLICY.md` is the whole rule and `registry/README.md` is how
@@ -383,7 +383,7 @@ trigger you have just hit, not the list.
 
 - `references/traps.md` — the trap → fix index. Read **before your first run on
   a new book**: the anchor edition is not the bundled edition, offset
-  confidence, summarised errata, Workflow args, session limits, tend's strict
+  confidence, summarized errata, Workflow args, session limits, tend's strict
   schema.
 - `references/onboarding-contract.md` — what a repo must expose for discovery
   to succeed, per convention, and the seven obligations of Stage 0. Read
@@ -401,7 +401,7 @@ trigger you have just hit, not the list.
   rule for adversarial verification. Read **before editing `workflows/`**.
 - `references/runbook-server.md` — the tend + agentbox procedure, the 1/1 smoke
   test and the failure modes. Read **before a server fleet**.
-- `references/review-patterns.md` — the defect-pattern catalogue (P9–P13) the
+- `references/review-patterns.md` — the defect-pattern catalog (P9–P13) the
   attack prompts are built from.
 - `registry/README.md` — the shipped source registry and a workspace's overlay;
   `POLICY.md` is the licence rule it implements.
