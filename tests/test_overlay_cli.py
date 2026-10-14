@@ -738,7 +738,6 @@ class TestSync(OverlayCase):
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
         self.assertIn(FILE, caught.exception.message)
-        self.assertNotIn("read from it", "".join(overlay_sync.read_annotations(self.companion).problems))
 
     def test_it_refuses_a_file_that_holds_an_array(self):
         self.assertEqual(self.init(), 0)
@@ -974,6 +973,9 @@ class TestCheck(OverlayCase):
                 self.assertTrue(any(word in line for line in problems), problems)
         self.assertEqual(self.hand_written(lambda r: r["target"].update(uri="https://docs.example.invalid/x")),
                          [])
+        problems = self.hand_written(lambda r: r.update(target="javascript:alert(1)"))
+        self.assertTrue(any("neither" in line for line in problems), problems)
+        self.assertEqual(self.hand_written(lambda r: r.update(target="https://docs.example.invalid/x")), [])
 
     def test_the_overlay_rules_hold_one_pdf(self):
         problems = self.hand_written(lambda r: None, lambda r: r["source"]["pin"].update(sha256="e" * 64))

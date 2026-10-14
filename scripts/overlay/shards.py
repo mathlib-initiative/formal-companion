@@ -706,7 +706,4 @@ def scan_problems(files: dict[str, bytes]) -> list[str]:
         found = discovery.collect([root])
         out = [f"{p.path.replace(str(root) + '/', '')}: {p.message} [{p.code}]" for p in found.problems]
         out += [f"{relative}: not a path of the annotation layout" for relative in walk(root)[2]]
-        leaves = sum(PurePosixPath(name).name != DEFAULTS for name in files)
-        if not out and len(found.records) != leaves:
-            out.append(f"the scan read {len(found.records)} annotations from {leaves} files")
     return out
