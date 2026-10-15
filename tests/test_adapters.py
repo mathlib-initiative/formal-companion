@@ -44,7 +44,7 @@ SCRIPTS = Path(__file__).resolve().parent.parent / "scripts"
 if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
-from adapters import api, base, itemtag, leanparse  # noqa: E402
+from adapters import api, base, itemtag, leanparse, leansnippets  # noqa: E402
 from adapters.api import from_config, load  # noqa: E402
 
 #: The published GSM 126 edition: the bytes both target companions were read
@@ -323,6 +323,115 @@ class TagAndAnchorTest(unittest.TestCase):
         self.assertEqual((hit.page, hit.source), (None, "none"))
 
 
+SNIPPET_LEAN = '''\
+namespace Demo
+
+/-- A box. -/
+structure Box where
+  left : Nat
+  /-- the right end -/
+  right : Nat
+
+/-- Doubling. -/
+def double (n : Nat) : Nat :=
+  n + n
+
+/-- Additivity. -/
+theorem double_add (m n : Nat) :
+    double (m + n) = double m + double n := by
+  unfold double
+  omega
+
+-- `example:demo-double`
+example : double 2 = 4 := by
+  rfl
+
+/-- Too long to show whole. -/
+theorem long_statement (b : Box)
+''' + "".join(f"    (h{k} : b.left ≤ b.right + {k})\n" for k in range(14)) + '''\
+    : True := trivial
+
+end Demo
+'''
+
+
+class LeanSnippetsTest(unittest.TestCase):
+    """The statement cut of the attribution-table convention (``adapters.leansnippets``)."""
+
+    def setUp(self):
+        self.found = leansnippets.index_text(SNIPPET_LEAN)
+
+    def test_a_theorem_is_cut_at_the_proof(self):
+        self.assertEqual(self.found["Demo.double_add"],
+                         (14, "theorem double_add (m n : Nat) :\n"
+                              "    double (m + n) = double m + double n := by"))
+
+    def test_a_definition_keeps_its_body(self):
+        self.assertEqual(self.found["Demo.double"], (10, "def double (n : Nat) : Nat :=\n  n + n"))
+
+    def test_a_structure_and_its_fields(self):
+        line, text = self.found["Demo.Box"]
+        self.assertEqual((line, text.splitlines()[0]), (4, "structure Box where"))
+        self.assertIn("  right : Nat", text)
+        # a projection sits at its field's line, under its structure's header
+        self.assertEqual(self.found["Demo.Box.left"], (5, "structure Box where\n  …\n  left : Nat"))
+        self.assertEqual(self.found["Demo.Box.right"], (7, "structure Box where\n  …\n  right : Nat"))
+
+    def test_a_tagged_example_is_found_by_its_tag(self):
+        self.assertEqual(self.found["example:demo-double"], (20, "example : double 2 = 4 := by"))
+
+    def test_a_definition_stops_at_an_example_tag_comment(self):
+        found = leansnippets.index_text("def triple (n : Nat) : Nat :=\n  n + n + n\n\n"
+                                        "/- `example:demo-x` -/\nexample : triple 1 = 3 := rfl\n")
+        self.assertEqual(found["triple"], (1, "def triple (n : Nat) : Nat :=\n  n + n + n"))
+        self.assertEqual(found["example:demo-x"], (5, "example : triple 1 = 3 := rfl"))
+
+    def test_a_long_statement_is_truncated(self):
+        line, text = self.found["Demo.long_statement"]
+        self.assertEqual(line, 24)
+        self.assertEqual(len(text.split("\n")), leansnippets.MAX_LINES + 1)
+        self.assertTrue(text.endswith("\n  " + leansnippets.MARKER))
+        self.assertNotIn(": True := trivial", text)
+
+    def test_cut_names_what_it_cannot_locate(self):
+        ledger = {"formalization_nodes": [
+            {"id": "Demo.double", "file": "Demo.lean"}, {"id": "Demo.gone", "file": "Demo.lean"},
+            {"id": "Demo.fileless"}, {"id": "example:demo-double", "file": "Demo.lean"}]}
+        refinement = {"entries": [
+            {"formalization_ids": ["example:demo-double", "Demo.gone", "Demo.unlisted"]},
+            {"formalization_ids": ["Demo.double", "Demo.fileless"]}]}
+        read = []
+        snippets, missing = leansnippets.cut(refinement, ledger, lambda rel: read.append(rel) or SNIPPET_LEAN)
+        self.assertEqual(list(snippets), ["Demo.double", "example:demo-double"])
+        self.assertEqual(snippets["Demo.double"], {"file": "Demo.lean", "line": 10,
+                                                   "text": "def double (n : Nat) : Nat :=\n  n + n"})
+        self.assertEqual(missing, ["Demo.fileless", "Demo.gone", "Demo.unlisted"])
+        self.assertEqual(read, ["Demo.lean"], "each file is read once")
+
+    def test_the_reader_stays_inside_the_checkout(self):
+        root = Path(tempfile.mkdtemp(prefix="cf-snippets-"))
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        (root / "Demo.lean").write_text(SNIPPET_LEAN, encoding="utf-8")
+        outside = Path(tempfile.mkdtemp(prefix="cf-snippets-outside-"))
+        self.addCleanup(shutil.rmtree, outside, ignore_errors=True)
+        (outside / "Out.lean").write_text(SNIPPET_LEAN, encoding="utf-8")
+        (root / "Ignored.lean").write_text(SNIPPET_LEAN, encoding="utf-8")
+        (root / "Away.lean").symlink_to(outside / "Out.lean")
+        (root / "Alias.lean").symlink_to("Demo.lean")
+        (root / "ToIgnored.lean").symlink_to("Ignored.lean")
+        read = leansnippets.reader(root)
+        self.assertEqual(read("Demo.lean"), SNIPPET_LEAN)
+        for rel in ("../Demo.lean", "/etc/hosts", "Missing.lean", "Away.lean"):
+            with self.subTest(rel=rel), self.assertRaises(leansnippets.SnippetError):
+                read(rel)
+        # restricted to the tracked files: a symlink reads only a tracked file
+        tracked = leansnippets.reader(root, ["Demo.lean", "Alias.lean", "ToIgnored.lean", "Away.lean"])
+        self.assertEqual(tracked("Alias.lean"), SNIPPET_LEAN)
+        for rel in ("Ignored.lean", "ToIgnored.lean", "Away.lean"):
+            with self.subTest(rel=rel), self.assertRaises(leansnippets.SnippetError):
+                tracked(rel)
+
+
 def valid_row(**overrides) -> dict:
     row = base.make_row(
         item_raw="Exercise 1.3.19", item="Exercise 1.3.19", sub="", item_kind="Exercise",
@@ -418,8 +527,9 @@ class AdapterLoadingTest(unittest.TestCase):
         repo = parent / "companion"
         exports = repo / "attribution"
         exports.mkdir(parents=True)
-        for name in ("target-refinement.json", "declaration-snippets.json", "geometry-batch-a.json"):
+        for name in ("target-refinement.json", "geometry-batch-a.json"):
             (exports / name).write_text("{}", encoding="utf-8")
+        (repo / "source-formalization-ledger.json").write_text("{}", encoding="utf-8")
         cfg_path = parent / "adapter.yaml"
         for path, kind in ((TEMPLATES / "docstring_tags.tao-measure-lean.yaml", "docstring_tags"),
                            (TEMPLATES / "attribution_table.measure_theory.yaml", "attribution_table")):
@@ -1004,7 +1114,7 @@ class AttributionTableBaselineTest(unittest.TestCase):
 
     def test_key_includes_the_ledger_and_refinement_shas(self):
         inputs = self.adapter.key_inputs()
-        for field in ("ledger_sha", "target_refinement_sha", "snippets_sha", "geometry_shas"):
+        for field in ("ledger_sha", "target_refinement_sha", "snippet_files_sha", "geometry_shas"):
             self.assertIn(field, inputs)
         self.assertFalse(inputs["ledger_stale"],
                          "target-refinement.json was curated against another ledger")

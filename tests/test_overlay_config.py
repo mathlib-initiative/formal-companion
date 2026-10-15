@@ -310,8 +310,8 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
         self.assertEqual(config.host, overlay_config.DEFAULT_HOST)
         self.assertEqual(config.port, overlay_config.DEFAULT_PORT)
         self.assertEqual(config.storage_key, overlay_config.DEFAULT_STORAGE_KEY)
-        self.assertEqual(config.back_link_href, overlay_config.DEFAULT_BACK_LINK["href"])
-        self.assertEqual(config.back_link_text, overlay_config.DEFAULT_BACK_LINK["text"])
+        self.assertEqual((config.back_link_href, config.back_link_text), ("", ""),
+                         "no back_link is no back link, not a default one")
 
     def test_minimal_is_off_unless_the_config_says_so(self):
         self.assertIs(overlay_config.parse(minimal()).minimal, False)
@@ -329,7 +329,7 @@ class TestTheDefaultsAreTheOnesSectionThreeStates(unittest.TestCase):
     def test_the_defaults_match_the_viewers_own(self):
         viewer = (RUNTIME / "viewer" / "viewer-core.js").read_text(encoding="utf-8")
         self.assertIn(f'DEFAULT_STORAGE_KEY = "{overlay_config.DEFAULT_STORAGE_KEY}"', viewer)
-        self.assertIn(f'href: "{overlay_config.DEFAULT_BACK_LINK["href"]}"', viewer)
+        self.assertNotIn("DEFAULT_BACK_LINK", viewer)
         self.assertIn(f'CONFIG_SCHEMA = "{overlay_config.CONFIG_SCHEMA}"', viewer)
 
 

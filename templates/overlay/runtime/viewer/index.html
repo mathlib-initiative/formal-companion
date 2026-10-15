@@ -10,9 +10,10 @@
     <meta name="referrer" content="no-referrer">
     <!--
       This shell is static and generic: it names no source, no companion and no
-      page count. The title, the heading, the lede and the back link below are
-      placeholders that viewer.js replaces at run time with the values in
-      ../overlay.config.json, and every other string on the page comes from the
+      page count. The title, the heading and the lede below are placeholders
+      that viewer.js replaces at run time with the values in
+      ../overlay.config.json, which may also name a back link to show; every
+      other string on the page comes from the
       annotations. Nothing is substituted into this file when it is
       copied into a companion.
     -->
@@ -21,70 +22,46 @@
     <script type="module" src="./viewer.js"></script>
   </head>
   <body>
-    <a class="skip-link" href="#viewer-main">Skip to the PDF viewer</a>
-    <header class="site-header">
-      <a id="back-link" class="back-link" href="../../index.html">← Back to the site</a>
-      <div>
-        <h1 id="page-heading">Source and formalization overlay</h1>
-        <p id="page-lede" class="lede">
-          Inspect the verified source PDF and the declarations attributed to its items.
+    <a class="skip-link" href="#page-scroller">Skip to the PDF</a>
+    <header class="topbar">
+      <a id="back-link" class="back-link" hidden></a>
+      <span class="topbar-sep" aria-hidden="true"></span>
+      <h1 id="page-heading">Source and formalization overlay</h1>
+      <button id="toggle-faithfulness" class="switch" type="button" aria-pressed="false" hidden>Show faithfulness</button>
+      <details id="status-chip" class="status-chip">
+        <summary aria-labelledby="status">
+          <span id="status-glyph" class="status-glyph" aria-hidden="true"></span>
+          <span id="status" class="status-text" role="status" aria-live="polite">Loading…</span>
+        </summary>
+        <p class="status-pop">
+          The PDF is served only on loopback from a local cache. This page checks its SHA-256
+          against the one the annotations pin before PDF.js renders it. It is never uploaded
+          or published.
         </p>
-      </div>
+      </details>
     </header>
 
-    <main id="viewer-main">
-      <section id="pdf-notice" class="file-gate" aria-labelledby="pdf-heading">
-        <div>
-          <h2 id="pdf-heading">Verified loopback PDF</h2>
-          <p>
-            The PDF is served only on loopback, out of the ignored local cache the runtime
-            tools fill. This page verifies its SHA-256 against the one the annotations pin
-            before the bundled PDF.js renders it; the PDF is never uploaded
-            and never part of the generated site.
-          </p>
-        </div>
-      </section>
-
-      <p id="error" class="message error" role="alert" hidden></p>
-      <p id="status" class="message status" role="status" aria-live="polite">
-        Loading the overlay configuration, the annotations and the PDF.
-      </p>
-      <p id="notice" class="message notice" role="status" hidden></p>
+    <main class="main">
+      <p id="error" class="error" role="alert" hidden></p>
 
       <section id="workspace" class="workspace" aria-label="PDF inspection workspace" hidden>
         <div class="viewer-column">
           <nav class="toolbar" aria-label="PDF controls">
-            <div class="control-group">
-              <button id="previous-page" type="button" aria-label="Previous page"
-                      title="Previous page (←)" aria-keyshortcuts="ArrowLeft">←</button>
-              <label for="page-number">Page</label>
-              <input id="page-number" type="number" inputmode="numeric" min="1" value="1">
-              <span id="page-count" aria-live="polite">of 0</span>
-              <button id="next-page" type="button" aria-label="Next page"
-                      title="Next page (→)" aria-keyshortcuts="ArrowRight">→</button>
-            </div>
-
-            <div class="control-group">
-              <button id="zoom-out" type="button" aria-label="Zoom out"
-                      title="Zoom out (−)" aria-keyshortcuts="-">−</button>
-              <label for="zoom">Zoom</label>
-              <input id="zoom" type="range" min="50" max="250" step="10" value="100">
-              <output id="zoom-value" for="zoom">100%</output>
-              <button id="zoom-in" type="button" aria-label="Zoom in"
-                      title="Zoom in (+)" aria-keyshortcuts="Plus =">+</button>
-            </div>
-
-            <div class="control-group">
-              <button id="rotate-left" type="button" aria-label="Rotate counterclockwise"
-                      title="Rotate counterclockwise">↶</button>
-              <output id="rotation-value" aria-label="Rotation">0°</output>
-              <button id="rotate-right" type="button" aria-label="Rotate clockwise"
-                      title="Rotate clockwise (R)" aria-keyshortcuts="R">↷</button>
-            </div>
-
-            <div class="control-group">
-              <button id="toggle-faithfulness" type="button" aria-pressed="false" hidden>Show faithfulness</button>
-            </div>
+            <button id="previous-page" class="icon" type="button" aria-label="Previous page"
+                    title="Previous page (←)" aria-keyshortcuts="ArrowLeft">‹</button>
+            <input id="page-number" type="number" inputmode="numeric" min="1" value="1" aria-label="Page">
+            <span id="page-count" class="page-count"></span>
+            <button id="next-page" class="icon" type="button" aria-label="Next page"
+                    title="Next page (→)" aria-keyshortcuts="ArrowRight">›</button>
+            <span class="toolbar-sep" aria-hidden="true"></span>
+            <button id="zoom-out" class="icon" type="button" aria-label="Zoom out"
+                    title="Zoom out (−)" aria-keyshortcuts="-">−</button>
+            <output id="zoom-value" class="zoom-value" aria-label="Zoom">100%</output>
+            <button id="zoom-in" class="icon" type="button" aria-label="Zoom in"
+                    title="Zoom in (+)" aria-keyshortcuts="Plus =">+</button>
+            <span class="toolbar-sep" aria-hidden="true"></span>
+            <button id="rotate-right" class="icon" type="button" aria-label="Rotate clockwise"
+                    title="Rotate clockwise (R)" aria-keyshortcuts="R">↻</button>
           </nav>
 
           <div
@@ -93,7 +70,7 @@
             tabindex="0"
             aria-label="Rendered PDF page with selectable source regions"
           >
-            <div id="page-stage" class="page-stage">
+            <div id="page-stage" class="page-stage" hidden>
               <canvas id="pdf-canvas" aria-label="Rendered PDF page"></canvas>
               <svg
                 id="overlay"
@@ -102,59 +79,87 @@
                 role="group"
                 aria-label="Selectable source regions"
               ></svg>
+              <div id="region-bar" class="region-bar" aria-hidden="true" hidden></div>
+              <div id="region-peek" class="region-peek" aria-hidden="true" hidden></div>
             </div>
           </div>
         </div>
 
-        <aside class="details-column" aria-labelledby="details-heading">
-          <h2 id="details-heading">Source item</h2>
-          <p id="selection-empty">
-            Select a highlighted region to see the declarations attributed to its items.
-          </p>
+        <aside id="details" class="details-column" aria-label="Lean counterparts">
+          <div id="selection-empty" class="page-view">
+            <h2 id="index-heading" class="index-heading" tabindex="-1">Page 1</h2>
+            <p id="index-meta" class="index-meta"></p>
+            <p id="page-jump" class="page-jump" hidden></p>
+            <p id="page-lede" class="lede">
+              Inspect the verified source PDF and the declarations attributed to its items.
+            </p>
+            <p id="notice" class="notice" role="status" hidden></p>
+            <ol id="page-index" class="page-index" aria-label="Passages on this page"></ol>
+            <div id="legend" class="legend"></div>
+            <div id="verdict-legend" class="legend" hidden></div>
+            <p id="keys" class="keys">
+              <kbd>← →</kbd> page · <kbd>+ −</kbd> zoom · <kbd>R</kbd> rotate · <kbd>Esc</kbd> back
+            </p>
+            <p id="index-footer" class="foot" hidden></p>
+          </div>
 
-          <div id="selection" hidden>
-            <div id="item-choices" class="item-choices" hidden></div>
-            <h3 id="item-label"></h3>
-            <p id="item-locator" class="source-locator"></p>
-            <div id="verdict-notes"></div>
-            <p id="coverage-note" class="card-note" hidden></p>
-            <p id="provenance-note" class="card-note" hidden></p>
-            <p id="fallback-note" class="card-note" hidden></p>
-
-            <div class="filters" aria-label="Declaration filters">
-              <label id="role-filter-wrap">
-                Role
-                <select id="role-filter">
-                  <option value="">All roles</option>
-                </select>
-              </label>
-              <label id="target-filter-wrap" class="search-filter">
-                Find declaration
-                <input id="target-filter" type="search" autocomplete="off">
-              </label>
+          <div id="selection" class="item-view" hidden>
+            <div class="nav-strip">
+              <button id="back-to-page" class="text-button" type="button">← Page 1</button>
+              <div class="stepper">
+                <button id="previous-item" class="icon" type="button" aria-label="Previous passage">‹</button>
+                <span id="item-position" aria-live="polite"></span>
+                <button id="next-item" class="icon" type="button" aria-label="Next passage">›</button>
+              </div>
             </div>
+            <div id="item-choices" class="item-choices" hidden></div>
 
-            <p id="target-summary" class="target-summary" aria-live="polite"></p>
-            <div id="target-groups"></div>
+            <header id="item-head" class="item-head">
+              <h2 id="item-label" class="item-label" tabindex="-1"></h2>
+              <div class="item-meta">
+                <p id="target-summary" class="target-summary"></p>
+                <p id="item-locator" class="item-locator"></p>
+              </div>
+              <p id="coverage-note" class="coverage-note" hidden></p>
+            </header>
+            <div id="verdict-notes" class="verdict-notes"></div>
 
-            <nav id="target-pagination" class="pagination" aria-label="Declaration pages">
-              <button id="previous-targets" type="button">Previous declarations</button>
-              <output id="target-page" aria-live="polite"></output>
-              <button id="next-targets" type="button">Next declarations</button>
-            </nav>
+            <section id="key-section" class="key-section" aria-label="Key declarations">
+              <div id="key-head" class="key-head" hidden>
+                <p id="key-count" class="key-count" hidden></p>
+                <input
+                  id="target-filter"
+                  class="filter"
+                  type="search"
+                  autocomplete="off"
+                  placeholder="Filter by name"
+                  aria-label="Filter declarations by name"
+                  hidden
+                >
+              </div>
+              <p id="filter-empty" class="empty-line filter-empty" hidden>No declaration matches.</p>
+              <div id="key-note" class="key-note" hidden></div>
+              <ol id="key-list" class="key-list"></ol>
+              <button id="key-more" class="text-button more" type="button" hidden></button>
+            </section>
+
+            <section id="related-section" class="related" aria-labelledby="related-heading" hidden>
+              <div class="related-head">
+                <h3 id="related-heading">Related</h3>
+                <span id="related-count" class="count" aria-live="polite"></span>
+              </div>
+              <ul id="related-list" class="related-list"></ul>
+              <nav id="related-pager" class="pagination" aria-label="Related declaration pages" hidden>
+                <button id="previous-targets" class="icon" type="button" aria-label="Previous declarations">‹</button>
+                <output id="target-page" aria-live="polite"></output>
+                <button id="next-targets" class="icon" type="button" aria-label="Next declarations">›</button>
+              </nav>
+            </section>
+
+            <p id="provenance-note" class="foot" hidden></p>
           </div>
         </aside>
       </section>
-
-      <details id="keyboard-help" class="keyboard-help">
-        <summary>Keyboard controls</summary>
-        <p>
-          With focus outside an input and no Ctrl, Alt or Command key held (Shift only where
-          it types the key, as for +): Left/Right changes page,
-          +/− changes zoom, R rotates, and Escape clears a selected region. Highlighted
-          regions are buttons: Tab to one and press Enter or Space to select it.
-        </p>
-      </details>
     </main>
   </body>
 </html>

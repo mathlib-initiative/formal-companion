@@ -34,7 +34,7 @@
           "type": "string"
         },
         "minimal": {
-          "description": "Show only the source, its outlines and the linked declarations with their statements: no PDF notice, visible status line, keyboard help, search box and role filter, plain 'formalized' sentence, provenance or ledger-cluster note, card badges or card metadata. Errors, qualifying statuses and an item that links nothing still show. Default false.",
+          "description": "Keep the passage, its links and their statements, and leave out what describes them: the status chip (still read by a screen reader, shown when the PDF is not verified), the keys line, the key count and name filter, card kinds and badges, related-row role and kind words, the review footer, the ledger cluster and the 'Formalized' word. Qualifying words, the notice, verdicts and pagers stay. Default false.",
           "type": "boolean"
         }
       }

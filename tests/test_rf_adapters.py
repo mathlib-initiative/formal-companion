@@ -42,6 +42,7 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import json
 import os
 import re
 import sys
@@ -864,12 +865,10 @@ def _attribution_repo(root: Path) -> Path:
     (repo / "pdf-overlay" / "data" / "target-refinement.json").write_text(json.dumps({
         "entries": [{"region_id": "r1", "formalization_ids": [TABLE_DECL],
                      "key_formalization_ids": [TABLE_DECL]}]}), encoding="utf-8")
-    (repo / "pdf-overlay" / "data" / "declaration-snippets.json").write_text(json.dumps({
-        "snippets": {TABLE_DECL: {"file": "Widget/Basic.lean", "line": 6,
-                                  "text": "theorem gadget_of_bounded : True := trivial"}}}),
-        encoding="utf-8")
+    # the table row's statement is cut from the file the ledger names
     (repo / "source-formalization-ledger.json").write_text(json.dumps({
-        "formalization_nodes": [{"id": TABLE_DECL, "kind": "theorem"}]}), encoding="utf-8")
+        "formalization_nodes": [{"id": TABLE_DECL, "kind": "theorem", "file": "Widget/Basic.lean"}]}),
+        encoding="utf-8")
 
     (repo / "Widget" / "Basic.lean").write_text(
         "namespace Widget.Basic\n"
@@ -1267,6 +1266,64 @@ class TestTheAttributionLayout(unittest.TestCase):
         with self.assertRaises(adapters_api.AdapterError) as caught:
             _attribution_adapter(repo, geometry_glob="attribution/geometry-batch-*.json")
         self.assertIn("matches no file", str(caught.exception))
+
+
+class TestTheStatementsAreCutFromTheLean(unittest.TestCase):
+    """A table row's statement, file and line come from the Lean file the ledger names."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.repo = _attribution_repo(tmpdir("cf-rf-adapters-cut-"))
+
+    def table_rows(self, repo: Path) -> list[dict]:
+        return [r for r in _attribution_adapter(repo).extract(sources={"s": SHA}) if r["provenance"] == "table"]
+
+    def test_the_row_is_cut_from_the_lean(self):
+        [row] = self.table_rows(self.repo)
+        self.assertEqual((row["file"], row["line"], row["statement"]),
+                         ("Widget/Basic.lean", 4, "theorem gadget_of_bounded : True"))
+
+    def test_an_id_the_lean_does_not_carry_is_a_missing_snippet(self):
+        repo = _copy_repo(self.repo, "cf-rf-adapters-cut-missing-")
+        path = repo / "pdf-overlay" / "data" / "target-refinement.json"
+        table = json.loads(path.read_text(encoding="utf-8"))
+        table["entries"][0]["formalization_ids"].append("Widget.Basic.gone")
+        path.write_text(json.dumps(table), encoding="utf-8")
+        ledger = repo / "source-formalization-ledger.json"
+        nodes = json.loads(ledger.read_text(encoding="utf-8"))
+        nodes["formalization_nodes"].append({"id": "Widget.Basic.gone", "kind": "theorem",
+                                             "file": "Widget/Basic.lean"})
+        ledger.write_text(json.dumps(nodes), encoding="utf-8")
+        report = _attribution_adapter(repo).dry_run(sources={"s": SHA})
+        self.assertEqual(report["missing_snippet"], 1)
+        self.assertIn({"decl": "Widget.Basic.gone", "item": "Definition 1.1.1", "why": "no snippet"},
+                      report["missing"])
+
+    def test_a_leftover_snippets_file_is_ignored_and_named(self):
+        repo = _copy_repo(self.repo, "cf-rf-adapters-cut-leftover-")
+        (repo / "pdf-overlay" / "data" / "declaration-snippets.json").write_text(json.dumps({
+            "snippets": {TABLE_DECL: {"file": "Widget/Basic.lean", "line": 99, "text": "theorem stale"}}}),
+            encoding="utf-8")
+        self.assertEqual(self.table_rows(repo), self.table_rows(self.repo))
+        self.assertEqual(_attribution_adapter(repo).dry_run(sources={"s": SHA})["ignored"],
+                         ["pdf-overlay/data/declaration-snippets.json"])
+        self.assertEqual(_attribution_adapter(self.repo).dry_run(sources={"s": SHA})["ignored"], [])
+
+    def test_the_key_follows_the_lean_the_rows_are_cut_from(self):
+        repo = _copy_repo(self.repo, "cf-rf-adapters-cut-key-")
+        before = _attribution_adapter(repo, lean_scan={"policy": "off"}).key()
+        lean = repo / "Widget" / "Basic.lean"
+        lean.write_text(lean.read_text(encoding="utf-8").replace(
+            "theorem gadget_of_bounded : True", "theorem gadget_of_bounded : 1 = 1"), encoding="utf-8")
+        self.assertNotEqual(_attribution_adapter(repo, lean_scan={"policy": "off"}).key(), before)
+        self.assertEqual(self.table_rows(repo)[0]["statement"], "theorem gadget_of_bounded : 1 = 1")
+
+    def test_without_a_ledger_the_adapter_refuses(self):
+        repo = _copy_repo(self.repo, "cf-rf-adapters-cut-noledger-")
+        (repo / "source-formalization-ledger.json").unlink()
+        with self.assertRaises(adapters_api.AdapterError) as caught:
+            _attribution_adapter(repo)
+        self.assertIn("ledger", str(caught.exception))
 
 
 class TestTheCrossCheckEdgeCases(unittest.TestCase):
