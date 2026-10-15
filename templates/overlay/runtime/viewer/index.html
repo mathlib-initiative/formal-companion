@@ -47,16 +47,21 @@
       <section id="workspace" class="workspace" aria-label="PDF inspection workspace" hidden>
         <div class="viewer-column">
           <nav class="toolbar" aria-label="PDF controls">
-            <button id="previous-page" class="icon" type="button" aria-label="Previous page">‹</button>
+            <button id="previous-page" class="icon" type="button" aria-label="Previous page"
+                    title="Previous page (←)" aria-keyshortcuts="ArrowLeft">‹</button>
             <input id="page-number" type="number" inputmode="numeric" min="1" value="1" aria-label="Page">
             <span id="page-count" class="page-count"></span>
-            <button id="next-page" class="icon" type="button" aria-label="Next page">›</button>
+            <button id="next-page" class="icon" type="button" aria-label="Next page"
+                    title="Next page (→)" aria-keyshortcuts="ArrowRight">›</button>
             <span class="toolbar-sep" aria-hidden="true"></span>
-            <button id="zoom-out" class="icon" type="button" aria-label="Zoom out">−</button>
+            <button id="zoom-out" class="icon" type="button" aria-label="Zoom out"
+                    title="Zoom out (−)" aria-keyshortcuts="-">−</button>
             <output id="zoom-value" class="zoom-value" aria-label="Zoom">100%</output>
-            <button id="zoom-in" class="icon" type="button" aria-label="Zoom in">+</button>
+            <button id="zoom-in" class="icon" type="button" aria-label="Zoom in"
+                    title="Zoom in (+)" aria-keyshortcuts="Plus =">+</button>
             <span class="toolbar-sep" aria-hidden="true"></span>
-            <button id="rotate-right" class="icon" type="button" aria-label="Rotate clockwise">↻</button>
+            <button id="rotate-right" class="icon" type="button" aria-label="Rotate clockwise"
+                    title="Rotate clockwise (R)" aria-keyshortcuts="R">↻</button>
           </nav>
 
           <div
@@ -92,7 +97,7 @@
             <ol id="page-index" class="page-index" aria-label="Passages on this page"></ol>
             <div id="legend" class="legend"></div>
             <div id="verdict-legend" class="legend" hidden></div>
-            <p class="keys">
+            <p id="keys" class="keys">
               <kbd>← →</kbd> page · <kbd>+ −</kbd> zoom · <kbd>R</kbd> rotate · <kbd>Esc</kbd> back
             </p>
             <p id="index-footer" class="foot" hidden></p>

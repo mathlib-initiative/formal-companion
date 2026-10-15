@@ -195,9 +195,16 @@ export function rememberPage(storageKey, page, { storage, historyRef } = {}) {
   }
 }
 
-/** A keydown the viewer acts on: no modifier held, and focus outside an input. */
+/**
+ * A keydown the viewer acts on: no Ctrl, Alt or Command held, focus outside an
+ * input, and Shift only where it types the key itself (`+` on many layouts),
+ * never with a named key such as ArrowRight.
+ */
 export function isViewerShortcut(event) {
-  if (!event || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) {
+  if (!event || event.ctrlKey || event.metaKey || event.altKey) {
+    return false;
+  }
+  if (event.shiftKey && String(event.key ?? "").length !== 1) {
     return false;
   }
   return !["INPUT", "SELECT", "TEXTAREA"].includes(event.target?.tagName);
@@ -246,7 +253,7 @@ export async function bootstrapViewer({
 } = {}) {
   const ui = Object.fromEntries(
     [
-      "back-link", "page-heading", "page-lede",
+      "back-link", "page-heading", "page-lede", "keys",
       "error", "status", "status-glyph", "status-chip", "notice", "workspace",
       "previous-page", "next-page", "page-number", "page-count",
       "zoom-out", "zoom-in", "zoom-value", "rotate-right", "toggle-faithfulness",
@@ -304,6 +311,9 @@ export async function bootstrapViewer({
     ui.status.textContent = message;
     ui["status-glyph"].textContent = kind === "ok" ? "✓" : kind === "bad" ? "!" : "";
     ui["status-chip"].className = `status-chip is-${kind}`;
+    // A minimal overlay keeps a verified PDF's chip for screen readers only;
+    // loading and failure stay in sight.
+    setClass(ui["status-chip"], "visually-hidden", Boolean(state.config?.minimal) && kind === "ok");
   }
 
   function setNotice(message) {
@@ -318,6 +328,8 @@ export async function bootstrapViewer({
     ui["page-heading"].title = config.title;
     ui["page-lede"].textContent = config.lede;
     ui["page-lede"].hidden = !config.lede;
+    // `display.minimal`: the toolbar buttons name their own shortcuts.
+    ui.keys.hidden = config.minimal;
     // With no back link the top bar starts with the title; the stylesheet drops the divider too.
     const back = config.backLink;
     ui["back-link"].hidden = !back;
@@ -659,7 +671,8 @@ export async function bootstrapViewer({
     if (parts.subtitle) {
       ui["item-label"].append(make("span", "item-subtitle", parts.subtitle));
     }
-    const word = coverageWord(item.coverage);
+    // A minimal overlay lets the cards say "formalized"; a word that qualifies them stays.
+    const word = state.config.minimal && item.coverage === "formalized" ? "" : coverageWord(item.coverage);
     ui["target-summary"].className = item.coverage
       ? `target-summary coverage-${item.coverage}` : "target-summary";
     ui["target-summary"].textContent = word;
@@ -697,12 +710,14 @@ export async function bootstrapViewer({
   function eyebrow(card) {
     const row = make("div", "eyebrow");
     const left = make("span", "eyebrow-left");
-    left.append(make("span", "kind", card.kind || "declaration"));
+    if (!state.config.minimal) {
+      left.append(make("span", "kind", card.kind || "declaration"));
+    }
     const verdict = cardVerdict(card);
     if (verdict) {
       left.append(verdict);
     }
-    for (const badge of card.badges) {
+    for (const badge of state.config.minimal ? [] : card.badges) {
       left.append(make("span", badge.startsWith("sorry") ? "tag is-sorry" : "tag", badge));
     }
     row.append(left, sourceLink(card));
@@ -735,7 +750,7 @@ export async function bootstrapViewer({
       return;
     }
     note.append(make("p", "empty-line is-strong", "No Lean declaration is linked to this passage."));
-    if (item.clusterIds.length) {
+    if (item.clusterIds.length && !state.config.minimal) {
       const line = make("p", "cluster-line", "Ledger cluster ");
       line.append(make("code", "cluster-ids", item.clusterIds.join(", ")));
       note.append(line);
@@ -765,10 +780,11 @@ export async function bootstrapViewer({
       tag.append(dot);
     }
     const role = card.role === shared ? "" : card.role;
-    const words = [role, card.kind === role ? "" : card.kind, fallback ? "module page" : "",
-                   card.href ? "" : "no page"];
+    // A minimal overlay drops the role and kind words, never where the link goes.
+    const words = [state.config.minimal ? "" : role, state.config.minimal || card.kind === role ? "" : card.kind,
+                   fallback ? "module page" : "", card.href ? "" : "no page"];
     tag.append(words.filter(Boolean).join(" · "));
-    if (card.badges.some((badge) => badge.startsWith("sorry"))) {
+    if (!state.config.minimal && card.badges.some((badge) => badge.startsWith("sorry"))) {
       tag.append(make("span", "tag is-sorry", "sorry"));
     }
     row.append(name, tag);
@@ -781,7 +797,7 @@ export async function bootstrapViewer({
     if (!item) {
       return;
     }
-    const filtered = item.cards.length > FILTER_ABOVE;
+    const filtered = item.cards.length > FILTER_ABOVE && !state.config.minimal;
     const query = filtered ? ui["target-filter"].value : "";
     const { keys, related } = splitCards(item);
     const shownKeys = cardsMatching(keys, { query });
@@ -792,7 +808,7 @@ export async function bootstrapViewer({
     ui["key-list"].replaceChildren(...capped.map(keyCard));
     ui["key-list"].hidden = !capped.length;
     // A neutral count, only when there is more than one: no heading says what the cards state.
-    ui["key-count"].hidden = keys.length < 2;
+    ui["key-count"].hidden = keys.length < 2 || state.config.minimal;
     ui["key-count"].textContent = query ? `${shownKeys.length} of ${keys.length} key declarations`
       : `${keys.length} key declarations`;
     const hidden = shownKeys.length - capped.length;
@@ -808,6 +824,7 @@ export async function bootstrapViewer({
       ui["related-heading"].append(make("span", "related-role", ` · ${shared}`));
     }
     ui["related-count"].textContent = String(query ? shownRelated.length : related.length);
+    ui["related-count"].hidden = state.config.minimal;
     ui["target-filter"].hidden = !filtered;
     // The count and the filter share a line above the key cards; with neither, no line.
     ui["key-head"].hidden = ui["key-count"].hidden && !filtered;
@@ -829,7 +846,10 @@ export async function bootstrapViewer({
   }
 
   function renderFooter(item) {
-    const footer = reviewFooter(item, { faithfulness: state.faithfulness });
+    // A minimal overlay leaves out how the links were made, but shown verdicts
+    // keep their caveat: the verdict line itself never says "unreviewed".
+    const footer = !state.config.minimal ? reviewFooter(item, { faithfulness: state.faithfulness })
+      : state.faithfulness ? verdictFooter([item]) : "";
     ui["provenance-note"].textContent = footer;
     ui["provenance-note"].hidden = !footer;
   }

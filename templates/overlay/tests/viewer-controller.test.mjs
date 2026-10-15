@@ -187,6 +187,8 @@ test("start-up: the shell's placeholders are replaced from the configuration", a
   assert.equal(el(documentRef, "error").hidden, true);
   assert.equal(el(documentRef, "notice").hidden, true);
   assert.equal(el(documentRef, "status").textContent, "Verified PDF");
+  assert.equal(el(documentRef, "status-chip").classList.contains("visually-hidden"), false);
+  assert.equal(el(documentRef, "keys").hidden, false);
   assert.deepEqual([el(documentRef, "page-number").value, el(documentRef, "page-count").textContent], ["1", "/ 12"]);
   assert.equal(el(documentRef, "page-stage").hidden, false, "the page shows once it is drawn");
 });
@@ -551,6 +553,116 @@ test("item: an item that links nothing says so and names its cluster", async () 
   assert.equal(polygonOf(documentRef, "loc:0003").dataset.coverage, "quiet");
 });
 
+const MINIMAL = { display: { minimal: true, strip_prefix: "Notes." } };
+
+test("minimal: the passage, its links and their statements stay; the metadata goes", async () => {
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL) });
+  assert.equal(el(documentRef, "status").textContent, "Verified PDF", "still read by a screen reader");
+  assert.ok(el(documentRef, "status-chip").classList.contains("visually-hidden"), "but out of sight");
+  assert.equal(el(documentRef, "keys").hidden, true, "the toolbar buttons name their shortcuts");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(el(documentRef, "target-summary").hidden, true, "the cards say it is formalized");
+  const [[eyebrow, name, pre]] = keyCards(documentRef);
+  assert.equal(textOf(eyebrow.children[0]), "", "no kind and no badge");
+  assert.deepEqual([eyebrow.children[1].tagName, eyebrow.children[1].attributes.href],
+                   ["A", `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`], "the link stays");
+  assert.equal(textOf(name), "Box.volume_nonneg");
+  assert.equal(textOf(pre), "theorem volume_nonneg (b : Box) : 0 <= b.volume", "and the statement");
+  assert.deepEqual(rows(documentRef, "related-list").map((row) => [rowName(row), rowKind(row)]), [
+    ["Box.volume_mono", "module page"], ["Set.inter_sub", ""], ["example:0123456789ab", "no page"],
+    ["Set.union_comm", ""],
+  ], "related rows drop their role and kind, never where the link goes");
+  assert.equal(rows(documentRef, "related-list")[0].children[0].attributes.href, `${ORIGIN}/Notes/Box/index.html`);
+  assert.equal(el(documentRef, "related-count").hidden, true);
+  assert.equal(el(documentRef, "provenance-note").hidden, true, "how the links were curated is left out");
+  await selectPageRegion(documentRef, result.state, "loc:0004");
+  const [[privateEyebrow]] = keyCards(documentRef);
+  assert.equal(textOf(privateEyebrow.children[0]), "", "a key card's badges go too");
+});
+
+test("minimal: several key cards need no count", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  const second = structuredClone(key);
+  second.id = "item:theorem-1.1/key/Notes.Box.volume_pos";
+  second.target.pin.declaration = "Notes.Box.volume_pos";
+  sections[1].push(second);
+  const plain = await start({ sections });
+  await selectPageRegion(plain.documentRef, plain.result.state, "loc:0001");
+  assert.equal(el(plain.documentRef, "key-count").hidden, false, "the default overlay counts them");
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL), sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(keyCards(documentRef).length, 2);
+  assert.deepEqual([el(documentRef, "key-count").hidden, el(documentRef, "key-head").hidden], [true, true]);
+});
+
+test("minimal: a status that qualifies the links still says so, with its note", async () => {
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL) });
+  await selectPageRegion(documentRef, result.state, "loc:0002");
+  const pill = el(documentRef, "target-summary");
+  assert.deepEqual([pill.textContent, pill.hidden], ["Support only", false]);
+  assert.equal(el(documentRef, "coverage-note").hidden, false);
+  assert.deepEqual(el(documentRef, "related-heading").children.map(textOf), ["Related", " · support"],
+                   "the heading still says what the related rows are");
+});
+
+test("minimal: an item that links nothing says so, without its ledger cluster", async () => {
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL) });
+  await selectPageRegion(documentRef, result.state, "loc:0003");
+  assert.deepEqual(el(documentRef, "key-note").children.map(textOf), ["No Lean declaration is linked to this passage."]);
+});
+
+test("minimal: a long list has no filter or count, and every card stays reachable", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  for (let n = 0; n < 30; n += 1) {
+    const name = `Notes.Fill.f${String(n).padStart(2, "0")}`;
+    const copy = structuredClone(key);
+    copy.id = `item:theorem-1.1/attributed/${name}`;
+    copy.target.pin.declaration = name;
+    const ext = copy.extensions[NAMESPACE];
+    ext.role = "attributed";
+    ext.declaration = { id: name, kind: "def" };
+    delete ext.snippet;
+    sections[1].push(copy);
+  }
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL), sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(el(documentRef, "target-filter").hidden, true);
+  assert.equal(el(documentRef, "key-head").hidden, true);
+  assert.equal(el(documentRef, "related-pager").hidden, false);
+  assert.equal(el(documentRef, "target-page").textContent, "1–25 of 34");
+  await fire(el(documentRef, "next-targets"), "click");
+  assert.equal(el(documentRef, "target-page").textContent, "26–34 of 34");
+});
+
+test("minimal: a record that cannot be placed is still reported", async () => {
+  const sections = makeSections(PDF_SHA256);
+  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  const { documentRef } = await start({ config: makeConfig(MINIMAL), sections });
+  assert.equal(el(documentRef, "notice").hidden, false);
+});
+
+test("minimal: the faithfulness switch and the verdicts still work", async () => {
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL) });
+  const button = el(documentRef, "toggle-faithfulness");
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(button.hidden, false);
+  assert.equal(el(documentRef, "provenance-note").hidden, true, "no footer while no verdict is shown");
+  await fire(button, "click");
+  assert.equal(el(documentRef, "verdict-notes").children.length, 1);
+  assert.deepEqual(verdictMarks(documentRef), ["faithful|card-verdict verdict-badge verdict-faithful"]);
+  assert.equal(el(documentRef, "provenance-note").hidden, false, "shown verdicts keep their caveat");
+  assert.match(el(documentRef, "provenance-note").textContent, /^Machine verdicts, (partly reviewed|unreviewed)\.$/);
+});
+
+test("minimal: a PDF that is not verified keeps its status in sight", async () => {
+  const { documentRef } = await start({ config: makeConfig(MINIMAL), sections: makeSections(fakeSha256("9")) });
+  assert.equal(el(documentRef, "status").textContent, "PDF not verified");
+  assert.equal(el(documentRef, "status-chip").classList.contains("visually-hidden"), false);
+  assert.equal(el(documentRef, "error").hidden, false);
+});
+
 test("item: a region opens the item its curation names first, and never an empty one first", async () => {
   const { documentRef, result } = await start();
   await selectPageRegion(documentRef, result.state, "loc:0005");
@@ -765,6 +877,9 @@ test("keyboard: the shortcuts work bare and are ignored with a modifier or in an
   assert.equal(result.state.zoom, 110);
   await fire(documentRef, "keydown", { key: "-" });
   assert.equal(result.state.zoom, 100);
+  await fire(documentRef, "keydown", { key: "+", shiftKey: true });
+  assert.equal(result.state.zoom, 110, "Shift is how a US keyboard types +");
+  await fire(documentRef, "keydown", { key: "-" });
   await fire(documentRef, "keydown", { key: "r" });
   assert.equal(result.state.rotation, 90);
   for (const modifier of ["ctrlKey", "metaKey", "altKey", "shiftKey"]) {
@@ -777,11 +892,36 @@ test("keyboard: the shortcuts work bare and are ignored with a modifier or in an
   assert.equal(result.state.currentPage, 1);
 });
 
+test("keyboard: every shortcut a button advertises does what the button does", async () => {
+  const advertised = [...SHELL.matchAll(/<button\b[^>]*>/g)]
+    .map(([tag]) => [tag.match(/\sid="([^"]+)"/)?.[1], tag.match(/\saria-keyshortcuts="([^"]+)"/)?.[1],
+                     tag.match(/\stitle="[^"]*\(([^)]+)\)"/)?.[1]])
+    .filter(([id, keys]) => id && keys);
+  assert.deepEqual(advertised.map(([id, , shown]) => [id, shown]),
+                   [["previous-page", "←"], ["next-page", "→"], ["zoom-out", "−"], ["zoom-in", "+"],
+                    ["rotate-right", "R"]], "each toolbar button names its key in its tooltip");
+  const snapshot = (state) => [state.currentPage, state.zoom, state.rotation];
+  for (const [id, keys] of advertised) {
+    const clicked = await start({ locationRef: { hash: "#page=5" } });
+    await fire(el(clicked.documentRef, id), "click");
+    assert.notDeepEqual(snapshot(clicked.result.state), [5, 100, 0], `#${id} does something`);
+    for (const token of keys.split(" ")) {
+      const key = token === "Plus" ? "+" : token;
+      const pressed = await start({ locationRef: { hash: "#page=5" } });
+      await fire(pressed.documentRef, "keydown", { key, shiftKey: key === "+" || /^[A-Z]$/.test(key) });
+      assert.deepEqual(snapshot(pressed.result.state), snapshot(clicked.result.state), `${token} on #${id}`);
+    }
+  }
+});
+
 test("keyboard: the shortcut test is the predicate's own, so both halves agree", () => {
   assert.equal(isViewerShortcut({ key: "ArrowRight", target: {} }), true);
   assert.equal(isViewerShortcut({ ctrlKey: true, key: "ArrowRight", target: {} }), false);
   assert.equal(isViewerShortcut({ key: "ArrowRight", metaKey: true, target: {} }), false);
   assert.equal(isViewerShortcut({ key: "r", target: { tagName: "INPUT" } }), false);
+  assert.equal(isViewerShortcut({ key: "+", shiftKey: true, target: {} }), true, "a shifted character counts");
+  assert.equal(isViewerShortcut({ key: "ArrowRight", shiftKey: true, target: {} }), false,
+               "a shifted named key does not");
   assert.equal(isViewerShortcut(null), false);
 });
 

@@ -79,7 +79,7 @@ SITE_KEYS = {"output_root", "index", "mount", "link_text"}
 BUILD_KEYS = {"commands"}
 SERVE_KEYS = {"host", "port"}
 BACK_LINK_KEYS = {"href", "text"}
-DISPLAY_KEYS = {"strip_prefix"}
+DISPLAY_KEYS = {"strip_prefix", "minimal"}
 
 DEFAULT_CACHE_DIR = ".lake/overlay-pdf"
 DEFAULT_OUTPUT_ROOT = ".lake/build/literate-html"
@@ -357,7 +357,9 @@ def load_config(overlay: Path) -> Config:
         nonempty_string(back["href"], f"{CONFIG_NAME}.back_link.href")
         nonempty_string(back["text"], f"{CONFIG_NAME}.back_link.text")
     if "display" in value:
-        exact_keys(value["display"], DISPLAY_KEYS, set(), f"{CONFIG_NAME}.display")
+        display = exact_keys(value["display"], DISPLAY_KEYS, set(), f"{CONFIG_NAME}.display")
+        if "minimal" in display and not isinstance(display["minimal"], bool):
+            fail(f"{CONFIG_NAME}.display.minimal: expected true or false")
 
     pdf = exact_keys(value["pdf"], PDF_KEYS, {"file_name"}, f"{CONFIG_NAME}.pdf")
     file_name = nonempty_string(pdf["file_name"], f"{CONFIG_NAME}.pdf.file_name")
