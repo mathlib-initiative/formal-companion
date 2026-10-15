@@ -780,8 +780,9 @@ export async function bootstrapViewer({
       tag.append(dot);
     }
     const role = card.role === shared ? "" : card.role;
-    const words = state.config.minimal ? [] : [role, card.kind === role ? "" : card.kind,
-                                               fallback ? "module page" : "", card.href ? "" : "no page"];
+    // A minimal overlay drops the role and kind words, never where the link goes.
+    const words = [state.config.minimal ? "" : role, state.config.minimal || card.kind === role ? "" : card.kind,
+                   fallback ? "module page" : "", card.href ? "" : "no page"];
     tag.append(words.filter(Boolean).join(" · "));
     if (!state.config.minimal && card.badges.some((badge) => badge.startsWith("sorry"))) {
       tag.append(make("span", "tag is-sorry", "sorry"));
@@ -845,9 +846,12 @@ export async function bootstrapViewer({
   }
 
   function renderFooter(item) {
-    const footer = reviewFooter(item, { faithfulness: state.faithfulness });
+    // A minimal overlay leaves out how the links were made, but shown verdicts
+    // keep their caveat: the verdict line itself never says "unreviewed".
+    const footer = !state.config.minimal ? reviewFooter(item, { faithfulness: state.faithfulness })
+      : state.faithfulness ? verdictFooter([item]) : "";
     ui["provenance-note"].textContent = footer;
-    ui["provenance-note"].hidden = !footer || state.config.minimal;
+    ui["provenance-note"].hidden = !footer;
   }
 
   function renderItem(item) {

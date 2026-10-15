@@ -447,6 +447,9 @@ test("coverage: the stylesheet has a colour for every value and every verdict ki
     assert.ok(VERDICT_LABELS[kind], `${kind} has no label`);
     assert.ok(css.includes(`.verdict-badge.verdict-${kind}`), `viewer.css has no rule for verdict ${kind}`);
   }
+  assert.match(css, /\.visually-hidden \{[^}]*clip-path: inset\(50%\)/, "a minimal overlay's chip is clipped out of sight");
+  assert.match(css, /\.status-chip\.visually-hidden:focus-within \{[^}]*clip-path: none/,
+               "and comes back while it holds keyboard focus");
   assert.ok(css.includes(".verdict-badge.verdict-fixed"));
 });
 
