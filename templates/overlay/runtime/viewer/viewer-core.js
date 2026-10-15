@@ -26,7 +26,6 @@ export const MAX_JSON_BYTES = 64 * 1024 * 1024;
 /** `pdf.route` must start with this and carry no `..` (the contract's section 3). */
 export const ROUTE_PREFIX = "/__";
 
-export const DEFAULT_BACK_LINK = Object.freeze({ href: "../../index.html", text: "Back to the site" });
 export const DEFAULT_MOUNT = "pdf-overlay";
 export const DEFAULT_STORAGE_KEY = "formal-companion-overlay-page";
 
@@ -145,7 +144,7 @@ export function safeHttpsUrl(value) {
 
 /**
  * The back link's own `href`, or null. It is the one href the config supplies,
- * and its default (`../../index.html`) climbs out of the mount: a relative path
+ * and it usually climbs out of the mount (`../../index.html`): a relative path
  * is accepted with its `..` segments and an `https:` URL whole, but a
  * scheme-bearing (`javascript:`, `data:`), protocol-relative or root-absolute
  * value is refused so the header can never carry a live link the config
@@ -238,12 +237,14 @@ export function readConfig(raw) {
     fail(`overlay.config.json has pdf.route ${JSON.stringify(route)}; a route starts with `
          + `"${ROUTE_PREFIX}" and carries no "..".`);
   }
-  const backLink = isObject(raw.back_link) ? raw.back_link : DEFAULT_BACK_LINK;
-  const backHref = safeBackLinkHref(backLink.href) ?? DEFAULT_BACK_LINK.href;
+  // No back_link, or one whose href is refused, is no back link: the top bar starts with the title.
+  const back = isObject(raw.back_link) ? raw.back_link : {};
+  const backHref = safeBackLinkHref(back.href);
+  const backText = text(back.text);
   const display = isObject(raw.display) ? raw.display : {};
   const site = isObject(raw.site) ? raw.site : {};
   return {
-    backLink: { href: backHref, text: text(backLink.text) || DEFAULT_BACK_LINK.text },
+    backLink: backHref && backText ? { href: backHref, text: backText } : null,
     lede: text(raw.lede),
     pdfRoute: route,
     // build_site.py publishes the annotation files at the site root, the same
@@ -431,23 +432,27 @@ export function declarationVerdictDisplay(verdict, status) {
 }
 
 /**
- * The item-level verdict note: its kind, severity and summary, then
- * `[<method>, <status>; <resolution>]`. The method is the adjudication's, from
- * the verdict's provenance, and stays on purpose: these verdicts are machine
- * adjudications until a human confirms them or a merged fix supersedes them.
- * The title (a tooltip) is the evidence and the provenance's note.
+ * One verdict line under an item: its kind (with the severity when there is
+ * one), the summary, the resolution and the status word when it says more
+ * than the label does. "unconfirmed" is never a word on the line: the item
+ * footer says once whether the verdicts were reviewed. The title (a tooltip)
+ * holds the evidence, the provenance's note and its method.
  */
-export function verdictNote(verdict) {
+export function verdictLine(verdict) {
   const display = verdictDisplay(verdict.verdict, verdict.status);
   const severity = text(verdict.severity) && verdict.severity !== "none" ? ` (${verdict.severity})` : "";
   const provenance = isObject(verdict.provenance) ? verdict.provenance : {};
-  const status = text(verdict.status).replace(/_/g, " ");
+  const status = text(verdict.status);
+  // A fixed verdict's label already says "fixed"; its resolution need not say it again.
   const resolution = resolutionText(verdict.resolution);
-  const tail = [text(provenance.method), status].filter(Boolean).join(", ") + (resolution ? `; ${resolution}` : "");
   return {
-    className: `verdict-note ${display.className}`,
-    text: `Faithfulness: ${display.label}${severity}. ${text(verdict.summary)} [${tail}]`,
-    title: [...asArray(verdict.evidence), text(provenance.note)].filter((line) => text(line)).join("\n"),
+    className: display.className,
+    label: `${display.label}${severity}`,
+    resolution: status === "fixed" ? resolution.replace(/^fixed(, |$)/, "") : resolution,
+    statusWord: status && status !== "unconfirmed" && status !== "fixed" ? status.replace(/_/g, " ") : "",
+    summary: text(verdict.summary),
+    title: [...asArray(verdict.evidence), text(provenance.note), text(provenance.method)]
+      .filter((line) => text(line)).join("\n"),
   };
 }
 
@@ -479,15 +484,6 @@ export function coverageSummary(coverage) {
   return COVERAGE_SUMMARIES[coverage] ?? "";
 }
 
-/** The line above the card list: the status speaks for the item, else a count. */
-export function cardSummaryText({ coverage = null, shown = 0 }) {
-  const summary = coverage ? coverageSummary(coverage) : "";
-  if (summary) {
-    return summary;
-  }
-  return shown ? `${plural(shown, "linked declaration")}.` : "No declaration is linked to this item.";
-}
-
 // --- the index --------------------------------------------------------------
 
 function statusValue(status) {
@@ -511,33 +507,6 @@ export function locatorText(locator) {
   const printed = pageList(locator.printed);
   const physical = pageList(locator.physical);
   return [printed && `printed ${printed}`, physical && `PDF ${physical}`].filter(Boolean).join(", ");
-}
-
-/** `<method>, confirmed|unconfirmed` of a link's provenance, or "". */
-export function provenanceLabel(provenance) {
-  if (!isObject(provenance) || !text(provenance.method)) {
-    return "";
-  }
-  const confirmed = typeof provenance.confirmed_by_human === "boolean"
-    ? `, ${provenance.confirmed_by_human ? "confirmed" : "unconfirmed"}` : "";
-  return `${text(provenance.method)}${confirmed}`;
-}
-
-/**
- * The line naming how the item's links were made: the key and attributed
- * counts when it has a key card, and each distinct link provenance.
- */
-export function provenanceText(item) {
-  const cards = asArray(item?.cards);
-  const labels = [...new Set(cards.map((entry) => entry.provenance).filter(Boolean))];
-  if (!labels.length) {
-    return "";
-  }
-  const keys = cards.filter((entry) => entry.role === "key").length;
-  const attributed = cards.filter((entry) => entry.role === "key" || entry.role === "attributed").length;
-  return keys
-    ? `${plural(keys, "key declaration")} for this result (${attributed} attributed); ${labels.join("; ")}.`
-    : `Links: ${labels.join("; ")}.`;
 }
 
 /** The item a click on the region opens: the first that has a card, else the first. */
@@ -571,12 +540,6 @@ function card(record, ext, context) {
   if (text(declaration.sorry) && declaration.sorry !== "none") {
     badges.push(`sorry: ${declaration.sorry}`);
   }
-  if (destination?.resolution === "fallback") {
-    badges.push("fallback");
-  }
-  if (!href) {
-    badges.push("unlinked");
-  }
   const snippet = isObject(ext.snippet) && text(ext.snippet.text)
     ? { line: Number.isInteger(ext.snippet.line) ? ext.snippet.line : null, text: ext.snippet.text }
     : null;
@@ -597,7 +560,9 @@ function card(record, ext, context) {
     kind: text(declaration.kind),
     module: text(pin.module),
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
-    provenance: provenanceLabel(ext.provenance),
+    provenanceMethod: isObject(ext.provenance) ? text(ext.provenance.method) : "",
+    reviewed: isObject(ext.provenance) && typeof ext.provenance.confirmed_by_human === "boolean"
+      ? ext.provenance.confirmed_by_human : null,
     relation: text(ext.relation),
     resolution: text(destination?.resolution),
     role: text(ext.role),
@@ -729,7 +694,6 @@ export function buildIndex(files, config, { pageOrigin = "" } = {}) {
   }
   for (const item of items.values()) {
     item.cards = orderCards(item.cards);
-    item.roles = [...new Set(item.cards.map((entry) => entry.role))];
   }
   const pages = new Map();
   for (const region of regions.values()) {
@@ -772,12 +736,8 @@ export function buildIndex(files, config, { pageOrigin = "" } = {}) {
 // --- the card list ----------------------------------------------------------
 
 export function cardsMatching(cards, filters = {}) {
-  const role = text(filters.role);
   const query = text(filters.query).toLocaleLowerCase();
   return asArray(cards).filter((entry) => {
-    if (role && entry.role !== role) {
-      return false;
-    }
     if (!query) {
       return true;
     }
@@ -802,16 +762,276 @@ export function paginateCards(cards, requestedPage, pageSize = CARD_PAGE_SIZE) {
   };
 }
 
-/** The cards grouped by role, in the role order the list is already sorted by. */
-export function groupCards(cards) {
-  const groups = [];
-  for (const entry of asArray(cards)) {
-    const last = groups[groups.length - 1];
-    if (last && last.role === entry.role) {
-      last.cards.push(entry);
-    } else {
-      groups.push({ cards: [entry], role: entry.role });
+// --- the bridge view --------------------------------------------------------
+
+/** One word per coverage status, for the pill; its title is the status's summary. */
+export const COVERAGE_WORDS = Object.freeze({
+  example_only: "Examples only",
+  formalized: "Formalized",
+  not_formalized: "Not formalized",
+  out_of_scope: "Out of scope",
+  partial: "Partial",
+  private_only: "Private only",
+  support_only: "Support only",
+});
+
+/** The coverage pill's word, or "" for an unknown status. */
+export function coverageWord(coverage) {
+  return COVERAGE_WORDS[coverage] ?? "";
+}
+
+/** The statuses whose region is drawn dashed: something, but not a key statement of the item. */
+const PARTIAL_COVERAGE = Object.freeze(["partial", "support_only", "example_only", "private_only"]);
+
+/** A parenthetical that numbers rather than names: "(A.1)", "(3.2b)", "(ii)", "(c)". */
+const NUMBERING = /^(?:\p{L}?[\d.]*\d\p{L}?|[ivxlc]+|\p{L})$/iu;
+
+/**
+ * A label's title and its trailing parenthetical, when that names something:
+ * "Theorem 2 (Main estimate)" is "Theorem 2" over "Main estimate", while
+ * "Equation (1.1)", "Equation (A.1)" and "Exercise 4 (c)" stay whole.
+ */
+export function labelParts(label) {
+  const whole = text(label);
+  const match = /^(.*\S)\s+\(([^()]*\p{L}[^()]*)\)$/u.exec(whole);
+  return match && !NUMBERING.test(match[2].trim())
+    ? { subtitle: match[2].trim(), title: match[1] } : { subtitle: "", title: whole };
+}
+
+/**
+ * The locator without the label it repeats, and only its first locator: the
+ * comma-separated segments, less one equal to the label or to its title, cut
+ * at the first ";" or " / " that starts another. A locator that never repeats
+ * the label is kept whole up to that cut, and one that is only the label is "".
+ */
+export function locatorTail(label, locator) {
+  const full = text(locator);
+  if (!full) {
+    return "";
+  }
+  const head = full.split(/\s*;\s+|\s+\/\s+/)[0].trim() || full;
+  const drop = new Set([text(label), labelParts(label).title].filter(Boolean));
+  const parts = head.split(", ");
+  const kept = parts.filter((part) => !drop.has(part));
+  return kept.length === parts.length ? head : kept.join(", ");
+}
+
+/** `[namespace with its trailing ".", leaf]` of a declaration name; a name with no "." is all leaf. */
+export function splitName(name) {
+  const value = typeof name === "string" ? name : "";
+  const cut = value.lastIndexOf(".", value.length - 2);
+  return cut > 0 ? [value.slice(0, cut + 1), value.slice(cut + 1)] : ["", value];
+}
+
+/** An item's first key card, in card order, or null: the name the page index and the peek show. */
+export function firstKeyCard(item) {
+  return asArray(item?.cards).find((entry) => entry.role === "key") ?? null;
+}
+
+/**
+ * An item's cards as the item view lists them: `keys`, each shown with its
+ * statement, and `related`, every other role, one line each.
+ */
+export function splitCards(item) {
+  const cards = asArray(item?.cards);
+  return {
+    keys: cards.filter((entry) => entry.role === "key"),
+    related: cards.filter((entry) => entry.role !== "key"),
+  };
+}
+
+/** The role more than half of `cards` share, said once in the Related heading; "" when none does. */
+export function sharedRole(cards) {
+  const list = asArray(cards);
+  const counts = new Map();
+  for (const entry of list) {
+    counts.set(entry.role, (counts.get(entry.role) ?? 0) + 1);
+  }
+  const [role, most] = [...counts].sort((a, b) => b[1] - a[1])[0] ?? ["", 0];
+  return role && most * 2 > list.length ? role : "";
+}
+
+/** How a region draws its item: "formalized" (solid), "partial" (dashed) or "quiet" (dotted). */
+export function regionCoverage(item) {
+  const coverage = text(item?.coverage);
+  if (coverage === "formalized") {
+    return "formalized";
+  }
+  if (PARTIAL_COVERAGE.includes(coverage)) {
+    return "partial";
+  }
+  if (coverage === "not_formalized" || coverage === "out_of_scope") {
+    return "quiet";
+  }
+  return firstKeyCard(item) ? "formalized" : "quiet";
+}
+
+/** Verdict kinds, most serious first: the order a region's stroke picks from. */
+export const VERDICT_SEVERITY = Object.freeze(["deviation", "attribution_gap", "proxy", "convention", "faithful"]);
+
+/**
+ * The verdict kind a region's stroke shows: the most serious open item
+ * verdict of its items (an item with none falls back on its cards'
+ * declaration verdicts), else "fixed" when every verdict is a fixed one, else
+ * null.
+ */
+export function regionVerdict(items) {
+  const open = new Set();
+  let fixed = false;
+  for (const item of asArray(items)) {
+    const own = asArray(item?.verdicts).filter(isObject);
+    const verdicts = own.length ? own : asArray(item?.cards).map((entry) => entry.verdict).filter(isObject);
+    for (const verdict of verdicts) {
+      if (verdict.status === "fixed" && verdict.verdict !== "faithful") {
+        fixed = true;
+      } else if (VERDICT_SEVERITY.includes(verdict.verdict)) {
+        open.add(verdict.verdict);
+      }
     }
   }
-  return groups;
+  return VERDICT_SEVERITY.find((kind) => open.has(kind)) ?? (fixed ? "fixed" : null);
+}
+
+/** How many passages a page has, and how many of them a key declaration states. */
+export function pageSummary(items) {
+  const list = asArray(items);
+  return { passages: list.length, withKey: list.filter((item) => firstKeyCard(item)).length };
+}
+
+/** The count line under the page index's heading. */
+export function pageSummaryText(items) {
+  const { passages, withKey } = pageSummary(items);
+  return passages
+    ? `${plural(passages, "passage")} · ${withKey} with a key declaration`
+    : "No highlighted passages on this page.";
+}
+
+/** Whether a verdict was reviewed: true, false, or null when it does not say. */
+function verdictReviewed(verdict) {
+  if (verdict?.status === "unconfirmed") {
+    return false;
+  }
+  if (verdict?.status === "human_confirmed") {
+    return true;
+  }
+  const provenance = isObject(verdict?.provenance) ? verdict.provenance : {};
+  return typeof provenance.confirmed_by_human === "boolean" ? provenance.confirmed_by_human : null;
+}
+
+/** ", unreviewed." / ", reviewed." / ", partly reviewed." from review flags, or "." when none says. */
+function reviewSuffix(flags) {
+  const known = flags.filter((flag) => typeof flag === "boolean");
+  if (!known.length) {
+    return ".";
+  }
+  if (known.every((flag) => !flag)) {
+    return ", unreviewed.";
+  }
+  return known.every(Boolean) ? ", reviewed." : ", partly reviewed.";
+}
+
+/** The page index's footer when verdicts are shown: "Machine verdicts, unreviewed.", or "". */
+export function verdictFooter(items) {
+  const verdicts = asArray(items).flatMap((item) => [
+    ...asArray(item?.verdicts).filter(isObject),
+    ...asArray(item?.cards).map((entry) => entry.verdict).filter(isObject),
+  ]);
+  return verdicts.length ? `Machine verdicts${reviewSuffix(verdicts.map(verdictReviewed))}` : "";
+}
+
+/**
+ * The item view's one footer line: how the links were made (each distinct
+ * provenance method), whether verdicts are shown, and whether any of it was
+ * reviewed by a person. "" for an item with no card and no verdict shown.
+ */
+export function reviewFooter(item, { faithfulness = false } = {}) {
+  const cards = asArray(item?.cards);
+  const verdicts = faithfulness
+    ? [...asArray(item?.verdicts).filter(isObject), ...cards.map((entry) => entry.verdict).filter(isObject)]
+    : [];
+  if (!cards.length && !verdicts.length) {
+    return "";
+  }
+  const methods = [...new Set(cards.map((entry) => text(entry.provenanceMethod)).filter(Boolean))];
+  const flags = [...cards.map((entry) => (typeof entry.reviewed === "boolean" ? entry.reviewed : null)),
+                 ...verdicts.map(verdictReviewed)];
+  const suffix = reviewSuffix(flags);
+  if (!methods.length && !verdicts.length && suffix === ".") {
+    // "Links." says nothing the page does not.
+    return "";
+  }
+  const links = cards.length ? (methods.length ? `${methods.join(" and ")} links` : "links") : "";
+  const subject = [links, verdicts.length ? "machine verdicts" : ""].filter(Boolean).join(" and ");
+  return `${subject.charAt(0).toUpperCase()}${subject.slice(1)}${suffix}`;
+}
+
+const LEAN_KEYWORDS = new Set([
+  "theorem", "lemma", "def", "abbrev", "structure", "class", "instance", "inductive", "example", "axiom",
+  "opaque", "noncomputable", "private", "protected", "partial", "unsafe", "deriving", "where", "fun", "let",
+  "have", "show", "by", "from", "with", "match", "if", "then", "else", "Prop", "Type", "Sort",
+]);
+/** What may not stand next to a keyword: an identifier character, ASCII or not. */
+const WORD = /[A-Za-z0-9_'.!?\p{L}\p{N}]/u;
+
+/**
+ * A Lean snippet as `[kind, text]` runs for a light tint: "kw" for a keyword
+ * standing alone, "cm" for a comment (`--` to the end of the line, or `/-`
+ * through `-/`), "el" for the ellipsis a snippet is cut with, "tx" for the
+ * rest. The texts joined are the input, exactly.
+ */
+export function leanTokens(source) {
+  const input = typeof source === "string" ? source : "";
+  const runs = [];
+  const push = (kind, value) => {
+    if (!value) {
+      return;
+    }
+    const last = runs[runs.length - 1];
+    if (last && last[0] === kind && kind === "tx") {
+      last[1] += value;
+    } else {
+      runs.push([kind, value]);
+    }
+  };
+  let at = 0;
+  while (at < input.length) {
+    if (input.startsWith("--", at)) {
+      const end = input.indexOf("\n", at);
+      const stop = end < 0 ? input.length : end;
+      push("cm", input.slice(at, stop));
+      at = stop;
+    } else if (input.startsWith("/-", at)) {
+      const end = input.indexOf("-/", at + 2);
+      const stop = end < 0 ? input.length : end + 2;
+      push("cm", input.slice(at, stop));
+      at = stop;
+    } else if (input[at] === "…") {
+      push("el", "…");
+      at += 1;
+    } else if (/[A-Za-z]/.test(input[at]) && (at === 0 || !WORD.test(input[at - 1]))) {
+      let end = at;
+      while (end < input.length && /[A-Za-z]/.test(input[end])) {
+        end += 1;
+      }
+      const word = input.slice(at, end);
+      const after = input[end];
+      const standalone = after === undefined || !WORD.test(after);
+      if (standalone && LEAN_KEYWORDS.has(word)) {
+        push("kw", word);
+        at = end;
+      } else {
+        // The rest of this identifier, so a keyword never matches inside it.
+        while (end < input.length && WORD.test(input[end]) && !input.startsWith("--", end)
+               && !input.startsWith("/-", end) && input[end] !== "…") {
+          end += 1;
+        }
+        push("tx", input.slice(at, end));
+        at = end;
+      }
+    } else {
+      push("tx", input[at]);
+      at += 1;
+    }
+  }
+  return runs;
 }
