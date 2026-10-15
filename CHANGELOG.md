@@ -94,10 +94,12 @@ release has something to say.
 - `display.minimal` in `overlay.config.json` (default `false`): the viewer
   keeps the passage, its links and their statements, and leaves out what
   describes them: the status chip (still read by a screen reader, and back in
-  sight when the PDF is not verified), the keys line, the key count and name
-  filter, a key card's kind and badges, a related row's role and kind words,
-  the review footer, the ledger cluster and the "Formalized" word. Qualifying
-  words, the notice, the faithfulness verdicts and the pagers stay.
+  sight when it has keyboard focus or the PDF is not verified), the keys line,
+  the key and related counts and the name filter, a key card's kind and
+  badges, a related row's role and kind words, the review footer, the ledger
+  cluster and the "Formalized" word. Qualifying words, where a link goes
+  ("module page", "no page"), the notice, the pagers and the faithfulness
+  verdicts with their "unreviewed" caveat stay.
   `config.py`, `check_generated.py`, `serve.py`, `build_site.py` and the
   schema accept it, and `tests/test_overlay_config.py` now holds
   `build_site.py` to the table too.

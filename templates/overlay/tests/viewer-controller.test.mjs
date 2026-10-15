@@ -569,11 +569,31 @@ test("minimal: the passage, its links and their statements stay; the metadata go
   assert.equal(textOf(name), "Box.volume_nonneg");
   assert.equal(textOf(pre), "theorem volume_nonneg (b : Box) : 0 <= b.volume", "and the statement");
   assert.deepEqual(rows(documentRef, "related-list").map((row) => [rowName(row), rowKind(row)]), [
-    ["Box.volume_mono", ""], ["Set.inter_sub", ""], ["example:0123456789ab", ""], ["Set.union_comm", ""],
-  ], "related rows are bare links");
+    ["Box.volume_mono", "module page"], ["Set.inter_sub", ""], ["example:0123456789ab", "no page"],
+    ["Set.union_comm", ""],
+  ], "related rows drop their role and kind, never where the link goes");
   assert.equal(rows(documentRef, "related-list")[0].children[0].attributes.href, `${ORIGIN}/Notes/Box/index.html`);
   assert.equal(el(documentRef, "related-count").hidden, true);
   assert.equal(el(documentRef, "provenance-note").hidden, true, "how the links were curated is left out");
+  await selectPageRegion(documentRef, result.state, "loc:0004");
+  const [[privateEyebrow]] = keyCards(documentRef);
+  assert.equal(textOf(privateEyebrow.children[0]), "", "a key card's badges go too");
+});
+
+test("minimal: several key cards need no count", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  const second = structuredClone(key);
+  second.id = "item:theorem-1.1/key/Notes.Box.volume_pos";
+  second.target.pin.declaration = "Notes.Box.volume_pos";
+  sections[1].push(second);
+  const plain = await start({ sections });
+  await selectPageRegion(plain.documentRef, plain.result.state, "loc:0001");
+  assert.equal(el(plain.documentRef, "key-count").hidden, false, "the default overlay counts them");
+  const { documentRef, result } = await start({ config: makeConfig(MINIMAL), sections });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  assert.equal(keyCards(documentRef).length, 2);
+  assert.deepEqual([el(documentRef, "key-count").hidden, el(documentRef, "key-head").hidden], [true, true]);
 });
 
 test("minimal: a status that qualifies the links still says so, with its note", async () => {
@@ -628,9 +648,12 @@ test("minimal: the faithfulness switch and the verdicts still work", async () =>
   const button = el(documentRef, "toggle-faithfulness");
   await selectPageRegion(documentRef, result.state, "loc:0001");
   assert.equal(button.hidden, false);
+  assert.equal(el(documentRef, "provenance-note").hidden, true, "no footer while no verdict is shown");
   await fire(button, "click");
   assert.equal(el(documentRef, "verdict-notes").children.length, 1);
   assert.deepEqual(verdictMarks(documentRef), ["faithful|card-verdict verdict-badge verdict-faithful"]);
+  assert.equal(el(documentRef, "provenance-note").hidden, false, "shown verdicts keep their caveat");
+  assert.match(el(documentRef, "provenance-note").textContent, /^Machine verdicts, (partly reviewed|unreviewed)\.$/);
 });
 
 test("minimal: a PDF that is not verified keeps its status in sight", async () => {

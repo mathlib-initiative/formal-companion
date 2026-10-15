@@ -89,13 +89,15 @@ are required; `lede`, `display.strip_prefix`, `display.minimal`, `storage_key`,
 unknown keys are errors. `back_link` is optional: with none, or one whose `href`
 the viewer refuses, the top bar shows no back link. `display.minimal: true`
 keeps the passage, its links and their statements, and leaves out what describes
-them: the status chip (kept for screen readers, and shown again when the PDF is
-not verified), the keys line (the toolbar buttons name their shortcuts), the key
-count and the name filter, a key card's kind and badges, a related row's role
-and kind words, the review footer, the ledger cluster and the "Formalized" word.
-A word that qualifies the links (support only, partial, ...), the notice, the
-faithfulness verdicts and the pagers stay. `source_id` names the PDF the overlay
-shows: the `source_id` in its records' source extension (section 7).
+them: the status chip (kept for screen readers, back in sight when it has
+keyboard focus or the PDF is not verified), the keys line (the toolbar buttons
+name their shortcuts), the key and related counts and the name filter, a key
+card's kind and badges, a related row's role and kind words, the review footer
+and the ledger cluster, and the "Formalized" word. A word that qualifies the
+links (support only, partial, ...), where a link goes ("module page", "no
+page"), the notice, the pagers and the faithfulness verdicts with their "machine
+verdicts, unreviewed" caveat stay. `source_id` names the PDF the overlay shows:
+the `source_id` in its records' source extension (section 7).
 `scripts/overlay/config.py`, `runtime/schema/overlay-config-v1.schema.json` and
 `runtime/tools/check_generated.py` carry the same rules and patterns, held
 together by `tests/test_overlay_config.py`.

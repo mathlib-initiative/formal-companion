@@ -118,6 +118,16 @@
   border: 0;
 }
 
+/* A chip out of sight comes back while it holds keyboard focus. */
+.status-chip.visually-hidden:focus-within {
+  position: relative !important;
+  width: auto;
+  height: auto;
+  margin: 0;
+  overflow: visible;
+  clip-path: none;
+}
+
 [hidden] {
   display: none !important;
 }
