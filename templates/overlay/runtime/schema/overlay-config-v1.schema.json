@@ -32,6 +32,10 @@
         "strip_prefix": {
           "description": "A declaration-name prefix the cards hide; the empty string hides nothing.",
           "type": "string"
+        },
+        "minimal": {
+          "description": "Keep the passage, its links and their statements, and leave out what describes them: the status chip (still read by a screen reader, shown when focused or when the PDF is not verified), the keys line, the key and related counts and the name filter, card kinds and badges, related-row role and kind words, the review footer, the ledger cluster and the 'Formalized' word. Qualifying words, where a link goes, the notice, pagers and verdicts with their caveat stay. Default false.",
+          "type": "boolean"
         }
       }
     },

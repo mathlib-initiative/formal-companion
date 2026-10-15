@@ -253,6 +253,7 @@ export function readConfig(raw) {
     sourceId,
     storageKey: text(raw.storage_key) || DEFAULT_STORAGE_KEY,
     stripPrefix: text(display.strip_prefix),
+    minimal: display.minimal === true,
     title,
   };
 }

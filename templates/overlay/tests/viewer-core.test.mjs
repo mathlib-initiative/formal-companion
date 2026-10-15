@@ -93,6 +93,9 @@ test("config: the viewer reads what it needs and fills section 3's defaults", ()
   assert.equal(config.pdfRoute, PDF_ROUTE);
   assert.equal(config.siteRoot, "../../");
   assert.equal(config.stripPrefix, "Notes.");
+  assert.equal(config.minimal, false, "an overlay explains itself unless the config says otherwise");
+  assert.equal(readConfig(makeConfig({ display: { minimal: true } })).minimal, true);
+  assert.equal(readConfig(makeConfig({ display: { minimal: "yes" } })).minimal, false, "only true turns it on");
   assert.equal(config.storageKey, "notes-overlay-page");
   const bare = readConfig({ pdf: { route: PDF_ROUTE }, schema: "formal-companion/overlay-config",
                             schema_version: 1, source_id: SOURCE_ID, title: "T" });
@@ -444,6 +447,9 @@ test("coverage: the stylesheet has a colour for every value and every verdict ki
     assert.ok(VERDICT_LABELS[kind], `${kind} has no label`);
     assert.ok(css.includes(`.verdict-badge.verdict-${kind}`), `viewer.css has no rule for verdict ${kind}`);
   }
+  assert.match(css, /\.visually-hidden \{[^}]*clip-path: inset\(50%\)/, "a minimal overlay's chip is clipped out of sight");
+  assert.match(css, /\.status-chip\.visually-hidden:focus-within \{[^}]*clip-path: none/,
+               "and comes back while it holds keyboard focus");
   assert.ok(css.includes(".verdict-badge.verdict-fixed"));
 });
 
