@@ -83,10 +83,11 @@ section folders of annotation files and nothing else.
 ## 3. `overlay.config.json`, version 1
 
 Unchanged: `schema`, `schema_version`, `source_id`, `title`, `pdf` and `site`
-are required; `lede`, `back_link`, `display.strip_prefix`, `storage_key`,
+are required; `lede`, `display.strip_prefix`, `storage_key`,
 `pdf.cache_dir`, `pdf.route`, `site.output_root`, `site.index`, `site.mount`,
 `site.link_text`, `build.commands` (default: none) and `serve` have defaults;
-unknown keys are errors. `source_id` names the PDF the overlay shows: the
+unknown keys are errors. `back_link` is optional: with none, or one whose
+`href` the viewer refuses, the top bar shows no back link. `source_id` names the PDF the overlay shows: the
 `source_id` in its records' source extension (section 7). `scripts/overlay/config.py`,
 `runtime/schema/overlay-config-v1.schema.json` and `runtime/tools/check_generated.py`
 carry the same rules and patterns, held together by `tests/test_overlay_config.py`.
@@ -110,21 +111,28 @@ From the records alone it builds:
   the extension's `region_items` order; a click opens the first item with a
   card;
 - items: one per extension `item`, labelled by `label`, with `status` as its
-  coverage line, `note` as its coverage note, the extension's `locator` (its
-  `text`, else its printed and physical pages) and `verdicts` (each ending
-  `[<provenance method>, <status>; <resolution>]`), and a line naming the
-  key and attributed counts and each link `provenance` (method, confirmed
-  or unconfirmed);
+  coverage word, `note` as its coverage note, the extension's `locator` (its
+  `text`, else its printed and physical pages, less the segment that repeats
+  the label and cut at the first `;` or ` / `, on one line) and `verdicts` (each one line: kind, summary and resolution,
+  shown only on request), and one footer line naming the link `provenance`
+  methods and whether a person reviewed the links and verdicts;
 - cards: one per record with a `target`, once per item however many regions
   repeat it, in the order key, attributed, support, example, helper (then by
   record id), with the extension's snippet, destination resolution and
-  fallback label, declaration kind and flags, and declaration verdict. The target resolves against the
-  annotation file's URL and becomes a link only when it is `https:` or a
-  page of the same origin, and only when the extension says it is a rendered
-  page;
+  fallback label, declaration kind and flags, and declaration verdict. The
+  target resolves against the annotation file's URL and becomes a link only
+  when it is `https:` or a page of the same origin, and only when the
+  extension says it is a rendered page. The panel shows one card per key
+  declaration, each with its statement (eight, then a button for the rest;
+  "N key declarations" when there are two or more, never a heading that says
+  what they state), then the rest under "Related": one line each, a plain
+  link to its source with no statement, headed by its count (and by the role
+  more than half of them share);
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
-  order the files came in.
+  order the files came in; with nothing selected the panel lists the page's
+  items in that order, with how many a key declaration states, and a page
+  with none points to the nearest pages that have some.
 
 A record it cannot place is dropped with a notice, never guessed at. Every
 string reaches the DOM through `textContent` or attribute setters.
