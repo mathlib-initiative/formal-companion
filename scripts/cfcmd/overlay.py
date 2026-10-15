@@ -123,6 +123,8 @@ def _export(args) -> int:
                                    source_id=args.source_id, extra=args.exporter_args)
     log.ok(f"wrote {sum(result.sections.values())} annotation files in {len(result.sections)} "
            f"section folders into {result.directory}")
+    for warning in result.warnings:
+        log.warn(warning)
     for name in result.deleted:
         log.detail(f"deleted {name}")
     log.info(f"next: `cf overlay sync {args.companion}`, then `cf overlay check {args.companion}`")

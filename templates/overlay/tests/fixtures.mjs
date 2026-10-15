@@ -249,14 +249,6 @@ export function makeConfig(overrides = {}) {
 
 // --- a DOM stand-in ---------------------------------------------------------
 
-export class FakeOption {
-  constructor(label, value) {
-    this.textContent = label;
-    this.value = value;
-    this.tagName = "OPTION";
-  }
-}
-
 export function fakeElement(tag = "div") {
   const listeners = new Map();
   const element = {
@@ -299,15 +291,17 @@ export function fakeElement(tag = "div") {
     add(...names) {
       element.className = [...new Set([...classes(), ...names])].join(" ");
     },
-    contains(name) {
-      return classes().includes(name);
-    },
+    contains: (name) => classes().includes(name),
     remove(...names) {
       element.className = classes().filter((name) => !names.includes(name)).join(" ");
     },
     toggle(name, force) {
-      const on = force ?? !classes().includes(name);
-      if (on) element.classList.add(name); else element.classList.remove(name);
+      const on = force === undefined ? !classes().includes(name) : Boolean(force);
+      if (on) {
+        element.classList.add(name);
+      } else {
+        element.classList.remove(name);
+      }
       return on;
     },
   };

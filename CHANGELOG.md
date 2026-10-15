@@ -35,6 +35,17 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The attribution-table convention no longer has a `declaration-snippets.json`.
+  `cf export attribution-table` and the `attribution_table` adapter cut each
+  snippet from the Lean file the ledger names (`adapters.leansnippets`, a port
+  of `extract_declaration_snippets.py` at measure_theory ef0a424; same text,
+  lines and `…` truncation), so the file is not an input in `GENERATED.json`
+  and the adapter's `declaration_snippets` setting is gone. A leftover file is
+  ignored and named (`ignored_inputs` in the export report, `ignored` in the
+  dry run); `cf export` and `cf overlay export` warn of it and of any id they
+  cannot locate (`snippets_unlocated`).
+  The adapter now needs the ledger, and its key hashes the Lean it cuts from
+  (`snippet_files_sha` for `snippets_sha`).
 - The vendored annotation format is the release candidate
   `formal-companion-annotations v1.0.0rc2` (identifier
   `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).
@@ -81,16 +92,15 @@ release has something to say.
 
 ### Added
 - `display.minimal` in `overlay.config.json` (default `false`): the viewer
-  shows the source, its outlines and the linked declarations with their
-  statements, and drops the PDF notice, the keyboard help, the search box and
-  role filter, the plain "formalized" sentence, the provenance and
-  ledger-cluster notes, card badges and metadata, a pager over one page of
-  cards and a role heading over cards that are all key declarations; the
-  status line stays for screen readers only. An error, a status that qualifies
-  the links and an item that links nothing still say so. Escape and Tab/Enter
-  on a region keep working but go undescribed. `config.py`, `check_generated.py`,
-  `serve.py`, `build_site.py` and the schema accept it, and
-  `tests/test_overlay_config.py` now holds `build_site.py` to the table too.
+  keeps the passage, its links and their statements, and leaves out what
+  describes them: the status chip (still read by a screen reader, and back in
+  sight when the PDF is not verified), the keys line, the key count and name
+  filter, a key card's kind and badges, a related row's role and kind words,
+  the review footer, the ledger cluster and the "Formalized" word. Qualifying
+  words, the notice, the faithfulness verdicts and the pagers stay.
+  `config.py`, `check_generated.py`, `serve.py`, `build_site.py` and the
+  schema accept it, and `tests/test_overlay_config.py` now holds
+  `build_site.py` to the table too.
 - Each toolbar button names its shortcut in a tooltip and in
   `aria-keyshortcuts`, and a test presses every advertised key and clicks its
   button and requires the same result.

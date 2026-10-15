@@ -9,9 +9,9 @@ against schema v2 and records the counts in state.json.
 Idempotence (docs/design/stage_map.md S4): the table is keyed on
 ``adapter.key()``, which hashes the adapter kind, its config, the repo commit,
 the SOURCE SHAS it is bound to *and* the content the adapter reads -- the
-globbed Lean sources, or the ledger / target-refinement / snippet / geometry
-exports of a table-driven companion.  An unchanged key is a no-op; ``--force``
-re-extracts anyway.
+globbed Lean sources, or the ledger / target-refinement / geometry exports of
+a table-driven companion and the Lean files its statements are cut from.  An
+unchanged key is a no-op; ``--force`` re-extracts anyway.
 
     cf extract                      # every companion in workspace.yaml
     cf extract --companion ours     # one
