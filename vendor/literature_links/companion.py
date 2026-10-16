@@ -21,7 +21,7 @@ _SOURCE_CHECKOUT = _HERE.parent.name == "src" and (_HERE.parent.parent / "pyproj
 SCHEMA_PATH = (_HERE.parent.parent / "schema" / "companion.schema.json"
                if not _PACKAGE_SCHEMA.is_file() and _SOURCE_CHECKOUT else _PACKAGE_SCHEMA)
 
-# The two sides of a record, each a list of ends.
+# The two sides of an annotation, each a list of ends.
 _SIDES = ("subject", "object")
 
 
@@ -126,6 +126,9 @@ def loads(text: str) -> Any:
     Integers stay exact and other numbers become floats. This does not validate;
     use :func:`check`.
     """
+    if isinstance(text, str) and text.startswith("\ufeff"):
+        # Clearer than the json module's advice to decode as utf-8-sig.
+        raise LoadError("not JSON: the text starts with a byte order mark")
     try:
         value = json.loads(text, object_pairs_hook=_pairs, parse_constant=_constant, parse_float=_float)
     except (ValueError, RecursionError) as exc:
@@ -154,13 +157,33 @@ def dumps(value: Any) -> str:
 
 def load_schema() -> dict[str, Any]:
     """Read the bundled schema."""
-    return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    schema: dict[str, Any] = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    return schema
+
+
+# Where the schema keeps a pattern for a rule of the specification, and the rule in words.
+_PATTERN_RULES = (
+    (("$defs", "reference", "pattern"),
+     "is not a reference: percent-encode White_Space, controls, invisible characters and any bare %"),
+    (("$defs", "sha256", "pattern"), "is not 64 lowercase hex digits"),
+    (("$defs", "html_location", "properties", "fragment", "pattern"),
+     "is not a fragment: it is empty, starts with # or has White_Space or a control character; use css for such an ID"),
+)
 
 
 @functools.cache
-def _validator(path: Path) -> Validator:
-    # Keyed by path so a swapped SCHEMA_PATH is still read.
-    return Validator(load_schema())
+def _validator(path: Path) -> tuple[Validator, dict[str, str]]:
+    """A validator for the schema at ``path``, and its patterns' rules in words."""
+    # Keyed by path, so a swapped SCHEMA_PATH is read.
+    schema = json.loads(path.read_text(encoding="utf-8"))
+    rules = {}
+    for keys, words in _PATTERN_RULES:
+        node = schema
+        for key in keys:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, str):
+            rules[node] = words
+    return Validator(schema), rules
 
 
 def check(document: Any) -> Report:
@@ -173,10 +196,16 @@ def check(document: Any) -> Report:
     report = Report(problems=_json_problems(document))
     if report.problems:
         return report
-    validator = _validator(SCHEMA_PATH)
+    validator, rules = _validator(SCHEMA_PATH)
     try:
-        report.problems.extend(Problem("SCHEMA", path, message)
-                               for path, message in validator.errors(document))
+        for path, message in validator.errors(document):
+            # Say which rule a value breaks, not which regular expression it fails.
+            value, _, pattern = message.rpartition(" does not match ")
+            if value and pattern in rules:
+                if value == '""' and report.problems and report.problems[-1].path == path:
+                    continue  # minLength has already said that the value is empty
+                message = f"{value} {rules[pattern]}"
+            report.problems.append(Problem("SCHEMA", path, message))
     except (ValueError, RecursionError) as exc:
         report.problems.append(Problem("SCHEMA", "$", f"cannot validate JSON: {exc}"))
     if report.problems:
@@ -222,9 +251,9 @@ def merge(inherited: dict[str, Any], written: dict[str, Any], *, defaults: bool 
     merges over it. If ``written`` holds a list there, each object in the list
     without a ``uri`` member merges over the template, and other items are kept
     as written. A ``location`` is never merged: one written over the
-    template's replaces it whole. ``written`` is a record, so a side it leaves
-    out that is still a template becomes a list holding the template alone.
-    With ``defaults=True``, ``written`` is a defaults file instead, and
+    template's replaces it whole. ``written`` is an annotation, so a side it
+    leaves out that is still a template becomes a list holding the template
+    alone. With ``defaults=True``, ``written`` is a defaults file instead, and
     templates stay objects. Neither argument is changed.
     """
     result = copy.deepcopy(inherited)

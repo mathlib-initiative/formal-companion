@@ -34,8 +34,8 @@ ANNOTATION_FILE = re.compile(r"[0-9A-Za-z_-][0-9A-Za-z._-]{0,114}\.json\Z")
 DEFAULTS = "_defaults.json"
 #: The order `cf overlay export` writes top-level members in, the rest sorted; an end's members in
 #: :data:`END` order; elsewhere `type` first.
-TOP = ("$schema", "id", "kind", "status", "relation", "junk", "note", "subject", "object", "extensions")
-END = ("type", "uri", "version", "location", "title", "role", "sha256", "citation", "identifiers", "extensions")
+TOP = ("$schema", "id", "kind", "status", "relation", "note", "subject", "object", "extensions")
+END = ("type", "uri", "version", "location", "title", "role", "junk", "sha256", "citation", "identifiers", "extensions")
 SIDES = ("subject", "object")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 #: The bundle sits beside `GENERATED.json`.

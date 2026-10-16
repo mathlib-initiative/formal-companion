@@ -9,7 +9,7 @@ overlay.
 - Project: Mozilla PDF.js, <https://github.com/mozilla/pdf.js>
 - Distributed as the npm package `pdfjs-dist`
 - Version: **6.2.108**
-- Licence: **Apache License 2.0**, reproduced verbatim in
+- License: **Apache License 2.0**, reproduced verbatim in
   `vendor/pdfjs/LICENSE`
 - Files, copied without modification from `pdfjs-dist@6.2.108`:
 
@@ -34,8 +34,8 @@ notice that says which files it covers and where they came from.
 ## Literature Links
 
 - Project: Literature Links, <https://github.com/mathlib-initiative/literature-links>
-  at commit `f80fd51afbd1e695940094bb41bc83fb72789c3d` of its `format-2.0` branch
+  at commit `2bb328c2584db1fc21e2864e3a8f8eeaebb74263` of its `format-2.0` branch
 - Version: **2.0.0**, not yet released
-- Licence: **Apache License 2.0**; Copyright 2026 the Literature Links contributors
+- License: **Apache License 2.0**; Copyright 2026 the Literature Links contributors
 - Files: `tools/literature_links/`, copied without modification and pinned by
   sha256 in `GENERATED.json`

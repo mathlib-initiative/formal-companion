@@ -17,7 +17,7 @@ A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generate
 which needs nothing but CPython and the checkout.
 
 The overlay reads **Literature Links** 2.0.0, not yet released: commit
-`f80fd51afbd1e695940094bb41bc83fb72789c3d` of its `format-2.0` branch, vendored
+`2bb328c2584db1fc21e2864e3a8f8eeaebb74263` of its `format-2.0` branch, vendored
 under `vendor/literature_links/` (sealed by
 `vendor/literature_links.manifest.json`) and shipped to companions as
 `pdf-overlay/tools/literature_links/`. The skill's other tools keep the
@@ -318,8 +318,8 @@ end of the template's document as its patch over the template, a `location`
 whole; an end whose patch would remove a template member is written whole,
 with its own `uri`, and a side that is the template alone is left out.
 References are compared resolved and written relative to each file. Files list
-`$schema, id, kind, status, relation, junk, note, subject, object, extensions`
-first, an end's `type, uri, version, location, title, role, sha256, citation,
+`$schema, id, kind, status, relation, note, subject, object, extensions` first,
+an end's `type, uri, version, location, title, role, junk, sha256, citation,
 identifiers, extensions`, and `type` first elsewhere, with a two-space indent,
 UTF-8 and arrays of scalars on one line. The files are read back with the
 vendored reader before anything is written; a record the conversion cannot

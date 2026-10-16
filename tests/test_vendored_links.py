@@ -34,6 +34,7 @@ from cflib import vendored                                          # noqa: E402
 import literature_links                                             # noqa: E402
 from literature_links import companion, discovery                   # noqa: E402
 from annotations import sync_format                                 # noqa: E402
+from overlay import defaults as overlay_defaults                    # noqa: E402
 
 VENDOR = SKILL / "vendor"
 PACKAGE = VENDOR / "literature_links"
@@ -74,6 +75,11 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
             text = (SKILL / path).read_text(encoding="utf-8")
             for value in (m["commit"], m["version"], m.get("tag", ""), m.get("branch", "")):
                 self.assertIn(value, text, path)
+
+    def test_the_written_order_names_every_field_of_the_schema(self):
+        schema = companion.load_schema()
+        self.assertEqual(set(overlay_defaults.TOP), set(schema["properties"]))
+        self.assertEqual(set(overlay_defaults.END), set(schema["$defs"]["end"]["properties"]))
 
     def test_the_bootstrap_imports_the_vendored_copy_and_its_schema(self):
         self.assertEqual(vendored.VENDOR, VENDOR)
