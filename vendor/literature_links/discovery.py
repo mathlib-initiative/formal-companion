@@ -27,7 +27,7 @@ _ONE_PER_FILE = "a JSON file holds one annotation, an object, not an array"
 class Record:
     """An annotation and its origin.
 
-    ``line`` is the one-based physical line of a JSONL record, and None in a
+    ``line`` is the one-based physical line in a JSONL file, and None in a
     JSON file, which holds one annotation. ``annotation`` has its folder
     defaults applied; ``defaults`` lists their files, outermost first.
     """
@@ -146,27 +146,28 @@ def _apply(annotation: dict[str, Any], path: Path,
     return companion.merge(merged, annotation)
 
 
+_TOO_DEEP = "JSON nesting exceeds this implementation's recursion limit"
+
+
 def inherit(annotation: dict[str, Any], path: Path | str) -> tuple[dict[str, Any] | None, tuple[Path, ...],
                                                                      list[Problem]]:
     """Apply the folder defaults that cover the file ``path`` to ``annotation``.
 
     Return the merged annotation, the defaults files applied (outermost first)
     and the problems reading them. The annotation is None when a defaults file
-    cannot be used or the record is too deep to merge. Relative references
+    cannot be used or the annotation is too deep to merge. Relative references
     keep resolving against ``path``.
     """
     problems: list[Problem] = []
-    chain = _Defaults(problems).chain(Path(path).resolve())
+    path = Path(path).resolve()
+    chain = _Defaults(problems).chain(path)
     if chain is None:
         return None, (), problems
     try:
-        merged = _apply(annotation, Path(path).resolve(), chain)
+        merged = _apply(annotation, path, chain)
     except RecursionError:
         return None, (), [Problem("JSON", "$", _TOO_DEEP)]
     return merged, tuple(file for file, _ in chain), problems
-
-
-_TOO_DEEP = "JSON nesting exceeds this implementation's recursion limit"
 
 
 def _rows(path: Path, text: str) -> list[tuple[int | None, str]]:

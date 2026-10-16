@@ -31,8 +31,8 @@ __all__ = ["DEFAULTS", "END", "SIDES", "TOP", "canonical", "common", "dumps", "e
 DEFAULTS = discovery.DEFAULTS
 SIDES = ("subject", "object")
 #: Top-level members in this order, then the rest sorted; an end's in :data:`END` order; elsewhere `type` first.
-TOP = ("$schema", "id", "kind", "status", "relation", "junk", "note", "subject", "object", "extensions")
-END = ("type", "uri", "version", "location", "title", "role", "sha256", "citation", "identifiers", "extensions")
+TOP = ("$schema", "id", "kind", "status", "relation", "note", "subject", "object", "extensions")
+END = ("type", "uri", "version", "location", "title", "role", "junk", "sha256", "citation", "identifiers", "extensions")
 #: The annotation directory as a URL, deep enough that no reference climbs out of it.
 _HOST = "https://annotations.invalid/"
 _ROOT = _HOST + "%00/" * 64
