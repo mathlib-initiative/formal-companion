@@ -1,4 +1,4 @@
-# `pdf-overlay/` — generated; do not edit by hand
+# `pdf-overlay/`: generated, do not edit by hand
 
 This directory is **generated** by the formal-companion skill's
 `cf overlay sync`: the viewer, its tools, the configuration schema, PDF.js and
