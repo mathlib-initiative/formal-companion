@@ -8,7 +8,7 @@ one companion is data the viewer and the tools read at run time:
 
 | path in the companion | written by | what it holds |
 |---|---|---|
-| `annotations/<section>/[<item>/]<name>.json`, `_defaults.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) 2.0 annotations, one link per file, one folder per book section, with folder defaults and end templates (section 7) |
+| `annotations/<section>/[<item>/]<name>.json`, `_defaults.json` | `cf overlay export` | the companion's [Literature Links](../vendor/literature_links/) 2.0 annotations, one annotation per file, one folder per book section and per item with several, with folder defaults and end templates (section 7) |
 | `pdf-overlay/overlay.config.json` | `cf overlay init`, then edited | presentation and local-build settings (section 3) |
 | `pdf-overlay/annotations.bundle.json` | `cf overlay sync` | every annotation as the reader reads it, defaults applied, with its file's path, in file order: what the viewer reads, in one fetch (section 6) |
 | `pdf-overlay/GENERATED.json` | `cf overlay sync` (and `export`) | the generator commit, the Literature Links release, the sha256 of every copied file, and the annotation files' count, manifest sha256 and bundle sha256 (section 6) |
@@ -36,8 +36,8 @@ annotation document format of `vendor/formal_companion_annotations/`;
 3. **Standard library only** for every Python file, and no build step for the
    JavaScript.
 4. **The PDF is never copied, committed or served off loopback.** The tools
-   fetch it from the URLs the annotations' source names, verify it against the
-   pinned sha256 (and `bytes`), cache it under the config's ignored cache
+   fetch it from the URLs the annotations' PDF ends name, verify it against
+   their sha256 (and `bytes`), cache it under the config's ignored cache
    directory and serve it only on `127.0.0.1`; the viewer verifies it again.
 5. **One exception to "never write to a companion repo".** `cf overlay init`,
    `export` and `sync`, run by a person by name, write
@@ -120,7 +120,7 @@ From the records alone it builds:
   rotation), or its extension's `quads`; one region per extension `region`
   id, its items in the extension's `region_items` order; a click opens the
   first item with a card;
-- items: one per record `id`, labelled by its subject ends' `title`, with
+- items: one per record `id`, labeled by its subject ends' `title`, with
   the record extension's `coverage`, else `status`, as its coverage word,
   `note` as its coverage note, the record extension's `locator` (its
   `text`, else its printed and physical pages, less the segment that repeats
@@ -152,9 +152,10 @@ From the records alone it builds:
   items in that order, with how many a key declaration states, and a page
   with none points to the nearest pages that have some.
 
-A record it cannot place is dropped with a notice, never guessed at. Every
-string reaches the DOM through `textContent` or attribute setters.
-`viewer-core.js` is the pure half; `viewer.js` the controller.
+A region it cannot place is dropped with a notice, never guessed at; a record
+with no region left adds nothing. Every string reaches the DOM through
+`textContent` or attribute setters. `viewer-core.js` is the pure half;
+`viewer.js` the controller.
 
 ## 5. Runtime tools (`runtime/tools/`)
 
@@ -301,7 +302,7 @@ that links nothing; an item with several is a folder `<item>/` of
 (and a leading `.`) is replaced by `-`. A name longer than 120 characters, a
 Windows device name (`con`, `nul`, ...), `_defaults.json`, and every name
 that equals another one in its folder ignoring case instead ends in `-` and
-the first 10 hex digits of the sha256 of the full unsanitised key, truncated
+the first 10 hex digits of the sha256 of the full unsanitized key, truncated
 to fit.
 
 `scripts/overlay/defaults.py` writes the files with Literature Links folder
