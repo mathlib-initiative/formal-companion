@@ -35,6 +35,21 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The overlay writes and reads Literature Links 2.0.0, unreleased, vendored
+  from commit `f80fd51` of its `format-2.0` branch. A record relates `subject`
+  ends, the item's regions of the PDF, to `object` ends, the declaration in
+  the repository at the export commit, and its `id` is the item's, so an item
+  drawn in several regions is one record per link. A link's relation token
+  becomes `relation` (`part` is `hasPart`), and an item that links nothing
+  with coverage `not_formalized` is a `noMatch` over the repository. Folder
+  defaults carry end templates. The viewer takes regions from the PDF ends and
+  cards from the Lean ends, and derives a card's page from the module and
+  declaration under the site root; `serve.py` reads the PDF's `sha256` and
+  URLs from its end. Companions re-export and re-sync; the viewer shows the
+  same regions, items and cards.
+- `scripts/annotations/sync_format.py --branch` vendors a commit of a version
+  not yet released; the manifest records the branch and `"released": false`,
+  and `GENERATED.json`'s `format` names the branch.
 - The attribution-table convention no longer has a `declaration-snippets.json`.
   `cf export attribution-table` and the `attribution_table` adapter cut each
   snippet from the Lean file the ledger names (`adapters.leansnippets`, a port
