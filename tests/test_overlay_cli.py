@@ -1004,6 +1004,17 @@ class TestCheck(OverlayCase):
         problems = self.hand_written(lambda r: None, lambda r: r["subject"][0].update(sha256="e" * 64))
         self.assertTrue(any("2 different sources" in line for line in problems), problems)
 
+    def test_the_overlay_rules_read_an_extension_that_is_not_an_object_as_none(self):
+        def replace(side, value):
+            return lambda r: r[side][0]["extensions"].update({overlay_shards.NAMESPACE: value})
+
+        for value in ("x", [1]):
+            with self.subTest(value=value):
+                self.assertEqual(self.hand_written(lambda r: None, replace("object", value),
+                                                   replace("subject", value)), [])
+                problems = self.hand_written(replace("subject", value))
+                self.assertTrue(any("no annotation is a record of the PDF" in line for line in problems), problems)
+
 
 # ---------------------------------------------------------------------------
 # check_generated.py, as a companion's CI runs it
