@@ -296,6 +296,23 @@ class TestTheMapping(unittest.TestCase):
         self.assertEqual(ext(equation["subject"][0])["region"], "remark-1.2.4@p002")
         self.assertEqual(equation["subject"][0]["title"], "Equation 1.1")
 
+    def test_status_is_a_recommended_value_and_another_class_stays_in_the_extension(self):
+        doc = document()
+        classes = {"passage-p5": "support_only", "lemma-2.1": "example_only"}
+        for item in doc["items"]:
+            item["coverage"] = classes.get(item["id"], item.get("coverage"))
+        records = by_id(shards.convert(doc))
+        [support] = records["passage-p5"]
+        self.assertEqual((support["status"], ext(support)["coverage"]), ("not_formalized", "support_only"))
+        self.assertNotIn("relation", support, "a support link claims no correspondence")
+        self.assertTrue(records["lemma-2.1"])
+        for record in records["lemma-2.1"]:
+            self.assertNotIn("status", record, "no recommended status names the class")
+            self.assertEqual(ext(record)["coverage"], "example_only")
+        for item in ("theorem-1.2.3", "remark-1.2.4", "exercise-1.3.1", "equation-1.1"):
+            for record in self.records[item]:
+                self.assertNotIn("coverage", ext(record), f"{item}: its status names its class")
+
     def test_a_region_keeps_the_order_its_curation_names_its_items_in(self):
         for record in self.records["remark-1.2.4"] + self.records["equation-1.1"]:
             self.assertEqual(ext(record["subject"][0])["region_items"], ["remark-1.2.4", "equation-1.1"])

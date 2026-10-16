@@ -20,7 +20,8 @@ section.  :func:`convert` is the whole mapping:
   item that links nothing has ``"object": []``, or, when its coverage is
   ``not_formalized``, the repository at the commit with ``relation: noMatch``;
 * ``relation`` from the link's relation token, ``kind``, ``status`` and
-  ``note`` from the item and its coverage;
+  ``note`` from the item and its coverage (a class that no recommended
+  status names stays in the extension as ``coverage``);
 * everything else the viewer shows under one extension, :data:`NAMESPACE`, on
   the end it describes or on the record.
 
@@ -69,8 +70,13 @@ HASH_DIGITS = 10
 ROLES = ("key", "attributed", "support", "example", "helper")
 #: The page boxes whose normalized coordinates are the displayed page's.
 DISPLAYED_BOXES = ("CropBox", "MediaBox")
-#: Statuses: the curation's class where it gives one, else ``formalized`` for a key link.
-STATUS_OF_COVERAGE = {"partial_only": "partial"}
+#: The curation's coverage class as a Literature Links ``status``: only the format's recommended values.
+#: ``example_only``, ``private_only`` and ``out_of_scope`` give no status. An item with no class is
+#: ``formalized`` when it has a key link.
+STATUS_OF_COVERAGE = {"formalized": "formalized", "partial_only": "partial", "not_formalized": "not_formalized",
+                      "support_only": "not_formalized"}
+#: The classes their status names alone; any other stays in the record's extension as ``coverage``.
+NAMED_BY_STATUS = frozenset({"formalized", "partial_only", "not_formalized"})
 #: A link's relation token as a Literature Links ``relation``.  ``uses`` and
 #: ``supporting`` are tokens outside the format's core that companions write.
 RELATIONS = {"exact": "exactMatch", "generalization": "broadMatch", "special_case": "narrowMatch",
@@ -356,7 +362,7 @@ def lean_location(decl: dict) -> dict:
 def _status(item: dict, has_key: bool) -> str | None:
     coverage = item.get("coverage")
     if coverage:
-        return STATUS_OF_COVERAGE.get(coverage, coverage)
+        return STATUS_OF_COVERAGE.get(coverage)
     return "formalized" if has_key else None
 
 
@@ -584,13 +590,15 @@ class _Converter:
         if item.get("coverage_note"):
             base["note"] = item["coverage_note"]
         common = {"locator": self.locator(item, {r.page for r in regions})}
+        if item.get("coverage") and item["coverage"] not in NAMED_BY_STATUS:
+            common["coverage"] = item["coverage"]
         verdicts = self.verdicts.get(item["id"], [])
         if verdicts:
             common["verdicts"] = [self.verdict(v) for v in verdicts]
         section = self.out.sections.setdefault(section_of(item, self.clusters), [])
         if not links:
             record = dict(base, subject=subject, object=[])
-            if status == "not_formalized" and "version" in self.project:
+            if item.get("coverage") == "not_formalized" and "version" in self.project:
                 # The item was searched for in the repository at the commit and is not there.
                 record.update(relation="noMatch", object=[dict(self.project)])
                 self.out.counts["checked_absences"] += 1

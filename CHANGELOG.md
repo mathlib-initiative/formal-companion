@@ -47,6 +47,11 @@ release has something to say.
   declaration under the site root; `serve.py` reads the PDF's `sha256` and
   URLs from its end. Companions re-export and re-sync; the viewer shows the
   same regions, items and cards.
+- `status` holds only Literature Links' recommended values: `support_only`
+  is `not_formalized`, and `example_only`, `private_only` and `out_of_scope`
+  give no status. Such a class stays in the record extension as `coverage`,
+  which the viewer reads first. A card whose location names no declaration
+  is named by its end's `title`.
 - `scripts/annotations/sync_format.py --branch` vendors a commit of a version
   not yet released; the manifest records the branch and `"released": false`,
   and `GENERATED.json`'s `format` names the branch.
