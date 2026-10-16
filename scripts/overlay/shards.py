@@ -3,37 +3,41 @@
 New code, implementing section 7 of the overlay contract (`docs/overlay.md`).
 The exporters resolve a companion's curation into one annotation document
 (`vendor/formal_companion_annotations`); the overlay reads Literature Links
-(`vendor/literature_links`), one annotation per file, one folder per book
+2.0 (`vendor/literature_links`), one annotation per file, one folder per book
 section.  :func:`convert` is the whole mapping:
 
-* one record per (region, item, linked declaration), for every link role the
-  viewer shows, and one target-less record per region of an item that links
-  nothing;
-* ``source``: the PDF, its official URL and a ``book`` pin;
-* ``location``: ``{page, rect}``, the region's box as ``[x, y, width, height]``
-  fractions of the displayed page from the top left (a quad region becomes
-  its bounding box, the quads kept in the extension);
-* ``target``: the rendered page (``href#fragment``, or the fallback page),
-  relative to the annotation's own file, and a ``repository`` pin of the
-  declaration;
-* ``kind``, ``label``, ``status``, ``note`` and ``id`` from the item, its
-  coverage and the link;
-* everything else the viewer shows under one extension, :data:`NAMESPACE`.
+* one record per (item, linked declaration), for every link role the viewer
+  shows, and one record for an item that links nothing; the record's ``id``
+  is the item's, so the records about one item share it;
+* ``subject``: one ``pdf`` end per region of the item, in reading order: the
+  PDF at its official URL with its ``sha256`` and a CSL ``citation``, the
+  region's box as ``{page, rect}`` (``[x, y, width, height]`` fractions of the
+  displayed page from the top left; a quad region becomes its bounding box,
+  the quads kept in the extension) and the item's label as ``title``;
+* ``object``: one ``lean`` end, the companion's repository at the export
+  commit with the declaration (or, for an anonymous example, its module and
+  the line it starts on) as ``location`` and the link's role as ``role``; an
+  item that links nothing has ``"object": []``, or, when its coverage is
+  ``not_formalized``, the repository at the commit with ``relation: noMatch``;
+* ``relation`` from the link's relation token, ``kind``, ``status`` and
+  ``note`` from the item and its coverage;
+* everything else the viewer shows under one extension, :data:`NAMESPACE`, on
+  the end it describes or on the record.
 
 :func:`layout` places the files, the same way on every OS: an item with
 several records gets a folder; :func:`file_bytes` writes them with folder
-defaults (`overlay.defaults`).
+defaults and end templates (`overlay.defaults`).
 """
 from __future__ import annotations
 
 import collections
+import copy
 import hashlib
 import math
 import os
 import re
 import stat
 import tempfile
-import urllib.parse
 from dataclasses import dataclass, field
 from decimal import Decimal
 from fractions import Fraction
@@ -44,9 +48,9 @@ from literature_links import discovery
 
 from overlay import defaults
 
-__all__ = ["ANNOTATION_FILE", "DEFAULTS", "DIRECTORY", "ITEM_DIR", "NAMESPACE", "ROLES", "SECTION_DIR",
-           "Conversion", "annotation_bytes", "convert", "file_bytes", "file_names", "layout", "scan_problems",
-           "section_of", "walk"]
+__all__ = ["ANNOTATION_FILE", "DEFAULTS", "DIRECTORY", "ITEM_DIR", "NAMESPACE", "RELATIONS", "ROLES", "SECTION_DIR",
+           "UNLOCATED_PROFILE", "Conversion", "annotation_bytes", "convert", "file_bytes", "file_names", "layout",
+           "page_of", "scan_problems", "section_of", "verso_fragment", "walk"]
 
 #: The one extension key every record carries (docs/overlay.md section 7).
 NAMESPACE = "org.mathlib-initiative.formal-companion.overlay"
@@ -67,8 +71,18 @@ ROLES = ("key", "attributed", "support", "example", "helper")
 DISPLAYED_BOXES = ("CropBox", "MediaBox")
 #: Statuses: the curation's class where it gives one, else ``formalized`` for a key link.
 STATUS_OF_COVERAGE = {"partial_only": "partial"}
-#: A fragment percent-encoded as `encodeURIComponent` does, so the viewer uses it as it is.
-FRAGMENT_SAFE = "!'()*-._~"
+#: A link's relation token as a Literature Links ``relation``.  ``uses`` and
+#: ``supporting`` are tokens outside the format's core that companions write.
+RELATIONS = {"exact": "exactMatch", "generalization": "broadMatch", "special_case": "narrowMatch",
+             "part": "hasPart", "related": "relatedMatch", "invocation": "relatedMatch",
+             "uses": "relatedMatch", "supporting": "relatedMatch"}
+#: The tokens their ``relation`` names alone; any other token stays in the record's extension.
+INJECTIVE = frozenset({"exact", "generalization", "special_case", "part"})
+#: The location of an anonymous example the export could not place on a line:
+#: ``{module}`` alone would select the whole module.
+UNLOCATED_PROFILE = "urn:x-formal-companion:unlocated-example:v1"
+#: The CSL type of a ``kind: pdf`` source.
+CSL_TYPE = "book"
 
 _CLUSTER_SECTION = re.compile(r"\bSection (\d+)\.(\d+)", re.ASCII)
 _DOTTED = re.compile(r"(\d+)\.(\d+)", re.ASCII)
@@ -271,26 +285,72 @@ def pdf_source(doc: dict, source_id: str | None) -> dict:
     return source
 
 
-def ll_source(source: dict) -> dict:
-    """``source``: the PDF at its official URL, a ``book`` pin, and what serve.py and the viewer need."""
-    pin = {"type": "book"}
-    for ours, theirs in (("title", "title"), ("edition", "edition"), ("url", "url"),
-                         ("retrieved_at", "retrieved"), ("sha256", "sha256")):
+def csl_date(text: str) -> dict:
+    """A CSL date: ``date-parts`` from a leading ISO date, and the text itself as ``raw`` when it says more."""
+    match = re.match(r"(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?", text)
+    out: dict = {}
+    if match:
+        out["date-parts"] = [[int(part) for part in match.groups() if part]]
+    if not match or match.group(0) != text:
+        out["raw"] = text
+    return out
+
+
+def pdf_end(source: dict) -> dict:
+    """A subject end for the PDF, without a location: its official URL, sha256 and CSL citation.
+
+    The extension carries what serve.py and the viewer need beside them.
+    """
+    citation = {"id": source["id"], "type": CSL_TYPE}
+    for ours, theirs in (("title", "title"), ("edition", "edition"), ("url", "URL")):
         if source.get(ours):
-            pin[theirs] = source[ours]
+            citation[theirs] = source[ours]
+    if source.get("retrieved_at"):
+        citation["accessed"] = csl_date(source["retrieved_at"])
     identifiers = dict(source.get("identifiers") or {})
     isbns = identifiers.pop("isbn", None) or []
     if isbns:
-        pin["isbn"] = isbns[0]
+        citation["ISBN"] = isbns[0]
+    if isinstance(identifiers.get("doi"), str):
+        citation["DOI"] = identifiers.pop("doi")
     extra = {f"isbn-{n}": isbn for n, isbn in enumerate(isbns[1:], 2)}
     extra.update({k: v for k, v in identifiers.items() if isinstance(v, str)})
+    end = {"type": "pdf", "uri": source["url"], "sha256": source["sha256"], "citation": citation}
     if extra:
-        pin["identifiers"] = dict(sorted(extra.items()))
+        end["identifiers"] = dict(sorted(extra.items()))
     ext = {"source_id": source["id"]}
     for key in ("bytes", "physical_page_count", "alternate_urls"):
         if source.get(key):
             ext[key] = source[key]
-    return {"type": "pdf", "uri": source["url"], "pin": pin, "extensions": {NAMESPACE: ext}}
+    end["extensions"] = {NAMESPACE: ext}
+    return end
+
+
+def page_of(module: object) -> str | None:
+    """A module's rendered page relative to the site root: ``A/B/C/index.html`` for ``A.B.C``."""
+    return module.replace(".", "/") + "/index.html" if isinstance(module, str) and module else None
+
+
+def verso_fragment(declaration: object) -> str | None:
+    """The anchor a rendered page gives a declaration: its name with each ``.`` as ``___``."""
+    return declaration.replace(".", "___") if isinstance(declaration, str) and declaration else None
+
+
+def lean_location(decl: dict) -> dict:
+    """The declaration by name; an anonymous one by its module and the line it starts on, else a profile."""
+    module, line = decl.get("module"), decl.get("line")
+    if decl.get("name"):
+        out = {"declaration": decl["name"]}
+        if module:
+            out["module"] = module
+        return out
+    if module and isinstance(line, int) and not isinstance(line, bool) and line >= 1:
+        return {"module": module, "lines": [line]}
+    out = {"profile": UNLOCATED_PROFILE}
+    if module:
+        out["module"] = module
+    out["id"] = decl["id"]
+    return out
 
 
 def _status(item: dict, has_key: bool) -> str | None:
@@ -325,17 +385,31 @@ def item_order(location: dict) -> list[str]:
     return items
 
 
+@dataclass
+class _Region:
+    """One region of the source, placed: what each item drawn in it needs for its subject end."""
+
+    location: dict
+    id: str
+    page: int
+    rect: list[float]
+    quads: list | None
+    order: list[str]
+
+
 class _Converter:
     def __init__(self, doc: dict, source_id: str | None, directory: str) -> None:
         self.doc = doc
         self.out = Conversion()
         self.source = pdf_source(doc, source_id)
-        self.ll_source = ll_source(self.source)
+        self.pdf_end = pdf_end(self.source)
         companion = doc.get("companion") or {}
         self.commit = companion.get("commit")
-        self.repo_url = repo_url(companion.get("repo"))
-        # Records are made for a file in <directory>/<section>/, this far below the site root; then moved.
+        # Records are made for a file in <directory>/<section>/, this far below the companion root; then moved.
         self.up = "../" * (len(PurePosixPath(directory).parts) + 1)
+        self.project = {"type": "lean", "uri": repo_url(companion.get("repo")) or self.up}
+        if self.commit:
+            self.project["version"] = self.commit
         self.declarations = _by_id(doc.get("declarations"))
         self.snippets = _by_id(doc.get("snippets"), "declaration")
         self.destinations = _by_id(doc.get("destinations"), "declaration")
@@ -356,47 +430,77 @@ class _Converter:
         for verdict in doc.get("verdicts") or []:
             self.verdicts[verdict["item"]].append(verdict)
 
-    def repository_pin(self, decl: dict | None = None) -> dict:
-        pin = {"type": "repository"}
-        if self.repo_url:
-            pin["url"] = self.repo_url
-        if self.commit:
-            pin["commit"] = self.commit
-        if decl is None:
-            return pin
-        if decl.get("file"):
-            pin["path"] = decl["file"]
-        if isinstance(decl.get("line"), int) and decl["line"] >= 1:
-            pin["line"] = decl["line"]
-        if decl.get("module"):
-            pin["module"] = decl["module"]
-        if decl.get("name"):
-            pin["declaration"] = decl["name"]
-        return pin
+    def destination(self, decl: dict, location: dict) -> dict | None:
+        """The rendered page, as far as the end's location does not already give it, or None.
 
-    def target(self, decl: dict, ext: dict) -> dict:
-        """The rendered page relative to the annotation's file, else the source file (an unlinked card)."""
+        A page is ``<site root>/<module as a path>/index.html``, and an exact
+        one adds the declaration's anchor (:func:`page_of`, :func:`verso_fragment`):
+        a destination they give keeps only its ``resolution`` (and
+        ``fallback_label``), and one they do not give keeps its ``href``
+        (relative to the site root, or an ``https:`` URL) and its ``fragment``.
+        """
         dest = self.destinations.get(decl["id"])
-        uri = None
-        if dest is not None:
-            href = dest.get("href")
-            base = href if isinstance(href, str) and _HTTPS.fullmatch(href) else (
-                self.up + href if _site_path(href) else None)
-            if base is None:
-                self.out.problems.append(f"{decl['id']}: destination href {href!r} is neither a site path "
-                                         "nor an https: URL; the card is unlinked")
-            else:
-                uri = base
-                if dest.get("resolution") == "exact" and dest.get("fragment"):
-                    uri += "#" + urllib.parse.quote(dest["fragment"], safe=FRAGMENT_SAFE)
-                ext["destination"] = {"resolution": dest.get("resolution")}
-                if dest.get("fallback_label"):
-                    ext["destination"]["fallback_label"] = dest["fallback_label"]
-        if uri is None:
+        if dest is None:
             self.out.counts["targets_without_a_rendered_page"] += 1
-            uri = self.up + urllib.parse.quote(decl["file"]) if decl.get("file") else \
-                urllib.parse.quote(decl.get("name") or decl["id"], safe=".")
-        return {"uri": uri, "pin": self.repository_pin(decl)}
+            return None
+        href = dest.get("href")
+        if not (isinstance(href, str) and _HTTPS.fullmatch(href) or _site_path(href)):
+            self.out.problems.append(f"{decl['id']}: destination href {href!r} is neither a site path "
+                                     "nor an https: URL; the card is unlinked")
+            return None
+        out = {"resolution": dest.get("resolution")}
+        if dest.get("fallback_label"):
+            out["fallback_label"] = dest["fallback_label"]
+        if href != page_of(location.get("module")):
+            out["href"] = href
+            self.out.counts["destinations_with_their_own_page"] += 1
+        if dest.get("resolution") == "exact" and dest.get("fragment") \
+                and dest["fragment"] != verso_fragment(location.get("declaration")):
+            out["fragment"] = dest["fragment"]
+            self.out.counts["destinations_with_their_own_anchor"] += 1
+        return out
+
+    def lean_end(self, decl: dict, link: dict, verdicts: list[dict]) -> dict:
+        """The object end of one link: the repository at the commit, the declaration in it, and its card."""
+        end = dict(self.project, location=lean_location(decl), role=link["role"])
+        if "profile" in end["location"]:
+            self.out.counts["unlocated_anonymous_declarations"] += 1
+        ext: dict = {"declaration": {"id": decl["id"]}}
+        if decl.get("kind"):
+            ext["declaration"]["kind"] = decl["kind"]
+        for flag in ("private", "anonymous"):
+            if decl.get(flag):
+                ext["declaration"][flag] = True
+        if decl.get("sorry") and decl["sorry"] != "none":
+            ext["declaration"]["sorry"] = decl["sorry"]
+        snippet = self.snippets.get(decl["id"])
+        if snippet and snippet.get("text"):
+            ext["snippet"] = {k: snippet[k] for k in ("text", "line", "truncated") if k in snippet}
+        destination = self.destination(decl, end["location"])
+        if destination is not None:
+            ext["destination"] = destination
+        for verdict in verdicts:
+            for entry in verdict.get("declarations") or []:
+                if entry.get("declaration") == decl["id"] and "declaration_verdict" not in ext:
+                    ext["declaration_verdict"] = {"verdict": entry["verdict"], "status": verdict["status"]}
+                    if entry.get("note"):
+                        ext["declaration_verdict"]["note"] = entry["note"]
+        end["extensions"] = {NAMESPACE: ext}
+        return end
+
+    def subject_end(self, item: dict, region: _Region) -> dict:
+        end = copy.deepcopy(self.pdf_end)
+        end["location"] = {"page": region.page, "rect": region.rect}
+        end["title"] = item_label(item)
+        ext = end["extensions"][NAMESPACE]
+        ext["region"] = region.id
+        if len(region.order) > 1:
+            ext["region_items"] = list(region.order)
+        if region.quads:
+            ext["quads"] = region.quads
+        if region.location.get("signoff"):
+            ext["signoff"] = region.location["signoff"]
+        return end
 
     def verdict(self, v: dict) -> dict:
         out = {k: v[k] for k in ("verdict", "severity", "status", "summary", "evidence", "resolution", "sub") if k in v}
@@ -424,7 +528,7 @@ class _Converter:
         return out
 
     def records(self) -> Conversion:
-        placed = []
+        regions: dict[str, list[_Region]] = collections.defaultdict(list)
         for location in sorted(self.doc.get("locations") or [], key=lambda l: l["id"]):
             if (location.get("target") or {}).get("source") != self.source["id"]:
                 continue
@@ -445,18 +549,15 @@ class _Converter:
                     continue
                 self.out.counts["regions"] += 1
                 self.out.counts["quad_regions"] += quads is not None
-                placed.append((location, region_id, page, rect, quads, item_order(location)))
-        pages: dict[str, set[int]] = collections.defaultdict(set)
-        for _location, _region, page, _rect, _quads, order in placed:
-            for item_id in order:
-                pages[item_id].add(page)
-        for location, region_id, page, rect, quads, order in placed:
-            for item_id in order:
-                item = self.items.get(item_id)
-                if item is None:
-                    self.out.problems.append(f"{location['id']}: item {item_id!r} is not an item of the source")
-                    continue
-                self.add(item, location, region_id, page, rect, quads, order, pages[item_id])
+                placed = _Region(location, region_id, page, rect, quads, item_order(location))
+                for item_id in placed.order:
+                    if item_id not in self.items:
+                        self.out.problems.append(f"{location['id']}: item {item_id!r} is not an item of the source")
+                        continue
+                    regions[item_id].append(placed)
+        for item_id, placed in sorted(regions.items()):
+            placed.sort(key=lambda r: (r.page, r.rect[1], r.rect[0], r.id))
+            self.add(self.items[item_id], placed)
         for section, records in sorted(self.out.sections.items()):
             records.sort(key=_order)
             try:
@@ -472,31 +573,27 @@ class _Converter:
         self.out.counts["sections"] = len(self.out.sections)
         return self.out
 
-    def add(self, item: dict, location: dict, region_id: str, page: int, rect: list[float], quads,
-            order: list[str], pages: set[int]) -> None:
+    def add(self, item: dict, regions: list[_Region]) -> None:
+        """The item's records: one per link, or one that links nothing; each names every region of the item."""
         links = self.links.get(item["id"], [])
         status = _status(item, any(l["role"] == "key" for l in links))
-        base = {"source": self.ll_source, "location": {"page": page, "rect": rect},
-                "kind": item["kind"].lower(), "label": item_label(item)}
+        subject = [self.subject_end(item, r) for r in regions]
+        base: dict = {"id": item["id"], "kind": item["kind"].lower()}
+        if status:
+            base["status"] = status
         if item.get("coverage_note"):
             base["note"] = item["coverage_note"]
-        common = {"item": item["id"], "region": region_id, "locator": self.locator(item, pages)}
-        if len(order) > 1:
-            common["region_items"] = list(order)
-        if quads:
-            common["quads"] = quads
-        if location.get("signoff"):
-            common["signoff"] = location["signoff"]
+        common = {"locator": self.locator(item, {r.page for r in regions})}
         verdicts = self.verdicts.get(item["id"], [])
         if verdicts:
             common["verdicts"] = [self.verdict(v) for v in verdicts]
         section = self.out.sections.setdefault(section_of(item, self.clusters), [])
         if not links:
-            record = dict(base, id=item["id"])
-            if status == "not_formalized":
-                record["status"] = {"value": status, "pin": self.repository_pin()}
-            elif status:
-                record["status"] = status
+            record = dict(base, subject=subject, object=[])
+            if status == "not_formalized" and "version" in self.project:
+                # The item was searched for in the repository at the commit and is not there.
+                record.update(relation="noMatch", object=[dict(self.project)])
+                self.out.counts["checked_absences"] += 1
             if item.get("clusters"):
                 common["clusters"] = list(item["clusters"])
             record["extensions"] = {NAMESPACE: common}
@@ -508,43 +605,39 @@ class _Converter:
             if decl is None:
                 self.out.problems.append(f"{link['id']}: declaration {link['declaration']!r} is not in the document")
                 continue
-            ext = dict(common, role=link["role"])
-            if link.get("relation"):
-                ext["relation"] = link["relation"]
+            ext = dict(common)
+            token = link.get("relation")
+            if token and token not in INJECTIVE:
+                ext["relation"] = token
             found = provenance_of(self.provenance.get(link.get("provenance")))
             if found:
                 ext["provenance"] = found
-            ext["declaration"] = {"id": decl["id"], "kind": decl.get("kind")}
-            for flag in ("private", "anonymous"):
-                if decl.get(flag):
-                    ext["declaration"][flag] = True
-            if decl.get("sorry") and decl["sorry"] != "none":
-                ext["declaration"]["sorry"] = decl["sorry"]
-            snippet = self.snippets.get(decl["id"])
-            if snippet and snippet.get("text"):
-                ext["snippet"] = {k: snippet[k] for k in ("text", "line", "truncated") if k in snippet}
-            for verdict in verdicts:
-                for entry in verdict.get("declarations") or []:
-                    if entry.get("declaration") == decl["id"] and "declaration_verdict" not in ext:
-                        ext["declaration_verdict"] = {"verdict": entry["verdict"], "status": verdict["status"]}
-                        if entry.get("note"):
-                            ext["declaration_verdict"]["note"] = entry["note"]
-            record = dict(base, id=link["id"], target=self.target(decl, ext))
-            if status:
-                record["status"] = status
+            record = dict(base, subject=copy.deepcopy(subject), object=[self.lean_end(decl, link, verdicts)])
+            if token in RELATIONS:
+                record["relation"] = RELATIONS[token]
             record["extensions"] = {NAMESPACE: ext}
             section.append(record)
             self.out.counts[f"records.{link['role']}"] += 1
 
 
+def _link(record: dict) -> tuple[str, str] | None:
+    """``(role, declaration id)`` of a record's link, or None for a record that links nothing."""
+    ends = record.get("object") or []
+    if record.get("relation") == "noMatch" or not ends:
+        return None
+    ext = (ends[0].get("extensions") or {}).get(NAMESPACE) or {}
+    return ends[0]["role"], ext["declaration"]["id"]
+
+
 def _order(record: dict) -> tuple:
-    ext = record["extensions"][NAMESPACE]
-    role = ext.get("role")
-    rank = -1 if role is None else (ROLES.index(role) if role in ROLES else len(ROLES))
-    x, y = record["location"]["rect"][:2]
-    items = ext.get("region_items") or [ext["item"]]
-    position = items.index(ext["item"]) if ext["item"] in items else len(items)
-    return (record["location"]["page"], y, x, ext["region"], position, ext["item"], rank, record["id"])
+    first = record["subject"][0]
+    ext = first["extensions"][NAMESPACE]
+    link = _link(record)
+    rank = -1 if link is None else (ROLES.index(link[0]) if link[0] in ROLES else len(ROLES))
+    x, y = first["location"]["rect"][:2]
+    items = ext.get("region_items") or [record["id"]]
+    position = items.index(record["id"]) if record["id"] in items else len(items)
+    return (first["location"]["page"], y, x, ext["region"], position, record["id"], rank, link[1] if link else "")
 
 
 def convert(doc: dict, *, source_id: str | None = None, directory: str = DIRECTORY) -> Conversion:
@@ -557,15 +650,15 @@ def convert(doc: dict, *, source_id: str | None = None, directory: str = DIRECTO
 # ---------------------------------------------------------------------------
 
 def name_key(record: dict, *, in_item: bool = False) -> str:
-    """``<item>__<role>__<declaration>``, or ``<item>`` for a record with no target, unsanitised.
+    """``<item>__<role>__<declaration>``, or ``<item>`` for a record that links nothing, unsanitised.
 
-    In its item's folder a record with a target drops the ``<item>__``.
+    In its item's folder a record with a link drops the ``<item>__``.
     """
-    ext = record["extensions"][NAMESPACE]
-    if "role" not in ext:
-        return ext["item"]
-    rest = f"{ext['role']}__{ext['declaration']['id']}"
-    return rest if in_item else f"{ext['item']}__{rest}"
+    link = _link(record)
+    if link is None:
+        return record["id"]
+    rest = f"{link[0]}__{link[1]}"
+    return rest if in_item else f"{record['id']}__{rest}"
 
 
 def _hashed(stem: str, key: str, suffix: str) -> str:
@@ -610,17 +703,12 @@ def file_names(records: list[dict], counts: collections.Counter | None = None, *
     A name longer than :data:`MAX_NAME`, a Windows device name, `_defaults.json`,
     and every name that would equal another one in the folder ignoring case end
     instead in ``-`` and the first :data:`HASH_DIGITS` hex digits of the sha256
-    of the full key, truncated to fit.  The full key is the unsanitised key,
-    followed by ``@<region>`` when one item drawn in several regions gives
-    several records the same key.
+    of the full, unsanitised key, truncated to fit.
     """
     keys = [name_key(record, in_item=in_item) for record in records]
-    shared = collections.Counter(keys)
-    full = [key if shared[key] == 1 else f"{key}@{record['extensions'][NAMESPACE]['region']}"
-            for key, record in zip(keys, records)]
-    if len(set(full)) != len(full):
-        raise ValueError(f"two records share the key {collections.Counter(full).most_common(1)[0][0]!r}")
-    return _names([(key, f, ".json") for key, f in zip(keys, full)], counts)
+    if len(set(keys)) != len(keys):
+        raise ValueError(f"two records share the key {collections.Counter(keys).most_common(1)[0][0]!r}")
+    return _names([(key, key, ".json") for key in keys], counts)
 
 
 def layout(records: list[dict], counts: collections.Counter | None = None) -> list[str]:
@@ -632,7 +720,7 @@ def layout(records: list[dict], counts: collections.Counter | None = None) -> li
     """
     items: dict[str, list[int]] = collections.defaultdict(list)
     for index, record in enumerate(records):
-        items[record["extensions"][NAMESPACE]["item"]].append(index)
+        items[record["id"]].append(index)
     single = [found[0] for found in items.values() if len(found) == 1]
     folders = [item for item, found in items.items() if len(found) > 1]
     keys = [name_key(records[index]) for index in single]
