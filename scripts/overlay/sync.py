@@ -734,7 +734,7 @@ def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
         out.append(f"the records of {source_id!r} carry {len(sources)} different sources; "
                    "the overlay shows one PDF")
     elif not re.fullmatch(r"[0-9a-f]{64}", str(next(iter(sources.values())).get("sha256"))):
-        out.append(f"the source {source_id!r} pins no sha256, which the viewer verifies the PDF by")
+        out.append(f"the PDF {source_id!r} states no sha256, which the viewer verifies it by")
     return out
 
 

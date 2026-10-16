@@ -223,7 +223,7 @@ class TestTheMapping(unittest.TestCase):
         self.assertEqual(end["location"], {"declaration": "Notes.Box.help", "module": "Notes.Box"})
         self.assertNotIn("destination", ext(end))
         self.assertEqual(ext(end)["declaration"]["private"], True)
-        self.assertEqual(self.conversion.counts["targets_without_a_rendered_page"], 1)
+        self.assertEqual(self.conversion.counts["declarations_without_a_rendered_page"], 1)
 
     def test_an_anonymous_declaration_is_its_module_and_the_line_it_starts_on(self):
         doc = document()
@@ -295,6 +295,8 @@ class TestTheMapping(unittest.TestCase):
         self.assertNotIn("relation", equation)
         self.assertEqual(ext(equation["subject"][0])["region"], "remark-1.2.4@p002")
         self.assertEqual(equation["subject"][0]["title"], "Equation 1.1")
+        self.assertEqual((self.conversion.counts["records_linking_nothing"],
+                          self.conversion.counts["checked_absences"]), (2, 1))
 
     def test_status_is_a_recommended_value_and_another_class_stays_in_the_extension(self):
         doc = document()

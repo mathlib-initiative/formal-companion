@@ -660,7 +660,7 @@ export function pdfSource(files, sourceId) {
          + "names.");
   }
   if (!/^[a-f\d]{64}$/.test(found.sha256)) {
-    fail(`The PDF ${JSON.stringify(sourceId)} pins no sha256, so it cannot be verified.`);
+    fail(`The PDF ${JSON.stringify(sourceId)} states no sha256, so it cannot be verified.`);
   }
   return found.source;
 }

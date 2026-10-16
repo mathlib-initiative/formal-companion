@@ -447,7 +447,7 @@ class _Converter:
         """
         dest = self.destinations.get(decl["id"])
         if dest is None:
-            self.out.counts["targets_without_a_rendered_page"] += 1
+            self.out.counts["declarations_without_a_rendered_page"] += 1
             return None
         href = dest.get("href")
         if not (isinstance(href, str) and _HTTPS.fullmatch(href) or _site_path(href)):
@@ -606,7 +606,7 @@ class _Converter:
                 common["clusters"] = list(item["clusters"])
             record["extensions"] = {NAMESPACE: common}
             section.append(record)
-            self.out.counts["target_less_records"] += 1
+            self.out.counts["records_linking_nothing"] += 1
             return
         for link in links:
             decl = self.declarations.get(link["declaration"])

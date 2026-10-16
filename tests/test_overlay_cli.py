@@ -1003,6 +1003,8 @@ class TestCheck(OverlayCase):
     def test_the_overlay_rules_hold_one_pdf(self):
         problems = self.hand_written(lambda r: None, lambda r: r["subject"][0].update(sha256="e" * 64))
         self.assertTrue(any("2 different sources" in line for line in problems), problems)
+        problems = self.hand_written(lambda r: r["subject"][0].pop("sha256"))
+        self.assertTrue(any("states no sha256" in line for line in problems), problems)
 
     def test_the_overlay_rules_read_an_extension_that_is_not_an_object_as_none(self):
         def replace(side, value):

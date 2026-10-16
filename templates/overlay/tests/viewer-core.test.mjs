@@ -189,7 +189,7 @@ test("source: the PDF is the records' subject ends the config names, one sha256 
   split[2][0].subject[0] = { ...split[2][0].subject[0], sha256: fakeSha256("1") };
   assert.throws(() => pdfSource(fileInputs(split), SOURCE_ID), /two different PDFs/);
   const unpinned = makeSections("not a digest");
-  assert.throws(() => pdfSource(fileInputs(unpinned), SOURCE_ID), /pins no sha256/);
+  assert.throws(() => pdfSource(fileInputs(unpinned), SOURCE_ID), /states no sha256/);
 });
 
 // --- geometry ---------------------------------------------------------------
