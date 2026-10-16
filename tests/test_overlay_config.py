@@ -364,9 +364,12 @@ class TestTheReadersAgreeOnTheAnnotations(unittest.TestCase):
     def test_the_tools_check_files_against_the_form_the_export_writes(self):
         from overlay import defaults as overlay_defaults
         tools = load_tool("overlay_annotations")
-        self.assertEqual((tools.TOP, tools.DEFAULTS), (overlay_defaults.TOP, overlay_defaults.DEFAULTS))
+        self.assertEqual((tools.TOP, tools.END, tools.SIDES, tools.DEFAULTS),
+                         (overlay_defaults.TOP, overlay_defaults.END, overlay_defaults.SIDES, overlay_defaults.DEFAULTS))
         value = {"extensions": {"x": {"b": [1, "é"], "type": "t", "a": [{"type": "q", "z": None}, []]}}, "zz": {},
-                 "location": {"rect": [0.24, 0.47, 0.5, 0.16], "page": 1}, "id": "i", "$schema": "s", "kind": "k"}
+                 "subject": [{"title": "t", "location": {"rect": [0.24, 0.47, 0.5, 0.16], "page": 1}, "type": "pdf",
+                              "extensions": {"x": {"uri": "u", "type": "v"}}}],
+                 "object": {"version": "v", "uri": "u", "type": "lean"}, "id": "i", "$schema": "s", "kind": "k"}
         self.assertEqual(tools.file_bytes(value), overlay_defaults.dumps(value))
 
     def test_build_site_publishes_what_the_viewer_reads(self):

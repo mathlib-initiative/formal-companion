@@ -32,8 +32,11 @@ SECTION_DIR = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]*\Z")
 ITEM_DIR = re.compile(r"[0-9A-Za-z_-][0-9A-Za-z._-]{0,119}\Z")
 ANNOTATION_FILE = re.compile(r"[0-9A-Za-z_-][0-9A-Za-z._-]{0,114}\.json\Z")
 DEFAULTS = "_defaults.json"
-#: The order `cf overlay export` writes top-level members in, the rest sorted; below the top, `type` first.
-TOP = ("$schema", "id", "kind", "label", "status", "note", "source", "location", "target", "extensions")
+#: The order `cf overlay export` writes top-level members in, the rest sorted; an end's members in
+#: :data:`END` order; elsewhere `type` first.
+TOP = ("$schema", "id", "kind", "status", "relation", "junk", "note", "subject", "object", "extensions")
+END = ("type", "uri", "version", "location", "title", "role", "sha256", "citation", "identifiers", "extensions")
+SIDES = ("subject", "object")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 #: The bundle sits beside `GENERATED.json`.
 BUNDLE_FILE = re.compile(r"[0-9A-Za-z][0-9A-Za-z._-]*\.json\Z")
@@ -86,17 +89,19 @@ def sha256(raw: bytes) -> str:
 
 
 def file_bytes(value: Any) -> bytes:
-    """A file as `cf overlay export` writes it: :data:`TOP` order, two-space indent, scalar arrays on one line."""
+    """A file as `cf overlay export` writes it: :data:`TOP` and :data:`END` order, two-space indent, scalar
+    arrays on one line."""
     def dump(item: Any, indent: str, first: tuple[str, ...]) -> str:
         inner = indent + "  "
         if isinstance(item, dict) and item:
             keys = [k for k in first if k in item] + sorted(k for k in item if k not in first)
-            return "{\n" + ",\n".join(f"{inner}{scalar(k)}: {dump(item[k], inner, ('type',))}"
+            return "{\n" + ",\n".join(f"{inner}{scalar(k)}: "
+                                       f"{dump(item[k], inner, END if first is TOP and k in SIDES else ('type',))}"
                                        for k in keys) + "\n" + indent + "}"
         if isinstance(item, list) and item:
             if not any(isinstance(x, (dict, list)) for x in item):
                 return "[" + ", ".join(map(scalar, item)) + "]"
-            return "[\n" + ",\n".join(inner + dump(x, inner, ("type",)) for x in item) + "\n" + indent + "]"
+            return "[\n" + ",\n".join(inner + dump(x, inner, first) for x in item) + "\n" + indent + "]"
         return scalar(item)
 
     def scalar(item: Any) -> str:
@@ -256,17 +261,22 @@ def bundle_problems(entries: list[tuple[str, dict[str, Any]]], records: dict[str
 
 
 def extension(node: Any) -> dict[str, Any]:
-    """The overlay's own extension object of a record, source or target, or {}."""
+    """The overlay's own extension object of a record or an end, or {}."""
     value = node.get("extensions", {}).get(NAMESPACE) if isinstance(node, dict) else None
     return value if isinstance(value, dict) else {}
 
 
+def pdf_ends(annotation: Any, source_id: str) -> list[dict[str, Any]]:
+    """The annotation's subject ends that are regions of the PDF the config's `source_id` names."""
+    ends = annotation.get("subject") if isinstance(annotation, dict) else None
+    return [end for end in ends if isinstance(end, dict) and end.get("type") == "pdf"
+            and extension(end).get("source_id") == source_id] if isinstance(ends, list) else []
+
+
 def pdf_source(overlay: Path, source_id: str) -> dict[str, Any]:
-    """The `source` of the first annotation whose PDF the config's `source_id` names."""
+    """The first subject end, in the bundle, of the PDF the config's `source_id` names."""
     for _path, annotation in read_bundle(overlay):
-        source = annotation.get("source")
-        if isinstance(source, dict) and source.get("type") == "pdf" \
-                and extension(source).get("source_id") == source_id:
-            return source
+        for end in pdf_ends(annotation, source_id):
+            return end
     raise AnnotationError(f"no annotation is a record of the PDF {source_id!r}, which the config's "
                           f"source_id names; `cf overlay export` writes them")

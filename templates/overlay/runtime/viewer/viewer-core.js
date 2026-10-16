@@ -1,6 +1,7 @@
 /**
  * The overlay viewer's pure functions: the annotation bundle, the Literature
- * Links records, coordinate conversion, the href rules and sha256 verification.
+ * Links 2.0 records, coordinate conversion, the href rules and sha256
+ * verification.
  *
  * Nothing here touches the DOM, so `node --test` exercises all of it; viewer.js
  * holds the controller. Nothing here is specific to one companion either: every
@@ -95,7 +96,7 @@ function plural(count, word) {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
-/** The overlay's own extension object of a record, a source or a target, or {}. */
+/** The overlay's own extension object of a record or an end, or {}. */
 export function extensionOf(node) {
   const value = isObject(node) && isObject(node.extensions) ? node.extensions[NAMESPACE] : null;
   return isObject(value) ? value : {};
@@ -120,7 +121,7 @@ export async function sha256Hex(bytes, cryptoProvider = globalThis.crypto) {
 }
 
 /**
- * Compare the bytes with the sha256 the records' book pin states.
+ * Compare the bytes with the sha256 the records' PDF ends state.
  * The expected value is a parameter: no hash of any one PDF lives in a template.
  */
 export async function verifyPdfBytes(bytes, expected, cryptoProvider = globalThis.crypto) {
@@ -165,13 +166,13 @@ export function safeBackLinkHref(value) {
 }
 
 /**
- * Where a record's `target` leads, or null. Literature Links resolves a
- * relative reference against the file that holds the annotation (the
- * specification's "References"), so `baseUrl` is the URL of the annotation's
- * own file, `<site root>/<directory>/<section>/[<item>/]<name>.json`. The
- * result is used only when it is an `https:` URL or an `http(s):` URL of the
- * page's own origin: a `javascript:`, `data:` or foreign plain-`http:` target
- * is never a link.
+ * Where a reference leads, or null: `uri` resolved against `baseUrl`, used
+ * only when it is an `https:` URL or an `http(s):` URL of the page's own
+ * origin: a `javascript:`, `data:` or foreign plain-`http:` target is never a
+ * link. An end's own `uri` resolves against the file that holds the
+ * annotation (the specification's "References"),
+ * `<site root>/<directory>/<section>/[<item>/]<name>.json`; a rendered page
+ * resolves against the site root.
  */
 export function targetHref(target, baseUrl, pageOrigin) {
   const uri = typeof target === "string" ? target : isObject(target) ? target.uri : null;
@@ -194,6 +195,42 @@ export function targetHref(target, baseUrl, pageOrigin) {
     return resolved.href;
   }
   return null;
+}
+
+/** A Lean module's rendered page relative to the site root: `A/B/C/index.html` for `A.B.C`. */
+export function modulePage(module) {
+  const name = text(module);
+  return name ? `${name.split(".").join("/")}/index.html` : null;
+}
+
+/** The anchor a rendered page gives a declaration: its name with each "." as "___". */
+export function versoFragment(declaration) {
+  const name = text(declaration);
+  return name ? name.split(".").join("___") : null;
+}
+
+/**
+ * The rendered page an overlay card links, or null. The end's `destination`
+ * extension says there is one: its page is the module's
+ * (`<site root>/<module as a path>/index.html`) and an `exact` one adds the
+ * declaration's anchor, unless the destination names its own `href`
+ * (relative to the site root, or an `https:` URL) or `fragment`. `siteUrl`
+ * is the site root, where the rendered pages and the annotation directory are.
+ */
+export function cardHref(end, siteUrl, pageOrigin) {
+  const ext = extensionOf(end);
+  const destination = isObject(ext.destination) ? ext.destination : null;
+  if (!destination) {
+    return null;
+  }
+  const location = isObject(end.location) ? end.location : {};
+  const page = typeof destination.href === "string" ? destination.href : modulePage(location.module);
+  if (!page) {
+    return null;
+  }
+  const fragment = destination.resolution !== "exact" ? ""
+    : typeof destination.fragment === "string" ? destination.fragment : versoFragment(location.declaration) ?? "";
+  return targetHref(fragment ? `${page}#${encodeURIComponent(fragment)}` : page, siteUrl, pageOrigin);
 }
 
 // --- the configuration ------------------------------------------------------
@@ -339,32 +376,32 @@ function fraction(value) {
 }
 
 /**
- * `{page, quads}` of a record's PDF location: its `rect`, `[x, y, width,
+ * `{page, quads}` of a PDF end's location: its `rect`, `[x, y, width,
  * height]` as fractions of the displayed page from the top left, or the
  * extension's quads when the region was drawn as quadrilaterals. A location
- * this viewer cannot place throws; the caller drops the record and says so.
+ * this viewer cannot place throws; the caller drops the region and says so.
  */
-export function recordRegion(record) {
-  const location = isObject(record) ? record.location : null;
+export function endRegion(end) {
+  const location = isObject(end) ? end.location : null;
   const page = isObject(location) ? location.page : undefined;
   if (!Number.isInteger(page) || page < 1) {
-    fail("A record has no physical page.");
+    fail("A region has no physical page.");
   }
   const rect = location.rect;
   if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(fraction)) {
-    fail(`The record on page ${page} has no rect of four page fractions.`);
+    fail(`The region on page ${page} has no rect of four page fractions.`);
   }
   const [x, y, width, height] = rect;
   if (!(width > 0 && height > 0) || x + width > 1 + EPSILON || y + height > 1 + EPSILON) {
-    fail(`The record on page ${page} has a rect with no area or off the page.`);
+    fail(`The region on page ${page} has a rect with no area or off the page.`);
   }
-  const quads = asArray(extensionOf(record).quads);
+  const quads = asArray(extensionOf(end).quads);
   if (quads.length) {
     return {
       page,
       quads: quads.map((quad) => {
         if (!Array.isArray(quad) || quad.length !== 8 || !quad.every(fraction)) {
-          fail(`The record on page ${page} has a malformed quad.`);
+          fail(`The region on page ${page} has a malformed quad.`);
         }
         return [0, 2, 4, 6].map((n) => [quad[n], quad[n + 1]]);
       }),
@@ -487,10 +524,6 @@ export function coverageSummary(coverage) {
 
 // --- the index --------------------------------------------------------------
 
-function statusValue(status) {
-  return isObject(status) ? text(status.value) : text(status);
-}
-
 function pageList(pages) {
   const list = asArray(pages).filter(Number.isInteger);
   return list.length ? `${list.length === 1 ? "p." : "pp."} ${list.join(", ")}` : "";
@@ -520,17 +553,21 @@ function stripPrefix(name, prefix) {
   return prefix && name.startsWith(prefix) ? name.slice(prefix.length) : name;
 }
 
-function card(record, ext, context) {
-  const target = record.target;
-  const pin = isObject(target) && isObject(target.pin) ? target.pin : {};
+/**
+ * One card: an object end of a record. The overlay's own ends say in their
+ * extension whether there is a rendered page (`cardHref`); an end from
+ * elsewhere does not, and its `uri` is taken as the page.
+ */
+function card(record, end, context) {
+  const ext = extensionOf(end);
+  const recordExt = extensionOf(record);
+  const location = isObject(end.location) ? end.location : {};
   const declaration = isObject(ext.declaration) ? ext.declaration : {};
   const destination = isObject(ext.destination) ? ext.destination : null;
-  const uri = typeof target === "string" ? target : text(target?.uri);
-  const fullName = text(pin.declaration) || text(declaration.id) || uri;
-  // The overlay's own records say whether the target is a rendered page; a
-  // record from elsewhere does not, and its target is taken as one.
-  const ours = Boolean(text(ext.role));
-  const href = !ours || destination ? targetHref(target, context.baseUrl, context.pageOrigin) : null;
+  const fullName = text(location.declaration) || text(declaration.id) || text(end.uri);
+  const ours = isObject(end.extensions) && isObject(end.extensions[NAMESPACE]);
+  const href = ours ? cardHref(end, context.siteUrl, context.pageOrigin)
+    : targetHref(end.uri, context.baseUrl, context.pageOrigin);
   const badges = [];
   if (declaration.private) {
     badges.push("private");
@@ -551,28 +588,29 @@ function card(record, ext, context) {
       verdict: text(ext.declaration_verdict.verdict),
     }
     : null;
+  const declarationId = text(declaration.id) || fullName;
   return {
     badges,
-    declarationId: text(declaration.id) || fullName,
+    declarationId,
     fallbackLabel: destination?.resolution === "fallback" ? text(destination.fallback_label) : "",
     fullName,
     href,
-    id: text(record.id),
+    id: [text(record.id), text(end.role), declarationId].join("/"),
     kind: text(declaration.kind),
-    module: text(pin.module),
+    module: text(location.module),
     name: stripPrefix(fullName, context.stripPrefix) || fullName,
-    provenanceMethod: isObject(ext.provenance) ? text(ext.provenance.method) : "",
-    reviewed: isObject(ext.provenance) && typeof ext.provenance.confirmed_by_human === "boolean"
-      ? ext.provenance.confirmed_by_human : null,
-    relation: text(ext.relation),
+    provenanceMethod: isObject(recordExt.provenance) ? text(recordExt.provenance.method) : "",
+    reviewed: isObject(recordExt.provenance) && typeof recordExt.provenance.confirmed_by_human === "boolean"
+      ? recordExt.provenance.confirmed_by_human : null,
+    relation: text(recordExt.relation) || text(record.relation),
     resolution: text(destination?.resolution),
-    role: text(ext.role),
+    role: text(end.role),
     snippet,
     verdict,
   };
 }
 
-/** By role, then by record id, so the order does not depend on the order the files came in. */
+/** By role, then by card id, so the order does not depend on the order the files came in. */
 function orderCards(cards) {
   return cards
     .map((entry, index) => ({ entry, index }))
@@ -586,29 +624,31 @@ function orderCards(cards) {
     .map(({ entry }) => entry);
 }
 
-function ofSource(record, sourceId) {
-  return isObject(record) && isObject(record.source) && record.source.type === "pdf"
-    && extensionOf(record.source).source_id === sourceId;
+function ends(record, side) {
+  return isObject(record) ? asArray(record[side]).filter(isObject) : [];
+}
+
+/** A record's subject ends that are regions of the PDF whose overlay extension carries `sourceId`. */
+function sourceEnds(record, sourceId) {
+  return ends(record, "subject").filter((end) => end.type === "pdf" && extensionOf(end).source_id === sourceId);
 }
 
 /**
- * The PDF the config names: the `source` of the records whose overlay
- * extension carries its `source_id`. Every such record must cite the same
- * bytes; two different sha256 under one id is a refusal.
+ * The PDF the config names: a subject end of the records whose overlay
+ * extension carries its `source_id`. Every such end must cite the same bytes;
+ * two different sha256 under one id is a refusal.
  */
 export function pdfSource(files, sourceId) {
   let found = null;
   for (const file of asArray(files)) {
     for (const record of asArray(file.records)) {
-      if (!ofSource(record, sourceId)) {
-        continue;
-      }
-      const pin = isObject(record.source.pin) ? record.source.pin : {};
-      const sha256 = text(pin.sha256).toLowerCase();
-      if (!found) {
-        found = { sha256, source: record.source };
-      } else if (found.sha256 !== sha256) {
-        fail(`The records of ${JSON.stringify(sourceId)} cite two different PDFs.`);
+      for (const end of sourceEnds(record, sourceId)) {
+        const sha256 = text(end.sha256).toLowerCase();
+        if (!found) {
+          found = { sha256, source: end };
+        } else if (found.sha256 !== sha256) {
+          fail(`The records of ${JSON.stringify(sourceId)} cite two different PDFs.`);
+        }
       }
     }
   }
@@ -622,20 +662,29 @@ export function pdfSource(files, sourceId) {
   return found.source;
 }
 
+/** The site root a file's URL is under: its URL less its path (`<directory>/...`). */
+function siteRootOf(file) {
+  const url = text(file?.url);
+  const path = text(file?.path);
+  return path && url.endsWith(path) ? url.slice(0, url.length - path.length) : url;
+}
+
 /**
  * The page → region → item → card index the viewer renders, built purely from
- * the annotation files (`[{url, records}]`, each url the file's own) and the
- * configuration.
+ * the annotation files (`[{url, path, records}]`, each url the file's own) and
+ * the configuration. `siteUrl` is the site root; without it, each file's URL
+ * less its path.
  *
- * A record is one link: its region is its `location`, its item and region ids
- * are the extension's, and a record with a `target` adds one card to its item
- * (once per item, however many regions repeat it). `warnings` holds one line
- * per record this build could not place; such a record is dropped, never
- * guessed at.
+ * A record is about one item, its `id`: each of its subject ends that is a
+ * region of the PDF adds the item to that region (the extension's `region`
+ * id), and each object end adds one card to the item (once per item, however
+ * many records repeat it), unless the record is a checked absence
+ * (`noMatch`). `warnings` holds one line per region this build could not
+ * place; such a region is dropped, never guessed at, and a record with no
+ * region left adds nothing.
  */
-export function buildIndex(files, config, { pageOrigin = "" } = {}) {
+export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = {}) {
   const source = pdfSource(files, config.sourceId);
-  const pin = isObject(source.pin) ? source.pin : {};
   const sourceExt = extensionOf(source);
   const pageCount = Number.isInteger(sourceExt.physical_page_count) ? sourceExt.physical_page_count : null;
   const items = new Map();
@@ -643,53 +692,67 @@ export function buildIndex(files, config, { pageOrigin = "" } = {}) {
   const seen = new Map();
   const warnings = [];
   for (const file of asArray(files)) {
-    const context = { baseUrl: file.url, pageOrigin, stripPrefix: config.stripPrefix ?? "" };
+    const context = {
+      baseUrl: file.url, pageOrigin, siteUrl: siteUrl ?? siteRootOf(file), stripPrefix: config.stripPrefix ?? "",
+    };
     for (const record of asArray(file.records)) {
-      if (!ofSource(record, config.sourceId)) {
+      const placed = [];
+      for (const end of sourceEnds(record, config.sourceId)) {
+        let place;
+        try {
+          place = endRegion(end);
+        } catch (error) {
+          warnings.push(`${text(record.id) || file.url}: ${error instanceof Error ? error.message : error}`);
+          continue;
+        }
+        if (pageCount !== null && place.page > pageCount) {
+          warnings.push(`${text(record.id)}: page ${place.page} is past the source's ${pageCount} pages.`);
+          continue;
+        }
+        placed.push({ end, place });
+      }
+      if (!placed.length) {
         continue;
       }
       const ext = extensionOf(record);
-      let place;
-      try {
-        place = recordRegion(record);
-      } catch (error) {
-        warnings.push(`${text(record.id) || file.url}: ${error instanceof Error ? error.message : error}`);
-        continue;
-      }
-      if (pageCount !== null && place.page > pageCount) {
-        warnings.push(`${text(record.id)}: page ${place.page} is past the source's ${pageCount} pages.`);
-        continue;
-      }
-      const itemId = text(ext.item) || text(record.id) || text(record.label) || `p${place.page}`;
-      const regionId = text(ext.region) || `p${place.page}:${record.location.rect.join(",")}`;
+      const title = placed.map(({ end }) => text(end.title)).find(Boolean) ?? "";
+      const itemId = text(record.id) || text(ext.item) || title || `p${placed[0].place.page}`;
       if (!items.has(itemId)) {
         items.set(itemId, {
           cards: [],
           clusterIds: asArray(ext.clusters).map(text).filter(Boolean),
-          coverage: statusValue(record.status),
+          coverage: text(record.status),
           coverageNote: text(record.note),
           id: itemId,
           kind: text(record.kind),
-          label: text(record.label) || itemId,
+          label: title || itemId,
           locator: locatorText(ext.locator),
           verdicts: asArray(ext.verdicts).filter(isObject),
         });
         seen.set(itemId, new Set());
       }
-      const key = text(record.id) || JSON.stringify(record.target);
-      if (record.target !== undefined && !seen.get(itemId).has(key)) {
-        seen.get(itemId).add(key);
-        items.get(itemId).cards.push(card(record, ext, context));
+      if (record.relation !== "noMatch") {
+        for (const end of ends(record, "object")) {
+          const key = [text(end.role), text(end.uri), JSON.stringify(end.location ?? null)].join("\n");
+          if (!seen.get(itemId).has(key)) {
+            seen.get(itemId).add(key);
+            items.get(itemId).cards.push(card(record, end, context));
+          }
+        }
       }
-      if (!regions.has(regionId)) {
-        regions.set(regionId, { id: regionId, itemIds: [], order: [], page: place.page, quads: place.quads });
-      }
-      const region = regions.get(regionId);
-      if (!region.itemIds.includes(itemId)) {
-        region.itemIds.push(itemId);
-      }
-      if (!region.order.length) {
-        region.order = asArray(ext.region_items).map(text).filter(Boolean);
+      for (const { end, place } of placed) {
+        const endExt = extensionOf(end);
+        const regionId = text(endExt.region) || `p${place.page}:${end.location.rect.join(",")}`;
+        if (!regions.has(regionId)) {
+          regions.set(regionId, { id: regionId, itemIds: [], order: [], page: place.page, quads: place.quads });
+        }
+        const region = regions.get(regionId);
+        if (!region.itemIds.includes(itemId)) {
+          region.itemIds.push(itemId);
+        }
+        if (!region.order.length) {
+          region.order = asArray(endExt.region_items).map(text).filter(Boolean);
+        }
       }
     }
   }
@@ -727,9 +790,9 @@ export function buildIndex(files, config, { pageOrigin = "" } = {}) {
     pageCount,
     pages,
     regions: [...regions.values()],
-    sha256: text(pin.sha256).toLowerCase(),
+    sha256: text(source.sha256).toLowerCase(),
     source,
-    sourceTitle: text(pin.title),
+    sourceTitle: text(isObject(source.citation) ? source.citation.title : ""),
     warnings,
   };
 }

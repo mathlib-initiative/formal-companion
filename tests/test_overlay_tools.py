@@ -235,16 +235,17 @@ class Companion:
         over.update(source_overrides)
         ext = {k: over[k] for k in ("bytes", "physical_page_count", "alternate_urls")
                if over.get(k) is not None}
-        ext["source_id"] = over["id"]
-        pin = {"type": "book", "title": over["title"], "sha256": over["sha256"]}
+        ext.update(source_id=over["id"], region="lemma-1.1.1@p001")
+        citation = {"id": over["id"], "type": "book", "title": over["title"]}
         if over["url"] is not None:
-            pin["url"] = over["url"]
+            citation["URL"] = over["url"]
+        location = {"page": 1, "rect": [0.1, 0.1, 0.5, 0.2]} if over["kind"] == "pdf" else {"fragment": "lemma"}
         return {
-            "source": {"type": over["kind"], "uri": over["url"] or "notes.pdf", "pin": pin,
-                       "extensions": {NAMESPACE: ext}},
-            "location": {"page": 1, "rect": [0.1, 0.1, 0.5, 0.2]},
-            "label": "Lemma 1.1.1",
-            "extensions": {NAMESPACE: {"item": "lemma-1.1.1", "region": "lemma-1.1.1@p001"}},
+            "id": "lemma-1.1.1",
+            "subject": [{"type": over["kind"], "uri": over["url"] or "notes.pdf", "sha256": over["sha256"],
+                         "citation": citation, "location": location, "title": "Lemma 1.1.1",
+                         "extensions": {NAMESPACE: ext}}],
+            "object": [],
         }
 
     def write_document(self, **source_overrides) -> Path:
@@ -783,7 +784,7 @@ class TestBuildSite(OverlayToolsTestCase):
     def test_a_file_the_bundle_does_not_hold_is_not_published(self):
         self.companion.write_site()
         (self.companion.root / FILE).write_bytes(overlay_shards.annotation_bytes(
-            dict(self.companion.record_value(), label="Lemma 9.9.9")))
+            dict(self.companion.record_value(), note="Lemma 9.9.9")))
         with self.assertRaisesRegex(BUILD.BuildError, f"{FILE}: differs from the bundle"):
             BUILD.build_site(self.companion.overlay)
         self.assertFalse((self.companion.site / "pdf-overlay").exists())
