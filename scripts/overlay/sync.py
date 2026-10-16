@@ -678,6 +678,13 @@ def _ends(record: dict, side: str) -> list[dict]:
     return [end for end in ends if isinstance(end, dict)] if isinstance(ends, list) else []
 
 
+def _extension(node: dict) -> dict:
+    """The overlay's extension object of a record or an end, or {}, as the viewer reads it."""
+    extensions = node.get("extensions")
+    value = extensions.get(overlay_shards.NAMESPACE) if isinstance(extensions, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
 def link_problems(path: str, record: dict) -> list[str]:
     """Where a card links: a project ``uri`` that is ``https:`` or relative, and a page that stays in the site.
 
@@ -689,7 +696,7 @@ def link_problems(path: str, record: dict) -> list[str]:
         if isinstance(uri, str) and not _HTTPS.fullmatch(uri) \
                 and (re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", uri) or uri.startswith(("/", "\\"))):
             out.append(f"{path}: {record.get('id')!r}: object {uri!r} is neither https: nor a relative reference")
-        ext = (end.get("extensions") or {}).get(overlay_shards.NAMESPACE) or {}
+        ext = _extension(end)
         href = (ext.get("destination") or {}).get("href") if isinstance(ext.get("destination"), dict) else None
         if href is None or isinstance(href, str) and _HTTPS.fullmatch(href):
             continue
@@ -709,7 +716,7 @@ def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
     for path, record in read_annotations(companion).records.items():
         out += link_problems(path, record)
         for end in _ends(record, "subject"):
-            ext = (end.get("extensions") or {}).get(overlay_shards.NAMESPACE) or {}
+            ext = _extension(end)
             if end.get("type") != "pdf" or ext.get("source_id") != source_id:
                 continue
             identity = {k: end.get(k) for k in ("uri", "sha256", "citation", "identifiers")}
