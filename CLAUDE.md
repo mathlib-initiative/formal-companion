@@ -37,12 +37,12 @@ docs/design/archive/       the design record it came from (historical)
 docs/proposals/            designs not yet built (pdf-to-companion.md)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
-vendor/              literature_links/: Literature Links at commit 3ad716a
-                     (1.0.0 with unreleased changes), the format the overlay
-                     writes and reads; formal_companion_annotations/: the
-                     legacy intermediate format that `cf export` writes and
-                     `cf overlay export` converts to Literature Links; each byte
-                     for byte, sealed by its manifest; never edited here
+vendor/              literature_links/: Literature Links 2.0.0, unreleased,
+                     the format the overlay writes and reads;
+                     formal_companion_annotations/: the legacy intermediate
+                     format that `cf export` writes and `cf overlay export`
+                     converts to Literature Links; each byte for byte, sealed
+                     by its manifest; never edited here
 evals/               trigger evals: prompts as data, run by hand
 bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/

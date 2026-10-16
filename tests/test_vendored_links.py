@@ -68,6 +68,13 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
     def test_the_vendored_version_is_the_manifests(self):
         self.assertEqual(literature_links.__version__, manifest()["version"])
 
+    def test_the_contract_and_the_shipped_notice_name_the_revision(self):
+        m = manifest()
+        for path in ("docs/overlay.md", "templates/overlay/runtime/THIRD_PARTY.md"):
+            text = (SKILL / path).read_text(encoding="utf-8")
+            for value in (m["commit"], m["version"], m.get("tag", ""), m.get("branch", "")):
+                self.assertIn(value, text, path)
+
     def test_the_bootstrap_imports_the_vendored_copy_and_its_schema(self):
         self.assertEqual(vendored.VENDOR, VENDOR)
         self.assertEqual(Path(literature_links.__file__).resolve().parent, PACKAGE.resolve())
