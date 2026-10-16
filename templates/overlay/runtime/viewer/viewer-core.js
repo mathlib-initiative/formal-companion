@@ -558,8 +558,8 @@ function stripPrefix(name, prefix) {
  * One card: an object end of a record. The overlay's own ends say in their
  * extension whether there is a rendered page (`cardHref`); an end from
  * elsewhere does not, and its `uri` is taken as the page. A card is named by
- * its declaration, else the end's `title` (for an anonymous declaration),
- * else the extension's declaration id.
+ * its declaration, else the end's `title` (an end from elsewhere), else the
+ * extension's declaration id.
  */
 function card(record, end, context) {
   const ext = extensionOf(end);
@@ -605,7 +605,6 @@ function card(record, end, context) {
     provenanceMethod: isObject(recordExt.provenance) ? text(recordExt.provenance.method) : "",
     reviewed: isObject(recordExt.provenance) && typeof recordExt.provenance.confirmed_by_human === "boolean"
       ? recordExt.provenance.confirmed_by_human : null,
-    relation: text(recordExt.relation) || text(record.relation),
     resolution: text(destination?.resolution),
     role: text(end.role),
     snippet,
@@ -719,7 +718,7 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
       }
       const ext = extensionOf(record);
       const title = placed.map(({ end }) => text(end.title)).find(Boolean) ?? "";
-      const itemId = text(record.id) || text(ext.item) || title || `p${placed[0].place.page}`;
+      const itemId = text(record.id) || title || `p${placed[0].place.page}`;
       if (!items.has(itemId)) {
         items.set(itemId, {
           cards: [],

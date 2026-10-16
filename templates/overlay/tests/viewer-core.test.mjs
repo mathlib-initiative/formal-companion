@@ -371,7 +371,6 @@ test("index: a card carries its snippet, link, badges and declaration verdict", 
                "the module's page under the site root, at the declaration's anchor");
   assert.deepEqual(key.snippet, { line: 12, text: "theorem volume_nonneg (b : Box) : 0 <= b.volume" });
   assert.deepEqual(key.verdict, { note: "repaired in place", status: "fixed", verdict: "faithful" });
-  assert.equal(key.relation, "exactMatch");
   assert.deepEqual(key.badges, []);
   assert.equal(attributed.href, `${ORIGIN}/Notes/Box/index.html`);
   assert.deepEqual(attributed.badges, [], "a fallback is said by the source link, not a badge");
