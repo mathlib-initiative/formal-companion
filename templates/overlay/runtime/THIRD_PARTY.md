@@ -34,8 +34,8 @@ notice that says which files it covers and where they came from.
 ## Literature Links
 
 - Project: Literature Links, <https://github.com/mathlib-initiative/literature-links>
-  at commit `3ad716af885ca7ebe8091f824fca829e03492f00` (untagged)
-- Version: **1.0.0** with unreleased changes
+  at commit `f80fd51afbd1e695940094bb41bc83fb72789c3d` of its `format-2.0` branch
+- Version: **2.0.0**, not yet released
 - Licence: **Apache License 2.0**; Copyright 2026 the Literature Links contributors
 - Files: `tools/literature_links/`, copied without modification and pinned by
   sha256 in `GENERATED.json`
