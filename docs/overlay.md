@@ -121,8 +121,8 @@ From the records alone it builds:
   id, its items in the extension's `region_items` order; a click opens the
   first item with a card;
 - items: one per record `id`, labelled by its subject ends' `title`, with
-  `status` as its coverage word, `note` as its coverage note, the record
-  extension's `locator` (its
+  the record extension's `coverage`, else `status`, as its coverage word,
+  `note` as its coverage note, the record extension's `locator` (its
   `text`, else its printed and physical pages, less the segment that repeats
   the label and cut at the first `;` or ` / `, on one line) and `verdicts` (each one line: kind, summary and resolution,
   shown only on request), and one footer line naming the link `provenance`
@@ -130,8 +130,10 @@ From the records alone it builds:
 - cards: one per object end of a record that is not a checked absence
   (`noMatch`), once per item however many records repeat it, in the order
   of the end's `role`: key, attributed, support, example, helper (then by
-  declaration), with the end extension's snippet, destination resolution and
-  fallback label, declaration kind and flags, and declaration verdict. A
+  declaration), named by `location.declaration`, else the end's `title`,
+  else the extension's declaration `id`, with the end extension's snippet,
+  destination resolution and fallback label, declaration kind and flags, and
+  declaration verdict. A
   card links to its rendered page only when its end's extension has a
   `destination`: `<site root>/<location.module as a path>/index.html`, plus
   the declaration's anchor (its name with each `.` as `___`) when the
@@ -261,7 +263,7 @@ Literature Links 2.0 records:
 | `subject` | one `pdf` end per region of the item, in reading order: `{type: pdf, uri: <official URL>, sha256, citation, identifiers, location, title}`. `citation` is a CSL `book` item (`id` the source id, `title`, `edition`, `URL`, `accessed`, `ISBN`, `DOI`); further ISBNs and an arXiv id go in `identifiers`. `location` is `{page, rect: [x, y, width, height]}` from the `PdfRegionSelector` (`normalized` or `pt`, either origin, CropBox or MediaBox, taken as unrotated); a quad region becomes its bounding box. `title` is the printed label (kind, number, sub-part, title) |
 | `object` | `[{type: lean, uri: <repository>, version: <commit>, location, role}]`: `location` is `{declaration, module}`, or for an anonymous declaration `{module, lines: [<the line it starts on>]}`, or, when the export could not place it on a line, `{profile: "urn:x-formal-companion:unlocated-example:v1", module, id}`; `role` is the link's role. An item that links nothing has `[]`, or, when its coverage is `not_formalized`, the repository at the commit with `relation: noMatch` |
 | `relation` | the link's relation token: `exact` is `exactMatch`, `generalization` `broadMatch`, `special_case` `narrowMatch`, `part` `hasPart`, and `related`, `invocation`, `uses` and `supporting` `relatedMatch`; none for a link with no token or another token |
-| `kind`, `status`, `note` | the item kind lower-cased; the item's coverage (`partial_only` becomes `partial`), else `formalized` for an item with a key link; the coverage note |
+| `kind`, `status`, `note` | the item kind lower-cased; the item's coverage as a recommended status (`formalized`, `partial_only` as `partial`, `not_formalized`, and `support_only` as `not_formalized`; `example_only`, `private_only` and `out_of_scope` give none), else `formalized` for an item with a key link; the coverage note |
 
 The repository is `https://<companion.repo>`, or for a local checkout the
 companion root relative to the file. A declaration's line is not written
@@ -278,8 +280,8 @@ on the record:
   `summary`, `evidence`, `resolution`, `sub`, `provenance`: `actor`,
   `method`, `confirmed_by_human`, `note`), `provenance` (the link's:
   `actor`, `method`, `confirmed_by_human`), `relation` (a token its
-  `relation` does not name alone), and on a record that links nothing
-  `clusters`;
+  `relation` does not name alone), `coverage` (a coverage class its `status`
+  does not name alone), and on a record that links nothing `clusters`;
 - on a subject end: `source_id`, `bytes`, `physical_page_count`,
   `alternate_urls`, `region`, `region_items` (a region's items in the order
   the location's `x_item_order` names them, when it has several), `quads`

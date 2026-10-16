@@ -338,6 +338,29 @@ test("index: a checked absence adds no card", () => {
   assert.deepEqual([exercise.cards, exercise.coverage], [[], "not_formalized"]);
 });
 
+test("index: a record's status is the coverage when its extension names no class", () => {
+  const sections = makeSections(PDF_SHA256);
+  const [definition] = sections[1].filter((record) => record.id === "item:definition-2.1");
+  delete definition.extensions[NAMESPACE].coverage;
+  assert.equal(fixture(sections).index.items.get("item:definition-2.1").coverage, "not_formalized");
+  definition.status = "support_only";
+  assert.equal(fixture(sections).index.items.get("item:definition-2.1").coverage, "support_only");
+});
+
+test("index: a card with no declaration in its location is named by the end's title", () => {
+  const sections = makeSections(PDF_SHA256);
+  const [definition] = sections[1].filter((record) => record.id === "item:definition-2.1");
+  const [end] = definition.object;
+  end.location = { lines: [40], module: "Notes.Set" };
+  end.extensions[NAMESPACE].declaration = { id: "01.instance@Notes/Set.lean:40", kind: "instance" };
+  end.title = "instance@Notes/Set.lean:40";
+  const [card] = cardsOf(fixture(sections).index, "item:definition-2.1");
+  assert.equal(card.fullName, "instance@Notes/Set.lean:40");
+  assert.equal(card.declarationId, "01.instance@Notes/Set.lean:40", "the id still orders the card");
+  delete end.title;
+  assert.equal(cardsOf(fixture(sections).index, "item:definition-2.1")[0].fullName, "01.instance@Notes/Set.lean:40");
+});
+
 test("index: a card carries its snippet, link, badges and declaration verdict", () => {
   const { index } = fixture();
   const [key, attributed, support, example, helper] = cardsOf(index, "item:theorem-1.1");
@@ -376,7 +399,7 @@ test("index: an end from elsewhere, with no overlay extension, still shows as a 
 test("index: status, note, verdicts, locator and clusters ride on the item", () => {
   const { index } = fixture();
   const definition = index.items.get("item:definition-2.1");
-  assert.equal(definition.coverage, "support_only");
+  assert.equal(definition.coverage, "support_only", "the extension's class, which its status does not name");
   assert.equal(definition.coverageNote, "The companion states the neighbouring box lemma, not this definition.");
   const theorem = index.items.get("item:theorem-1.1");
   assert.equal(theorem.coverage, "formalized");

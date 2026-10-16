@@ -58,8 +58,9 @@ export const VERDICT_LABELS = Object.freeze({
 /**
  * One generic line per status: what the item's links do NOT show on their
  * own. `formalized`, `partial` and `not_formalized` are Literature Links'
- * recommended values; the others are the curation classes the exporter writes
- * verbatim. No value is ever guessed: an unknown one shows no summary.
+ * recommended values; the others are curation classes, which the exporter
+ * keeps in the record extension's `coverage`. No value is ever guessed: an
+ * unknown one shows no summary.
  */
 export const COVERAGE_SUMMARIES = Object.freeze({
   example_only: "Formalized only by anonymous examples; no named declaration is attributed to it.",
@@ -556,7 +557,9 @@ function stripPrefix(name, prefix) {
 /**
  * One card: an object end of a record. The overlay's own ends say in their
  * extension whether there is a rendered page (`cardHref`); an end from
- * elsewhere does not, and its `uri` is taken as the page.
+ * elsewhere does not, and its `uri` is taken as the page. A card is named by
+ * its declaration, else the end's `title` (for an anonymous declaration),
+ * else the extension's declaration id.
  */
 function card(record, end, context) {
   const ext = extensionOf(end);
@@ -564,7 +567,7 @@ function card(record, end, context) {
   const location = isObject(end.location) ? end.location : {};
   const declaration = isObject(ext.declaration) ? ext.declaration : {};
   const destination = isObject(ext.destination) ? ext.destination : null;
-  const fullName = text(location.declaration) || text(declaration.id) || text(end.uri);
+  const fullName = text(location.declaration) || text(end.title) || text(declaration.id) || text(end.uri);
   const ours = isObject(end.extensions) && isObject(end.extensions[NAMESPACE]);
   const href = ours ? cardHref(end, context.siteUrl, context.pageOrigin)
     : targetHref(end.uri, context.baseUrl, context.pageOrigin);
@@ -721,7 +724,7 @@ export function buildIndex(files, config, { pageOrigin = "", siteUrl = null } = 
         items.set(itemId, {
           cards: [],
           clusterIds: asArray(ext.clusters).map(text).filter(Boolean),
-          coverage: text(record.status),
+          coverage: text(ext.coverage) || text(record.status),
           coverageNote: text(record.note),
           id: itemId,
           kind: text(record.kind),

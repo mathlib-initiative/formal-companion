@@ -172,9 +172,9 @@ export function makeSections(sha256) {
     lean({ decl: "Notes.Set.inter_sub", ext: { destination: { href: "https://notes.example.invalid/api/Notes/Set.html",
                                                               resolution: "exact" } },
            module: "Notes.Set", role: "support" }),
-    { ext: { locator: { physical: [3], printed: [1] } },
+    { ext: { coverage: "support_only", locator: { physical: [3], printed: [1] } },
       extra: { kind: "definition", note: "The companion states the neighbouring box lemma, not this definition.",
-               status: "support_only" },
+               status: "not_formalized" },
       item: "item:definition-2.1" },
   );
   const unlinked = {
