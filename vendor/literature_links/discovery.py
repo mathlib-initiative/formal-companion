@@ -19,7 +19,7 @@ DEFAULTS = "_defaults.json"
 # Files read one annotation per line; other files hold one JSON value.
 _LINES = (".jsonl", ".ndjson")
 
-# Before 2.0 an array in a JSON file was read as several annotations, so name it.
+# The SHAPE message for a JSON file that holds an array.
 _ONE_PER_FILE = "a JSON file holds one annotation, an object, not an array"
 
 
@@ -142,7 +142,7 @@ def _apply(annotation: dict[str, Any], path: Path,
     merged: dict[str, Any] = {}
     for file, value in chain:
         depth = len(path.parent.relative_to(file.parent).parts)
-        merged = companion.merge(merged, companion.rebase(value, "../" * depth + DEFAULTS))
+        merged = companion.merge(merged, companion.rebase(value, "../" * depth + DEFAULTS), defaults=True)
     return companion.merge(merged, annotation)
 
 

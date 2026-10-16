@@ -73,10 +73,14 @@ def _child(path: str, key: Any) -> str:
     return f"{path}[{json.dumps(key, ensure_ascii=False)}]"
 
 
-class Validator:
-    """Evaluate one schema.  ``errors(instance)`` yields ``(path, message)``."""
+def _count(number: int, noun: str) -> str:
+    return f"{number} {noun}{'' if number == 1 else 's'}"
 
-    def __init__(self, schema: dict) -> None:
+
+class Validator:
+    """Evaluate one schema. ``errors(instance)`` returns a list of ``(path, message)`` pairs."""
+
+    def __init__(self, schema: dict[str, Any]) -> None:
         self.root = schema
         self._patterns: dict[str, re.Pattern] = {}
         self._check_schema(schema, "#")
@@ -125,11 +129,16 @@ class Validator:
         return node
 
     # -- evaluation --------------------------------------------------------
-    def is_valid(self, instance: Any, schema: Any = None) -> bool:
-        return next(self._eval(instance, self.root if schema is None else schema, "$"), None) is None
+    def is_valid(self, instance: Any) -> bool:
+        """Whether ``instance`` satisfies the schema."""
+        return self._is_valid(instance, self.root)
 
     def errors(self, instance: Any) -> list[tuple[str, str]]:
+        """Every violation as a ``(path, message)`` pair, with paths such as ``$.subject[0].type``; empty if valid."""
         return list(self._eval(instance, self.root, "$"))
+
+    def _is_valid(self, instance: Any, schema: Any) -> bool:
+        return next(self._eval(instance, schema, "$"), None) is None
 
     def _eval(self, inst: Any, schema: Any, path: str) -> Iterator[tuple[str, str]]:
         if schema is True:
@@ -151,9 +160,9 @@ class Validator:
             yield path, f"{json.dumps(inst, ensure_ascii=False)} is not one of {allowed}"
         if isinstance(inst, str):
             if "minLength" in schema and len(inst) < schema["minLength"]:
-                yield path, f"must be at least {schema['minLength']} character(s) long"
+                yield path, f"must be at least {_count(schema['minLength'], 'character')} long"
             if "maxLength" in schema and len(inst) > schema["maxLength"]:
-                yield path, f"must be at most {schema['maxLength']} characters long"
+                yield path, f"must be at most {_count(schema['maxLength'], 'character')} long"
             if "pattern" in schema and not self._regex(schema["pattern"]).search(inst):
                 yield path, f"{json.dumps(inst, ensure_ascii=False)} does not match {schema['pattern']}"
         if _type_ok(inst, "number"):
@@ -163,9 +172,9 @@ class Validator:
                 yield path, f"must be <= {schema['maximum']}"
         if isinstance(inst, list):
             if "minItems" in schema and len(inst) < schema["minItems"]:
-                yield path, f"must have at least {schema['minItems']} item(s)"
+                yield path, f"must have at least {_count(schema['minItems'], 'item')}"
             if "maxItems" in schema and len(inst) > schema["maxItems"]:
-                yield path, f"must have at most {schema['maxItems']} item(s)"
+                yield path, f"must have at most {_count(schema['maxItems'], 'item')}"
             if schema.get("uniqueItems"):
                 for i in range(len(inst)):
                     if any(_json_equal(inst[i], inst[j]) for j in range(i)):
@@ -196,13 +205,13 @@ class Validator:
                         yield from self._eval(value, extra, _child(path, key))
         for sub in schema.get("allOf", ()):
             yield from self._eval(inst, sub, path)
-        if "anyOf" in schema and not any(self.is_valid(inst, s) for s in schema["anyOf"]):
+        if "anyOf" in schema and not any(self._is_valid(inst, s) for s in schema["anyOf"]):
             yield path, "matches none of the allowed alternatives (anyOf)"
         if "oneOf" in schema:
-            hits = sum(self.is_valid(inst, s) for s in schema["oneOf"])
+            hits = sum(self._is_valid(inst, s) for s in schema["oneOf"])
             if hits != 1:
                 yield path, f"must match exactly one alternative (oneOf), matched {hits}"
-        if "not" in schema and self.is_valid(inst, schema["not"]):
+        if "not" in schema and self._is_valid(inst, schema["not"]):
             banned = schema["not"]
             if (isinstance(inst, dict) and isinstance(banned, dict) and banned.keys() == {"required"}
                     and len(banned["required"]) > 1):
@@ -212,7 +221,7 @@ class Validator:
             else:
                 yield path, "matches a shape that is not allowed here (not)"
         if "if" in schema:
-            if self.is_valid(inst, schema["if"]):
+            if self._is_valid(inst, schema["if"]):
                 if "then" in schema:
                     yield from self._eval(inst, schema["then"], path)
             elif "else" in schema:

@@ -50,13 +50,15 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
         m = manifest()
         self.assertLessEqual({"upstream", "commit", "version", "source", "license", "files", "extra_files"}, set(m))
         self.assertLessEqual(set(m), {"upstream", "commit", "version", "source", "license", "files",
-                                      "extra_files", "tag"})
+                                      "extra_files", "tag", "branch", "released"})
         self.assertEqual(m["upstream"], sync_format.PACKAGES["literature_links"].upstream)
         self.assertRegex(m["commit"], r"^[0-9a-f]{40}$")
         self.assertEqual(m["source"], "src/literature_links")
         self.assertEqual(m["extra_files"], ["schema/companion.schema.json"])
         if "tag" in m:
             self.assertEqual(m["tag"], f"v{m['version']}")
+        self.assertEqual("branch" in m, m.get("released") is False, "an unreleased revision names its branch")
+        self.assertFalse("tag" in m and "branch" in m)
 
     def test_no_vendored_byte_drifts_from_the_manifest(self):
         self.assertEqual(sync_format.vendored_files(PACKAGE), manifest()["files"],
@@ -73,7 +75,8 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
                          (PACKAGE / "schema" / "companion.schema.json").resolve())
 
     def test_it_validates_and_scans(self):
-        good = {"source": {"type": "pdf", "uri": "book.pdf"}, "location": {"page": 2, "rect": [0.1, 0.2, 0.3, 0.4]}}
+        good = {"subject": [{"type": "pdf", "uri": "book.pdf", "location": {"page": 2, "rect": [0.1, 0.2, 0.3, 0.4]}}],
+                "object": []}
         self.assertEqual(companion.validate(good), [])
         with tempfile.TemporaryDirectory() as tmp:
             (Path(tmp) / "1.1.jsonl").write_text(json.dumps(good) + "\n", encoding="utf-8")
@@ -82,15 +85,22 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
 
     def test_a_json_file_holds_one_annotation(self):
         """The overlay counts one annotation per file because the reader refuses an array."""
-        good = {"source": {"type": "pdf", "uri": "book.pdf"}, "target": "a.lean", "status": "formalized"}
+        good = {"subject": [{"type": "pdf", "uri": "book.pdf"}], "object": [], "status": "formalized"}
         with tempfile.TemporaryDirectory() as tmp:
             for held in ([good], []):
                 (Path(tmp) / "a.json").write_text(json.dumps(held), encoding="utf-8")
                 found = discovery.collect([tmp])
                 self.assertEqual(([r.annotation for r in found.records], [p.code for p in found.problems]),
                                  ([], ["SHAPE"]))
-        self.assertEqual(companion.normalize(good), dict(good, target={"uri": "a.lean"},
-                                                         status={"value": "formalized"}))
+
+    def test_an_end_template_fills_the_ends_that_name_no_document(self):
+        """The overlay's folder defaults rely on 2.0 end templates."""
+        template = {"subject": {"type": "pdf", "uri": "https://example.invalid/b.pdf", "sha256": "0" * 64}}
+        record = {"subject": [{"location": {"page": 1}}, {"type": "pdf", "uri": "c.pdf"}], "object": []}
+        self.assertEqual(companion.merge(template, record)["subject"],
+                         [dict(template["subject"], location={"page": 1}), {"type": "pdf", "uri": "c.pdf"}])
+        self.assertEqual(companion.merge(template, {"object": []})["subject"], [template["subject"]])
+        self.assertFalse(hasattr(companion, "normalize"))
 
     def test_every_import_goes_through_the_bootstrap(self):
         offenders = []
@@ -148,6 +158,31 @@ class TestTheSyncScript(unittest.TestCase):
         self.assertEqual(sorted(m["files"]), ["__init__.py", "companion.py", "schema/companion.schema.json"])
         self.assertEqual(m["files"]["companion.py"], hashlib.sha256(b"X = 1\n").hexdigest())
         self.assertEqual(self.sync(self.commit, "--check"), 0)
+
+    def test_a_commit_on_a_branch_is_an_unreleased_version(self):
+        self.git("branch", "-M", "next")
+        self.assertEqual(self.sync(self.commit, "--branch", "next"), 0)
+        m = json.loads((self.vendor / "literature_links.manifest.json").read_text())
+        self.assertEqual((m["commit"], m["version"], m["branch"], m["released"]), (self.commit, "2.1.0", "next", False))
+        self.assertNotIn("tag", m)
+        self.assertEqual(self.sync(self.commit, "--branch", "next", "--check"), 0)
+        self.assertEqual(self.sync(self.commit, "--check"), 1, "the manifest names a branch the check does not")
+        for branch in ("main", "no-such-branch"):
+            with self.subTest(branch=branch), self.assertRaises(SystemExit):
+                self.sync(self.commit, "--branch", branch)
+
+    def test_a_commit_that_is_not_on_the_branch_is_refused(self):
+        self.git("branch", "-M", "next")
+        self.git("checkout", "-q", "-b", "other")
+        (self.repo / "README.md").write_text("later\n")
+        self.git("commit", "-qam", "two")
+        later = self.git("rev-parse", "HEAD").strip()
+        with self.assertRaises(SystemExit) as caught:
+            self.sync(later, "--branch", "next")
+        self.assertIn("not on next", str(caught.exception))
+        self.git("tag", "-a", "v2.1.0", "-m", "release", self.commit)
+        with self.assertRaises(SystemExit):
+            self.sync("v2.1.0", "--branch", "next")
 
     def test_a_tag_vendors_the_same_bytes_and_names_the_tag(self):
         self.git("tag", "-a", "v2.1.0", "-m", "release")

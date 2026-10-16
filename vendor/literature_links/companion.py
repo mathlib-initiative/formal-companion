@@ -13,13 +13,16 @@ from typing import Any
 from .schemacheck import Validator
 
 __all__ = ["SCHEMA_PATH", "LoadError", "Problem", "Report", "check", "dumps", "load_schema", "loads", "merge",
-           "normalize", "rebase", "validate"]
+           "rebase", "validate"]
 
 _HERE = Path(__file__).resolve().parent
 _PACKAGE_SCHEMA = _HERE / "schema" / "companion.schema.json"
 _SOURCE_CHECKOUT = _HERE.parent.name == "src" and (_HERE.parent.parent / "pyproject.toml").is_file()
 SCHEMA_PATH = (_HERE.parent.parent / "schema" / "companion.schema.json"
                if not _PACKAGE_SCHEMA.is_file() and _SOURCE_CHECKOUT else _PACKAGE_SCHEMA)
+
+# The two sides of a record, each a list of ends.
+_SIDES = ("subject", "object")
 
 
 class LoadError(ValueError):
@@ -164,7 +167,8 @@ def check(document: Any) -> Report:
     """Check one annotation without changing it.
 
     Problem codes are ``JSON`` (not a JSON value), ``SCHEMA``, ``PDF_RECT`` and
-    ``LATEX_LINES``.
+    ``LINES``. The last two are checked in each end, subject first, whose
+    location has no ``profile``, and only when the schema finds nothing.
     """
     report = Report(problems=_json_problems(document))
     if report.problems:
@@ -178,24 +182,26 @@ def check(document: Any) -> Report:
     if report.problems:
         return report
 
-    mode = document["source"]["type"]
-    location = document.get("location")
-    if location is None or "profile" in location:
-        return report
-    if mode == "pdf" and "rect" in location:
-        x, y, width, height = location["rect"]
-        if width <= 0 or height <= 0:
-            report.problems.append(Problem("PDF_RECT", "$.location.rect",
-                                           "width and height must be positive"))
-        # Double sums, as the specification says: every language computes the same answer.
-        if float(x) + float(width) > 1 or float(y) + float(height) > 1:
-            report.problems.append(Problem("PDF_RECT", "$.location.rect",
-                                           "rectangle must stay within the page"))
-    elif mode == "latex" and "lines" in location:
-        start, end = location["lines"]
-        if end < start:
-            report.problems.append(Problem("LATEX_LINES", "$.location.lines",
-                                           "end must be greater than or equal to start"))
+    for side in _SIDES:
+        for index, end in enumerate(document[side]):
+            location = end.get("location")
+            if location is None or "profile" in location:
+                continue
+            path = f"$.{side}[{index}].location"
+            if end["type"] == "pdf" and "rect" in location:
+                x, y, width, height = location["rect"]
+                if width <= 0 or height <= 0:
+                    report.problems.append(Problem("PDF_RECT", path + ".rect",
+                                                   "width and height must be positive"))
+                # Double sums, as the specification says: every language computes the same answer.
+                if float(x) + float(width) > 1 or float(y) + float(height) > 1:
+                    report.problems.append(Problem("PDF_RECT", path + ".rect",
+                                                   "rectangle must stay within the page"))
+            elif end["type"] in ("latex", "lean") and len(location.get("lines", ())) == 2:
+                start, last = location["lines"]
+                if last < start:
+                    report.problems.append(Problem("LINES", path + ".lines",
+                                                   "end must be greater than or equal to start"))
     return report
 
 
@@ -204,46 +210,58 @@ def validate(document: Any) -> list[str]:
     return [str(problem) for problem in check(document).problems]
 
 
-def normalize(annotation: dict[str, Any]) -> dict[str, Any]:
-    """Copy ``annotation`` with ``target`` and ``status`` as objects, so readers handle one shape.
-
-    A string ``target`` becomes ``{"uri": target}`` and a string ``status``
-    becomes ``{"value": status}``. Everything else is copied unchanged, so an
-    already normal record comes back equal. ``annotation`` must be a dict;
-    beyond that this does not validate. Normalize a record after its folder
-    defaults are applied: a written string replaces an inherited object, but a
-    written object merges with it.
-    """
-    if not isinstance(annotation, dict):
-        raise TypeError("normalize takes one annotation object")
-    result = copy.deepcopy(annotation)
-    if isinstance(result.get("target"), str):
-        result["target"] = {"uri": result["target"]}
-    if isinstance(result.get("status"), str):
-        result["status"] = {"value": result["status"]}
-    return result
-
-
-def merge(inherited: dict[str, Any], written: dict[str, Any]) -> dict[str, Any]:
+def merge(inherited: dict[str, Any], written: dict[str, Any], *, defaults: bool = False) -> dict[str, Any]:
     """Merge ``written`` over ``inherited`` (docs/companion.md, "Folder defaults").
 
     Objects merge member by member at any depth, and any other written value
     replaces the inherited one. A ``null`` removes the inherited member; where
-    nothing is inherited it is kept. Neither argument is changed.
+    nothing is inherited it is kept.
+
+    One rule covers ends. Where ``inherited`` holds an end template, an object,
+    as its ``subject`` or ``object``, an object that ``written`` holds there
+    merges over it. If ``written`` holds a list there, each object in the list
+    without a ``uri`` member merges over the template, and other items are kept
+    as written. A ``location`` is never merged: one written over the
+    template's replaces it whole. ``written`` is a record, so a side it leaves
+    out that is still a template becomes a list holding the template alone.
+    With ``defaults=True``, ``written`` is a defaults file instead, and
+    templates stay objects. Neither argument is changed.
     """
     result = copy.deepcopy(inherited)
-    _merge_into(result, written)
+    for key, value in written.items():
+        template = result.get(key) if key in _SIDES else None
+        if isinstance(template, dict) and isinstance(value, list):
+            result[key] = [_merged_end(template, item) if isinstance(item, dict) and "uri" not in item
+                           else copy.deepcopy(item) for item in value]
+        elif isinstance(template, dict) and isinstance(value, dict):
+            result[key] = _merged_end(template, value)
+        else:
+            _merge_member(result, key, value)
+    if not defaults:
+        for key in _SIDES:
+            if key not in written and isinstance(result.get(key), dict):
+                result[key] = [result[key]]
     return result
 
 
-def _merge_into(result: dict[str, Any], written: dict[str, Any]) -> None:
-    for key, value in written.items():
-        if key in result and value is None:
-            del result[key]
-        elif key in result and isinstance(value, dict) and isinstance(result[key], dict):
-            _merge_into(result[key], value)
-        else:
+def _merged_end(template: dict[str, Any], end: dict[str, Any]) -> dict[str, Any]:
+    result = copy.deepcopy(template)
+    for key, value in end.items():
+        if key == "location" and value is not None:
             result[key] = copy.deepcopy(value)
+        else:
+            _merge_member(result, key, value)
+    return result
+
+
+def _merge_member(result: dict[str, Any], key: str, value: Any) -> None:
+    if key in result and value is None:
+        del result[key]
+    elif key in result and isinstance(value, dict) and isinstance(result[key], dict):
+        for inner, item in value.items():
+            _merge_member(result[key], inner, item)
+    else:
+        result[key] = copy.deepcopy(value)
 
 
 _SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
@@ -267,7 +285,10 @@ def rebase(value: dict[str, Any], base: str) -> dict[str, Any]:
 
     ``base`` is a relative reference to the file that holds ``value``, written
     from the file that will hold the result, such as ``"../_defaults.json"``.
-    Only the references that docs/companion.md lists under "References" change.
+    Only the references that docs/companion.md lists under "References" change:
+    ``$schema``, and each end's ``uri`` and ``location.profile``, where a side
+    is an end template or a list of ends. ``citation`` and ``extensions`` are
+    copied unchanged.
     """
     result = copy.deepcopy(value)
 
@@ -276,12 +297,10 @@ def rebase(value: dict[str, Any], base: str) -> dict[str, Any]:
             holder[key] = _rebased(holder[key], base)
 
     fix(result, "$schema")
-    fix(result, "target")
-    fix(result.get("location"), "profile")
-    for name in ("source", "target"):
-        fix(result.get(name), "uri")
-    for name in ("source", "target", "status"):
-        holder = result.get(name)
-        if isinstance(holder, dict):
-            fix(holder.get("pin"), "url")
+    for side in _SIDES:
+        ends = result.get(side)
+        for end in ends if isinstance(ends, list) else [ends]:
+            if isinstance(end, dict):
+                fix(end, "uri")
+                fix(end.get("location"), "profile")
     return result

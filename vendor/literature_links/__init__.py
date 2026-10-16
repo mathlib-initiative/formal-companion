@@ -1,4 +1,4 @@
-"""One informal–formal association per annotation, with offline validation.
+"""Annotations that relate a subject and an object, lists of ends, with offline validation.
 
 ``companion`` defines the format and its strict JSON codec.
 ``discovery`` reads annotations from selected files and directories.
@@ -12,4 +12,4 @@ from __future__ import annotations
 
 __all__ = ["__version__", "schemacheck", "companion", "cli", "discovery"]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
