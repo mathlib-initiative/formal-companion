@@ -14,8 +14,10 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import contextlib
 import html
 import importlib.util
+import io
 import json
 import sys
 import tempfile
@@ -246,10 +248,13 @@ def joined(runs: list[list]) -> str:
 
 
 class VersoCase(unittest.TestCase):
+    #: Where the pages are, under the temporary directory.
+    ROOT: tuple[str, ...] = ("site",)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory(prefix="overlay-verso-test-")
         self.addCleanup(temporary.cleanup)
-        self.site = Path(temporary.name) / "site"
+        self.site = Path(temporary.name).joinpath(*self.ROOT)
         self.write(BOX_PAGE, page(prose("Boxes."), PER_LINE, ONE_ELEMENT, prose("Attributes."), ATTRIBUTED,
                                   TACTIC, TWO_BLOCKS, MESSAGES, USES_GEO, prose(f"See `{EXAMPLE_TAG}` below."),
                                   EXAMPLE, NESTED_EXAMPLE))
@@ -444,6 +449,218 @@ class TestTheFile(VersoCase):
                 end = {"location": case["location"], "extensions": {NAMESPACE: ext}}
                 self.assertEqual(VERSO.card_target(end), case["target"])
 
+
+
+# ---------------------------------------------------------------------------
+# a Verso build elsewhere: `--pages`, and the file a companion commits
+# ---------------------------------------------------------------------------
+
+REMOTE = "https://git.example.invalid/notes/blob/main"
+HIDDEN_PAGE = "Notes/Hidden/index.html"
+#: Names Verso spells out or mangles, and a private declaration whose anchor only the cross-reference table gives.
+HIDDEN = box(
+    block(tok("keyword", "def"), gap(), tok("const", "«x y»", 110, ident="Notes___Hidden____FLQQ_x-y_FLQQ_"), gap(),
+          tok("built-in delim", ":="), gap(), tok("literal number", "1")),
+    block(tok("keyword", "def"), gap(), tok("const", "two'", 111, ident="Notes___Hidden___two___"), gap(),
+          tok("built-in delim", ":="), gap(), tok("literal number", "2")),
+    block(tok("keyword", "private"), gap(), tok("keyword", "theorem"), gap(),
+          tok("const", "secret", 112, ident="_private___0___Notes___Hidden___secret"), gap(), tok("built-in delim", ":"),
+          gap(), link("Notes/Box/#Notes___Box", tok("const", "True", 32)), gap(), tok("built-in delim", ":="), gap(),
+          tok("const", "trivial", 33)),
+)
+XREF = {"VersoHtml.constant": {"contents": {
+    "_private.0.Notes.Hidden.secret": [{"address": "/Notes/Hidden/", "id": "_private___0___Notes___Hidden___secret",
+                                        "data": {"module": "Notes.Hidden", "private": True,
+                                                 "userName": "Notes.Hidden.secret"}}],
+    "Notes.Hidden.two'": [{"address": "/Notes/Geo/", "id": "Notes___Geo___carrier",
+                           "data": {"module": "Notes.Hidden", "private": False, "userName": "Notes.Hidden.two'"}}],
+}}}
+
+
+def remote_end(declaration: str, snippet: str, *, module: str = "Notes.Box", line: int = 1, **declared) -> dict:
+    """An end whose card links its source file elsewhere, as a companion with no Verso site has it."""
+    ext = {"destination": {"resolution": "exact", "href": f"{REMOTE}/{module.replace('.', '/')}.lean",
+                           "fragment": f"L{line}"},
+           "snippet": {"line": line, "text": snippet}}
+    if declared:
+        ext["declaration"] = declared
+    location = {"declaration": declaration, "module": module} if declaration else {"lines": [line], "module": module}
+    return {"type": "lean", "uri": "https://git.example.invalid/notes", "role": "key", "location": location,
+            "extensions": {NAMESPACE: ext}}
+
+
+def remote_key(module: str, line: int) -> str:
+    return f"{REMOTE}/{module.replace('.', '/')}.lean#L{line}"
+
+
+class PagesCase(VersoCase):
+    """The pages of a project's own Verso build, `<project>/.lake/build/literate-html`: not the viewer's site."""
+
+    ROOT = ("project", ".lake", "build", "literate-html")
+    COMMIT = "c0ffee" + "0" * 34
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.write(HIDDEN_PAGE, page(HIDDEN))
+        self.write(VERSO.XREF_NAME, json.dumps(XREF))
+        self.write(VERSO.DOCS_NAME, json.dumps({**DOCS, "112": "<code>Notes.Hidden.secret : True</code>"}))
+        manifest = {"version": "1.2.0", "packages": [
+            {"name": "mathlib", "rev": "1" * 40, "inputRev": "v0.0.0-test"},
+            {"name": "verso", "rev": "2" * 40, "inputRev": "v0.0.0-test", "type": "git"}]}
+        (self.site.parent.parent.parent / "lake-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+
+    def pages(self, *ends: dict, commit: str | None = None) -> tuple[dict, dict]:
+        return VERSO.extract_pages(self.site, entries(*ends), commit=commit)
+
+
+class TestPagesOfABuildElsewhere(PagesCase):
+    def test_a_card_is_found_by_its_module_and_declaration_and_filed_under_its_own_key(self):
+        snippet = "noncomputable def volume (b : Box) : ℝ :=\n  b.side * b.side + zero"
+        value, counts = self.pages(remote_end("Notes.Box.volume", snippet, line=9),
+                                   remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3))
+        self.assertEqual(counts, {"statements": 2, "targets": 2})
+        self.assertEqual(sorted(value["statements"]), [remote_key("Notes.Box", 3), remote_key("Notes.Box", 9)])
+        [runs] = value["statements"][remote_key("Notes.Box", 9)]
+        self.assertEqual(joined(runs), snippet)
+        self.assertEqual(runs[4], ["const", "volume", 20])
+        self.assertIn(["var", "b", 21, 2], runs, "bindings and hovers as on the viewer's own site")
+        self.assertEqual(value["hovers"]["10"]["doc"], "The side is positive.")
+
+    def test_no_token_keeps_a_link_into_the_other_build(self):
+        value, _ = self.pages(remote_end("Notes.Box.volume", "noncomputable def volume (b : Box) : ℝ", line=9),
+                              remote_end("Notes.Box.sets", "def sets : Set carrier", line=5),
+                              remote_end("Notes.Hidden.secret", "private theorem secret : True := trivial",
+                                         module="Notes.Hidden", line=4))
+        runs = [run for alternatives in value["statements"].values() for statement in alternatives for run in statement]
+        self.assertEqual(len(value["statements"]), 3)
+        self.assertIn(["const", "Box", 12], runs, "the link Box has on the page is dropped")
+        self.assertIn(["const", "carrier", 70], runs)
+        self.assertEqual([run for run in runs if len(run) > 4], [])
+        self.assertEqual(VERSO.committed_problems(value), [])
+
+    def test_the_anchor_is_verso_slug_of_the_name_or_what_the_cross_reference_table_files(self):
+        self.assertEqual([VERSO.verso_slug(name) for name in
+                          ("Notes.Box.volume", "Notes.Hidden.«x y»", "Notes.two'", "a→b", "f⟨x⟩[i]", "ℝ", "x\ty")],
+                         ["Notes___Box___volume", "Notes___Hidden____FLQQ_x-y_FLQQ_", "Notes___two___", "a_ARR_b",
+                          "f_LANGLE_x_RANGLE__LSQ_i_RSQ_", "___", "x-y"])
+        self.assertEqual(VERSO.module_page("Notes.Hidden"), HIDDEN_PAGE)
+        for module in ("", "Notes..Box", "Notes./x", "Notes.\\x"):
+            with self.subTest(module=module):
+                self.assertIsNone(VERSO.module_page(module))
+        ends = (remote_end("Notes.Hidden.«x y»", "def «x y» := 1", module="Notes.Hidden", line=1),
+                remote_end("Notes.Hidden.two'", "def two' := 2", module="Notes.Hidden", line=2),
+                remote_end("Notes.Hidden.secret", "private theorem secret : True := trivial", module="Notes.Hidden",
+                           line=4))
+        value, counts = self.pages(*ends)
+        self.assertEqual(counts["statements"], 3, "an entry on another page than the module's is not used")
+        self.assertEqual(value["statements"][remote_key("Notes.Hidden", 4)][0][4], ["const", "secret", 112])
+        (self.site / VERSO.XREF_NAME).unlink()
+        value, counts = self.pages(*ends)
+        self.assertEqual(counts["statements"], 2, "without the table, a private declaration's anchor is not known")
+        self.assertNotIn(remote_key("Notes.Hidden", 4), value["statements"])
+
+    def test_a_missing_page_or_anchor_or_a_snippet_that_does_not_match_gives_none(self):
+        for end in (remote_end("Notes.Gone.volume", "def volume", module="Notes.Gone"),
+                    remote_end("Notes.Box.nope", "def nope := 1"),
+                    remote_end("Notes.Box.volume", "noncomputable def volume (b : Box) : ℕ"),
+                    remote_end("Notes.Box.volume", "noncomputable def volume", module="Notes..Box"),
+                    remote_end("", "example : 0 < Box := trivial", kind="example", id="example:notes-box-gone")):
+            with self.subTest(end=end["location"]):
+                value, counts = self.pages(end)
+                self.assertEqual((value["statements"], counts["statements"]), ({}, 0))
+
+    def test_a_tagged_example_is_found_by_its_tag_on_its_modules_page(self):
+        snippet = "example : 0 < Box := trivial"
+        value, counts = self.pages(remote_end("", snippet, line=7, kind="example", id=EXAMPLE_TAG, anonymous=True))
+        self.assertEqual(counts, {"statements": 1, "targets": 1})
+        [runs] = value["statements"][remote_key("Notes.Box", 7)]
+        self.assertEqual(joined(runs), snippet)
+        self.assertIn(["const", "Box", 12], runs)
+
+    def test_the_file_records_the_project_commit_and_the_builds_verso(self):
+        end = remote_end("Notes.Box.three", "def three := 3")
+        value, _ = self.pages(end, commit=self.COMMIT)
+        self.assertEqual(value["build"], {"commit": self.COMMIT, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}})
+        (self.site.parent.parent.parent / "lake-manifest.json").unlink()
+        self.assertEqual(self.pages(end, commit=self.COMMIT)[0]["build"], {"commit": self.COMMIT})
+        self.assertNotIn("build", self.pages(end)[0])
+
+    def test_the_command_writes_the_committed_form_one_entry_a_line(self):
+        ends = (remote_end("Notes.Box.three", "def three := 3"), remote_end("Notes.Box.uno", "def uno := 1", line=2))
+        bundle = self.site.parent / "annotations.bundle.json"
+        bundle.write_text(json.dumps({"schema": VERSO.overlay_annotations.BUNDLE_SCHEMA, "schema_version": 1,
+                                      "directory": "annotations", "count": 2,
+                                      "annotations": [{"path": p, "annotation": a} for p, a in entries(*ends)]}),
+                          encoding="utf-8")
+        out = self.site.parent / "verso.json"
+        with contextlib.redirect_stdout(io.StringIO()) as printed:
+            self.assertEqual(VERSO.main(["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out),
+                                         "--commit", self.COMMIT]), 0)
+        self.assertEqual(json.loads(printed.getvalue())["statements"], 2)
+        raw = out.read_bytes()
+        value, _ = self.pages(*ends, commit=self.COMMIT)
+        self.assertEqual(json.loads(raw), value)
+        self.assertEqual(raw, VERSO.dumps_lines(value))
+        self.assertEqual(sum(line.startswith(b'"' + VERSO_KEY_START) for line in raw.splitlines()), 2,
+                         "each target's statements on a line of its own")
+        with contextlib.redirect_stderr(io.StringIO()):
+            for argv in (["--commit", "HEAD"], ["--commit", "abc123"]):
+                with self.subTest(argv=argv), self.assertRaises(SystemExit):
+                    VERSO.main(["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out), *argv])
+            bundle.write_text("{}", encoding="utf-8")
+            self.assertEqual(VERSO.main(["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out)]), 1)
+
+
+VERSO_KEY_START = REMOTE.encode("utf-8")
+
+
+class TestTheCommittedFile(PagesCase):
+    def committed(self) -> dict:
+        return self.pages(remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3),
+                          remote_end("Notes.Box.three", "def three := 3", line=8), commit=self.COMMIT)[0]
+
+    def test_what_pages_writes_has_no_problem_and_anything_else_is_named(self):
+        value = self.committed()
+        self.assertEqual(VERSO.committed_problems(value), [])
+        key = remote_key("Notes.Box", 3)
+
+        def changed(change) -> list[str]:
+            copy = json.loads(json.dumps(value))
+            change(copy)
+            return VERSO.committed_problems(copy)
+
+        cases = {
+            "a run carries a link": lambda v: v["statements"][key][0].append(["const", "Box", None, None, "Box/#B"]),
+            "is not in hovers": lambda v: v["hovers"].pop("10"),
+            "not a known kind": lambda v: v["statements"][key][0].append(["html", "<b>"]),
+            "binding": lambda v: v["statements"][key][0].append(["var", "b", None, 0]),
+            "expected schema": lambda v: v.update(schema_version=2),
+            "unknown key": lambda v: v.update(links={}),
+            "hovers['x']": lambda v: v["hovers"].update(x={"signature": "s"}),
+            "build": lambda v: v["build"].update(commit="HEAD"),
+            "a list of statements": lambda v: v["statements"].update({key: []}),
+        }
+        for words, change in cases.items():
+            with self.subTest(words=words):
+                self.assertTrue(any(words in line for line in changed(change)), changed(change))
+        self.assertEqual(VERSO.committed_problems([]), ["expected an object"])
+        many = changed(lambda v: v["hovers"].update({str(n): {} for n in range(200, 230)}))
+        self.assertEqual((len(many), many[-1]), (11, "and 20 more"))
+
+    def test_joined_keeps_a_statement_only_while_its_card_has_that_snippet(self):
+        value = self.committed()
+        ends = [remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3),
+                remote_end("Notes.Box.three", "def three := 3", line=8)]
+        same, counts = VERSO.joined(value, entries(*ends))
+        self.assertEqual((same, counts), (value, {"dropped": 0, "statements": 2, "targets": 2}))
+        ends[0] = remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 1 < b.side", line=3)
+        cut, counts = VERSO.joined(value, entries(*ends))
+        self.assertEqual(counts, {"dropped": 1, "statements": 1, "targets": 2})
+        self.assertEqual(list(cut["statements"]), [remote_key("Notes.Box", 8)])
+        self.assertEqual(cut["hovers"], {}, "the hovers only the dropped statement used go with it")
+        self.assertEqual(cut["build"], value["build"])
+        moved, counts = VERSO.joined(value, entries(remote_end("Notes.Box.three", "def three := 3", line=9)))
+        self.assertEqual((moved["statements"], counts["dropped"]), ({}, 2), "a card filed under another key")
 
 if __name__ == "__main__":                                   # pragma: no cover
     unittest.main(verbosity=2)

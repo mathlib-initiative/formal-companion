@@ -34,9 +34,23 @@ declares (a Verso page also gives an id to some other uses of a name). Only
 the hover entries the statements use are copied from
 the site's hover table (`DOCS_NAME`), each split into its signature and its
 docstring, both plain text; the viewer renders them with `textContent`.
+
+A companion whose site has no Verso pages (its cards link elsewhere) can
+commit a `pdf-overlay/verso.json` cut from a Verso build of its project made
+somewhere else: `python3 verso_extract.py --pages <literate-html> --bundle
+<annotations.bundle.json> --out <verso.json> [--commit <sha>]`. There a card
+is found by its Lean location instead of its link: its module's page
+(`A/B/index.html` for `A.B`) and the anchor Verso gives its declaration (the
+build's `xref.json`, else `verso_slug` of its name), or for a tagged example
+its tag. It is filed under the same key, the same rules match the snippet,
+no token keeps a link (those pages are not the viewer's site), and `build`
+records the project commit and the build's Verso revision (`build_record`).
+`build_site.py` publishes it only for a site with no Verso pages, each
+statement checked again against the bundle (`committed_problems`, `joined`).
 """
 from __future__ import annotations
 
+import argparse
 import codecs
 import html
 from html.parser import HTMLParser
@@ -48,7 +62,7 @@ import posixpath
 import re
 import stat
 import sys
-from typing import Any
+from typing import Any, Callable
 import urllib.parse
 
 sys.dont_write_bytecode = True
@@ -94,6 +108,21 @@ DECLARING = frozenset({b"theorem", b"lemma", b"def", b"abbrev", b"structure", b"
                        b"instance", b"opaque", b"axiom"})
 KEYWORD_TOKEN = re.compile(rb'<span class="keyword token"[^>]*>([^<]*)</span>')
 ANY_TAG = re.compile(rb"<[^>]*>")
+#: The run kinds this file writes, as the viewer's `RUN_KINDS`.
+RUN_KINDS = frozenset({"tx", "kw", "cm", "el", "const", "var", "sort", "lit"})
+#: A Verso build's cross-reference table at its root, and its domain of constants.
+XREF_NAME = "xref.json"
+XREF_CONSTANTS = "VersoHtml.constant"
+#: Verso's `asSlug` (`MultiVerso/Slug.lean`): ASCII letters, digits, "-" and "_" stay, Lean's whitespace is "-",
+#: these characters are spelled out, and any other (each "." of a name) is "___".
+SLUG_KEEP = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
+SLUG_WHITESPACE = frozenset(" \t\r\n")
+SLUG_NAMES = {"<": "_LT_", ">": "_GT_", ";": "_SEMI_", "‹": "_FLQ_", "›": "_FRQ_", "«": "_FLQQ_", "»": "_FLQQ_",
+              "⟨": "_LANGLE_", "⟩": "_RANGLE_", "(": "_LPAR_", ")": "_RPAR_", "[": "_LSQ_", "]": "_RSQ_",
+              "→": "_ARR_", "↦": "_MAPSTO_", "⊢": "_VDASH_"}
+COMMIT = re.compile(r"[0-9a-f]{40}(?:[0-9a-f]{24})?\Z")
+#: The keys of a committed file; `build` is what `--pages` records about the build.
+FILE_KEYS = frozenset({"schema", "schema_version", "statements", "hovers", "build"})
 
 
 # ---------------------------------------------------------------------------
@@ -151,19 +180,58 @@ def snippet_text(end: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def card_statements(entries: list[tuple[str, dict[str, Any]]]) -> dict[str, tuple[tuple[str, str, str], list[str]]]:
-    """{target: (locator, [snippet text, ...])} in bundle order, each text once per target."""
-    found: dict[str, tuple[tuple[str, str, str], list[str]]] = {}
+Locator = tuple[str, str, str]
+
+
+def card_statements(entries: list[tuple[str, dict[str, Any]]],
+                    locate: Callable[[dict[str, Any]], Locator | None] = card_locator,
+                    ) -> dict[str, list[tuple[Locator, str]]]:
+    """{target: [(locator, snippet text), ...]} in bundle order, each pair once: the target is the key
+    the viewer looks the card up by (`card_target`), the locator where `locate` says its statement is."""
+    found: dict[str, list[tuple[Locator, str]]] = {}
     for _path, annotation in entries:
         for end in annotation.get("object") or []:
             if not isinstance(end, dict):
                 continue
-            locator, text = card_locator(end), snippet_text(end)
-            if locator and text:
-                texts = found.setdefault(f"{locator[0]}#{locator[2]}", (locator, []))[1]
-                if text not in texts:
-                    texts.append(text)
+            target, locator, text = card_target(end), locate(end), snippet_text(end)
+            if target and locator and text and (locator, text) not in found.get(target, []):
+                found.setdefault(target, []).append((locator, text))
     return found
+
+
+def module_page(module: str) -> str | None:
+    """A module's page in a Verso build, `A/B/index.html` for `A.B`, or None."""
+    parts = module.split(".")
+    if not module or not all(part and part not in {".", ".."} and "/" not in part and "\\" not in part
+                             for part in parts):
+        return None
+    return "/".join(parts) + "/index.html"
+
+
+def verso_slug(name: str) -> str:
+    """The anchor Verso gives a name: `asSlug` of `MultiVerso/Slug.lean`, character by character."""
+    return "".join(char if char in SLUG_KEEP else "-" if char in SLUG_WHITESPACE else SLUG_NAMES.get(char, "___")
+                   for char in name)
+
+
+def object_locator(end: dict[str, Any], ids: dict[tuple[str, str], str]) -> Locator | None:
+    """`(page, how, what)` of an object end on a Verso build's own pages, from its Lean location alone:
+    its module's page and its declaration's anchor (`ids`, else `verso_slug` of its name), or for a
+    tagged example its tag."""
+    location = end.get("location") if isinstance(end.get("location"), dict) else {}
+    module = _trimmed(location.get("module"))
+    page = module_page(module)
+    if page is None:
+        return None
+    name = _trimmed(location.get("declaration"))
+    if name:
+        return page, "id", ids.get((name, module)) or verso_slug(name)
+    ext = overlay_annotations.extension(end)
+    declaration = ext.get("declaration") if isinstance(ext.get("declaration"), dict) else {}
+    tag = declaration.get("id")
+    if declaration.get("kind") == "example" and isinstance(tag, str) and EXAMPLE_ID.match(tag):
+        return page, "tag", tag
+    return None
 
 
 def site_file(page: str) -> str | None:
@@ -573,8 +641,9 @@ def owners(box: Box) -> list[int]:
 
 
 def statement_runs(box: Box, snippet: str, site: Site, page: str,
-                   hovers: dict[str, Any]) -> list[list[Any]] | None:
-    """The snippet as runs carrying the box's tokens, or None when it does not match."""
+                   hovers: dict[str, Any], *, links: bool = True) -> list[list[Any]] | None:
+    """The snippet as runs carrying the box's tokens (with no link unless `links`), or None when it
+    does not match."""
     stripped = snippet.rstrip()
     elided = stripped.endswith(ELLIPSIS)
     want = stripped[:-1] if elided else snippet
@@ -587,7 +656,7 @@ def statement_runs(box: Box, snippet: str, site: Site, page: str,
         comments: list[tuple[int, int]] = []
         found = align(text, line, want, comments)
         if found and found[0][0][1] <= box.anchor_at < found[1]:
-            return _runs(box, snippet, want, found[0], comments, site, page, hovers)
+            return _runs(box, snippet, want, found[0], comments, site if links else None, page, hovers)
         if line == 0:
             break
         line = text.rfind("\n", 0, line - 1) + 1
@@ -595,7 +664,7 @@ def statement_runs(box: Box, snippet: str, site: Site, page: str,
 
 
 def _runs(box: Box, snippet: str, want: str, pairs: list[tuple[int, int]],
-          comments: list[tuple[int, int]], site: Site, page: str,
+          comments: list[tuple[int, int]], site: Site | None, page: str,
           hovers: dict[str, Any]) -> list[list[Any]]:
     by_char = owners(box)
     token_of = [-1] * len(snippet)
@@ -630,7 +699,7 @@ def _runs(box: Box, snippet: str, want: str, pairs: list[tuple[int, int]],
         token_kind, hover, binding, href = box.tokens[token]
         out.append([token_kind, value,
                     int(hover) if hover and HOVER_ID.fullmatch(hover) and hover in hovers else None,
-                    binding, link(site, page, href) if href else None])
+                    binding, link(site, page, href) if href and site else None])
     return _numbered(out)
 
 
@@ -738,22 +807,38 @@ def hover_table(site: Site) -> dict[str, Any]:
 
 def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
     """`(verso.json, {"targets": n, "statements": m})` for the bundle's cards over the built site."""
-    site = Site(site_root)
+    return _extract(Site(site_root), card_statements(entries), links=True)
+
+
+def extract_pages(pages_root: Path, entries: list[tuple[str, dict[str, Any]]], *,
+                  commit: str | None = None) -> tuple[dict[str, Any], dict[str, int]]:
+    """`extract` over a Verso build that is not the viewer's site: each card found by its Lean location
+    (`object_locator`), no link kept, and the build recorded (`build_record`)."""
+    site = Site(pages_root)
+    ids = declaration_ids(site)
+    value, counts = _extract(site, card_statements(entries, lambda end: object_locator(end, ids)), links=False)
+    build = build_record(site.root, commit)
+    if build:
+        value["build"] = build
+    return value, counts
+
+
+def _extract(site: Site, targets: dict[str, list[tuple[Locator, str]]], *,
+             links: bool) -> tuple[dict[str, Any], dict[str, int]]:
     table = hover_table(site)
-    targets = card_statements(entries)
     statements: dict[str, list[list[list[Any]]]] = {}
     used: set[int] = set()
     try:
-        for target, ((page_ref, how, what), texts) in targets.items():
-            page = site_file(page_ref)
-            data = site.page(page) if page else None
-            if data is None:
-                continue
-            for text in texts:
+        for target, pairs in targets.items():
+            for (page_ref, how, what), text in pairs:
+                page = site_file(page_ref)
+                data = site.page(page) if page else None
+                if data is None:
+                    continue
                 room = len(text) + 256
                 box = read_box(data, what, room) if how == "id" else read_tagged_box(data, what, room)
-                runs = statement_runs(box, text, site, page, table) if box else None
-                if runs is None:
+                runs = statement_runs(box, text, site, page, table, links=links) if box else None
+                if runs is None or runs in statements.get(target, []):
                     continue
                 statements.setdefault(target, []).append(runs)
                 used.update(run[2] for run in runs if len(run) > 2 and isinstance(run[2], int))
@@ -773,10 +858,227 @@ def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple
                         run.pop()
     value = {"schema": SCHEMA, "schema_version": SCHEMA_VERSION, "statements": statements, "hovers": hovers}
     return value, {"statements": sum(len(v) for v in statements.values()),
-                   "targets": sum(len(texts) for _locator, texts in targets.values())}
+                   "targets": sum(len(pairs) for pairs in targets.values())}
+
+
+def is_verso_site(site_root: Path) -> bool:
+    """Whether a built site is a Verso build: its root holds Verso's hover table."""
+    return Site(site_root).resolve(DOCS_NAME) is not None
+
+
+# ---------------------------------------------------------------------------
+# a build elsewhere: its anchors, its record, and the file a companion commits
+# ---------------------------------------------------------------------------
+
+def declaration_ids(site: Site) -> dict[tuple[str, str], str]:
+    """{(declaration, module): anchor} from the build's cross-reference table, for each constant it
+    files on its module's page under one anchor: a private declaration's anchor carries the private
+    prefix its name does not show. Empty when there is no table that reads."""
+    path = site.resolve(XREF_NAME)
+    try:
+        value = json.loads(path.read_bytes().decode("utf-8")) if path is not None else None
+    except (OSError, UnicodeDecodeError, ValueError):
+        value = None
+    domain = value.get(XREF_CONSTANTS) if isinstance(value, dict) else None
+    contents = domain.get("contents") if isinstance(domain, dict) else None
+    found: dict[tuple[str, str], set[str]] = {}
+    for name, rows in (contents.items() if isinstance(contents, dict) else ()):
+        for row in rows if isinstance(rows, list) else ():
+            if not isinstance(row, dict) or not isinstance(row.get("data"), dict):
+                continue
+            user, module = row["data"].get("userName") or name, row["data"].get("module")
+            anchor, address = row.get("id"), row.get("address")
+            if all(isinstance(item, str) and item for item in (user, module, anchor, address)) \
+                    and site_file(address.lstrip("/")) == module_page(module):
+                found.setdefault((user, module), set()).add(anchor)
+    return {key: anchors.pop() for key, anchors in found.items() if len(anchors) == 1}
+
+
+def build_record(root: Path, commit: str | None) -> dict[str, Any]:
+    """What `--pages` records about the build: the project commit given, and the Verso package the
+    project's `lake-manifest.json` names when the pages are its `.lake/build/<directory>`."""
+    out: dict[str, Any] = {"commit": commit} if commit else {}
+    if root.parent.name != "build" or root.parent.parent.name != ".lake":
+        return out
+    try:
+        value = json.loads((root.parent.parent.parent / "lake-manifest.json").read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        return out
+    packages = value.get("packages") if isinstance(value, dict) else None
+    for package in packages if isinstance(packages, list) else ():
+        if isinstance(package, dict) and package.get("name") == "verso":
+            verso = {key: package[key] for key in ("inputRev", "rev") if isinstance(package.get(key), str)}
+            if verso:
+                out["verso"] = verso
+    return out
+
+
+def _run_problem(run: Any, hovers: dict[str, Any]) -> str | None:
+    if not isinstance(run, list) or not 2 <= len(run) <= 5:
+        return "a run is not [kind, text, hover, binding]"
+    if len(run) == 5:
+        return "a run carries a link, to a page that is not this site's"
+    if run[0] not in RUN_KINDS or not isinstance(run[1], str) or not run[1]:
+        return f"a run is not a known kind with its text: {run[:2]!r}"
+    hover = run[2] if len(run) > 2 else None
+    if hover is not None and not (type(hover) is int and str(hover) in hovers):
+        return f"a run's hover {hover!r} is not in hovers"
+    binding = run[3] if len(run) > 3 else None
+    if binding is not None and not (type(binding) is int and binding > 0):
+        return f"a run's binding {binding!r} is not a positive integer"
+    return None
+
+
+def committed_problems(value: Any, limit: int = 10) -> list[str]:
+    """What keeps a committed `verso.json` from being one `--pages` writes, at most `limit` lines: its
+    schema, each hover entry, each statement's runs (none with a link), and its `build` record."""
+    if not isinstance(value, dict):
+        return ["expected an object"]
+    out = [f"unknown key {key!r}" for key in sorted(set(value) - FILE_KEYS)]
+    if value.get("schema") != SCHEMA or type(value.get("schema_version")) is not int \
+            or value["schema_version"] != SCHEMA_VERSION:
+        out.append(f"expected schema {SCHEMA} version {SCHEMA_VERSION}")
+    hovers = value.get("hovers")
+    if not isinstance(hovers, dict):
+        out.append("hovers: expected an object")
+        hovers = {}
+    for key, entry in hovers.items():
+        if not HOVER_ID.match(key) or not isinstance(entry, dict) or not entry \
+                or not all(name in ("signature", "doc") and isinstance(text, str) and text
+                           for name, text in entry.items()):
+            out.append(f"hovers[{key!r}]: expected {{signature, doc}} as text")
+    statements = value.get("statements")
+    if not isinstance(statements, dict):
+        out.append("statements: expected an object")
+        statements = {}
+    for target, alternatives in statements.items():
+        if not target or not isinstance(alternatives, list) or not alternatives \
+                or not all(isinstance(runs, list) and runs for runs in alternatives):
+            out.append(f"statements[{target!r}]: expected a list of statements, each a list of runs")
+            continue
+        problem = next(filter(None, (_run_problem(run, hovers) for runs in alternatives for run in runs)), None)
+        if problem:
+            out.append(f"statements[{target!r}]: {problem}")
+    build = value.get("build", {})
+    if not isinstance(build, dict) or set(build) - {"commit", "verso"} \
+            or "commit" in build and not (isinstance(build["commit"], str) and COMMIT.match(build["commit"])) \
+            or not isinstance(build.get("verso", {}), dict) \
+            or not all(isinstance(text, str) for text in build.get("verso", {}).values()):
+        out.append("build: expected {commit, verso}, a commit sha and the Verso package's revisions")
+    return out[:limit] + ([f"and {len(out) - limit} more"] if len(out) > limit else [])
+
+
+def joined(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
+    """A committed `verso.json` (one `committed_problems` passes) cut to the bundle: a statement stays
+    only where its runs' texts joined are the snippet of a card the viewer files under its target, and
+    a hover entry only where a statement left uses it. `(verso.json, {"targets", "statements",
+    "dropped"})`."""
+    wanted: dict[str, set[str]] = {}
+    for _path, annotation in entries:
+        for end in annotation.get("object") or []:
+            target, text = (card_target(end), snippet_text(end)) if isinstance(end, dict) else (None, None)
+            if target and text:
+                wanted.setdefault(target, set()).add(text)
+    statements: dict[str, list[list[list[Any]]]] = {}
+    dropped = 0
+    for target, alternatives in value["statements"].items():
+        kept = [runs for runs in alternatives if "".join(run[1] for run in runs) in wanted.get(target, ())]
+        dropped += len(alternatives) - len(kept)
+        if kept:
+            statements[target] = kept
+    used = {str(run[2]) for alternatives in statements.values() for runs in alternatives for run in runs
+            if len(run) > 2 and run[2] is not None}
+    out = {"schema": SCHEMA, "schema_version": SCHEMA_VERSION, "statements": statements,
+           "hovers": {key: entry for key, entry in value["hovers"].items() if key in used}}
+    if value.get("build"):
+        out["build"] = value["build"]
+    return out, {"dropped": dropped, "statements": sum(len(v) for v in statements.values()),
+                 "targets": sum(len(texts) for texts in wanted.values())}
 
 
 def dumps(value: dict[str, Any]) -> bytes:
     """One deterministic, compact line of UTF-8 JSON."""
     return (json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
                        allow_nan=False) + "\n").encode("utf-8")
+
+
+def dumps_lines(value: dict[str, Any]) -> bytes:
+    """`dumps`, with each hover entry and each target's statements on a line of its own: the form a
+    committed file is written in, so that a diff names the cards that changed."""
+    def one(item: Any) -> str:
+        return json.dumps(item, ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
+
+    parts = []
+    for key in sorted(value):
+        item = value[key]
+        if key in ("hovers", "statements") and isinstance(item, dict) and item:
+            parts.append(one(key) + ":{\n" + ",\n".join(f"{one(name)}:{one(item[name])}" for name in sorted(item))
+                         + "\n}")
+        else:
+            parts.append(f"{one(key)}:{one(item)}")
+    return ("{" + ",\n".join(parts) + "}\n").encode("utf-8")
+
+
+# ---------------------------------------------------------------------------
+# the command, for a build elsewhere
+# ---------------------------------------------------------------------------
+
+def bundle_entries(path: Path) -> list[tuple[str, dict[str, Any]]]:
+    """`[(path, annotation)]` of an annotation bundle file, as `cf overlay sync` writes it."""
+    label = path.name
+    try:
+        value = overlay_annotations.strict_json(overlay_annotations.read_regular(path, label).decode("utf-8"), label)
+    except UnicodeDecodeError as error:
+        raise overlay_annotations.AnnotationError(f"{label}: not UTF-8") from error
+    rows = value.get("annotations") if isinstance(value, dict) else None
+    if not isinstance(rows, list) or value.get("schema") != overlay_annotations.BUNDLE_SCHEMA \
+            or not all(isinstance(row, dict) and isinstance(row.get("path"), str)
+                       and isinstance(row.get("annotation"), dict) for row in rows):
+        raise overlay_annotations.AnnotationError(f"{label}: expected a {overlay_annotations.BUNDLE_SCHEMA} bundle")
+    return [(row["path"], row["annotation"]) for row in rows]
+
+
+def write_out(path: Path, raw: bytes) -> None:
+    """`raw` at `path`, through a temporary file beside it; never through a symlink."""
+    if path.is_symlink() or path.exists() and not path.is_file():
+        raise OSError(f"{path}: not an ordinary file")
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with open(temporary, "xb") as handle:
+            handle.write(raw)
+        os.replace(temporary, path)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="verso_extract.py",
+        description="Cut each card's statement and its hovers out of a Verso build that is not the "
+                    "overlay's site, for a committed pdf-overlay/verso.json.")
+    parser.add_argument("--pages", required=True, type=Path, metavar="DIR",
+                        help="the build's literate HTML root (its -verso-docs.json and module pages)")
+    parser.add_argument("--bundle", required=True, type=Path, metavar="FILE",
+                        help="the companion's pdf-overlay/annotations.bundle.json")
+    parser.add_argument("--out", required=True, type=Path, metavar="FILE", help="the verso.json to write")
+    parser.add_argument("--commit", metavar="SHA", help="the commit of the Lean project the pages were built from")
+    args = parser.parse_args(argv)
+    if args.commit is not None and not COMMIT.match(args.commit):
+        parser.error("--commit: expected a full lowercase commit sha")
+    if not args.pages.is_dir():
+        parser.error(f"--pages: {args.pages} is not a directory")
+    try:
+        entries = bundle_entries(args.bundle)
+        value, counts = extract_pages(args.pages, entries, commit=args.commit)
+        raw = dumps_lines(value)
+        write_out(args.out, raw)
+    except (overlay_annotations.AnnotationError, OSError) as error:
+        print(f"STOP {error}", file=sys.stderr)
+        return 1
+    print(json.dumps({**counts, "bytes": len(raw), "hovers": len(value["hovers"])}, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":                                   # pragma: no cover
+    raise SystemExit(main())

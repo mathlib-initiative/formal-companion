@@ -1128,6 +1128,11 @@ class TestNothingInTheToolsNamesOneCompanion(OverlayToolsTestCase):
                 for token in ("lean-toolchain", "lake-manifest", "toolchain_sha256",
                               "overlay-manifest", "site-manifest", "measure",
                               "chapter", "Chapter"):
+                    if (name, token) == ("verso_extract", "lake-manifest"):
+                        # it reads a build's own manifest to record its Verso release, and pins none
+                        record = source.partition("def build_record(")[2].partition("\ndef ")[0]
+                        self.assertEqual(source.count(token), record.count(token), "only in build_record")
+                        continue
                     self.assertNotIn(token, source)
 
     def test_the_per_companion_values_are_read_not_written(self):
