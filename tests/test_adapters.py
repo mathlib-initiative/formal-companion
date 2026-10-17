@@ -501,6 +501,9 @@ class LeanSnippetsDefinitionTest(unittest.TestCase):
         self.assertTrue(self.text("Demo.Box").endswith("  right : Nat\nderiving DecidableEq"))
         self.assertEqual(self.found["Demo.Box.left"], (7, "structure Box where\n  …\n  left : Nat"))
         self.assertNotIn("Demo.Box.over", self.found, "a docstring's line is not a field")
+        indented = leansnippets.index_text("structure Box where\n  /-- the left end, documented\n"
+                                           "    over (two) lines -/\n  left : Nat\n")
+        self.assertEqual(sorted(indented), ["Box", "Box.left"], "nor is an indented one that looks like a field")
 
     def test_an_inductive_keeps_its_constructors(self):
         self.assertEqual(self.text("Demo.Kind"), "inductive Kind\n  | closed\n  | open\n  deriving Repr")
@@ -536,6 +539,86 @@ class LeanSnippetsDefinitionTest(unittest.TestCase):
     def test_a_declaration_in_a_comment_is_not_one(self):
         found = leansnippets.index_text("/- Prose:\ndef fake : Nat := 0\nnamespace Fake\n-/\ndef real : Nat := 1\n")
         self.assertEqual(found, {"real": (5, "def real : Nat := 1")})
+
+    def test_a_comment_or_a_body_at_column_0_is_inside_the_declaration(self):
+        where = "def inclusion (s : Nat) : Nat × Nat where\n-- the first component\n  fst := s\n  snd := 0"
+        body = "private def pick (n : Nat) : Nat :=\nmatch n with\n| 0 => 1\n| _ => 2"
+        binders = "theorem foo (x : Nat)\n-- the hypothesis\n    (h : x = 1) : x = 1 := h"
+        documented = "/-- A comment before code opens a command. -/ theorem bar :\n    True := trivial"
+        found = leansnippets.index_text("\n\n".join([where, body, documented, binders,
+                                                      "-- a note\ndef next : Nat := 1\n"]))
+        self.assertEqual(found["inclusion"], (1, where))
+        self.assertEqual(found["pick"], (6, body))
+        self.assertEqual(found["foo"], (14, binders), "the comment above the next command is not this one's")
+        self.assertEqual(found["next"], (19, "def next : Nat := 1"))
+
+    def test_a_do_block_a_term_or_a_constructor_at_column_0_is_inside_the_declaration(self):
+        block = 'def main : IO Unit := do\nIO.println "a"\nfor i in [1] do\n  IO.println i\n\n-- then b\nIO.println "b"'
+        term = "def two : Nat :=\nlet x := 1\nx + x"
+        tactics = "def three : Nat := by\nexact 3"
+        alternative = "def f : Nat → Nat\n| 0 => 0\n| n + 1 =>\nf n"
+        array = "def xs : Array Nat :=\n#[1, 2]"
+        constructor = "structure P where\nmk' ::\n  a : Nat"
+        found = leansnippets.index_text("\n\n".join([block, term, tactics, alternative, array, constructor, ""]))
+        self.assertEqual(found["main"], (1, block), "the body stays open past an indented and a blank line")
+        self.assertEqual(found["two"], (9, term))
+        self.assertEqual(found["three"], (13, tactics))
+        self.assertEqual(found["f"], (16, alternative))
+        self.assertEqual(found["xs"], (21, array), "an array literal is no `#` command")
+        self.assertEqual(found["P"], (24, constructor))
+        self.assertEqual(found["P.a"][0], 26)
+
+    def test_a_command_ends_a_body_open_at_column_0(self):
+        body = 'def main : IO Unit := do\nIO.println "a"'
+        for command in ("theorem t : True := trivial", "private noncomputable def d : Nat := 1", "@[simp]",
+                        "#eval main", "end Demo", "namespace Demo", "open Nat in", "scoped[Demo] attribute [simp] d",
+                        "deriving instance Repr for Nat", "/-- A doc comment. -/ example : True := trivial"):
+            with self.subTest(command=command):
+                found = leansnippets.index_text(f"{body}\n-- a note\n/- a /- nested -/ note -/\n{command}\n")
+                self.assertEqual(found["main"], (1, body))
+
+    def test_every_line_a_declaration_or_a_section_starts_on_ends_a_body_open_at_column_0(self):
+        # what DECL_RE, MUTUAL_RE and SECTION_RE read must end the body, or that id is lost
+        body = 'def main : IO Unit := do\nIO.println "a"'
+        for command, name in (("theorem t : True := trivial", "t"), ("lemma l : True := trivial", "l"),
+                              ("def d : Nat := 1", "d"), ("abbrev A := Nat", "A"), ("structure S where", "S"),
+                              ("class C (a : Type) where", "C"), ("class inductive K | k", "K"),
+                              ("instance i : Inhabited Nat := ⟨0⟩", "i"), ("inductive I | i", "I"),
+                              ("opaque o : Nat", "o"), ("section", None), ("noncomputable section", None),
+                              ("mutual", None)):
+            with self.subTest(command=command):
+                found = leansnippets.index_text(f"{body}\n{command}\n")
+                self.assertEqual(found["main"], (1, body))
+                if name:
+                    self.assertEqual(found[name][0], 3)
+
+    def test_a_word_that_only_begins_like_a_command_stays_in_the_body(self):
+        body = 'def main : IO Unit := do\nopenFile "a"\ndefault\nendpoint 1'
+        self.assertEqual(leansnippets.index_text(body + "\n")["main"], (1, body))
+
+    def test_another_word_at_column_0_ends_a_declaration_whose_body_is_not_open(self):
+        found = leansnippets.index_text(
+            "def x : Nat := 1 -- the default :=\nmy_command x\n"
+            "def y : Nat :=\n  1 -- the default :=\nmy_command y\n"
+            "structure S extends P where\n\n/-- Doc. -/\nadd_decl_doc S.toP\n"
+            'def s : String := "say \\" :=\nb"\nmy_command s\n'
+            "def isQuote (c : Char) : IO Unit := if c == '\"' || c == '\\\"' then pure () else do\n"
+            'IO.println "q"\ntheorem t : True := trivial\n')
+        self.assertEqual(found["x"], (1, "def x : Nat := 1 -- the default :="), "a comment's `:=` opens nothing")
+        self.assertEqual(found["y"], (3, "def y : Nat :=\n  1 -- the default :="))
+        self.assertEqual(found["S"], (6, "structure S extends P where"), "nor a `where` a blank line follows")
+        self.assertEqual(found["s"], (10, 'def s : String := "say \\" :=\nb"'), "nor a string's `:=`")
+        self.assertEqual(found["isQuote"][1].split("\n")[1:], ['IO.println "q"'], "a `'\"'` opens no string")
+        self.assertEqual(found["t"], (15, "theorem t : True := trivial"))
+
+    def test_an_indented_comment_above_the_next_command_is_inside_the_declaration(self):
+        found = leansnippets.index_text("def x : Nat :=\n  1\n  -- still the body's\ntheorem t : True := trivial\n")
+        self.assertEqual(found["x"], (1, "def x : Nat :=\n  1\n  -- still the body's"))
+
+    def test_an_escaped_quote_character_opens_no_string(self):
+        found = leansnippets.index_text("def p : Char := '\"'\ndef q : Char := '\\\"'\ndef after : Nat := 1\n")
+        self.assertEqual(found, {"p": (1, "def p : Char := '\"'"), "q": (2, "def q : Char := '\\\"'"),
+                                 "after": (3, "def after : Nat := 1")})
 
     def test_deriving_instance_is_a_command_of_its_own(self):
         found = leansnippets.index_text("inductive Two\n  | a\n  | b\nderiving instance Repr for Two\n")
@@ -574,6 +657,48 @@ theorem with_string : "a := b".length =
 
 theorem with_char : '(' ≠
     ')' := by decide
+
+theorem with_open_char : '(' ≠
+    'a' := by
+  decide
+
+theorem with_block_comment (x : Nat) /- not a proof: a := b -/ :
+    x = x := by
+  rfl
+
+theorem with_long_comment :
+    /- not a proof,
+    a := b -/
+    True := by
+  trivial
+
+theorem with_do_let :
+    True ∧ ⦃⌜True⌝⦄ let x ← get; pure x ⦃⇓ _ => ⌜True⌝⦄ := by
+  have h := 1
+  sorry
+
+theorem with_let_rec : let rec go : Nat → Nat
+    | 0 => 0
+    | n + 1 => go n
+  go 3 = 0 := by
+  have h : 1 = 1 := rfl
+  rfl
+
+theorem with_abs (x : Int) :
+    have h : |x| = |x| := rfl
+    True := by
+  trivial
+
+theorem with_spaced_abs (x : Int) :
+    have h :
+    | x | = (fun y => y) | x | := rfl
+    True := by
+  trivial
+
+theorem with_have_fun :
+    have h : id = fun x : Nat => x := rfl
+    True := by
+  trivial
 
 @[deprecated (since := "2025-01-01")] theorem old_name (x : Nat) :
     x + 0 = x := by
@@ -634,6 +759,23 @@ class LeanSnippetsStatementTest(unittest.TestCase):
                          "theorem with_comment (x : Nat) : -- not a proof: a := b\n    x = x := rfl")
         self.assertEqual(self.text("Demo.with_string"), 'theorem with_string : "a := b".length =\n    6 := by decide')
         self.assertEqual(self.text("Demo.with_char"), "theorem with_char : '(' ≠\n    ')' := by decide")
+        self.assertEqual(self.text("Demo.with_open_char"), "theorem with_open_char : '(' ≠\n    'a' := by")
+        self.assertEqual(self.text("Demo.with_block_comment"),
+                         "theorem with_block_comment (x : Nat) /- not a proof: a := b -/ :\n    x = x := by")
+        self.assertEqual(self.text("Demo.with_long_comment"),
+                         "theorem with_long_comment :\n    /- not a proof,\n    a := b -/\n    True := by")
+
+    def test_a_do_let_or_a_let_rec_with_alternatives_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_do_let"),
+                         "theorem with_do_let :\n    True ∧ ⦃⌜True⌝⦄ let x ← get; pure x ⦃⇓ _ => ⌜True⌝⦄ := by")
+        self.assertEqual(self.text("Demo.with_let_rec"), "theorem with_let_rec : let rec go : Nat → Nat\n"
+                                                         "    | 0 => 0\n    | n + 1 => go n\n  go 3 = 0 := by")
+        self.assertEqual(self.text("Demo.with_abs"),
+                         "theorem with_abs (x : Int) :\n    have h : |x| = |x| := rfl\n    True := by")
+        self.assertEqual(self.text("Demo.with_spaced_abs"), "theorem with_spaced_abs (x : Int) :\n    have h :\n"
+                                                            "    | x | = (fun y => y) | x | := rfl\n    True := by")
+        self.assertEqual(self.text("Demo.with_have_fun"),
+                         "theorem with_have_fun :\n    have h : id = fun x : Nat => x := rfl\n    True := by")
 
     def test_an_attribute_on_the_line_is_not_the_proof(self):
         self.assertEqual(self.text("Demo.old_name"),
@@ -641,6 +783,13 @@ class LeanSnippetsStatementTest(unittest.TestCase):
         self.assertEqual(self.text("Demo.mul_one'"),
                          "@[to_additive (attr := simp)] theorem mul_one' (x : Nat) (y : Nat)\n"
                          "    (h : x = y) : x * 1 = y := by")
+
+    def test_an_attribute_holding_brackets_or_a_string_is_read(self):
+        nested = "@[simp, aesop (rule_sets := [Measurable]) safe apply] theorem m2 : True := trivial"
+        string = '@[to_additive "The [additive] version"] theorem m3 : True := trivial'
+        escaped = '@[to_additive "The \\"]\\" bracket"] theorem m4 : True := trivial'
+        self.assertEqual(leansnippets.index_text(f"{nested}\n{string}\n{escaped}\n"),
+                         {"m2": (1, nested), "m3": (2, string), "m4": (3, escaped)})
 
     def test_proof_start_is_none_without_a_proof_assignment(self):
         lines = ["theorem t : ∀ n : Nat, n = n", "  | 0 => rfl", "  | _ + 1 => rfl"]

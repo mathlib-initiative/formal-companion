@@ -412,6 +412,28 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- The overlay's hover card. A key held with Alt, Ctrl, Meta or Shift on a
+  statement's token is the browser's again. A card that keyboard focus opened
+  comes back after the pointer passes over another token, and Escape or the
+  token losing focus forgets it, while a mouse click no longer pins a card. On
+  touch, a tap inside the card keeps it. A token scrolled out of the panel
+  hides its card, and the next Escape leaves the item. A token links only to
+  a page under the site's own path.
+- `verso_extract.py`: a token whose link names no anchor gets no link, as
+  documented; an encoded NUL in a card's or a token's link is skipped; and a
+  committed `verso.json` whose run kind is not text is refused by
+  `build_site.py` and reported by `check_generated.py` instead of crashing
+  them.
+- The overlay's strict JSON readers (`serve.py`, `build_site.py`,
+  `check_generated.py`, `overlay_annotations.py` and `scripts/overlay/config.py`)
+  report an integer too long for Python, or nesting too deep, as invalid JSON
+  instead of crashing, and refuse a number too large for a float, which would
+  read as Infinity.
+- Lean snippets (`adapters.leansnippets`): a comment, a term, a `do` block or
+  a `mk ::` line at column 0 inside a declaration no longer ends it; a `let x
+  ←`, or a `let rec` given by alternatives, no longer runs a statement into
+  its proof; the character `'\"'` opens no string; and a declaration whose
+  attribute holds brackets or a string is found.
 - The viewer's shortcuts ignored a key typed with Shift, so `+` never zoomed
   on a layout that types it with Shift; Shift now disqualifies a named key
   such as ArrowRight only.
