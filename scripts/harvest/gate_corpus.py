@@ -92,6 +92,34 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     }
 
 
+def gate_locate_corpus(dest: str | Path, gate_config: str | Path) -> dict:
+    """Run the LOCATE gate (``gate/verify_locate.py``) over a landed locate corpus.
+
+    The corpus keeps ``<task-id>/<source-id>.json`` at its top, so the gate runs in
+    directory mode with ``--findings-dir .``, in-process, and returns the shape
+    :func:`gate_corpus` returns so the receipt and :func:`render` read it alike.
+    An empty corpus fails here too: the gate refuses an empty set itself.
+    """
+    from gate import verify_locate as vl
+
+    cfg_path = Path(gate_config).expanduser()
+    if not cfg_path.exists():
+        raise CfError(f"no gate config at {cfg_path}",
+                      hint="the locate planner writes runs/<id>/gate.local.json; pass --gate-config")
+    try:
+        cfg = vl.GateConfig.load(cfg_path)
+    except vl.GateBroken as exc:
+        return {"ok": False, "config": str(cfg_path), "preset": "locate", "sources": [],
+                "files": 0, "problems": [f"the gate could not run: {exc}"], "partial_quotes": [],
+                "binding_notes": [], "unbound_quotes": 0, "broken": [str(exc)]}
+    result = vl.run_gate(cfg, root=Path(dest), findings_dir=CORPUS_FINDINGS_DIR)
+    problems = [f"the gate could not run: {b}" for b in result["broken"]] + result["problems"]
+    return {"ok": result["exit"] == vl.EXIT_OK, "config": str(cfg_path), "preset": cfg.preset,
+            "mode": cfg.mode, "sources": sorted(cfg.sources), "files": result["documents"],
+            "problems": problems, "by_rule": result["by_rule"], "broken": result["broken"],
+            "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0}
+
+
 def render(result: dict, max_named: int = 12) -> str:
     """One-screen summary of a gate result."""
     sources = ", ".join(result.get("sources") or []) or "(none)"

@@ -183,6 +183,65 @@ release has something to say.
   capped at 12 words and 32 characters of context, receipts as sidecars, `SEAL.json`; a passage
   whose challenge is owed and a source over the byte budget are refused by name, and a re-export
   is byte-identical.
+- `cf campaign plan | render | status` (proposal §6): an ordered list of
+  already-planned locate runs as shards (each at most 500 tasks, each with a
+  spend cap in its own `run.yaml`, all for one allowlisted host) and the
+  watchdog's thresholds in `campaigns/<id>/campaign.yaml`; a rendered host-side
+  sequencer (shell, no cflib) that starts shard k+1 when shard k ends, runs the
+  watchdog beside each shard, exports usage and prunes that shard's
+  transcripts, and stops when a watchdog drains; and a status table read from
+  the shards' receipts. `scripts/run/watchdog.py` is the model-free, stdlib
+  watchdog: spend from the kept envelopes, the gate-failure rate from the gate
+  log and the cost per merged task from the entrypoint's merge target, drained
+  with `tend-control drain` at the shard's cap or a multiple of the pilot's p90.
+- `cf run` for a locate run: `--execute` needs a spend cap recorded in its
+  `run.yaml` or given as `--max-cost` (a workspace default does not count and
+  `--no-budget-cap` is refused); the transfer sends this run's rendered sources
+  (with `--include-source-text`), `corpus.sqlite`, the L2 candidates and the
+  frozen inventory to the host paths its `gate.json` names; the verify stage
+  checks `corpus.sqlite`'s sha256 once and that the locate gate is out of tree,
+  and the tend config is checked for `verify_locate.py`.
+- Recursive harvest (proposal §3, §6): the listing (`find -print0` on a host),
+  the transfer and the checksums descend into subdirectories, a receipt names a
+  file by its path relative to the corpus, and `iter_finding_files` walks the
+  tree, so a locate run's `<task-id>/<source-id>.json` documents land, are
+  reconciled and are counted; a flat faithfulness corpus lists, copies and
+  receipts exactly as before. `cf harvest` gates a locate run with
+  `verify_locate.py` and its `gate.local.json`, audits its documents against
+  the run's own source pins, adds a receipt `locate` block (documents by mode,
+  UNRESOLVED documents, attempt-capped documents and unresolved passages
+  counted on their own) and writes no faithfulness tally, pin or companion
+  state for it.
+- Bridge hardening (proposal §6). `scripts/run/agent_call.py` runs every
+  agent call of `bridge-agentbox.sh` and `bridge-claude-p.sh` inside one of 15
+  per-user `flock` session slots (`CF_SLOT_DIR`, `CF_SLOTS`), waiting for a
+  free one rather than failing, under `CF_AGENT_TIMEOUT` (45 minutes) in its own
+  process group; a timeout exits 124 and an empty or 409 envelope 75, with no
+  contribution printed, so tend retries the worktree. Claude's JSON envelope is
+  kept under `<tend-root>/usage/` instead of being deleted.
+  `scripts/run/attempt_cap.py` counts genuine reviewer rejections per task under
+  `<tend-root>/attempts/`; at `CF_ATTEMPT_CAP` the worker bridge writes and
+  commits the task's schema-valid `UNRESOLVED` documents (`unresolved.by:
+  attempt_cap`) without an agent call and the reviewer bridge approves exactly
+  those mechanically. `CF_EXTRA_TOOLS` reaches the worker's allowlist,
+  `CF_FINDINGS_GLOB` may name the task, and `cf run` ships any bridge helper a
+  staged `bin/` lacks.
+- The locate gate, `scripts/gate/verify_locate.py` (proposal §4): rules 1-8 out
+  of tree over only the task's own documents — the change set's
+  `findings/<task-id>/<source-id>.json`, or `--findings` — loading only the
+  sources, L2 candidates files and task manifests they name. Schema per mode
+  with the header pins and a strict JSON parse; every implied record through the
+  vendored Literature Links checker, both vendored packages verified against
+  their manifests and `gate.json`'s pins at start; quotes exactly once on the
+  pinned layer at the passage start, ids recomputed over the whole inventory;
+  every named declaration in `corpus.sqlite`'s exact table at the universe's
+  commit, `proof_status`/`commit`/`version` refused; L2 curated hits read by the
+  gate itself (off in the blind arm); three distinct queries per absence; at
+  most five ranked locations; ownership by task id, by `orchestrator.sqlite`
+  (an assumed schema, looked up defensively) or by the single-stem rule, named
+  on the last line; the finder and coverage floor of inventories. Exit 0/1/3 as
+  `verify_findings.py`, one JSON line per call in the gate log.
+  `references/locate-documents.md` §2-§4 and §9 state each rule precisely.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the

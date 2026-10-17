@@ -119,11 +119,45 @@ def run(args) -> int:
                  "this corpus. Re-run them against the pinned edition, or pass "
                  "--allow-edition-mismatch and say so in the report.")
 
+    if is_locate(data):
+        # A locate corpus is no companion's: it pins no companion revision, the
+        # faithfulness tally has no row to count in it, and its counts belong to
+        # the sourceset, which the locate harvest records.
+        log.info("locate run: the faithfulness tally, the companion pin and the companions' "
+                 "state.json are not written for it; the receipt's locate block carries its "
+                 "counts")
+        return 0 if receipt["complete"] else 1
     pin = _pin(workspace, args.run_id, data, dest)
     counts = ({} if args.no_tally
               else record_mod.write_run_tally(workspace, args.run_id, dest))
     record_mod.record_run_state(workspace, args.run_id, data, receipt, counts, pin)
     return 0 if receipt["complete"] else 1
+
+
+def is_locate(data: dict) -> bool:
+    """Is this run.yaml a locate run's (references/locate-documents.md section 9)?"""
+    from cflib import vocab
+
+    block = data.get("locate") if isinstance(data, dict) else None
+    return isinstance(block, dict) or str((data or {}).get("mode") or "") in vocab.LOCATE_MODES
+
+
+def locate_source_shas(workspace, run_id: str) -> dict[str, str]:
+    """``{source_id: html_sha256}`` a locate run pinned, from its gate.local.json.
+
+    A web source lives in a sourceset, never in workspace.yaml, so the edition
+    audit of the receipt reads the run's own pin instead of the workspace's
+    sources table.
+    """
+    path = Path(workspace.paths.run_dir(run_id)) / "gate.local.json"
+    try:
+        import json
+
+        sources = json.loads(path.read_text(encoding="utf-8")).get("sources") or {}
+    except (OSError, ValueError, AttributeError):
+        return {}
+    return {str(sid): str(pin.get("html_sha256")) for sid, pin in sorted(sources.items())
+            if isinstance(pin, dict) and pin.get("html_sha256")}
 
 
 def _cost_block(workspace, args) -> dict | None:
@@ -167,13 +201,15 @@ def _from_findings(workspace, args, data: dict, dest: Path, run_yaml_path: Path,
             log.info(f"# {step['title']}\n{step['shell']}")
         raise CfError("remote harvest needs --execute",
                       hint="the commands above are exactly what it will run")
+    locate = is_locate(data)
     return harvest_mod.harvest(
         run_id=args.run_id, source=source, dest=dest,
-        sources=manifest.source_shas(workspace, data),
+        sources=(locate_source_shas(workspace, args.run_id) if locate
+                 else manifest.source_shas(workspace, data)),
         run_yaml_src=run_yaml_path if run_yaml_path.exists() else None,
         verify_sha=args.verify_sha, execute=True,
         allow_edition_mismatch=args.allow_edition_mismatch,
-        gate_runner=gate_runner(workspace, args), cost=cost)
+        gate_runner=gate_runner(workspace, args, locate=locate), cost=cost)
 
 
 def _check_remote_source(workspace, args, source: dict) -> None:
@@ -199,7 +235,8 @@ def _check_remote_source(workspace, args, source: dict) -> None:
             hint="this moves data from a machine you may not own onto this one")
 
 
-def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
+def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None,
+                locate: bool = False):
     """A callable harvest() invokes on the landed corpus, or None with ``--no-gate``.
 
     ``--gate-config`` always wins.  Otherwise a run this workspace PLANNED has a
@@ -225,6 +262,16 @@ def gate_runner(workspace, args, *, preset: str = "", sources=None, repos=None):
     explicit = getattr(args, "gate_config", None)
     planned = Path(workspace.paths.run_dir(args.run_id)) / "gate.local.json"
     config = Path(explicit).expanduser() if explicit else planned
+    if locate:
+        # A locate run is gated by gate/verify_locate.py over the whole landed
+        # corpus, with the gate.local.json its planner wrote: the same rules the
+        # host ran per task, run once more over what actually arrived.
+        def _run_locate_gate(dest: Path) -> dict:
+            result = gate_mod.gate_locate_corpus(dest, config)
+            log.info(gate_mod.render(result))
+            return result
+
+        return _run_locate_gate
 
     def _run_gate(dest: Path) -> dict | None:
         cfg = config
