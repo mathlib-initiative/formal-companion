@@ -69,7 +69,7 @@ release has something to say.
   `inductive`, `opaque`) is the whole declaration, up to the next command and
   at most 60 lines; a theorem's is still its statement through the `:=`. A
   declaration with an attribute on its line is located, one inside a comment
-  is not.
+  is not. The viewer clamps a statement only past 20 lines, to 14.
 - The vendored annotation format is the release candidate
   `formal-companion-annotations v1.0.0rc2` (identifier
   `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).

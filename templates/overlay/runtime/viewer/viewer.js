@@ -212,8 +212,10 @@ export function isViewerShortcut(event) {
 }
 
 
-/** Statements longer than this many lines are clamped, with a "Show all" button. */
+/** Statements longer than this many lines are clamped to it, with a "Show all" button. */
 const STATEMENT_LINES = 14;
+/** Up to this many lines more are shown whole: a clamp that would hide only a few lines is not worth a click. */
+const STATEMENT_SLACK = 6;
 /** About how many characters of a statement fit on one line of the panel before it wraps. */
 const STATEMENT_COLUMNS = 70;
 /** A line's closing " :" and the word before it, kept on one line so the colon never wraps alone. */
@@ -461,14 +463,15 @@ export async function bootstrapViewer({
   }
 
   /**
-   * A statement block, clamped past STATEMENT_LINES lines with a button to
-   * show the rest. A long line counts as the lines it wraps to.
+   * A statement block, clamped to STATEMENT_LINES lines when it is longer
+   * than that and STATEMENT_SLACK, with a button to show the rest. A long
+   * line counts as the lines it wraps to.
    */
   function statementNodes(source) {
     const pre = leanNode(source);
     const lines = source.split("\n")
       .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / STATEMENT_COLUMNS)), 0);
-    if (lines <= STATEMENT_LINES) {
+    if (lines <= STATEMENT_LINES + STATEMENT_SLACK) {
       return [pre];
     }
     setClass(pre, "is-clamped", true);
