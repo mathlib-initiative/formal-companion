@@ -462,8 +462,14 @@ rejection.
 
 ## 10. Harvested rows and passage outcomes
 
-Harvest lands `findings/<task-id>/<source-id>.json` under `corpus/<run-id>/`
-with the same relative paths (the receipt manifest is keyed by them). Each
+Harvest copies the host's `findings/` tree into `corpus/<run-id>/`, so a document
+lands at `corpus/<run-id>/<task-id>/<source-id>.json` and the receipt's listing,
+manifest and missing set are keyed by `<task-id>/<source-id>.json` (the listing
+is `find -print0`, the checksums `shasum` over it). The landed corpus is gated
+again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
+`locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
+`unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
+UNRESOLVED on its own, never as not formalized. Each
 document becomes finding rows that `cflib.hashing.finding_id` keys unchanged —
 the library id is the `repo` and `<library>:<declaration>@<commit>` the
 declaration list:

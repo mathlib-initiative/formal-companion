@@ -514,7 +514,8 @@ class TestReceipt(unittest.TestCase):
         with self.assertRaises(Exception):
             harvest_mod.harvest(run_id="run-1", source=source, dest=self.dest, execute=False)
         commands = harvest_mod.list_commands(source, self.dest)
-        self.assertTrue(any("ls -1" in c["shell"] for c in commands))
+        # recursive since locate's findings/<task-id>/<source-id>.json layout
+        self.assertTrue(any("find . -type f" in c["shell"] for c in commands))
         self.assertTrue(any(c["shell"].startswith("rsync") for c in commands))
 
     def test_local_path_with_a_colon_is_not_a_host(self):

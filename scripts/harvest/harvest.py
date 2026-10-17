@@ -33,12 +33,20 @@ from typing import Mapping, Sequence
 if __package__ in (None, ""):  # `python3 scripts/harvest/harvest.py`
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from harvest._compat import (NON_FINDING_FILES, CfError, hashing, iso_now,
-                             iter_finding_files, read_json, write_json)
+from harvest._compat import (NON_FINDING_FILES, CfError, finding_name, hashing,
+                             is_finding_name, iso_now, iter_finding_files, read_json,
+                             write_json)
 
 RECEIPT_NAME = "RECEIPT.json"
 #: how many missing names an error message spells out before truncating
 MAX_NAMED = 20
+#: The remote listing and checksums, RECURSIVE: a locate run's findings are
+#: ``findings/<task-id>/<source-id>.json`` (docs/proposals/wikipedia-locate.md
+#: section 3), so ``ls -1`` over the findings directory listed task directories
+#: and never a document.  NUL-separated, so no name is split; a flat
+#: faithfulness directory lists exactly what ``ls -1`` listed.
+REMOTE_LIST = "cd {path} && find . -type f -name '*.json' -print0"
+REMOTE_SHAS = "cd {path} && find . -type f -name '*.json' -print0 | xargs -0 shasum -a 256"
 
 
 def parse_source(spec: str) -> dict:
@@ -69,11 +77,10 @@ def list_commands(source: dict, dest: Path) -> list[dict]:
     if source["kind"] != "remote":
         return []
     remote = f"{source['host']}:{source['path']}/"
-    ls = ["ssh", source["host"], f"ls -1 {shlex.quote(source['path'])}"]
+    ls = ["ssh", source["host"], REMOTE_LIST.format(path=shlex.quote(source["path"]))]
     rsync = ["rsync", "-a", "--prune-empty-dirs", "--include=*.json", "--include=*/",
              "--exclude=*", remote, str(dest) + "/"]
-    shas = ["ssh", source["host"],
-            f"cd {shlex.quote(source['path'])} && shasum -a 256 *.json"]
+    shas = ["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(source["path"]))]
     return [
         {"title": "expected set (the source listing IS the expectation)", "argv": ls,
          "shell": " ".join(shlex.quote(a) for a in ls)},
@@ -94,33 +101,38 @@ def source_names(source: dict) -> list[str]:
     those names as MISSING -- files that were on disk in both places.
     """
     if source["kind"] == "remote":
-        out = _run(["ssh", source["host"], f"ls -1 {shlex.quote(source['path'])}"],
+        out = _run(["ssh", source["host"], REMOTE_LIST.format(path=shlex.quote(source["path"]))],
                    "remote listing")
-        names = [line.strip() for line in out.splitlines() if line.strip()]
+        names = [_strip_dot(n) for n in out.split("\0") if n.strip()]
     else:
         directory = Path(source["path"])
         if not directory.is_dir():
             raise CfError(f"source directory does not exist: {directory}")
-        names = [p.name for p in sorted(directory.iterdir()) if p.is_file()]
-    return sorted(n for n in names if n.endswith(".json") and not n.startswith(".")
-                  and n not in NON_FINDING_FILES)
+        names = [finding_name(p, directory) for p in iter_finding_files(directory)]
+    return sorted({n for n in names if is_finding_name(n)})
+
+
+def _strip_dot(name: str) -> str:
+    """``./t-1/a.json`` -> ``t-1/a.json``: a `find .` path as a receipt name."""
+    name = name.strip("\n")
+    return name[2:] if name.startswith("./") else name
 
 
 def source_shas(source: dict) -> dict[str, str]:
     """{name: sha256} at the SOURCE (``--verify-sha``; remote uses shasum -a 256)."""
     if source["kind"] == "remote":
-        out = _run(["ssh", source["host"],
-                    f"cd {shlex.quote(source['path'])} && shasum -a 256 *.json"],
+        out = _run(["ssh", source["host"], REMOTE_SHAS.format(path=shlex.quote(source["path"]))],
                    "remote checksums")
         shas = {}
         for line in out.splitlines():
-            parts = line.split()
-            if len(parts) >= 2:
-                shas[Path(parts[-1]).name] = parts[0]
+            digest, _, name = line.partition(" ")
+            name = _strip_dot(name.strip().lstrip("*"))
+            if len(digest) == 64 and name and name != "-":
+                shas[name] = digest
         return shas
     directory = Path(source["path"])
-    return {p.name: hashing.sha256_file(p) for p in sorted(directory.iterdir())
-            if p.is_file() and p.suffix == ".json"}
+    return {finding_name(p, directory): hashing.sha256_file(p)
+            for p in iter_finding_files(directory)}
 
 
 def transfer(source: dict, dest: Path) -> None:
@@ -131,9 +143,11 @@ def transfer(source: dict, dest: Path) -> None:
                 "--exclude=*", f"{source['host']}:{source['path']}/", str(dest) + "/"]
         _run(argv, "rsync")
         return
-    for path in sorted(Path(source["path"]).iterdir()):
-        if path.is_file() and path.suffix == ".json" and not path.name.startswith("."):
-            shutil.copy2(path, dest / path.name)
+    root = Path(source["path"])
+    for path in iter_finding_files(root):
+        target = dest / finding_name(path, root)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(path, target)
 
 
 def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
@@ -172,11 +186,12 @@ def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
         sid = str(payload.get("source_id") or meta.get("source_id") or "")
         sha = payload.get("source_sha") or meta.get("source_sha") \
             or payload.get("book_sha") or meta.get("book_sha")
+        name = finding_name(path, dest)
         if not sha and not sid:
-            missing.append(path.name)
+            missing.append(name)
             continue
         if sid and sid not in expected:
-            unknown.append(path.name)
+            unknown.append(name)
             continue
         want = expected.get(sid) if sid else None
         if want is None:
@@ -185,10 +200,10 @@ def source_audit(dest: Path, expected: Mapping[str, str]) -> dict:
             if str(sha) in set(expected.values()):
                 matched += 1
                 continue
-            mismatched.append(path.name)
+            mismatched.append(name)
             continue
         if str(sha) != want:
-            mismatched.append(path.name)
+            mismatched.append(name)
             continue
         matched += 1
         seen[sid] = seen.get(sid, 0) + 1
@@ -211,11 +226,57 @@ def malformed_files(dest: Path) -> list[str]:
         try:
             payload = read_json(path, default=None)
         except CfError:  # invalid JSON: read_json already refuses it
-            bad.append(path.name)
+            bad.append(finding_name(path, dest))
             continue
         if not isinstance(payload, dict):
-            bad.append(path.name)
+            bad.append(finding_name(path, dest))
     return sorted(bad)
+
+
+#: the ``schema`` of every locate document (``cflib.vocab.LOCATE_DOCUMENT_SCHEMA``)
+LOCATE_SCHEMA = "cf-locate/1"
+
+
+def locate_counts(dest: Path) -> dict | None:
+    """The locate documents in *dest*, counted by mode, or None when there are none.
+
+    UNRESOLVED is counted on its own and never as "not formalized" (the
+    proposal's section 2.6), and the documents the bridge wrote at the attempt
+    cap (``unresolved.by: attempt_cap``) are counted apart from the workers' own:
+    a shard whose receipt is mostly attempt-capped is a shard to re-plan, not a
+    shard that found nothing (docs/proposals/wikipedia-locate.md section 6).
+    """
+    out = {"documents": 0, "by_mode": {}, "unresolved_documents": 0,
+           "attempt_capped_documents": 0, "passages": 0, "unresolved_passages": 0,
+           "verdicts": 0, "tasks": 0}
+    tasks: set[str] = set()
+    for path in iter_finding_files(dest):
+        try:
+            payload = read_json(path, default=None)
+        except CfError:
+            continue
+        if not isinstance(payload, dict) or payload.get("schema") != LOCATE_SCHEMA:
+            continue
+        mode = str(payload.get("mode") or "?")
+        out["documents"] += 1
+        out["by_mode"][mode] = out["by_mode"].get(mode, 0) + 1
+        tasks.add(str(payload.get("task_id") or Path(path).parent.name))
+        block = payload.get("unresolved")
+        if isinstance(block, dict):
+            out["unresolved_documents"] += 1
+            if block.get("by") == "attempt_cap":
+                out["attempt_capped_documents"] += 1
+        passages = payload.get("passages") if isinstance(payload.get("passages"), list) else []
+        out["passages"] += len(passages)
+        out["unresolved_passages"] += sum(1 for p in passages if isinstance(p, dict)
+                                          and p.get("outcome") == "unresolved")
+        if isinstance(payload.get("verdicts"), list):
+            out["verdicts"] += len(payload["verdicts"])
+    if not out["documents"]:
+        return None
+    out["tasks"] = len(tasks)
+    out["by_mode"] = dict(sorted(out["by_mode"].items()))
+    return out
 
 
 def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: Path,
@@ -244,7 +305,7 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
     of whether anyone priced them.
     """
     actual_paths = iter_finding_files(dest)
-    actual = sorted(p.name for p in actual_paths)
+    actual = sorted(finding_name(p, dest) for p in actual_paths)
     expected_set, actual_set = set(expected), set(actual)
     missing = sorted(expected_set - actual_set)
     extra = sorted(actual_set - expected_set)
@@ -286,6 +347,9 @@ def build_receipt(*, run_id: str, source: dict, expected: Sequence[str], dest: P
         "gate": gate,
         "cost": cost,
     }
+    locate = locate_counts(dest)
+    if locate:
+        receipt["locate"] = locate
     if previous:
         receipt["previous"] = {
             "harvested_at": previous.get("harvested_at"),
@@ -389,6 +453,14 @@ def describe(receipt: dict) -> str:
         if edition.get("no_source"):
             lines.append(f"  source: {len(edition['no_source'])} findings carry no source_id "
                          f"(v1 findings; convert_v1.py stamps them)")
+    locate = receipt.get("locate")
+    if isinstance(locate, dict):
+        modes = ", ".join(f"{m} {n}" for m, n in sorted((locate.get("by_mode") or {}).items()))
+        lines.append(f"  locate: {locate.get('documents')} document(s) over {locate.get('tasks')} "
+                     f"task(s) ({modes}); UNRESOLVED {locate.get('unresolved_documents')} "
+                     f"document(s), {locate.get('attempt_capped_documents')} at the attempt cap, "
+                     f"{locate.get('unresolved_passages')} of {locate.get('passages')} passage(s) "
+                     f"-- counted on their own, never as not formalized")
     gate = receipt.get("gate")
     if gate:
         lines.append(f"  gate: {'PASSED' if gate.get('ok') else 'FAILED'} "
