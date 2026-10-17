@@ -613,15 +613,19 @@ export async function bootstrapViewer({
   /** Open the hover card by a token. */
   function showHover(node, shown) {
     const card = ui["hover-card"];
+    const fresh = hover.token !== node;
     cancelHideHover();
-    if (hover.token !== node) {
+    if (fresh) {
       hover.token?.removeAttribute?.("aria-describedby");
       card.replaceChildren(...hoverNodes(shown));
-      card.scrollTop = 0;
     }
     hover.token = node;
     node.setAttribute("aria-describedby", "hover-card");
     card.hidden = false;
+    // Once shown: a hidden element keeps no scroll position of its own to set.
+    if (fresh) {
+      card.scrollTop = 0;
+    }
     placeHover();
   }
 

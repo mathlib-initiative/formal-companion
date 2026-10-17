@@ -1101,7 +1101,7 @@ test("verso: the pointer can move onto the hover card, which stays while the poi
 });
 
 test("verso: PageDown and PageUp scroll a long hover card while its token has focus", async () => {
-  const { card, named } = await versoCard();
+  const { card, documentRef, named } = await versoCard();
   const box = named("Box");
   await fire(box, "focus");
   const key = async (name) => {
@@ -1120,6 +1120,17 @@ test("verso: PageDown and PageUp scroll a long hover card while its token has fo
   assert.deepEqual(await key("PageUp"), [false, 0]);
   await fire(named("b"), "focus");
   assert.equal(card.scrollTop, 0, "another token's card starts at its top");
+
+  // A hidden element keeps no scroll position to set, as in a browser: a card is scrolled back once shown.
+  let top = 0;
+  Object.defineProperty(card, "scrollTop", { configurable: true, get: () => top, set: (value) => { if (!card.hidden) top = value; } });
+  await fire(box, "focus");
+  assert.deepEqual(await key("PageDown"), [true, 376]);
+  await fire(box, "keydown", { key: "Escape", target: box });
+  await fire(documentRef, "keydown", { key: "Escape", target: box });
+  assert.equal(card.hidden, true);
+  await fire(box, "focus");
+  assert.deepEqual([card.hidden, card.scrollTop], [false, 0], "the same token's card, reopened, starts at its top");
 });
 
 test("verso: the arrow keys move between a statement's tokens and never turn the page", async () => {
