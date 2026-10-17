@@ -7,11 +7,14 @@ last commit that has it (``index_file`` and ``build``), which wrote them to
 at measure_theory ef0a424 (``code_line_starts``, ``declaration_body_end``,
 ``comment_ending_at``, ``example_tag`` and the example branch of
 ``DeclarationIndex``).  Both are ported rule for rule, except where a snippet
-ends: a theorem's is still its statement through the proof's ``:=``, but a
-definition (:data:`DEFINITION_KEYWORDS`) is shown whole, body, fields and
-constructors included, up to the next command (:func:`declaration_end`, which
-bounds a theorem's statement too), and a declaration is read only outside
-comments and with any attributes on its line (docs/exporters.md section 1).
+ends: a theorem's is still its statement through the proof's ``:=``, now the
+first one outside brackets, comments and strings that closes no ``let`` or
+``have`` (:func:`proof_start`), but a definition (:data:`DEFINITION_KEYWORDS`)
+is shown whole, body, fields and constructors included, up to the next command
+(:func:`declaration_end`, which bounds a theorem's statement too), a field's
+snippet keeps the lines that continue its type, and a declaration is read only
+outside comments and with any attributes or instance priority on its line
+(docs/exporters.md section 1).
 ``adapters.leanparse`` ends a body elsewhere, so it gives other text and lines.
 Consumers: ``adapters.attribution_table`` (docs/design/stage_map.md Stage 2)
 and ``annotations.export.attribution_table`` (docs/exporters.md section 1).
@@ -24,8 +27,8 @@ from pathlib import Path, PurePosixPath
 from typing import Callable, Collection
 
 __all__ = ["SnippetError", "MAX_LINES", "DEFINITION_MAX_LINES", "MARKER", "DEFINITION_KEYWORDS",
-           "RETIRED_SNIPPETS", "declaration_end", "definition_text", "statement_text", "index_text", "wanted",
-           "cut", "reader"]
+           "RETIRED_SNIPPETS", "declaration_end", "definition_text", "proof_start", "statement_text", "index_text",
+           "wanted", "cut", "reader"]
 
 #: a statement longer than this is cut to its first MAX_LINES lines plus "\n  " + MARKER
 MAX_LINES = 14
@@ -38,18 +41,25 @@ DEFINITION_KEYWORDS = frozenset({"def", "abbrev", "instance", "structure", "clas
 RETIRED_SNIPPETS = "declaration-snippets.json"
 
 # -- extract_declaration_snippets.py at measure_theory ef0a424 ---------------
-# (it read only the three modifiers in this order, no attribute and no `opaque`)
+# (it read only the three modifiers in this order, no attribute, no `opaque` and no instance priority)
 DECL_RE = re.compile(
     r"^(?:@\[[^\]\n]*\]\s*)*"
     r"(?:(?:private|protected|public|noncomputable|nonrec|unsafe|partial|local|scoped|meta)\s+)*"
     r"(?P<kw>class\s+inductive|theorem|lemma|def|abbrev|structure|class|instance|inductive|opaque)"
+    r"(?:\s+\(priority\s*:=[^)\n]*\))?"
     r"\s+(?P<name>[A-Za-z0-9_'.]+)"
 )
+MUTUAL_RE = re.compile(r"^mutual\s*$")
 NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z0-9_'.]+)\s*$")
 SECTION_RE = re.compile(r"^(noncomputable\s+)?section(\s+[A-Za-z0-9_'.]+)?\s*$")
 END_RE = re.compile(r"^end(\s+[A-Za-z0-9_'.]+)?\s*$")
 FIELD_RE = re.compile(r"^\s{2,}([A-Za-z0-9_']+)\s*[:({\[]")
-STOP_RE = re.compile(r":=")
+#: brackets: a ':=' inside them is a named argument's, a structure instance's or an attribute's
+OPENING, CLOSING = "([{⟨⦃⟦", ")]}⟩⦄⟧"
+#: words that bring a ':=' of their own into a statement
+LOCAL_BINDERS = frozenset({"let", "have", "haveI", "letI"})
+#: what an identifier is made of, after its first letter
+NAME_CHARS = "_'!?"
 #: what a command's first line starts with: a keyword or `@[`, `#`, or a comment
 COMMAND_START_RE = re.compile(r"[A-Za-z_@#]|/-|--")
 #: what continues a declaration at its own indentation
@@ -235,15 +245,78 @@ def definition_text(lines: list[str], start: int, code: list[bool] | None = None
     return _capped(lines[start:declaration_end(lines, start, code)], DEFINITION_MAX_LINES)
 
 
+def proof_start(lines: list[str], start: int, end: int) -> tuple[int, int] | None:
+    """(line, column) of the ``:=`` that starts the proof of the declaration in lines[start:end], or None.
+
+    That is the first ``:=`` outside comments, strings and brackets (a named argument
+    ``(n := 1)``, a structure instance ``{ x := 1 }`` and an attribute ``@[simp (since := ...)]``
+    each have their own) that does not close a ``let`` or ``have`` of the statement.
+    """
+    depth = comment = pending = 0
+    in_string = False
+    for row in range(start, min(end, len(lines))):
+        line = lines[row]
+        at = 0
+        while at < len(line):
+            char, pair = line[at], line[at:at + 2]
+            if in_string:
+                if char == "\\":
+                    at += 2
+                    continue
+                in_string = char != '"'
+                at += 1
+            elif comment:
+                comment += 1 if pair == "/-" else -1 if pair == "-/" else 0
+                at += 2 if pair in ("/-", "-/") else 1
+            elif pair == "--":
+                break
+            elif pair == "/-":
+                comment, at = 1, at + 2
+            elif char == "'" and (at == 0 or not (line[at - 1].isalnum() or line[at - 1] in NAME_CHARS)):
+                # a character literal: 'x' or '\n'
+                at += 4 if line[at + 1:at + 2] == "\\" and line[at + 3:at + 4] == "'" \
+                    else 3 if line[at + 2:at + 3] == "'" else 1
+            elif char == '"':
+                in_string, at = True, at + 1
+            elif char in OPENING:
+                depth, at = depth + 1, at + 1
+            elif char in CLOSING:
+                depth, at = max(0, depth - 1), at + 1
+            elif pair == ":=":
+                if depth == 0 and not pending:
+                    return row, at
+                pending -= 1 if depth == 0 else 0
+                at += 2
+            elif char.isalpha() or char == "_":
+                stop = at + 1
+                while stop < len(line) and (line[stop].isalnum() or line[stop] in NAME_CHARS):
+                    stop += 1
+                pending += 1 if depth == 0 and line[at:stop] in LOCAL_BINDERS else 0
+                at = stop
+            else:
+                at += 1
+    return None
+
+
 def statement_text(lines: list[str], start: int, end: int) -> str:
-    """A theorem's statement: its lines through the first that holds the proof's ``:=`` (or ends in
-    `` where``), within lines[start:end], cut past MAX_LINES lines and marked."""
+    """A theorem's statement: its lines through the one that starts its proof (:func:`proof_start`), or
+    that ends in `` where``, within lines[start:end], cut past MAX_LINES lines and marked."""
+    proof = proof_start(lines, start, end)
     block: list[str] = []
-    for line in lines[start:end]:
+    for line in lines[start:proof[0] + 1 if proof else end]:
         block.append(line)
-        if STOP_RE.search(line) or line.rstrip().endswith(" where"):
+        if line.rstrip().endswith(" where"):
             break
     return _capped(block, MAX_LINES)
+
+
+def field_text(structure: str, lines: list[str], at: int, end: int) -> str:
+    """A field's snippet: its structure's name, a marker, and the field's lines, the deeper indented
+    lines that continue its type included, within lines[:end]; cut like a definition."""
+    stop = at + 1
+    while stop < end and lines[stop].strip() and _indent(lines[stop]) > _indent(lines[at]):
+        stop += 1
+    return _capped([f"structure {structure} where", f"  {MARKER}", *lines[at:stop]], DEFINITION_MAX_LINES)
 
 
 def index_text(text: str) -> dict[str, tuple[int, str]]:
@@ -279,6 +352,10 @@ def index_text(text: str) -> dict[str, tuple[int, str]]:
             blocks.append(("section", 0))
             i += 1
             continue
+        if MUTUAL_RE.match(line):
+            blocks.append(("mutual", 0))
+            i += 1
+            continue
         if END_RE.match(line):
             if blocks:
                 kind_popped, count = blocks.pop()
@@ -304,8 +381,7 @@ def index_text(text: str) -> dict[str, tuple[int, str]]:
                 for k in range(i + 1, min(end, i + 200)):
                     field = FIELD_RE.match(lines[k])
                     if field and code[k] and "/--" not in lines[k]:
-                        field_snippet = f"structure {name} where\n  {MARKER}\n{lines[k]}"
-                        found.setdefault(f"{full}.{field.group(1)}", (k + 1, field_snippet))
+                        found.setdefault(f"{full}.{field.group(1)}", (k + 1, field_text(name, lines, k, end)))
             i = end
             continue
         i += 1

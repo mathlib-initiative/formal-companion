@@ -546,6 +546,117 @@ class LeanSnippetsDefinitionTest(unittest.TestCase):
         self.assertEqual(leansnippets.definition_text(lines, 0), "  def inner : Nat :=\n    1")
 
 
+STATEMENTS_LEAN = '''\
+namespace Demo
+
+theorem with_let (x : Nat) :
+    let y := x + 1
+    y = x + 1 := by
+  rfl
+
+theorem with_named : f (n := 1) =
+    2 := by
+  rfl
+
+theorem with_instance :
+    ({ lower := 0, upper := 1 } : Interval).lower =
+      0 := rfl
+
+theorem with_have :
+    have h : 1 = 1 := rfl
+    True := trivial
+
+theorem with_comment (x : Nat) : -- not a proof: a := b
+    x = x := rfl
+
+theorem with_string : "a := b".length =
+    6 := by decide
+
+theorem with_char : '(' ≠
+    ')' := by decide
+
+@[deprecated (since := "2025-01-01")] theorem old_name (x : Nat) :
+    x + 0 = x := by
+  simp
+
+@[to_additive (attr := simp)] theorem mul_one' (x : Nat) (y : Nat)
+    (h : x = y) : x * 1 = y := by
+  simp [h]
+
+/- `example:demo-let` -/
+example :
+    let z := 2
+    z = 2 := rfl
+
+structure Laws where
+  box (b : Nat) : b =
+    b
+  /-- the next field -/
+  next : Nat
+
+mutual
+def isEven : Nat → Bool
+  | 0 => true
+  | n + 1 => isOdd n
+def isOdd : Nat → Bool
+  | 0 => false
+  | n + 1 => isEven n
+end
+
+def after : Nat := 1
+
+instance (priority := 100) fooInst : Inhabited Nat := ⟨0⟩
+
+end Demo'''
+
+
+class LeanSnippetsStatementTest(unittest.TestCase):
+    """A theorem's statement runs to its proof's `:=`, past every other `:=` in it."""
+
+    def setUp(self):
+        self.found = leansnippets.index_text(STATEMENTS_LEAN)
+
+    def text(self, ident: str) -> str:
+        return self.found[ident][1]
+
+    def test_a_let_or_have_in_the_statement_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_let"), "theorem with_let (x : Nat) :\n    let y := x + 1\n    y = x + 1 := by")
+        self.assertEqual(self.text("Demo.with_have"), "theorem with_have :\n    have h : 1 = 1 := rfl\n    True := trivial")
+        self.assertEqual(self.text("example:demo-let"), "example :\n    let z := 2\n    z = 2 := rfl")
+
+    def test_a_named_argument_or_a_structure_instance_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_named"), "theorem with_named : f (n := 1) =\n    2 := by")
+        self.assertEqual(self.text("Demo.with_instance"),
+                         "theorem with_instance :\n    ({ lower := 0, upper := 1 } : Interval).lower =\n      0 := rfl")
+
+    def test_a_comment_a_string_or_a_character_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_comment"),
+                         "theorem with_comment (x : Nat) : -- not a proof: a := b\n    x = x := rfl")
+        self.assertEqual(self.text("Demo.with_string"), 'theorem with_string : "a := b".length =\n    6 := by decide')
+        self.assertEqual(self.text("Demo.with_char"), "theorem with_char : '(' ≠\n    ')' := by decide")
+
+    def test_an_attribute_on_the_line_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.old_name"),
+                         '@[deprecated (since := "2025-01-01")] theorem old_name (x : Nat) :\n    x + 0 = x := by')
+        self.assertEqual(self.text("Demo.mul_one'"),
+                         "@[to_additive (attr := simp)] theorem mul_one' (x : Nat) (y : Nat)\n"
+                         "    (h : x = y) : x * 1 = y := by")
+
+    def test_proof_start_is_none_without_a_proof_assignment(self):
+        lines = ["theorem t : ∀ n : Nat, n = n", "  | 0 => rfl", "  | _ + 1 => rfl"]
+        self.assertIsNone(leansnippets.proof_start(lines, 0, len(lines)))
+        self.assertEqual(leansnippets.proof_start(["theorem t :", "  (x := 1) = 1 := rfl"], 0, 2), (1, 15))
+
+    def test_a_field_keeps_the_lines_that_continue_its_type(self):
+        self.assertEqual(self.text("Demo.Laws.box"), "structure Laws where\n  …\n  box (b : Nat) : b =\n    b")
+        self.assertEqual(self.text("Demo.Laws.next"), "structure Laws where\n  …\n  next : Nat")
+
+    def test_a_mutual_block_keeps_the_namespace_and_a_priority_is_read(self):
+        self.assertIn("Demo.isEven", self.found)
+        self.assertEqual(self.text("Demo.after"), "def after : Nat := 1")
+        self.assertEqual(self.text("Demo.fooInst"), "instance (priority := 100) fooInst : Inhabited Nat := ⟨0⟩")
+
+
 def valid_row(**overrides) -> dict:
     row = base.make_row(
         item_raw="Exercise 1.3.19", item="Exercise 1.3.19", sub="", item_kind="Exercise",
