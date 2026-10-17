@@ -909,7 +909,8 @@ class TestBuildSite(OverlayToolsTestCase):
     def test_verso_json_holds_the_statements_the_sites_pages_highlight(self):
         """Section 5: an empty file for a site with no such page, and the receipt records it."""
         site = self.companion.write_site()
-        BUILD.build_site(self.companion.overlay)
+        self.assertEqual(BUILD.build_site(self.companion.overlay)["verso"],
+                         {"source": "none", "statements": 0, "targets": 0})
         mount = site / "pdf-overlay"
         empty = json.loads((mount / "verso.json").read_text(encoding="utf-8"))
         self.assertEqual(empty, {"hovers": {}, "schema": "formal-companion/overlay-verso", "schema_version": 1,
@@ -931,7 +932,7 @@ class TestBuildSite(OverlayToolsTestCase):
         (site / "-verso-docs.json").write_text(json.dumps({"7": "<code>Notes.Box.volume : Nat</code>"}),
                                                encoding="utf-8")
         summary = BUILD.build_site(self.companion.overlay)
-        self.assertEqual(summary["verso"], {"statements": 1, "targets": 1})
+        self.assertEqual(summary["verso"], {"source": "site", "statements": 1, "targets": 1})
         verso = json.loads((mount / "verso.json").read_text(encoding="utf-8"))
         self.assertEqual(verso["statements"], {"Notes/Box/index.html#Notes___Box___volume": [[
             ["kw", "def"], ["tx", " "], ["const", "volume", 7], ["tx", " : "], ["const", "Nat"], ["tx", " := "],
@@ -940,6 +941,91 @@ class TestBuildSite(OverlayToolsTestCase):
         receipt = json.loads((mount / "receipt.json").read_text(encoding="utf-8"))
         rows = {row["path"]: row["sha256"] for row in receipt["files"]}
         self.assertEqual(rows["verso.json"], digest((mount / "verso.json").read_bytes()))
+        self.assertEqual(receipt["verso"], summary["verso"])
+
+    # -- a committed verso.json, cut from a Verso build elsewhere ------------
+    REMOTE = "https://git.example.test/notes/blob/main/Notes/Box.lean"
+
+    def remote_end(self, name: str, snippet: str, line: int) -> dict:
+        return {"type": "lean", "uri": "https://git.example.test/notes", "version": "0" * 40, "role": "key",
+                "location": {"declaration": f"Notes.Box.{name}", "module": "Notes.Box"},
+                "extensions": {NAMESPACE: {"destination": {"resolution": "exact", "href": self.REMOTE,
+                                                           "fragment": f"L{line}"},
+                                           "snippet": {"line": line, "text": snippet}}}}
+
+    def write_committed(self, value: dict | None = None) -> bytes:
+        """What `verso_extract.py --pages` writes for `volume` and `area`, as a companion commits it."""
+        value = value or {
+            "schema": "formal-companion/overlay-verso", "schema_version": 1,
+            "build": {"commit": "1" * 40, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}},
+            "hovers": {"7": {"signature": "Notes.Box.volume : Nat"}, "8": {"signature": "Notes.Box.area : Nat"}},
+            "statements": {
+                f"{self.REMOTE}#L3": [[["kw", "def"], ["tx", " "], ["const", "volume", 7], ["tx", " := "], ["lit", "2"]]],
+                f"{self.REMOTE}#L5": [[["kw", "def"], ["tx", " "], ["const", "area", 8], ["tx", " := "], ["lit", "1"]]]}}
+        raw = BUILD.verso_extract.dumps_lines(value)
+        (self.companion.overlay / "verso.json").write_bytes(raw)
+        return raw
+
+    def test_a_site_with_no_verso_pages_publishes_the_committed_verso_json(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3),
+                                               self.remote_end("area", "def area := 1", 5)])
+        raw = self.write_committed()
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "committed", "sha256": digest(raw), "dropped": 0,
+                                            "statements": 2, "targets": 2})
+        mount = site / "pdf-overlay"
+        published = (mount / "verso.json").read_bytes()
+        self.assertEqual(json.loads(published), json.loads(raw), "every statement still joins to its card")
+        self.assertEqual(published.count(b"\n"), 1, "published in the compact form")
+        receipt = json.loads((mount / "receipt.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["verso"], summary["verso"])
+        self.assertEqual({row["path"]: row["sha256"] for row in receipt["files"]}["verso.json"], digest(published))
+        self.assertEqual(BUILD.build_site(self.companion.overlay), summary, "a second run is the same")
+
+    def test_a_committed_statement_whose_snippet_changed_is_dropped_alone(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 3", 3),
+                                               self.remote_end("area", "def area := 1", 5)])
+        self.write_committed()
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual((summary["verso"]["statements"], summary["verso"]["dropped"]), (1, 1))
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(published["statements"]), [f"{self.REMOTE}#L5"])
+        self.assertEqual(published["hovers"], {"8": {"signature": "Notes.Box.area : Nat"}})
+        self.assertEqual(published["build"]["commit"], "1" * 40)
+
+    def test_a_site_with_verso_pages_extracts_its_own_and_ignores_the_committed_file(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3)])
+        self.write_committed()
+        (site / "-verso-docs.json").write_text("{}", encoding="utf-8")
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "site", "statements": 0, "targets": 1})
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(published["statements"], {})
+
+    def test_a_committed_file_that_is_not_one_pages_writes_is_refused(self):
+        self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3)])
+        linked = {"schema": "formal-companion/overlay-verso", "schema_version": 1, "hovers": {},
+                  "statements": {f"{self.REMOTE}#L3": [[["kw", "def"], ["tx", " "],
+                                                         ["const", "volume", None, None, "Notes/Box/index.html#v"]]]}}
+        for value, words in ((linked, "carries a link"), ({**linked, "schema_version": 2}, "expected schema"),
+                             ({"schema": "x"}, "expected schema")):
+            with self.subTest(words=words):
+                self.write_committed(value)
+                with self.assertRaisesRegex(BUILD.BuildError, f"pdf-overlay/verso.json: .*{words}"):
+                    BUILD.build_site(self.companion.overlay)
+                self.assertFalse((self.companion.site / "pdf-overlay").exists())
+        (self.companion.overlay / "verso.json").write_bytes(b'{"schema": 1, "schema": 2}')
+        with self.assertRaisesRegex(BUILD.BuildError, "duplicate JSON key"):
+            BUILD.build_site(self.companion.overlay)
+        real = self.base / "verso.json"
+        (self.companion.overlay / "verso.json").rename(real)
+        (self.companion.overlay / "verso.json").symlink_to(real)
+        with self.assertRaisesRegex(BUILD.BuildError, "nonsymlink"):
+            BUILD.build_site(self.companion.overlay)
 
     def test_it_runs_no_build_tool_of_its_own(self):
         source = (TOOLS / "build_site.py").read_text(encoding="utf-8")
