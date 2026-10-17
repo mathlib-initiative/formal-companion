@@ -1024,6 +1024,26 @@ class TestBuildSite(OverlayToolsTestCase):
         published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
         self.assertEqual(published["statements"], {})
 
+    def test_a_site_whose_pages_give_a_statement_ignores_the_committed_file_with_no_hover_table(self):
+        site = self.companion.write_site()
+        local = {"type": "lean", "uri": "https://git.example.test/notes", "version": self.BUILT, "role": "key",
+                 "location": {"declaration": "Notes.Box.volume", "module": "Notes.Box"},
+                 "extensions": {NAMESPACE: {"destination": {"resolution": "exact"},
+                                            "snippet": {"line": 3, "text": "def volume := 2"}}}}
+        self.companion.write_document(objects=[local, self.remote_end("volume", "def volume := 2", 3)])
+        self.write_committed()
+        page = site / "Notes" / "Box" / "index.html"
+        page.parent.mkdir(parents=True)
+        page.write_text(
+            '<html><head><base href="../../"></head><body><div class="code-box">'
+            '<code class="hl lean block"><span class="keyword token">def</span> '
+            '<span class="const token" id="Notes___Box___volume">volume</span> := '
+            '<span class="literal number token">2</span></code></div></body></html>\n', encoding="utf-8")
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "site", "statements": 1, "targets": 2})
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(published["statements"]), ["Notes/Box/index.html#Notes___Box___volume"])
+
     def test_a_committed_file_that_is_not_one_pages_writes_is_refused(self):
         self.companion.write_site()
         self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3)])
