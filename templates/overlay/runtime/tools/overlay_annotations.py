@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -59,9 +60,17 @@ def strict_json(text: str, label: str) -> Any:
     def constant(token: str) -> Any:
         raise AnnotationError(f"{label}: non-standard JSON constant {token}")
 
+    def finite(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise AnnotationError(f"{label}: number out of range: {token[:40]}")
+        return value
+
     try:
-        return json.loads(text, object_pairs_hook=unique, parse_constant=constant)
-    except json.JSONDecodeError as error:
+        return json.loads(text, object_pairs_hook=unique, parse_constant=constant, parse_float=finite)
+    except (ValueError, RecursionError) as error:
+        # ValueError is a JSONDecodeError or an integer of more digits than
+        # `int` converts; RecursionError, arrays or objects nested past the stack.
         raise AnnotationError(f"{label}: invalid JSON: {error}") from error
 
 

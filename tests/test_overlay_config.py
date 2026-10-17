@@ -406,6 +406,16 @@ class TestReadingTheFile(unittest.TestCase):
         with self.assertRaises(CfError):
             overlay_config.strict_json(b'{"port": NaN}', "overlay.config.json")
 
+    def test_strict_json_refuses_what_json_cannot_hold(self):
+        # as the runtime tools do: a crash of `json` is invalid JSON, and a number
+        # too large for a float would be Infinity
+        for text, message in (('{"n": ' + "1" * 5000 + "}", "invalid JSON"),
+                              ("[" * 200000 + "]" * 200000, "invalid JSON"),
+                              ('{"n": 1e400}', "number out of range")):
+            with self.subTest(text=text[:20]):
+                with self.assertRaisesRegex(CfError, "^overlay\\.config\\.json: " + message):
+                    overlay_config.strict_json(text.encode(), "overlay.config.json")
+
     def test_load_problems_reports_a_missing_file_as_one_line(self):
         found = overlay_config.load_problems(SKILL / "no-such-overlay.config.json")
         self.assertEqual(len(found), 1, found)
