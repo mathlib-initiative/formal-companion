@@ -24,7 +24,8 @@ usage: normalize_result.py worker|reviewer RESULT_JSON RAW_AGENT_OUTPUT
 environment:
   CF_GATE_CMD        gate command for the observable-state fallback
                      (default: "python3 scripts/verify_findings.py")
-  CF_FINDINGS_GLOB   findings glob for that fallback (default: "findings/*.json")
+  CF_FINDINGS_GLOB   findings glob for that fallback (default: "findings/*.json");
+                     $TEND_TASK_ID in it is the task's id, ** is recursive
 """
 from __future__ import annotations
 
@@ -82,7 +83,10 @@ def observed() -> dict | None:
     Returns ``{"files": [...], "gate_ok": bool, "gate_msg": str}`` or None when
     the agent produced no findings at all.
     """
-    files = [f for f in sorted(glob.glob(FINDINGS_GLOB))
+    # A locate run's documents nest one level deeper, findings/<task-id>/<source>.json,
+    # and its glob may name the task: CF_FINDINGS_GLOB=findings/$TEND_TASK_ID/*.json.
+    pattern = FINDINGS_GLOB.replace("$TEND_TASK_ID", os.environ.get("TEND_TASK_ID", ""))
+    files = [f for f in sorted(glob.glob(pattern, recursive=True))
              if not os.path.basename(f).startswith(".")]
     if not files:
         return None
