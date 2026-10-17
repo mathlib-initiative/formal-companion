@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -159,9 +160,17 @@ def strict_json(raw: bytes, label: str) -> Any:
     def bad_constant(token: str) -> Any:
         raise CfError(f"{label}: non-standard JSON constant {token}")
 
+    def finite(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise CfError(f"{label}: number out of range: {token[:40]}")
+        return value
+
     try:
-        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=bad_constant)
-    except json.JSONDecodeError as exc:
+        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=bad_constant, parse_float=finite)
+    except (ValueError, RecursionError) as exc:
+        # ValueError is a JSONDecodeError or an integer of more digits than
+        # `int` converts; RecursionError, arrays or objects nested past the stack.
         raise CfError(f"{label}: invalid JSON: {exc}") from exc
 
 

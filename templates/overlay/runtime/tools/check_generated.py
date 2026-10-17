@@ -44,6 +44,7 @@ import argparse
 import hashlib
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -138,9 +139,17 @@ def strict_json(raw: bytes, label: str) -> Any:
     def bad_constant(token: str) -> Any:
         raise Unreadable(f"{label}: non-standard JSON constant {token}")
 
+    def finite(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            raise Unreadable(f"{label}: number out of range: {token[:40]}")
+        return value
+
     try:
-        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=bad_constant)
-    except json.JSONDecodeError as error:
+        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=bad_constant, parse_float=finite)
+    except (ValueError, RecursionError) as error:
+        # ValueError is a JSONDecodeError or an integer of more digits than
+        # `int` converts; RecursionError, arrays or objects nested past the stack.
         raise Unreadable(f"{label}: invalid JSON: {error}") from error
 
 

@@ -69,6 +69,7 @@ def load_tool(name: str):
 
 SERVE = load_tool("serve")
 BUILD = load_tool("build_site")
+CHECK = load_tool("check_generated")
 
 #: A synthetic PDF: the signature and the terminal marker the tools check, and
 #: nothing of anybody's book.
@@ -411,6 +412,40 @@ class TestTheConfigIsTheContract(OverlayToolsTestCase):
             '{"schema": "formal-companion/overlay-config", "schema": "x"}')
         with self.assertRaisesRegex(SERVE.OverlayError, "duplicate JSON key"):
             self.companion.config()
+
+    def test_json_python_cannot_load_is_invalid_json_to_build_site_and_check_generated(self):
+        # neither is a JSONDecodeError: an integer of more digits than `int`
+        # converts raises ValueError, and arrays nested past the stack RecursionError
+        for case, text in (("long integer", '{"schema": ' + "1" * 5000 + "}"),
+                           ("deep nesting", "[" * 200000 + "]" * 200000)):
+            self.companion.write_raw_config(text)
+            with self.subTest(case=case, tool="build_site"):
+                with self.assertRaisesRegex(BUILD.BuildError, r"^overlay\.config\.json: invalid JSON: "):
+                    BUILD.load_config(self.companion.overlay)
+            with self.subTest(case=case, tool="check_generated"):
+                self.assertRegex("\n".join(CHECK.problems(self.companion.overlay)),
+                                 r"(?m)^overlay\.config\.json: invalid JSON: ")
+
+    def test_every_strict_reader_refuses_what_json_cannot_hold(self):
+        # the four runtime readers agree: a crash of `json` is invalid JSON, and a
+        # number too large for a float would be Infinity, which none of them takes
+        annotations = load_tool("overlay_annotations")
+        readers = (("serve", lambda raw: SERVE.strict_json(raw, "x.json"), SERVE.OverlayError),
+                   ("build_site", lambda raw: BUILD.strict_json(raw, "x.json"), BUILD.BuildError),
+                   ("check_generated", lambda raw: CHECK.strict_json(raw, "x.json"), CHECK.Unreadable),
+                   ("overlay_annotations", lambda raw: annotations.strict_json(raw.decode(), "x.json"),
+                    annotations.AnnotationError))
+        cases = (("long integer", '{"n": ' + "1" * 5000 + "}", "invalid JSON"),
+                 ("deep nesting", "[" * 200000 + "]" * 200000, "invalid JSON"),
+                 ("exponent", '{"n": 1e400}', "number out of range: 1e400"),
+                 ("long decimal", '{"n": ' + "9" * 400 + ".5}", "number out of range"))
+        for name, read, error in readers:
+            for case, text, message in cases:
+                with self.subTest(tool=name, case=case):
+                    with self.assertRaisesRegex(error, "^x\\.json: " + message):
+                        read(text.encode())
+            with self.subTest(tool=name, case="a finite number"):
+                self.assertEqual(read(b'{"n": 2.5e3}'), {"n": 2500.0})
 
 
 class TestThePdfIdentityComesFromTheDocument(OverlayToolsTestCase):

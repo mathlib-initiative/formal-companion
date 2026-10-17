@@ -27,6 +27,7 @@ import hashlib
 import http.server
 import ipaddress
 import json
+import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -197,11 +198,19 @@ def strict_json(raw: bytes, label: str) -> Any:
     def bad_constant(token: str) -> NoReturn:
         fail(f"{label}: non-standard JSON constant {token}")
 
+    def finite(token: str) -> float:
+        value = float(token)
+        if not math.isfinite(value):
+            fail(f"{label}: number out of range: {token[:40]}")
+        return value
+
     try:
-        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=bad_constant)
+        return json.loads(text, object_pairs_hook=unique_pairs, parse_constant=bad_constant, parse_float=finite)
     except OverlayError:
         raise
-    except json.JSONDecodeError as error:
+    except (ValueError, RecursionError) as error:
+        # ValueError is a JSONDecodeError or an integer of more digits than
+        # `int` converts; RecursionError, arrays or objects nested past the stack.
         fail(f"{label}: invalid JSON: {error}")
 
 
