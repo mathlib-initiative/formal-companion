@@ -9,8 +9,8 @@ subcommand today:
 
 writes ``sourcesets/<id>/candidates/<universe>/<source-id>.json`` for every
 rendered source (references/locate-documents.md section 5).  The curated lists
-are the operator's files -- Mathlib's own ``docs/1000.yaml`` and
-``docs/100.yaml`` at the universe's commit -- read as data; nothing is fetched.
+are the operator's files -- Mathlib's own ``$MATHLIB/docs/1000.yaml`` and
+``$MATHLIB/docs/100.yaml`` at the universe's commit -- read as data; nothing is fetched.
 """
 from __future__ import annotations
 
