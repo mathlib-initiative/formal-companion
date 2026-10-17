@@ -432,6 +432,120 @@ class LeanSnippetsTest(unittest.TestCase):
                 tracked(rel)
 
 
+DEFINITIONS_LEAN = '''\
+namespace Demo
+
+/-- A box with a docstring per field. -/
+structure Box where
+  /-- the left end, documented
+over two lines -/
+  left : Nat
+
+  right : Nat
+deriving DecidableEq
+
+/-- Kinds of interval. -/
+inductive Kind
+  | closed
+  | open
+  deriving Repr
+
+class inductive Shape
+  | dot
+
+@[simp] private noncomputable def double (n : Nat) : Nat :=
+  match n with
+  | 0 => 0
+  | k + 1 => go k
+where
+  go : Nat → Nat
+    | 0 => 2
+    | k + 1 => go k + 2
+termination_by n
+
+protected abbrev Small := Fin 3
+set_option linter.unusedVariables false in
+theorem small_le (a : Small) :
+    a.val ≤ 3 := by
+  omega
+
+instance instInhabitedBox : Inhabited Box where
+  default := ⟨0, 0⟩
+open Nat in
+class HasArea (α : Type) where
+  area : α → Nat
+-- a note between declarations
+opaque secret : Nat
+attribute [simp] double
+/- `example:demo-small` -/
+example : (2 : Small).val = 2 := rfl
+def lastOne : Nat :=
+  1'''
+
+#: an indented line of its own, so the definition runs on past the cap
+LONG_DEFINITION = "def long : Nat :=\n" + "".join(f"  {k} +\n" for k in range(70)) + "  0\n\n#check long\n"
+
+
+class LeanSnippetsDefinitionTest(unittest.TestCase):
+    """A definition is shown whole (body, fields, constructors), up to the next command."""
+
+    def setUp(self):
+        self.found = leansnippets.index_text(DEFINITIONS_LEAN)
+        self.lines = DEFINITIONS_LEAN.split("\n")
+
+    def text(self, ident: str) -> str:
+        return self.found[ident][1]
+
+    def test_a_structure_keeps_its_fields_docstrings_and_deriving(self):
+        self.assertEqual(self.found["Demo.Box"], (4, "\n".join(self.lines[3:10])))
+        self.assertTrue(self.text("Demo.Box").endswith("  right : Nat\nderiving DecidableEq"))
+        self.assertEqual(self.found["Demo.Box.left"], (7, "structure Box where\n  …\n  left : Nat"))
+        self.assertNotIn("Demo.Box.over", self.found, "a docstring's line is not a field")
+
+    def test_an_inductive_keeps_its_constructors(self):
+        self.assertEqual(self.text("Demo.Kind"), "inductive Kind\n  | closed\n  | open\n  deriving Repr")
+        self.assertEqual(self.text("Demo.Shape"), "class inductive Shape\n  | dot")
+
+    def test_attributes_and_modifiers_and_a_where_with_a_match(self):
+        line, text = self.found["Demo.double"]
+        self.assertEqual(line, 21)
+        self.assertTrue(text.startswith("@[simp] private noncomputable def double (n : Nat) : Nat :=\n  match n with"))
+        self.assertTrue(text.endswith("where\n  go : Nat → Nat\n    | 0 => 2\n    | k + 1 => go k + 2\ntermination_by n"))
+
+    def test_each_ends_at_the_next_command(self):
+        self.assertEqual(self.text("Demo.Small"), "protected abbrev Small := Fin 3")
+        self.assertEqual(self.text("Demo.instInhabitedBox"),
+                         "instance instInhabitedBox : Inhabited Box where\n  default := ⟨0, 0⟩")
+        self.assertEqual(self.text("Demo.HasArea"), "class HasArea (α : Type) where\n  area : α → Nat")
+        self.assertEqual(self.text("Demo.secret"), "opaque secret : Nat")
+
+    def test_a_definition_at_the_end_of_the_file(self):
+        self.assertEqual(self.text("Demo.lastOne"), "def lastOne : Nat :=\n  1")
+
+    def test_a_theorem_is_still_cut_at_the_proof(self):
+        self.assertEqual(self.text("Demo.small_le"), "theorem small_le (a : Small) :\n    a.val ≤ 3 := by")
+        self.assertEqual(self.text("example:demo-small"), "example : (2 : Small).val = 2 := rfl")
+
+    def test_a_long_definition_is_cut_at_the_cap_and_marked(self):
+        text = leansnippets.index_text(LONG_DEFINITION)["long"][1]
+        lines = text.split("\n")
+        self.assertEqual(len(lines), leansnippets.DEFINITION_MAX_LINES + 1)
+        self.assertEqual(lines[:-1], LONG_DEFINITION.split("\n")[:leansnippets.DEFINITION_MAX_LINES])
+        self.assertEqual(lines[-1], "  " + leansnippets.MARKER)
+
+    def test_a_declaration_in_a_comment_is_not_one(self):
+        found = leansnippets.index_text("/- Prose:\ndef fake : Nat := 0\nnamespace Fake\n-/\ndef real : Nat := 1\n")
+        self.assertEqual(found, {"real": (5, "def real : Nat := 1")})
+
+    def test_deriving_instance_is_a_command_of_its_own(self):
+        found = leansnippets.index_text("inductive Two\n  | a\n  | b\nderiving instance Repr for Two\n")
+        self.assertEqual(found["Two"][1], "inductive Two\n  | a\n  | b")
+
+    def test_definition_text_reads_from_any_line(self):
+        lines = ["  def inner : Nat :=", "    1", "  theorem t : True := trivial"]
+        self.assertEqual(leansnippets.definition_text(lines, 0), "  def inner : Nat :=\n    1")
+
+
 def valid_row(**overrides) -> dict:
     row = base.make_row(
         item_raw="Exercise 1.3.19", item="Exercise 1.3.19", sub="", item_kind="Exercise",

@@ -65,6 +65,11 @@ release has something to say.
   cannot locate (`snippets_unlocated`).
   The adapter now needs the ledger, and its key hashes the Lean it cuts from
   (`snippet_files_sha` for `snippets_sha`).
+- A definition's snippet (`def`, `abbrev`, `instance`, `structure`, `class`,
+  `inductive`, `opaque`) is the whole declaration, up to the next command and
+  at most 60 lines; a theorem's is still its statement through the `:=`. A
+  declaration with an attribute on its line is located, one inside a comment
+  is not.
 - The vendored annotation format is the release candidate
   `formal-companion-annotations v1.0.0rc2` (identifier
   `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).

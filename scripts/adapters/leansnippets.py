@@ -6,9 +6,13 @@ last commit that has it (``index_file`` and ``build``), which wrote them to
 ``example:<slug>`` id is found with the reader of ``source_formalization_ledger.py``
 at measure_theory ef0a424 (``code_line_starts``, ``declaration_body_end``,
 ``comment_ending_at``, ``example_tag`` and the example branch of
-``DeclarationIndex``).  Both are ported rule for rule, because the
-snippets must stay byte-identical: ``adapters.leanparse`` tracks comment depth,
-reads attributes and ends a body elsewhere, so it gives other text and lines.
+``DeclarationIndex``).  Both are ported rule for rule, except where a snippet
+ends: a theorem's is still its statement through the proof's ``:=``, but a
+definition (:data:`DEFINITION_KEYWORDS`) is shown whole, body, fields and
+constructors included, up to the next command (:func:`declaration_end`, which
+bounds a theorem's statement too), and a declaration is read only outside
+comments and with any attributes on its line (docs/exporters.md section 1).
+``adapters.leanparse`` ends a body elsewhere, so it gives other text and lines.
 Consumers: ``adapters.attribution_table`` (docs/design/stage_map.md Stage 2)
 and ``annotations.export.attribution_table`` (docs/exporters.md section 1).
 """
@@ -19,25 +23,37 @@ import re
 from pathlib import Path, PurePosixPath
 from typing import Callable, Collection
 
-__all__ = ["SnippetError", "MAX_LINES", "MARKER", "RETIRED_SNIPPETS", "index_text", "wanted", "cut", "reader"]
+__all__ = ["SnippetError", "MAX_LINES", "DEFINITION_MAX_LINES", "MARKER", "DEFINITION_KEYWORDS",
+           "RETIRED_SNIPPETS", "declaration_end", "definition_text", "statement_text", "index_text", "wanted",
+           "cut", "reader"]
 
-#: a snippet longer than this is cut to its first MAX_LINES lines plus "\n  " + MARKER
+#: a statement longer than this is cut to its first MAX_LINES lines plus "\n  " + MARKER
 MAX_LINES = 14
+#: a definition longer than this is cut the same way, at this many lines
+DEFINITION_MAX_LINES = 60
 MARKER = "…"
+#: The keywords whose declaration is its own content: its snippet is the whole declaration.
+DEFINITION_KEYWORDS = frozenset({"def", "abbrev", "instance", "structure", "class", "inductive", "opaque"})
 #: The file the companion once shipped the snippets in; not read, and named when a checkout still has it.
 RETIRED_SNIPPETS = "declaration-snippets.json"
 
 # -- extract_declaration_snippets.py at measure_theory ef0a424 ---------------
+# (it read only the three modifiers in this order, no attribute and no `opaque`)
 DECL_RE = re.compile(
-    r"^(private\s+)?(protected\s+)?(noncomputable\s+)?"
-    r"(theorem|lemma|def|abbrev|structure|class|instance|inductive)\s+([A-Za-z0-9_'.]+)"
+    r"^(?:@\[[^\]\n]*\]\s*)*"
+    r"(?:(?:private|protected|public|noncomputable|nonrec|unsafe|partial|local|scoped|meta)\s+)*"
+    r"(?P<kw>class\s+inductive|theorem|lemma|def|abbrev|structure|class|instance|inductive|opaque)"
+    r"\s+(?P<name>[A-Za-z0-9_'.]+)"
 )
 NAMESPACE_RE = re.compile(r"^namespace\s+([A-Za-z0-9_'.]+)\s*$")
 SECTION_RE = re.compile(r"^(noncomputable\s+)?section(\s+[A-Za-z0-9_'.]+)?\s*$")
 END_RE = re.compile(r"^end(\s+[A-Za-z0-9_'.]+)?\s*$")
 FIELD_RE = re.compile(r"^\s{2,}([A-Za-z0-9_']+)\s*[:({\[]")
 STOP_RE = re.compile(r":=")
-EXAMPLE_START_RE = re.compile(r"(?:noncomputable\s+)?example\b|/- `example:")
+#: what a command's first line starts with: a keyword or `@[`, `#`, or a comment
+COMMAND_START_RE = re.compile(r"[A-Za-z_@#]|/-|--")
+#: what continues a declaration at its own indentation
+CONTINUATION_RE = re.compile(r"(?:where|termination_by|decreasing_by|deriving(?!\s+instance))\b")
 
 # -- source_formalization_ledger.py at measure_theory ef0a424: the tag reader ----
 EXAMPLE_HEADER_RE = re.compile(
@@ -178,26 +194,80 @@ def tagged_examples(lines: list[str]) -> dict[str, list[tuple[int, str]]]:
     return found
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" \t"))
+
+
+def declaration_end(lines: list[str], start: int, code: list[bool] | None = None) -> int:
+    """Exclusive end of the declaration whose keyword line is lines[start]: where the next command starts.
+
+    That is the first later line that starts outside comments and strings, no deeper than
+    lines[start], with what opens a command (a keyword, ``@[``, ``#``, a comment), and is not
+    a ``where``, ``deriving``, ``termination_by`` or ``decreasing_by`` of this one; the blank
+    lines before it are not the declaration's. ``code`` is :func:`code_line_starts` of ``lines``.
+    """
+    code = code_line_starts(lines) if code is None else code
+    indent = _indent(lines[start])
+    end = start + 1
+    while end < len(lines):
+        line = lines[end]
+        head = line.lstrip(" \t")
+        if code[end] and head and _indent(line) <= indent and COMMAND_START_RE.match(head) \
+                and not CONTINUATION_RE.match(head):
+            break
+        end += 1
+    while end > start + 1 and not lines[end - 1].strip():
+        end -= 1
+    return end
+
+
+def _capped(block: list[str], limit: int) -> str:
+    while block and not block[-1].strip():
+        block = block[:-1]
+    if len(block) > limit:
+        return "\n".join(block[:limit]) + "\n  " + MARKER
+    return "\n".join(block)
+
+
+def definition_text(lines: list[str], start: int, code: list[bool] | None = None) -> str:
+    """The definition whose keyword line is lines[start], whole: through :func:`declaration_end`,
+    cut past DEFINITION_MAX_LINES lines and marked."""
+    return _capped(lines[start:declaration_end(lines, start, code)], DEFINITION_MAX_LINES)
+
+
+def statement_text(lines: list[str], start: int, end: int) -> str:
+    """A theorem's statement: its lines through the first that holds the proof's ``:=`` (or ends in
+    `` where``), within lines[start:end], cut past MAX_LINES lines and marked."""
+    block: list[str] = []
+    for line in lines[start:end]:
+        block.append(line)
+        if STOP_RE.search(line) or line.rstrip().endswith(" where"):
+            break
+    return _capped(block, MAX_LINES)
+
+
 def index_text(text: str) -> dict[str, tuple[int, str]]:
-    """``{id: (1-based line, snippet)}`` for one Lean file: declarations, structure fields, tagged examples."""
+    """``{id: (1-based line, snippet)}`` for one Lean file: declarations, structure fields, tagged examples.
+
+    A definition's snippet is :func:`definition_text`, a theorem's :func:`statement_text`, and a
+    tagged example's its statement through the ``:=`` as the tag reader ends its body.
+    """
     lines = text.split("\n")
+    code = code_line_starts(lines)
     blocks: list[tuple[str, int]] = []
     stack: list[str] = []
     found: dict[str, tuple[int, str]] = {}
-    # A tagged example: its statement, through the `:=`.
     for name, declarations in tagged_examples(lines).items():
         if len(declarations) == 1:
             start, body = declarations[0]
-            block = []
-            for line in body.split("\n"):
-                block.append(line)
-                if STOP_RE.search(line) or line.rstrip().endswith(" where"):
-                    break
-            snippet = "\n".join(block[:MAX_LINES]) + ("\n  " + MARKER if len(block) > MAX_LINES else "")
-            found[name] = (start + 1, snippet)
+            body_lines = body.split("\n")
+            found[name] = (start + 1, statement_text(body_lines, 0, len(body_lines)))
     i = 0
     while i < len(lines):
         line = lines[i]
+        if not code[i]:
+            i += 1
+            continue
         ns = NAMESPACE_RE.match(line)
         if ns:
             components = ns.group(1).split(".")
@@ -218,50 +288,25 @@ def index_text(text: str) -> dict[str, tuple[int, str]]:
             continue
         decl = DECL_RE.match(line)
         if decl:
-            keyword, name = decl.group(4), decl.group(5)
+            keyword, name = decl.group("kw").split()[0], decl.group("name")
             if name.startswith("_root_."):
                 full = name.removeprefix("_root_.")
             else:
                 full = ".".join([*stack, *name.split(".")])
-            block = [line]
-            j = i + 1
-            structural = keyword in {"structure", "class", "inductive"}
-            while j < len(lines):
-                last = block[-1]
-                # A theorem's snippet is its statement: stop at the proof's `:=`. A definition's
-                # body is the content, so it is kept (the breaks below and MAX_LINES bound it).
-                if not structural and keyword in ("theorem", "lemma") and (
-                    STOP_RE.search(last) or last.rstrip().endswith(" where")
-                ):
-                    break
-                nxt = lines[j]
-                if (
-                    DECL_RE.match(nxt)
-                    or NAMESPACE_RE.match(nxt)
-                    or END_RE.match(nxt)
-                    or SECTION_RE.match(nxt)
-                    or nxt.startswith("/--")
-                    or EXAMPLE_START_RE.match(nxt)
-                ):
-                    break
-                if structural and nxt == "" and j + 1 < len(lines) and lines[j + 1] == "":
-                    break
-                block.append(nxt)
-                j += 1
-            while block and block[-1].strip() == "":
-                block.pop()
-            snippet = "\n".join(block)
-            if len(block) > MAX_LINES:
-                snippet = "\n".join(block[:MAX_LINES]) + "\n  " + MARKER
+            end = declaration_end(lines, i, code)
+            if keyword in DEFINITION_KEYWORDS:
+                snippet = definition_text(lines, i, code)
+            else:
+                snippet = statement_text(lines, i, end)
             found.setdefault(full, (i + 1, snippet))
-            if structural:
+            if keyword in {"structure", "class", "inductive"}:
                 # an auto-generated projection sits at its field's line
-                for k in range(i + 1, min(j, i + 200)):
+                for k in range(i + 1, min(end, i + 200)):
                     field = FIELD_RE.match(lines[k])
-                    if field and "/--" not in lines[k]:
+                    if field and code[k] and "/--" not in lines[k]:
                         field_snippet = f"structure {name} where\n  {MARKER}\n{lines[k]}"
                         found.setdefault(f"{full}.{field.group(1)}", (k + 1, field_snippet))
-            i = j
+            i = end
             continue
         i += 1
     return found

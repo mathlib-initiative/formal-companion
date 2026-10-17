@@ -291,7 +291,9 @@ on the record:
   `sorry`), `snippet` (`text`, `line`, `truncated`), `destination`
   (`resolution`, `fallback_label`, and `href`, relative to the site root, or
   `fragment` when the module's page or the declaration's anchor is not the
-  page) and `declaration_verdict` (`verdict`, `status`, `note`).
+  page) and `declaration_verdict` (`verdict`, `status`, `note`). A snippet's
+  `text` is a theorem's statement through its `:=`, and a definition whole
+  (body, fields, constructors) up to 60 lines (docs/exporters.md section 1).
 
 The section folder is the item number's first two parts (`1.2.7` is `1.2`);
 otherwise the item's section or a cluster locator's `Section N.M`; otherwise
