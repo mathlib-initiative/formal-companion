@@ -12,6 +12,7 @@ one companion is data the viewer and the tools read at run time:
 | `pdf-overlay/overlay.config.json` | `cf overlay init`, then edited | presentation and local-build settings (section 3) |
 | `pdf-overlay/annotations.bundle.json` | `cf overlay sync` | every annotation as the reader reads it, defaults applied, with its file's path, in file order: what the viewer reads, in one fetch (section 6) |
 | `pdf-overlay/GENERATED.json` | `cf overlay sync` (and `export`) | the generator commit, the Literature Links release, the sha256 of every copied file, and the annotation files' count, manifest sha256 and bundle sha256 (section 6) |
+| `pdf-overlay/verso.json` (optional, committed) | `tools/verso_extract.py --pages`, where a Verso build of the project is | hovers for a site with no Verso pages of its own (section 5) |
 
 A companion's CI checks all of it with `python3 pdf-overlay/tools/check_generated.py`,
 which needs nothing but CPython and the checkout.
@@ -51,9 +52,9 @@ annotation document format of `vendor/formal_companion_annotations/`;
    with `isEvalSupported: false`.
 7. **Hovers come from the built site, at build time.** `build_site.py` reads
    the site's own Verso pages and hover table and writes `<mount>/verso.json`
-   (section 5); the viewer never fetches or parses a page's HTML, and a site
-   with no Verso page gets an empty file and plain statements. No setting
-   turns this on or off.
+   (section 5); the viewer never fetches or parses a page's HTML. A site
+   with no Verso page gets the companion's committed `pdf-overlay/verso.json`,
+   or an empty file and plain statements. No setting turns this on or off.
 
 ## 2. Layout
 
@@ -207,11 +208,19 @@ bytecode writing off.
   anchor is a declaration's own (the name after a declaration keyword, or a
   field or constructor of one the page declares), and only
   the hover entries the statements use are copied from the site's
-  `-verso-docs.json`, as plain-text `signature` and `doc`. The receipt
-  records `verso.json` with the other files and the summary counts its
-  statements.
+  `-verso-docs.json`, as plain-text `signature` and `doc`. For a site with
+  no Verso pages (no `-verso-docs.json` and no statement) it publishes the
+  committed `pdf-overlay/verso.json` instead, a statement that no longer
+  joins to its card's snippet dropped. `verso_extract.py --pages <dir>
+  --bundle <bundle> --out pdf-overlay/verso.json [--commit <sha>]` writes
+  that file from a Verso build elsewhere: a card is found by its module's
+  page and its declaration's anchor (the build's `xref.json`, else Verso's
+  slug of the name), no token keeps a link, and `build` records the commit
+  and the build's Verso revision. The receipt records `verso.json` with the
+  other files, and its `verso.source` is `site`, `committed` or `none`.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
-  sha256, and nothing else in `pdf-overlay/` but the bundle; the `format`
+  sha256, and nothing else in `pdf-overlay/` but the bundle and a committed
+  `verso.json` in the form `--pages` writes; the `format`
   block against the shipped package's version; the config; `annotations/`
   holding only the layout of section 7, each file as a recorded export writes
   it, as many annotations as recorded and every file at the manifest sha256;
@@ -247,7 +256,8 @@ cf overlay check <companion>
 - `sync` copies the runtime and `vendor/literature_links/` (as
   `tools/literature_links/`), removes what a previous record listed and the
   templates dropped, refuses unlisted files, writes the bundle and records
-  it. Files `export` wrote that changed since are refused, not recorded
+  it (a committed `verso.json` is left alone). Files `export` wrote that
+  changed since are refused, not recorded
   (named, when the last bundle holds the export); files nothing exported are
   recorded as they are.
 - `sync --check` is read-only and includes the scan; `check` adds the config,

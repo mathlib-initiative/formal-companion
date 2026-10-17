@@ -8,12 +8,13 @@ and the manifest sha256 of the annotation files, and the sha256 of
 `annotations.bundle.json`, which holds every annotation, folder defaults
 applied, with its file's path for the viewer.
 
-What the viewer shows comes from two places that are yours:
+What the viewer shows comes from these places that are yours:
 
 | path | what it is | written by |
 |---|---|---|
 | `pdf-overlay/overlay.config.json` | presentation and local-build settings | `cf overlay init`, then edited by you |
 | `annotations/<section>/[<item>/]<name>.json` (at the repository root) | Literature Links annotations, one per file, one folder per book section and per item with several, shared members in `_defaults.json` | `cf overlay export` |
+| `pdf-overlay/verso.json` (optional) | hovers for a site with no Verso pages, cut from a Verso build of the project made elsewhere | `pdf-overlay/tools/verso_extract.py --pages <literate-html> --bundle <bundle> --out <file> --commit <sha>`, run where the build is |
 
 No page count, PDF hash, URL, section number or declaration name is written
 into the viewer or the tools.
@@ -33,8 +34,9 @@ viewer and the bundle into `<site.output_root>/<site.mount>/` and the
 annotation files into `<site.output_root>/annotations/`; a declaration's
 rendered page is a page of `<site.output_root>`. It also writes
 `<site.mount>/verso.json` from the site's Verso pages: each card's
-statement with its tokens and hovers (the viewer draws the key cards'), or
-nothing for a site without them.
+statement with its tokens and hovers (the viewer draws the key cards'). A
+site without them gets your committed `pdf-overlay/verso.json`, less the
+statements whose snippet changed since, or an empty one.
 
 ## Checking it in CI
 

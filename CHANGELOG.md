@@ -129,6 +129,13 @@ release has something to say.
   scroll it; Escape or a click elsewhere closes it); the CSP is unchanged.
   A site with no Verso page, or a card with no matching statement, keeps the
   plain snippet.
+- A companion whose site has no Verso pages can commit `pdf-overlay/verso.json`,
+  written by `tools/verso_extract.py --pages` from a Verso build of its project
+  made elsewhere: cards found by module and declaration (`xref.json`, else
+  Verso's slug), no links, and the build's commit and Verso revision recorded.
+  `build_site.py` publishes it for such a site, dropping each statement that no
+  longer joins to its card's snippet, and the receipt says where `verso.json`
+  came from. `sync` leaves the file alone; `check_generated.py` checks its form.
 - `display.minimal` in `overlay.config.json` (default `false`): the viewer
   keeps the passage, its links and their statements, and leaves out what
   describes them: the status chip (still read by a screen reader, and back in
