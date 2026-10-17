@@ -48,7 +48,8 @@ bin/cf               the PATH shim; it resolves back to this checkout
 scripts/cf.py        CLI entrypoint; package root for everything under scripts/
 scripts/cflib/       shared library (no stage logic, no network):
                      workspace, paths, registry, discovery, inference, state,
-                     items, vocab, hashing, yamlio/jsonio, adapters_api, vendored
+                     items, passages, vocab, hashing, yamlio/jsonio,
+                     adapters_api, vendored
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
                      route, detect, report, recheck, score, share, cost, pipeline
@@ -84,8 +85,11 @@ Those two lines move together or not at all.
   installed.
 - No network in library code. The only exceptions are the errata fetcher
   (curl, raw HTML kept, never a summarising fetch), an explicit
-  `cf onboard --download` of a PDF the author publishes himself, and the
-  run/harvest commands (ssh/rsync to an allowlisted host).
+  `cf onboard --download` of a PDF the author publishes himself, the
+  run/harvest commands (ssh/rsync to an allowlisted host), and the Wikipedia
+  fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — curl, the raw bytes
+  kept, one fixed parameter set, each revision fetched once — which is *not
+  implemented*: until it exists, nothing here fetches a web source.
 - Every module starts with a docstring saying **what** it was ported from — the
   v1 campaign script, cell or workflow, named for what it did — or saying it is
   new code, and pointing at the section it implements:

@@ -76,6 +76,7 @@ sources:
     book_page_url: …            # the page that describes the book
     errata_url: …               # usually the same page; this is what `cf sources refresh` fetches
     licence: {note: …, fetch: none|author_site|open, redistribute: false}
+    licence_class: closed|open_attribution|open_share_alike|public_domain   # default closed
     offset: <int>               # printed page = PDF page - offset
     offset_confidence: <0..1>   # how the number was arrived at, and how sure
     offset_method: running_head_mode | declared | manual | none
@@ -103,6 +104,14 @@ sources:
 passed, and the override is recorded in the stage receipt
 (`docs/pipeline.md`).
 
+`licence_class` is what an *exported* record may quote of the edition
+(`POLICY.md` §4.1, `cflib.vocab.LICENCE_CLASSES`). It is optional and
+`closed` when absent, so every entry written before it existed is `closed` and
+still valid; `cf sources validate-registry` refuses any other value. A command
+writing an overlay row writes the key only when it is not `closed`: the overlay
+is merged over the shipped entry key by key, and a `closed` written everywhere
+would close a source the shipped registry calls open.
+
 A source need not be a paginated PDF. A manuscript that is already text (an
 arXiv `.tex`, notes in Markdown, reStructuredText or HTML, a `pdftotext` dump
 kept as a file — `.txt .md .markdown .tex .html .htm .rst`, exactly the set
@@ -120,6 +129,49 @@ out, and `Registry.validate()` checks that they agree: `a→b.default_shift ==
 -(b→a.default_shift)`, likewise `exception_shift`, plus a `note` whenever
 `exceptions` is empty, plus `same_work` naming its partner back.
 
+## Web-source families
+
+A web page is not an edition with a PDF: English Wikipedia alone has millions
+of revisions, and a registry row per revision would be a corpus, not metadata.
+So the registry's second map, `families:`, holds one row per **site** — what
+every revision of every page of it shares — and **no per-revision rows**:
+
+```yaml
+families:
+  enwiki:                       # 2-24 lowercase letters and digits, no '-'
+    title: English Wikipedia    # required
+    site: https://en.wikipedia.org
+    container_title: Wikipedia  # the CSL container-title of every record
+    licence_class: open_share_alike
+    licence: {spdx: CC-BY-SA-4.0, note: …, redistribute: false}
+    attribution: '"{title}", Wikipedia, revision {revision}, {url}, licensed {licence}'
+    revision_url: "https://en.wikipedia.org/w/index.php?curid={pageid}&oldid={revision}"
+    confirmed: true
+    notes: …
+```
+
+A web source's id is `<family>-<pageid>-<revision>` — `enwiki-28767-1371234567`
+(`cflib.registry.web_source_id`, `parse_web_source_id`) — keyed by page id and
+MediaWiki revision because titles carry `/` and move. Its shas, its title and
+its assessment live in a sourceset manifest beside the workspace's sources (*not
+implemented*), never here. `Registry.family_of(source_id)` finds the family,
+`SourceFamily.attribution_for(title=…, pageid=…, revision=…)` fills the
+attribution template, and `SourceFamily.revision_link` the permalink.
+
+What `cf sources validate-registry` checks on a family: no key outside the list
+above (a `sha256`, `pageid` or `revision` is refused — a family holds nothing
+about one revision), `licence_class` in the enum, `licence.redistribute` false,
+an open-attribution or share-alike family naming its licence as `licence.spdx`,
+an `https://` site and permalink, and two templates that name only their own
+fields — the attribution `{title}`, `{pageid}`, `{revision}`, `{url}` and
+`{licence}`, of which it must name `{title}`, `{url}` and `{licence}` (what CC BY
+and CC BY-SA attribution is), and the permalink `{pageid}` and `{revision}`, of
+which it must name `{revision}`. The free-text caps apply as for an entry, with
+`attribution` capped at 40 words. A registry entry whose id is a web source id
+of a known family is refused: it is a sourceset row, not an edition. **Nothing
+here fetches**: the fetcher a family will use is *not implemented* (`CLAUDE.md`
+§3 names it as a network exception).
+
 ## What ships today
 
 Two editions of one book, both fingerprinted on the machine this skill was
@@ -130,7 +182,10 @@ written on:
 | `tao-measure-gsm126-published` | `64498329` | 1,338,765 | 16 | mode 16 on 244 of the 245 pages carrying a running-head number → 0.9959 |
 | `tao-measure-2011-draft` | `62d95658` | 1,218,984 | 16 | mode 16 on 248 of 249 → 0.9960 |
 
-They are `same_work`, and their page map is the whole reason this file exists:
+Beside them ships one web-source family, `enwiki` (English Wikipedia,
+`open_share_alike`), and no web source at all.
+
+The two editions are `same_work`, and their page map is the whole reason this file exists:
 roughly 65 numbered items, nearly all in one section, print **one printed page
 earlier** in the published book than in the draft. Both editions satisfy
 `pdf_page = printed_page + 16`, so a companion anchored to the wrong one is off

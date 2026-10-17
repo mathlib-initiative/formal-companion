@@ -315,7 +315,13 @@ needs neither.
    redistributed. Exports redact quotes to (page, normalized length, sha256,
    and at most a quarter of the quote's words from each end, none at all below
    fourteen words) by default. Quote at most a sentence or two of a source in
-   any artifact. `POLICY.md` is the whole rule and `registry/README.md` is how
+   any artifact. Every source has a **licence class**, `closed` unless its
+   registry entry or web-source family names another (`open_attribution`,
+   `open_share_alike` — Wikipedia's text — or `public_domain`); an open class
+   lets an exported record quote twelve words with a citation and the licence
+   named, and changes nothing else: no class puts source text in the skill
+   repo or lets anything be redistributed. The export that applies it is not
+   implemented. `POLICY.md` is the whole rule and `registry/README.md` is how
    the registry implements it.
 7. **Consent and allowlist for runs.** `cf run` refuses any host not in
    `workspace.yaml` `hosts.allowlist` and requires `--i-have-consent`, recorded
@@ -362,14 +368,18 @@ One set, defined in `scripts/cflib/vocab.py`, documented in
 - resolution: `fixed:PR#N` `in_progress:<branch>` `refuted` `argued_correct`
   `out_of_scope`
 - source role: `audited` `reference`; licence fetch: `none` `author_site`
-  `open`
+  `open`; licence class: `closed` `open_attribution` `open_share_alike`
+  `public_domain`
+- locate (where a source is formalized; vocabulary only, every stage not
+  implemented): `references/vocabulary.md` §1.11
 
 **An item is the pair `(source_id, item)`.** The item half follows one strict
 grammar (`cflib/items.py`): `<Kind> <n>[.<n>…]`, one to four numeric levels, the
 depth inferred per source and stored as `numbering`, with an optional sub-part —
 or `In-text p.<n>`, where the kind list is the *source's*, inferred from its own
-headings. A label deeper than the source's numbering is a reject, never a
-truncation. Anything else is rejected with a reason and reported, never silently
+headings — or, for a passage of a source with neither numbers nor pages,
+`In-text #<hex>`, the hash of its head (`scripts/cflib/passages.py`). A label
+deeper than the source's numbering is a reject, never a truncation. Anything else is rejected with a reason and reported, never silently
 turned into a key. Rows carry the two halves as two fields; where one string is
 needed the spelling is `source_id::item` (`cflib.items.qualified_item`), and a
 filename uses `qualified_slug`. A bare item string is never a cross-source key,
