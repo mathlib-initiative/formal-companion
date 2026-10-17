@@ -12,7 +12,7 @@ closely?** The first corpus is English Wikipedia's WikiProject Mathematics;
 the long-term corpus is research papers. Every stage is therefore built to be
 measured, gated and improved, not run once.
 
-Commands written `cf ...` exist unless marked *new*.
+Commands written `cf ...` exist unless marked *not implemented*; so do paths, unless written in italics.
 
 **Contents**: 0 conventions · 1 what exists · 2 the model · 3 the stages ·
 4 gates · 5 challenge · 6 the host · 7 budget and scale · 8 the benchmark ·
@@ -21,7 +21,7 @@ Commands written `cf ...` exist unless marked *new*.
 
 ## 0. Conventions
 
-Placeholders: `$WIKILEAN` (the first consumer), `$AUTOFORM` (the Autoform
+Placeholders: `$WIKILEAN` (the first consumer), `$MATHLIB` (a Mathlib checkout at the universe's commit), `$AUTOFORM` (the Autoform
 plugin, MIT, whose library-index probe §2.5 adapts), `$HOST` (the allowlisted
 run host, named only in a workspace's `workspace.yaml`, never here —
 `CLAUDE.md` §1). "The maintainer" signs the human gates. Figures marked
@@ -85,8 +85,8 @@ assessment: {class: B, importance: high}
 - **Adopt the consumer's bytes.** When a consumer (WikiLean) already pins a
   revision of the page and holds the cached parse bytes, the sourceset adopts
   that revision and those bytes instead of choosing its own (§11.1).
-- **Two text views of one document.** `scripts/sources/render_html.py`
-  (*new*, stdlib) computes from the canonical body:
+- **Two text views of one document.** *scripts/sources/render_html.py*
+  (*not implemented*, stdlib) computes from the canonical body:
   1. the **Literature Links text layer** — the HTML `textContent`
      whitespace-collapsed exactly as the Literature Links spec defines it
      (MathML token text and its TeX annotation included, citation markers
@@ -99,7 +99,7 @@ assessment: {class: B, importance: high}
   3. `layer_map.json`, a character-offset map from `text.txt` to the layer,
      and `sections.json` (heading path, fragment id, layer span).
 - **Sourcesets.** Twenty thousand sources do not fit `workspace.yaml`, which
-  every command validates. Web sources live in a **sourceset** (*new*):
+  every command validates. Web sources live in a **sourceset** (*not implemented*):
   `sourcesets/<id>/manifest-<n>.jsonl`, append-only and versioned, plus one
   directory per source, validated lazily. A run pins `(sourceset id, manifest
   sha)`; the gate checks per-source shas from that pin.
@@ -142,7 +142,7 @@ refusal, never a silent drop. A passage row:
 ### 2.3 Universes
 
 ```yaml
-# corpora/u1/universe.yaml   (*new*)
+# corpora/u1/universe.yaml   (*not implemented*)
 id: u1
 frozen: 2026-10-17
 libraries:
@@ -208,7 +208,7 @@ hidden in a private proof body of a `module` file, a `theorem_wanted`, a
 `Prop`-valued def, and an axiom-dependent theorem; the probe must classify all
 four before any library on that toolchain is ingested.
 
-`corpus.sqlite` (*new*, derived, rebuildable) holds every declaration of the
+`corpus.sqlite` (*not implemented*, derived, rebuildable) holds every declaration of the
 universe: an exact table `(library, commit, name)` for existence checks, an
 FTS5 index over name segments, signature and docstring, and a tag table. It is
 built with `journal_mode=DELETE`, lives in a read-only host directory outside
@@ -216,13 +216,13 @@ every entrypoint, is opened with `mode=ro&immutable=1` everywhere, and its sha
 is verified once at `cf run`'s verify stage and recorded in `gate.json`.
 
 **`cf` never builds a library**, the rule `detect-proxies --lean` already
-follows: `cf corpus probe-command` (*new*) prints a per-library pipeline (disk
+follows: `cf corpus probe-command` (*not implemented*) prints a per-library pipeline (disk
 floor check → `ulimit -n 65536` → cache fetch → build → probe → `cf corpus
 ingest` → remove `.lake`, keeping the index); the operator runs it on `$HOST`.
 
 ### 2.5 The probe
 
-`templates/corpus/probe.lean.tmpl` (*new*), adapted from `$AUTOFORM`'s
+*templates/corpus/probe.lean.tmpl* (*not implemented*), adapted from `$AUTOFORM`'s
 library probe at a pinned commit (MIT; the header says so). It uses the
 long-stable `Environment` API so one template serves every toolchain in the
 universe, and falls back where a newer API (the module system's olean levels)
@@ -317,17 +317,17 @@ prefix and suffix) and carry the CSL citation and licence pointer above.
 |---|---|---|---|
 | L0 universe | per library: clone at commit, fetch caches, build, probe, ingest, prune | `$HOST`, sequential nice'd jobs | no |
 | L1 sources | enumerate the corpus (PageAssessments API: titles, class, importance, page ids, QIDs, latest revisions), adopt consumer pins and bytes, fetch the rest once, render | one machine, then copied | no |
-| L2 candidates | deterministic joins (tags, curated lists such as Mathlib's `docs/1000.yaml` and `docs/100.yaml`, docstring URLs, a library's own metadata such as FormalFrontier `formalization.yaml` main results) and lexical retrieval on title, aliases and bold terms; written to a read-only host directory keyed by source id | anywhere | no |
+| L2 candidates | deterministic joins (tags, curated lists such as Mathlib's `$MATHLIB/docs/1000.yaml` and `$MATHLIB/docs/100.yaml`, docstring URLs, a library's own metadata such as FormalFrontier `formalization.yaml` main results) and lexical retrieval on title, aliases and bold terms; written to a read-only host directory keyed by source id | anywhere | no |
 | L3a inventory | one task per source: deterministic finders (theorem boxes, bold definitions, lead sentence) then the enumerator; outputs the passage table, frozen by the gate | fleet | yes |
 | L3b locate | tasks of **≤ 8 `formal_math` passages** from frozen inventories; each passage ends located, absent or unresolved | fleet | yes |
 | L4 gate | §4 | out of tree | no |
 | L5 challenge | separate tasks over batches of records; per-record verdicts (§5) | fleet | yes |
-| L6 harvest, export | receipts, tally, derived status, `cf export literature-links` (*new*) with a per-source byte budget | local | no |
+| L6 harvest, export | receipts, tally, derived status, `cf export literature-links` (*not implemented*) with a per-source byte budget | local | no |
 | L7 consume | consumers import sealed record sets with their own credentials (§11) | consumer | no |
 
 L3a/L3b/L5 are three presets (`locate-inventory`, `locate`,
-`locate-challenge`; *new*) on a **new locate planner** (sourceset-scoped, not
-companion-scoped; `cfcmd/plan_locate.py`) that renders tend roots on the same
+`locate-challenge`; *not implemented*) on a **new locate planner** (sourceset-scoped, not
+companion-scoped; *cfcmd/plan_locate.py*) that renders tend roots on the same
 gate/bridge/harvest machinery. Locate documents use the library id as `repo`
 and `library:declaration@commit` as the declaration list, so `finding_id`,
 the tally key and receipts work unchanged; a sourceset-level state file
@@ -409,14 +409,14 @@ Hard rule 5 applies per record: nothing leaves the workspace without a
 - **Roots** hold at most 500 tasks, fed in waves (`--max-open-tasks` about
   twice the session count); task YAML stays small; candidates and sources live
   in read-only host directories keyed by source id.
-- **Cost and spend.** The bridge keeps Claude's JSON envelope (*new*) outside
+- **Cost and spend.** The bridge keeps Claude's JSON envelope (*not implemented*) outside
   the worktree as a cross-check; primary cost comes from transcripts priced by
   `scripts/cost`, exported within days of each run (transcripts age out after
   about thirty days). A host-side, model-free **watchdog** per shard drains the
   root when its spend passes the cap recorded in `run.yaml`, or when the
   gate-failure rate or cost per merged task exceeds a multiple of the pilot's
   p90. A recorded cap is a precondition of `cf run --execute` for locate.
-- **`cf campaign`** (*new*) renders a host-side sequencer (shell, no `cflib`)
+- **`cf campaign`** (*not implemented*) renders a host-side sequencer (shell, no `cflib`)
   that starts shard k+1 when shard k ends, runs the watchdog, exports usage and
   prunes transcripts per shard; the operator's machine only harvests receipts.
 - **Builds** run as the user, with a clean environment and nice/ionice. The
@@ -449,14 +449,14 @@ concept article is roughly $250k and 40 days. Hence:
 
 ## 8. The benchmark
 
-`cf bench` (*new*: `build | anchor | freeze | score | compare`) sits beside
+`cf bench` (*not implemented*: `build | anchor | freeze | score | compare`) sits beside
 `cf score`, which stays as it is.
 
 ### 8.1 Gold
 
 | tier | what | how |
 |---|---|---|
-| G1 | maintainer-curated positives: Mathlib `@[wikidata]` tags, `docs/1000.yaml`, `docs/100.yaml` | `cf bench anchor`: resolve each declaration in the universe through the rename table (else drop with a reason); widen the accept set (`to_additive` twins, renames); anchor to a passage by an exact selector check; adjudicate the relation once with the frozen labeler; unanchorable entries score at article level only |
+| G1 | maintainer-curated positives: Mathlib `@[wikidata]` tags, `$MATHLIB/docs/1000.yaml`, `$MATHLIB/docs/100.yaml` | `cf bench anchor`: resolve each declaration in the universe through the rename table (else drop with a reason); widen the accept set (`to_additive` twins, renames); anchor to a passage by an exact selector check; adjudicate the relation once with the frozen labeler; unanchorable entries score at article level only |
 | G3 | **blind labels** of an independent sample: spans drawn from `sections.json`, not from any run | a frozen labeling workflow (its commit and prompt shas in the gold manifest) that never sees run records, with hunters on tools the system does not use (ripgrep over pinned checkouts, a type search at the pin, LeanSearch-class search with every hit re-checked at the pin); hunter recall *h* is calibrated tag-blind on G1, and G3 negative purity is reported as at least *h* |
 | GX | exhaustive inventories of 8–10 articles | two independent enumerators plus the deterministic finders; the union adjudicated by the labeler and signed by the maintainer |
 | G4 | the maintainer's spot checks | up to 30 negatives and 20 positives per release |
@@ -551,7 +551,7 @@ a canary string, and a transcript containing one fails the run.
 4. Test is scored only at checkpoints. A model change is a new baseline, never
    an improvement. The loop never edits gold; a gold change is its own change
    with a new manifest sha.
-5. `references/locate-patterns.md` (*new*) is fed from dev errors only and
+5. *references/locate-patterns.md* (*not implemented*) is fed from dev errors only and
    linted to fail if it names a val/test gold declaration or QID.
 6. Each iteration has a spend cap and a reserved session quota (4 of 15), or
    runs between campaign shards; an unchanged baseline arm is reused when every
