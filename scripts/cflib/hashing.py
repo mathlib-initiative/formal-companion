@@ -123,6 +123,35 @@ def defect_key(source_id: str, item: str, kind: str,
     return finding_id("", source_id, item, kind, unfaithful_decls)
 
 
+def location_key(source_id: str, item: str, library: str, commit: str,
+                 declaration: str) -> str:
+    """The RUN-FREE identity of one location -- the ONE definition.
+
+    ``sha256("\\n".join([source_id, clean(item), library, commit, declaration]))``
+    (docs/proposals/wikipedia-locate.md section 2.7; references/locate-documents.md).
+    It is what a consumer upserts a record on, so it holds no run id: the same
+    passage located at the same declaration of the same commit by two runs is one
+    key, while ``finding_id`` -- which stays in the ledger -- is one per run.
+    The item goes through :func:`cflib.items.clean` first, the shape
+    :func:`finding_id` has, so whitespace variants of one ``In-text #<hex>`` key
+    one location.  Every part is required: a key with an empty library, commit
+    or declaration would collide across everything that lost the same field.
+    """
+    from .errors import CfError
+    from .items import clean  # local import: items imports nothing from here
+
+    parts = [str(source_id or "").strip(), clean(str(item or "")),
+             str(library or "").strip(), str(commit or "").strip(),
+             str(declaration or "").strip()]
+    names = ("source_id", "item", "library", "commit", "declaration")
+    missing = [name for name, part in zip(names, parts) if not part]
+    if missing:
+        raise CfError(f"a location_key needs every part; {', '.join(missing)} is empty",
+                      hint="source_id, item, library, commit and declaration are all "
+                           "required; the commit is the universe's, never a worker's")
+    return sha256_text("\n".join(parts))
+
+
 def manifest(paths: Iterable[str | Path], root: str | Path | None = None) -> dict[str, str]:
     """{relative path: sha256} for a set of files (harvest RECEIPT manifests)."""
     root_p = Path(root).resolve() if root else None

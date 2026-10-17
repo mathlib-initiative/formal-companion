@@ -309,6 +309,38 @@ not a bool (absent or `null` is `false`); and any value outside these sets.
 | `not_required` | outside every challenge rule |
 | `sampled_out` | inside the stratified sample's frame, and not drawn |
 
+**The values the locate documents carry** (`references/locate-documents.md`, every one in
+`cflib.vocab`'s locate block):
+
+| enum | values |
+|---|---|
+| `LOCATE_DOCUMENT_SCHEMA` | `cf-locate/1`: the `schema` of every inventory, locate and challenge document |
+| `RENDERER_WEB_HTML` | `web-html/1`: the renderer of the first corpus's web sources, pinned by every run, gate and score document |
+| `LOCATE_OUTCOMES` | `located` · `absent` · `unresolved` — what one `formal_math` passage of a locate document ends with; `OUTCOME_KIND` tallies them as `LOCATION`, `ABSENCE` and `UNRESOLVED` |
+| `FINDERS` | `theorem_box` · `bold_definition` · `lead` (the `DETERMINISTIC_FINDERS`, whose passages are pre-filled in an inventory task and may be dropped only with a skip naming their span) · `model` (the enumerator's own) |
+| `CONFIDENCES` | `high` · `medium` · `low` — a location's confidence, recorded and never an input to a status |
+| `CANDIDATE_VERDICTS` | `accepted` · `rejected` — what a receipt says of each candidate it examined; a rejection carries a reason |
+| `CANDIDATE_VIA` | `wikidata_tag` · `mathlib_1000` · `mathlib_100` · `docstring_url` · `library_metadata` — how an L2 **curated** candidate was found; lexical retrieval is not curated, and only curated hits bind gate rule 4 |
+| `TAG_KINDS` | `wikidata` · `stacks` · `kerodon` · `wikipedia` — the tags the library index parses from a declaration's source span and docstring |
+| `CHALLENGE_TARGETS` | `location` · `absence` · `unresolved` · `scope` · `prominence` |
+| `CHALLENGE_ACTIONS` | `confirm` and `uphold` (`CHALLENGE_KEEP`: the record survives) · `downgrade`, `refute` and `overturn` (`CHALLENGE_CHANGE`: the affected records are `downgraded`) |
+| `UNRESOLVED_ATTEMPT_CAP` | `attempt_cap`: the reason on an `UNRESOLVED` document the bridge writes after a task's third genuine reviewer rejection; never a worker's |
+
+Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
+`MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
+task), and the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
+`EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`).
+
+**The benchmark's values** (the proposal's §8 and §9):
+
+| enum | values |
+|---|---|
+| `BENCH_TIERS` | `G1` · `G3` · `GX` · `G4` · `P` — never pooled |
+| `BENCH_ARMS` | `assisted` (production) · `blind` (L2's curated joins, gate rule 4 and the tag table off for the scored items); never pooled |
+| `BENCH_SPLITS` | `dev` · `eval` · `test` |
+| `FNF_CAUSES` | `inventory_miss` · `scope_demotion` · `absence` · `weak_relation` · `unresolved` · `gate_failed` — why a gold-formalized passage did not end `formalized`; unresolved and gate-failed tasks are misses, never exclusions |
+| `ERROR_CODES` | `E-INVENTORY-MISS` · `E-RETRIEVAL-MISS` · `E-REJECTED-CORRECT` · `E-WRONG-RELATION` · `E-FALSE-ABSENCE` · `E-WRONG-SCOPE` · `E-UNRESOLVED` · `E-MEMORY` — the mechanical code of every miss in the improvement loop |
+
 Licence classes are §1.6's `LICENCE_CLASSES`.
 
 ---

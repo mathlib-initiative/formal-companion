@@ -52,6 +52,12 @@ detect/*/deps.json
 # The companion a pipeline generates is its own git repository (cf ingest, S0):
 pipelines/*/repo/
 
+# Locate: a sourceset's page text sits under sourcesets/<id>/sources/, which the
+# `sources/` line above already ignores. Library indexes and corpus.sqlite are
+# large derived artifacts, rebuilt from the probe output:
+corpora/*/index/
+corpora/*/corpus.sqlite
+
 # corpus/ is deliberately NOT ignored: the findings corpus is the calibration
 # baseline and must be durable. It quotes 1-3 book sentences per finding, so the
 # workspace itself stays local (no remote; the pre-push hook is only a reminder)

@@ -295,6 +295,113 @@ class WorkspacePaths:
         return self.stage_receipts_dir(pipeline_id) / (
             f"{_safe_id(stage, 'stage')}.stage-receipt.json")
 
+    # -- locate (docs/proposals/wikipedia-locate.md; the layout is
+    # references/locate-documents.md section 7) -------------------------
+    #
+    # A web source does not live in sources/ or in workspace.yaml -- twenty
+    # thousand of them fit neither -- but in a SOURCESET: append-only manifests
+    # plus one directory per source.  The per-source directories sit under
+    # sourcesets/<id>/sources/, so the workspace .gitignore's `sources/` line
+    # keeps their page text out of git with no rule of its own.
+    @property
+    def sourcesets_dir(self) -> Path:
+        return self.root / "sourcesets"
+
+    def sourceset_dir(self, sourceset_id: str) -> Path:
+        return self.sourcesets_dir / _safe_id(sourceset_id, "sourceset id")
+
+    def sourceset_manifest(self, sourceset_id: str, version: int) -> Path:
+        """``manifest-<n>.jsonl``: version ``n`` of the sourceset, never rewritten."""
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise CfError(f"a sourceset manifest version is a positive integer, not {version!r}")
+        return self.sourceset_dir(sourceset_id) / f"manifest-{version}.jsonl"
+
+    def sourceset_manifests(self, sourceset_id: str) -> list[tuple[int, Path]]:
+        """``[(n, path)]`` of every manifest on disk, oldest first."""
+        directory = self.sourceset_dir(sourceset_id)
+        if not directory.is_dir():
+            return []
+        found = []
+        for path in directory.glob("manifest-*.jsonl"):
+            number = path.name[len("manifest-"):-len(".jsonl")]
+            if number.isdigit() and not number.startswith("0"):
+                found.append((int(number), path))
+        return sorted(found)
+
+    def sourceset_sources_dir(self, sourceset_id: str) -> Path:
+        return self.sourceset_dir(sourceset_id) / "sources"
+
+    def sourceset_source_dir(self, sourceset_id: str, source_id: str) -> Path:
+        """One web source's files: the raw bytes, the body, the layer and its views."""
+        return self.sourceset_sources_dir(sourceset_id) / _safe_id(source_id, "source_id")
+
+    def sourceset_state_json(self, sourceset_id: str) -> Path:
+        """The sourceset-level state file locate writes instead of companions/<n>/state.json."""
+        return self.sourceset_dir(sourceset_id) / "state.json"
+
+    def candidates_dir(self, sourceset_id: str, universe_id: str) -> Path:
+        """L2: one candidates file per source, for one universe."""
+        return (self.sourceset_dir(sourceset_id) / "candidates"
+                / _safe_id(universe_id, "universe id"))
+
+    def candidates_json(self, sourceset_id: str, universe_id: str, source_id: str) -> Path:
+        return (self.candidates_dir(sourceset_id, universe_id)
+                / f"{_safe_id(source_id, 'source_id')}.json")
+
+    @property
+    def corpora_dir(self) -> Path:
+        """Universes of libraries.  Not ``corpus/``, which holds harvested findings."""
+        return self.root / "corpora"
+
+    def universe_dir(self, universe_id: str) -> Path:
+        return self.corpora_dir / _safe_id(universe_id, "universe id")
+
+    def universe_yaml(self, universe_id: str) -> Path:
+        return self.universe_dir(universe_id) / "universe.yaml"
+
+    def universe_index_dir(self, universe_id: str, library_id: str) -> Path:
+        return self.universe_dir(universe_id) / "index" / _safe_id(library_id, "library id")
+
+    def universe_conventions_md(self, universe_id: str, library_id: str) -> Path:
+        return (self.universe_dir(universe_id) / "conventions"
+                / f"{_safe_id(library_id, 'library id')}.md")
+
+    def corpus_db(self, universe_id: str) -> Path:
+        """``corpus.sqlite``: derived from the indexes, rebuildable, opened read-only."""
+        return self.universe_dir(universe_id) / "corpus.sqlite"
+
+    @property
+    def exports_dir(self) -> Path:
+        return self.root / "exports"
+
+    def export_dir(self, set_id: str) -> Path:
+        """One sealed record set (references/locate-documents.md section 6)."""
+        return self.exports_dir / _safe_id(set_id, "record set id")
+
+    @property
+    def benches_dir(self) -> Path:
+        return self.root / "benches"
+
+    def bench_dir(self, bench_id: str) -> Path:
+        return self.benches_dir / _safe_id(bench_id, "bench id")
+
+    @property
+    def campaigns_dir(self) -> Path:
+        return self.root / "campaigns"
+
+    def campaign_dir(self, campaign_id: str) -> Path:
+        return self.campaigns_dir / _safe_id(campaign_id, "campaign id")
+
+    def campaign_yaml(self, campaign_id: str) -> Path:
+        return self.campaign_dir(campaign_id) / "campaign.yaml"
+
+    def locate_outcomes_jsonl(self, run_id: str) -> Path:
+        """One row per passage of a harvested locate run, with its derived status."""
+        return self.reports_dir / f"locate-outcomes.{_safe_id(run_id, 'run_id')}.jsonl"
+
+    def locate_tally_json(self, run_id: str) -> Path:
+        return self.reports_dir / f"locate-tally.{_safe_id(run_id, 'run_id')}.json"
+
     # -- ledger, routing, detection ------------------------------------
     @property
     def ledger_dir(self) -> Path:
