@@ -6,9 +6,12 @@ New code for `docs/overlay.md` sections 4 and 5: `build_site.py` calls
 the way the rendered page does and to show a hover for each identifier in it.
 
 A card qualifies when its end's rendered page is a page of the site with an
-anchor (the same page and fragment the viewer's `cardHref` builds). That
-page's `div.code-box` holding the anchor is parsed with `html.parser`, from
-the box's start only, and its code text is flattened in reading order:
+anchor (the same page and fragment the viewer's `cardHref` builds), or when
+it is a tagged example on its module's page: an example has no anchor, so
+its box is the one whose code holds its tag comment (`` `example:<slug>` ``),
+and its `example` keyword after the tag stands for the anchor. That page's
+`div.code-box` holding the anchor is parsed with `html.parser`, from the
+box's start only, and its code text is flattened in reading order:
 `.tactic-state` and `.hover-info` subtrees and inputs are skipped, and a
 line break separates two `code.block` elements. The card's snippet is matched
 against that text from the anchor's line or up to `LINES_ABOVE` lines above
@@ -25,7 +28,10 @@ snippet has and the page does not stay plain. A binding is a small number,
 shared by the runs of one statement that Verso binds together (a variable and
 its uses, a bracket and its partner), kept only when two runs share it. A
 link is kept only when its target page is a file of the site and holds the
-anchor it names. Only the hover entries the statements use are copied from
+anchor it names, and that anchor is a declaration's own: the name after a
+declaration keyword, or a field or constructor of a declaration the page
+declares (a Verso page also gives an id to some other uses of a name). Only
+the hover entries the statements use are copied from
 the site's hover table (`DOCS_NAME`), each split into its signature and its
 docstring, both plain text; the viewer renders them with `textContent`.
 """
@@ -59,6 +65,8 @@ DOCS_NAME = "-verso-docs.json"
 #: How many lines above the declaration's name its statement may start (attributes, modifiers).
 LINES_ABOVE = 6
 ELLIPSIS = "…"
+#: The keyword that stands for a tagged example's anchor.
+EXAMPLE_KEYWORD = "example"
 #: Verso's token classes, by the kind a run carries; any other token is plain text.
 KINDS = (("keyword", "kw"), ("const", "const"), ("level-var", "var"), ("var", "var"),
          ("sort", "sort"), ("literal", "lit"), ("comment", "cm"))
@@ -70,12 +78,22 @@ CHUNK = 1 << 16
 #: How Verso marks a code box, opens a goal view, and any span tag.
 BOX_CLASS = b'class="code-box'
 TACTIC_STATE = b'<span class="tactic-state">'
+#: How a comment's opening delimiter token and a code element of a code box start.
+COMMENT_TOKEN = b'<span class="comment delimiter'
+CODE_BLOCK = b'<code class="hl lean block"'
 SPAN_TAG = re.compile(rb"<(/?)span\b[^>]*>")
 WHITESPACE = " \t\r\n"
 HOVER_ID = re.compile(r"[0-9]{1,9}\Z")
 BASE_TAG = re.compile(rb"<base\s[^>]*href=\"([^\"]*)\"", re.IGNORECASE)
 #: The characters `encodeURIComponent` leaves alone.
 URI_COMPONENT_SAFE = "-_.!~*'()"
+#: An example's declared id: its tag, which its tag comment holds in backticks.
+EXAMPLE_ID = re.compile(r"example:[A-Za-z0-9][A-Za-z0-9._-]*\Z")
+#: The keywords a declaration's own anchor follows: the anchored name is the one they declare.
+DECLARING = frozenset({b"theorem", b"lemma", b"def", b"abbrev", b"structure", b"class", b"inductive",
+                       b"instance", b"opaque", b"axiom"})
+KEYWORD_TOKEN = re.compile(rb'<span class="keyword token"[^>]*>([^<]*)</span>')
+ANY_TAG = re.compile(rb"<[^>]*>")
 
 
 # ---------------------------------------------------------------------------
@@ -86,17 +104,19 @@ def _trimmed(value: Any) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
-def card_target(end: dict[str, Any]) -> str | None:
-    """`<page>#<fragment>` of an object end whose rendered page has an anchor, or None.
+def card_locator(end: dict[str, Any]) -> tuple[str, str, str] | None:
+    """`(page, how, what)` of an object end's statement, or None: `how` is "id" and `what` the
+    anchor of an exact destination, or `how` is "tag" and `what` the tag of an example.
 
     The viewer's `cardTarget` in `viewer-core.js`, written again: the page is
     the destination's own `href`, else the module's page; the fragment is the
     destination's own, else the declaration's name with each "." as "___",
-    and only an `exact` destination has one.
+    and only an `exact` destination has one. An example whose declared id is
+    its tag (`example:<slug>`) has no anchor, and is found by that tag.
     """
     ext = overlay_annotations.extension(end)
     destination = ext.get("destination")
-    if not isinstance(destination, dict) or destination.get("resolution") != "exact":
+    if not isinstance(destination, dict):
         return None
     location = end.get("location") if isinstance(end.get("location"), dict) else {}
     if isinstance(destination.get("href"), str):
@@ -104,11 +124,25 @@ def card_target(end: dict[str, Any]) -> str | None:
     else:
         module = _trimmed(location.get("module"))
         page = "/".join(module.split(".")) + "/index.html" if module else ""
-    if isinstance(destination.get("fragment"), str):
-        fragment = destination["fragment"]
-    else:
-        fragment = "___".join(_trimmed(location.get("declaration")).split("."))
-    return f"{page}#{fragment}" if page and fragment else None
+    if not page:
+        return None
+    if destination.get("resolution") == "exact":
+        if isinstance(destination.get("fragment"), str):
+            fragment = destination["fragment"]
+        else:
+            fragment = "___".join(_trimmed(location.get("declaration")).split("."))
+        return (page, "id", fragment) if fragment else None
+    declaration = ext.get("declaration") if isinstance(ext.get("declaration"), dict) else {}
+    tag = declaration.get("id")
+    if declaration.get("kind") == "example" and isinstance(tag, str) and EXAMPLE_ID.match(tag):
+        return page, "tag", tag
+    return None
+
+
+def card_target(end: dict[str, Any]) -> str | None:
+    """`<page>#<fragment>`, or `<page>#<example tag>`: the key `verso.json` files the end's statement under."""
+    found = card_locator(end)
+    return f"{found[0]}#{found[2]}" if found else None
 
 
 def snippet_text(end: dict[str, Any]) -> str | None:
@@ -117,17 +151,19 @@ def snippet_text(end: dict[str, Any]) -> str | None:
     return value if isinstance(value, str) and value.strip() else None
 
 
-def card_statements(entries: list[tuple[str, dict[str, Any]]]) -> dict[str, list[str]]:
-    """{target: [snippet text, ...]} in bundle order, each text once per target."""
-    found: dict[str, list[str]] = {}
+def card_statements(entries: list[tuple[str, dict[str, Any]]]) -> dict[str, tuple[tuple[str, str, str], list[str]]]:
+    """{target: (locator, [snippet text, ...])} in bundle order, each text once per target."""
+    found: dict[str, tuple[tuple[str, str, str], list[str]]] = {}
     for _path, annotation in entries:
         for end in annotation.get("object") or []:
             if not isinstance(end, dict):
                 continue
-            target, text = card_target(end), snippet_text(end)
-            if target and text and text not in found.setdefault(target, []):
-                found[target].append(text)
-    return {target: texts for target, texts in found.items() if texts}
+            locator, text = card_locator(end), snippet_text(end)
+            if locator and text:
+                texts = found.setdefault(f"{locator[0]}#{locator[2]}", (locator, []))[1]
+                if text not in texts:
+                    texts.append(text)
+    return found
 
 
 def site_file(page: str) -> str | None:
@@ -155,11 +191,20 @@ class Site:
         self.root = Path(os.path.realpath(root))
         self.pages: dict[str, mmap.mmap | bytes | None] = {}
         self.anchors: dict[tuple[str, str], bool] = {}
+        self.declared: dict[tuple[str, str], bool] = {}
+
+    @staticmethod
+    def parts(relative: str) -> tuple[str, ...] | None:
+        """The components of a path relative to the root, or None when it is absolute or has a `..`."""
+        parts = PurePosixPath(relative).parts
+        if not parts or relative.startswith("/") or "\\" in relative or ".." in parts:
+            return None
+        return parts
 
     def resolve(self, relative: str) -> Path | None:
         """A regular file under the root, every component a plain directory."""
-        parts = PurePosixPath(relative).parts
-        if not parts:
+        parts = self.parts(relative)
+        if parts is None:
             return None
         current = self.root
         mode = 0
@@ -174,7 +219,10 @@ class Site:
         return current if stat.S_ISREG(mode) else None
 
     def is_directory(self, relative: str) -> bool:
-        path = self.root.joinpath(*PurePosixPath(relative).parts)
+        parts = self.parts(relative)
+        if parts is None:
+            return False
+        path = self.root.joinpath(*parts)
         try:
             return stat.S_ISDIR(path.lstat().st_mode)
         except OSError:
@@ -210,6 +258,18 @@ class Site:
             self.anchors[key] = data is not None and (not fragment or id_position(data, fragment) >= 0)
         return self.anchors[key]
 
+    def declares(self, relative: str, fragment: str) -> bool:
+        """Whether the page's element with this id is a declaration's own name (`declared_at`), or the
+        name of a field or constructor (`A___B___c`) of a declaration the page declares (`A___B`)."""
+        key = (relative, fragment)
+        if key not in self.declared:
+            self.declared[key] = False
+            data = self.page(relative)
+            at = id_position(data, fragment) if data is not None and fragment else -1
+            parent = fragment.rpartition("___")[0]
+            self.declared[key] = at >= 0 and (declared_at(data, at) or bool(parent) and self.declares(relative, parent))
+        return self.declared[key]
+
     def base(self, relative: str) -> str:
         """The page's directory, as its own `<base href>` moves it, relative to the root."""
         data = self.page(relative)
@@ -240,6 +300,20 @@ def id_position(data: mmap.mmap | bytes, fragment: str) -> int:
     return min(found) if found else -1
 
 
+def declared_at(data: mmap.mmap | bytes, at: int) -> bool:
+    """Whether the element whose attribute starts at `at` comes right after a declaration keyword token,
+    with nothing but tags and whitespace between them."""
+    start = data.rfind(b"<", 0, at)
+    window = bytes(data[max(0, start - 4096):start]) if start >= 0 else b""
+    keyword = None
+    for keyword in KEYWORD_TOKEN.finditer(window):
+        pass
+    if keyword is None or keyword.group(1).strip() not in DECLARING:
+        return False
+    between = ANY_TAG.sub(b"", window[keyword.end():])
+    return not html.unescape(between.decode("utf-8", "replace")).strip()
+
+
 # ---------------------------------------------------------------------------
 # one code box
 # ---------------------------------------------------------------------------
@@ -247,10 +321,19 @@ def id_position(data: mmap.mmap | bytes, fragment: str) -> int:
 class Box(HTMLParser):
     """The code text of one `div.code-box`, its tokens, and where the anchor's text starts."""
 
-    def __init__(self, anchor: str, *, past_anchor: int) -> None:
+    def __init__(self, anchor: str, *, past_anchor: int, tag: bool = False, loose: bool = False) -> None:
         super().__init__(convert_charrefs=True)
         self.anchor = anchor
         self.past_anchor = past_anchor
+        #: In tag mode `anchor` is a text the code holds (an example's tag comment), not an id, and the
+        #: anchor is the first `example` keyword after it; `tail` is the text read last, `tag_at` the tag's.
+        self.tag = tag
+        self.tail = ""
+        self.tag_at: int | None = None
+        #: The token the last characters belong to, where its text starts, and its text so far.
+        self.run: tuple[int, int, str] = (-1, 0, "")
+        #: Read from inside the box: an end tag of no element open here closes nothing.
+        self.loose = loose
         self.parts: list[str] = []
         self.length = 0
         #: One entry per character run: (start, end, token index or -1).
@@ -269,6 +352,17 @@ class Box(HTMLParser):
         return "".join(self.parts)
 
     def _append(self, value: str, token: int) -> None:
+        if value and self.tag and self.anchor_at is None:
+            last, start, text = self.run
+            self.run = (token, start, text + value) if token >= 0 and token == last else (token, self.length, value)
+            if self.tag_at is None:
+                window = self.tail + value
+                found = window.find(self.anchor)
+                if found >= 0:
+                    self.tag_at = self.length - len(self.tail) + found
+                self.tail = window[-len(self.anchor):]
+            elif token >= 0 and self.tokens[token][0] == "kw" and self.run[2] == EXAMPLE_KEYWORD:
+                self.anchor_at = self.run[1]
         if value:
             self.parts.append(value)
             self.segments.append((self.length, self.length + len(value), token))
@@ -302,7 +396,7 @@ class Box(HTMLParser):
             self.tokens.append((kind, values.get("data-verso-hover") or None,
                                 values.get("data-binding") or None, href))
             token = len(self.tokens) - 1
-        if not skip and block and self.anchor_at is None and values.get("id") == self.anchor:
+        if not self.tag and not skip and block and self.anchor_at is None and values.get("id") == self.anchor:
             self.anchor_at = self.length
         if tag not in VOID_TAGS:
             self.stack.append((tag, skip, block, token, href))
@@ -314,6 +408,8 @@ class Box(HTMLParser):
 
     def handle_endtag(self, tag: str) -> None:
         if self.done or tag in VOID_TAGS:
+            return
+        if self.loose and all(entry[0] != tag for entry in self.stack):
             return
         while self.stack:
             if self.stack.pop()[0] == tag:
@@ -340,19 +436,57 @@ def subtree_end(data: mmap.mmap | bytes, start: int) -> int:
 
 
 def read_box(data: mmap.mmap | bytes, fragment: str, room: int) -> Box | None:
-    """The box that holds the element with this id, parsed from its start, or None.
+    """The box that holds the element with this id, parsed from its start, or None."""
+    at = id_position(data, fragment)
+    return _parse_box(data, at, Box(fragment, past_anchor=room)) if at >= 0 else None
+
+
+def read_tagged_box(data: mmap.mmap | bytes, tag: str, room: int) -> Box | None:
+    """The box whose code holds this example's tag comment, its anchor the first `example` keyword
+    after the tag; or None.
+
+    The tag comment often ends the box of the declaration before it, whose
+    proof may be megabytes, so when the comment is in a code element the box
+    is read from the comment on, as that element's content, an end tag of an
+    element opened before the comment passed over (`Box.loose`); failing
+    that, from the box's start.
+    """
+    needle = f"`{tag}`".encode("utf-8")
+    at = data.find(needle)
+    while at >= 0:
+        box = None
+        comment = data.rfind(COMMENT_TOKEN, max(0, at - 4096), at)
+        if comment >= 0 and in_code_block(data, comment):
+            box = _parse_box(data, at, Box(f"`{tag}`", past_anchor=room, tag=True, loose=True), start=comment)
+        box = box or _parse_box(data, at, Box(f"`{tag}`", past_anchor=room, tag=True))
+        if box:
+            return box
+        at = data.find(needle, at + len(needle))
+    return None
+
+
+def in_code_block(data: mmap.mmap | bytes, at: int) -> bool:
+    """Whether `at` is in a `code.block` element of a code box."""
+    mark = data.rfind(BOX_CLASS, 0, at)
+    code = data.rfind(CODE_BLOCK, mark, at) if mark >= 0 else -1
+    return code >= 0 and data.find(b"</code>", code, at) < 0 and data.find(b"</div>", mark, at) < 0
+
+
+def _parse_box(data: mmap.mmap | bytes, at: int, box: Box, start: int | None = None) -> Box | None:
+    """`box` fed from the start of the `div.code-box` before `at`, or None when there is none or its
+    anchor is not in it. With `start`, it is fed from there instead, as the content of a code box's
+    code element (`in_code_block`).
 
     A goal view (`TACTIC_STATE`, most of a page's bytes) is passed over by
     counting its spans, not parsed; the parser would skip its content anyway.
     """
-    at = id_position(data, fragment)
-    if at < 0:
-        return None
-    mark = data.rfind(BOX_CLASS, 0, at)
-    start = data.rfind(b"<div", 0, mark) if mark >= 0 else -1
-    if start < 0 or b">" in data[start:mark]:
-        return None
-    box = Box(fragment, past_anchor=room)
+    if start is None:
+        mark = data.rfind(BOX_CLASS, 0, at)
+        start = data.rfind(b"<div", 0, mark) if mark >= 0 else -1
+        if start < 0 or b">" in data[start:mark]:
+            return None
+    else:
+        box.feed('<div class="code-box"><code class="hl lean block">')
     decoder = codecs.getincrementaldecoder("utf-8")()
     try:
         while not box.done and start < len(data):
@@ -536,7 +670,7 @@ def link(site: Site, page: str, href: str) -> str | None:
     if joined in {".", ".."} or joined.startswith("../"):
         return None
     target = f"{joined}/index.html" if path.endswith("/") or site.is_directory(joined) else joined
-    if not site.has_anchor(target, fragment):
+    if not (site.declares(target, fragment) if fragment else site.has_anchor(target, fragment)):
         return None
     quoted = urllib.parse.quote(target, safe="/")
     return f"{quoted}#{urllib.parse.quote(fragment, safe=URI_COMPONENT_SAFE)}" if fragment else quoted
@@ -610,14 +744,14 @@ def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple
     statements: dict[str, list[list[list[Any]]]] = {}
     used: set[int] = set()
     try:
-        for target, texts in targets.items():
-            page_ref, _, fragment = target.partition("#")
+        for target, ((page_ref, how, what), texts) in targets.items():
             page = site_file(page_ref)
             data = site.page(page) if page else None
             if data is None:
                 continue
             for text in texts:
-                box = read_box(data, fragment, room=2 * len(text) + 1024)
+                room = len(text) + 256
+                box = read_box(data, what, room) if how == "id" else read_tagged_box(data, what, room)
                 runs = statement_runs(box, text, site, page, table) if box else None
                 if runs is None:
                     continue
@@ -639,7 +773,7 @@ def extract(site_root: Path, entries: list[tuple[str, dict[str, Any]]]) -> tuple
                         run.pop()
     value = {"schema": SCHEMA, "schema_version": SCHEMA_VERSION, "statements": statements, "hovers": hovers}
     return value, {"statements": sum(len(v) for v in statements.values()),
-                   "targets": sum(len(v) for v in targets.values())}
+                   "targets": sum(len(texts) for _locator, texts in targets.values())}
 
 
 def dumps(value: dict[str, Any]) -> bytes:
