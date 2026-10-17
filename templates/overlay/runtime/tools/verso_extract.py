@@ -259,14 +259,13 @@ class Site:
     def __init__(self, root: Path) -> None:
         self.root = Path(os.path.realpath(root))
         self.pages: dict[str, mmap.mmap | bytes | None] = {}
-        self.anchors: dict[tuple[str, str], bool] = {}
         self.declared: dict[tuple[str, str], bool] = {}
 
     @staticmethod
     def parts(relative: str) -> tuple[str, ...] | None:
-        """The components of a path relative to the root, or None when it is absolute or has a `..`."""
+        """The components of a path relative to the root, or None when it is absolute or has a `..` or a NUL."""
         parts = PurePosixPath(relative).parts
-        if not parts or relative.startswith("/") or "\\" in relative or ".." in parts:
+        if not parts or relative.startswith("/") or "\\" in relative or "\0" in relative or ".." in parts:
             return None
         return parts
 
@@ -318,14 +317,6 @@ class Site:
             if isinstance(data, mmap.mmap):
                 data.close()
         self.pages.clear()
-
-    def has_anchor(self, relative: str, fragment: str) -> bool:
-        """Whether the page exists and an element on it has this id."""
-        key = (relative, fragment)
-        if key not in self.anchors:
-            data = self.page(relative)
-            self.anchors[key] = data is not None and (not fragment or id_position(data, fragment) >= 0)
-        return self.anchors[key]
 
     def declares(self, relative: str, fragment: str) -> bool:
         """Whether the page's element with this id is a declaration's own name (`declared_at`), or the
@@ -729,9 +720,10 @@ def _numbered(runs: list[list[Any]]) -> list[list[Any]]:
 
 
 def link(site: Site, page: str, href: str) -> str | None:
-    """A token's link as `<page>#<fragment>` relative to the site root, when its target exists."""
+    """A token's link as `<page>#<fragment>` relative to the site root, when the fragment is a
+    declaration's own anchor on that page (`Site.declares`)."""
     parts = urllib.parse.urlsplit(href)
-    if parts.scheme or parts.netloc or parts.query or not parts.path or "\\" in href:
+    if parts.scheme or parts.netloc or parts.query or not parts.path or not parts.fragment or "\\" in href:
         return None
     path = urllib.parse.unquote(parts.path)
     fragment = urllib.parse.unquote(parts.fragment)
@@ -740,10 +732,9 @@ def link(site: Site, page: str, href: str) -> str | None:
     if joined in {".", ".."} or joined.startswith("../"):
         return None
     target = f"{joined}/index.html" if path.endswith("/") or site.is_directory(joined) else joined
-    if not (site.declares(target, fragment) if fragment else site.has_anchor(target, fragment)):
+    if not site.declares(target, fragment):
         return None
-    quoted = urllib.parse.quote(target, safe="/")
-    return f"{quoted}#{urllib.parse.quote(fragment, safe=URI_COMPONENT_SAFE)}" if fragment else quoted
+    return f"{urllib.parse.quote(target, safe='/')}#{urllib.parse.quote(fragment, safe=URI_COMPONENT_SAFE)}"
 
 
 # ---------------------------------------------------------------------------
@@ -936,7 +927,7 @@ def _run_problem(run: Any, hovers: dict[str, Any]) -> str | None:
         return "a run is not [kind, text, hover, binding]"
     if len(run) == 5:
         return "a run carries a link, to a page that is not this site's"
-    if run[0] not in RUN_KINDS or not isinstance(run[1], str) or not run[1]:
+    if not isinstance(run[0], str) or run[0] not in RUN_KINDS or not isinstance(run[1], str) or not run[1]:
         return f"a run is not a known kind with its text: {run[:2]!r}"
     hover = run[2] if len(run) > 2 else None
     if hover is not None and not (type(hover) is int and str(hover) in hovers):
