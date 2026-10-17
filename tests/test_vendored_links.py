@@ -115,9 +115,17 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
         self.assertEqual(companion.merge(template, {"object": []})["subject"], [template["subject"]])
         self.assertFalse(hasattr(companion, "normalize"))
 
+    #: copied to a run host, where cflib is not importable: it puts vendor/ (beside
+    #: it in a gate directory, else the checkout's) on sys.path itself first
+    HOST_BOOTSTRAPPED = {"scripts/locate/records.py"}
+
     def test_every_import_goes_through_the_bootstrap(self):
         offenders = []
         for path in sorted([*SCRIPTS.rglob("*.py"), *(SKILL / "tests").glob("*.py")]):
+            if path.relative_to(SKILL).as_posix() in self.HOST_BOOTSTRAPPED:
+                text = path.read_text(encoding="utf-8")
+                self.assertLess(text.index("sys.path.insert"), text.index("from literature_links"))
+                continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             imports = sorted((n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))),
                              key=lambda n: (n.lineno, n.col_offset))
