@@ -190,7 +190,7 @@ class Companion:
             "export const overlay = true;\n", encoding="utf-8")
         (self.overlay / "vendor" / "pdfjs" / "LICENSE").write_text(
             "fixture licence\n", encoding="utf-8")
-        for name in ("serve", "build_site", "overlay_annotations"):
+        for name in ("serve", "build_site", "overlay_annotations", "verso_extract"):
             shutil.copy2(TOOLS / f"{name}.py", self.overlay / "tools" / f"{name}.py")
         shutil.copytree(SKILL / "vendor" / "literature_links", self.overlay / "tools" / "literature_links",
                         ignore=shutil.ignore_patterns("__pycache__"))
@@ -248,13 +248,17 @@ class Companion:
             "object": [],
         }
 
-    def write_document(self, **source_overrides) -> Path:
+    def write_document(self, objects: list | None = None, **source_overrides) -> Path:
         """The annotation file, the bundle and the `GENERATED.json` that records them."""
         path = self.root / FILE
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(overlay_shards.annotation_bytes(self.record_value(**source_overrides)))
+
+        def value() -> dict:
+            return dict(self.record_value(**source_overrides), **({"object": objects} if objects else {}))
+
+        path.write_bytes(overlay_shards.annotation_bytes(value()))
         files = {FILE: path.read_bytes()}
-        bundle = overlay_sync.bundle_bytes({FILE: self.record_value(**source_overrides)})
+        bundle = overlay_sync.bundle_bytes({FILE: value()})
         (self.overlay / BUNDLE).write_bytes(bundle)
         record = {"annotations": {"directory": "annotations", "count": 1,
                                   "manifest_sha256": overlay_sync.manifest_sha256(files),
@@ -728,7 +732,7 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(
             sorted(published),
             ["GENERATED.json", BUNDLE, "overlay.config.json", "receipt.json",
-             "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
+             "vendor/pdfjs/LICENSE", "verso.json", "viewer/index.html", "viewer/viewer.js"])
         self.assertEqual((self.companion.site / FILE).read_bytes(),
                          (self.companion.root / FILE).read_bytes(),
                          "the annotations sit at the site root as they sit at the repository root")
@@ -747,7 +751,8 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(receipt["source_id"], SOURCE_ID)
         rows = {row["path"]: row["sha256"] for row in receipt["files"]}
         self.assertEqual(sorted(rows), ["GENERATED.json", BUNDLE, "overlay.config.json",
-                                        "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
+                                        "vendor/pdfjs/LICENSE", "verso.json", "viewer/index.html",
+                                        "viewer/viewer.js"])
         self.assertEqual(receipt["annotations"], {"directory": "annotations", "files": [{
             "bytes": len((self.companion.root / FILE).read_bytes()), "path": "1.1/lemma-1.1.1.json",
             "sha256": digest((self.companion.root / FILE).read_bytes())}]})
@@ -900,6 +905,41 @@ class TestBuildSite(OverlayToolsTestCase):
         target.symlink_to(moved)
         with self.assertRaisesRegex(BUILD.BuildError, "symlink"):
             BUILD.build_site(self.companion.overlay)
+
+    def test_verso_json_holds_the_statements_the_sites_pages_highlight(self):
+        """Section 5: an empty file for a site with no such page, and the receipt records it."""
+        site = self.companion.write_site()
+        BUILD.build_site(self.companion.overlay)
+        mount = site / "pdf-overlay"
+        empty = json.loads((mount / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(empty, {"hovers": {}, "schema": "formal-companion/overlay-verso", "schema_version": 1,
+                                 "statements": {}})
+        snippet = "def volume : Nat := 2"
+        self.companion.write_document(objects=[{
+            "type": "lean", "uri": "https://git.example.test/notes", "version": "0" * 40, "role": "key",
+            "location": {"declaration": "Notes.Box.volume", "module": "Notes.Box"},
+            "extensions": {NAMESPACE: {"destination": {"resolution": "exact"},
+                                       "snippet": {"line": 3, "text": snippet}}}}])
+        page = site / "Notes" / "Box" / "index.html"
+        page.parent.mkdir(parents=True)
+        page.write_text(
+            '<html><head><base href="../../"></head><body><div class="code-box">'
+            '<code class="hl lean block"><span class="keyword token">def</span> '
+            '<span class="const token" data-verso-hover="7" id="Notes___Box___volume">volume</span> : '
+            '<span class="const token" data-verso-hover="8">Nat</span> := '
+            '<span class="literal number token">2</span></code></div></body></html>\n', encoding="utf-8")
+        (site / "-verso-docs.json").write_text(json.dumps({"7": "<code>Notes.Box.volume : Nat</code>"}),
+                                               encoding="utf-8")
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"statements": 1, "targets": 1})
+        verso = json.loads((mount / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(verso["statements"], {"Notes/Box/index.html#Notes___Box___volume": [[
+            ["kw", "def"], ["tx", " "], ["const", "volume", 7], ["tx", " : "], ["const", "Nat"], ["tx", " := "],
+            ["lit", "2"]]]})
+        self.assertEqual(verso["hovers"], {"7": {"signature": "Notes.Box.volume : Nat"}})
+        receipt = json.loads((mount / "receipt.json").read_text(encoding="utf-8"))
+        rows = {row["path"]: row["sha256"] for row in receipt["files"]}
+        self.assertEqual(rows["verso.json"], digest((mount / "verso.json").read_bytes()))
 
     def test_it_runs_no_build_tool_of_its_own(self):
         source = (TOOLS / "build_site.py").read_text(encoding="utf-8")
@@ -1072,7 +1112,7 @@ class TestNothingInTheToolsNamesOneCompanion(OverlayToolsTestCase):
 
     def sources(self) -> dict[str, str]:
         return {name: (TOOLS / f"{name}.py").read_text(encoding="utf-8")
-                for name in ("serve", "build_site", "overlay_annotations")}
+                for name in ("serve", "build_site", "overlay_annotations", "verso_extract")}
 
     def test_no_tool_carries_a_hash_a_url_or_a_byte_count_of_its_own(self):
         for name, source in self.sources().items():
