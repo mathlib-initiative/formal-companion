@@ -763,10 +763,11 @@ test("lean: the tint runs join back to the snippet exactly", () => {
 test("verso: a card's target is its page and anchor, as cardHref builds them and the extractor keys them", async () => {
   const table = JSON.parse(await readFile(path.join(HERE, "card-targets.json"), "utf8"));
   assert.equal(table.namespace, NAMESPACE);
-  for (const { destination, location, target } of table.cases) {
-    const end = { extensions: { [NAMESPACE]: destination ? { destination } : {} }, location };
-    assert.equal(cardTarget(end), target, JSON.stringify({ destination, location }));
-    if (target) {
+  for (const { declaration, destination, location, target } of table.cases) {
+    const end = { extensions: { [NAMESPACE]: { ...(destination ? { destination } : {}), ...(declaration ? { declaration } : {}) } },
+                  location };
+    assert.equal(cardTarget(end), target, JSON.stringify({ declaration, destination, location }));
+    if (target && destination.resolution === "exact") {
       const [page, fragment] = target.split("#");
       assert.equal(cardHref(end, `${ORIGIN}/`, ORIGIN), new URL(`${page}#${encodeURIComponent(fragment)}`, `${ORIGIN}/`).href);
     }

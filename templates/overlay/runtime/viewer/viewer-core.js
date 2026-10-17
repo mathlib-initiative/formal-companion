@@ -245,15 +245,28 @@ function cardDestination(end) {
   return { fragment, page };
 }
 
+/** An example's declared id when it is its tag: the tag comment holds it in backticks. */
+const EXAMPLE_ID = /^example:[A-Za-z0-9][A-Za-z0-9._-]*$/;
+
 /**
  * `<page>#<fragment>` of a card's rendered page when it has an anchor, or
- * null: the key `verso.json` files the card's statement under. The page is
- * as `cardHref` reads it, relative to the site root; `tools/verso_extract.py`
- * builds the same key.
+ * `<page>#<tag>` of a tagged example on its module page (an example has no
+ * anchor), or null: the key `verso.json` files the card's statement under.
+ * The page is as `cardHref` reads it, relative to the site root;
+ * `tools/verso_extract.py` builds the same key.
  */
 export function cardTarget(end) {
   const destination = cardDestination(end);
-  return destination?.fragment ? `${destination.page}#${destination.fragment}` : null;
+  const declaration = isObject(extensionOf(end).declaration) ? extensionOf(end).declaration : {};
+  if (!destination) {
+    return null;
+  }
+  if (destination.fragment) {
+    return `${destination.page}#${destination.fragment}`;
+  }
+  const exact = extensionOf(end).destination.resolution === "exact";
+  return !exact && declaration.kind === "example" && typeof declaration.id === "string" && EXAMPLE_ID.test(declaration.id)
+    ? `${destination.page}#${declaration.id}` : null;
 }
 
 // --- the configuration ------------------------------------------------------

@@ -136,6 +136,53 @@ TACTIC = box(block(
     goals("ℕ"), gap("\n  "), tok("keyword", "exact"), gap(), tok("literal string", '"a b"', 52),
 ))
 REAL_PAGE = page(box(block(tok("keyword", "def"), gap(), tok("const", "Real", 22, ident="Notes___Real"))))
+#: Two code elements, neither starting with whitespace: a line break must still separate them.
+TWO_BLOCKS = box(
+    block(tok("keyword", "def"), gap(), tok("const", "one", 60, ident="Notes___Box___one"), gap(),
+          tok("built-in delim", ":="), gap(), tok("literal number", "1")),
+    block(tok("keyword", "def"), gap(), tok("const", "uno", 61, ident="Notes___Box___uno"), gap(),
+          tok("built-in delim", ":="), gap(), tok("literal number", "1")),
+)
+#: A message the page shows in its code (`.hover-info`) and a "…" the code itself holds.
+MESSAGES = box(block(
+    tok("keyword", "def"), gap(), tok("const", "three", 62, ident="Notes___Box___three"),
+    '<span class="hover-info"><code class="hl lean">unused variable</code></span>', gap(),
+    tok("built-in delim", ":="), gap(), tok("literal number", "3"), gap("\n\n"),
+    tok("keyword", "def"), gap(), tok("const", "dots", 63, ident="Notes___Box___dots"), gap(),
+    tok("built-in delim", ":="), gap(), tok("literal string", '"…"'),
+))
+#: A page that gives an id to a use of a name that is not its declaration, as Verso does to `Set`.
+GEO_PAGE = page(box(block(
+    tok("keyword", "def"), gap(), tok("const", "carrier", 70, "const-Notes.Geo.carrier", ident="Notes___Geo___carrier"),
+    gap(), tok("built-in delim", ":"), gap(), tok("const", "Set", 71, "const-Set", ident="Set"),
+)))
+USES_GEO = box(block(
+    tok("keyword", "def"), gap(), tok("const", "sets", 72, ident="Notes___Box___sets"), gap(), tok("built-in delim", ":"),
+    gap(), link("Notes/Geo/#Set", tok("const", "Set", 71)), gap(),
+    link("Notes/Geo/#Notes___Geo___carrier", tok("const", "carrier", 70)),
+))
+#: A tagged example: no anchor, its tag comment in its box (and named once in the prose before it).
+EXAMPLE_TAG = "example:notes-box-pos"
+EXAMPLE = box(block(
+    tok("comment delimiter", "/-"), tok("comment block", f" `{EXAMPLE_TAG}` "), tok("comment delimiter", "-/"),
+    gap("\n"), tok("keyword", "open"), gap(), tok("const", "Notes", 80), gap(), tok("keyword", "in"), gap("\n"),
+    tok("keyword", "example"), gap(), tok("built-in delim", ":"), gap(), tok("literal number", "0"), gap(),
+    tok("unknown", "<"), gap(), link("Notes/Box/#Notes___Box", tok("const", "Box", 12)), gap(),
+    tok("built-in delim", ":="), gap(), tok("const", "trivial", 33),
+))
+#: Verso often puts a tag comment inside the last tactic of the declaration before it.
+NESTED_TAG = "example:notes-nested"
+NESTED_EXAMPLE = box(block(
+    tok("keyword", "theorem"), gap(), tok("const", "prev", 90, ident="Notes___Box___prev"), gap(),
+    tok("built-in delim", ":"), gap(), tok("const", "True", 32), gap(), tok("built-in delim", ":="), gap(),
+    tok("keyword", "by"), gap("\n  "),
+    '<span class="tactic"><label for="ts-9">' + tok("keyword", "trivial", 91) + gap("\n\n")
+    + tok("comment delimiter", "/-") + tok("comment block", f" `{NESTED_TAG}` ") + tok("comment delimiter", "-/")
+    + '</label><input type="checkbox" class="tactic-toggle" id="ts-9"><span class="tactic-state">'
+    + '<span class="goal">All goals completed!</span></span></span>',
+    gap("\n"), tok("keyword", "example"), gap(), tok("built-in delim", ":"), gap(), tok("const", "True", 32), gap(),
+    tok("built-in delim", ":="), gap(), tok("const", "trivial", 33),
+))
 DOCS = {
     "10": "<code>Notes.Box.side_pos (b : Box) : 0 &lt; b.side</code><span class=\"sep\"></span>"
           "<code class=\"docstring\">The side is positive.</code>",
@@ -151,6 +198,8 @@ DOCS = {
     "40": "<code class=\"docstring\">`by tac` constructs a term of the expected type by running the tactic(s) `tac`.</code>",
     "41": "<code>False</code>",
     "52": "<code><span class=\"literal string\">\"a b\"</span> : String</code>",
+    "70": "<code>Notes.Geo.carrier : Type</code>",
+    "71": "<code>Set.{u} (α : Type u) : Type u</code>",
     "99": "<code>never used</code>",
 }
 
@@ -160,6 +209,31 @@ def lean_end(declaration: str, snippet: str, *, module: str = "Notes.Box", **des
     return {"type": "lean", "uri": "https://git.example.invalid/notes", "role": "key",
             "location": {"declaration": declaration, "module": module},
             "extensions": {NAMESPACE: {"destination": destination, "snippet": {"line": 1, "text": snippet}}}}
+
+
+def example_end(tag: str, snippet: str) -> dict:
+    """An example's end: no declaration name, its module page as a fallback, its tag as its id."""
+    return {"type": "lean", "uri": "https://git.example.invalid/notes", "role": "key",
+            "location": {"lines": [7], "module": "Notes.Box"},
+            "extensions": {NAMESPACE: {"declaration": {"anonymous": True, "id": tag, "kind": "example"},
+                                       "destination": {"resolution": "fallback", "fallback_label": "module page"},
+                                       "snippet": {"line": 7, "text": snippet}}}}
+
+
+class AnySite:
+    """A site where every page and anchor exists: what is left out is what `link` itself refuses."""
+
+    def base(self, _page: str) -> str:
+        return ""
+
+    def is_directory(self, _relative: str) -> bool:
+        return False
+
+    def declares(self, _relative: str, _fragment: str) -> bool:
+        return True
+
+    def has_anchor(self, _relative: str, _fragment: str) -> bool:
+        return True
 
 
 def entries(*ends: dict) -> list[tuple[str, dict]]:
@@ -177,8 +251,10 @@ class VersoCase(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.site = Path(temporary.name) / "site"
         self.write(BOX_PAGE, page(prose("Boxes."), PER_LINE, ONE_ELEMENT, prose("Attributes."), ATTRIBUTED,
-                                  TACTIC))
+                                  TACTIC, TWO_BLOCKS, MESSAGES, USES_GEO, prose(f"See `{EXAMPLE_TAG}` below."),
+                                  EXAMPLE, NESTED_EXAMPLE))
         self.write("Notes/Real/index.html", REAL_PAGE)
+        self.write("Notes/Geo/index.html", GEO_PAGE)
         self.write(VERSO.DOCS_NAME, json.dumps(DOCS))
 
     def write(self, relative: str, text: str) -> Path:
@@ -237,6 +313,8 @@ class TestTheStatement(VersoCase):
         for snippet in ("structure Box where\n  …\n  pos : 0 < side",
                         "noncomputable def volume (b : Box) : ℕ :=\n  b.side",
                         "noncomputable def volume (b : Box) : ℝ := b.sides",
+                        "noncomputabledef volume (b : Box) : ℝ :=\n  b.side",
+                        "noncomputable def volume(b : Box) : ℝ :=\n  b.side",
                         "theorem side_pos (b : Box) : 0 < b.side := b"):
             with self.subTest(snippet=snippet):
                 declaration = "Notes.Box" if snippet.startswith("structure") else "Notes.Box.volume"
@@ -251,8 +329,68 @@ class TestTheStatement(VersoCase):
         value, _counts = self.extract(lean_end("Notes.Box.two", snippet))
         self.assertNotIn("41", value["hovers"], "the goal view's hovers are not the statement's")
 
+    def test_an_ellipsis_inside_the_snippet_is_no_statement_even_where_the_page_has_one(self):
+        self.assertIsNotNone(self.statement("Notes.Box.three", "def three := 3"))
+        self.assertIsNone(self.statement("Notes.Box.dots", 'def dots := "…"'))
+
+    def test_a_message_the_page_shows_in_its_code_is_not_code(self):
+        runs = self.statement("Notes.Box.three", "def three := 3")
+        self.assertEqual(runs, [["kw", "def"], ["tx", " "], ["const", "three"], ["tx", " := "], ["lit", "3"]])
+
+    def test_two_code_elements_are_two_lines(self):
+        runs = self.statement("Notes.Box.uno", "def uno := 1")
+        self.assertEqual(joined(runs), "def uno := 1")
+        self.assertEqual(runs[0], ["kw", "def"])
+
+    def test_a_tagged_example_is_found_by_its_tag_on_its_module_page(self):
+        snippet = "example : 0 < Box := trivial"
+        value, counts = self.extract(example_end(EXAMPLE_TAG, snippet))
+        self.assertEqual(counts, {"statements": 1, "targets": 1})
+        [runs] = value["statements"][f"{BOX_PAGE}#{EXAMPLE_TAG}"]
+        self.assertEqual(joined(runs), snippet)
+        self.assertEqual(runs[0], ["kw", "example"])
+        self.assertIn(["const", "Box", 12, None, "Notes/Box/index.html#Notes___Box"], runs)
+        [nested] = self.extract(example_end(NESTED_TAG, "example : True := trivial"))[0]["statements"].values()
+        self.assertEqual(nested[0][:2], [["kw", "example"], ["tx", " : "]],
+                         "a tag inside the last tactic before it: the goal view is not read")
+        self.assertEqual(joined(nested[0]), "example : True := trivial")
+        for tag, text in ((EXAMPLE_TAG, "example : 1 < Box := trivial"), ("example:notes-box-gone", snippet)):
+            with self.subTest(tag=tag, text=text):
+                self.assertEqual(self.extract(example_end(tag, text))[0]["statements"], {})
+
+    def test_a_link_goes_only_to_a_declarations_own_anchor(self):
+        runs = self.statement("Notes.Box.sets", "def sets : Set carrier")
+        self.assertIn(["const", "Set", 71], runs, "an id on a use of Set is not where Set is declared")
+        self.assertIn(["const", "carrier", 70, None, "Notes/Geo/index.html#Notes___Geo___carrier"], runs)
+        site = VERSO.Site(self.site)
+        self.addCleanup(site.close)
+        self.assertEqual([site.declares(BOX_PAGE, fragment) for fragment in
+                          ("Notes___Box", "Notes___Box___side", "Notes___Box___volume", "Notes___Box___nope")],
+                         [True, True, True, False], "a field of a declared structure is declared too")
+
+    def test_a_link_off_the_site_or_out_of_its_root_is_dropped_by_link_itself(self):
+        site = AnySite()
+        self.assertEqual(VERSO.link(site, BOX_PAGE, "Notes/Box/#Notes___Box"), "Notes/Box/index.html#Notes___Box")
+        for href in ("../../../outside/index.html#Notes___Box", "../outside/", "/../outside/index.html#x",
+                     "https://elsewhere.invalid/Notes/Box/index.html#Notes___Box", "//elsewhere.invalid/x#y",
+                     "javascript:x#y", "Notes\\Box#Notes___Box", "Notes/Box/?q=1#Notes___Box"):
+            with self.subTest(href=href):
+                self.assertIsNone(VERSO.link(site, BOX_PAGE, href))
+
     def test_a_card_whose_page_is_not_a_page_of_the_site_gets_none(self):
+        outside = self.site.parent / "outside" / "index.html"
+        outside.parent.mkdir()
+        outside.write_text(page(ONE_ELEMENT), encoding="utf-8")
+        self.assertIsNone(VERSO.site_file("../outside/index.html"))
+        self.assertIsNone(VERSO.site_file("Notes/../../outside/index.html"))
+        site = VERSO.Site(self.site)
+        self.addCleanup(site.close)
+        for relative in ("../outside/index.html", "Notes/../../outside/index.html", str(outside)):
+            with self.subTest(relative=relative):
+                self.assertIsNone(site.resolve(relative), "the root is never left, even to a file that exists")
+                self.assertFalse(site.is_directory(relative.rpartition("/")[0]))
         for destination in ({"href": "https://notes.example.invalid/Box.html"}, {"href": "../outside/index.html"},
+                            {"href": "Notes/../../outside/index.html"},
                             {"resolution": "fallback"}, {"href": "Notes/Gone/index.html"}):
             with self.subTest(destination=destination):
                 value, counts = self.extract(lean_end("Notes.Box.volume", "noncomputable def volume", **destination))
@@ -302,7 +440,7 @@ class TestTheFile(VersoCase):
         self.assertEqual(table["namespace"], NAMESPACE)
         for case in table["cases"]:
             with self.subTest(case=case):
-                ext = {"destination": case["destination"]} if "destination" in case else {}
+                ext = {key: case[key] for key in ("declaration", "destination") if key in case}
                 end = {"location": case["location"], "extensions": {NAMESPACE: ext}}
                 self.assertEqual(VERSO.card_target(end), case["target"])
 
