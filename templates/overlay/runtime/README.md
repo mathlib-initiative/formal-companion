@@ -36,7 +36,8 @@ rendered page is a page of `<site.output_root>`. It also writes
 `<site.mount>/verso.json` from the site's Verso pages: each card's
 statement with its tokens and hovers (the viewer draws the key cards'). A
 site without them gets your committed `pdf-overlay/verso.json`, less the
-statements whose snippet changed since, or an empty one.
+statements whose snippet changed since, or an empty one; a committed file
+cut from a build of a commit no card pins is refused.
 
 ## Checking it in CI
 

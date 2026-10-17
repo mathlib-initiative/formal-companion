@@ -945,9 +945,11 @@ class TestBuildSite(OverlayToolsTestCase):
 
     # -- a committed verso.json, cut from a Verso build elsewhere ------------
     REMOTE = "https://git.example.test/notes/blob/main/Notes/Box.lean"
+    #: The commit the committed file's build is of, and the one the cards pin.
+    BUILT = "1" * 40
 
-    def remote_end(self, name: str, snippet: str, line: int) -> dict:
-        return {"type": "lean", "uri": "https://git.example.test/notes", "version": "0" * 40, "role": "key",
+    def remote_end(self, name: str, snippet: str, line: int, version: str = BUILT) -> dict:
+        return {"type": "lean", "uri": "https://git.example.test/notes", "version": version, "role": "key",
                 "location": {"declaration": f"Notes.Box.{name}", "module": "Notes.Box"},
                 "extensions": {NAMESPACE: {"destination": {"resolution": "exact", "href": self.REMOTE,
                                                            "fragment": f"L{line}"},
@@ -957,7 +959,7 @@ class TestBuildSite(OverlayToolsTestCase):
         """What `verso_extract.py --pages` writes for `volume` and `area`, as a companion commits it."""
         value = value or {
             "schema": "formal-companion/overlay-verso", "schema_version": 1,
-            "build": {"commit": "1" * 40, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}},
+            "build": {"commit": self.BUILT, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}},
             "hovers": {"7": {"signature": "Notes.Box.volume : Nat"}, "8": {"signature": "Notes.Box.area : Nat"}},
             "statements": {
                 f"{self.REMOTE}#L3": [[["kw", "def"], ["tx", " "], ["const", "volume", 7], ["tx", " := "], ["lit", "2"]]],
@@ -972,8 +974,8 @@ class TestBuildSite(OverlayToolsTestCase):
                                                self.remote_end("area", "def area := 1", 5)])
         raw = self.write_committed()
         summary = BUILD.build_site(self.companion.overlay)
-        self.assertEqual(summary["verso"], {"source": "committed", "sha256": digest(raw), "dropped": 0,
-                                            "statements": 2, "targets": 2})
+        self.assertEqual(summary["verso"], {"source": "committed", "sha256": digest(raw), "commit": self.BUILT,
+                                            "dropped": 0, "statements": 2, "targets": 2})
         mount = site / "pdf-overlay"
         published = (mount / "verso.json").read_bytes()
         self.assertEqual(json.loads(published), json.loads(raw), "every statement still joins to its card")
@@ -993,7 +995,24 @@ class TestBuildSite(OverlayToolsTestCase):
         published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
         self.assertEqual(list(published["statements"]), [f"{self.REMOTE}#L5"])
         self.assertEqual(published["hovers"], {"8": {"signature": "Notes.Box.area : Nat"}})
-        self.assertEqual(published["build"]["commit"], "1" * 40)
+        self.assertEqual(published["build"]["commit"], self.BUILT)
+
+    def test_a_committed_file_of_a_build_no_card_pins_is_refused(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3, "0" * 40),
+                                               self.remote_end("area", "def area := 1", 5, "0" * 40)])
+        self.write_committed()
+        with self.assertRaisesRegex(BUILD.BuildError, f"verso.json: cut from a build of {self.BUILT}, "
+                                                      f"but the cards pin {'0' * 40}"):
+            BUILD.build_site(self.companion.overlay)
+        self.assertFalse((site / "pdf-overlay").exists())
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3),
+                                               self.remote_end("area", "def area := 1", 5, "0" * 40)])
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual((summary["verso"]["statements"], summary["verso"]["dropped"]), (1, 1),
+                         "a card that pins another commit keeps no statement of this build")
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(published["statements"]), [f"{self.REMOTE}#L3"])
 
     def test_a_site_with_verso_pages_extracts_its_own_and_ignores_the_committed_file(self):
         site = self.companion.write_site()
