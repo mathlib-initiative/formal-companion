@@ -14,7 +14,8 @@ is shown whole, body, fields and constructors included, up to the next command
 (:func:`declaration_end`, which bounds a theorem's statement too), a field's
 snippet keeps the lines that continue its type, and a declaration is read only
 outside comments and with any attributes or instance priority on its line
-(docs/exporters.md section 1).
+(docs/exporters.md section 1); ``code_line_starts`` also reads the escaped
+character ``'\\"'`` as one character, not as a string's start.
 ``adapters.leanparse`` ends a body elsewhere, so it gives other text and lines.
 Consumers: ``adapters.attribution_table`` (docs/design/stage_map.md Stage 2)
 and ``annotations.export.attribution_table`` (docs/exporters.md section 1).
@@ -43,7 +44,7 @@ RETIRED_SNIPPETS = "declaration-snippets.json"
 # -- extract_declaration_snippets.py at measure_theory ef0a424 ---------------
 # (it read only the three modifiers in this order, no attribute, no `opaque` and no instance priority)
 DECL_RE = re.compile(
-    r"^(?:@\[[^\]\n]*\]\s*)*"
+    r"^(?:@\[(?:[^\[\]\"\n]|\[[^\[\]\n]*\]|\"(?:[^\"\\\n]|\\.)*\")*\]\s*)*"
     r"(?:(?:private|protected|public|noncomputable|nonrec|unsafe|partial|local|scoped|meta)\s+)*"
     r"(?P<kw>class\s+inductive|theorem|lemma|def|abbrev|structure|class|instance|inductive|opaque)"
     r"(?:\s+\(priority\s*:=[^)\n]*\))?"
@@ -60,10 +61,21 @@ OPENING, CLOSING = "([{⟨⦃⟦", ")]}⟩⦄⟧"
 LOCAL_BINDERS = frozenset({"let", "have", "haveI", "letI"})
 #: what an identifier is made of, after its first letter
 NAME_CHARS = "_'!?"
-#: what a command's first line starts with: a keyword or `@[`, `#`, or a comment
-COMMAND_START_RE = re.compile(r"[A-Za-z_@#]|/-|--")
+#: what a command's first line starts with, once its comments are left out: a word, `@[` or `#`
+COMMAND_START_RE = re.compile(r"[A-Za-z_@#]")
+#: what surely starts a command, even inside a body at the declaration's indentation: an attribute,
+#: a `#` command, or a command keyword after any modifiers
+COMMAND_RE = re.compile(
+    r"@\[|#[a-z]|(?:(?:private|protected|public|noncomputable|nonrec|unsafe|partial|local|scoped(?:\[[^\]\n]*\])?"
+    r"|meta)\s+)*"
+    r"(?:theorem|lemma|def|abbrev|structure|class|instance|inductive|opaque|axiom|example|mutual|end|namespace|"
+    r"section|open|export|variable|universe|include|omit|set_option|attribute|deriving\s+instance|notation|"
+    r"infix[lr]?|prefix|postfix|macro(?:_rules)?|syntax|elab(?:_rules)?|initialize|alias)\b"
+)
 #: what continues a declaration at its own indentation
 CONTINUATION_RE = re.compile(r"(?:where|termination_by|decreasing_by|deriving(?!\s+instance))\b")
+#: what a code line ends in when the body after it may start at the declaration's indentation
+OPENER_RE = re.compile(r"(?::=|=>|\b(?:do|by|where))$")
 
 # -- source_formalization_ledger.py at measure_theory ef0a424: the tag reader ----
 EXAMPLE_HEADER_RE = re.compile(
@@ -114,8 +126,8 @@ def code_line_starts(lines: list[str]) -> list[bool]:
             elif pair == "/-":
                 depth += 1
                 index += 2
-            elif line[index : index + 3] == "'\"'":
-                index += 3
+            elif line[index : index + 3] == "'\"'" or line[index : index + 4] == "'\\\"'":
+                index += 3 if line[index + 1] == '"' else 4
             else:
                 if line[index] == '"':
                     in_string = True
@@ -208,24 +220,68 @@ def _indent(line: str) -> int:
     return len(line) - len(line.lstrip(" \t"))
 
 
+def _code(line: str) -> str:
+    """``line``, which starts outside comments and strings, without its comments, and each string
+    or ``'"'`` in it cut to its quotes, so that a ``--``, ``/-`` or ``:=`` in one is not read."""
+    out: list[str] = []
+    depth = at = 0
+    while at < len(line):
+        pair = line[at:at + 2]
+        if depth:
+            depth += 1 if pair == "/-" else -1 if pair == "-/" else 0
+            at += 2 if pair in ("/-", "-/") else 1
+        elif pair == "--":
+            break
+        elif pair == "/-":
+            depth, at = 1, at + 2
+        elif line[at:at + 3] == "'\"'" or line[at:at + 4] == "'\\\"'":
+            out.append("''")
+            at += 3 if line[at + 1] == '"' else 4
+        elif line[at] == '"':
+            close = at + 1
+            while close < len(line) and line[close] != '"':
+                close += 2 if line[close] == "\\" else 1
+            out.append('""')
+            at = close + 1
+        else:
+            out.append(line[at])
+            at += 1
+    return "".join(out)
+
+
 def declaration_end(lines: list[str], start: int, code: list[bool] | None = None) -> int:
     """Exclusive end of the declaration whose keyword line is lines[start]: where the next command starts.
 
     That is the first later line that starts outside comments and strings, no deeper than
-    lines[start], with what opens a command (a keyword, ``@[``, ``#``, a comment), and is not
-    a ``where``, ``deriving``, ``termination_by`` or ``decreasing_by`` of this one; the blank
-    lines before it are not the declaration's. ``code`` is :func:`code_line_starts` of ``lines``.
+    lines[start], and, its comments left out, opens a command: it starts with what
+    :data:`COMMAND_RE` reads, or with any other word (a library's own command) that is not a
+    ``where``, ``deriving``, ``termination_by`` or ``decreasing_by`` of this one while the body
+    is not open at that depth. The body opens there when such a word line comes right after a
+    code line that ends in ``:=``, ``=>``, ``do``, ``by`` or ``where``, with comments but no blank
+    line between, as a ``do`` block, a term or a constructor ``mk ::`` at column 0 does, and it
+    stays open. Comment lines decide nothing, so a comment at the declaration's indentation is
+    inside it when the next code line is; the comments no deeper than lines[start] just above
+    the next command, and the blank lines before it, are not the declaration's. ``code`` is
+    :func:`code_line_starts` of ``lines``.
     """
     code = code_line_starts(lines) if code is None else code
     indent = _indent(lines[start])
-    end = start + 1
+    end, cut, last, flat = start + 1, None, _code(lines[start]).rstrip(), False
     while end < len(lines):
         line = lines[end]
-        head = line.lstrip(" \t")
-        if code[end] and head and _indent(line) <= indent and COMMAND_START_RE.match(head) \
-                and not CONTINUATION_RE.match(head):
+        head = _code(line).strip() if code[end] else ""
+        word = _indent(line) <= indent and COMMAND_START_RE.match(head) and not CONTINUATION_RE.match(head)
+        if not line.strip():
+            last = ""
+        elif not head:
+            if cut is None and code[end] and _indent(line) <= indent:
+                cut = end
+        elif word and (COMMAND_RE.match(head) or not (flat or OPENER_RE.search(last))):
             break
+        else:
+            flat, cut, last = flat or bool(word), None, head
         end += 1
+    end = end if cut is None else cut
     while end > start + 1 and not lines[end - 1].strip():
         end -= 1
     return end
@@ -250,12 +306,15 @@ def proof_start(lines: list[str], start: int, end: int) -> tuple[int, int] | Non
 
     That is the first ``:=`` outside comments, strings and brackets (a named argument
     ``(n := 1)``, a structure instance ``{ x := 1 }`` and an attribute ``@[simp (since := ...)]``
-    each have their own) that does not close a ``let`` or ``have`` of the statement.
+    each have their own) that does not close a ``let`` or ``have`` of the statement; a ``←``
+    (``let x ← e`` in a ``do``) or the first ``=>`` outside brackets on a line that starts with
+    ``|`` (``let rec f : T`` given by alternatives, not an absolute value) closes one too.
     """
     depth = comment = pending = 0
     in_string = False
     for row in range(start, min(end, len(lines))):
         line = lines[row]
+        alternative = line.lstrip().startswith("|")
         at = 0
         while at < len(line):
             char, pair = line[at], line[at:at + 2]
@@ -287,6 +346,9 @@ def proof_start(lines: list[str], start: int, end: int) -> tuple[int, int] | Non
                     return row, at
                 pending -= 1 if depth == 0 else 0
                 at += 2
+            elif depth == 0 and pending and (char == "←" or alternative and pair == "=>"):
+                # a binder closed without a `:=`: `let x ← e`, or `let rec f : T` and its `| ... =>` lines
+                pending, at = pending - 1, at + (2 if pair == "=>" else 1)
             elif char.isalpha() or char == "_":
                 stop = at + 1
                 while stop < len(line) and (line[stop].isalnum() or line[stop] in NAME_CHARS):
