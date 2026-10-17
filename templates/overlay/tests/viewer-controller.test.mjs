@@ -1002,6 +1002,13 @@ function tokensOf(node) {
 /** Past the time a hover card stays after the pointer leaves. */
 const linger = () => new Promise((resolve) => { setTimeout(resolve, HOVER_LINGER + 20); });
 
+/** Focus from the keyboard, which `:focus-visible` matches; a click's focus does not. */
+async function keyboardFocus(node) {
+  node.matches = (selector) => selector === ":focus-visible";
+  await fire(node, "focus");
+  delete node.matches;
+}
+
 /** The theorem's key card with `verso.json` served, and its statement's tokens. */
 async function versoCard(options = {}) {
   const documentRef = fakeDocument(SHELL);
@@ -1100,6 +1107,77 @@ test("verso: the pointer can move onto the hover card, which stays while the poi
   assert.equal(card.hidden, true, "focus leaving the token closes it");
 });
 
+test("verso: a card keyboard focus opened comes back once the pointer has passed over the statement", async () => {
+  const { card, named } = await versoCard();
+  const [b, box] = [named("b"), named("Box")];
+  await keyboardFocus(box);
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  assert.equal(textOf(card), "b : Box", "the pointer's token takes the card");
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.deepEqual([card.hidden, textOf(card.children[0]), box.attributes["aria-describedby"]],
+                   [false, "Notes.Box : Type", "hover-card"], "then it is the focused token's again");
+  let prevented = false;
+  Object.assign(card, { clientHeight: 400, scrollHeight: 900, scrollTop: 0 });
+  await fire(box, "keydown", { key: "PageDown", preventDefault() { prevented = true; } });
+  assert.deepEqual([prevented, card.scrollTop], [true, 376], "and PageDown scrolls it");
+  await fire(box, "pointerenter", { pointerType: "mouse" });
+  await fire(box, "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.equal(card.hidden, false, "the pointer leaving the focused token leaves its card");
+  await fire(box, "blur");
+  assert.equal(card.hidden, true);
+
+  // A focused token with a link and no hover has no card to take back.
+  const linkOnly = makeVerso();
+  linkOnly.statements[VERSO_TARGET][0][7][2] = null;
+  const other = await versoCard({ verso: linkOnly });
+  await keyboardFocus(other.named("Box"));
+  await fire(other.named("b"), "pointerenter", { pointerType: "mouse" });
+  await fire(other.named("b"), "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.equal(other.card.hidden, true);
+});
+
+test("verso: Escape closes a focused token's card for good, and focus leaving the token forgets it", async () => {
+  const { card, documentRef, named } = await versoCard();
+  const [b, box] = [named("b"), named("Box")];
+  const passOverB = async () => {
+    await fire(b, "pointerenter", { pointerType: "mouse" });
+    await fire(b, "pointerleave", { pointerType: "mouse" });
+    await linger();
+  };
+  await keyboardFocus(box);
+  await fire(documentRef, "keydown", { key: "Escape", target: box });
+  assert.equal(card.hidden, true);
+  await passOverB();
+  assert.equal(card.hidden, true, "the pointer passing over the statement leaves it closed");
+
+  // Tab away from the token while the pointer is on another: the card that goes is the pointer's.
+  await keyboardFocus(box);
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  await fire(box, "blur");
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.deepEqual([card.hidden, box.attributes["aria-describedby"]], [true, undefined]);
+});
+
+test("verso: a click's focus leaves the card to the pointer, which closes it shortly after it leaves", async () => {
+  const { card, named } = await versoCard();
+  const [b, volume] = [named("b"), named("volume")];
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  await fire(b, "pointerdown", { pointerType: "mouse" });
+  await fire(b, "focus");
+  await fire(b, "click");
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.equal(card.hidden, true);
+  await fire(volume, "pointerenter", { pointerType: "mouse" });
+  await fire(volume, "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.equal(card.hidden, true, "nor does the clicked token's card come back");
+});
+
 test("verso: PageDown and PageUp scroll a long hover card while its token has focus", async () => {
   const { card, documentRef, named } = await versoCard();
   const box = named("Box");
@@ -1152,6 +1230,20 @@ test("verso: the arrow keys move between a statement's tokens and never turn the
   assert.equal(result.state.currentPage, 2, "still the theorem's page");
 });
 
+test("verso: a key held with Alt, Ctrl, Command or Shift is the browser's, not the statement's", async () => {
+  const { card, focused, named } = await versoCard();
+  const box = named("Box");
+  await fire(box, "focus");
+  Object.assign(card, { clientHeight: 400, scrollHeight: 900, scrollTop: 0 });
+  for (const [key, held] of [["ArrowLeft", "altKey"], ["ArrowLeft", "metaKey"], ["Home", "ctrlKey"],
+                             ["End", "metaKey"], ["ArrowRight", "shiftKey"], ["PageDown", "altKey"]]) {
+    let kept = false;
+    const keep = () => { kept = true; };
+    await fire(box, "keydown", { key, [held]: true, preventDefault: keep, stopPropagation: keep });
+    assert.deepEqual([kept, focused.length, card.scrollTop], [false, 0, 0], `${held} ${key}`);
+  }
+});
+
 test("verso: on touch a first tap opens the hover and a second follows the link", async () => {
   const { card, named } = await versoCard();
   const box = named("Box");
@@ -1167,6 +1259,64 @@ test("verso: on touch a first tap opens the hover and a second follows the link"
   assert.equal(card.hidden, false);
   assert.equal(textOf(card.children[0]), "Notes.Box : Type");
   assert.equal(await tap(), false, "the second tap is the link's");
+});
+
+test("verso: on touch a tap inside the card keeps it, and a tap elsewhere closes it", async () => {
+  const { card, documentRef, named } = await versoCard();
+  const box = named("Box");
+  // A tap focuses the token, then clicks it; a tap on the card blurs the token once the finger
+  // has lifted, then clicks the card, and the click reaches the document after the card.
+  await fire(box, "pointerdown", { pointerType: "touch" });
+  await fire(box, "focus");
+  await fire(box, "click");
+  assert.equal(card.hidden, false);
+  await fire(card, "pointerenter", { pointerType: "touch" });
+  await fire(card, "pointerdown", { pointerType: "touch" });
+  await fire(card, "pointerup", { pointerType: "touch" });
+  await fire(box, "blur");
+  await fire(card, "click");
+  await fire(documentRef, "click", { target: card });
+  assert.equal(card.hidden, false, "a tap inside the card keeps it");
+  await fire(documentRef, "click", { target: el(documentRef, "page-heading") });
+  assert.equal(card.hidden, true, "a tap elsewhere closes it");
+  await fire(box, "focus");
+  await fire(box, "blur");
+  assert.equal(card.hidden, true, "the tap on the card kept that card only");
+});
+
+test("verso: a press on the hover card keeps it through that press only", async () => {
+  const { card, documentRef, named } = await versoCard();
+  const [b, box] = [named("b"), named("Box")];
+  // A tap on the card while no token has focus blurs nothing; its click ends it all the same.
+  await fire(box, "pointerdown", { pointerType: "touch" });
+  await fire(box, "click");
+  await fire(card, "pointerdown", { pointerType: "touch" });
+  await fire(card, "pointerup", { pointerType: "touch" });
+  await fire(card, "click");
+  await fire(documentRef, "click", { target: card });
+  assert.equal(card.hidden, false);
+  await keyboardFocus(b);
+  await fire(b, "blur");
+  assert.equal(card.hidden, true, "a later blur closes the card");
+
+  // A touch that scrolls the card is canceled, and clicks nothing.
+  await keyboardFocus(box);
+  await fire(card, "pointerdown", { pointerType: "touch" });
+  await fire(card, "pointercancel", { pointerType: "touch" });
+  await fire(box, "blur");
+  assert.equal(card.hidden, true, "Tab away from the token closes it");
+
+  // A mouse is `over` what it presses, so its press is no tap, even one that clicks nothing.
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  await fire(card, "pointerenter", { pointerType: "mouse" });
+  await fire(card, "pointerdown", { pointerType: "mouse" });
+  await fire(card, "pointerup", { pointerType: "mouse" });
+  await fire(card, "pointerleave", { pointerType: "mouse" });
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  await keyboardFocus(box);
+  await fire(box, "blur");
+  assert.equal(card.hidden, true);
 });
 
 test("verso: leaving the item closes an open hover", async () => {
@@ -1231,6 +1381,37 @@ test("verso: the hover card sits under its token, above it near the window's foo
   await fire(other, "pointerenter", { pointerType: "mouse" });
   assert.deepEqual([card.style.left, card.getBoundingClientRect().width], ["692px", 300],
                    "the next card is measured at its own width");
+});
+
+test("verso: a token scrolled out of the panel hides its card, and Escape then leaves the item", async () => {
+  const documentRef = fakeDocument(SHELL);
+  const create = documentRef.createElement;
+  documentRef.createElement = (tag) => Object.assign(create(tag), {
+    getBoundingClientRect() { return this.rect ?? { bottom: 0, left: 0, right: 0, top: 0 }; },
+  });
+  const windowRef = { innerHeight: 800, innerWidth: 1000 };
+  const { result } = await start({ documentRef, verso: makeVerso(), windowRef });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const [card, details] = [el(documentRef, "hover-card"), el(documentRef, "details")];
+  card.getBoundingClientRect = () => ({ height: 100, width: 300 });
+  details.getBoundingClientRect = () => ({ bottom: 800, left: 600, right: 1000, top: 200 });
+  details.contains = () => true;
+  const [[, , pre]] = keyCards(documentRef);
+  const box = tokensOf(pre).find((node) => node.textContent === "Box");
+  const scrollTo = async (top) => {
+    box.rect = { bottom: top + 20, left: 700, right: 730, top };
+    await fire(documentRef, "scroll");
+    return card.hidden;
+  };
+  box.rect = { bottom: 320, left: 700, right: 730, top: 300 };
+  await fire(box, "focus");
+  assert.equal(card.hidden, false);
+  assert.equal(await scrollTo(150), true, "above the panel's top, though still in the window");
+  assert.equal(await scrollTo(300), false, "back in the panel, the card is back");
+  assert.equal(await scrollTo(150), true);
+  await fire(documentRef, "keydown", { key: "Escape", target: box });
+  assert.equal(result.state.selected, null, "an Escape with no card in sight leaves the item");
+  assert.equal(box.attributes["aria-describedby"], undefined);
 });
 
 test("verso: focus on a token the clamp hides opens the whole statement", async () => {

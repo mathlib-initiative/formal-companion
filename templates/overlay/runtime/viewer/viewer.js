@@ -324,9 +324,11 @@ export async function bootstrapViewer({
   };
   /**
    * The token whose hover card is open, if any; the pending close, when the
-   * pointer has left; and whether the pointer is on the card, which keeps it.
+   * pointer has left; whether the pointer is on the card or a tap on it is
+   * under way, either of which keeps it; and, while a token with a card has
+   * keyboard focus, what opens that card again once the pointer has gone.
    */
-  const hover = { over: false, timer: null, token: null };
+  const hover = { focus: null, over: false, pressed: false, timer: null, token: null };
   const setTimer = typeof windowRef?.setTimeout === "function" ? windowRef.setTimeout.bind(windowRef)
     : globalThis.setTimeout;
   const clearTimer = typeof windowRef?.clearTimeout === "function" ? windowRef.clearTimeout.bind(windowRef)
@@ -558,12 +560,15 @@ export async function bootstrapViewer({
         stop.tabIndex = stop === node ? 0 : -1;
       }
       statement.reveal?.(node);
+      // Only keyboard focus holds the card; a click's focus leaves it to the pointer.
+      hover.focus = shown && node.matches?.(":focus-visible") ? enter : null;
       enter();
     });
-    // Focus leaving the token closes its card, unless the pointer is on the card (a click into it).
+    // Focus leaving the token closes its card, unless that is a click or a tap into the card.
     node.addEventListener("blur", () => {
       bind(false);
-      if (hover.token === node && !hover.over) {
+      hover.focus = null;
+      if (hover.token === node && !hover.over && !hover.pressed) {
         hideHover();
       }
     });
@@ -580,6 +585,10 @@ export async function bootstrapViewer({
       tapped = null;
     });
     node.addEventListener("keydown", (event) => {
+      // Alt+ArrowLeft, Command+ArrowLeft and the like are the browser's.
+      if (!isViewerShortcut(event)) {
+        return;
+      }
       const stops = statement.stops;
       const at = stops.indexOf(node);
       const next = event.key === "Home" ? 0 : event.key === "End" ? stops.length - 1
@@ -642,8 +651,9 @@ export async function bootstrapViewer({
     const size = card.getBoundingClientRect?.() ?? { height: 0, width: 0 };
     const width = windowRef?.innerWidth ?? size.width;
     const height = windowRef?.innerHeight ?? size.height;
-    // A token scrolled out of the window takes its card with it, until it is back.
-    card.hidden = at.bottom < 0 || at.top > height;
+    // A token scrolled out of its panel, or of the window, takes its card with it, until it is back.
+    const panel = ui.details.contains?.(hover.token) ? ui.details.getBoundingClientRect?.() : null;
+    card.hidden = at.bottom < Math.max(panel?.top ?? 0, 0) || at.top > Math.min(panel?.bottom ?? height, height);
     const below = at.bottom + HOVER_GAP;
     const above = at.top - HOVER_GAP - size.height;
     const top = below + size.height <= height - HOVER_MARGIN || above < HOVER_MARGIN ? below : above;
@@ -656,17 +666,22 @@ export async function bootstrapViewer({
     cancelHideHover();
     hover.token?.removeAttribute?.("aria-describedby");
     hover.token = null;
+    hover.focus = null;
     hover.over = false;
+    hover.pressed = false;
     ui["hover-card"].hidden = true;
   }
 
-  /** Close the card after HOVER_LINGER, unless the pointer reaches the card or another token first. */
+  /**
+   * Close the card after HOVER_LINGER, unless the pointer reaches the card or
+   * another token first; a token with keyboard focus then has its own card back.
+   */
   function hideHoverSoon() {
     cancelHideHover();
     hover.timer = setTimer(() => {
       hover.timer = null;
       if (!hover.over) {
-        hideHover();
+        (hover.focus ?? hideHover)();
       }
     }, HOVER_LINGER);
   }
@@ -1507,6 +1522,18 @@ export async function bootstrapViewer({
       if (hover.token) hideHoverSoon();
     }
   });
+  // A tap on the card (a tap is never `over` it) blurs its token after the finger lifts, and the
+  // card stays. The tap ends with its click, or with a pointercancel when it scrolls the card instead.
+  ui["hover-card"].addEventListener("pointerdown", (event) => {
+    if (event.pointerType === "touch") {
+      hover.pressed = true;
+    }
+  });
+  for (const type of ["click", "pointercancel"]) {
+    ui["hover-card"].addEventListener(type, () => {
+      hover.pressed = false;
+    });
+  }
   documentRef.addEventListener("keydown", (event) => {
     if (!isViewerShortcut(event)) {
       return;
@@ -1517,7 +1544,8 @@ export async function bootstrapViewer({
     else if (event.key === "-") changeZoom(state.zoom - 10);
     else if (event.key.toLowerCase() === "r") rotate(90);
     else if (event.key === "Escape") {
-      if (hover.token) hideHover();
+      // A card its token's scroll has hidden is not one to close: Escape leaves the item.
+      if (hover.token && !ui["hover-card"].hidden) hideHover();
       else if (state.selected && ui.details.contains?.(documentRef.activeElement)) backToPage();
       else selectRegion(null);
     }
