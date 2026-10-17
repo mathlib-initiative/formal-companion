@@ -252,6 +252,10 @@ const CONTROLS_ROOM = 64;
 /** The gap between a token and its hover card, and between the card and the window's edge. */
 const HOVER_GAP = 6;
 const HOVER_MARGIN = 8;
+/** How long a hover card stays once the pointer leaves its token or the card: time to reach the card. */
+export const HOVER_LINGER = 300;
+/** Keys that scroll an open hover card while its token has focus, by how much of the card. */
+const HOVER_PAGES = Object.freeze({ PageDown: 1, PageUp: -1 });
 /** Keys that move focus between a statement's tokens, by how far. */
 const TOKEN_STEPS = Object.freeze({ ArrowLeft: -1, ArrowRight: 1 });
 
@@ -318,8 +322,15 @@ export async function bootstrapViewer({
     verso: null,
     zoom: 100,
   };
-  /** The token whose hover card is open, if any. */
-  const hover = { token: null };
+  /**
+   * The token whose hover card is open, if any; the pending close, when the
+   * pointer has left; and whether the pointer is on the card, which keeps it.
+   */
+  const hover = { over: false, timer: null, token: null };
+  const setTimer = typeof windowRef?.setTimeout === "function" ? windowRef.setTimeout.bind(windowRef)
+    : globalThis.setTimeout;
+  const clearTimer = typeof windowRef?.clearTimeout === "function" ? windowRef.clearTimeout.bind(windowRef)
+    : globalThis.clearTimeout;
 
   /** An element with a class and text, both optional; every string goes in as text. */
   function make(tag, className, value) {
@@ -533,7 +544,7 @@ export async function bootstrapViewer({
     const leave = () => {
       bind(false);
       if (hover.token === node) {
-        hideHover();
+        hideHoverSoon();
       }
     };
     node.addEventListener("pointerenter", (event) => event.pointerType !== "touch" && enter());
@@ -549,7 +560,13 @@ export async function bootstrapViewer({
       statement.reveal?.(node);
       enter();
     });
-    node.addEventListener("blur", leave);
+    // Focus leaving the token closes its card, unless the pointer is on the card (a click into it).
+    node.addEventListener("blur", () => {
+      bind(false);
+      if (hover.token === node && !hover.over) {
+        hideHover();
+      }
+    });
     // A first tap opens the hover; a second follows the link.
     let tapped = null;
     node.addEventListener("pointerdown", (event) => {
@@ -567,7 +584,10 @@ export async function bootstrapViewer({
       const at = stops.indexOf(node);
       const next = event.key === "Home" ? 0 : event.key === "End" ? stops.length - 1
         : event.key in TOKEN_STEPS ? Math.min(Math.max(at + TOKEN_STEPS[event.key], 0), stops.length - 1) : null;
-      if (next !== null) {
+      if (event.key in HOVER_PAGES && hover.token === node && scrollHover(HOVER_PAGES[event.key])) {
+        event.preventDefault();
+        event.stopPropagation?.();
+      } else if (next !== null) {
         // The arrows turn the PDF's pages everywhere else.
         event.preventDefault();
         event.stopPropagation?.();
@@ -593,9 +613,11 @@ export async function bootstrapViewer({
   /** Open the hover card by a token. */
   function showHover(node, shown) {
     const card = ui["hover-card"];
+    cancelHideHover();
     if (hover.token !== node) {
       hover.token?.removeAttribute?.("aria-describedby");
       card.replaceChildren(...hoverNodes(shown));
+      card.scrollTop = 0;
     }
     hover.token = node;
     node.setAttribute("aria-describedby", "hover-card");
@@ -610,6 +632,9 @@ export async function bootstrapViewer({
     if (!at) {
       return;
     }
+    // Measured at the window's left edge, so its width is its own, not what its last place left room for.
+    card.style.left = "0px";
+    card.style.top = "0px";
     const size = card.getBoundingClientRect?.() ?? { height: 0, width: 0 };
     const width = windowRef?.innerWidth ?? size.width;
     const height = windowRef?.innerHeight ?? size.height;
@@ -624,9 +649,42 @@ export async function bootstrapViewer({
   }
 
   function hideHover() {
+    cancelHideHover();
     hover.token?.removeAttribute?.("aria-describedby");
     hover.token = null;
+    hover.over = false;
     ui["hover-card"].hidden = true;
+  }
+
+  /** Close the card after HOVER_LINGER, unless the pointer reaches the card or another token first. */
+  function hideHoverSoon() {
+    cancelHideHover();
+    hover.timer = setTimer(() => {
+      hover.timer = null;
+      if (!hover.over) {
+        hideHover();
+      }
+    }, HOVER_LINGER);
+  }
+
+  function cancelHideHover() {
+    if (hover.timer !== null) {
+      clearTimer(hover.timer);
+      hover.timer = null;
+    }
+  }
+
+  /** Scroll the open card by about a card's height; false when it has nothing more to show that way. */
+  function scrollHover(direction) {
+    const card = ui["hover-card"];
+    const room = (card.scrollHeight ?? 0) - (card.clientHeight ?? 0);
+    const top = card.scrollTop ?? 0;
+    if (card.hidden || room <= 0 || (direction > 0 ? top >= room : top <= 0)) {
+      return false;
+    }
+    const step = Math.max(1, (card.clientHeight ?? 0) - 24);
+    card.scrollTop = Math.min(room, Math.max(0, top + direction * step));
+    return true;
   }
 
   /**
@@ -1422,10 +1480,27 @@ export async function bootstrapViewer({
     lit.addEventListener("mouseenter", () => setHot(state.region?.id ?? null));
     lit.addEventListener("mouseleave", () => setHot(null));
   }
-  // The status chip's note closes on a click anywhere else.
+  // The status chip's note and an open hover card close on a click anywhere else.
   documentRef.addEventListener("click", (event) => {
     if (ui["status-chip"].open && !ui["status-chip"].contains?.(event.target)) {
       ui["status-chip"].open = false;
+    }
+    const within = (node) => node === event.target || Boolean(node?.contains?.(event.target));
+    if (hover.token && !within(hover.token) && !within(ui["hover-card"])) {
+      hideHover();
+    }
+  });
+  // The pointer may move onto the hover card (to read or scroll it); the card stays while it is there.
+  ui["hover-card"].addEventListener("pointerenter", (event) => {
+    if (event.pointerType !== "touch") {
+      hover.over = true;
+      cancelHideHover();
+    }
+  });
+  ui["hover-card"].addEventListener("pointerleave", (event) => {
+    if (event.pointerType !== "touch") {
+      hover.over = false;
+      if (hover.token) hideHoverSoon();
     }
   });
   documentRef.addEventListener("keydown", (event) => {
