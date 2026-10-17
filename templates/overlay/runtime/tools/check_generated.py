@@ -16,8 +16,9 @@ It reports, one line per problem, and exits 1 when there is one:
   sha256 recorded for it, and `pdf-overlay/` holds nothing else but
   `GENERATED.json`, the bundle, the instance file `overlay.config.json` and
   the companion's own `verso.json`, if it commits one: that one must have the
-  form `tools/verso_extract.py --pages` writes (a statement that no longer
-  joins to its card's snippet is not a problem: `build_site.py` drops it);
+  form `tools/verso_extract.py --pages` writes and be of a build of a commit
+  the bundle's cards pin (a statement that no longer joins to its card's
+  snippet is not a problem: `build_site.py` drops it);
 * `GENERATED.json`'s `format` block names the Literature Links release whose
   package `cf overlay sync` shipped in `tools/literature_links/`;
 * `overlay.config.json` satisfies section 3 -- the same rules as the skill's
@@ -526,7 +527,8 @@ def problems(overlay: Path) -> list[str]:
 
 
 def verso_problems(overlay: Path) -> list[str]:
-    """A committed `verso.json`, when there is one, against the form `verso_extract.py --pages` writes."""
+    """A committed `verso.json`, when there is one, against the form `verso_extract.py --pages` writes
+    and the commit the bundle's cards pin (a bundle that does not read is `annotations_problems`')."""
     path = overlay / verso_extract.FILE_NAME
     if not path.is_symlink() and not path.exists():
         return []
@@ -534,7 +536,14 @@ def verso_problems(overlay: Path) -> list[str]:
         value = strict_json(read_bytes(path, verso_extract.FILE_NAME), verso_extract.FILE_NAME)
     except Unreadable as error:
         return [str(error)]
-    return [f"{verso_extract.FILE_NAME}: {line}" for line in verso_extract.committed_problems(value)]
+    found = verso_extract.committed_problems(value)
+    if not found:
+        try:
+            stale = verso_extract.unpinned(value, overlay_annotations.read_bundle(overlay))
+        except overlay_annotations.AnnotationError:
+            stale = None
+        found = [stale] if stale else []
+    return [f"{verso_extract.FILE_NAME}: {line}" for line in found]
 
 
 def main(argv: list[str] | None = None) -> int:

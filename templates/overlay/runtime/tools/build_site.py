@@ -19,8 +19,9 @@ link block in the index; write `receipt.json`. Beside the bundle it writes
 `verso.json`, each card's statement as the site's Verso pages highlight
 it, with their hovers (`verso_extract.py`). For a site with no Verso pages
 it is the companion's committed `pdf-overlay/verso.json`, cut from a Verso
-build made elsewhere, when there is one, and else empty; the receipt says
-which. It never runs the build: `serve.py --build` does that first.
+build of the commit its cards pin made elsewhere, when there is one, and
+else empty; the receipt says which. It never runs the build:
+`serve.py --build` does that first.
 """
 
 from __future__ import annotations
@@ -405,8 +406,8 @@ def verso_file(overlay: Path, output_root: Path, entries: list) -> tuple[dict[st
     """`(verso.json, where it came from)`: the site's own Verso pages (`source` "site"); for a site
     with none (no hover table and no statement from its pages), the companion's committed
     `pdf-overlay/verso.json` ("committed"), refused unless it has the form `verso_extract.py --pages`
-    writes and cut to the bundle's cards, a statement whose texts no longer join to its card's
-    snippet dropped; else an empty file ("none")."""
+    writes and is of a build of a commit the cards pin, and cut to the bundle's cards, a statement
+    whose texts no longer join to its card's snippet dropped; else an empty file ("none")."""
     value, counts = verso_extract.extract(output_root, entries)
     if counts["statements"] or verso_extract.is_verso_site(output_root):
         return value, {"source": "site", **counts}
@@ -423,8 +424,11 @@ def verso_file(overlay: Path, output_root: Path, entries: list) -> tuple[dict[st
     problems = verso_extract.committed_problems(committed)
     if problems:
         fail(f"{label}: {problems[0]}; write it again with `verso_extract.py --pages`")
+    stale = verso_extract.unpinned(committed, entries)
+    if stale:
+        fail(f"{label}: {stale}; write it again with `verso_extract.py --pages` from a build of that commit")
     value, counts = verso_extract.joined(committed, entries)
-    return value, {"source": "committed", "sha256": sha256(raw), **counts}
+    return value, {"source": "committed", "sha256": sha256(raw), "commit": committed["build"]["commit"], **counts}
 
 
 def receipt_value(config: Config, contents: dict[str, bytes], href: str,

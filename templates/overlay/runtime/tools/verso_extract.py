@@ -38,15 +38,16 @@ docstring, both plain text; the viewer renders them with `textContent`.
 A companion whose site has no Verso pages (its cards link elsewhere) can
 commit a `pdf-overlay/verso.json` cut from a Verso build of its project made
 somewhere else: `python3 verso_extract.py --pages <literate-html> --bundle
-<annotations.bundle.json> --out <verso.json> [--commit <sha>]`. There a card
+<annotations.bundle.json> --out <verso.json> --commit <sha>`. There a card
 is found by its Lean location instead of its link: its module's page
 (`A/B/index.html` for `A.B`) and the anchor Verso gives its declaration (the
 build's `xref.json`, else `verso_slug` of its name), or for a tagged example
 its tag. It is filed under the same key, the same rules match the snippet,
 no token keeps a link (those pages are not the viewer's site), and `build`
 records the project commit and the build's Verso revision (`build_record`).
-`build_site.py` publishes it only for a site with no Verso pages, each
-statement checked again against the bundle (`committed_problems`, `joined`).
+`build_site.py` publishes it only for a site with no Verso pages, and only
+when its cards pin that commit (`unpinned`), each statement checked again
+against the bundle (`committed_problems`, `joined`).
 """
 from __future__ import annotations
 
@@ -913,6 +914,23 @@ def build_record(root: Path, commit: str | None) -> dict[str, Any]:
     return out
 
 
+def pinned(entries: list[tuple[str, dict[str, Any]]]) -> set[str]:
+    """The commits the bundle's cards pin: the `version` of each object end with a key and a snippet."""
+    return {end["version"] for _path, annotation in entries for end in annotation.get("object") or []
+            if isinstance(end, dict) and isinstance(end.get("version"), str)
+            and card_target(end) and snippet_text(end)}
+
+
+def unpinned(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> str | None:
+    """Why a committed `verso.json` (one `committed_problems` passes) is not of the build the cards pin:
+    its build's commit is one no card pins, so its hovers would be another build's. None when it is."""
+    commit, versions = value["build"]["commit"], sorted(pinned(entries))
+    if not versions or commit in versions:
+        return None
+    named = ", ".join(versions[:3]) + (f" and {len(versions) - 3} more" if len(versions) > 3 else "")
+    return f"cut from a build of {commit}, but the cards pin {named}"
+
+
 def _run_problem(run: Any, hovers: dict[str, Any]) -> str | None:
     if not isinstance(run, list) or not 2 <= len(run) <= 5:
         return "a run is not [kind, text, hover, binding]"
@@ -959,26 +977,31 @@ def committed_problems(value: Any, limit: int = 10) -> list[str]:
         problem = next(filter(None, (_run_problem(run, hovers) for runs in alternatives for run in runs)), None)
         if problem:
             out.append(f"statements[{target!r}]: {problem}")
-    build = value.get("build", {})
+    build = value.get("build")
     if not isinstance(build, dict) or set(build) - {"commit", "verso"} \
-            or "commit" in build and not (isinstance(build["commit"], str) and COMMIT.match(build["commit"])) \
+            or not (isinstance(build.get("commit"), str) and COMMIT.match(build["commit"])) \
             or not isinstance(build.get("verso", {}), dict) \
             or not all(isinstance(text, str) for text in build.get("verso", {}).values()):
-        out.append("build: expected {commit, verso}, a commit sha and the Verso package's revisions")
+        out.append("build: expected {commit, verso}: the commit the pages were built from (--commit) and "
+                   "the Verso package's revisions")
     return out[:limit] + ([f"and {len(out) - limit} more"] if len(out) > limit else [])
 
 
 def joined(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> tuple[dict[str, Any], dict[str, int]]:
     """A committed `verso.json` (one `committed_problems` passes) cut to the bundle: a statement stays
-    only where its runs' texts joined are the snippet of a card the viewer files under its target, and
-    a hover entry only where a statement left uses it. `(verso.json, {"targets", "statements",
-    "dropped"})`."""
+    only where its runs' texts joined are the snippet of a card the viewer files under its target and
+    that card pins the build's commit, and a hover entry only where a statement left uses it.
+    `(verso.json, {"targets", "statements", "dropped"})`."""
+    commit = value["build"]["commit"]
+    cards: set[tuple[str, str]] = set()
     wanted: dict[str, set[str]] = {}
     for _path, annotation in entries:
         for end in annotation.get("object") or []:
             target, text = (card_target(end), snippet_text(end)) if isinstance(end, dict) else (None, None)
             if target and text:
-                wanted.setdefault(target, set()).add(text)
+                cards.add((target, text))
+                if end.get("version") == commit:
+                    wanted.setdefault(target, set()).add(text)
     statements: dict[str, list[list[list[Any]]]] = {}
     dropped = 0
     for target, alternatives in value["statements"].items():
@@ -988,12 +1011,9 @@ def joined(value: dict[str, Any], entries: list[tuple[str, dict[str, Any]]]) -> 
             statements[target] = kept
     used = {str(run[2]) for alternatives in statements.values() for runs in alternatives for run in runs
             if len(run) > 2 and run[2] is not None}
-    out = {"schema": SCHEMA, "schema_version": SCHEMA_VERSION, "statements": statements,
+    out = {"schema": SCHEMA, "schema_version": SCHEMA_VERSION, "statements": statements, "build": value["build"],
            "hovers": {key: entry for key, entry in value["hovers"].items() if key in used}}
-    if value.get("build"):
-        out["build"] = value["build"]
-    return out, {"dropped": dropped, "statements": sum(len(v) for v in statements.values()),
-                 "targets": sum(len(texts) for texts in wanted.values())}
+    return out, {"dropped": dropped, "statements": sum(len(v) for v in statements.values()), "targets": len(cards)}
 
 
 def dumps(value: dict[str, Any]) -> bytes:
@@ -1062,9 +1082,10 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bundle", required=True, type=Path, metavar="FILE",
                         help="the companion's pdf-overlay/annotations.bundle.json")
     parser.add_argument("--out", required=True, type=Path, metavar="FILE", help="the verso.json to write")
-    parser.add_argument("--commit", metavar="SHA", help="the commit of the Lean project the pages were built from")
+    parser.add_argument("--commit", required=True, metavar="SHA",
+                        help="the commit of the Lean project the pages were built from, which the cards pin")
     args = parser.parse_args(argv)
-    if args.commit is not None and not COMMIT.match(args.commit):
+    if not COMMIT.match(args.commit):
         parser.error("--commit: expected a full lowercase commit sha")
     if not args.pages.is_dir():
         parser.error(f"--pages: {args.pages} is not a directory")

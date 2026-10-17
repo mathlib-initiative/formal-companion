@@ -475,9 +475,12 @@ XREF = {"VersoHtml.constant": {"contents": {
     "Notes.Hidden.two'": [{"address": "/Notes/Geo/", "id": "Notes___Geo___carrier",
                            "data": {"module": "Notes.Hidden", "private": False, "userName": "Notes.Hidden.two'"}}],
 }}}
+#: The commit the build's pages were made from, which the cards pin.
+BUILD_COMMIT = "c0ffee" + "0" * 34
 
 
-def remote_end(declaration: str, snippet: str, *, module: str = "Notes.Box", line: int = 1, **declared) -> dict:
+def remote_end(declaration: str, snippet: str, *, module: str = "Notes.Box", line: int = 1,
+               version: str = BUILD_COMMIT, **declared) -> dict:
     """An end whose card links its source file elsewhere, as a companion with no Verso site has it."""
     ext = {"destination": {"resolution": "exact", "href": f"{REMOTE}/{module.replace('.', '/')}.lean",
                            "fragment": f"L{line}"},
@@ -485,8 +488,8 @@ def remote_end(declaration: str, snippet: str, *, module: str = "Notes.Box", lin
     if declared:
         ext["declaration"] = declared
     location = {"declaration": declaration, "module": module} if declaration else {"lines": [line], "module": module}
-    return {"type": "lean", "uri": "https://git.example.invalid/notes", "role": "key", "location": location,
-            "extensions": {NAMESPACE: ext}}
+    return {"type": "lean", "uri": "https://git.example.invalid/notes", "version": version, "role": "key",
+            "location": location, "extensions": {NAMESPACE: ext}}
 
 
 def remote_key(module: str, line: int) -> str:
@@ -497,7 +500,7 @@ class PagesCase(VersoCase):
     """The pages of a project's own Verso build, `<project>/.lake/build/literate-html`: not the viewer's site."""
 
     ROOT = ("project", ".lake", "build", "literate-html")
-    COMMIT = "c0ffee" + "0" * 34
+    COMMIT = BUILD_COMMIT
 
     def setUp(self) -> None:
         super().setUp()
@@ -509,7 +512,7 @@ class PagesCase(VersoCase):
             {"name": "verso", "rev": "2" * 40, "inputRev": "v0.0.0-test", "type": "git"}]}
         (self.site.parent.parent.parent / "lake-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
 
-    def pages(self, *ends: dict, commit: str | None = None) -> tuple[dict, dict]:
+    def pages(self, *ends: dict, commit: str | None = BUILD_COMMIT) -> tuple[dict, dict]:
         return VERSO.extract_pages(self.site, entries(*ends), commit=commit)
 
 
@@ -583,7 +586,10 @@ class TestPagesOfABuildElsewhere(PagesCase):
         self.assertEqual(value["build"], {"commit": self.COMMIT, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}})
         (self.site.parent.parent.parent / "lake-manifest.json").unlink()
         self.assertEqual(self.pages(end, commit=self.COMMIT)[0]["build"], {"commit": self.COMMIT})
-        self.assertNotIn("build", self.pages(end)[0])
+        uncommitted = self.pages(end, commit=None)[0]
+        self.assertNotIn("build", uncommitted)
+        self.assertEqual([line[:6] for line in VERSO.committed_problems(uncommitted)], ["build:"],
+                         "a committed file must say which commit its build is of")
 
     def test_the_command_writes_the_committed_form_one_entry_a_line(self):
         ends = (remote_end("Notes.Box.three", "def three := 3"), remote_end("Notes.Box.uno", "def uno := 1", line=2))
@@ -603,12 +609,14 @@ class TestPagesOfABuildElsewhere(PagesCase):
         self.assertEqual(raw, VERSO.dumps_lines(value))
         self.assertEqual(sum(line.startswith(b'"' + VERSO_KEY_START) for line in raw.splitlines()), 2,
                          "each target's statements on a line of its own")
+        command = ["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out)]
         with contextlib.redirect_stderr(io.StringIO()):
-            for argv in (["--commit", "HEAD"], ["--commit", "abc123"]):
+            for argv in ([], ["--commit", "HEAD"], ["--commit", "abc123"]):
                 with self.subTest(argv=argv), self.assertRaises(SystemExit):
-                    VERSO.main(["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out), *argv])
-            bundle.write_text("{}", encoding="utf-8")
-            self.assertEqual(VERSO.main(["--pages", str(self.site), "--bundle", str(bundle), "--out", str(out)]), 1)
+                    VERSO.main([*command, *argv])
+        bundle.write_text("{}", encoding="utf-8")
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(VERSO.main([*command, "--commit", self.COMMIT]), 1)
 
 
 VERSO_KEY_START = REMOTE.encode("utf-8")
@@ -629,18 +637,20 @@ class TestTheCommittedFile(PagesCase):
             change(copy)
             return VERSO.committed_problems(copy)
 
-        cases = {
-            "a run carries a link": lambda v: v["statements"][key][0].append(["const", "Box", None, None, "Box/#B"]),
-            "is not in hovers": lambda v: v["hovers"].pop("10"),
-            "not a known kind": lambda v: v["statements"][key][0].append(["html", "<b>"]),
-            "binding": lambda v: v["statements"][key][0].append(["var", "b", None, 0]),
-            "expected schema": lambda v: v.update(schema_version=2),
-            "unknown key": lambda v: v.update(links={}),
-            "hovers['x']": lambda v: v["hovers"].update(x={"signature": "s"}),
-            "build": lambda v: v["build"].update(commit="HEAD"),
-            "a list of statements": lambda v: v["statements"].update({key: []}),
-        }
-        for words, change in cases.items():
+        cases = (
+            ("a run carries a link", lambda v: v["statements"][key][0].append(["const", "Box", None, None, "Box/#B"])),
+            ("is not in hovers", lambda v: v["hovers"].pop("10")),
+            ("not a known kind", lambda v: v["statements"][key][0].append(["html", "<b>"])),
+            ("binding", lambda v: v["statements"][key][0].append(["var", "b", None, 0])),
+            ("expected schema", lambda v: v.update(schema_version=2)),
+            ("unknown key", lambda v: v.update(links={})),
+            ("hovers['x']", lambda v: v["hovers"].update(x={"signature": "s"})),
+            ("build", lambda v: v["build"].update(commit="HEAD")),
+            ("build", lambda v: v["build"].pop("commit")),
+            ("build", lambda v: v.pop("build")),
+            ("a list of statements", lambda v: v["statements"].update({key: []})),
+        )
+        for words, change in cases:
             with self.subTest(words=words):
                 self.assertTrue(any(words in line for line in changed(change)), changed(change))
         self.assertEqual(VERSO.committed_problems([]), ["expected an object"])
@@ -661,6 +671,26 @@ class TestTheCommittedFile(PagesCase):
         self.assertEqual(cut["build"], value["build"])
         moved, counts = VERSO.joined(value, entries(remote_end("Notes.Box.three", "def three := 3", line=9)))
         self.assertEqual((moved["statements"], counts["dropped"]), ({}, 2), "a card filed under another key")
+
+    def test_a_committed_file_is_of_the_commit_its_cards_pin(self):
+        value = self.committed()
+        other = "f" * 40
+        ends = [remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3),
+                remote_end("Notes.Box.three", "def three := 3", line=8)]
+        self.assertEqual(VERSO.pinned(entries(*ends)), {BUILD_COMMIT})
+        self.assertIsNone(VERSO.unpinned(value, entries(*ends)))
+        self.assertIsNone(VERSO.unpinned(value, []), "no card, nothing to be stale against")
+        ends[1] = remote_end("Notes.Box.three", "def three := 3", line=8, version=other)
+        self.assertIsNone(VERSO.unpinned(value, entries(*ends)), "one card still pins the build's commit")
+        cut, counts = VERSO.joined(value, entries(*ends))
+        self.assertEqual(counts, {"dropped": 1, "statements": 1, "targets": 2})
+        self.assertEqual(list(cut["statements"]), [remote_key("Notes.Box", 3)],
+                         "a card that pins another commit keeps no statement of this build")
+        ends[0] = remote_end("Notes.Box.side_pos", "theorem side_pos (b : Box) : 0 < b.side", line=3, version=other)
+        self.assertEqual(VERSO.unpinned(value, entries(*ends)),
+                         f"cut from a build of {BUILD_COMMIT}, but the cards pin {other}")
+        many = [remote_end("Notes.Box.three", "def three := 3", line=8, version=f"{n}" * 40) for n in range(1, 6)]
+        self.assertTrue(VERSO.unpinned(value, entries(*many)).endswith("and 2 more"))
 
 if __name__ == "__main__":                                   # pragma: no cover
     unittest.main(verbosity=2)
