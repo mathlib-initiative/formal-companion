@@ -11,7 +11,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { NAMESPACE, sha256Hex } from "../runtime/viewer/viewer-core.js";
-import { bootstrapViewer, isViewerShortcut, rememberedPage } from "../runtime/viewer/viewer.js";
+import { HOVER_LINGER, bootstrapViewer, isViewerShortcut, rememberedPage } from "../runtime/viewer/viewer.js";
 import {
   BUNDLE_URL,
   ORIGIN,
@@ -999,6 +999,9 @@ function tokensOf(node) {
   return found;
 }
 
+/** Past the time a hover card stays after the pointer leaves. */
+const linger = () => new Promise((resolve) => { setTimeout(resolve, HOVER_LINGER + 20); });
+
 /** The theorem's key card with `verso.json` served, and its statement's tokens. */
 async function versoCard(options = {}) {
   const documentRef = fakeDocument(SHELL);
@@ -1043,9 +1046,11 @@ test("verso: a hover opens on the pointer and on focus, lights its binding, and 
   assert.equal(b.attributes["aria-describedby"], "hover-card");
   assert.ok([b, otherB].every((node) => node.classList.contains("is-bound")), "both uses of b are lit");
   await fire(b, "pointerleave", { pointerType: "mouse" });
+  assert.ok(![b, otherB].some((node) => node.classList.contains("is-bound")));
+  assert.equal(card.hidden, false, "the card waits a moment for the pointer");
+  await linger();
   assert.equal(card.hidden, true);
   assert.equal(b.attributes["aria-describedby"], undefined);
-  assert.ok(![b, otherB].some((node) => node.classList.contains("is-bound")));
 
   await fire(box, "focus");
   assert.equal(card.hidden, false);
@@ -1058,6 +1063,63 @@ test("verso: a hover opens on the pointer and on focus, lights its binding, and 
   assert.equal(card.hidden, true);
   assert.equal(el(documentRef, "selection").hidden, false, "the first Escape only closes the hover");
   assert.equal(result.state.selected?.id, "item:theorem-1.1");
+});
+
+test("verso: the pointer can move onto the hover card, which stays while the pointer is on it", async () => {
+  const { card, documentRef, named } = await versoCard();
+  const [b, box] = [named("b"), named("Box")];
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  await fire(card, "pointerenter", { pointerType: "mouse" });
+  await linger();
+  assert.equal(card.hidden, false, "on the card, the card stays");
+  assert.equal(textOf(card), "b : Box");
+  await fire(card, "pointerleave", { pointerType: "mouse" });
+  await linger();
+  assert.equal(card.hidden, true, "off the card, it closes");
+
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  await fire(box, "pointerenter", { pointerType: "mouse" });
+  await linger();
+  assert.deepEqual([card.hidden, textOf(card.children[0])], [false, "Notes.Box : Type"], "the next token takes the card over");
+  await fire(box, "pointerleave", { pointerType: "mouse" });
+  await linger();
+
+  // Keyboard focus opens it; a click into the card blurs the token but keeps the card.
+  await fire(box, "focus");
+  await fire(card, "pointerenter", { pointerType: "mouse" });
+  await fire(box, "blur");
+  assert.equal(card.hidden, false);
+  await fire(documentRef, "click", { target: card });
+  assert.equal(card.hidden, false, "a click inside the card keeps it");
+  await fire(documentRef, "click", { target: el(documentRef, "page-heading") });
+  assert.equal(card.hidden, true, "a click anywhere else closes it");
+  await fire(box, "focus");
+  await fire(box, "blur");
+  assert.equal(card.hidden, true, "focus leaving the token closes it");
+});
+
+test("verso: PageDown and PageUp scroll a long hover card while its token has focus", async () => {
+  const { card, named } = await versoCard();
+  const box = named("Box");
+  await fire(box, "focus");
+  const key = async (name) => {
+    let prevented = false;
+    await fire(box, "keydown", { key: name, preventDefault() { prevented = true; } });
+    return [prevented, card.scrollTop];
+  };
+  Object.assign(card, { clientHeight: 400, scrollHeight: 400, scrollTop: 0 });
+  assert.deepEqual(await key("PageDown"), [false, 0], "a card that shows everything leaves the key alone");
+  card.scrollHeight = 900;
+  assert.deepEqual(await key("PageDown"), [true, 376]);
+  assert.deepEqual(await key("PageDown"), [true, 500], "never past the end");
+  assert.deepEqual(await key("PageDown"), [false, 500]);
+  assert.deepEqual(await key("PageUp"), [true, 124]);
+  assert.deepEqual(await key("PageUp"), [true, 0]);
+  assert.deepEqual(await key("PageUp"), [false, 0]);
+  await fire(named("b"), "focus");
+  assert.equal(card.scrollTop, 0, "another token's card starts at its top");
 });
 
 test("verso: the arrow keys move between a statement's tokens and never turn the page", async () => {
@@ -1146,6 +1208,18 @@ test("verso: the hover card sits under its token, above it near the window's foo
                    "never past the window's right edge");
   assert.deepEqual(await place({ bottom: -10, left: 200, right: 230, top: -30 }).then((at) => at[2]), true,
                    "a token scrolled away hides its card");
+
+  // A card is as wide as its content allows from where it stands (shrink to fit): measured where the
+  // last one was left, a wide card near the right edge would come out narrow.
+  let natural = 50;
+  card.getBoundingClientRect = () => ({ height: 100, width: Math.min(natural, 1000 - (parseFloat(card.style.left) || 0)) });
+  assert.deepEqual(await place({ bottom: 120, left: 940, right: 970, top: 100 }), ["940px", "126px", false]);
+  natural = 300;
+  const other = tokensOf(pre).find((node) => node.textContent === "volume_nonneg");
+  other.rect = { bottom: 120, left: 900, right: 930, top: 100 };
+  await fire(other, "pointerenter", { pointerType: "mouse" });
+  assert.deepEqual([card.style.left, card.getBoundingClientRect().width], ["692px", 300],
+                   "the next card is measured at its own width");
 });
 
 test("verso: focus on a token the clamp hides opens the whole statement", async () => {

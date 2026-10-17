@@ -1354,6 +1354,7 @@ kbd {
   max-width: min(560px, calc(100vw - 16px));
   max-height: min(50vh, 420px);
   overflow: auto;
+  overscroll-behavior: contain;
   padding: 8px 12px;
   border: 1px solid var(--line-strong);
   border-radius: 8px;
@@ -1363,7 +1364,6 @@ kbd {
   font-family: var(--sans);
   font-size: 13px;
   line-height: 1.5;
-  pointer-events: none;
 }
 
 .hover-sig {
