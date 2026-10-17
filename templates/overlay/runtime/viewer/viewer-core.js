@@ -198,10 +198,18 @@ export function targetHref(target, baseUrl, pageOrigin) {
   return null;
 }
 
-/** A page of this site that `href` (relative to `siteUrl`) names, or null: a token links nowhere else. */
+/**
+ * A page of this site that `href` (relative to `siteUrl`) names, or null: a
+ * token links nowhere else. The page's origin is not enough, since a project
+ * site shares it with its owner's other sites: the page must be under `siteUrl`.
+ */
 export function siteHref(href, siteUrl, pageOrigin) {
   const resolved = targetHref(href, siteUrl, pageOrigin);
-  return resolved && new URL(resolved).origin === pageOrigin ? resolved : null;
+  if (!resolved) {
+    return null;
+  }
+  const url = new URL(resolved);
+  return url.origin === pageOrigin && url.pathname.startsWith(new URL("./", siteUrl).pathname) ? resolved : null;
 }
 
 /** A Lean module's rendered page relative to the site root: `A/B/C/index.html` for `A.B.C`. */

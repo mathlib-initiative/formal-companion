@@ -155,15 +155,19 @@ From the records alone it builds:
   key card's target (its page and anchor, before resolution, or for a tagged
   example its module's page and its tag) whose texts joined are the card's
   snippet exactly, the statement is drawn from its runs: each token tinted by
-  its kind, a link when its target is a page of this site, and a hover card
-  (its signature, a variable's as `name : type`, and its docstring's
-  paragraphs and code as text) on the pointer, on keyboard focus and on a
-  first tap. The pointer may move onto the card, which stays while it is
-  there and closes shortly after it leaves; a click elsewhere closes it, and
-  PageDown and PageUp scroll a long card while its token has focus. A
-  statement is one tab stop, the arrow keys, Home and End move between its
-  tokens, and Escape closes the card. Otherwise, and with no `verso.json`,
-  the plain statement stays;
+  its kind, a link when its target is a declaration's own anchor on a page
+  of this site, and a hover card (its signature, a variable's as
+  `name : type`, and its docstring's paragraphs and code as text) on the
+  pointer, on keyboard focus and on a first tap. The pointer may move onto
+  the card, which stays while it is there and closes shortly after it
+  leaves; a tap inside the card keeps it, a click or a tap elsewhere closes
+  it, and PageDown and PageUp scroll a long card while its token has focus.
+  A card that keyboard focus opened comes back once the pointer has passed
+  over another token, until Escape or the token loses focus. A statement is
+  one tab stop, the arrow keys, Home and End (with no modifier held) move
+  between its tokens, and Escape closes the card, or leaves the item when a
+  scroll has already hidden it. Otherwise, and with no `verso.json`, the
+  plain statement stays;
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
   order the files came in; with nothing selected the panel lists the page's

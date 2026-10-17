@@ -834,4 +834,11 @@ test("verso: a token links only a page of this site", () => {
   for (const elsewhere of ["https://elsewhere.invalid/x.html", "javascript:alert(1)", "//elsewhere.invalid/x"]) {
     assert.equal(siteHref(elsewhere, site, ORIGIN), null, elsewhere);
   }
+  // A project site shares its origin with every other site of its owner: a page of this one is under its root.
+  const project = `${ORIGIN}/notes/`;
+  assert.equal(siteHref("Notes/Box/index.html", project, ORIGIN), `${ORIGIN}/notes/Notes/Box/index.html`);
+  for (const elsewhere of ["../other/x.html", "/other/x.html", `${ORIGIN}/other/x.html`, "../notes-other/x.html",
+                           "%2e%2e/other/x.html", "Notes/../../other/x.html"]) {
+    assert.equal(siteHref(elsewhere, project, ORIGIN), null, elsewhere);
+  }
 });

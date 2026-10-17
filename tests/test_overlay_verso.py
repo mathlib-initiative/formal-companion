@@ -234,9 +234,6 @@ class AnySite:
     def declares(self, _relative: str, _fragment: str) -> bool:
         return True
 
-    def has_anchor(self, _relative: str, _fragment: str) -> bool:
-        return True
-
 
 def entries(*ends: dict) -> list[tuple[str, dict]]:
     return [(f"annotations/1.1/{n:02d}.json", {"id": f"item:{n}", "subject": [], "object": [end]})
@@ -382,6 +379,22 @@ class TestTheStatement(VersoCase):
             with self.subTest(href=href):
                 self.assertIsNone(VERSO.link(site, BOX_PAGE, href))
 
+    def test_a_link_with_no_fragment_or_a_nul_is_no_link(self):
+        for href in ("Notes/Box/", BOX_PAGE, "Notes/Box/#", VERSO.DOCS_NAME):
+            with self.subTest(href=href):
+                self.assertIsNone(VERSO.link(AnySite(), BOX_PAGE, href),
+                                  "a page is not a declaration's own anchor")
+        self.write("Notes/Plain/index.html", page(box(block(
+            tok("keyword", "def"), gap(), tok("const", "plain", 64, ident="Notes___Plain___plain"), gap(),
+            tok("built-in delim", ":"), gap(), link(VERSO.DOCS_NAME, tok("const", "A", 65)), gap(),
+            link("Notes/Box/", tok("const", "B", 66)), gap(),
+            link("Notes/%00x#Notes___Box___volume", tok("const", "C", 67)), gap(),
+            link("Notes/Box/#Notes___Box", tok("const", "Box", 12))))))
+        value, _ = self.extract(lean_end("Notes.Plain.plain", "def plain : A B C Box", module="Notes.Plain"))
+        [runs] = value["statements"]["Notes/Plain/index.html#Notes___Plain___plain"]
+        self.assertEqual([run for run in runs if len(run) == 5],
+                         [["const", "Box", 12, None, "Notes/Box/index.html#Notes___Box"]])
+
     def test_a_card_whose_page_is_not_a_page_of_the_site_gets_none(self):
         outside = self.site.parent / "outside" / "index.html"
         outside.parent.mkdir()
@@ -394,8 +407,10 @@ class TestTheStatement(VersoCase):
             with self.subTest(relative=relative):
                 self.assertIsNone(site.resolve(relative), "the root is never left, even to a file that exists")
                 self.assertFalse(site.is_directory(relative.rpartition("/")[0]))
+        self.assertIsNone(site.resolve("Notes/\0/index.html"))
+        self.assertFalse(site.is_directory("Notes/\0"))
         for destination in ({"href": "https://notes.example.invalid/Box.html"}, {"href": "../outside/index.html"},
-                            {"href": "Notes/../../outside/index.html"},
+                            {"href": "Notes/../../outside/index.html"}, {"href": "Notes/%00/index.html"},
                             {"resolution": "fallback"}, {"href": "Notes/Gone/index.html"}):
             with self.subTest(destination=destination):
                 value, counts = self.extract(lean_end("Notes.Box.volume", "noncomputable def volume", **destination))
@@ -663,6 +678,8 @@ class TestTheCommittedFile(PagesCase):
             ("is not in hovers", lambda v: v["hovers"].pop("10")),
             ("not a known kind", lambda v: v["statements"][key][0].append(["html", "<b>"])),
             ("not a known kind", lambda v: v["statements"][key][0].append(["tx", ""])),
+            ("not a known kind", lambda v: v["statements"][key][0].append([["kw"], "def"])),
+            ("not a known kind", lambda v: v["statements"][key][0].append([{"kw": 1}, "def"])),
             ("binding", lambda v: v["statements"][key][0].append(["var", "b", None, 0])),
             ("expected schema", lambda v: v.update(schema_version=2)),
             ("unknown key", lambda v: v.update(links={})),
@@ -680,6 +697,20 @@ class TestTheCommittedFile(PagesCase):
         self.assertEqual(VERSO.committed_problems([]), ["expected an object"])
         many = changed(lambda v: v["hovers"].update({str(n): {} for n in range(200, 230)}))
         self.assertEqual((len(many), many[-1]), (11, "and 20 more"))
+
+    def test_a_run_whose_kind_is_not_text_is_refused_and_reported_not_a_crash(self):
+        value = self.committed()
+        value["statements"][remote_key("Notes.Box", 3)][0][0][0] = ["kw"]
+        root = Path(tempfile.mkdtemp(dir=self.site.parent))
+        (root / "site").mkdir()
+        (root / "pdf-overlay").mkdir()
+        (root / "pdf-overlay" / VERSO.FILE_NAME).write_bytes(VERSO.dumps_lines(value))
+        build, check = load_tool("build_site"), load_tool("check_generated")
+        with self.assertRaisesRegex(build.BuildError, r"a run is not a known kind .*; write it again with"):
+            build.verso_file(root / "pdf-overlay", root / "site", [])
+        self.assertEqual(check.verso_problems(root / "pdf-overlay"),
+                         [f"{VERSO.FILE_NAME}: statements[{remote_key('Notes.Box', 3)!r}]: "
+                          "a run is not a known kind with its text: [['kw'], 'theorem']"])
 
     def test_joined_keeps_a_statement_only_while_its_card_has_that_snippet(self):
         value = self.committed()
