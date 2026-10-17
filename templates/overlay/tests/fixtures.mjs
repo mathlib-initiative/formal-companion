@@ -254,6 +254,38 @@ export function fileInputs(sections) {
                                                                    url: `${ORIGIN}/${path}` }));
 }
 
+// --- verso.json ---------------------------------------------------------------
+
+/** The key card's target, as `tools/verso_extract.py` files its statement. */
+export const VERSO_TARGET = "Notes/Box/index.html#Notes___Box___volume_nonneg";
+export const VERSO_URL = "../verso.json";
+
+/**
+ * A `verso.json` with the key card's statement as Verso runs: their texts
+ * join to its snippet, `b` is bound twice, `Box` links a page of the site and
+ * `volume` an address elsewhere, which no token may link.
+ */
+export function makeVerso() {
+  return {
+    hovers: {
+      1: { doc: "The volume of a box is never negative.", signature: "Notes.Box.volume_nonneg (b : Box) : 0 <= b.volume" },
+      2: { signature: "Box" },
+      3: { doc: "A box: a product of `n` intervals.\n\nSee `Box.volume`.", signature: "Notes.Box : Type" },
+      4: { signature: "Notes.Box.volume (b : Box) : ℝ" },
+    },
+    schema: "formal-companion/overlay-verso",
+    schema_version: 1,
+    statements: {
+      [VERSO_TARGET]: [[
+        ["kw", "theorem"], ["tx", " "], ["const", "volume_nonneg", 1], ["tx", " "], ["tx", "(", null, 2],
+        ["var", "b", 2, 1], ["tx", " : "], ["const", "Box", 3, null, "Notes/Box/index.html#Notes___Box"],
+        ["tx", ")", null, 2], ["tx", " : 0 <= "], ["var", "b", 2, 1], ["tx", "."],
+        ["const", "volume", 4, null, "https://elsewhere.invalid/Notes/Box.html#volume"],
+      ]],
+    },
+  };
+}
+
 // --- the configuration ------------------------------------------------------
 
 export function makeConfig(overrides = {}) {
@@ -313,6 +345,9 @@ export function fakeElement(tag = "div") {
     querySelectorAll(selector) {
       const want = selector.replace(/^\./, "");
       return this.children.filter((child) => String(child.className).split(" ").includes(want));
+    },
+    removeAttribute(name) {
+      delete this.attributes[name];
     },
     replaceChildren(...items) {
       this.children = [...items];
