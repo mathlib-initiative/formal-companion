@@ -453,12 +453,15 @@ test("item: a statement is clamped by the lines it wraps to, not only by its sou
     const [[, , pre, button]] = keyCards(documentRef);
     return [pre.className, button?.textContent];
   };
-  assert.deepEqual(await statement(`theorem long : ${"a + ".repeat(250)}a = a`), ["lean is-clamped", "Show all"],
-                   "one 1000-character line wraps far past fourteen lines");
-  assert.deepEqual(await statement(Array.from({ length: 14 }, (_, n) => `  h${n} : a = a`).join("\n")),
-                   ["lean", undefined], "fourteen short lines fit");
-  assert.deepEqual(await statement(Array.from({ length: 15 }, (_, n) => `  h${n} : a = a`).join("\n")),
-                   ["lean is-clamped", "Show all"]);
+  const lines = (count) => Array.from({ length: count }, (_, n) => `  h${n} : a = a`).join("\n");
+  assert.deepEqual(await statement(`theorem long : ${"a + ".repeat(400)}a = a`), ["lean is-clamped", "Show all"],
+                   "one 1600-character line wraps past twenty lines");
+  assert.deepEqual(await statement(lines(14)), ["lean", undefined], "fourteen short lines fit");
+  assert.deepEqual(await statement(lines(20)), ["lean", undefined],
+                   "a definition a few lines longer is shown whole, not clamped to hide two or three lines");
+  assert.deepEqual(await statement(lines(21)), ["lean is-clamped", "Show all"]);
+  assert.deepEqual(await statement(`structure Long where\n${lines(59)}\n  …`), ["lean is-clamped", "Show all"],
+                   "a long definition is clamped to fourteen lines");
 });
 
 test("item: a line's closing colon is kept with the word before it", async () => {
