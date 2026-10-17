@@ -20,6 +20,12 @@ Common rules:
 - A library is named by its universe-local id (`alpha`, `beta`, …); a declaration by its full Lean name. The commit is
   never written by a worker: it is the universe's.
 - No document carries `proof_status`; it is joined from the index at export.
+- A passage's kind is `passage_kind` (`cflib.vocab.PASSAGE_KINDS`). The word
+  `kind` is reserved for the finding kind (`PASSAGE`, `LOCATION`, `ABSENCE`,
+  `UNRESOLVED`) that harvest hashes into `finding_id`.
+- `location_key` is `cflib.hashing.location_key(source_id, item, library,
+  commit, declaration)`: sha256 over the five parts joined with a newline, the
+  item through `items.clean()` first, the same shape as `finding_id`.
 
 ## 1. The common header
 
@@ -47,7 +53,7 @@ document covers one source; it lives at `findings/<task-id>/<source-id>.json`.
     "span": [10234, 10612],
     "quote": {"exact": "…", "prefix": "…", "suffix": "…"},
     "section": ["Theorems"], "fragment": "Theorems",
-    "kind": "theorem", "prominence": "central", "scope": "formal_math",
+    "passage_kind": "theorem", "prominence": "central", "scope": "formal_math",
     "statement": "<informal restatement, one or two sentences>",
     "concept": null,
     "finder": "theorem_box"}],
