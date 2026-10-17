@@ -135,7 +135,7 @@ function spanBlock(t) {
 
 async function hunt(t, tagBlind) {
   const blind = tagBlind
-    ? '\nTAG-BLIND: do NOT search for @[wikidata], @[stacks] or @[kerodon] attributes, Wikipedia URLs in docstrings, or Mathlib\'s docs/1000.yaml and docs/100.yaml -- this run measures how well hunting finds a formalization WITHOUT them.'
+    ? '\nTAG-BLIND: do NOT search for @[wikidata], @[stacks] or @[kerodon] attributes, Wikipedia URLs in docstrings, or Mathlib\'s $MATHLIB/docs/1000.yaml and $MATHLIB/docs/100.yaml -- this run measures how well hunting finds a formalization WITHOUT them.'
     : ''
   const votes = await parallel(Array.from({ length: HUNTERS }, (_, k) => () =>
     agent(`${RULES}
