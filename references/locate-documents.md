@@ -444,13 +444,21 @@ A locate run is planned from a sourceset and a universe (*not implemented*:
   sends a locate run anywhere (proposal §6).
 
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
-JSON envelope per agent call, kept as a cost cross-check), `attempts/<task-id>`
-(the count of genuine reviewer rejections), `gate-log/` (one JSON line per gate
-call: task, mode, ok, the refusal reasons), and the per-user slot directory the
-bridge's 15-slot `flock` semaphore uses. The bridge reads `CF_SLOT_DIR`,
-`CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`), `CF_ATTEMPT_CAP` (3),
-`CF_TASK_MANIFESTS` (the `gate/tasks` directory) and `CF_EXTRA_TOOLS` (the
-allowlist entries for the two host tools, worker role only).
+JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
+a cost cross-check), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
+the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
+per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
+`by_rule`, `reasons`), and the per-user slot directory the bridge's 15-slot
+`flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
+`scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
+`~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
+`CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3), `CF_TASK_MANIFESTS`
+(the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the allowlist entries for the two
+host tools, worker role only) and `CF_FINDINGS_GLOB`
+(`findings/$TEND_TASK_ID/*.json` for the nested layout). A timeout exits 124 and
+an empty or 409 envelope 75, with no contribution printed, so tend retries the
+same worktree; only a `request_changes` from a call that completed counts as a
+rejection.
 
 ## 10. Harvested rows and passage outcomes
 

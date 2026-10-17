@@ -41,7 +41,23 @@
 #   CF_GATE_CMD            gate command normalize_result.py runs for the observable-state
 #                          fallback (default: python3 $CF_GATE_DIR/verify_findings.py, else
 #                          python3 scripts/verify_findings.py)
-#   CF_FINDINGS_GLOB       findings glob for that fallback (default: findings/*.json)
+#   CF_FINDINGS_GLOB       findings glob for that fallback (default: findings/*.json; a
+#                          locate run's nested layout is findings/$TEND_TASK_ID/*.json)
+#   CF_EXTRA_TOOLS         allowlist entries appended for the WORKER only (a locate run's
+#                          two host tools, Bash(python3 <gate>/corpus_search.py:*), ...)
+#   CF_SLOT_DIR, CF_SLOTS  the per-user session-slot directory and its size (default
+#                          ~/.cache/cf-agent-slots, 15): agent_call.py takes a slot with
+#                          flock before the agent call and WAITS for one (the account
+#                          allows 16 sessions per Unix user, across every root)
+#   CF_AGENT_TIMEOUT       the agent call's timeout (default 45m); an expiry, an empty
+#                          envelope and a 409 exit non-zero so tend retries the worktree:
+#                          an infrastructure failure is never a verdict
+#   CF_ATTEMPT_CAP         genuine reviewer rejections after which the task ends
+#                          UNRESOLVED (attempt_cap.py; unset or 0 = off, a locate run sets
+#                          3), with CF_TASK_MANIFESTS the gate's tasks/ directory
+# Claude's JSON envelope is KEPT, outside the worktree, under $ROOT/usage/ (one file
+# per call), for the spend watchdog and the cost cross-check; the counter is
+# $ROOT/attempts/<task-id>.json.
 # tend provides TEND_TASK_ID, TEND_WORKTREE_PATH, TEND_WORKTREE_ID; they are substituted
 # into the prompt text wherever it writes $TEND_TASK_ID etc.
 #
@@ -61,6 +77,16 @@ HOST="${CF_AGENT_HOST:-claude}"
 PROFILE="${CF_AGENTBOX_PROFILE:-${USER:-}}"
 [ -n "$PROFILE" ] || { echo "bridge-agentbox: no agentbox profile -- set CF_AGENTBOX_PROFILE" >&2; exit 78; }
 ERR="$ROOT/agentbox-$ROLE.err"
+BINDIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+for helper in agent_call.py normalize_result.py; do
+  [ -r "$BINDIR/$helper" ] || {
+    echo "bridge-agentbox: missing helper $BINDIR/$helper (cf run ships it beside the bridge)" >&2
+    exit 78; }
+done
+CAP="${CF_ATTEMPT_CAP:-0}"
+if [ "$CAP" != 0 ] && [ ! -r "$BINDIR/attempt_cap.py" ]; then
+  echo "bridge-agentbox: CF_ATTEMPT_CAP=$CAP but $BINDIR/attempt_cap.py is missing" >&2; exit 78
+fi
 
 for f in "$PROMPTS/$ROLE-system.md" "$PROMPTS/$ROLE.md"; do
   [ -r "$f" ] || { echo "bridge-agentbox: missing prompt $f" >&2; exit 66; }
@@ -124,15 +150,37 @@ else
     *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;
   esac
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)$GATE_TOOL}}"
+  # A locate worker's host tools (corpus_search.py, corpus_show.py), by absolute path.
+  [ -n "${CF_EXTRA_TOOLS:-}" ] && TOOLS="$TOOLS,$CF_EXTRA_TOOLS"
 fi
 BYPASS="${CF_ALLOW_SANDBOX_BYPASS:-0}"
 printf 'bridge-agentbox: role=%s host=%s bypass=%s tools=%s\n' \
   "$ROLE" "$HOST" "$BYPASS" "$TOOLS" >>"$ERR"
 
+# THE ATTEMPT CAP. A task a reviewer keeps rejecting used to loop until the run was
+# stopped. At the cap the worker side writes the task's UNRESOLVED documents and
+# commits them without an agent call, and the reviewer side approves exactly those
+# mechanically; exit 10 from attempt_cap.py means "not capped: call the agent".
+if [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
+  CAPPED="$(python3 "$BINDIR/attempt_cap.py" "$ROLE" --root "$ROOT" --task "$TEND_TASK_ID" \
+              --cap "$CAP" --worktree "$PWD" 2>>"$ERR")"
+  CAPRC=$?
+  if [ "$CAPRC" = 0 ]; then printf '%s\n' "$CAPPED"; exit 0; fi
+  if [ "$CAPRC" != 10 ]; then
+    echo "bridge-agentbox: the attempt cap could not end task $TEND_TASK_ID (exit $CAPRC)" >&2
+    exit 1
+  fi
+fi
+
 RESULT="$PWD/.tend/agent_result.json"
 mkdir -p "$PWD/.tend"; rm -f "$RESULT"
 RAW="$(mktemp)"
 trap 'rm -f "$RAW"' EXIT
+# agent_call.py takes a session slot (flock, waiting), runs the call under
+# CF_AGENT_TIMEOUT in its own process group, keeps the envelope under usage/ and
+# exits 124 (timeout) or 75 (empty or 409) for an infrastructure failure.
+CALL=(python3 "$BINDIR/agent_call.py" --role "$ROLE" --raw "$RAW" --err "$ERR"
+      --usage-dir "$ROOT/usage" --task-id "${TEND_TASK_ID:-}" --)
 
 if [ "$HOST" = codex ]; then
   # codex takes one prompt argument and no system-prompt flag, so the system block is
@@ -146,12 +194,15 @@ if [ "$HOST" = codex ]; then
     CODEX_ARGS+=(--sandbox "${CF_CODEX_SANDBOX:-workspace-write}")
   fi
   [ -n "${CF_MODEL:-}" ] && CODEX_ARGS+=(-m "$CF_MODEL")
-  printf '' | agentbox host codex --profile "$PROFILE" -- "${CODEX_ARGS[@]}" \
+  # agent_call.py gives the agent an empty stdin, which is what keeps codex from
+  # waiting on it (it hung the first attempt).
+  "${CALL[@]}" agentbox host codex --profile "$PROFILE" -- "${CODEX_ARGS[@]}" \
     "$SYS
 
 ---
 
-$PROMPT" >"$RAW" 2>>"$ERR"
+$PROMPT"
+  CALLRC=$?
 else
   CLAUDE_ARGS=(-p "$PROMPT" --append-system-prompt "$SYS" --output-format json)
   if [ "$BYPASS" = 1 ]; then
@@ -162,7 +213,22 @@ else
   fi
   CLAUDE_ARGS+=(--allowedTools "$TOOLS")
   [ -n "${CF_MODEL:-}" ] && CLAUDE_ARGS+=(--model "$CF_MODEL")
-  agentbox host claude --profile "$PROFILE" -- "${CLAUDE_ARGS[@]}" >"$RAW" 2>>"$ERR"
+  "${CALL[@]}" agentbox host claude --profile "$PROFILE" -- "${CLAUDE_ARGS[@]}"
+  CALLRC=$?
 fi
+case "$CALLRC" in
+  124|75|64)
+    echo "bridge-agentbox: the agent call failed as infrastructure (exit $CALLRC; see $ERR);" \
+         "no contribution reported, so tend retries this worktree" >&2
+    exit "$CALLRC" ;;
+esac
 
-python3 "$(dirname -- "${BASH_SOURCE[0]}")/normalize_result.py" "$ROLE" "$RESULT" "$RAW"
+OUT="$(python3 "$BINDIR/normalize_result.py" "$ROLE" "$RESULT" "$RAW")"
+NORMRC=$?
+printf '%s\n' "$OUT"
+if [ "$ROLE" = reviewer ] && [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
+  # Only a request_changes from a call that completed counts; attempt_cap.py checks both.
+  printf '%s' "$OUT" | python3 "$BINDIR/attempt_cap.py" record --root "$ROOT" \
+    --task "$TEND_TASK_ID" --raw "$RAW" >/dev/null 2>>"$ERR" || true
+fi
+exit "$NORMRC"

@@ -118,6 +118,20 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- Bridge hardening (proposal §6). `scripts/run/agent_call.py` runs every
+  agent call of `bridge-agentbox.sh` and `bridge-claude-p.sh` inside one of 15
+  per-user `flock` session slots (`CF_SLOT_DIR`, `CF_SLOTS`), waiting for a
+  free one rather than failing, under `CF_AGENT_TIMEOUT` (45 minutes) in its own
+  process group; a timeout exits 124 and an empty or 409 envelope 75, with no
+  contribution printed, so tend retries the worktree. Claude's JSON envelope is
+  kept under `<tend-root>/usage/` instead of being deleted.
+  `scripts/run/attempt_cap.py` counts genuine reviewer rejections per task under
+  `<tend-root>/attempts/`; at `CF_ATTEMPT_CAP` the worker bridge writes and
+  commits the task's schema-valid `UNRESOLVED` documents (`unresolved.by:
+  attempt_cap`) without an agent call and the reviewer bridge approves exactly
+  those mechanically. `CF_EXTRA_TOOLS` reaches the worker's allowlist,
+  `CF_FINDINGS_GLOB` may name the task, and `cf run` ships any bridge helper a
+  staged `bin/` lacks.
 - The locate gate, `scripts/gate/verify_locate.py` (proposal §4): rules 1-8 out
   of tree over only the task's own documents — the change set's
   `findings/<task-id>/<source-id>.json`, or `--findings` — loading only the

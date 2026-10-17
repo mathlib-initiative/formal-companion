@@ -48,7 +48,8 @@ READONLY_CHMOD = ["--chmod=D0555,F0444"]
 BYPASS_ENV = "CF_ALLOW_SANDBOX_BYPASS"
 #: the only files of scripts/run/ that belong on the server
 BRIDGE_FILES = ("bridge-agentbox.sh", "bridge-claude-p.sh", "bridge-tend-agent.sh",
-                "normalize_result.py", "extract_final_json.py")
+                "normalize_result.py", "extract_final_json.py", "agent_call.py",
+                "attempt_cap.py")
 #: never ship build trees, git objects or editor droppings to the server.
 SOURCE_EXCLUDES = [".git", ".lake", "build", ".DS_Store", "__pycache__", "*.olean"]
 #: a tend worktree per ready task: 382 worktrees were 1.1 GB in 11 minutes.
@@ -417,6 +418,18 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
         entries.append(_entry("bridges", [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES],
                               f"{root}/{names['tend_root']}/bin/",
                               note="agent bridges + the StrictModel coercion"))
+    else:
+        # A plan that staged a bridge may predate a helper the bridge now calls
+        # (agent_call.py takes the session slot and the timeout): ship what bin/
+        # lacks, so a staged bridge never runs without its own hardening.
+        missing_helpers = [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES
+                           if not (tend_root / "bin" / n).exists()
+                           and (skill_dir / "scripts" / "run" / n).exists()]
+        if missing_helpers:
+            entries.append(_entry("bridge-helpers", missing_helpers,
+                                  f"{root}/{names['tend_root']}/bin/",
+                                  note="bridge helpers the staged bin/ lacks (slots, timeout, "
+                                       "attempt cap, watchdog)"))
 
     if include_sources:
         pinned = recorded_tree_digests(run)
