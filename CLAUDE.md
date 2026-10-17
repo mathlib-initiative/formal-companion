@@ -59,6 +59,10 @@ scripts/annotations/ the skill's tooling around the legacy format, not a stage:
                      sync_format.py, which vendors a release; the legacy format
                      itself (schema, checker, id rules) is
                      vendor/formal_companion_annotations/
+scripts/corpus/      locate's universes (`cf corpus`): the host probe drivers and the two
+                     host tools, stdlib-only with no cflib, plus universe.yaml, ingest,
+                     corpus.sqlite and its read API; templates/corpus/ holds the probe
+                     and its acceptance canary (references/locate-documents.md §8)
 scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites

@@ -278,30 +278,48 @@ corpora/<universe>/index/<library>/decls.jsonl
 corpora/<universe>/corpus.sqlite                  derived, rebuildable
 ```
 
-`universe.yaml` is the proposal's §2.3 shape. Each library carries `id` (the
-universe-local id a document names as `library`), `brain_lib`, `repo`, a 40-hex
-`commit`, `toolchain`, `roots`, `licence` and `index: {path, sha256,
-declarations}`; `excluded` lists `{id, reason}`. **`universe_sha256`** is
-sha256 over the lines `<id>\t<commit>\t<index sha256>`, one per library sorted
-by id, joined with `\n` — so a re-probe that changes one index changes the
-universe.
+`universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
+(`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
+a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,
+`toolchain`, `roots`, `licence`, `conventions` and, once ingested, `index: {path,
+sha256, declarations}`; `excluded` lists `{id, reason}`; `canaries` lists, per
+toolchain, the acceptance canary's result (`{toolchain, lean_version, passed,
+checked, index_sha256, cases}`) — no library on a toolchain without a passed
+canary is ingested; `corpus_db` is `{path, sha256, built, declarations,
+universe_sha256}` once `corpus.sqlite` is built, and `null` again as soon as an
+index changes. **`universe_sha256`** is sha256 over the lines `<id>\t<commit>\t<index
+sha256>`, one per library sorted by id (an empty index sha before ingest), joined
+with `\n` — so a re-probe that changes one index changes the universe.
 
 **A normalised index** (`decls.jsonl`, sorted by name; its sha256 is
 `index.sha256`) holds one declaration per line:
 
 ```json
 {"name": "Widget.exists_spanning_gadget", "module": "Alpha.Widget",
- "path": "Alpha/Widget.lean", "line": 612, "end_line": 640, "kind": "theorem",
- "proof_status": "proved", "statement": false, "printable": true,
+ "path": "Alpha/Widget.lean", "line": 612, "start_line": 610, "end_line": 640,
+ "kind": "theorem", "proof_status": "proved", "statement": false, "printable": true,
  "signature": "∀ (w : Widget), ∃ g, g.Spans w", "docstring": "…",
- "axioms": ["propext"], "tags": [{"tag": "wikidata", "value": "Q99999001"}],
- "deprecated": null}
+ "axioms": [], "tags": [{"tag": "wikidata", "value": "Q99999001"}],
+ "deprecated": null, "probe_proof_status": "proved", "flags": []}
 ```
 
 `proof_status` is `cflib.vocab.decide_proof_status` over the probe's wrapper,
-its axiom closure and its type — re-decided at ingest, never copied from a
-probe — and `statement` is set on a `Prop`-valued definition. `tags` use
-`cflib.vocab.TAG_KINDS`.
+its axiom closure and its type — re-decided at ingest (`scripts/corpus/ingest.py`),
+never copied from a probe, whose own answer is kept as `probe_proof_status`
+because the probe as run decides in another order (an axiom by its kind first,
+no `axiom_dependent`, an `isProp` failure falling through to `proved`). `axioms`
+is the closure outside `propext`, `Classical.choice` and `Quot.sound` (`sorryAx`
+included; an axiom declaration's closure holds itself). A declaration whose
+status would turn on an `isProp` the probe could not compute is the conservative
+`statement_only` with `is_prop_unknown` in `flags`; a published index's status
+word, taken without a closure, carries `published_status`. `statement` is set on
+a `Prop`-valued definition — derived, while the probe emits no such field, from
+a `def`/`abbrev`/`opaque` whose printed type's final codomain is `Prop`. `tags`
+use `cflib.vocab.TAG_KINDS`: attributes in the source span from `start_line` to
+`line` (read from a checkout given to the ingest) and Wikipedia URLs in the
+docstring. `manifest.json` (`schema: cf-library-index/1`) carries the library,
+commit, toolchain, declaration count, `sha256` of `decls.jsonl`, the counts by
+proof status and kind, the flagged and tag counts, and the probe output's shas.
 
 **`corpus.sqlite`** (built with `journal_mode=DELETE`, opened everywhere else
 with `mode=ro&immutable=1`; its sha256 is recorded in `gate.json`):
@@ -326,9 +344,10 @@ CREATE INDEX tags_by_value ON tags (tag, value);
 lowercased and joined by spaces, so `Widget.exists_spanning_gadget` is found by
 `spanning gadget`. A declaration present in two libraries is two rows.
 
-**The host tools** (*not implemented*: *scripts/corpus/corpus_search.py* and
-*scripts/corpus/corpus_show.py*) are standard-library scripts copied into the
-gate directory, which the prompts name by absolute path:
+**The host tools** (`scripts/corpus/corpus_search.py` and
+`scripts/corpus/corpus_show.py`) are standard-library scripts copied into the
+gate directory — both together: `corpus_show.py` imports its helpers from its
+sibling — which the prompts name by absolute path:
 
 ```
 python3 <gate>/corpus_search.py --db <corpus.sqlite> [--library L] [--limit N] <query words…>
@@ -336,8 +355,14 @@ python3 <gate>/corpus_show.py --db <corpus.sqlite> <library> <declaration>
 ```
 
 Both print JSON lines (`library`, `declaration`, `module`, `path`, `line`,
-`end_line`, `kind`, `signature`; `corpus_show.py` adds `docstring` and `tags`),
-read nothing but the database and write nothing.
+`end_line`, `kind`, `signature`; `corpus_search.py` adds its `score`,
+`corpus_show.py` adds `docstring` and `tags`, and neither shows a proof status),
+read nothing but the database and write nothing. The query is split into words,
+each quoted and the words OR-ed, so nothing a worker types reaches FTS5's own
+syntax; results are ranked by `bm25` with the name weighted over the signature
+over the docstring. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
+(bad arguments), 3 (the database could not be read — a host problem). The
+workspace side reads the same database through `scripts/corpus/query.py`.
 
 ## 9. A locate run on disk
 
