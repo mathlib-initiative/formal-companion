@@ -198,6 +198,12 @@ export function targetHref(target, baseUrl, pageOrigin) {
   return null;
 }
 
+/** A page of this site that `href` (relative to `siteUrl`) names, or null: a token links nowhere else. */
+export function siteHref(href, siteUrl, pageOrigin) {
+  const resolved = targetHref(href, siteUrl, pageOrigin);
+  return resolved && new URL(resolved).origin === pageOrigin ? resolved : null;
+}
+
 /** A Lean module's rendered page relative to the site root: `A/B/C/index.html` for `A.B.C`. */
 export function modulePage(module) {
   const name = text(module);
@@ -219,19 +225,35 @@ export function versoFragment(declaration) {
  * is the site root, where the rendered pages and the annotation directory are.
  */
 export function cardHref(end, siteUrl, pageOrigin) {
-  const ext = extensionOf(end);
-  const destination = isObject(ext.destination) ? ext.destination : null;
-  if (!destination) {
-    return null;
-  }
-  const location = isObject(end.location) ? end.location : {};
-  const page = typeof destination.href === "string" ? destination.href : modulePage(location.module);
+  const destination = cardDestination(end);
+  return destination ? targetHref(destination.fragment
+    ? `${destination.page}#${encodeURIComponent(destination.fragment)}` : destination.page, siteUrl, pageOrigin)
+    : null;
+}
+
+/** `{page, fragment}` of a card's rendered page, before resolution, or null; "" for no fragment. */
+function cardDestination(end) {
+  const destination = isObject(extensionOf(end).destination) ? extensionOf(end).destination : null;
+  const location = isObject(end?.location) ? end.location : {};
+  const page = !destination ? null
+    : typeof destination.href === "string" ? destination.href : modulePage(location.module);
   if (!page) {
     return null;
   }
   const fragment = destination.resolution !== "exact" ? ""
     : typeof destination.fragment === "string" ? destination.fragment : versoFragment(location.declaration) ?? "";
-  return targetHref(fragment ? `${page}#${encodeURIComponent(fragment)}` : page, siteUrl, pageOrigin);
+  return { fragment, page };
+}
+
+/**
+ * `<page>#<fragment>` of a card's rendered page when it has an anchor, or
+ * null: the key `verso.json` files the card's statement under. The page is
+ * as `cardHref` reads it, relative to the site root; `tools/verso_extract.py`
+ * builds the same key.
+ */
+export function cardTarget(end) {
+  const destination = cardDestination(end);
+  return destination?.fragment ? `${destination.page}#${destination.fragment}` : null;
 }
 
 // --- the configuration ------------------------------------------------------
@@ -608,6 +630,7 @@ function card(record, end, context) {
     resolution: text(destination?.resolution),
     role: text(end.role),
     snippet,
+    target: ours ? cardTarget(end) : null,
     verdict,
   };
 }
@@ -1100,4 +1123,136 @@ export function leanTokens(source) {
     }
   }
   return runs;
+}
+
+// --- Verso statements and hovers --------------------------------------------
+
+/** `build_site.py` writes it beside the bundle, from the built site (docs/overlay.md section 5). */
+export const VERSO_URL = "../verso.json";
+export const VERSO_SCHEMA = "formal-companion/overlay-verso";
+/** The run kinds `tools/verso_extract.py` writes; any other is plain text. */
+export const RUN_KINDS = Object.freeze(["tx", "kw", "cm", "el", "const", "var", "sort", "lit"]);
+
+function positiveInteger(value) {
+  return Number.isInteger(value) && value > 0 ? value : null;
+}
+
+/** One run `[kind, text, hover, binding, href]`, every member checked; null when it is not one. */
+function readRun(run, hovers) {
+  if (!Array.isArray(run) || typeof run[0] !== "string" || typeof run[1] !== "string" || !run[1]) {
+    return null;
+  }
+  const hover = Number.isInteger(run[2]) && run[2] >= 0 ? run[2] : null;
+  return [RUN_KINDS.includes(run[0]) ? run[0] : "tx", run[1],
+          hover !== null && hovers.has(String(hover)) ? String(hover) : null,
+          positiveInteger(run[3]), typeof run[4] === "string" && run[4] ? run[4] : null];
+}
+
+/**
+ * `verso.json`: each card target's statements as runs, and the hover entries
+ * they use, `{signature, doc}` as plain text. A statement with a run that does
+ * not read is dropped, never repaired; a file that is not one is null, and the
+ * cards keep their plain statements.
+ */
+export function readVerso(raw) {
+  if (!isObject(raw) || raw.schema !== VERSO_SCHEMA || raw.schema_version !== 1
+      || !isObject(raw.statements) || !isObject(raw.hovers)) {
+    return null;
+  }
+  const hovers = new Map();
+  for (const [id, entry] of Object.entries(raw.hovers)) {
+    const signature = isObject(entry) && typeof entry.signature === "string" ? entry.signature : "";
+    const doc = isObject(entry) && typeof entry.doc === "string" ? entry.doc : "";
+    if (/^\d+$/.test(id) && (signature || doc)) {
+      hovers.set(id, { doc, signature });
+    }
+  }
+  const statements = new Map();
+  for (const [target, alternatives] of Object.entries(raw.statements)) {
+    const read = asArray(alternatives).map((runs) => {
+      const list = Array.isArray(runs) ? runs.map((run) => readRun(run, hovers)) : [null];
+      return list.length && list.every(Boolean) ? list : null;
+    }).filter(Boolean);
+    if (read.length) {
+      statements.set(target, read);
+    }
+  }
+  return { hovers, statements };
+}
+
+/**
+ * A card's statement as Verso runs, or null. Only a statement whose texts
+ * joined are the card's snippet, exactly, is used, so a stale `verso.json`
+ * never changes what a card says.
+ */
+export function versoRuns(verso, card) {
+  const source = card?.snippet?.text;
+  const alternatives = card?.target && typeof source === "string" ? verso?.statements?.get(card.target) : null;
+  return asArray(alternatives).find((runs) => runs.map((run) => run[1]).join("") === source) ?? null;
+}
+
+/** A run's hover: its entry's signature, a variable's as `name : type`, and its docstring; or null. */
+export function hoverText(verso, run) {
+  const entry = Array.isArray(run) && run[2] ? verso?.hovers?.get(run[2]) : null;
+  if (!entry) {
+    return null;
+  }
+  const signature = entry.signature && run[0] === "var" ? `${run[1].trim()} : ${entry.signature}` : entry.signature;
+  return { doc: entry.doc, signature };
+}
+
+const LIST_ITEM = /^\s*(?:[-*+]|\d+[.)])\s/;
+
+/** Inline code in a docstring's paragraph: `[["tx" | "code", text], ...]`. */
+function inlineCode(paragraph) {
+  const parts = [];
+  let rest = paragraph;
+  for (let match = /(`+)([\s\S]*?[^`])\1(?!`)/.exec(rest); match; match = /(`+)([\s\S]*?[^`])\1(?!`)/.exec(rest)) {
+    if (match.index) {
+      parts.push(["tx", rest.slice(0, match.index)]);
+    }
+    parts.push(["code", match[2].trim() || match[2]]);
+    rest = rest.slice(match.index + match[0].length);
+  }
+  if (rest) {
+    parts.push(["tx", rest]);
+  }
+  return parts;
+}
+
+/**
+ * A docstring's Markdown as plain blocks: `{code: true, parts}` for a fenced
+ * block, else a paragraph of text and inline code. A paragraph's lines are
+ * joined with spaces, except that a list item starts a line of its own.
+ * Nothing else is interpreted: what is not code is shown as written.
+ */
+export function docBlocks(markdown) {
+  const blocks = [];
+  let paragraph = [];
+  const flush = () => {
+    if (paragraph.length) {
+      const joined = paragraph.map((line, index) => (index && LIST_ITEM.test(line) ? `\n${line.trim()}`
+        : `${index ? " " : ""}${line.trim()}`)).join("");
+      blocks.push({ code: false, parts: inlineCode(joined) });
+    }
+    paragraph = [];
+  };
+  const lines = (typeof markdown === "string" ? markdown : "").split("\n");
+  for (let at = 0; at < lines.length; at += 1) {
+    const fence = /^\s*(```+|~~~+)/.exec(lines[at]);
+    if (fence) {
+      flush();
+      const body = [];
+      for (at += 1; at < lines.length && !lines[at].trim().startsWith(fence[1]); at += 1) {
+        body.push(lines[at]);
+      }
+      blocks.push({ code: true, parts: [["code", body.join("\n")]] });
+    } else if (lines[at].trim()) {
+      paragraph.push(lines[at]);
+    } else {
+      flush();
+    }
+  }
+  flush();
+  return blocks;
 }
