@@ -1,0 +1,269 @@
+"""The locate wave-2 contract: the values, paths and helpers every locate package shares.
+
+New code, for references/locate-documents.md sections 7-11 and the values
+references/vocabulary.md section 1.11 adds for them.  The sources, corpus,
+planner, gate and bench packages are built against these definitions on
+separate branches, so the tests pin the definitions themselves: every new
+value documented, ``location_key``'s parts and refusals, the workspace paths,
+and the stdlib head-text helper the gate carries -- in lockstep with
+``cflib.passages``, as ``verify_findings.finding_id`` is with
+``cflib.hashing.finding_id``.
+"""
+from __future__ import annotations
+
+try:
+    import _hermetic  # noqa: F401
+except ImportError:  # pragma: no cover
+    from tests import _hermetic  # noqa: F401
+
+import hashlib
+import shutil
+import sys
+import tempfile
+import unittest
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+SKILL = HERE.parent
+SCRIPTS = SKILL / "scripts"
+if str(SCRIPTS) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS))
+
+from cflib import hashing, items, passages, vocab  # noqa: E402
+from cflib.errors import CfError, PassageIdError  # noqa: E402
+from cflib.paths import WorkspacePaths  # noqa: E402
+from gate import locate_text as lt  # noqa: E402
+
+VOCABULARY_MD = (SKILL / "references" / "vocabulary.md").read_text(encoding="utf-8")
+DOCUMENTS_MD = (SKILL / "references" / "locate-documents.md").read_text(encoding="utf-8")
+
+
+def _scratch(case: unittest.TestCase) -> Path:
+    path = Path(tempfile.mkdtemp())
+    case.addCleanup(shutil.rmtree, path, ignore_errors=True)
+    return path
+
+
+class TestTheDocumentValues(unittest.TestCase):
+
+    def test_the_sets(self):
+        self.assertEqual(vocab.LOCATE_OUTCOMES, {"located", "absent", "unresolved"})
+        self.assertEqual(vocab.OUTCOME_KIND, {"located": "LOCATION", "absent": "ABSENCE",
+                                              "unresolved": "UNRESOLVED"})
+        self.assertEqual(set(vocab.OUTCOME_KIND.values()), vocab.LOCATE_OUTCOME_KINDS)
+        self.assertEqual(vocab.FINDERS, {"theorem_box", "bold_definition", "lead", "model"})
+        self.assertNotIn("model", vocab.DETERMINISTIC_FINDERS)
+        self.assertEqual(vocab.CHALLENGE_ACTIONS, vocab.CHALLENGE_KEEP | vocab.CHALLENGE_CHANGE)
+        self.assertFalse(vocab.CHALLENGE_KEEP & vocab.CHALLENGE_CHANGE)
+        self.assertEqual(vocab.CANDIDATE_VIA, {"wikidata_tag", "mathlib_1000", "mathlib_100",
+                                               "docstring_url", "library_metadata"})
+        self.assertEqual(vocab.MIN_ABSENCE_QUERIES, 3)
+        self.assertEqual(vocab.MAX_PASSAGES_PER_LOCATE_TASK, 8)
+        self.assertEqual((vocab.EXPORT_QUOTE_WORDS, vocab.EXPORT_CONTEXT_CHARS), (12, 32))
+        self.assertEqual(vocab.BENCH_ARMS, {"assisted", "blind"})
+        self.assertIn("E-MEMORY", vocab.ERROR_CODES)
+
+    def test_every_value_is_documented_in_the_vocabulary(self):
+        """CLAUDE.md S4: a new value is a change to vocab.py AND references/vocabulary.md."""
+        values = (vocab.LOCATE_OUTCOMES | vocab.FINDERS | vocab.CONFIDENCES
+                  | vocab.CANDIDATE_VERDICTS | vocab.CANDIDATE_VIA | vocab.TAG_KINDS
+                  | vocab.CHALLENGE_TARGETS | vocab.CHALLENGE_ACTIONS | vocab.BENCH_TIERS
+                  | vocab.BENCH_ARMS | vocab.BENCH_SPLITS | vocab.FNF_CAUSES | vocab.ERROR_CODES
+                  | {vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML,
+                     vocab.UNRESOLVED_ATTEMPT_CAP})
+        for value in sorted(values):
+            with self.subTest(value=value):
+                self.assertIn(f"`{value}`", VOCABULARY_MD)
+
+    def test_the_documents_name_the_values_they_carry(self):
+        for value in (vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML, "cf-sourceset/1",
+                      "cf-corpus/1", "cf-gate-locate/1", "cf-layer-map/1",
+                      "cf-locate-candidates/1", "cf-locate-recordset/1"):
+            with self.subTest(value=value):
+                self.assertIn(value, DOCUMENTS_MD)
+
+
+class TestTheLocationKey(unittest.TestCase):
+
+    def test_it_is_five_parts_joined_by_newlines_with_the_item_cleaned(self):
+        key = hashing.location_key("enwiki-1001-2002", "In-text   #3fa91c07", "alpha",
+                                   "a" * 40, "Widget.exists_spanning_gadget")
+        payload = "\n".join(["enwiki-1001-2002", "In-text #3fa91c07", "alpha", "a" * 40,
+                             "Widget.exists_spanning_gadget"])
+        self.assertEqual(key, hashlib.sha256(payload.encode("utf-8")).hexdigest())
+
+    def test_it_holds_no_run_and_differs_from_the_defect_key(self):
+        args = ("enwiki-1001-2002", "In-text #3fa91c07", "alpha", "a" * 40, "W.x")
+        spaced = (args[0], "In-text  #3fa91c07", *args[2:])
+        self.assertEqual(hashing.location_key(*spaced), hashing.location_key(*args))
+        self.assertNotEqual(hashing.location_key(*args),
+                            hashing.defect_key(args[0], args[1], "LOCATION",
+                                               ["alpha:W.x@" + "a" * 40]))
+        self.assertNotEqual(hashing.location_key(*args),
+                            hashing.location_key(args[0], args[1], "beta", args[3], args[4]))
+
+    def test_a_missing_part_is_refused(self):
+        for index in range(5):
+            parts = ["enwiki-1001-2002", "In-text #3fa91c07", "alpha", "a" * 40, "W.x"]
+            parts[index] = "  "
+            with self.subTest(part=index), self.assertRaises(CfError):
+                hashing.location_key(*parts)
+
+
+class TestTheLocatePaths(unittest.TestCase):
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.paths = WorkspacePaths(self.root)
+
+    def test_the_layout(self):
+        p = self.paths
+        self.assertEqual(p.sourceset_manifest("wpm", 3), self.root / "sourcesets/wpm/manifest-3.jsonl")
+        self.assertEqual(p.sourceset_source_dir("wpm", "enwiki-1001-2002"),
+                         self.root / "sourcesets/wpm/sources/enwiki-1001-2002")
+        self.assertEqual(p.candidates_json("wpm", "u1", "enwiki-1001-2002"),
+                         self.root / "sourcesets/wpm/candidates/u1/enwiki-1001-2002.json")
+        self.assertEqual(p.universe_yaml("u1"), self.root / "corpora/u1/universe.yaml")
+        self.assertEqual(p.universe_index_dir("u1", "alpha"), self.root / "corpora/u1/index/alpha")
+        self.assertEqual(p.corpus_db("u1"), self.root / "corpora/u1/corpus.sqlite")
+        self.assertEqual(p.export_dir("set-1"), self.root / "exports/set-1")
+        self.assertEqual(p.campaign_yaml("c1"), self.root / "campaigns/c1/campaign.yaml")
+        self.assertEqual(p.locate_outcomes_jsonl("r1"),
+                         self.root / "reports/locate-outcomes.r1.jsonl")
+        self.assertNotEqual(p.corpora_dir, p.corpus_dir)
+
+    def test_the_source_text_is_under_a_directory_the_workspace_ignores(self):
+        from cfcmd.init import GITIGNORE
+
+        self.assertIn("\nsources/\n", GITIGNORE)
+        self.assertEqual(self.paths.sourceset_source_dir("wpm", "enwiki-1-2").parent.name, "sources")
+        self.assertIn("corpora/*/corpus.sqlite", GITIGNORE)
+
+    def test_the_manifests_are_listed_in_version_order(self):
+        directory = self.paths.sourceset_dir("wpm")
+        directory.mkdir(parents=True)
+        for name in ("manifest-10.jsonl", "manifest-2.jsonl", "manifest-1.jsonl",
+                     "manifest-01.jsonl", "manifest-x.jsonl"):
+            (directory / name).write_text("{}\n", encoding="utf-8")
+        self.assertEqual([n for n, _ in self.paths.sourceset_manifests("wpm")], [1, 2, 10])
+        self.assertEqual(self.paths.sourceset_manifests("missing"), [])
+
+    def test_unsafe_ids_and_versions_are_refused(self):
+        for bad in ("../x", "/etc", "", "a/b"):
+            with self.subTest(bad=bad), self.assertRaises(CfError):
+                self.paths.sourceset_source_dir("wpm", bad)
+            with self.subTest(bad=bad), self.assertRaises(CfError):
+                self.paths.universe_dir(bad)
+        for version in (0, -1, True, "3"):
+            with self.subTest(version=version), self.assertRaises(CfError):
+                self.paths.sourceset_manifest("wpm", version)
+
+
+LAYER = ("A widget is spanning when every gadget meets it. Theorem. Let "
+         "G{\\displaystyle G} be a finite widget of order n{\\displaystyle n}; "
+         "then G{\\displaystyle G} has a spanning gadget whose size divides n "
+         "and every two such gadgets are conjugate under the widget group action.")
+
+
+def _formulas(layer: str) -> list[dict]:
+    out, at = [], 0
+    for text in ("G{\\displaystyle G}", "n{\\displaystyle n}", "G{\\displaystyle G}"):
+        a = layer.index(text, at)
+        out.append({"span": [a, a + len(text)], "alttext": text[1:]})
+        at = a + len(text)
+    return out
+
+
+class TestTheHeadText(unittest.TestCase):
+
+    def setUp(self):
+        self.map = lt.HeadMap(LAYER, _formulas(LAYER))
+
+    def test_formulas_become_tokens(self):
+        self.assertIn("Let ⟦G⟧ be a finite widget of order ⟦n⟧;", self.map.head)
+        self.assertNotIn("displaystyle", self.map.head)
+
+    def test_offsets_round_trip_outside_formulas_and_are_refused_inside(self):
+        for word in ("Theorem.", "be a finite", "has a spanning", "conjugate"):
+            layer_at = LAYER.index(word)
+            head_at = self.map.to_head(layer_at)
+            self.assertEqual(self.map.head[head_at:head_at + len(word)], word)
+            self.assertEqual(self.map.to_layer(head_at), layer_at)
+        start = _formulas(LAYER)[0]["span"][0]
+        self.assertEqual(self.map.head[self.map.to_head(start)], "⟦")
+        with self.assertRaises(lt.HeadError):
+            self.map.to_head(start + 1)
+        with self.assertRaises(lt.HeadError):
+            self.map.to_layer(self.map.to_head(start) + 1)
+        self.assertEqual(self.map.to_head(len(LAYER)), len(self.map.head))
+
+    def test_bad_formula_lists_are_refused(self):
+        for formulas in ([{"span": [5, 5], "alttext": "x"}],
+                         [{"span": [5, 9], "alttext": "x"}, {"span": [8, 12], "alttext": "y"}],
+                         [{"span": [0, len(LAYER) + 1], "alttext": "x"}],
+                         [{"alttext": "x"}]):
+            with self.subTest(formulas=formulas), self.assertRaises(lt.HeadError):
+                lt.HeadMap(LAYER, formulas)
+
+    def test_the_tokens_are_cflib_passages_own(self):
+        for alttext in ("{\\displaystyle G}", " x ", "{\\displaystyle {x}}", "{\\mathcal {P}}(X)",
+                        "{a\\}", "{a}{b}", "\\displaystyle\\alpha", "ｘ　+ 1"):
+            with self.subTest(alttext=alttext):
+                self.assertEqual(lt.normalize_alttext(alttext), passages.normalize_alttext(alttext))
+                self.assertEqual(lt.formula_token(alttext), passages.formula_token(alttext))
+
+
+class TestThePassageIdsAreInLockstep(unittest.TestCase):
+
+    def heads(self):
+        head = lt.HeadMap(LAYER, _formulas(LAYER)).head
+        starts = [0, head.index("Theorem."), head.index("Let"), head.index("then"),
+                  head.index("and every")]
+        return head, starts
+
+    def test_assign_and_hex_agree_with_cflib(self):
+        head, starts = self.heads()
+        mine = lt.assign_ids(head, starts)
+        theirs = passages.assign_passage_ids(head, starts)
+        self.assertEqual(mine, [(h.start, h.hex, h.head_words) for h in theirs])
+        for start, digest, words in mine:
+            self.assertEqual(lt.hex_at(head, start, words), digest)
+            self.assertEqual(passages.hex_at(head, start, words), digest)
+            self.assertEqual(items.passage_item(digest), f"In-text #{digest}")
+
+    def test_a_shared_prefix_extends_both_heads_in_both(self):
+        common = " ".join(f"w{i}" for i in range(14))
+        head = f"{common} alpha tail. {common} beta tail."
+        starts = [0, head.index(common, 1)]
+        mine = lt.assign_ids(head, starts)
+        self.assertEqual(mine, [(h.start, h.hex, h.head_words)
+                                for h in passages.assign_passage_ids(head, starts)])
+        self.assertEqual([w for _s, _h, w in mine], [15, 15])
+
+    def test_the_refusals_are_the_same(self):
+        head, starts = self.heads()
+        twin = " ".join(f"w{i}" for i in range(45))
+        for bad_head, bad_starts in ((head, [starts[0], starts[0]]), (head, [1]),
+                                     (head, [len(head) + 5]), (f"{twin} {twin}", [0, len(twin) + 1])):
+            with self.subTest(starts=bad_starts):
+                with self.assertRaises(lt.HeadError):
+                    lt.assign_ids(bad_head, bad_starts)
+                with self.assertRaises(PassageIdError):
+                    passages.assign_passage_ids(bad_head, bad_starts)
+        with self.assertRaises(lt.HeadError):
+            lt.hex_at(head, 0, 41)
+
+
+class TestFindQuote(unittest.TestCase):
+
+    def test_exact_with_context(self):
+        text = "a gadget meets it. a gadget meets them."
+        self.assertEqual(lt.find_quote(text, "a gadget meets"), [0, 19])
+        self.assertEqual(lt.find_quote(text, "gadget meets", prefix="a ", suffix=" them"), [21])
+        self.assertEqual(lt.find_quote(text, "gadget  meets"), [])
+        self.assertEqual(lt.find_quote(text, ""), [])
+        self.assertEqual(lt.find_quote("aaa", "aa"), [0, 1])
+
+
+if __name__ == "__main__":
+    unittest.main()
