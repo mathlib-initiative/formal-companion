@@ -65,6 +65,14 @@ release has something to say.
   cannot locate (`snippets_unlocated`).
   The adapter now needs the ledger, and its key hashes the Lean it cuts from
   (`snippet_files_sha` for `snippets_sha`).
+- A definition's snippet (`def`, `abbrev`, `instance`, `structure`, `class`,
+  `inductive`, `opaque`) is the whole declaration, up to the next command and
+  at most 60 lines; a theorem's is still its statement through the `:=` of
+  its proof, now past a `:=` in brackets, a comment, a string, a `let` or a
+  `have`. A field's snippet keeps the lines that continue its type. A
+  declaration with an attribute or an instance priority on its line is
+  located, one inside a comment is not, and a `mutual` block's `end` keeps
+  the namespace. The viewer clamps a statement only past 20 lines, to 14.
 - The vendored annotation format is the release candidate
   `formal-companion-annotations v1.0.0rc2` (identifier
   `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).
@@ -110,6 +118,25 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- Verso hovers in the overlay viewer. `build_site.py` cuts each card's
+  statement out of the built site's Verso pages (`tools/verso_extract.py`),
+  a tagged example's by its tag comment on its module's page, and writes
+  `<mount>/verso.json`: the snippet as runs with Verso's token kinds,
+  bindings and links to a declaration's own anchor on the site, and the
+  hover entries they use. The viewer draws a key card's matching statement
+  from its runs, with its own hover card built with `textContent` (pointer,
+  keyboard focus and tap; the pointer may move onto it; PageDown and PageUp
+  scroll it; Escape or a click elsewhere closes it); the CSP is unchanged.
+  A site with no Verso page, or a card with no matching statement, keeps the
+  plain snippet.
+- A companion whose site has no Verso pages can commit `pdf-overlay/verso.json`,
+  written by `tools/verso_extract.py --pages` from a Verso build of its project
+  made elsewhere: cards found by module and declaration (`xref.json`, else
+  Verso's slug), no links, and the build's commit and Verso revision recorded.
+  `build_site.py` publishes it for such a site, dropping each statement that no
+  longer joins to its card's snippet, and refuses it when no card pins its
+  build's commit; the receipt says where `verso.json` came from. `sync` leaves
+  the file alone; `check_generated.py` checks its form and commit.
 - `display.minimal` in `overlay.config.json` (default `false`): the viewer
   keeps the passage, its links and their statements, and leaves out what
   describes them: the status chip (still read by a screen reader, and back in

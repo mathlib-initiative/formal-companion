@@ -79,6 +79,10 @@ DELIBERATE = (
     "the site source's title and retrieved_at come from the page manifest, not from the build's file times",
     "an equation's title (measure_theory: equation-1.2 and equation-1.3) carries title_source producer: a book "
     "prints an equation by its number alone, and the prototype's missing field read as the book's words",
+    "a definition's snippet (measure_theory) is the whole declaration up to the next command, at most 60 lines, "
+    "where the prototype's was its first 14 lines and could run into the next declaration's comment; a theorem's "
+    "runs to its proof's := past one in a named argument, a structure instance, a let or a have, and a field's "
+    "keeps the lines that continue its type",
 )
 
 
@@ -1922,7 +1926,7 @@ class TestTheReferencesAreWhatTheyClaim(unittest.TestCase):
                                                     "unattributed")},
                          {"items": 651, "declarations": 1544, "links": 1169, "locations": 2201,
                           "destinations": 1544, "unattributed": 377})
-        self.assertEqual(len(DELIBERATE), 4)
+        self.assertEqual(len(DELIBERATE), 5)
 
 
 if __name__ == "__main__":                                       # pragma: no cover

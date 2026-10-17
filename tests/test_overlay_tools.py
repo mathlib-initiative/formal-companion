@@ -190,7 +190,7 @@ class Companion:
             "export const overlay = true;\n", encoding="utf-8")
         (self.overlay / "vendor" / "pdfjs" / "LICENSE").write_text(
             "fixture licence\n", encoding="utf-8")
-        for name in ("serve", "build_site", "overlay_annotations"):
+        for name in ("serve", "build_site", "overlay_annotations", "verso_extract"):
             shutil.copy2(TOOLS / f"{name}.py", self.overlay / "tools" / f"{name}.py")
         shutil.copytree(SKILL / "vendor" / "literature_links", self.overlay / "tools" / "literature_links",
                         ignore=shutil.ignore_patterns("__pycache__"))
@@ -248,13 +248,17 @@ class Companion:
             "object": [],
         }
 
-    def write_document(self, **source_overrides) -> Path:
+    def write_document(self, objects: list | None = None, **source_overrides) -> Path:
         """The annotation file, the bundle and the `GENERATED.json` that records them."""
         path = self.root / FILE
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(overlay_shards.annotation_bytes(self.record_value(**source_overrides)))
+
+        def value() -> dict:
+            return dict(self.record_value(**source_overrides), **({"object": objects} if objects else {}))
+
+        path.write_bytes(overlay_shards.annotation_bytes(value()))
         files = {FILE: path.read_bytes()}
-        bundle = overlay_sync.bundle_bytes({FILE: self.record_value(**source_overrides)})
+        bundle = overlay_sync.bundle_bytes({FILE: value()})
         (self.overlay / BUNDLE).write_bytes(bundle)
         record = {"annotations": {"directory": "annotations", "count": 1,
                                   "manifest_sha256": overlay_sync.manifest_sha256(files),
@@ -728,7 +732,7 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(
             sorted(published),
             ["GENERATED.json", BUNDLE, "overlay.config.json", "receipt.json",
-             "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
+             "vendor/pdfjs/LICENSE", "verso.json", "viewer/index.html", "viewer/viewer.js"])
         self.assertEqual((self.companion.site / FILE).read_bytes(),
                          (self.companion.root / FILE).read_bytes(),
                          "the annotations sit at the site root as they sit at the repository root")
@@ -747,7 +751,8 @@ class TestBuildSite(OverlayToolsTestCase):
         self.assertEqual(receipt["source_id"], SOURCE_ID)
         rows = {row["path"]: row["sha256"] for row in receipt["files"]}
         self.assertEqual(sorted(rows), ["GENERATED.json", BUNDLE, "overlay.config.json",
-                                        "vendor/pdfjs/LICENSE", "viewer/index.html", "viewer/viewer.js"])
+                                        "vendor/pdfjs/LICENSE", "verso.json", "viewer/index.html",
+                                        "viewer/viewer.js"])
         self.assertEqual(receipt["annotations"], {"directory": "annotations", "files": [{
             "bytes": len((self.companion.root / FILE).read_bytes()), "path": "1.1/lemma-1.1.1.json",
             "sha256": digest((self.companion.root / FILE).read_bytes())}]})
@@ -899,6 +904,166 @@ class TestBuildSite(OverlayToolsTestCase):
         target.rename(moved)
         target.symlink_to(moved)
         with self.assertRaisesRegex(BUILD.BuildError, "symlink"):
+            BUILD.build_site(self.companion.overlay)
+
+    def test_verso_json_holds_the_statements_the_sites_pages_highlight(self):
+        """Section 5: an empty file for a site with no such page, and the receipt records it."""
+        site = self.companion.write_site()
+        self.assertEqual(BUILD.build_site(self.companion.overlay)["verso"],
+                         {"source": "none", "statements": 0, "targets": 0})
+        mount = site / "pdf-overlay"
+        empty = json.loads((mount / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(empty, {"hovers": {}, "schema": "formal-companion/overlay-verso", "schema_version": 1,
+                                 "statements": {}})
+        snippet = "def volume : Nat := 2"
+        self.companion.write_document(objects=[{
+            "type": "lean", "uri": "https://git.example.test/notes", "version": "0" * 40, "role": "key",
+            "location": {"declaration": "Notes.Box.volume", "module": "Notes.Box"},
+            "extensions": {NAMESPACE: {"destination": {"resolution": "exact"},
+                                       "snippet": {"line": 3, "text": snippet}}}}])
+        page = site / "Notes" / "Box" / "index.html"
+        page.parent.mkdir(parents=True)
+        page.write_text(
+            '<html><head><base href="../../"></head><body><div class="code-box">'
+            '<code class="hl lean block"><span class="keyword token">def</span> '
+            '<span class="const token" data-verso-hover="7" id="Notes___Box___volume">volume</span> : '
+            '<span class="const token" data-verso-hover="8">Nat</span> := '
+            '<span class="literal number token">2</span></code></div></body></html>\n', encoding="utf-8")
+        (site / "-verso-docs.json").write_text(json.dumps({"7": "<code>Notes.Box.volume : Nat</code>"}),
+                                               encoding="utf-8")
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "site", "statements": 1, "targets": 1})
+        verso = json.loads((mount / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(verso["statements"], {"Notes/Box/index.html#Notes___Box___volume": [[
+            ["kw", "def"], ["tx", " "], ["const", "volume", 7], ["tx", " : "], ["const", "Nat"], ["tx", " := "],
+            ["lit", "2"]]]})
+        self.assertEqual(verso["hovers"], {"7": {"signature": "Notes.Box.volume : Nat"}})
+        receipt = json.loads((mount / "receipt.json").read_text(encoding="utf-8"))
+        rows = {row["path"]: row["sha256"] for row in receipt["files"]}
+        self.assertEqual(rows["verso.json"], digest((mount / "verso.json").read_bytes()))
+        self.assertEqual(receipt["verso"], summary["verso"])
+
+    # -- a committed verso.json, cut from a Verso build elsewhere ------------
+    REMOTE = "https://git.example.test/notes/blob/main/Notes/Box.lean"
+    #: The commit the committed file's build is of, and the one the cards pin.
+    BUILT = "1" * 40
+
+    def remote_end(self, name: str, snippet: str, line: int, version: str = BUILT) -> dict:
+        return {"type": "lean", "uri": "https://git.example.test/notes", "version": version, "role": "key",
+                "location": {"declaration": f"Notes.Box.{name}", "module": "Notes.Box"},
+                "extensions": {NAMESPACE: {"destination": {"resolution": "exact", "href": self.REMOTE,
+                                                           "fragment": f"L{line}"},
+                                           "snippet": {"line": line, "text": snippet}}}}
+
+    def write_committed(self, value: dict | None = None) -> bytes:
+        """What `verso_extract.py --pages` writes for `volume` and `area`, as a companion commits it."""
+        value = value or {
+            "schema": "formal-companion/overlay-verso", "schema_version": 1,
+            "build": {"commit": self.BUILT, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}},
+            "hovers": {"7": {"signature": "Notes.Box.volume : Nat"}, "8": {"signature": "Notes.Box.area : Nat"}},
+            "statements": {
+                f"{self.REMOTE}#L3": [[["kw", "def"], ["tx", " "], ["const", "volume", 7], ["tx", " := "], ["lit", "2"]]],
+                f"{self.REMOTE}#L5": [[["kw", "def"], ["tx", " "], ["const", "area", 8], ["tx", " := "], ["lit", "1"]]]}}
+        raw = BUILD.verso_extract.dumps_lines(value)
+        (self.companion.overlay / "verso.json").write_bytes(raw)
+        return raw
+
+    def test_a_site_with_no_verso_pages_publishes_the_committed_verso_json(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3),
+                                               self.remote_end("area", "def area := 1", 5)])
+        raw = self.write_committed()
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "committed", "sha256": digest(raw), "commit": self.BUILT,
+                                            "dropped": 0, "statements": 2, "targets": 2})
+        mount = site / "pdf-overlay"
+        published = (mount / "verso.json").read_bytes()
+        self.assertEqual(json.loads(published), json.loads(raw), "every statement still joins to its card")
+        self.assertEqual(published.count(b"\n"), 1, "published in the compact form")
+        receipt = json.loads((mount / "receipt.json").read_text(encoding="utf-8"))
+        self.assertEqual(receipt["verso"], summary["verso"])
+        self.assertEqual({row["path"]: row["sha256"] for row in receipt["files"]}["verso.json"], digest(published))
+        self.assertEqual(BUILD.build_site(self.companion.overlay), summary, "a second run is the same")
+
+    def test_a_committed_statement_whose_snippet_changed_is_dropped_alone(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 3", 3),
+                                               self.remote_end("area", "def area := 1", 5)])
+        self.write_committed()
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual((summary["verso"]["statements"], summary["verso"]["dropped"]), (1, 1))
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(published["statements"]), [f"{self.REMOTE}#L5"])
+        self.assertEqual(published["hovers"], {"8": {"signature": "Notes.Box.area : Nat"}})
+        self.assertEqual(published["build"]["commit"], self.BUILT)
+
+    def test_a_committed_file_of_a_build_no_card_pins_is_refused(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3, "0" * 40),
+                                               self.remote_end("area", "def area := 1", 5, "0" * 40)])
+        self.write_committed()
+        with self.assertRaisesRegex(BUILD.BuildError, f"verso.json: cut from a build of {self.BUILT}, "
+                                                      f"but the cards pin {'0' * 40}"):
+            BUILD.build_site(self.companion.overlay)
+        self.assertFalse((site / "pdf-overlay").exists())
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3),
+                                               self.remote_end("area", "def area := 1", 5, "0" * 40)])
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual((summary["verso"]["statements"], summary["verso"]["dropped"]), (1, 1),
+                         "a card that pins another commit keeps no statement of this build")
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(published["statements"]), [f"{self.REMOTE}#L3"])
+
+    def test_a_site_with_verso_pages_extracts_its_own_and_ignores_the_committed_file(self):
+        site = self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3)])
+        self.write_committed()
+        (site / "-verso-docs.json").write_text("{}", encoding="utf-8")
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "site", "statements": 0, "targets": 1})
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(published["statements"], {})
+
+    def test_a_site_whose_pages_give_a_statement_ignores_the_committed_file_with_no_hover_table(self):
+        site = self.companion.write_site()
+        local = {"type": "lean", "uri": "https://git.example.test/notes", "version": self.BUILT, "role": "key",
+                 "location": {"declaration": "Notes.Box.volume", "module": "Notes.Box"},
+                 "extensions": {NAMESPACE: {"destination": {"resolution": "exact"},
+                                            "snippet": {"line": 3, "text": "def volume := 2"}}}}
+        self.companion.write_document(objects=[local, self.remote_end("volume", "def volume := 2", 3)])
+        self.write_committed()
+        page = site / "Notes" / "Box" / "index.html"
+        page.parent.mkdir(parents=True)
+        page.write_text(
+            '<html><head><base href="../../"></head><body><div class="code-box">'
+            '<code class="hl lean block"><span class="keyword token">def</span> '
+            '<span class="const token" id="Notes___Box___volume">volume</span> := '
+            '<span class="literal number token">2</span></code></div></body></html>\n', encoding="utf-8")
+        summary = BUILD.build_site(self.companion.overlay)
+        self.assertEqual(summary["verso"], {"source": "site", "statements": 1, "targets": 2})
+        published = json.loads((site / "pdf-overlay" / "verso.json").read_text(encoding="utf-8"))
+        self.assertEqual(list(published["statements"]), ["Notes/Box/index.html#Notes___Box___volume"])
+
+    def test_a_committed_file_that_is_not_one_pages_writes_is_refused(self):
+        self.companion.write_site()
+        self.companion.write_document(objects=[self.remote_end("volume", "def volume := 2", 3)])
+        linked = {"schema": "formal-companion/overlay-verso", "schema_version": 1, "hovers": {},
+                  "statements": {f"{self.REMOTE}#L3": [[["kw", "def"], ["tx", " "],
+                                                         ["const", "volume", None, None, "Notes/Box/index.html#v"]]]}}
+        for value, words in ((linked, "carries a link"), ({**linked, "schema_version": 2}, "expected schema"),
+                             ({"schema": "x"}, "expected schema")):
+            with self.subTest(words=words):
+                self.write_committed(value)
+                with self.assertRaisesRegex(BUILD.BuildError, f"pdf-overlay/verso.json: .*{words}"):
+                    BUILD.build_site(self.companion.overlay)
+                self.assertFalse((self.companion.site / "pdf-overlay").exists())
+        (self.companion.overlay / "verso.json").write_bytes(b'{"schema": 1, "schema": 2}')
+        with self.assertRaisesRegex(BUILD.BuildError, "duplicate JSON key"):
+            BUILD.build_site(self.companion.overlay)
+        real = self.base / "verso.json"
+        (self.companion.overlay / "verso.json").rename(real)
+        (self.companion.overlay / "verso.json").symlink_to(real)
+        with self.assertRaisesRegex(BUILD.BuildError, "nonsymlink"):
             BUILD.build_site(self.companion.overlay)
 
     def test_it_runs_no_build_tool_of_its_own(self):
@@ -1072,7 +1237,7 @@ class TestNothingInTheToolsNamesOneCompanion(OverlayToolsTestCase):
 
     def sources(self) -> dict[str, str]:
         return {name: (TOOLS / f"{name}.py").read_text(encoding="utf-8")
-                for name in ("serve", "build_site", "overlay_annotations")}
+                for name in ("serve", "build_site", "overlay_annotations", "verso_extract")}
 
     def test_no_tool_carries_a_hash_a_url_or_a_byte_count_of_its_own(self):
         for name, source in self.sources().items():
@@ -1088,6 +1253,11 @@ class TestNothingInTheToolsNamesOneCompanion(OverlayToolsTestCase):
                 for token in ("lean-toolchain", "lake-manifest", "toolchain_sha256",
                               "overlay-manifest", "site-manifest", "measure",
                               "chapter", "Chapter"):
+                    if (name, token) == ("verso_extract", "lake-manifest"):
+                        # it reads a build's own manifest to record its Verso release, and pins none
+                        record = source.partition("def build_record(")[2].partition("\ndef ")[0]
+                        self.assertEqual(source.count(token), record.count(token), "only in build_record")
+                        continue
                     self.assertNotIn(token, source)
 
     def test_the_per_companion_values_are_read_not_written(self):
