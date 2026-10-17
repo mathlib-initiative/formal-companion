@@ -1,0 +1,51 @@
+You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: the **inventory** (L3a) of one web source — the table of every passage of it that states something.
+
+Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`, then the source's reading copy `{{sources_dir}}/<source-id>/text.txt` from top to bottom. Never work from memory of the article: this revision is the one being inventoried.
+
+## What a passage is
+A span of the source that states something: a definition, a theorem, a conjecture, an example, a construction or a notation (`passage_kind`; `other` when it states something that is none of these). One passage per statement. For each one decide:
+
+- `prominence`: `subject` — what the article is about (usually one passage, often in the lead) · `central` — a named result or definition the article states · `supporting` — anything else formal;
+- `scope`: `formal_math` — mathematics a library could state · `expository` — history, motivation, applications told about mathematics · `non_math` — anything else. Only `formal_math` passages are searched for later. A passage may not be scoped out while the candidates file `{{candidates_dir}}/<source-id>.json` holds a `curated` hit, unless you are certain, and the subject passage of such an article is never scoped out;
+- `statement`: your informal restatement in one or two sentences, precise enough that a reader could check a Lean statement against it;
+- `concept`: always `null` (a passage's own Wikidata item is assigned by a validated method, never by a worker).
+
+**The deterministic finders' passages are already in your manifest** (`finders`: a theorem box, a bolded definition, the lead). Keep every one of them as a passage (`finder` set to the finder that proposed it), or drop it with a `skips` entry giving its exact `span` and a reason. Then add the passages the finders missed, with `finder: "model"`. Every paragraph of `paragraphs.json` marked `"math": true` must be covered by a passage span or a `skips` span: that floor is checked mechanically.
+
+## The document
+Write `findings/$TEND_TASK_ID/<source-id>.json`, one per source of the task:
+
+```json
+{"schema": "{{schema}}", "mode": "locate-inventory",
+ "run_id": "{{run_id}}", "task_id": "$TEND_TASK_ID",
+ "source_id": "<from the manifest>", "source_sha": "<from the manifest>",
+ "layer_sha256": "<from the manifest>", "renderer": "<from the manifest>",
+ "passages": [
+   {"item": "", "head_words": 0, "span": null,
+    "quote": {"exact": "<the passage's first words, verbatim from layer.txt>", "prefix": "", "suffix": ""},
+    "section": ["<heading path from sections.json>"], "fragment": "<the section's fragment, or null>",
+    "passage_kind": "theorem", "prominence": "central", "scope": "formal_math",
+    "statement": "<informal restatement>", "concept": null, "finder": "model"}],
+ "skips": [{"span": [200, 900], "reason": "infobox"}],
+ "notes": "free text, at most 2,000 characters"}
+```
+
+- `quote.exact` **starts the passage**: copy the passage's first words character for character from `layer.txt` (not from `text.txt`: the layer spells a formula as its rendered text followed by its TeX, which is what you must copy). Add a `prefix`/`suffix` of a few words from the layer only when `exact` alone occurs more than once. A passage must start at a word, and never inside a formula.
+- Leave `item`, `head_words` and `span` for the tool, then run it:
+
+```bash
+{{ids_command}} --source-dir {{sources_dir}}/<source-id> --document findings/$TEND_TASK_ID/<source-id>.json --write
+```
+
+  It places each quote on the layer (a passage ends where its paragraph ends unless you give `"until": "<its last words>"`), keys every passage with its `In-text #<hex>` id, and prints what it could not place. Fix those quotes and run it again; never edit an id or an offset by hand.
+- If the source cannot be inventoried at all (it is empty, or not mathematics), write the document with `"passages": []` and `"unresolved": {"reason": "<why>", "by": "worker"}`.
+
+## Before you commit, run the gate
+
+```bash
+{{gate_command}} --findings findings/$TEND_TASK_ID/<source-id>.json
+```
+
+`exit 1` means it refused your document: fix what it names. Any other non-zero exit is an infrastructure fault — stop and finish `blocked`, quoting it.
+
+{{finish_block}}

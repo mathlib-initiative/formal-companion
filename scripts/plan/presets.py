@@ -303,7 +303,18 @@ GATE_ONLY = {
 
 
 def get(name: str) -> Preset:
-    """Look up a preset by name, or raise with the list of valid names."""
+    """Look up a preset by name, or raise with the list of valid names.
+
+    The three locate presets are refused here by name, with the command that
+    plans them: a locate run is sourceset-scoped (``scripts/locate/presets.py``),
+    and planning one from a companion would stage the wrong gate and prompts.
+    """
+    if name in vocab.LOCATE_MODES:
+        raise CfError(
+            f"preset {name!r} is a locate preset: a locate run is planned from a "
+            f"sourceset and a universe, not from a companion",
+            hint=f"plan it with `cf plan-locate --preset {name} --sourceset <id> "
+                 f"--universe <id>`")
     try:
         return PRESETS[name]
     except KeyError:

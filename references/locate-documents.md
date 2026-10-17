@@ -3,10 +3,11 @@
 The file formats the locate stages exchange (`docs/proposals/wikipedia-locate.md`
 §3–§5). Every package that writes or reads one of these follows this file; a
 change to a shape is a change here in the same commit. **Status**: the formats
-are fixed; `scripts/gate/locate_text.py` (the head text and the layer quote of §7),
-the paths of `cflib.paths`, and the sourcesets and renderer of §7
-(`cf sourceset`) are built, and the stages that write and read the rest are not
-implemented.
+are fixed and built: `scripts/gate/locate_text.py` (the head text and the layer
+quote of §7), the paths of `cflib.paths`, the sourcesets and renderer of §7
+(`cf sourceset`), the universes and `corpus.sqlite` of §8 (`cf corpus`), and the
+planner side (`scripts/locate/`: §5's candidates, §6's sealed set, §9's run and
+§10's outcomes).
 
 **Contents**: 1 the common header · 2 inventory document · 3 locate document ·
 4 challenge document · 5 candidates file · 6 sealed record set · 7 sourcesets and
@@ -167,6 +168,22 @@ aliases where known and the lead's bold terms, which lexical retrieval queried;
 `matched` names which. Only `curated` hits bind gate rule 4. In the G1-blind
 arm (proposal §8.1) `curated` is empty and the file says `"blind": true`.
 
+`cf locate candidates` writes it (`scripts/locate/candidates.py`). Every curated
+declaration is checked in `corpus.sqlite`'s exact table at the universe's commit,
+and one that is not there, or whose library is not in the universe, is listed in
+`"dropped": [{library, declaration, via, evidence, reason}]` instead of
+`curated` — a phantom the gate would refuse a worker for not locating is never
+kept. Its curated inputs are the operator's files, read as data: a QID-keyed
+`1000.yaml` (`--curated-1000`), a numbered `100.yaml` matched by normalised title
+or an entry's own `wikidata` (`--curated-100`), both naming `--curated-library`
+(default `mathlib`), and a library-metadata file of main results
+(`--library-metadata`):
+
+```json
+{"libraries": {"alpha": [{"wikidata": "Q99999001", "title": "Widget lemma",
+                          "declarations": ["Widget.exists_spanning_gadget"]}]}}
+```
+
 ## 6. Sealed record set (export)
 
 ```
@@ -181,7 +198,21 @@ arm (proposal §8.1) `curated` is empty and the file says `"blind": true`.
 ```
 
 `SEAL.json` lists every other file with its sha256; a consumer refuses a set
-whose files do not match.
+whose files do not match. It also names the runs the set was made from
+(`"runs": {"locate", "challenge", "inventory"}`), and `created` is the newest of
+those runs' harvest times, so the set is a function of its inputs and a
+re-export is byte-identical.
+
+`cf export literature-links --run <locate run> --challenge-run <run> --set-id
+<id>` writes it (`scripts/locate/export.py`, the records from
+`scripts/locate/records.py`) under `exports/<id>/` and what it refused, by
+passage, to `reports/export.<id>.json`, exiting 1 when it refused anything: a
+passage whose challenge is owed, one whose outcome could not be derived, a
+record the checker rejects, a quote no context can make unique, and a whole
+source whose records pass `--byte-budget` (default 262,144 bytes). Only
+`formal_math` passages with an outcome are exported; the subject end's `uri` and
+`URL` are the family's `revision_url` (titles move), its licence the family's
+SPDX id.
 
 Records are the proposal's §2.7 shape with one addition the vendored checker
 requires: the subject end's CSL `citation` carries `"id"` (the source id) beside
@@ -366,13 +397,16 @@ workspace side reads the same database through `scripts/corpus/query.py`.
 
 ## 9. A locate run on disk
 
-A locate run is planned from a sourceset and a universe (*not implemented*:
-*scripts/cfcmd/plan_locate.py*) into `runs/<run-id>/`, like a faithfulness run:
+A locate run is planned from a sourceset and a universe by `cf plan-locate`
+(`scripts/cfcmd/plan_locate.py`, `scripts/locate/plan.py`) into `runs/<run-id>/`,
+like a faithfulness run:
 
 - `tasks/<task-id>.yaml` — tend's task shape (`schema_version, id, title,
   status, priority, depends_on, summary, description`), titled `inventory:`,
   `locate:` or `challenge:`; the description names the task's documents, the
-  paths to read and the gate command.
+  paths to read and the gate command. Task ids: `inv-<source-id>`,
+  `loc-<source-id>-<k>` (one source per task), `loc-subject-<kkkk>` (the
+  article tier, one subject passage per source), `chl-<kkkk>`.
 - `gate/tasks/<task-id>.json` in the tend root — the **task manifest**, outside
   every worktree, read by the gate (only these documents, only these passages)
   and by the bridge (the `UNRESOLVED` document it writes at the attempt cap):
@@ -388,8 +422,18 @@ A locate run is planned from a sourceset and a universe (*not implemented*:
 
   An inventory task's documents carry `"finders": [...]` (`finders.json`'s
   passages, pre-filled) instead of `passages`; a challenge task's carry
-  `"records": [...]`, the records it judges, each with its `location_key` or
-  its outcome.
+  `"records": [...]`, the records it judges: `{key, target, item, span, run_id,
+  prominence, scope, passage_kind, outcome}` and, for a location, its
+  `location_key`, `library`, `declaration`, `relation` and `rank`.
+- `challenge-plan.json` (a challenge run only) — every record of the challenged
+  runs, required or not: `{schema: "cf-locate-challenge-plan/1", run_id,
+  challenged_runs, seed, sample_rate, counts, records: [{key, target, source_id,
+  item, location_key, library, declaration, relation, run_id, prominence, scope,
+  rule, stratum, planned, task_id}]}`. `rule` is `refute_by_default`, `hunt`,
+  `sample` or `none`; `planned` is `required`, `sampled_out` or `not_required`.
+  A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
+  for an absence, unresolved outcome, scope or prominence. The outcomes read it
+  back: a required record no verdict judged is owed (`challenge: null`).
 - `findings/<task-id>/<source-id>.json` — the documents (§1–§4); a contribution
   may change only its own task's directory and `tasks/<task-id>.yaml`.
 - `gate.json` — read by the out-of-tree locate gate (*not implemented*:
@@ -415,15 +459,29 @@ A locate run is planned from a sourceset and a universe (*not implemented*:
   ```
 
   `inventory` is the frozen inventory a `locate` run reads (null for
-  `locate-inventory`); `blind: true` is the G1-blind arm (curated candidates and
-  gate rule 4 off). The gate directory also holds `scripts/gate/locate_text.py`,
-  the two host tools of §8, and `vendor/` with both vendored packages, whose
-  manifest shas the gate verifies at start.
+  `locate-inventory` and `locate-challenge`); `blind: true` is the G1-blind arm
+  (curated candidates and gate rule 4 off). The planner also writes
+  `challenged_runs` (a challenge run's locate runs) and `findings_dir:
+  "findings"`. The gate directory also holds `locate_text.py`,
+  `passage_ids.py` (`scripts/locate/passage_ids.py`: the tool an inventory worker
+  runs to fill each passage's `span`, `head_words` and `item` from its quote,
+  since nobody can count code points or hash a head by hand),
+  `locate_records.py` (`scripts/locate/records.py`, the record builder, which
+  needs no `cflib`), the two host tools of §8, and `vendor/` with both vendored
+  packages and their manifests, whose shas the gate verifies at start. The
+  validation commands run `verify_locate.py --gate-config <gate>/gate.json
+  --changed-files --base <branch>`, and the prompts have the worker run it with
+  `--findings findings/<task-id>/<source-id>.json`.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256}, inventory_run, challenged_runs, arm, per_task,
-  documents, passages}`; `budget.max_cost` is required before `cf run --execute`
-  sends a locate run anywhere (proposal §6).
+  subject_only, seed, sample_rate, documents, passages, source_ids, skipped}`,
+  and `remote` names the host directories of the sourceset's sources, the
+  universe, the candidates and the inventory (`sourcesets/<id>/sources`,
+  `corpora/<u>`, `sourcesets/<id>/candidates/<u>`, `inventories/<run>`);
+  `repos` and `sources` are empty. `budget.max_cost` is required before
+  `cf run --execute` sends a locate run anywhere (proposal §6). The run's counts
+  land in the sourceset's `state.json`, not in a companion's.
 
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
 JSON envelope per agent call, kept as a cost cross-check), `attempts/<task-id>`
@@ -431,8 +489,11 @@ JSON envelope per agent call, kept as a cost cross-check), `attempts/<task-id>`
 call: task, mode, ok, the refusal reasons), and the per-user slot directory the
 bridge's 15-slot `flock` semaphore uses. The bridge reads `CF_SLOT_DIR`,
 `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`), `CF_ATTEMPT_CAP` (3),
-`CF_TASK_MANIFESTS` (the `gate/tasks` directory) and `CF_EXTRA_TOOLS` (the
-allowlist entries for the two host tools, worker role only).
+`CF_TASK_MANIFESTS` (the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the
+allowlist entries for the two host tools — and in an inventory run the
+passage-id tool — worker role only) and `CF_FINDINGS_GLOB`
+(`findings/${TEND_TASK_ID:-*}/*.json`), all exported by the generated wrappers in
+`bin/`.
 
 ## 10. Harvested rows and passage outcomes
 
@@ -449,8 +510,10 @@ declaration list:
 | absent passage | one `ABSENCE` (beside one `LOCATION` per `relatedMatch`) | the universe id | none |
 | unresolved passage, or an `unresolved` document | one `UNRESOLVED` | the universe id (inventory: the sourceset id) | none |
 
-`reports/locate-outcomes.<run-id>.jsonl` holds one row per passage after
-challenge, which the export reads and nothing else writes:
+`cf tally --locate --run <run> [--challenge-run <run>]…` computes them
+(`scripts/locate/outcomes.py`) and writes `reports/locate-tally.<run-id>.json`
+(the rows and the counts) and `reports/locate-outcomes.<run-id>.jsonl`, one row
+per passage after challenge:
 
 ```json
 {"source_id": "enwiki-1001-2002", "item": "In-text #3fa91c07", "passage_kind": "theorem",
@@ -463,10 +526,19 @@ challenge, which the export reads and nothing else writes:
  "runs": {"inventory": "r-…", "locate": "r-…", "challenge": "r-…"}}
 ```
 
-`proof_status` and `statement` are joined from `corpus.sqlite` at harvest;
-`status` is `cflib.vocab.derive_status` over the surviving locations and the
-absence; an unresolved passage has `status: null`. A passage whose challenge is
-still owed carries `challenge: null`, and the export refuses it (hard rule 5).
+`proof_status` and `statement` are joined from `corpus.sqlite` at harvest (with
+the declaration's `module`, `path`, `line`, `end_line` and `kind`), and a
+`proof_status` a document wrote is ignored and named; `status` is
+`cflib.vocab.derive_status` over the surviving locations and the absence; an
+unresolved passage has `status: null`. A passage whose challenge is still owed
+carries `challenge: null`, and the export refuses it (hard rule 5). A row also
+carries `span`, `head_words`, `section`, `reason`, `unresolved_by` (`worker` or
+`attempt_cap`), `refuted` (the locations a challenge removed) and `task_id`; a
+passage the run planned and no document answered has `outcome: null` and
+`missing: true`, and an inventory passage scoped out has `outcome: null`. The
+passage's `challenge` is one value over its records: owed when any is owed, else
+`downgraded` when any changed, else `survived` when any was judged, else
+`sampled_out` or `not_required`.
 
 ## 11. Campaigns
 

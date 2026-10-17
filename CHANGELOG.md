@@ -162,6 +162,27 @@ release has something to say.
   database from a query); `scripts/corpus/query.py` is the read API the other
   locate stages call over the same functions. The WIP probe drivers pin git with
   gitsafe's settings, inlined because they run on the host without cflib.
+- The locate planner (`scripts/locate/`, `docs/proposals/wikipedia-locate.md` §3, §5,
+  §7, §2.7 and §11.1). `cf locate candidates` writes L2: curated joins (a library's
+  `@[wikidata]` tag on the article's QID, Mathlib-shaped `1000.yaml` and `100.yaml` lists,
+  Wikipedia URLs in docstrings, a library's main results), every one checked in
+  `corpus.sqlite`'s exact table and a phantom dropped by name, plus lexical retrieval over the
+  title and the lead's bold terms; `--blind` is the G1-blind arm. `cf plan-locate` plans the
+  three presets `locate-inventory`, `locate` (at most 8 `formal_math` passages of a frozen,
+  gated inventory; `--subject-only` for the article tier) and `locate-challenge` (the §5 rules
+  and a seeded stratified sample, recorded per record in `challenge-plan.json`), at most 500
+  tasks a root, deterministically: tasks, task manifests, the locate prompts, `gate.json` and
+  `gate.local.json`, and a tend root whose gate directory carries the head-text helper, a
+  passage-id tool the inventory worker runs instead of counting offsets, the record builder and
+  both vendored packages; `cf plan-run` refuses the locate presets by name. `cf tally --locate`
+  turns a harvested run into the finding rows of `references/locate-documents.md` §10 (keyed by
+  `finding_id` unchanged), applies challenge verdicts, joins `proof_status` from the index and
+  derives each passage's status; an unresolved passage is counted on its own, and a planned
+  passage no document answered is kept as missing. `cf export literature-links` writes the sealed
+  record set: location, absence and unresolved records checked with the vendored checker, quotes
+  capped at 12 words and 32 characters of context, receipts as sidecars, `SEAL.json`; a passage
+  whose challenge is owed and a source over the byte budget are refused by name, and a re-export
+  is byte-identical.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the
