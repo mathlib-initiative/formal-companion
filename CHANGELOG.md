@@ -118,6 +118,24 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- `cf campaign plan | render | status` (proposal §6): an ordered list of
+  already-planned locate runs as shards (each at most 500 tasks, each with a
+  spend cap in its own `run.yaml`, all for one allowlisted host) and the
+  watchdog's thresholds in `campaigns/<id>/campaign.yaml`; a rendered host-side
+  sequencer (shell, no cflib) that starts shard k+1 when shard k ends, runs the
+  watchdog beside each shard, exports usage and prunes that shard's
+  transcripts, and stops when a watchdog drains; and a status table read from
+  the shards' receipts. `scripts/run/watchdog.py` is the model-free, stdlib
+  watchdog: spend from the kept envelopes, the gate-failure rate from the gate
+  log and the cost per merged task from the entrypoint's merge target, drained
+  with `tend-control drain` at the shard's cap or a multiple of the pilot's p90.
+- `cf run` for a locate run: `--execute` needs a spend cap recorded in its
+  `run.yaml` or given as `--max-cost` (a workspace default does not count and
+  `--no-budget-cap` is refused); the transfer sends this run's rendered sources
+  (with `--include-source-text`), `corpus.sqlite`, the L2 candidates and the
+  frozen inventory to the host paths its `gate.json` names; the verify stage
+  checks `corpus.sqlite`'s sha256 once and that the locate gate is out of tree,
+  and the tend config is checked for `verify_locate.py`.
 - Recursive harvest (proposal §3, §6): the listing (`find -print0` on a host),
   the transfer and the checksums descend into subdirectories, a receipt names a
   file by its path relative to the corpus, and `iter_finding_files` walks the

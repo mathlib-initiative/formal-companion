@@ -377,13 +377,21 @@ def _server(workspace, args, data: dict, run_yaml_path: Path) -> int:
         warnings.append(mismatch)
 
     tasks = manifest.task_count(Path(workspace.root), args.run_id, data)
-    budget = manifest.check_budget_cap(workspace, data, args.max_cost, args.no_budget_cap)
+    locate = manifest.is_locate(data)
+    if locate and args.no_budget_cap:
+        raise CfError("--no-budget-cap does not apply to a locate run",
+                      hint="a recorded spend cap is a precondition: the shard's watchdog drains "
+                           "the root at it; record one with --max-cost")
+    budget = manifest.check_budget_cap(workspace, data, args.max_cost, args.no_budget_cap,
+                                       locate=locate)
     disk = manifest.disk_budget(entries, tasks, host)
     concurrency = _concurrency(workspace, data, args)
 
     steps = remote.plan_commands(host=host, run_id=args.run_id, run=data, entries=entries,
                                  names=names, budget=budget, concurrency=concurrency,
-                                 force=args.force)
+                                 force=args.force,
+                                 locate=(manifest.locate_gate(run_yaml_path.parent)[0]
+                                         if locate else None))
     stages = remote.stages_upto(args.stage)
     if args.stage == "raise" and not args.smoke_verified:
         raise CfError(

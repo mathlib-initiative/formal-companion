@@ -502,11 +502,38 @@ still owed carries `challenge: null`, and the export refuses it (hard rule 5).
 
 ## 11. Campaigns
 
-A campaign (*not implemented*: *scripts/cfcmd/campaign.py*) is a sequence of
-locate runs, called shards, of at most 500 tasks each, fed in waves:
-`campaigns/<id>/campaign.yaml` lists the shards in order with their run ids and
-spend caps, and the rendered host side is one shell sequencer that starts shard
-k+1 when shard k ends, runs a model-free watchdog per shard (drain the root when
-its spend passes the cap recorded in its `run.yaml`, or the gate-failure rate or
-cost per merged task passes a multiple of the pilot's p90), exports usage and
-prunes transcripts per shard. The operator's machine only harvests receipts.
+A campaign (`scripts/cfcmd/campaign.py`, logic in `scripts/run/campaign.py`) is a
+sequence of locate runs, called shards, fed in waves. It plans nothing: each
+shard is a locate run already planned, of at most 500 tasks, with a spend cap in
+its own `run.yaml`, for the campaign's one allowlisted host.
+
+`campaigns/<id>/campaign.yaml`:
+
+```yaml
+version: 1
+id: wpm-tier-a
+host: examplebox
+shards:                       # in the order they run
+  - {index: 1, run_id: wpm-a-1, mode: locate, tasks: 480, max_cost: 120.0, workers: 6, reviewers: 4}
+tasks: 480
+max_cost: 120.0               # the sum of the shards' caps
+watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5}
+sequencer: {path: …/host/sequencer.sh, sha256: <hex>, host_dir: <remote root>/campaigns/<id>}
+```
+
+`render` writes `campaigns/<id>/host/`: `sequencer.sh` (from
+`templates/campaign/sequencer.sh.tmpl`, shell, no cflib) beside copies of
+`scripts/run/watchdog.py` and `scripts/cost/usage.py`, and prints the rsync and
+start commands. On the host the sequencer runs each shard's `tend run` in order —
+shard k+1 starts when shard k's ends — with the watchdog beside it, exports the
+shard's usage from `CF_TRANSCRIPT_DIRS` and then prunes the transcripts that
+shard wrote, keeps its state in `<remote root>/campaigns/<id>/` (`shard-<k>.done`,
+`usage-<k>.jsonl`, `sequencer.log`), and writes `STOPPED` and stops the moment a
+watchdog drains a shard. The watchdog (model-free, stdlib) drains the root with
+`tend-control drain` when the spend summed from `usage/` reaches the shard's cap,
+or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
+the cost per merged task (over at least `min_tasks`) passes `multiple` times the
+pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
+`<root>/watchdog.json`. The operator's machine only harvests receipts:
+`status` reads each shard's `RECEIPT.json` (complete, gate, the `locate` block,
+the priced cost) and totals the UNRESOLVED rate.
