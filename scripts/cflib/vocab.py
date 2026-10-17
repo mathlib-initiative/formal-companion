@@ -478,6 +478,10 @@ def decide_proof_status(*, wanted: bool, axioms: Iterable[str], is_prop: bool) -
 _STATUS_RANK = {status: rank for rank, status in enumerate(DERIVED_STATUSES)}
 _PART = frozenset({HAS_PART, NARROW_MATCH})
 _UNFINISHED = frozenset({PROOF_WANTED, PROOF_STATEMENT_ONLY, PROOF_AXIOM_DEPENDENT})
+#: The proof statuses a ``Prop``-valued definition (the ``statement`` flag) can
+#: have: ``decide_proof_status`` gives a definition every status but ``proved``,
+#: which is a declaration whose type IS a ``Prop`` -- a theorem, not a definition.
+_STATEMENT_PROOF_STATUSES = frozenset({PROOF_DEFINITION}) | _UNFINISHED
 
 
 def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
@@ -539,13 +543,22 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool) -> str |
     * ``None`` -- unresolved: no location that counts and no absence.  It is
       never ``not_formalized``.
 
-    ``relatedMatch`` never counts towards a status.  Three cases the table does
+    ``relatedMatch`` never counts towards a status.  Four cases the table does
     not name are decided here, each conservatively (references/vocabulary.md
     section 1.11): a theorem passage matched exactly to DATA is ``partial``, as
     its ``broadMatch`` is; a definition passage matched exactly to a proved
     theorem is ``partial``; an example or ``other`` passage takes the better of
-    the two rows.  A checked absence beside a location that counts is a
-    contradiction and is refused, as is any value outside the vocabulary.
+    the two rows; and a passage whose only locations are ``relatedMatch``, with
+    no checked absence, is ``None`` -- the state a challenge leaves when it
+    downgrades a passage's one location to ``relatedMatch``: nothing says it is
+    formalized and nobody checked that it is absent, so it counts as
+    unresolved (a miss for the safety metric, never ``not_formalized``).
+
+    Refused (``CfError``), because no consistent record can say them: a checked
+    absence beside a location that counts; a ``statement`` flag on a ``proved``
+    declaration (``decide_proof_status`` gives a ``Prop``-valued definition every
+    status but ``proved``); a ``statement`` that is not a bool; and any value
+    outside the vocabulary.
     """
     check(passage_kind, PASSAGE_KINDS, "passage kind")
     best: str | None = None
@@ -555,9 +568,20 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool) -> str |
                          "location relation")
         proof_status = check(str(_field(location, "proof_status") or ""), PROOF_STATUS_SET,
                              "location proof_status")
+        statement = _field(location, "statement", False)
+        if statement is None:
+            statement = False
+        if not isinstance(statement, bool):
+            raise CfError(f"a location's statement flag must be true or false, not "
+                          f"{statement!r}",
+                          hint="the library index sets it on a Prop-valued definition")
+        if statement and proof_status not in _STATEMENT_PROOF_STATUSES:
+            raise CfError(f"a {proof_status} declaration with the statement flag set",
+                          hint="the flag marks a Prop-valued DEFINITION, whose proof_status "
+                               "is definition, wanted, statement_only or axiom_dependent; "
+                               "re-join proof_status and the flag from the library index")
         if relation == RELATED_MATCH:
             continue
-        statement = bool(_field(location, "statement", False))
         rows = []
         if passage_kind in THEOREM_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
             rows.append(_theorem_row(relation, proof_status, statement))

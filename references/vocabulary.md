@@ -273,7 +273,7 @@ absent)`, each location giving its `relation`, `proof_status` and optional `stat
 | `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage |
 | `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition |
 | `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
-| none (`None`) | unresolved: no location that counts and no absence |
+| none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
 
 The proposal's table names theorem/conjecture and definition passages only. Decided here, each
 the conservative way, until the maintainer says otherwise:
@@ -285,8 +285,20 @@ the conservative way, until the maintainer says otherwise:
   flag) is `partial`, as its `broadMatch` is — which understates an instance that states "ℝ is a
   field", and is listed as an open question;
 - a definition passage matched exactly or closely to a `proved` theorem is `partial`;
-- a checked absence beside a location that counts is a contradiction, and `derive_status`
-  refuses it.
+- the relation decides before the proof status or the `statement` flag: `hasPart` and
+  `narrowMatch` (and, for a definition passage, `broadMatch`) are `partial` whatever the
+  declaration is, so a sorry'd lemma stating one part of a theorem is never `statement_only`;
+- a passage whose only locations are `relatedMatch`, with no checked absence, has **no status**
+  (`None`). It is what a challenge leaves when it downgrades a passage's one location to
+  `relatedMatch`: nothing says the passage is formalized and nobody checked that it is absent,
+  so it counts as unresolved — a miss for the safety metric, never `not_formalized`. A worker
+  that searched and found only related declarations records the absence beside them, and the
+  passage is then `not_formalized`.
+
+Refused (`CfError`), because no consistent record says them: a checked absence beside a location
+that counts; the `statement` flag on a `proved` declaration (`decide_proof_status` gives a
+`Prop`-valued definition every status but `proved`, which is a theorem's); a `statement` that is
+not a bool (absent or `null` is `false`); and any value outside these sets.
 
 **Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
 
@@ -512,6 +524,10 @@ A source with no numbering **and** no printed page — a web page — keys its p
 up to forty until no other passage of the source starts the same way). It is one production of
 the in-text grammar:
 
+- tried **last**: a printed page wins, then a named numbered item, and only a body both refuse
+  can be a passage — so `In-text #3, book p. 71` is still the p.71 item and `In-text #1,
+  Definition 1.4.35` still the anchored Definition 1.4.35, as they were before the production
+  existed (a well-formed hash holds no `p` and no space, so it never reaches the first two);
 - parsed whitespace-tolerantly like the others — `In-text#3fa91c07`, `in text  # 3fa91c07` and
   `In-text #3fa91c07` are one item, and `join_key` gives all three as `In-text #3fa91c07`;
 - a hash that is uppercase, too short, too long, not hex, or followed by anything is a reject
@@ -524,6 +540,27 @@ the in-text grammar:
   `items.to_vendored_passage_id(item)` → `passage-<8 hex>` (refused for a longer hash, which the
   format's `PASSAGE_QUOTE_ID_PATTERN` does not admit) and `items.from_vendored_passage_id(id)`
   (refused for a `passage-p<page>-<hex>` id, which hashes a title, not a head).
+
+**The head rule is frozen**, like `clean()`: the id is content-addressed, a consumer and the
+out-of-tree gate must reproduce it, and changing any step re-keys every passage. Over a source's
+*head text* (`scripts/cflib/passages.py`):
+
+1. the head text is the Literature Links text layer with each formula replaced by
+   `passages.formula_token(alttext)` = `⟦` + `normalize_alttext(alttext)` + `⟧` (U+27E6, U+27E7).
+   `normalize_alttext` is the vendored `ids.normalize_text` (NFKC, each run of Unicode
+   `White_Space` to one space, ends stripped), every `\displaystyle` control word dropped, and the
+   outer braces stripped while the whole string is one balanced group, to a fixed point. The
+   brackets are hashed: `⟦G⟧` and the word `G` are different heads;
+2. a passage starts at the first character of a word — offset 0, or just after whitespace;
+   a start inside a word, on whitespace or outside the text is refused (`PassageIdError`);
+3. the words from a start are the vendored `normalize_text` of the text from there, split on
+   single spaces (a formula with spaces inside it is several words; no bracket is parsed);
+4. the head is the first `n` words joined by one space, for the smallest `n` in 12..40 at which
+   no other passage of the source shares those `n` words (`n` is each passage's own, and it is
+   stored as `head_words`; fewer than 12 only when the text runs out);
+5. the hex is the vendored `passage_quote_id(head)` without its `passage-` prefix: 8 digits;
+6. two passages that share forty words, an offset given twice, or two different heads with one
+   hash are refused, naming both offsets — never dropped and never re-keyed.
 
 - **How many numbers is the source's numbering, not a constant.** `Theorem 7`, `Theorem 3.4`,
   `Definition 1.2.3` and `Lemma 2.3.4.1` are four real book conventions; `cflib.inference.

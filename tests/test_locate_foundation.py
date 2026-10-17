@@ -198,20 +198,53 @@ class TestTheDerivedStatus(unittest.TestCase):
         riemann = self.loc("exactMatch", "definition", statement=True)
         self.assertEqual(self.status("conjecture", riemann), "statement_only")
         self.assertEqual(self.status("theorem", riemann), "statement_only")
-        # ...even when an inconsistent record also calls it proved
-        self.assertEqual(self.status("theorem", self.loc("exactMatch", "proved", True)),
-                         "statement_only")
+        for proof_status in ("wanted", "statement_only", "axiom_dependent"):
+            with self.subTest(proof_status=proof_status):
+                self.assertEqual(self.status("theorem",
+                                             self.loc("exactMatch", proof_status, True)),
+                                 "statement_only")
         # a predicate IS a definition of a definition passage
         self.assertEqual(self.status("definition", riemann), "formalized")
 
+    def test_a_location_without_the_statement_flag_is_an_ordinary_one(self):
+        """The flag is optional: most index rows are theorems, and leave it out."""
+        bare = {"relation": "exactMatch", "proof_status": "proved"}
+        self.assertEqual(vocab.derive_status("theorem", [bare], False), "formalized")
+        self.assertEqual(vocab.derive_status("theorem", [dict(bare, statement=None)], False),
+                         "formalized")
+
+        class Located:
+            relation, proof_status = "exactMatch", "proved"
+        self.assertEqual(vocab.derive_status("theorem", [Located()], False), "formalized")
+        self.assertEqual(vocab.derive_status("definition",
+                                             [{"relation": "exactMatch",
+                                               "proof_status": "definition"}], False),
+                         "formalized")
+
     def test_partial(self):
-        for relation in ("hasPart", "narrowMatch"):
-            with self.subTest(relation=relation):
-                self.assertEqual(self.status("theorem", self.loc(relation, "proved")), "partial")
-                self.assertEqual(self.status("definition", self.loc(relation, "definition")),
-                                 "partial")
-        self.assertEqual(self.status("definition", self.loc("broadMatch", "definition")),
-                         "partial")
+        """The relation decides before the proof status or the flag: a part is a part.
+
+        Whatever the declaration -- proved, sorry'd, wanted, a Prop-valued def --
+        a location that states only part of the passage, or a special case of
+        it, is ``partial``; ranking a sorry'd lemma stating one part as
+        ``statement_only`` would overclaim the passage.
+        """
+        for proof_status in vocab.PROOF_STATUSES:
+            for statement in (False, True):
+                if statement and proof_status == "proved":
+                    continue                    # refused: see the contradictions test
+                for relation in ("hasPart", "narrowMatch"):
+                    with self.subTest(relation=relation, proof_status=proof_status,
+                                      statement=statement):
+                        location = self.loc(relation, proof_status, statement)
+                        for kind in ("theorem", "conjecture", "definition", "construction",
+                                     "notation", "example", "other"):
+                            self.assertEqual(self.status(kind, location), "partial", kind)
+                with self.subTest(relation="broadMatch", proof_status=proof_status,
+                                  statement=statement):
+                    location = self.loc("broadMatch", proof_status, statement)
+                    for kind in ("definition", "construction", "notation"):
+                        self.assertEqual(self.status(kind, location), "partial", kind)
         self.assertEqual(self.status("theorem", self.loc("broadMatch", "definition")), "partial")
 
     def test_not_formalized_and_unresolved(self):
@@ -219,7 +252,20 @@ class TestTheDerivedStatus(unittest.TestCase):
         self.assertEqual(self.status("theorem", self.loc("relatedMatch", "proved"), absent=True),
                          "not_formalized")
         self.assertIsNone(self.status("theorem"))
-        self.assertIsNone(self.status("theorem", self.loc("relatedMatch", "proved")))
+
+    def test_related_matches_alone_with_no_absence_are_unresolved(self):
+        """The state a challenge leaves when it downgrades the one location.
+
+        Nothing says the passage is formalized and nobody checked that it is
+        absent, so it has no status: counted as unresolved (a miss for the
+        safety metric), never as ``not_formalized`` -- a decision documented in
+        references/vocabulary.md section 1.11.
+        """
+        for kind in sorted(vocab.PASSAGE_KINDS):
+            with self.subTest(kind=kind):
+                self.assertIsNone(self.status(kind, self.loc("relatedMatch", "proved"),
+                                              self.loc("relatedMatch", "definition")))
+        self.assertIn("downgrades", VOCABULARY_MD)
 
     def test_the_best_location_wins(self):
         self.assertEqual(self.status("theorem", self.loc("hasPart", "proved"),
@@ -240,6 +286,11 @@ class TestTheDerivedStatus(unittest.TestCase):
                          "formalized")
         self.assertEqual(self.status("example", self.loc("broadMatch", "proved")), "formalized")
         self.assertEqual(self.status("other", self.loc("narrowMatch", "proved")), "partial")
+        # ...and so does an `other` passage: each row alone would answer `partial`
+        self.assertEqual(self.status("other", self.loc("exactMatch", "definition")),
+                         "formalized")
+        self.assertEqual(self.status("other", self.loc("broadMatch", "proved")), "formalized")
+        self.assertEqual(self.status("other", self.loc("exactMatch", "proved")), "formalized")
 
     def test_objects_work_as_well_as_mappings(self):
         class Located:
@@ -257,6 +308,18 @@ class TestTheDerivedStatus(unittest.TestCase):
             self.status("theorem", self.loc("exactMatch", "sorry"))
         with self.assertRaises(CfError):
             self.status("theorem", {"relation": "exactMatch"})
+        # the statement flag marks a Prop-valued DEFINITION, never a proved theorem
+        for kind in ("theorem", "definition", "example"):
+            with self.subTest(kind=kind):
+                with self.assertRaises(CfError) as caught:
+                    self.status(kind, self.loc("exactMatch", "proved", statement=True))
+                self.assertIn("statement flag", caught.exception.message)
+        with self.assertRaises(CfError):
+            self.status("theorem", self.loc("relatedMatch", "proved", statement=True))
+        for flag in ("false", 1, "yes"):
+            with self.subTest(statement=flag):
+                with self.assertRaises(CfError):
+                    self.status("theorem", self.loc("exactMatch", "definition", statement=flag))
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +366,31 @@ PINNED = (
      "d5c849e587db977ecf84ad4206d2dbe803457a5091c33091617d14dc519cce33"),
     ("Theorem 2.3.4.5", None, "too_many_segments", "Theorem 2.3.4.5", None,
      "fd0b2f9b3be97206ebab4774c08b7b19456879c09d1eb09768e054e835c12b79"),
+    # a `#` body that carries a printed page or a numbered item parsed, and
+    # joined, as that page or item; the passage production may not take it
+    ("In-text #3, book p. 71", "In-text p.71", None, "In-text p.71", None,
+     "1824e76401b23e27733e32d1a46cbaf1fd71299d7649db214e844b7bc5dbdb4a"),
+    ("In-text #2 (p. 40)", "In-text p.40", None, "In-text p.40", None,
+     "7449b3df528fc1d1351982d1afb0467de2c563a5fca332bcd73e7021747c321f"),
+    ("In-text #1, Definition 1.4.35", "In-text Definition 1.4.35", None,
+     "In-text Definition 1.4.35", None,
+     "eca773eee6dec1d866d1072a28250a9dc3910ffad8d35aacbee84223c37425ff"),
+    ("In-text #12 p.5", "In-text p.5", None, "In-text p.5", None,
+     "5b37c20cd4d7d110fdd0cdd2e691db489160ed6a059ec7228756715986990280"),
+    ("In-text # p. 12", "In-text p.12", None, "In-text p.12", None,
+     "a1823794307952c04cf3a2628d9117ec7caf89109243639b779b544c98989b84"),
+    ("In-text #3fa91c07, p. 12", "In-text p.12", None, "In-text p.12", None,
+     "6697708cce6d7550dab17b75e91cb1f3b8b3430e60d79c09fecf2c10a00d59b6"),
+    ("In-text #3fa91c07 p. 12", "In-text p.12", None, "In-text p.12", None,
+     "5bb177534b7d7a111656937a71db2b502fc5a84f823ae90aafa144ebb27fd789"),
+    ("In-text #p 12", "In-text p.12", None, "In-text p.12", None,
+     "7482f60d6ac919f98d21497fd3497a9932efaeb8da9be0b4ae55c3bcfc3e75ef"),
+    ("In-text #deadbeef Theorem 1.2.3", "In-text Theorem 1.2.3", None,
+     "In-text Theorem 1.2.3", None,
+     "4e410317dd301a215cf192354ad42179c065b7ae5c9cb4b09625bbd226a0716f"),
+    ("In-text #2, Theorem 1.2.3 (ii)", "In-text Theorem 1.2.3(ii)", None,
+     "In-text Theorem 1.2.3(ii)", None,
+     "93b620ad9bbc1ab499f302db0dd5f0b5a352e665cced7a9106d927e528d6c505"),
 )
 #: finding_id of the passage labels BEFORE the production existed: the id is
 #: the label as written, so admitting the label changed none of them.
@@ -369,9 +457,11 @@ class TestThePassageProduction(unittest.TestCase):
 
     def test_malformed_hashes_are_rejects_with_the_problem_named(self):
         cases = {"In-text #": "empty", "In-text #3FA91C07": "uppercase",
-                 "In-text #3fa9": "length", "In-text #" + "a" * 17: "length",
-                 "In-text #zz12zz12": "not_hex", "In-text #3fa91c07 (Sylow)": "trailing_text",
-                 "In-text #3fa91c07 p. 12": "trailing_text", "In-text #p 12": "trailing_text"}
+                 "In-text #3fa9": "length", "In-text #" + "a" * 7: "length",
+                 "In-text #" + "a" * 17: "length",
+                 "In-text #zz12zz12": "not_hex", "In-text #3fa91c0g": "not_hex",
+                 "In-text #3fa91c07 (Sylow)": "trailing_text",
+                 "In-text #3fa91c07 trailing": "trailing_text"}
         for raw, problem in cases.items():
             with self.subTest(raw=raw):
                 item, reject = items.try_parse(raw)
@@ -384,8 +474,36 @@ class TestThePassageProduction(unittest.TestCase):
                 with self.assertRaises(ItemGrammarError):
                     items.join_key(raw)
 
-    def test_the_hash_wins_over_a_page(self):
-        self.assertEqual(items.try_parse("In-text #3fa91c07")[0].page, None)
+    def test_the_bounds_are_eight_and_sixteen_digits(self):
+        for n in (8, 9, 15, 16):
+            with self.subTest(digits=n):
+                self.assertEqual(items.parse("In-text #" + "a" * n).passage_hex, "a" * n)
+        for n in (7, 17):
+            with self.subTest(digits=n):
+                self.assertEqual(items.try_parse("In-text #" + "a" * n)[1].context["problem"],
+                                 "length")
+
+    def test_a_page_or_a_named_item_wins_over_a_hash(self):
+        """The passage production takes only what the page and reference grammar refuse.
+
+        So a label that parsed before the production existed parses as it did
+        (TestNoExistingIdMoved pins them), and ``passage_hex`` agrees with
+        ``try_parse``: none of these is a passage.
+        """
+        for raw, item in (("In-text #3fa91c07, p. 12", "In-text p.12"),
+                          ("In-text #3fa91c07 (p. 12)", "In-text p.12"),
+                          ("In-text #2, Definition 1.4.35", "In-text Definition 1.4.35")):
+            with self.subTest(raw=raw):
+                parsed = items.parse(raw)
+                self.assertEqual(parsed.full, item)
+                self.assertFalse(parsed.is_passage)
+                self.assertEqual(items.join_key(raw), item)
+                self.assertFalse(items.is_passage_item(raw))
+                with self.assertRaises(ItemGrammarError) as caught:
+                    items.passage_hex(raw)
+                self.assertEqual(caught.exception.reason, "not a passage item")
+        # and a hash alone is never a page
+        self.assertIsNone(items.try_parse("In-text #3fa91c07")[0].page)
 
     def test_a_reject_list_reports_it(self):
         found, rejects = items.parse_all(["In-text #3fa91c07", "In-text #3FA91C07"])
@@ -430,7 +548,8 @@ class TestTheConversions(unittest.TestCase):
                     items.passage_item(bad)
 
     def test_passage_hex_refuses_another_item(self):
-        for other in ("In-text p.71", "Exercise 1.3.19", "In-text #3FA91C07", "In-text", ""):
+        for other in ("In-text p.71", "Exercise 1.3.19", "In-text #3FA91C07", "In-text", "",
+                      "#3fa91c07", " #3fa91c07", "passage-3fa91c07", "In-text #3fa91c0g"):
             with self.subTest(item=other):
                 with self.assertRaises(ItemGrammarError):
                     items.passage_hex(other)
@@ -449,7 +568,8 @@ class TestTheConversions(unittest.TestCase):
         with self.assertRaises(ItemGrammarError):
             items.to_vendored_passage_id("In-text #0123456789abcdef")
         for bad in ("passage-p12-3fa91c07", "passage-3FA91C07", "passage-3fa9", "3fa91c07",
-                    "In-text #3fa91c07"):
+                    "In-text #3fa91c07", "passage-3fa91c07ff", "passage-3fa91c070",
+                    "xpassage-3fa91c07"):
             with self.subTest(id=bad):
                 with self.assertRaises(ItemGrammarError):
                     items.from_vendored_passage_id(bad)
@@ -537,6 +657,28 @@ class TestHeadIds(unittest.TestCase):
         heads = passages.assign_passage_ids(text, [0, second, third])
         self.assertEqual(heads[2].head_words, min(12, len(text[third:].split())))
 
+    def test_each_passage_takes_its_own_shortest_unique_head(self):
+        """Not the longest of its group: A leaves B and C at its thirteenth word.
+
+        A shares twelve words with B and C, and B and C share fourteen.  A is
+        unique at thirteen words, B and C only at fifteen, and A's id is the
+        hash of its own thirteen -- it does not wait for B and C.
+        """
+        shared = words(12, "s")
+        a = f"{shared} a12 a13 a14 a15 a16"
+        b = f"{shared} t12 t13 b14 b15 b16"
+        c = f"{shared} t12 t13 c14 c15 c16"
+        text = f"{a}. {b}. {c}."
+        starts = [0, text.index(b), text.index(c)]
+        heads = passages.assign_passage_ids(text, starts)
+        self.assertEqual([h.head_words for h in heads], [13, 15, 15])
+        self.assertEqual(heads[0].hex, passages.head_hex(a.split()[:13]))
+        self.assertEqual(heads[0].head, " ".join(a.split()[:13]))
+        self.assertEqual(heads[1].hex, passages.head_hex(b.split()[:15]))
+        self.assertEqual(heads[2].hex, passages.head_hex(c.split()[:15]))
+        for head in heads:
+            self.assertEqual(passages.hex_at(text, head.start, head.head_words), head.hex)
+
     def test_the_result_does_not_depend_on_the_order_of_the_starts(self):
         shared = words(13, "s")
         text = f"{shared} one x x. {shared} two y y. other words here entirely."
@@ -573,6 +715,13 @@ class TestHeadIds(unittest.TestCase):
         with self.assertRaises(PassageIdError) as caught:
             passages.assign_passage_ids(words(20), [0, 0])
         self.assertEqual(caught.exception.starts, (0, 0))
+        self.assertIn("given twice", caught.exception.message)
+        # ...and through the one-passage view, which adds `start` only when absent
+        with self.assertRaises(PassageIdError) as caught:
+            passages.passage_id(words(20), 0, [0, 0])
+        self.assertIn("given twice", caught.exception.message)
+        self.assertEqual(passages.passage_id(words(20), 0, [0]),
+                         passages.passage_id(words(20), 0, []))
 
     def test_a_start_that_is_not_a_word_start_is_refused(self):
         text = words(20)
@@ -580,6 +729,37 @@ class TestHeadIds(unittest.TestCase):
             with self.subTest(start=bad):
                 with self.assertRaises(PassageIdError):
                     passages.assign_passage_ids(text, [bad])
+        for bad in (True, "0", text.index(" ")):
+            with self.subTest(start=bad, view="passage_id"):
+                with self.assertRaises(PassageIdError):
+                    passages.passage_id(text, bad, [])
+        # True == 1, so a bool start must be refused before it is looked up among the starts
+        spaced = " " + text
+        self.assertEqual(passages.passage_id(spaced, 1, [1]), passages.passage_id(text, 0, [0]))
+        with self.assertRaises(PassageIdError):
+            passages.passage_id(spaced, True, [1])
+
+    def test_a_start_inside_a_word_is_refused(self):
+        """An off-by-one offset would hash a fragment, and hex_at would agree with it."""
+        text = "hello world " + words(20)
+        inside = [1, 4, text.index("w0") + 1, text.index("w12") + 2]
+        for bad in inside:
+            with self.subTest(start=bad):
+                with self.assertRaises(PassageIdError) as caught:
+                    passages.assign_passage_ids(text, [bad])
+                self.assertEqual(caught.exception.starts, (bad,))
+                self.assertIn("inside a word", caught.exception.message)
+                with self.assertRaises(PassageIdError):
+                    passages.hex_at(text, bad, 12)
+                with self.assertRaises(PassageIdError):
+                    passages.head_at(text, bad)
+        # a word starts at 0 or after any whitespace, and punctuation is part of it
+        odd = "(Sylow) first\nsecond\tthird\u00a0fourth " + words(12)
+        for good in (0, odd.index("second"), odd.index("third"), odd.index("fourth")):
+            with self.subTest(start=good):
+                (head,) = passages.assign_passage_ids(odd, [good])
+                self.assertEqual(head.start, good)
+        self.assertTrue(passages.assign_passage_ids(odd, [0])[0].head.startswith("(Sylow) "))
 
     def test_a_hash_collision_between_different_heads_is_refused(self):
         text = words(20) + " " + words(20, "x")
@@ -631,6 +811,20 @@ class TestTheHeadIsBlindToWhitespace(unittest.TestCase):
         head = passages.head_at(long_words, 0)
         self.assertEqual(len(head), passages.MAX_HEAD_WORDS)
         self.assertEqual(head[-1], "x" * 60 + "39")
+
+    def test_the_window_never_keeps_a_word_it_cut_in_half(self):
+        """Exactly forty pieces in the first window, the fortieth cut short.
+
+        Twenty-five-character words: thirty-nine of them and their spaces fill
+        1014 characters, so the window of 1024 holds ten characters of the
+        fortieth.  The head must read on and keep that word whole.
+        """
+        full = ["x" * 23 + f"{i:02d}" for i in range(45)]
+        text = " ".join(full)
+        self.assertEqual(len(" ".join(full[:39])) + 1, 1014)
+        head = passages.head_at(text, 0)
+        self.assertEqual(head, full[:40])
+        self.assertEqual(passages.hex_at(text, 0, 40), passages.head_hex(full[:40]))
 
 
 # ---------------------------------------------------------------------------
@@ -719,10 +913,31 @@ class TestWebSourceFamilies(unittest.TestCase):
         self.assertIn("oldid=1371234567", line)
         self.assertIn("CC-BY-SA-4.0", line)
 
+    def test_the_fallback_reader_reads_the_family_block(self):
+        """Stdlib only (CLAUDE.md section 3): the minimal reader alone gets it right."""
+        text = registry.skill_registry_path().read_text(encoding="utf-8")
+        enwiki = yamlio.load_yaml_minimal(text)["families"]["enwiki"]
+        self.assertIs(enwiki["confirmed"], True)
+        self.assertIs(enwiki["licence"]["redistribute"], False)
+        self.assertEqual(enwiki["licence_class"], "open_share_alike")
+        self.assertEqual(enwiki["licence"]["spdx"], "CC-BY-SA-4.0")
+        self.assertEqual(enwiki["attribution"],
+                         '"{title}", Wikipedia, revision {revision}, {url}, licensed {licence}')
+        self.assertEqual(enwiki["revision_url"],
+                         "https://en.wikipedia.org/w/index.php?curid={pageid}&oldid={revision}")
+        # a folded scalar: one line, single spaces, no trailing newline
+        self.assertTrue(enwiki["notes"].startswith("The first locate corpus is WikiProject"))
+        self.assertNotIn("\n", enwiki["notes"])
+        self.assertTrue(enwiki["notes"].endswith("revision."))
+        self.assertTrue(enwiki["licence"]["note"].startswith("Article text is CC BY-SA 4.0."))
+
     def test_the_family_block_reads_the_same_under_both_yaml_readers(self):
+        if not yamlio.HAVE_PYYAML:
+            self.skipTest("PyYAML is not installed; the fallback reader is checked alone above")
+        import yaml
         text = registry.skill_registry_path().read_text(encoding="utf-8")
         self.assertEqual(yamlio.load_yaml_minimal(text)["families"],
-                         yamlio.load_yaml(text)["families"])
+                         yaml.safe_load(text)["families"])
 
     def test_web_source_ids(self):
         self.assertEqual(registry.parse_web_source_id("enwiki-28767-1371234567"),
@@ -768,13 +983,128 @@ class TestWebSourceFamilies(unittest.TestCase):
             "must name {revision}": dict(revision_url="https://wiki.example.org/{pageid}"),
             "bare field name": dict(attribution="{title!r} {url} {licence}"),
             "revision_url must be an https": dict(revision_url="http://x/{revision}"),
+            "site must be an https": dict(site="http://wiki.example.org"),
             "title is required": dict(title=""),
+            "attribution is required": dict(attribution=""),
+            "revision_url is required": dict(revision_url=""),
         }
         from dataclasses import replace
         for needle, change in cases.items():
             with self.subTest(case=needle):
                 problems = replace(base, **change).problems()
                 self.assertTrue(any(needle in p for p in problems), problems)
+
+    def test_validate_reports_a_family_problem(self):
+        """`cf sources validate-registry` runs validate(); a bad family must reach it."""
+        from dataclasses import replace
+        good = registry.Registry.load(None).family("enwiki")
+        for needle, change in (("licence_class", dict(licence_class="copyleft")),
+                               ("redistribute", dict(licence={"spdx": "CC-BY-SA-4.0",
+                                                              "redistribute": True})),
+                               ("the id", dict(id="en-wiki"))):
+            with self.subTest(case=needle):
+                bad = replace(good, **change)
+                reg = registry.Registry({}, families={bad.id: bad})
+                problems = reg.validate()
+                self.assertTrue(any(needle in p and bad.id in p for p in problems), problems)
+
+    def test_a_revision_link_refuses_a_bad_page_or_revision(self):
+        family = registry.Registry.load(None).family("enwiki")
+        for pageid, revision in ((0, 1), (1, 0), (-1, 5), (True, 5), (1, True)):
+            with self.subTest(pageid=pageid, revision=revision):
+                with self.assertRaises(CfError):
+                    family.revision_link(pageid, revision)
+                with self.assertRaises(CfError):
+                    family.attribution_for(title="T", pageid=pageid, revision=revision)
+
+    def test_the_file_check_refuses_a_misshapen_family_block(self):
+        root = _scratch(self)
+        cases = {
+            "families: [enwiki]\n": "`families:` must be a map",
+            "families:\n  testwiki: text\n": "family testwiki: the entry must be a map",
+            GOOD_FAMILY.replace("redistribute: false}", "redistribute: false, fetch: open}"):
+                "unknown licence key `fetch`",
+        }
+        for body, needle in cases.items():
+            with self.subTest(case=needle):
+                path = _registry_file(root, body)
+                problems = registry.metadata_problems(path)
+                self.assertTrue(any(needle in p for p in problems), problems)
+
+    def test_a_misshapen_overlay_family_block_is_a_refusal_not_a_crash(self):
+        for body in ("families: [enwiki]\n", "families:\n  testwiki: text\n",
+                     "families:\n  testwiki: [a, b]\n"):
+            with self.subTest(body=body):
+                ws = _scratch(self)
+                _registry_file(ws, body)
+                with self.assertRaises(CfError) as caught:
+                    registry.Registry.load(ws)
+                self.assertIn("must be a map", caught.exception.message)
+
+    def test_an_overlay_family_is_merged_like_a_source(self):
+        """An overlay may add a family, and its licence is its own."""
+        ws = _scratch(self)
+        _registry_file(ws, GOOD_FAMILY)
+        reg = registry.Registry.load(ws)
+        family = reg.family("testwiki")
+        self.assertIsNotNone(family)
+        self.assertEqual(family.origin, "overlay")
+        self.assertFalse(family.confirmed)
+        self.assertEqual(reg.licence_class("testwiki-5-9"), "open_attribution")
+        self.assertEqual(reg.family_of("testwiki-5-9"), family)
+        self.assertEqual(reg.shadowed_families, {})
+        self.assertEqual(reg.validate(), [])
+        # the shipped family is still there, untouched
+        self.assertEqual(reg.family("enwiki").origin, "skill")
+        self.assertEqual(reg.licence_class("enwiki-1-2"), "open_share_alike")
+
+    def test_an_overlay_cannot_reopen_or_demote_a_confirmed_family(self):
+        """`confirmed` and the licence of a curated family stand, and the shadow is reported.
+
+        Without this, a workspace registry.yaml saying `public_domain` made every
+        Wikipedia record quotable with no CC BY-SA attribution, and nothing --
+        not validate(), not `cf status` -- said so.
+        """
+        ws = _scratch(self)
+        _registry_file(ws, "families:\n  enwiki:\n    licence_class: public_domain\n"
+                           "    licence: {spdx: CC0-1.0, redistribute: false}\n"
+                           "    confirmed: false\n    container_title: Wikipedia (overlay)\n")
+        reg = registry.Registry.load(ws)
+        family = reg.family("enwiki")
+        self.assertEqual(family.origin, "overlay")
+        self.assertTrue(family.confirmed)
+        self.assertEqual(family.licence_class, "open_share_alike")
+        self.assertEqual(family.spdx, "CC-BY-SA-4.0")
+        self.assertEqual(reg.licence_class("enwiki-28767-1371234567"), "open_share_alike")
+        self.assertIn("CC-BY-SA-4.0", family.attribution_for(title="T", pageid=1, revision=2))
+        self.assertEqual(family.container_title, "Wikipedia (overlay)")   # the rest merges
+        self.assertEqual(reg.shadowed_families, {"enwiki": ("licence_class", "licence")})
+        problems = reg.validate()
+        shadow = [p for p in problems if p.startswith("family enwiki:")]
+        self.assertEqual(len(shadow), 1, problems)
+        self.assertIn("shadows a CONFIRMED family", shadow[0])
+        self.assertIn("licence_class, licence were not applied", shadow[0])
+        # an overlay row that changes nothing licence-shaped is still reported
+        _registry_file(ws, "families:\n  enwiki:\n    notes: seen here first\n")
+        again = registry.Registry.load(ws)
+        self.assertEqual(again.shadowed_families, {"enwiki": ()})
+        self.assertTrue(any("shadows a CONFIRMED family" in p and "not applied" not in p
+                            for p in again.validate()))
+        # and a more restrictive class is held as well: the curated licence is one fact
+        _registry_file(ws, "families:\n  enwiki:\n    licence_class: closed\n")
+        held = registry.Registry.load(ws)
+        self.assertEqual(held.licence_class("enwiki-1-2"), "open_share_alike")
+        self.assertEqual(held.shadowed_families, {"enwiki": ("licence_class",)})
+
+    def test_cf_status_reports_a_shadowed_family(self):
+        ws = _scratch(self)
+        _registry_file(ws, "families:\n  enwiki:\n    licence_class: public_domain\n")
+        from cfcmd import status
+        with mock.patch.object(status.log, "warn_block") as warn_block:
+            status._print_registry_problems(ws)
+        lines = [line for call in warn_block.call_args_list for line in call.args[1]]
+        self.assertTrue(any("family enwiki" in line and "licence_class" in line
+                            for line in lines), lines)
 
     def test_a_web_source_is_never_a_registry_entry(self):
         reg = registry.Registry.load(None)

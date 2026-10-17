@@ -134,19 +134,26 @@ release has something to say.
   a passage keyed by the hash of its head, parsed whitespace-tolerantly, with
   the reject `bad_passage_id` for a malformed hash, and conversions to and
   from the hex (`passage_item`, `passage_hex`) and the vendored
-  `passage-<8 hex>` id. `clean()` and `finding_id` are untouched; the only
-  labels whose parse or join key changed are ones that were rejects before
-  (`In-text #…`, then `in_text_no_target`). `cflib.passages` computes the hex:
-  the vendored `passage_quote_id` over a renderer-independent head (formulas
-  as `⟦normalized alttext⟧`, twelve words extended to forty until unique in
-  the source), refusing two passages that still collide with
-  `PassageIdError`.
+  `passage-<8 hex>` id. `clean()` and `finding_id` are untouched, and the
+  production is tried after the printed page and the cross-reference, so the
+  only labels whose parse or join key changed are ones that were rejects
+  before (`In-text #…`, then `in_text_no_target`): `In-text #3, book p. 71` is
+  still the p.71 item. `cflib.passages` computes the hex: the vendored
+  `passage_quote_id` over a renderer-independent head (formulas as
+  `⟦normalized alttext⟧`, twelve words extended to forty until unique in the
+  source, each passage starting at a word), refusing two passages that still
+  collide, a duplicate offset and a start inside a word with
+  `PassageIdError`. The head rule is frozen and stated in full in
+  `references/vocabulary.md` §4.
 - Licence classes (`closed` by default, `open_attribution`,
   `open_share_alike`, `public_domain`): an optional registry `licence_class`
   that every existing entry passes without, `POLICY.md` §4.1, hard rule 6.
   The registry gains `families:`, web-source families with no per-revision
   rows; it ships one, `enwiki` (`open_share_alike`, an attribution template
-  and a permalink template), validated by `cf sources validate-registry`.
+  and a permalink template), validated by `cf sources validate-registry`. A
+  workspace overlay may add a family; over a confirmed shipped one it keeps
+  `confirmed` and the curated `licence_class` and `licence`, and the shadow
+  is reported by `Registry.validate()` and `cf status`.
   `CLAUDE.md` §3 names the Wikipedia fetcher, not implemented, as the next
   network exception.
 - Verso hovers in the overlay viewer. `build_site.py` cuts each card's

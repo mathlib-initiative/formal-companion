@@ -29,7 +29,10 @@ at all (a web page): ``"In-text #<hex>"``, a PASSAGE keyed by 8 to 16
 lowercase hex digits of the hash of its head (docs/proposals/wikipedia-locate.md
 section 2.2; ``cflib.passages`` computes the hash).  It is one production of
 the in-text grammar, parsed whitespace-tolerantly like the others, and a
-malformed one is a reject (``bad_passage_id``), never a guess.
+malformed one is a reject (``bad_passage_id``), never a guess.  It is tried
+LAST, after the printed page and the cross-reference, so only a label those
+two refuse can become a passage and no label that parsed before it existed
+parses differently now.
 :func:`passage_item` / :func:`passage_hex` convert between the item and its
 hex, and :func:`to_vendored_passage_id` / :func:`from_vendored_passage_id`
 between the item and the vendored format's ``passage-<8 hex>`` id.  Nothing
@@ -338,10 +341,17 @@ def try_parse(raw: str, kinds: Sequence[str] = DEFAULT_KINDS,
 
 
 def _parse_in_text(raw: str, s: str, kinds: Sequence[str], *, numbering=None):
-    """In-text items: a ``#<hex>`` passage; else the printed page; else a named cross-reference."""
+    """In-text items: the printed page wins; else a named cross-reference; else a ``#<hex>`` passage.
+
+    The passage production is LAST on purpose: it takes only a body the page
+    and cross-reference grammar refuse, so a label that parsed before the
+    production existed parses exactly as it did -- ``In-text #3, book p. 71``
+    is still the p.71 item and ``In-text #1, Definition 1.4.35`` still the
+    anchored Definition 1.4.35 (``TestNoExistingIdMoved`` pins them).  A
+    well-formed ``#<hex>`` can never reach the first two: a hex run holds no
+    ``p`` and no space, which a page and a ``<Kind> <n>`` mention both need.
+    """
     body = _IN_TEXT_RE.sub("", s).strip().lstrip(",").strip()
-    if body.startswith("#"):
-        return _parse_passage(raw, body)
     page_m = _PAGE_RE.search(s)
     qualifier = re.split(r",|\(|\bbook\b|\bpp?\.", body, maxsplit=1)[0].strip()
     if page_m:
@@ -353,6 +363,8 @@ def _parse_in_text(raw: str, s: str, kinds: Sequence[str], *, numbering=None):
         return Item(id=f"{IN_TEXT} {ref.full}", kind=IN_TEXT, chapter=ref.chapter,
                     section=ref.section, number=ref.number, levels=ref.levels,
                     qualifier=qualifier, raw=raw), None
+    if body.startswith("#"):
+        return _parse_passage(raw, body)
     return None, Reject(raw, REJECT_IN_TEXT_NO_TARGET, {"body": body[:60]})
 
 
@@ -378,7 +390,9 @@ def _parse_passage(raw: str, body: str):
     ``in text  # 3fa91c07`` and ``In-text #3fa91c07`` are one item -- and strict
     about the hash itself: an uppercase, short, long or non-hex hash, or anything
     after it, is refused with the problem named, because a hash that is almost
-    right is a different key.
+    right is a different key.  Reached only for a body the page and the
+    cross-reference grammar refused (:func:`_parse_in_text`), so "anything after
+    it" never includes a printed page or a named item: those still win.
     """
     hexpart = body[1:].strip()
     problem = _passage_problem(hexpart)
@@ -623,6 +637,9 @@ def passage_hex(item: "Item | str") -> str:
 
     The inverse of :func:`passage_item`.  Raises ItemGrammarError on any other
     item -- a numbered item, an ``In-text p.<n>`` -- and on a malformed hash.
+    A string goes through the in-text grammar itself (:func:`_parse_in_text`),
+    so this answers exactly what :func:`try_parse` answers: ``In-text
+    #3fa91c07, p. 12`` is the p.12 item there, and not a passage here.
     """
     if isinstance(item, Item):
         if not item.is_passage:
@@ -634,16 +651,19 @@ def passage_hex(item: "Item | str") -> str:
     if not _IN_TEXT_RE.match(s):
         raise ItemGrammarError(raw, "not a passage item",
                                hint=f"expected {PASSAGE_ITEM_PREFIX}<hex>")
-    body = _IN_TEXT_RE.sub("", s).strip().lstrip(",").strip()
-    if not body.startswith("#"):
-        raise ItemGrammarError(raw, "not a passage item",
-                               hint=f"expected {PASSAGE_ITEM_PREFIX}<hex>")
-    parsed, reject = _parse_passage(raw, body)
+    parsed, reject = _parse_in_text(raw, s, DEFAULT_KINDS)
     if parsed is None:
         assert reject is not None
+        if reject.reason != REJECT_BAD_PASSAGE_ID:
+            raise ItemGrammarError(raw, "not a passage item",
+                                   hint=f"expected {PASSAGE_ITEM_PREFIX}<hex>")
         raise ItemGrammarError(raw, reject.reason,
                                hint=f"a passage hash is {reject.context['expected']} "
                                     f"({reject.context['problem']})")
+    if not parsed.is_passage:
+        raise ItemGrammarError(raw, "not a passage item",
+                               hint=f"{raw!r} is the in-text item {parsed.full!r}; "
+                                    f"expected {PASSAGE_ITEM_PREFIX}<hex>")
     return parsed.passage_hex
 
 
