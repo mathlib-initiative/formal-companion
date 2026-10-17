@@ -49,6 +49,11 @@ annotation document format of `vendor/formal_companion_annotations/`;
 6. **Hardening carries over**: TLS verification, HTTPS-only redirects, atomic
    writes, loopback-only binding, the CSP, no HTML-string injection, and PDF.js
    with `isEvalSupported: false`.
+7. **Hovers come from the built site, at build time.** `build_site.py` reads
+   the site's own Verso pages and hover table and writes `<mount>/verso.json`
+   (section 5); the viewer never fetches or parses a page's HTML, and a site
+   with no Verso page gets an empty file and plain statements. No setting
+   turns this on or off.
 
 ## 2. Layout
 
@@ -58,7 +63,7 @@ templates/overlay/
   runtime/                     copied verbatim into <companion>/pdf-overlay/
     README.md THIRD_PARTY.md
     schema/                    overlay-config-v1.schema.json
-    tools/serve.py build_site.py check_generated.py overlay_annotations.py
+    tools/serve.py build_site.py check_generated.py overlay_annotations.py verso_extract.py
     viewer/index.html viewer.js viewer-core.js viewer.css
     vendor/pdfjs/
   tests/                       node --test suites (not copied)
@@ -145,7 +150,15 @@ From the records alone it builds:
   "N key declarations" when there are two or more, never a heading that says
   what they state), then the rest under "Related": one line each, a plain
   link to its source with no statement, headed by its count (and by the role
-  more than half of them share);
+  more than half of them share). When `../verso.json` holds a statement for a
+  key card's target (its page and anchor, before resolution) whose texts
+  joined are the card's snippet exactly, the statement is drawn from its runs:
+  each token tinted by its kind, a link when its target is a page of this
+  site, and a hover card (its signature, a variable's as `name : type`, and
+  its docstring's paragraphs and code as text) on the pointer, on keyboard
+  focus and on a first tap; a statement is one tab stop, the arrow keys, Home
+  and End move between its tokens, and Escape closes the card. Otherwise, and
+  with no `verso.json`, the plain statement stays;
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
   order the files came in; with nothing selected the panel lists the page's
@@ -174,7 +187,21 @@ bytecode writing off.
   into `<output_root>/annotations/`, so that a card's rendered page,
   relative to the site root, is a page of `<output_root>`; replace both
   atomically (refusing a site directory that does not have the layout of
-  section 7), insert the index link, write `receipt.json`.
+  section 7), insert the index link, write `receipt.json`. Beside the bundle
+  it writes `verso.json` (`verso_extract.py`): for each object end whose
+  rendered page is a page of the site with an anchor, the `div.code-box`
+  holding the anchor is parsed from its start (goal views, messages and
+  inputs skipped, a line break between two `code.block` elements) and the
+  snippet matched from the anchor's line or up to six lines above: whitespace
+  runs match whitespace runs, comments are skipped on both sides, a trailing
+  `…` is kept, and an internal `…`, a mismatch or a match that does not cover
+  the anchor gives no statement. A statement is `[kind, text, hover,
+  binding, href]` runs whose texts joined are the snippet; a link is kept
+  only when its page is a file of the site that holds its anchor, and only
+  the hover entries the statements use are copied from the site's
+  `-verso-docs.json`, as plain-text `signature` and `doc`. The receipt
+  records `verso.json` with the other files and the summary counts its
+  statements.
 - **`check_generated.py`**: every file `GENERATED.json` lists, with its
   sha256, and nothing else in `pdf-overlay/` but the bundle; the `format`
   block against the shipped package's version; the config; `annotations/`

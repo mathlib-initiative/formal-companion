@@ -110,6 +110,14 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- Verso hovers in the overlay viewer. `build_site.py` cuts each key card's
+  statement out of the built site's Verso pages (`tools/verso_extract.py`)
+  and writes `<mount>/verso.json`: the snippet as runs with Verso's token
+  kinds, bindings and same-site links, and the hover entries they use. The
+  viewer draws a matching statement from its runs, with its own hover card
+  (pointer, keyboard focus and tap; Escape closes it) built with
+  `textContent`; the CSP is unchanged. A site with no Verso page, or a card
+  with no matching statement, keeps the plain snippet.
 - `display.minimal` in `overlay.config.json` (default `false`): the viewer
   keeps the passage, its links and their statements, and leaves out what
   describes them: the status chip (still read by a screen reader, and back in
