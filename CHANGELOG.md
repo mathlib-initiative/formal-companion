@@ -118,6 +118,17 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- Recursive harvest (proposal §3, §6): the listing (`find -print0` on a host),
+  the transfer and the checksums descend into subdirectories, a receipt names a
+  file by its path relative to the corpus, and `iter_finding_files` walks the
+  tree, so a locate run's `<task-id>/<source-id>.json` documents land, are
+  reconciled and are counted; a flat faithfulness corpus lists, copies and
+  receipts exactly as before. `cf harvest` gates a locate run with
+  `verify_locate.py` and its `gate.local.json`, audits its documents against
+  the run's own source pins, adds a receipt `locate` block (documents by mode,
+  UNRESOLVED documents, attempt-capped documents and unresolved passages
+  counted on their own) and writes no faithfulness tally, pin or companion
+  state for it.
 - Bridge hardening (proposal §6). `scripts/run/agent_call.py` runs every
   agent call of `bridge-agentbox.sh` and `bridge-claude-p.sh` inside one of 15
   per-user `flock` session slots (`CF_SLOT_DIR`, `CF_SLOTS`), waiting for a
