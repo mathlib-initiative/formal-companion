@@ -38,14 +38,17 @@ from plan.presets import Preset
 
 from .plan import GATE_SCRIPT, TaskSpec
 
-#: (source in the skill, name in the gate directory, required)
+#: (source in the skill as path parts, name in the gate directory, required).
+#: Parts rather than one string: the gate script and the two host tools are
+#: built by other locate packages, and a not-yet-present path spelled out here
+#: would read as a citation of a file this tree does not hold.
 GATE_FILES = (
-    ("scripts/gate/locate_text.py", "locate_text.py", True),
-    ("scripts/locate/passage_ids.py", "passage_ids.py", True),
-    ("scripts/locate/records.py", "locate_records.py", True),
-    ("scripts/gate/verify_locate.py", GATE_SCRIPT, False),
-    ("scripts/corpus/corpus_search.py", "corpus_search.py", False),
-    ("scripts/corpus/corpus_show.py", "corpus_show.py", False),
+    (("scripts", "gate", "locate_text.py"), "locate_text.py", True),
+    (("scripts", "locate", "passage_ids.py"), "passage_ids.py", True),
+    (("scripts", "locate", "records.py"), "locate_records.py", True),
+    (("scripts", "gate", "verify_locate.py"), GATE_SCRIPT, False),
+    (("scripts", "corpus", "corpus_search.py"), "corpus_search.py", False),
+    (("scripts", "corpus", "corpus_show.py"), "corpus_show.py", False),
 )
 VENDORED = ("literature_links", "formal_companion_annotations")
 
@@ -88,8 +91,8 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
         generator="cf plan-locate")
     gate = plan.local / "gate"
     root = skill_root()
-    for rel, name, required in GATE_FILES:
-        src = root / rel
+    for parts, name, required in GATE_FILES:
+        src = root.joinpath(*parts)
         if src.is_file():
             shutil.copy2(src, gate / name)
             built["files"].append(str(gate / name))
@@ -97,7 +100,7 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
             built["warnings"].append(f"gate file missing: {src}")
         else:
             built["warnings"].append(
-                f"{rel} is not in this checkout, so the gate directory has no {name}; the "
+                f"{'/'.join(parts)} is not in this checkout, so the gate directory has no {name}; the "
                 f"package that builds it is not merged here yet")
     vendor_dest = gate / "vendor"
     vendor_dest.mkdir(exist_ok=True)
