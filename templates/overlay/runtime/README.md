@@ -32,8 +32,9 @@ loopback at `pdf.route`; it is never committed. `build_site.py` copies the
 viewer and the bundle into `<site.output_root>/<site.mount>/` and the
 annotation files into `<site.output_root>/annotations/`; a declaration's
 rendered page is a page of `<site.output_root>`. It also writes
-`<site.mount>/verso.json` from the site's Verso pages: each key card's
-statement with its tokens and hovers, or nothing for a site without them.
+`<site.mount>/verso.json` from the site's Verso pages: each card's
+statement with its tokens and hovers (the viewer draws the key cards'), or
+nothing for a site without them.
 
 ## Checking it in CI
 

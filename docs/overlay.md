@@ -151,14 +151,18 @@ From the records alone it builds:
   what they state), then the rest under "Related": one line each, a plain
   link to its source with no statement, headed by its count (and by the role
   more than half of them share). When `../verso.json` holds a statement for a
-  key card's target (its page and anchor, before resolution) whose texts
-  joined are the card's snippet exactly, the statement is drawn from its runs:
-  each token tinted by its kind, a link when its target is a page of this
-  site, and a hover card (its signature, a variable's as `name : type`, and
-  its docstring's paragraphs and code as text) on the pointer, on keyboard
-  focus and on a first tap; a statement is one tab stop, the arrow keys, Home
-  and End move between its tokens, and Escape closes the card. Otherwise, and
-  with no `verso.json`, the plain statement stays;
+  key card's target (its page and anchor, before resolution, or for a tagged
+  example its module's page and its tag) whose texts joined are the card's
+  snippet exactly, the statement is drawn from its runs: each token tinted by
+  its kind, a link when its target is a page of this site, and a hover card
+  (its signature, a variable's as `name : type`, and its docstring's
+  paragraphs and code as text) on the pointer, on keyboard focus and on a
+  first tap. The pointer may move onto the card, which stays while it is
+  there and closes shortly after it leaves; a click elsewhere closes it, and
+  PageDown and PageUp scroll a long card while its token has focus. A
+  statement is one tab stop, the arrow keys, Home and End move between its
+  tokens, and Escape closes the card. Otherwise, and with no `verso.json`,
+  the plain statement stays;
 - an item with no card says so, and names its ledger clusters;
 - the regions on a page are in reading order (top, then left), whatever
   order the files came in; with nothing selected the panel lists the page's
@@ -190,14 +194,18 @@ bytecode writing off.
   section 7), insert the index link, write `receipt.json`. Beside the bundle
   it writes `verso.json` (`verso_extract.py`): for each object end whose
   rendered page is a page of the site with an anchor, the `div.code-box`
-  holding the anchor is parsed from its start (goal views, messages and
+  holding the anchor (for a tagged example, the box whose code holds its tag
+  comment, with its `example` keyword as the anchor) is parsed from its
+  start (goal views, messages and
   inputs skipped, a line break between two `code.block` elements) and the
   snippet matched from the anchor's line or up to six lines above: whitespace
   runs match whitespace runs, comments are skipped on both sides, a trailing
   `…` is kept, and an internal `…`, a mismatch or a match that does not cover
   the anchor gives no statement. A statement is `[kind, text, hover,
   binding, href]` runs whose texts joined are the snippet; a link is kept
-  only when its page is a file of the site that holds its anchor, and only
+  only when its page is a file of the site that holds its anchor and that
+  anchor is a declaration's own (the name after a declaration keyword, or a
+  field or constructor of one the page declares), and only
   the hover entries the statements use are copied from the site's
   `-verso-docs.json`, as plain-text `signature` and `doc`. The receipt
   records `verso.json` with the other files and the summary counts its
