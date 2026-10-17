@@ -115,16 +115,31 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
         self.assertEqual(companion.merge(template, {"object": []})["subject"], [template["subject"]])
         self.assertFalse(hasattr(companion, "normalize"))
 
-    #: copied to a run host, where cflib is not importable: it puts vendor/ (beside
-    #: it in a gate directory, else the checkout's) on sys.path itself first
-    HOST_BOOTSTRAPPED = {"scripts/locate/records.py"}
+    #: Modules copied to a run host, where ``cflib`` is not importable: each puts
+    #: ``vendor/`` on ``sys.path`` itself (the copy beside it in a gate directory,
+    #: else the checkout's) before it imports the package.
+    HOST_BOOTSTRAPPED = {
+        "scripts/gate/verify_locate.py":
+            "the locate gate; references/locate-documents.md section 9",
+        "scripts/locate/records.py":
+            "the record builder, copied into the gate directory as locate_records.py",
+    }
+
+    def test_a_host_module_puts_vendor_on_the_path_before_the_package(self):
+        for rel in sorted(self.HOST_BOOTSTRAPPED):
+            with self.subTest(module=rel):
+                text = (SKILL / rel).read_text(encoding="utf-8")
+                tree = ast.parse(text)
+                self.assertFalse([n for n in ast.walk(tree) if isinstance(n, ast.ImportFrom)
+                                  and (n.module or "").split(".")[0] == "cflib"],
+                                 "a host module cannot import cflib")
+                self.assertLess(text.index("sys.path.insert(0, str("),
+                                text.index("from literature_links"))
 
     def test_every_import_goes_through_the_bootstrap(self):
         offenders = []
         for path in sorted([*SCRIPTS.rglob("*.py"), *(SKILL / "tests").glob("*.py")]):
             if path.relative_to(SKILL).as_posix() in self.HOST_BOOTSTRAPPED:
-                text = path.read_text(encoding="utf-8")
-                self.assertLess(text.index("sys.path.insert"), text.index("from literature_links"))
                 continue
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
             imports = sorted((n for n in ast.walk(tree) if isinstance(n, (ast.Import, ast.ImportFrom))),

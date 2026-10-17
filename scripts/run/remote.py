@@ -190,7 +190,7 @@ def _tree_check(host: dict, entry: dict) -> dict:
 
 def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
                   names: dict, budget: dict, concurrency: dict,
-                  force: bool = False) -> list[dict]:
+                  force: bool = False, locate: dict | None = None) -> list[dict]:
     """The ordered command plan: preflight, transfer, verify, smoke, raise, monitor.
 
     Each step is ``{stage, title, argv, shell, safe}``; ``safe`` marks the
@@ -270,9 +270,21 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
         _ssh(host, f"{tend} tend-task verify {shlex.quote(entrypoint + '/tasks')}"), safe=True)
     add("verify", "orchestrator config",
         _ssh(host, f"{tend} tend validate-config --root {shlex.quote(tend_root)}"), safe=True)
+    gate_script = "verify_locate.py" if locate is not None else "verify_findings.py"
     add("verify", "gate runs out of tree against one staged finding (fails closed)",
-        _ssh(host, f"test -f {shlex.quote(root + '/' + names['gate'] + '/verify_findings.py')} "
+        _ssh(host, f"test -f {shlex.quote(root + '/' + names['gate'] + '/' + gate_script)} "
                    f"&& echo 'gate present (out of tree)'"), safe=True)
+    corpus = (locate or {}).get("corpus_db") or {}
+    if corpus.get("path") and corpus.get("sha256"):
+        # Verified ONCE, here, not on every gate call: hashing a universe's
+        # corpus.sqlite per task is what made the old gate O(N); the gate opens it
+        # mode=ro&immutable=1 and trusts this check (proposal section 2.4).
+        line = shlex.quote(f"{corpus['sha256']}  {corpus['path']}")
+        add("verify", "corpus.sqlite is the pinned database (sha256, once per run)",
+            _ssh(host, f"echo {line} | sha256sum -c --status - && echo 'corpus.sqlite: pinned "
+                       f"sha256 verified' || {{ echo 'REFUSED: corpus.sqlite on the host is not "
+                       f"the database gate.json pins' >&2; exit 1; }}"),
+            safe=True, record_output=True, expected=corpus["sha256"])
     # BEFORE: the companion trees as they landed, hashed on the host. Recorded in
     # run.yaml (run.executed) with the digest they were sent with.
     for entry in entries:

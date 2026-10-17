@@ -22,6 +22,8 @@
 #   CF_REVIEWER_TOOLS      --allowedTools for the reviewer (read-only surface)
 #   TEND_AGENT_SESSION_DIR where the claude session id and revision prompt live
 #   TEND_TASK_ID / TEND_WORKTREE_PATH / TEND_WORKTREE_ID  substituted into the prompt
+#   CF_SLOT_DIR / CF_SLOTS / CF_AGENT_TIMEOUT  the session slots and the call's timeout
+#                          (agent_call.py: ~/.cache/cf-agent-slots, 15, 45m)
 set -euo pipefail
 
 ROLE="${CF_ROLE:-worker}"
@@ -76,5 +78,19 @@ $(tail -c 6000 "$PWD/.tend/discussion.md")
   fi
 fi
 
-claude "${CLAUDE_ARGS[@]}" -p "$PROMPT" \
-  | python3 "$SCRIPT_DIR/extract_final_json.py" "$ROLE" "$SESSION_ID_FILE"
+# agent_call.py takes one of the per-user session slots (flock, waiting for one),
+# runs the call under CF_AGENT_TIMEOUT (45m) in its own process group, and keeps
+# the JSON envelope under $ROOT/usage/; a timeout (124) or an empty or 409
+# envelope (75) is an infrastructure failure, so no contract JSON is printed and
+# the orchestrator retries.
+RAW="$(mktemp)"
+trap 'rm -f "$RAW"' EXIT
+CALLRC=0
+python3 "$SCRIPT_DIR/agent_call.py" --role "$ROLE" --raw "$RAW" --usage-dir "$ROOT/usage" \
+  --task-id "${TEND_TASK_ID:-}" -- claude "${CLAUDE_ARGS[@]}" -p "$PROMPT" || CALLRC=$?
+case "$CALLRC" in
+  124|75|64) echo "bridge-claude-p: the agent call failed as infrastructure (exit $CALLRC)" >&2
+             exit "$CALLRC" ;;
+esac
+python3 "$SCRIPT_DIR/extract_final_json.py" "$ROLE" "$SESSION_ID_FILE" <"$RAW"
+[ "$CALLRC" = 0 ] || exit "$CALLRC"

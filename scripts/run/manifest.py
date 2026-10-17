@@ -48,7 +48,8 @@ READONLY_CHMOD = ["--chmod=D0555,F0444"]
 BYPASS_ENV = "CF_ALLOW_SANDBOX_BYPASS"
 #: the only files of scripts/run/ that belong on the server
 BRIDGE_FILES = ("bridge-agentbox.sh", "bridge-claude-p.sh", "bridge-tend-agent.sh",
-                "normalize_result.py", "extract_final_json.py")
+                "normalize_result.py", "extract_final_json.py", "agent_call.py",
+                "attempt_cap.py", "watchdog.py")
 #: never ship build trees, git objects or editor droppings to the server.
 SOURCE_EXCLUDES = [".git", ".lake", "build", ".DS_Store", "__pycache__", "*.olean"]
 #: a tend worktree per ready task: 382 worktrees were 1.1 GB in 11 minutes.
@@ -384,9 +385,13 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
     if (rd / "data").exists():
         entries.append(_entry("data", rd / "data", f"{root}/{names['entrypoint']}/data/",
                               note="statement tables the workers read"))
-    else:
+    elif not is_locate(run):
         warnings.append(f"runs/{run_id}/data/ is absent: the workers will have no "
                         "statements.jsonl/pairs.jsonl to read")
+    if is_locate(run):
+        located, notes = locate_entries(rd, include_texts=include_texts)
+        entries.extend(located)
+        warnings.extend(notes)
 
     # The tend root, minus its gate/ copy (which belongs out of tree, below).
     entries.append(_entry("tend-root", tend_root, f"{root}/{names['tend_root']}/",
@@ -417,6 +422,18 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
         entries.append(_entry("bridges", [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES],
                               f"{root}/{names['tend_root']}/bin/",
                               note="agent bridges + the StrictModel coercion"))
+    else:
+        # A plan that staged a bridge may predate a helper the bridge now calls
+        # (agent_call.py takes the session slot and the timeout): ship what bin/
+        # lacks, so a staged bridge never runs without its own hardening.
+        missing_helpers = [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES
+                           if not (tend_root / "bin" / n).exists()
+                           and (skill_dir / "scripts" / "run" / n).exists()]
+        if missing_helpers:
+            entries.append(_entry("bridge-helpers", missing_helpers,
+                                  f"{root}/{names['tend_root']}/bin/",
+                                  note="bridge helpers the staged bin/ lacks (slots, timeout, "
+                                       "attempt cap, watchdog)"))
 
     if include_sources:
         pinned = recorded_tree_digests(run)
@@ -488,6 +505,78 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
     for entry in entries:
         if entry["required"] and not entry["exists"]:
             warnings.append("missing %s: %s" % (entry["name"], entry["src"]))
+    return entries, warnings
+
+
+def is_locate(run: dict) -> bool:
+    """Is this run.yaml a locate run's (references/locate-documents.md section 9)?"""
+    return isinstance((run or {}).get("locate"), dict)
+
+
+def locate_gate(run_dir: Path) -> tuple[dict, dict]:
+    """``(gate.json, gate.local.json)`` of a planned locate run; ``{}`` for one that is absent."""
+    out = []
+    for name in ("gate.json", "gate.local.json"):
+        path = run_dir / name
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        except (OSError, ValueError):
+            data = {}
+        out.append(data if isinstance(data, dict) else {})
+    return out[0], out[1]
+
+
+def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], list[str]]:
+    """What a locate run sends beyond the root: its sources, corpus, L2 and inventory.
+
+    The host paths are the ones the planner wrote into ``gate.json`` (the gate
+    reads them there) and the local ones its ``gate.local.json``; only THIS run's
+    sources travel, never the whole sourceset.  The rendered sources and the
+    frozen inventory quote the source text, so they leave this machine only with
+    ``--include-source-text`` -- and without them the gate on the host fails
+    closed, which the warning says.  ``corpus.sqlite`` and the candidates are
+    metadata about public libraries and always travel.
+    """
+    remote, local = locate_gate(run_dir)
+    entries: list[dict] = []
+    warnings: list[str] = []
+    if not remote or not local:
+        return entries, [f"{run_dir.name}: a locate run needs gate.json and gate.local.json "
+                         "(the locate planner writes both)"]
+    r_set = remote.get("sourceset") or {}
+    l_set = local.get("sourceset") or {}
+    if include_texts:
+        for sid in sorted(remote.get("sources") or {}):
+            entries.append(_entry(f"source-layer:{sid}", Path(l_set.get("sources_dir", "")) / sid,
+                                  f"{str(r_set.get('sources_dir', '')).rstrip('/')}/{sid}/",
+                                  flags=READONLY_CHMOD + ["--delete"],
+                                  note="a rendered web source: layer, formulas, paragraphs (quotes "
+                                       "are cut from it); leaves only with --include-source-text"))
+    else:
+        warnings.append("this locate run's sources were not included (--include-source-text): the "
+                        "gate on the host reads each document's layer and fails closed without it")
+    corpus_r = (remote.get("corpus_db") or {}).get("path")
+    corpus_l = (local.get("corpus_db") or {}).get("path")
+    if corpus_r and corpus_l:
+        entry = _entry("corpus.sqlite", Path(corpus_l), str(corpus_r), flags=READONLY_CHMOD,
+                       note="the universe's declarations; the gate checks every lean end in it")
+        entry["sha256"] = (remote.get("corpus_db") or {}).get("sha256")
+        entries.append(entry)
+    if remote.get("candidates_dir") and local.get("candidates_dir"):
+        entries.append(_entry("candidates", Path(local["candidates_dir"]),
+                              str(remote["candidates_dir"]).rstrip("/") + "/",
+                              flags=READONLY_CHMOD + ["--delete"],
+                              note="L2: the curated hits gate rule 4 reads itself"))
+    inv_r = (remote.get("inventory") or {}).get("dir") if isinstance(remote.get("inventory"), dict) else None
+    inv_l = (local.get("inventory") or {}).get("dir") if isinstance(local.get("inventory"), dict) else None
+    if inv_r and inv_l:
+        if include_texts:
+            entries.append(_entry("inventory", Path(inv_l), str(inv_r).rstrip("/") + "/",
+                                  flags=READONLY_CHMOD + ["--delete"],
+                                  note="the frozen inventory this locate run reads (it quotes the "
+                                       "source)"))
+        else:
+            warnings.append("the frozen inventory quotes the source, so it was not included either")
     return entries, warnings
 
 
@@ -698,7 +787,7 @@ def disk_budget(entries: list[dict], tasks: int, host: dict) -> dict:
 
 
 def check_budget_cap(workspace, run: dict, max_cost: float | None,
-                     no_budget_cap: bool) -> dict:
+                     no_budget_cap: bool, *, locate: bool = False) -> dict:
     """Resolve the spend ceiling, or refuse to plan a run without one.
 
     the design critique: "No budget gate ... run.yaml carries a billing-path
@@ -710,6 +799,20 @@ def check_budget_cap(workspace, run: dict, max_cost: float | None,
     budget = _as_dict(getattr(workspace, "budget", {}))
     currency = str(run_budget.get("currency") or budget.get("currency") or "USD")
     value = max_cost
+    if locate:
+        # A locate run's cap is a precondition, not a default (proposal section 6):
+        # the watchdog drains at the cap recorded in run.yaml, so a workspace-wide
+        # ceiling the run never recorded would leave it with nothing to drain at,
+        # and no flag acknowledges running without one.
+        if value is None and run_budget.get("max_cost") is not None:
+            value = float(run_budget["max_cost"])
+        if value is None or value <= 0:
+            raise CfError(
+                "a locate run needs a spend cap recorded in its run.yaml (budget.max_cost) or "
+                "given as --max-cost, which cf run records",
+                hint="--no-budget-cap does not apply to locate: the per-shard watchdog drains "
+                     "the root at that cap")
+        no_budget_cap = False
     if value is None:
         for source in (run_budget, budget):
             for key in ("max_cost", "max_cost_usd", "ceiling"):
@@ -815,7 +918,9 @@ def gate_config_warnings(workspace_dir: Path, run_id: str, host: dict, run: dict
     must pass a changed-files check.
     """
     names = remote_names(run, run_id)
-    gate_path = f"{host['remote_root']}/{names['gate']}/verify_findings.py"
+    # a locate run's tend config calls the locate gate (references/locate-documents.md S9)
+    script = "verify_locate.py" if is_locate(run) else "verify_findings.py"
+    gate_path = f"{host['remote_root']}/{names['gate']}/{script}"
     config = workspace_dir / "runs" / run_id / "tend-root" / "config.yaml"
     if not config.exists():
         return [f"runs/{run_id}/tend-root/config.yaml is missing; `cf plan-run` writes it"]

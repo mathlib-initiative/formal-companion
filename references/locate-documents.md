@@ -80,10 +80,24 @@ third genuine reviewer rejection (proposal §6), never by a worker.
 - `finder` ∈ {`theorem_box`, `bold_definition`, `lead`, `model`}: which finder
   proposed the passage. Deterministic finders' passages are pre-filled in the
   task; dropping one needs a `skips` entry naming its span.
-- `item` must equal the passage id of `span` (§2.2 of the proposal); the gate
-  recomputes it.
-- Every paragraph of the source with `formal_math` content is covered by a
-  passage span or a `skips` span (the coverage floor).
+- `item` must equal the passage id of `span` (§2.2 of the proposal), written
+  `In-text #<8 hex>`; the gate recomputes every id of the document over all
+  its passages, so `head_words` must be the shortest unique head.
+- **The quote rule**: `quote.exact` (non-empty, at most 1,500 characters, each
+  context at most 200 — `gate.json` may change both) matches the layer
+  **exactly once** with its `prefix` immediately before it and its `suffix`
+  immediately after, the match starts at `span[0]`, and `exact` lies inside
+  the span. A passage may not start inside a formula.
+- A passage whose `finder` is a deterministic one must start where that finder's
+  passage of the task starts; a passage the enumerator found is `model`. A
+  deterministic passage of the task is dropped only with a skip whose span
+  covers its whole span.
+- Every paragraph of the source with `formal_math` content — every
+  `paragraphs.json` entry with `math: true` — overlaps a passage span or a
+  `skips` span (the coverage floor).
+- With L2 curated hits for the article (§5; gate rule 4, off in the blind arm),
+  the inventory keeps at least one `formal_math` passage and no `subject`
+  passage is scoped `expository` or `non_math`.
 
 ## 3. Locate document (`mode: locate`)
 
@@ -110,13 +124,23 @@ A locate task carries at most eight passages of one frozen inventory.
     "reason": "the passage's quantifier is ambiguous", "receipt": {"queries": [], "candidates": []}}]}
 ```
 
-- `outcome` ∈ {`located`, `absent`, `unresolved`}. `absent` may carry
-  `relatedMatch` locations only.
+- `outcome` ∈ {`located`, `absent`, `unresolved`}. `located` needs a location
+  whose relation is not `relatedMatch` (with only related ones the passage is
+  absent, beside them); `absent` may carry `relatedMatch` locations only;
+  `unresolved` has no locations and says why in `reason`.
+- The document's passages are exactly the task's (the task manifest, §9), each
+  once.
 - `relation` ∈ the six locate relations; `rank` 1..5, distinct; `confidence` ∈
   {`high`, `medium`, `low`}.
 - `closeMatch` requires a non-empty `note` naming the convention difference.
 - Every curated candidate handed to the task (§5) must appear in `candidates`,
-  accepted or rejected with a reason.
+  accepted or rejected with a reason, or be located; the gate reads the
+  candidates file itself (rule 4).
+- Every declaration a location or an `accepted` candidate names exists in
+  `corpus.sqlite` at that library and the universe's commit (rule 3). No
+  document carries `proof_status`, `commit` or `version` anywhere.
+- An absence's receipt lists at least three distinct queries (whitespace and
+  case folded) (rule 5).
 
 ## 4. Challenge document (`mode: locate-challenge`)
 
@@ -142,8 +166,15 @@ A locate task carries at most eight passages of one frozen inventory.
   changes a relation, `refute` removes a location, `overturn` replaces an
   absence or unresolved outcome (or a scope) with the given locations — all
   three give `challenge: downgraded` on the affected records.
-- A record not named by any verdict is `not_required` or `sampled_out`, as the
-  challenge plan said.
+- The actions a target admits: `location` — `confirm`, `downgrade` (naming the
+  weaker `relation`), `refute`; `absence` and `unresolved` — `uphold`,
+  `overturn` (with `locations`, at least one whose relation counts); `scope` —
+  `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
+  `uphold`, `overturn` (naming the new `prominence`).
+- A challenge task's records are its task manifest's, and each gets exactly one
+  verdict (rule 1); overturn locations are checked like a locate document's.
+- A record of the run not named by any challenge task is `not_required` or
+  `sampled_out`, as the challenge plan said.
 
 ## 5. Candidates file (L2)
 
@@ -433,11 +464,13 @@ like a faithfulness run:
   `sample` or `none`; `planned` is `required`, `sampled_out` or `not_required`.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
   for an absence, unresolved outcome, scope or prominence. The outcomes read it
-  back: a required record no verdict judged is owed (`challenge: null`).
+  back: a required record no verdict judged is owed (`challenge: null`). The gate
+  reads a record's `item`, `target`, `location_key` (location targets only), `span`
+  and `passage_kind`.
 - `findings/<task-id>/<source-id>.json` — the documents (§1–§4); a contribution
   may change only its own task's directory and `tasks/<task-id>.yaml`.
-- `gate.json` — read by the out-of-tree locate gate (*not implemented*:
-  *scripts/gate/verify_locate.py*):
+- `gate.json` — read by the out-of-tree locate gate,
+  `scripts/gate/verify_locate.py`:
 
   ```json
   {"schema": "cf-gate-locate/1", "mode": "locate", "preset": "locate", "run_id": "r-…",
@@ -463,15 +496,27 @@ like a faithfulness run:
   (curated candidates and gate rule 4 off). The planner also writes
   `challenged_runs` (a challenge run's locate runs) and `findings_dir:
   "findings"`. The gate directory also holds `locate_text.py`,
+  `verify_findings.py` (whose hardened change-set reader the locate gate reuses),
   `passage_ids.py` (`scripts/locate/passage_ids.py`: the tool an inventory worker
   runs to fill each passage's `span`, `head_words` and `item` from its quote,
   since nobody can count code points or hash a head by hand),
   `locate_records.py` (`scripts/locate/records.py`, the record builder, which
   needs no `cflib`), the two host tools of §8, and `vendor/` with both vendored
-  packages and their manifests, whose shas the gate verifies at start. The
-  validation commands run `verify_locate.py --gate-config <gate>/gate.json
-  --changed-files --base <branch>`, and the prompts have the worker run it with
-  `--findings findings/<task-id>/<source-id>.json`.
+  packages and their manifests, whose shas the gate verifies at start.
+
+  The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
+  <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
+  validation and pre-merge commands, `--findings <file>` for one document, or
+  `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus. It
+  validates only the documents the change set touched (or names), loads only
+  the sources, candidates files and task manifests those documents name, exits
+  0 / 1 (rejected) / 3 (could not run) like `verify_findings.py`, prefixes each
+  refusal with its rule (`[rule 2] …`), and its last line says which ownership
+  rule judged the change set: `--task-id`/`TEND_TASK_ID`, the task id recovered
+  from `orchestrator.sqlite` (whose schema is assumed, not known: any table
+  with a worktree-path-like and a task-id-like column, one task id or none), or
+  the single-stem rule. Documents are parsed strictly: a duplicate key or a
+  `NaN` is a refusal.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256}, inventory_run, challenged_runs, arm, per_task,
@@ -484,21 +529,33 @@ like a faithfulness run:
   land in the sourceset's `state.json`, not in a companion's.
 
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
-JSON envelope per agent call, kept as a cost cross-check), `attempts/<task-id>`
-(the count of genuine reviewer rejections), `gate-log/` (one JSON line per gate
-call: task, mode, ok, the refusal reasons), and the per-user slot directory the
-bridge's 15-slot `flock` semaphore uses. The bridge reads `CF_SLOT_DIR`,
-`CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`), `CF_ATTEMPT_CAP` (3),
-`CF_TASK_MANIFESTS` (the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the
-allowlist entries for the two host tools — and in an inventory run the
-passage-id tool — worker role only) and `CF_FINDINGS_GLOB`
-(`findings/${TEND_TASK_ID:-*}/*.json`), all exported by the generated wrappers in
-`bin/`.
+JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
+a cost cross-check), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
+the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
+per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
+`by_rule`, `reasons`), and the per-user slot directory the bridge's 15-slot
+`flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
+`scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
+`~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
+`CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3), `CF_TASK_MANIFESTS`
+(the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the allowlist entries for the two
+host tools — and in an inventory run the passage-id tool — worker role only) and
+`CF_FINDINGS_GLOB` (`findings/$TEND_TASK_ID/*.json` for the nested layout), all
+exported by the generated wrappers in `bin/`. A timeout exits 124 and
+an empty or 409 envelope 75, with no contribution printed, so tend retries the
+same worktree; only a `request_changes` from a call that completed counts as a
+rejection.
 
 ## 10. Harvested rows and passage outcomes
 
-Harvest lands `findings/<task-id>/<source-id>.json` under `corpus/<run-id>/`
-with the same relative paths (the receipt manifest is keyed by them). Each
+Harvest copies the host's `findings/` tree into `corpus/<run-id>/`, so a document
+lands at `corpus/<run-id>/<task-id>/<source-id>.json` and the receipt's listing,
+manifest and missing set are keyed by `<task-id>/<source-id>.json` (the listing
+is `find -print0`, the checksums `shasum` over it). The landed corpus is gated
+again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
+`locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
+`unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
+UNRESOLVED on its own, never as not formalized. Each
 document becomes finding rows that `cflib.hashing.finding_id` keys unchanged —
 the library id is the `repo` and `<library>:<declaration>@<commit>` the
 declaration list:
@@ -542,11 +599,38 @@ passage's `challenge` is one value over its records: owed when any is owed, else
 
 ## 11. Campaigns
 
-A campaign (*not implemented*: *scripts/cfcmd/campaign.py*) is a sequence of
-locate runs, called shards, of at most 500 tasks each, fed in waves:
-`campaigns/<id>/campaign.yaml` lists the shards in order with their run ids and
-spend caps, and the rendered host side is one shell sequencer that starts shard
-k+1 when shard k ends, runs a model-free watchdog per shard (drain the root when
-its spend passes the cap recorded in its `run.yaml`, or the gate-failure rate or
-cost per merged task passes a multiple of the pilot's p90), exports usage and
-prunes transcripts per shard. The operator's machine only harvests receipts.
+A campaign (`scripts/cfcmd/campaign.py`, logic in `scripts/run/campaign.py`) is a
+sequence of locate runs, called shards, fed in waves. It plans nothing: each
+shard is a locate run already planned, of at most 500 tasks, with a spend cap in
+its own `run.yaml`, for the campaign's one allowlisted host.
+
+`campaigns/<id>/campaign.yaml`:
+
+```yaml
+version: 1
+id: wpm-tier-a
+host: examplebox
+shards:                       # in the order they run
+  - {index: 1, run_id: wpm-a-1, mode: locate, tasks: 480, max_cost: 120.0, workers: 6, reviewers: 4}
+tasks: 480
+max_cost: 120.0               # the sum of the shards' caps
+watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5}
+sequencer: {path: …/host/sequencer.sh, sha256: <hex>, host_dir: <remote root>/campaigns/<id>}
+```
+
+`render` writes `campaigns/<id>/host/`: `sequencer.sh` (from
+`templates/campaign/sequencer.sh.tmpl`, shell, no cflib) beside copies of
+`scripts/run/watchdog.py` and `scripts/cost/usage.py`, and prints the rsync and
+start commands. On the host the sequencer runs each shard's `tend run` in order —
+shard k+1 starts when shard k's ends — with the watchdog beside it, exports the
+shard's usage from `CF_TRANSCRIPT_DIRS` and then prunes the transcripts that
+shard wrote, keeps its state in `<remote root>/campaigns/<id>/` (`shard-<k>.done`,
+`usage-<k>.jsonl`, `sequencer.log`), and writes `STOPPED` and stops the moment a
+watchdog drains a shard. The watchdog (model-free, stdlib) drains the root with
+`tend-control drain` when the spend summed from `usage/` reaches the shard's cap,
+or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
+the cost per merged task (over at least `min_tasks`) passes `multiple` times the
+pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
+`<root>/watchdog.json`. The operator's machine only harvests receipts:
+`status` reads each shard's `RECEIPT.json` (complete, gate, the `locate` block,
+the priced cost) and totals the UNRESOLVED rate.

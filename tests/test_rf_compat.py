@@ -355,11 +355,12 @@ class TestTheShimsHaveADeadline(unittest.TestCase):
     """
 
     #: total NON-BLANK lines across every shim; 1,292 before the fallback halves
-    #: went (1,607 physical lines).  This is today's measured total with no
+    #: went (1,607 physical lines), 896 before the corpus listing moved to
+    #: harvest/files.py.  This is today's measured total with no
     #: margin at all: a ceiling with slack in it is not a ratchet, because the
     #: deleted second implementation could be pasted back under it and the suite
     #: would stay green.  Adding a line to a shim is meant to fail here.
-    MAX_SHIM_LINES = 896
+    MAX_SHIM_LINES = 886
     #: modules that still import a shim rather than cflib directly.  Also today's
     #: measured count with no margin.
     MAX_CALLERS = 40
