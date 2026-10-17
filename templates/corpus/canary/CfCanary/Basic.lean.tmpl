@@ -1,0 +1,32 @@
+@@MODULE_HEADER@@
+/-! The probe's acceptance canary (docs/proposals/wikipedia-locate.md §2.4): four
+declarations whose proof statuses the probe must decide correctly on this
+toolchain before any library on it is indexed. Generated from
+templates/corpus/canary/ of the formal-companion skill. -/
+
+namespace CfCanary
+
+/-- A stand-in for a `theorem_wanted` placeholder: the probe reads any head whose
+last name component ends in `Wanted` as a wanted-result wrapper. -/
+def TheoremWanted (_p : Prop) : Prop := True
+
+/-- Case 1: the proof body -- private under the module system -- rests on `sorry`,
+so the closure must contain `sorryAx`: `statement_only`. -/
+theorem hiddenSorry : ∀ n : Nat, n + 0 = n := by
+  intro n
+  sorry
+
+/-- Case 2: a wanted result: `wanted`. -/
+theorem wantedTheorem : TheoremWanted (∀ n : Nat, n = n) := trivial
+
+/-- Case 3: a `Prop`-valued definition: `definition`, with the statement flag. -/
+def propDef : Prop := ∀ n : Nat, n + 0 = n
+
+/-- The non-standard axiom case 4 rests on. -/
+axiom canaryAxiom : ∀ n : Nat, n = n + 0
+
+/-- Case 4: rests on `canaryAxiom`: `axiom_dependent`. -/
+theorem axiomTheorem : 2 = 2 + 0 := canaryAxiom 2
+
+end CfCanary
+@@MODULE_FOOTER@@

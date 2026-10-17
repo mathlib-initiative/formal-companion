@@ -135,6 +135,33 @@ release has something to say.
   reading copy and its layer map, sections, blocks and the three deterministic
   finders; a parity test against the consumer's text layer runs when
   `CF_WIKILEAN_LAYER` names its output.
+- Locate's corpus (`docs/proposals/wikipedia-locate.md` §2.3–§2.5 and §6,
+  `references/locate-documents.md` §8): `cf corpus init | add | probe-command |
+  ingest | build-db | status | search | show`. A universe is
+  `corpora/<u>/universe.yaml` (`scripts/corpus/universe.py`): libraries pinned at
+  40-hex commits with their toolchain, roots, licence and brain_lib token,
+  exclusions with their reasons, per-toolchain canary results, and
+  `universe_sha256` over (id, commit, index sha). `probe-command` prints the host
+  pipeline over the probe drivers (disk floor, `ulimit -n 65536`, caches, build,
+  probe, ingest, prune) and runs nothing. `ingest` streams a probe's `index.jsonl`
+  (or a published `autoform-library-index/v0` file) line by line, sorts by name
+  through temporary chunks when the input is not sorted, refuses a repeated name,
+  a foreign library or commit and a toolchain whose acceptance canary
+  (`templates/corpus/canary/`, `ingest --canary`) has not passed, reads
+  `@[wikidata]`/`@[stacks]`/`@[kerodon]` attributes from a checkout's source
+  spans and Wikipedia URLs from docstrings, and **re-decides every proof status
+  in the §2.4 order** with `cflib.vocab.decide_proof_status` — the probe as run
+  decides an axiom by its kind first, has no `axiom_dependent` and lets a failed
+  `isProp` fall through to `proved`; ingest gives that last case the conservative
+  `statement_only`, flagged. `build-db` writes `corpus.sqlite` with the §8 schema
+  (exact table, FTS5 over name words, signature and docstring, tags) in
+  `journal_mode=DELETE`, atomically, refusing an index whose bytes are not the
+  pinned ones and doing nothing when the database is current.
+  `scripts/corpus/corpus_search.py` and `corpus_show.py` are the stdlib host tools
+  a locate worker runs from the gate directory (no FTS5 syntax reaches the
+  database from a query); `scripts/corpus/query.py` is the read API the other
+  locate stages call over the same functions. The WIP probe drivers pin git with
+  gitsafe's settings, inlined because they run on the host without cflib.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the

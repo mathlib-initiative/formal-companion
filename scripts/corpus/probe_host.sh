@@ -1,0 +1,128 @@
+#!/usr/bin/env bash
+# probe_host.sh -- index one BUILT Lean checkout with the library probe, on the run host.
+#
+# New code for docs/proposals/wikipedia-locate.md §2.3 (universes and library
+# indexes): the operator runs this on the run host after building a library at
+# its pin; it never builds anything itself. It renders
+# templates/corpus/probe.lean.tmpl for the library, runs SHARD_COUNT probe
+# shards (at most MAX_PARALLEL at once) under a clean environment, nice and
+# ionice, then merges the shard files into a deterministic index.jsonl and a
+# manifest.json through scripts/corpus/probe_merge.py.
+#
+# Usage:
+#   probe_host.sh <checkout-dir> <library-id> <roots> <output-dir>
+#
+#   <roots>   the modules to import: comma/space separated, or @FILE (one per line)
+#
+# Environment (all optional):
+#   SHARD_COUNT        shards to split the declarations into           (default 8)
+#   MAX_PARALLEL       shards running at once; each is one Lean thread (default min(SHARD_COUNT, 24))
+#   MODULE_PREFIXES    modules that count as the library's own         (default: the roots)
+#   SRC_DIRS           source directories, relative to the checkout    (default ".")
+#   PROBE_FIELD_CAP PROBE_MENTIONS_CAP PROBE_MAX_BYTES PROBE_INCLUDE_PRIVATE PROBE_PROGRESS
+#                      passed to the probe; see the template's header comment
+#   PROBE_TEMPLATE     the template                (default: ../../templates/corpus/ from here)
+#   PROBE_NICE         nice level                                       (default 10)
+#   KEEP_WORK=1        keep the per-shard files under <output-dir>/work after a clean merge
+#
+# Output: <output-dir>/index.jsonl, <output-dir>/manifest.json, and
+# <output-dir>/work/ (rendered probe, shard files, per-shard logs and timings).
+# Exit status: 0 indexed; 1 a shard failed (its log is named); 2 bad arguments
+# or a merge refusal.
+set -euo pipefail
+
+die() { printf 'probe_host: %s\n' "$*" >&2; exit 2; }
+
+[ "$#" -eq 4 ] || die "usage: probe_host.sh <checkout-dir> <library-id> <roots> <output-dir>"
+checkout=$(cd "$1" 2>/dev/null && pwd) || die "no checkout directory $1"
+library=$2
+roots=$3
+out_dir=$4
+
+here=$(cd "$(dirname "$0")" && pwd)
+template=${PROBE_TEMPLATE:-$here/../../templates/corpus/probe.lean.tmpl}
+merge_py=$here/probe_merge.py
+[ -f "$template" ] || die "no probe template at $template"
+[ -f "$merge_py" ] || die "no probe_merge.py beside this script"
+[ -f "$checkout/lean-toolchain" ] || die "$checkout has no lean-toolchain"
+[ -d "$checkout/.lake/build" ] || die "$checkout is not built (no .lake/build); build it first"
+
+shard_count=${SHARD_COUNT:-8}
+case $shard_count in ''|*[!0-9]*) die "SHARD_COUNT must be a positive integer" ;; esac
+[ "$shard_count" -ge 1 ] || die "SHARD_COUNT must be at least 1"
+default_parallel=$(( shard_count < 24 ? shard_count : 24 ))
+parallel=${MAX_PARALLEL:-$default_parallel}
+case $parallel in ''|*[!0-9]*) die "MAX_PARALLEL must be a positive integer" ;; esac
+[ "$parallel" -ge 1 ] || die "MAX_PARALLEL must be at least 1"
+nice_level=${PROBE_NICE:-10}
+
+mkdir -p "$out_dir"
+out_dir=$(cd "$out_dir" && pwd)
+work=$out_dir/work
+rm -rf "$work"
+mkdir -p "$work"
+started=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+# A clean environment: nothing a third-party Lake configuration could read
+# beyond HOME, USER, PATH and the probe's own settings.
+clean_env() {
+  env -i HOME="$HOME" USER="${USER:-$(id -un)}" PATH="$HOME/.elan/bin:/usr/bin:/bin" \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 "$@"
+}
+
+clean_env python3 -I "$merge_py" render --template "$template" --library "$library" \
+  --roots "$roots" --prefixes "${MODULE_PREFIXES:-}" --src-dirs "${SRC_DIRS:-.}" \
+  --out "$work/probe.lean" || die "could not render the probe"
+
+ulimit -n 65536 2>/dev/null || true
+cd "$checkout"
+# Resolve the Lake workspace once, serially, so the shards only read it.
+clean_env nice -n "$nice_level" ionice -c3 lake env true >"$work/lake-env.log" 2>&1 \
+  || die "lake env failed in $checkout (see $work/lake-env.log)"
+
+run_one() {
+  local i=$1
+  clean_env LEAN_NUM_THREADS=1 \
+    PROBE_OUTPUT="$work/shard-$i.jsonl" SHARD_INDEX="$i" SHARD_COUNT="$shard_count" \
+    PROBE_FIELD_CAP="${PROBE_FIELD_CAP:-20000}" PROBE_MENTIONS_CAP="${PROBE_MENTIONS_CAP:-4096}" \
+    PROBE_MAX_BYTES="${PROBE_MAX_BYTES:-2147483648}" \
+    PROBE_INCLUDE_PRIVATE="${PROBE_INCLUDE_PRIVATE:-0}" PROBE_PROGRESS="${PROBE_PROGRESS:-0}" \
+    nice -n "$nice_level" ionice -c3 \
+    python3 -I "$merge_py" run-shard --timing "$work/shard-$i.timing.json" -- \
+    lake env lean "$work/probe.lean" >"$work/shard-$i.log" 2>&1
+}
+
+declare -A pid_of=()
+failed=()
+running=0
+reap() {
+  # Wait for any one shard; record it if it failed.
+  local done_pid status=0
+  wait -n -p done_pid || status=$?
+  running=$((running - 1))
+  if [ "$status" -ne 0 ]; then failed+=("${pid_of[$done_pid]}"); fi
+}
+for ((i = 0; i < shard_count; i++)); do
+  if [ "$running" -ge "$parallel" ]; then reap; fi
+  run_one "$i" &
+  pid_of[$!]=$i
+  running=$((running + 1))
+done
+while [ "$running" -gt 0 ]; do reap; done
+
+if [ "${#failed[@]}" -gt 0 ]; then
+  for i in "${failed[@]}"; do
+    printf 'probe_host: shard %s failed; last lines of %s:\n' "$i" "$work/shard-$i.log" >&2
+    tail -n 20 "$work/shard-$i.log" >&2 || true
+  done
+  exit 1
+fi
+
+clean_env python3 -I "$merge_py" merge --work "$work" --shard-count "$shard_count" \
+  --checkout "$checkout" --out-dir "$out_dir" --template "$template" \
+  --probe "$work/probe.lean" --parallel "$parallel" --started "$started" \
+  || die "merge refused the shard files (they are kept in $work)"
+
+if [ "${KEEP_WORK:-0}" != "1" ]; then
+  rm -f "$work"/shard-*.jsonl
+fi
