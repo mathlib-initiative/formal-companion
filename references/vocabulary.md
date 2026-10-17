@@ -10,9 +10,9 @@ The enums here are the single source of truth in code: `scripts/cflib/vocab.py`.
 listed is invalid and the schema gate rejects it.
 
 **Contents** — §1 the canonical vocabulary (match verdicts, finding kinds, severity, ledger
-verdicts, resolutions, source roles, re-check statuses, statement-row provenance, annotation
-documents) · §2 mapping tables from the five legacy vocabularies · §3 `finding_id`, the frozen
-rule · §4 item ids.
+verdicts, resolutions, source roles and licence classes, re-check statuses, statement-row
+provenance, annotation documents, locate) · §2 mapping tables from the five legacy vocabularies ·
+§3 `finding_id`, the frozen rule · §4 item ids.
 
 ---
 
@@ -99,6 +99,7 @@ These came with the multi-source model (`docs/design/archive/multi-source-model.
 |---|---|---|
 | `SOURCE_ROLES` | `audited` \| `reference` | `audited`: at least one companion is checked against it. `reference`: prepared only so the page map to a sibling edition can be checked, and audited by nobody — the disposition for an edition a repo bundles but does not anchor to |
 | `LICENCE_FETCH` | `none` \| `author_site` \| `open` | what a registry licence note permits. `none` refuses a download even with `--download`. **Nothing is ever redistributed, whatever this says** |
+| `LICENCE_CLASSES` | `closed` \| `open_attribution` \| `open_share_alike` \| `public_domain` | what an **exported** record may quote of the source (`POLICY.md` §4.1). `closed` is the default (`DEFAULT_LICENCE_CLASS`) for every entry that says nothing, so every entry written before the field existed is `closed`: all rights reserved, quotes redacted on export. `open_attribution` (CC BY and the like) and `open_share_alike` (CC BY-SA; Wikipedia's text) may be quoted in capped form with a citation and the licence named (`ATTRIBUTION_LICENCE_CLASSES`); `public_domain` needs no attribution and is capped all the same. `OPEN_LICENCE_CLASSES` is the three open ones. Orthogonal to `LICENCE_FETCH`: a class says what may be *quoted*, a fetch value what may be *downloaded*, and neither permits redistribution or source text in the skill repo. A registry entry carries it as `licence_class`, a web-source family as its own `licence_class` (`registry/README.md`), and `Registry.licence_class(source_id)` answers for any id — an unknown one is `closed` |
 | `DISCOVERY_SIGNALS` | `formalization_yaml` `ledger_source` `official_source_json` `graph_json` `prose` `filesystem` `citation` | S1–S7: which repo signal produced a claim. All seven run for every adapter kind |
 | `PDF_FOUND_IN` | `repo_declared` `repo_cache` `workspace_store` `library_path` `download` `none` | which step of the search order located the bytes — in search order, so it doubles as a provenance ranking |
 | `OFFSET_METHODS` | `running_head_mode` `declared` `manual` `registry` `unknown` | how a page offset was arrived at. `manual` means a human typed it through `cf sources set`, and the confidence beside it is not an inference |
@@ -189,6 +190,126 @@ are the viewer layer's (section 1.7), a source's `role` section 1.5's, a declara
 every value the skill writes is one the format admits. The ledger verdicts and finding kinds
 (sections 1.2 and 1.4) are not in the format at all: a document carries them only under `x_`
 keys (`x_ledger_verdict`).
+
+### 1.11 Locate — where a source is formalized, in any library
+
+The vocabulary of `docs/proposals/wikipedia-locate.md`, in `cflib.vocab`'s locate block. **Only
+the vocabulary is built** (with `vocab.derive_status`, `vocab.decide_proof_status`, the
+`In-text #<hex>` item of §4 and the head hash in `scripts/cflib/passages.py`); the planner,
+presets, gate, renderer, sourcesets and export that use it are not implemented. The extension
+namespace of every locate record is `org.mathlib-initiative.formal-companion.locate`
+(`LOCATE_EXTENSION`).
+
+**Run modes and kinds.** Three modes join `RUN_MODES`, one per locate preset, each with the
+kinds its gate admits (`KINDS_BY_MODE`, `kinds_for_mode`):
+
+| mode | stage | kinds |
+|---|---|---|
+| `locate-inventory` | L3a: one task per source, the passage table | `PASSAGE`, `UNRESOLVED` |
+| `locate` | L3b: each `formal_math` passage ends located, absent or unresolved | `LOCATION`, `ABSENCE`, `UNRESOLVED` |
+| `locate-challenge` | L5: per-record verdicts over those records | `LOCATION`, `ABSENCE`, `UNRESOLVED` |
+
+| kind | meaning |
+|---|---|
+| `PASSAGE` | one passage of an inventory, keyed by its `In-text #<hex>` item |
+| `LOCATION` | a declaration at a commit states the passage, wholly or in part (a relation below) |
+| `ABSENCE` | a checked statement that the passage was searched for in a universe and nothing was found |
+| `UNRESOLVED` | the worker, or the attempt cap, could not decide. Counted on its own, **never** as not formalized |
+
+These are `LOCATE_FINDING_KINDS`; `ALL_FINDING_KINDS` is them plus §1.2's. `FINDING_KINDS` itself
+stays the six faithfulness kinds, because the ledger validator, the answer key and the harvest's
+substantive kinds read it and a locate outcome is not a defect. The tally hashes a document row's
+`kind` into `finding_id` (§3), so **in a locate document `kind` is the finding kind**, and a
+passage's own kind travels as `passage_kind`; only an exported Literature Links record carries the
+passage kind as its `kind`.
+
+**Passages** (the proposal's §2.2):
+
+| enum | values |
+|---|---|
+| `PASSAGE_KINDS` | `definition` `theorem` `conjecture` `example` `construction` `notation` `other` |
+| `PROMINENCE` | `subject` — what the article is about · `central` — a named result or definition it states · `supporting` — anything else formal. Not "role", which Literature Links uses for an end. `REFUTE_BY_DEFAULT_PROMINENCE` is `subject` and `central`: their locations are refuted by default and their absences and unresolved outcomes are hunted (the proposal's §5) |
+| `SCOPES` | `formal_math` `expository` `non_math`. Only `formal_math` passages are located (`LOCATED_SCOPES`); a passage may not be scoped out while the deterministic candidates hold a tag or curated hit for it |
+
+**Proof status** of a declaration (`PROOF_STATUSES`, the proposal's §2.4), decided in this order, the first rule
+that applies winning, whatever the declaration's kind — mechanically from the axiom closure and
+the type (`vocab.decide_proof_status`), never by a model and never by a worker:
+
+| order | value | when |
+|---|---|---|
+| 1 | `wanted` | the type is a `ProofWanted`/`DefWanted`-style wrapper |
+| 2 | `statement_only` | the axiom closure contains `sorryAx` (`SORRY_AXIOM`) |
+| 3 | `axiom_dependent` | the closure contains an axiom outside `propext`, `Classical.choice`, `Quot.sound` (`STANDARD_AXIOMS`) |
+| 4 | `proved` | the type is a `Prop` |
+| 5 | `definition` | data: types, functions, structures, classes, instances |
+
+A `Prop`-valued definition (`def RiemannHypothesis : Prop`) is a `definition` whose `statement`
+flag the index sets beside it; it never formalizes a theorem passage.
+
+**Relations** of a location (`LOCATE_RELATIONS`, the proposal's §2.6): Literature Links relation words with SKOS
+direction, subject the passage, object the declaration.
+
+| value | meaning |
+|---|---|
+| `exactMatch` | the declaration states the passage |
+| `closeMatch` | the same up to a convention difference (0 ∈ ℕ, junk values, normalization), named in `note` |
+| `broadMatch` | the declaration is more general; the passage is an instance |
+| `narrowMatch` | the declaration is a special case of the passage |
+| `hasPart` | the declaration states part of a passage that says several things |
+| `relatedMatch` | relevant, but it states something else. Never counts towards a status |
+
+`noMatch` (`NO_MATCH`) is the relation of an **absence** record only — one `lean` end per universe
+library, no `location` — never of a location. At most `MAX_LOCATIONS_PER_PASSAGE` (5) locations per
+passage, ranked. `WEAK_RELATIONS` (`relatedMatch`, `narrowMatch`, `hasPart`) are the ones the
+challenge sample re-judges.
+
+**The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
+passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
+absent)`, each location giving its `relation`, `proof_status` and optional `statement` flag:
+
+| status | when |
+|---|---|
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration. Definition passage: `exactMatch` or `closeMatch` to a `definition` |
+| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage |
+| `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition |
+| `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
+| none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
+
+The proposal's table names theorem/conjecture and definition passages only. Decided here, each
+the conservative way, until the maintainer says otherwise:
+
+- a `construction` or `notation` passage introduces an object or a symbol, so it is judged as a
+  definition passage (`DEFINITION_PASSAGE_KINDS`); an `example` or `other` passage is judged by
+  **both** rows and takes the better (`EITHER_PASSAGE_KINDS`);
+- a theorem passage matched exactly or closely to **data** (a `definition` with no `statement`
+  flag) is `partial`, as its `broadMatch` is — which understates an instance that states "ℝ is a
+  field", and is listed as an open question;
+- a definition passage matched exactly or closely to a `proved` theorem is `partial`;
+- the relation decides before the proof status or the `statement` flag: `hasPart` and
+  `narrowMatch` (and, for a definition passage, `broadMatch`) are `partial` whatever the
+  declaration is, so a sorry'd lemma stating one part of a theorem is never `statement_only`;
+- a passage whose only locations are `relatedMatch`, with no checked absence, has **no status**
+  (`None`). It is what a challenge leaves when it downgrades a passage's one location to
+  `relatedMatch`: nothing says the passage is formalized and nobody checked that it is absent,
+  so it counts as unresolved — a miss for the safety metric, never `not_formalized`. A worker
+  that searched and found only related declarations records the absence beside them, and the
+  passage is then `not_formalized`.
+
+Refused (`CfError`), because no consistent record says them: a checked absence beside a location
+that counts; the `statement` flag on a `proved` declaration (`decide_proof_status` gives a
+`Prop`-valued definition every status but `proved`, which is a theorem's); a `statement` that is
+not a bool (absent or `null` is `false`); and any value outside these sets.
+
+**Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
+
+| value | meaning |
+|---|---|
+| `survived` | challenged and confirmed, with a quoted witness |
+| `downgraded` | challenged, and the relation or the outcome was weakened |
+| `not_required` | outside every challenge rule |
+| `sampled_out` | inside the stratified sample's frame, and not drawn |
+
+Licence classes are §1.6's `LICENCE_CLASSES`.
 
 ---
 
@@ -396,6 +517,50 @@ headings and stored in `workspace.yaml` `sources.<id>.kinds` (typically `Definit
 as `Claim`, `Strategy`). Kind inference folds case, so an AMS-style `THEOREM 1.2` head counts as
 `Theorem`. Structural words (`Chapter`, `Section`, `Figure`, `Table`, …) are counted and reported
 but are never item kinds. Non-numbered items use `In-text p.<printed page>`.
+
+A source with no numbering **and** no printed page — a web page — keys its passages as
+`In-text #<hex>`, 8 to 16 lowercase hex digits of the hash of the passage's head
+(`scripts/cflib/passages.py`: the vendored `passage_quote_id` over its first twelve words, extended
+up to forty until no other passage of the source starts the same way). It is one production of
+the in-text grammar:
+
+- tried **last**: a printed page wins, then a named numbered item, and only a body both refuse
+  can be a passage — so `In-text #3, book p. 71` is still the p.71 item and `In-text #1,
+  Definition 1.4.35` still the anchored Definition 1.4.35, as they were before the production
+  existed (a well-formed hash holds no `p` and no space, so it never reaches the first two);
+- parsed whitespace-tolerantly like the others — `In-text#3fa91c07`, `in text  # 3fa91c07` and
+  `In-text #3fa91c07` are one item, and `join_key` gives all three as `In-text #3fa91c07`;
+- a hash that is uppercase, too short, too long, not hex, or followed by anything is a reject
+  with reason `bad_passage_id` and the problem named in its context, never a guess;
+- `clean()` and `finding_id` did not change to admit it, so as for every label the spellings join
+  as one item and hash as two: a stage that writes a passage label writes
+  `items.passage_item(hex)`'s spelling;
+- one conversion pair, `items.passage_item(hex)` → `In-text #<hex>` and `items.passage_hex(item)`
+  → the hex, and one to and from the vendored format's quote-hash id:
+  `items.to_vendored_passage_id(item)` → `passage-<8 hex>` (refused for a longer hash, which the
+  format's `PASSAGE_QUOTE_ID_PATTERN` does not admit) and `items.from_vendored_passage_id(id)`
+  (refused for a `passage-p<page>-<hex>` id, which hashes a title, not a head).
+
+**The head rule is frozen**, like `clean()`: the id is content-addressed, a consumer and the
+out-of-tree gate must reproduce it, and changing any step re-keys every passage. Over a source's
+*head text* (`scripts/cflib/passages.py`):
+
+1. the head text is the Literature Links text layer with each formula replaced by
+   `passages.formula_token(alttext)` = `⟦` + `normalize_alttext(alttext)` + `⟧` (U+27E6, U+27E7).
+   `normalize_alttext` is the vendored `ids.normalize_text` (NFKC, each run of Unicode
+   `White_Space` to one space, ends stripped), every `\displaystyle` control word dropped, and the
+   outer braces stripped while the whole string is one balanced group, to a fixed point. The
+   brackets are hashed: `⟦G⟧` and the word `G` are different heads;
+2. a passage starts at the first character of a word — offset 0, or just after whitespace;
+   a start inside a word, on whitespace or outside the text is refused (`PassageIdError`);
+3. the words from a start are the vendored `normalize_text` of the text from there, split on
+   single spaces (a formula with spaces inside it is several words; no bracket is parsed);
+4. the head is the first `n` words joined by one space, for the smallest `n` in 12..40 at which
+   no other passage of the source shares those `n` words (`n` is each passage's own, and it is
+   stored as `head_words`; fewer than 12 only when the text runs out);
+5. the hex is the vendored `passage_quote_id(head)` without its `passage-` prefix: 8 digits;
+6. two passages that share forty words, an offset given twice, or two different heads with one
+   hash are refused, naming both offsets — never dropped and never re-keyed.
 
 - **How many numbers is the source's numbering, not a constant.** `Theorem 7`, `Theorem 3.4`,
   `Definition 1.2.3` and `Lemma 2.3.4.1` are four real book conventions; `cflib.inference.

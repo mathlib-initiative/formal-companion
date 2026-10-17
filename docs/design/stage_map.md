@@ -25,7 +25,12 @@ is what let an earlier copy fall one rule behind without anyone noticing.
   already text. Its identity is the sha256 of its bytes (`source_id`,
   `source_sha`), and what is known about it lives in `registry/sources.yaml`
   (shipped, curated) or a workspace's `registry.yaml` overlay (discovered,
-  `confirmed: false`). See `registry/README.md`.
+  `confirmed: false`). See `registry/README.md`. Every source has a licence
+  class (`cflib.vocab.LICENCE_CLASSES`, `closed` unless its entry says
+  otherwise; `POLICY.md` §4.1), and the registry's `families:` map holds
+  web-source families, one row per site and none per revision (an overlay
+  row cannot change a confirmed family's `confirmed`, `licence_class` or
+  `licence`, and is reported); a web source itself is not implemented.
 - A **companion** is a Lean repository whose declarations claim to formalise a
   source's numbered items. A companion is audited against a **list** of
   sources; one of them is its **anchor source**, the edition whose pagination
@@ -48,7 +53,12 @@ is what let an earlier copy fall one rule behind without anyone noticing.
 
 `<Kind> <n>[.<n>…]`, one to four numeric levels
 (`cflib.items.MAX_NUMBER_SEGMENTS = 4`), with an optional sub-part — or
-`In-text p.<n>`. The kind list is the **source's**, inferred from its own
+`In-text p.<n>` — or `In-text #<hex>`, 8 to 16 lowercase hex digits, a
+passage of a source with neither numbers nor pages keyed by the hash of its
+head (`cflib.passages`; a malformed hash is the reject `bad_passage_id`; the
+production is tried after the page and the cross-reference, so it takes only
+a label those refuse). The
+kind list is the **source's**, inferred from its own
 headings; the depth is inferred per source and stored as `numbering`
 (`cflib.inference.DEFAULT_NUMBERING = (2, 3)`). A label deeper than the
 source's numbering is a **reject**, never a truncation. Parsing is

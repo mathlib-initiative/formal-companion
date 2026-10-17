@@ -9,6 +9,33 @@ version: 1
 # facts about an edition; the prose is copyrighted and lives (gitignored) in a
 # workspace's sources/<id>/ directory. A download_url is recorded only when the
 # author publishes the file himself, and `redistribute: false` means exactly that.
+#
+# FAMILIES are web-source families (docs/proposals/wikipedia-locate.md section 2.1):
+# what every revision of every page of one site shares. A family holds NO row per
+# page or revision -- a web source is `<family>-<pageid>-<revision>`, and its shas
+# live in a sourceset manifest -- and nothing here fetches anything.
+families:
+
+  enwiki:
+    title: English Wikipedia
+    site: https://en.wikipedia.org
+    container_title: Wikipedia
+    licence_class: open_share_alike
+    licence:
+      spdx: CC-BY-SA-4.0
+      note: >-
+        Article text is CC BY-SA 4.0. A locate record may quote it only in capped
+        form, as quotation, with the attribution below; the skill repository holds
+        none of it and nothing is redistributed.
+      redistribute: false
+    attribution: '"{title}", Wikipedia, revision {revision}, {url}, licensed {licence}'
+    revision_url: "https://en.wikipedia.org/w/index.php?curid={pageid}&oldid={revision}"
+    confirmed: true
+    notes: >-
+      The first locate corpus is WikiProject Mathematics. Page titles are metadata
+      only: they contain slashes and move, so a source is keyed by page id and
+      revision.
+
 sources:
 
   tao-measure-gsm126-published:

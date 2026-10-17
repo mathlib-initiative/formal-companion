@@ -41,7 +41,10 @@ run host, named only in a workspace's `workspace.yaml`, never here —
 
 | part | path | state |
 |---|---|---|
-| companion/source/item/finding model; frozen `clean()` and `finding_id` | `scripts/cflib/items.py`, `cflib/hashing.py` | keys only numbered items and `In-text p.N` |
+| companion/source/item/finding model; frozen `clean()` and `finding_id` | `scripts/cflib/items.py`, `cflib/hashing.py` | keys numbered items, `In-text p.N` and (built, L-M0) the `In-text #<hex>` passage of §2.2, tried after the page and the cross-reference so no existing label moved |
+| the passage head id of §2.2 (built, L-M0) | `scripts/cflib/passages.py` | `assign_passage_ids` over a head text the renderer will produce; the renderer is not implemented |
+| the locate vocabulary of §2.2, §2.4, §2.6 and §5 (built, L-M0) | `scripts/cflib/vocab.py`, `references/vocabulary.md` §1.11 | values, `decide_proof_status`, `derive_status`; no stage uses them yet |
+| licence classes and web-source families of §10 (built, L-M0) | `scripts/cflib/registry.py`, `registry/sources.yaml`, `POLICY.md` §4.1 | ships `enwiki`; a source's class is read, nothing exports by it yet |
 | text manuscripts located by heading path + line | `scripts/sources/locator.py`, `prepare_source.py` | an `.html` source is copied raw into `text.txt`; the quote gate then runs against markup |
 | S0 ingest, S1 inventory (deterministic halves) | `scripts/pipeline/` | PDF-only; the passage enumerator is deferred; measured passage recall 19/222 |
 | per-run companion declaration index | `scripts/plan/decl_index.py` | names only, per companion |
@@ -111,11 +114,22 @@ with one conversion function to and from the vendored `passage-<hex>` id.
 `clean()` is untouched.
 
 The hex is the vendored passage hash over a **renderer-independent head**: the
-passage's text on the Literature Links layer with each formula replaced by its
-normalized alttext, taken from the passage start for twelve words and
-extended word by word until the head is unique within the source (cap: forty
-words; the length used is stored). Two passages that still collide are a gate
-refusal, never a silent drop. A passage row:
+passage's text on the Literature Links layer with each formula replaced by
+`⟦normalized alttext⟧` (`cflib.passages.formula_token`: the brackets are part
+of the hashed text, so a formula never hashes as the word it spells), taken
+from the passage start for twelve words and extended word by word until the
+head is unique within the source (cap: forty words; the length used is
+stored). Words are the vendored `normalize_text` split on single spaces, and a
+passage starts at the first character of a word. Two passages that still
+collide are a gate refusal, never a silent drop. The rule is frozen: the id is
+content-addressed, and the out-of-tree gate re-computes it
+(`references/vocabulary.md` §4 states it in full).
+
+A passage row of an inventory document carries **two kinds**: `kind` is the
+finding kind `PASSAGE`, because harvest hashes a row's `kind` into
+`finding_id` and the gate checks it against the mode's kinds, and the
+passage's own kind travels as `passage_kind`. Only the exported Literature
+Links record (§2.7) carries the passage kind as its `kind`.
 
 ```json
 {"source_id": "enwiki-28767-1371234567", "source_sha": "<html_sha256>",
@@ -124,12 +138,13 @@ refusal, never a silent drop. A passage row:
  "span": [10234, 10612],
  "quote": {"exact": "…", "prefix": "…", "suffix": "…"},
  "section": ["Theorems"], "fragment": "Theorems",
- "kind": "theorem", "prominence": "central", "scope": "formal_math",
+ "kind": "PASSAGE", "passage_kind": "theorem",
+ "prominence": "central", "scope": "formal_math",
  "statement": "<informal restatement>", "concept": null}
 ```
 
-- `kind`: `definition`, `theorem`, `conjecture`, `example`, `construction`,
-  `notation`, `other`.
+- `passage_kind`: `definition`, `theorem`, `conjecture`, `example`,
+  `construction`, `notation`, `other`.
 - `prominence` (not "role", which Literature Links uses): `subject` — what the
   article is about; `central` — a named result or definition the article
   states; `supporting` — anything else formal.
@@ -258,7 +273,12 @@ once per passage after challenge and stamped on all its records):
 | `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage |
 | `partial` | only `hasPart` or `narrowMatch` (or `broadMatch` to a definition) |
 | `not_formalized` | a checked absence, possibly with `relatedMatch` locations |
-| *(none)* | unresolved |
+| *(none)* | unresolved; also only `relatedMatch` locations and no checked absence (what a challenge that downgrades a passage's one location leaves) |
+
+Built as `cflib.vocab.derive_status`, which refuses a contradiction (an
+absence beside a location that counts; the `statement` flag on a `proved`
+declaration) rather than mapping it; the cases this table does not name are
+decided in `references/vocabulary.md` §1.11.
 
 ### 2.7 The records
 
