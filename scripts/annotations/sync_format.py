@@ -20,14 +20,17 @@ by path against a local checkout of the upstream repository::
 
     python3 scripts/annotations/sync_format.py <checkout> v1.0.0rc2
     python3 scripts/annotations/sync_format.py <checkout> <full commit id> --package literature_links
+    python3 scripts/annotations/sync_format.py <checkout> <full commit id> --branch <name> --package literature_links
 
 The revision is an annotated release tag ``vMAJOR.MINOR.PATCH`` (or
 ``vMAJOR.MINOR.PATCHrcN``), whose version the package's ``__version__`` must
 equal, or a full commit id for a release not tagged yet, in which case the
-manifest names no tag.  Files are read from git through :mod:`cflib.gitsafe`,
-never from the working tree, and each is checked against its blob id.
-``--check`` changes nothing: it exits 1 unless the vendored tree matches the
-manifest and the manifest matches the revision.
+manifest names no tag.  ``--branch`` vendors a commit of a version not yet
+released: the commit must be on that branch of the checkout, and the manifest
+records the branch and ``"released": false``.  Files are read from git through
+:mod:`cflib.gitsafe`, never from the working tree, and each is checked against
+its blob id.  ``--check`` changes nothing: it exits 1 unless the vendored tree
+matches the manifest and the manifest matches the revision.
 """
 from __future__ import annotations
 
@@ -122,6 +125,18 @@ def resolve(checkout: Path, revision: str) -> tuple[str, str | None]:
                      "nor a full 40-hex commit id")
 
 
+def on_branch(checkout: Path, commit: str, branch: str) -> str:
+    """The ref of ``branch`` in the checkout (local, else ``origin``'s) that holds ``commit``."""
+    for ref in (f"refs/heads/{branch}", f"refs/remotes/origin/{branch}"):
+        found = gitsafe.run(checkout, ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"])
+        if found.returncode != 0:
+            continue
+        if gitsafe.run(checkout, ["merge-base", "--is-ancestor", commit, ref]).returncode != 0:
+            raise SystemExit(f"{commit[:12]} is not on {branch} in {checkout}")
+        return ref
+    raise SystemExit(f"{branch}: no such branch in {checkout}")
+
+
 def _blobs(checkout: Path, commit: str, path: str) -> list[tuple[str, bytes]]:
     """``(upstream path, bytes)`` of every file at or under ``path``, each checked against its blob id."""
     out = []
@@ -138,9 +153,13 @@ def _blobs(checkout: Path, commit: str, path: str) -> list[tuple[str, bytes]]:
 
 
 def release(checkout: Path, revision: str, package: Package = PACKAGES[DEFAULT_PACKAGE],
-            ) -> tuple[str, str | None, str, dict[str, bytes]]:
-    """``(commit, tag, version, files)`` of ``package`` at ``revision``."""
+            branch: str | None = None) -> tuple[str, str | None, str, dict[str, bytes]]:
+    """``(commit, tag, version, files)`` of ``package`` at ``revision`` (on ``branch``, when named)."""
     commit, tag = resolve(checkout, revision)
+    if branch is not None:
+        if tag is not None:
+            raise SystemExit(f"{tag} is a release; --branch is for the commit of a version not released yet")
+        on_branch(checkout, commit, branch)
     files = {name[len(package.source) + 1:]: data for name, data in _blobs(checkout, commit, package.source)}
     if not files:
         raise SystemExit(f"{package.source}/ is empty at {revision}")
@@ -162,7 +181,7 @@ def release(checkout: Path, revision: str, package: Package = PACKAGES[DEFAULT_P
 
 
 def manifest_for(tag: str | None, commit: str, version: str, files: dict[str, bytes],
-                 package: Package = PACKAGES[DEFAULT_PACKAGE]) -> dict:
+                 package: Package = PACKAGES[DEFAULT_PACKAGE], branch: str | None = None) -> dict:
     out = {
         "upstream": package.upstream,
         "commit": commit,
@@ -173,6 +192,8 @@ def manifest_for(tag: str | None, commit: str, version: str, files: dict[str, by
     }
     if tag is not None:
         out["tag"] = tag
+    if branch is not None:
+        out.update(branch=branch, released=False)
     if package.extra_files:
         out["extra_files"] = list(package.extra_files)
     return out
@@ -202,13 +223,15 @@ def main(argv: list[str] | None = None, vendor: Path = VENDOR) -> int:
                                          "full commit id of a release that is not tagged yet")
     parser.add_argument("--package", choices=sorted(PACKAGES), default=DEFAULT_PACKAGE,
                         help=f"the package to vendor (default {DEFAULT_PACKAGE})")
+    parser.add_argument("--branch", help="with a full commit id: the branch of a version not yet released; "
+                                         "the commit must be on it, and the manifest says so")
     parser.add_argument("--check", action="store_true",
                         help="change nothing; exit 1 unless vendor/ is exactly this revision")
     args = parser.parse_args(argv)
     package = PACKAGES[args.package]
-    commit, tag, version, files = release(args.checkout.resolve(), args.revision, package)
-    manifest = manifest_for(tag, commit, version, files, package)
-    label = f"{tag} ({commit[:12]})" if tag else commit[:12]
+    commit, tag, version, files = release(args.checkout.resolve(), args.revision, package, args.branch)
+    manifest = manifest_for(tag, commit, version, files, package, args.branch)
+    label = f"{tag} ({commit[:12]})" if tag else commit[:12] + (f" on {args.branch}" if args.branch else "")
     if args.check:
         path = vendor / f"{package.name}.manifest.json"
         current = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None

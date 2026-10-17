@@ -24,7 +24,7 @@ or `::1` (serve.py takes any address ``ipaddress`` calls loopback, which
 includes `0:0:0:0:0:0:0:1`).
 
 The PDF's identity is deliberately not here: its URL and `sha256` come from the
-`source` of the annotations whose overlay extension carries this
+PDF subject ends of the annotations whose overlay extension carries this
 `source_id`, and `bytes`, `alternate_urls` and `physical_page_count` from that
 extension.
 """

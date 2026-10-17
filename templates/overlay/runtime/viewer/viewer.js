@@ -13,7 +13,7 @@
  *
  * Security (docs/overlay.md section 4): every string from those files reaches
  * the DOM through `textContent` or an attribute setter, never `innerHTML`; an
- * `href` is used only when a record's target resolves to an `https:` URL or a
+ * `href` is used only when a card's page resolves to an `https:` URL or a
  * page of this site; the PDF is requested only from `config.pdf.route`;
  * PDF.js runs with `isEvalSupported: false`.
  */
@@ -100,8 +100,9 @@ export async function loadConfig(fetchImpl = globalThis.fetch, url = CONFIG_URL)
 /**
  * Read `GENERATED.json`, fetch the bundle it records (beside it) and check its
  * sha256, then index the records, each with the URL of its own file under the
- * site root: Literature Links resolves a relative target against the file
- * that holds the annotation. A bundle that does not match its recorded sha256
+ * site root: Literature Links resolves a relative reference against the file
+ * that holds the annotation, and a card's rendered page is under the site
+ * root. A bundle that does not match its recorded sha256
  * is a refusal: the page and the data it was generated with are out of step.
  */
 export async function loadAnnotations(config, fetchImpl = globalThis.fetch, cryptoProvider = globalThis.crypto,
@@ -117,12 +118,12 @@ export async function loadAnnotations(config, fetchImpl = globalThis.fetch, cryp
   const base = new URL(config.siteRoot, pageUrl).href;
   const files = parseBundle(decodeUtf8(bytes, block.bundle.path), block)
     .map(({ annotation, path }) => ({ path, records: [annotation], url: new URL(path, base).href }));
-  return { files, index: buildIndex(files, config, { pageOrigin: new URL(pageUrl).origin }) };
+  return { files, index: buildIndex(files, config, { pageOrigin: new URL(pageUrl).origin, siteUrl: base }) };
 }
 
 /**
  * Fetch the PDF from the configured loopback route and verify its bytes against
- * the sha256 its source pins before anything renders them.
+ * the sha256 its subject ends state before anything renders them.
  */
 export async function loadPdfBytes(config, index, fetchImpl = globalThis.fetch,
                                    cryptoProvider = globalThis.crypto) {

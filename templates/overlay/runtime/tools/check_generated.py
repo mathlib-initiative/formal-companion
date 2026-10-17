@@ -58,7 +58,7 @@ GENERATED_SCHEMA_VERSION = 3
 #: `cf overlay sync` ships its package.
 FORMAT_PACKAGE = "literature-links"
 FORMAT_KEYS = ("package", "version", "commit")
-FORMAT_OPTIONAL_KEYS = ("tag",)
+FORMAT_OPTIONAL_KEYS = ("tag", "branch")
 LINKS_INIT = ("tools", "literature_links", "__init__.py")
 
 CONFIG_KEYS = {
@@ -451,9 +451,8 @@ def annotations_problems(overlay: Path, source_id: str | None) -> list[str]:
         out.append(str(error))
     else:
         out += overlay_annotations.bundle_problems(entries, records)
-    if files and source_id is not None and not any(
-            overlay_annotations.extension(r["source"]).get("source_id") == source_id
-            for r in records.values() if r["source"].get("type") == "pdf"):
+    if files and source_id is not None and not any(overlay_annotations.pdf_ends(r, source_id)
+                                                   for r in records.values()):
         out.append(f"no annotation is a record of the PDF {source_id!r}, which "
                    f"{CONFIG_NAME} names")
     out += inputs_problems(root, block.get("inputs"), exported="export" in block)

@@ -35,6 +35,25 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The overlay writes and reads Literature Links 2.0.0, unreleased. A
+  record's `subject` ends are the item's regions of the PDF and its `object`
+  end is the declaration in the repository at the export commit, so an item
+  drawn in several regions is one record per link; its `id` is the item's.
+  A link's relation token becomes `relation` (`part` is `hasPart`), and an
+  item that links nothing with coverage `not_formalized` is a `noMatch` over
+  the repository at that commit. Folder defaults carry end templates. The
+  viewer takes regions from the PDF ends and cards from the Lean ends, and
+  derives a card's page from the module and declaration under the site root;
+  `serve.py` reads the PDF's `sha256` and URLs from its end. Companions
+  re-export and re-sync; the viewer shows the same regions, items and cards.
+- `status` holds only Literature Links' recommended values: `support_only`
+  is `not_formalized`, and `example_only`, `private_only` and `out_of_scope`
+  give no status. Such a class stays in the record extension as `coverage`,
+  which the viewer reads first. A card whose location names no declaration
+  (an end from elsewhere) is named by its end's `title`.
+- `scripts/annotations/sync_format.py --branch` vendors a commit of a version
+  not yet released; the manifest records the branch and `"released": false`,
+  and `GENERATED.json`'s `format` names the branch.
 - The attribution-table convention no longer has a `declaration-snippets.json`.
   `cf export attribution-table` and the `attribution_table` adapter cut each
   snippet from the Lean file the ledger names (`adapters.leansnippets`, a port
@@ -109,8 +128,7 @@ release has something to say.
 - `cf overlay init|sync|check|export`: a companion's
   `pdf-overlay/` is generated from `templates/overlay/runtime/` rather than
   written by hand for one book, and reads Literature Links (vendored as
-  `vendor/literature_links/` at commit `3ad716a`, untagged: 1.0.0 with
-  unreleased changes, one annotation per `.json` file). `export` converts an
+  `vendor/literature_links/`, one annotation per `.json` file). `export` converts an
   exporter's document into one `annotations/<section>/[<item>/]<name>.json`
   file per annotation, one folder per book section and per item with several,
   shared members in `_defaults.json` (`overlay.shards`, `overlay.defaults`; the extension key

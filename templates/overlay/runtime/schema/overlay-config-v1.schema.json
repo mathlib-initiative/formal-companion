@@ -10,7 +10,7 @@
     "schema": {"const": "formal-companion/overlay-config"},
     "schema_version": {"const": 1},
     "source_id": {
-      "description": "The PDF the overlay shows: the source_id in its records' overlay extension.",
+      "description": "The PDF the overlay shows: the source_id in the overlay extension of its records' PDF ends.",
       "type": "string",
       "minLength": 1
     },

@@ -22,15 +22,17 @@ from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path)
 from literature_links import companion, discovery                    # noqa: E402
 from overlay import defaults                                          # noqa: E402
 
-SOURCE = {"type": "pdf", "uri": "https://example.invalid/notes.pdf", "pin": {"type": "book", "title": "Notes"}}
-PIN = {"type": "repository", "url": "https://example.invalid/repo", "commit": "1" * 40}
+PDF = {"type": "pdf", "uri": "https://example.invalid/notes.pdf", "sha256": "0" * 64,
+       "citation": {"id": "notes", "type": "book", "title": "Notes"}}
+PROJECT = {"type": "lean", "uri": "https://example.invalid/repo", "version": "1" * 40}
 
 
-def record(rid: str, uri: str | None = None, **extra) -> dict:
-    out = {"id": rid, "kind": "theorem", "source": SOURCE, "location": {"page": 1, "rect": [0.1, 0.2, 0.3, 0.4]},
-           "extensions": {"x": {"item": rid.split("/")[0]}}, **extra}
-    if uri is not None:
-        out["target"] = {"uri": uri, "pin": dict(PIN, path=rid + ".lean")}
+def record(rid: str, declaration: str | None = None, *, page: int = 1, project: dict = PROJECT, **extra) -> dict:
+    out = {"id": rid.split("/")[0], "kind": "theorem",
+           "subject": [dict(PDF, location={"page": page, "rect": [0.1, 0.2, 0.3, 0.4]}, title=rid.split("/")[0])],
+           "object": [], "extensions": {"x": {"item": rid.split("/")[0]}}, **extra}
+    if declaration is not None:
+        out["object"] = [dict(project, location={"declaration": declaration}, role="key")]
     return out
 
 
@@ -50,9 +52,9 @@ def resolved(uri: str, path: str) -> str:
 
 
 RECORDS = {
-    "s/one.json": record("one", "../../Site/One.html#one"),
-    "s/two/a.json": record("two/a", "../../../Site/Two.html#a", status="formalized"),
-    "s/two/b.json": record("two/b", "../../../Site/Two.html#b", status="formalized"),
+    "s/one.json": record("one", "One.one"),
+    "s/two/a.json": record("two/a", "Two.a", status="formalized"),
+    "s/two/b.json": record("two/b", "Two.b", status="formalized"),
     "s/two/c.json": record("two/c", None, status="formalized"),
 }
 FOLDERS = ["", "s/two"]
@@ -72,6 +74,23 @@ class TestFactoring(unittest.TestCase):
         self.assertEqual(defaults.subtract({"a": 1, "o": {"x": 1, "y": 2}, "b": 2}, {"a": 1, "o": {"x": 1}, "b": 3}),
                          {"o": {"y": 2}, "b": 2})
 
+    def test_an_end_template_is_what_the_ends_of_the_commonest_document_share(self):
+        ends = [dict(PDF, location={"page": 1}, title="a"), dict(PDF, location={"page": 1}, title="b"),
+                {"type": "pdf", "uri": "other.pdf"}]
+        self.assertEqual(defaults.template_for(ends), dict(PDF, location={"page": 1}))
+        self.assertIsNone(defaults.template_for(ends[:1] + ends[2:]), "no document holds a strict majority")
+        self.assertIsNone(defaults.template_for(ends[:1]), "one end is no template")
+        ends = [dict(PDF, location={"page": 1, "rect": [0, 0, 1, 1]}), dict(PDF, location={"page": 1})]
+        self.assertNotIn("location", defaults.template_for(ends), "a location is shared only whole")
+
+    def test_an_end_patch_writes_no_uri_and_a_whole_location(self):
+        template = dict(PDF, location={"page": 1, "rect": [0, 0, 1, 1]})
+        end = dict(PDF, location={"page": 2}, citation=dict(PDF["citation"], title="Other"))
+        self.assertEqual(defaults.end_patch(template, end), {"location": {"page": 2}, "citation": {"title": "Other"}})
+        self.assertEqual(defaults.end_patch(template, PDF), {"location": None})
+        self.assertEqual(companion.merge({"subject": template}, {"subject": [defaults.end_patch(template, end)]}),
+                         {"subject": [end]})
+
     def test_patch_is_the_smallest_merge_patch(self):
         inherited = {"a": 1, "o": {"x": 1, "y": 1}, "gone": {"z": 1}}
         written = defaults.patch(inherited, {"a": 1, "o": {"x": 2, "y": 1}, "new": [1]})
@@ -84,51 +103,70 @@ class TestTheFiles(unittest.TestCase):
         self.files = defaults.files(RECORDS, FOLDERS)
 
     def test_the_reader_reads_back_every_record(self):
-        back = read(self.files)
-        self.assertEqual(set(back), set(RECORDS))
-        for path, value in RECORDS.items():
-            with self.subTest(path=path):
-                self.assertEqual({k: v for k, v in back[path].items() if k != "target"},
-                                 {k: v for k, v in value.items() if k != "target"})
-                if "target" in value:
-                    self.assertEqual(resolved(back[path]["target"]["uri"], path),
-                                     resolved(value["target"]["uri"], path))
-                else:
-                    self.assertNotIn("target", back[path])
+        self.assertEqual(read(self.files), RECORDS)
 
-    def test_defaults_only_where_asked_and_where_records_share_something(self):
+    def test_defaults_and_end_templates_only_where_asked_and_where_records_share_something(self):
         self.assertEqual([p for p in self.files if p.endswith(defaults.DEFAULTS)], ["_defaults.json",
                                                                                  "s/two/_defaults.json"])
         self.assertEqual([p for p in defaults.files({"s/x/a.json": RECORDS["s/one.json"]}, ["", "s/x"])],
                          ["s/x/a.json"], "no defaults file for a single record")
         top = json.loads(self.files["_defaults.json"])
-        self.assertEqual(top["source"], SOURCE)
-        self.assertEqual(top["target"], {"pin": PIN})
+        self.assertEqual(top["subject"], dict(PDF, location={"page": 1, "rect": [0.1, 0.2, 0.3, 0.4]}))
+        self.assertEqual(top["object"], dict(PROJECT, role="key"))
         self.assertEqual(json.loads(self.files["s/two/_defaults.json"]),
-                         {"status": "formalized", "extensions": {"x": {"item": "two"}}})
+                         {"id": "two", "status": "formalized", "subject": {"title": "two"},
+                          "extensions": {"x": {"item": "two"}}})
 
-    def test_a_record_lacking_an_object_most_records_have_writes_null(self):
-        self.assertEqual(json.loads(self.files["s/two/c.json"]), {"id": "two/c", "target": None})
+    def test_an_end_is_written_as_its_patch_over_the_template_and_a_side_that_is_the_template_left_out(self):
+        self.assertEqual(json.loads(self.files["s/one.json"]),
+                         {"id": "one", "subject": [{"title": "one"}],
+                          "object": [{"location": {"declaration": "One.one"}}], "extensions": {"x": {"item": "one"}}})
+        self.assertEqual(json.loads(self.files["s/two/c.json"]), {"object": []})
 
-    def test_a_reference_shared_by_meaning_is_factored_and_one_shared_by_spelling_is_not(self):
-        same_meaning = {"s/a.json": record("a", "../../Site/X.html"), "s/b/c.json": record("b", "../../../Site/X.html"),
-                        "s/b/d.json": record("b", "../../../Site/X.html")}
-        files = defaults.files(same_meaning, ["", "s/b"])
-        self.assertEqual(json.loads(files["_defaults.json"])["target"]["uri"], "../Site/X.html")
-        self.assertNotIn("uri", json.loads(files["s/a.json"]).get("target", {}))
-        same_spelling = {"s/a.json": record("a", "../../Site/X.html"), "s/b/c.json": record("b", "../../Site/X.html"),
-                         "s/b/d.json": record("b", "../../Site/X.html")}
-        files = defaults.files(same_spelling, ["", "s/b"])
-        self.assertNotIn("uri", json.loads(files["_defaults.json"])["target"])
-        self.assertEqual(json.loads(files["s/b/_defaults.json"])["target"]["uri"], "../../Site/X.html")
-        self.assertEqual(json.loads(files["s/a.json"])["target"]["uri"], "../../Site/X.html")
+    def test_an_end_that_would_cancel_a_template_member_is_written_whole(self):
+        records = {f"s/{n}.json": record(f"r{n}", f"D.{n}", project=dict(PROJECT, extensions={"x": {"k": 1}}))
+                   for n in range(3)}
+        records["s/3.json"] = record("r3", "D.3")
+        files = defaults.files(records, [""])
+        self.assertEqual(json.loads(files["_defaults.json"])["object"]["extensions"], {"x": {"k": 1}})
+        self.assertEqual(json.loads(files["s/3.json"])["object"], records["s/3.json"]["object"],
+                         "an end that would write extensions: null names its document instead")
+        self.assertEqual(read(files), records)
+
+    def test_a_record_lacking_a_member_most_records_have_writes_null(self):
+        records = {f"s/{n}.json": record(f"r{n}", f"D.{n}", extensions={"x": {"a": {"k": 1}, "b": n}})
+                   for n in range(3)}
+        records["s/3.json"] = record("r3", "D.3", extensions={"x": {"b": 3}})
+        files = defaults.files(records, [""])
+        self.assertEqual(json.loads(files["_defaults.json"])["extensions"], {"x": {"a": {"k": 1}}})
+        self.assertEqual(json.loads(files["s/3.json"])["extensions"], {"x": {"a": None, "b": 3}})
+        self.assertEqual(read(files), records)
+
+    def test_a_relative_reference_is_shared_by_meaning(self):
+        local = {"type": "lean", "uri": "../../", "version": "1" * 40}
+        records = {"s/a.json": record("a", "A.a", project=local),
+                   "s/b/c.json": record("b", "B.c", project=dict(local, uri="../../../")),
+                   "s/b/d.json": record("b", "B.d", project=dict(local, uri="../../../"))}
+        files = defaults.files(records, ["", "s/b"])
+        self.assertEqual(json.loads(files["_defaults.json"])["object"]["uri"], "../")
+        self.assertNotIn("uri", json.loads(files["s/a.json"])["object"][0])
         for path, value in read(files).items():
-            self.assertEqual(resolved(value["target"]["uri"], path), resolved(same_spelling[path]["target"]["uri"], path))
+            self.assertEqual(resolved(value["object"][0]["uri"], path), resolved(records[path]["object"][0]["uri"], path))
+        same_spelling = {"s/a.json": record("a", "A.a", project=local),
+                         "s/b/c.json": record("b", "B.c", project=local), "s/b/d.json": record("b", "B.d", project=local)}
+        files = defaults.files(same_spelling, ["", "s/b"])
+        self.assertEqual(json.loads(files["s/a.json"])["object"][0]["uri"], "../../",
+                         "the two in s/b/ are another folder, the template's; this end names its own")
+        for path, value in read(files).items():
+            self.assertEqual(resolved(value["object"][0]["uri"], path),
+                             resolved(same_spelling[path]["object"][0]["uri"], path))
 
-    def test_any_relative_reference_is_moved_not_only_the_target(self):
-        moved = defaults.moved({"source": {"type": "pdf", "uri": "../notes.pdf"}, "target": "#here"}, "s/a.json",
-                               "s/t/b.json")
-        self.assertEqual(moved, {"source": {"type": "pdf", "uri": "../../notes.pdf"}, "target": "../a.json#here"})
+    def test_any_relative_reference_is_moved(self):
+        moved = defaults.moved({"subject": [{"type": "pdf", "uri": "../notes.pdf"}],
+                                "object": [{"type": "lean", "uri": "../../", "location": {"profile": "#here"}}]},
+                               "s/a.json", "s/t/b.json")
+        self.assertEqual(moved, {"subject": [{"type": "pdf", "uri": "../../notes.pdf"}],
+                                 "object": [{"type": "lean", "uri": "../../../", "location": {"profile": "../a.json#here"}}]})
 
     def test_a_file_that_would_read_back_wrong_is_refused(self):
         real = defaults.dumps
@@ -140,19 +178,30 @@ class TestTheFiles(unittest.TestCase):
 class TestTheBytes(unittest.TestCase):
     def test_keys_in_order_scalar_arrays_on_one_line_and_strict_utf8_json(self):
         value = {"extensions": {"x": {"b": 1, "type": "t", "a": [[1, 2], [3]]}}, "zz": 1, "aa": "é",
-                 "location": {"rect": [0.24, 0.47, 0.5, 0.16], "page": 1, "type": "p"}, "id": "i", "$schema": "s",
-                 "target": None, "kind": "k", "e": [], "o": {}}
+                 "subject": [{"title": "T", "location": {"rect": [0.24, 0.47, 0.5, 0.16], "page": 1}, "type": "p",
+                              "citation": {"title": "C", "type": "book"}}],
+                 "id": "i", "$schema": "s", "relation": "noMatch", "object": None, "kind": "k", "e": [], "o": {}}
         raw = defaults.dumps(value)
         self.assertEqual(raw.decode("utf-8"), """{
   "$schema": "s",
   "id": "i",
   "kind": "k",
-  "location": {
-    "type": "p",
-    "page": 1,
-    "rect": [0.24, 0.47, 0.5, 0.16]
-  },
-  "target": null,
+  "relation": "noMatch",
+  "subject": [
+    {
+      "type": "p",
+      "location": {
+        "page": 1,
+        "rect": [0.24, 0.47, 0.5, 0.16]
+      },
+      "title": "T",
+      "citation": {
+        "type": "book",
+        "title": "C"
+      }
+    }
+  ],
+  "object": null,
   "extensions": {
     "x": {
       "type": "t",
