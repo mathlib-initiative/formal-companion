@@ -378,6 +378,10 @@ class WorkspacePaths:
         """One sealed record set (references/locate-documents.md section 6)."""
         return self.exports_dir / _safe_id(set_id, "record set id")
 
+    def export_report_json(self, set_id: str) -> Path:
+        """What one export refused and why: beside the set, never inside its seal."""
+        return self.reports_dir / f"export.{_safe_id(set_id, 'record set id')}.json"
+
     @property
     def benches_dir(self) -> Path:
         return self.root / "benches"

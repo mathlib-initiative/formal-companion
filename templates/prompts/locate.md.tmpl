@@ -1,0 +1,53 @@
+You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: **locate** (L3b) at most {{per_task}} passages of a frozen inventory in universe `{{universe_id}}`.
+
+Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each source it lists the passages that are yours (`item`, `span`, `head_words`, `prominence`, `passage_kind`). Read each passage in `{{sources_dir}}/<source-id>/text.txt` with enough of its section around it to know what it says, then search the universe for the declarations that state it. Every passage of the manifest ends **located**, **absent** or **unresolved** — none is skipped.
+
+## How to search
+1. Restate the passage to yourself precisely: its objects, its hypotheses, its conclusion.
+2. Read the candidates file `{{candidates_dir}}/<source-id>.json`. **Every `curated` candidate must appear in your receipt for the passage it concerns** — accepted, or rejected with a reason. The `lexical` ones are hints.
+3. Search with several distinct queries: the name a library would give the result, its key words, the objects it is about. `{{search_command}} <query words…>`, then read each plausible hit with `{{show_command}} <library> <declaration>`. Read the signature: a name is not a statement.
+4. Judge each declaration you would cite by its **relation** to the passage (subject = passage, object = declaration):
+   - `exactMatch` — the declaration states the passage;
+   - `closeMatch` — the same up to a convention difference (0 ∈ ℕ, a junk value, a normalisation), which you name in `note` (required);
+   - `broadMatch` — the declaration is more general; the passage is an instance of it;
+   - `narrowMatch` — the declaration is a special case of the passage;
+   - `hasPart` — it states one part of a passage that says several things;
+   - `relatedMatch` — relevant, but it states something else.
+
+## The document
+Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
+
+```json
+{"schema": "{{schema}}", "mode": "locate",
+ "run_id": "{{run_id}}", "task_id": "$TEND_TASK_ID",
+ "source_id": "<from the manifest>", "source_sha": "<from the manifest>",
+ "layer_sha256": "<from the manifest>", "renderer": "<from the manifest>",
+ "universe": "{{universe_id}}", "universe_sha256": "{{universe_sha256}}",
+ "passages": [
+   {"item": "<from the manifest>", "outcome": "located",
+    "locations": [
+      {"library": "<id>", "declaration": "<full Lean name>", "relation": "exactMatch",
+       "rank": 1, "confidence": "high", "note": "", "witness": "<why this declaration states the passage>"}],
+    "receipt": {"queries": ["<query 1>", "<query 2>", "<query 3>"],
+                "candidates": [{"library": "<id>", "declaration": "<name>", "verdict": "accepted", "reason": ""},
+                               {"library": "<id>", "declaration": "<name>", "verdict": "rejected", "reason": "<why>"}]}},
+   {"item": "<…>", "outcome": "absent", "locations": [],
+    "receipt": {"queries": ["…", "…", "…"], "candidates": []}},
+   {"item": "<…>", "outcome": "unresolved", "locations": [], "reason": "<what you could not decide>",
+    "receipt": {"queries": [], "candidates": []}}]}
+```
+
+- `located`: at least one location; at most {{max_locations}}, ranked 1.. without repeats, best first. `confidence` is `high`, `medium` or `low`.
+- `absent`: you searched and nothing in the universe states it. The receipt lists **at least {{min_queries}} distinct queries** and the candidates you examined. An absence may sit beside `relatedMatch` locations only, and never while a curated candidate is left unexamined.
+- `unresolved`: you could not decide (an ambiguous passage, a declaration you could not read). Say why in `reason`. It is counted as unresolved, never as not formalized — prefer it to a guess.
+- Copy `item`, the source's shas and `renderer` from the manifest exactly; write no commit and no `proof_status`.
+
+## Before you commit, run the gate
+
+```bash
+{{gate_command}} --findings findings/$TEND_TASK_ID/<source-id>.json
+```
+
+`exit 1` means it refused your document: fix what it names. Any other non-zero exit is an infrastructure fault — stop and finish `blocked`, quoting it.
+
+{{finish_block}}

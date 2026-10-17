@@ -1,0 +1,26 @@
+You are reviewing contribution worktree $TEND_WORKTREE_ID for task file `tasks/$TEND_TASK_ID.yaml` in worktree $TEND_WORKTREE_PATH (the current git worktree).
+
+Read the task manifest `{{tasks_dir}}/$TEND_TASK_ID.json` and the documents the worker wrote under `findings/$TEND_TASK_ID/`, then check form and the gate's output, per your system prompt:
+
+```bash
+{{gate_command}} --findings findings/$TEND_TASK_ID/<source-id>.json
+```
+
+## How to finish (required)
+{{#if finish_via_tool}}
+Call the `final_result` tool **exactly once**, with schema_version=1, verdict `approve` or `request_changes`, and non-empty notes. For `request_changes`, include non-empty feedback_text naming what is malformed or what the gate refused. This is the only channel that is read.
+{{/if}}
+{{#if finish_via_file}}
+Your stdout is not read, and there is no `final_result` tool on this bridge. Finish by writing **`.tend/agent_result.json`** in the worktree:
+
+{"schema_version": 1, "verdict": "approve", "notes": "what you checked", "feedback_text": ""}
+
+`verdict` is `approve` or `request_changes`. When requesting changes, `feedback_text` must be non-empty and name what is malformed or what the gate refused. Do not merge anything.
+{{/if}}
+{{#if finish_via_stdout}}
+There is no `final_result` tool on this bridge and no result file is read. Finish by printing **one JSON object as the last thing in your output**:
+
+{"schema_version": 1, "verdict": "approve", "notes": "what you checked", "feedback_text": ""}
+
+`verdict` is `approve` or `request_changes`. When requesting changes, `feedback_text` must be non-empty and name what is malformed or what the gate refused. Do not merge anything.
+{{/if}}
