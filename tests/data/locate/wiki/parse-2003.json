@@ -1,0 +1,19 @@
+{
+ "json": {
+  "parse": {
+   "pageid": 1002,
+   "revid": 2003,
+   "text": "<div class=\"mw-parser-output\"><p>The <b>gadget theorem</b> is a result about gadgets: every gadget is the union of two widgets <span class=\"mwe-math-element mwe-math-element-inline\"><span class=\"mwe-math-mathml-inline mwe-math-mathml-a11y\" style=\"display: none;\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\" alttext=\"{\\displaystyle A}\"><semantics><mrow class=\"MJX-TeXAtom-ORD\"><mstyle displaystyle=\"true\" scriptlevel=\"0\"><mi>A</mi></mstyle></mrow><annotation encoding=\"application/x-tex\">{\\displaystyle A}</annotation></semantics></math></span><img src=\"https://wikimedia.invalid/inline.svg\" class=\"mwe-math-fallback-image-inline mw-invert skin-invert\" aria-hidden=\"true\" alt=\"{\\displaystyle A}\"></span> and <span class=\"mwe-math-element mwe-math-element-inline\"><span class=\"mwe-math-mathml-inline mwe-math-mathml-a11y\" style=\"display: none;\"><math xmlns=\"http://www.w3.org/1998/Math/MathML\" alttext=\"{\\displaystyle B}\"><semantics><mrow class=\"MJX-TeXAtom-ORD\"><mstyle displaystyle=\"true\" scriptlevel=\"0\"><mi>B</mi></mstyle></mrow><annotation encoding=\"application/x-tex\">{\\displaystyle B}</annotation></semantics></math></span><img src=\"https://wikimedia.invalid/inline.svg\" class=\"mwe-math-fallback-image-inline mw-invert skin-invert\" aria-hidden=\"true\" alt=\"{\\displaystyle B}\"></span>.\n</p>\n<h2><span class=\"mw-headline\" id=\"Proof\">Proof</span><span class=\"mw-editsection\"><span class=\"mw-editsection-bracket\">[</span><a href=\"/w/index.php?title=Gadget_theorem&amp;action=edit&amp;section=1\">edit</a><span class=\"mw-editsection-bracket\">]</span></span></h2>\n<p>Split the gadget along its spine; each half is a widget.\n</p>\n</div>",
+   "title": "Gadget theorem"
+  }
+ },
+ "query": {
+  "action": "parse",
+  "disableeditsection": "1",
+  "disablelimitreport": "1",
+  "format": "json",
+  "formatversion": "2",
+  "oldid": "2003",
+  "prop": "text"
+ }
+}

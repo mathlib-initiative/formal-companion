@@ -3,9 +3,10 @@
 The file formats the locate stages exchange (`docs/proposals/wikipedia-locate.md`
 §3–§5). Every package that writes or reads one of these follows this file; a
 change to a shape is a change here in the same commit. **Status**: the formats
-are fixed; `scripts/gate/locate_text.py` (the head text and the layer quote of §7)
-and the paths of `cflib.paths` are built, and the stages that write and read the
-rest are not implemented.
+are fixed; `scripts/gate/locate_text.py` (the head text and the layer quote of §7),
+the paths of `cflib.paths`, and the sourcesets and renderer of §7
+(`cf sourceset`) are built, and the stages that write and read the rest are not
+implemented.
 
 **Contents**: 1 the common header · 2 inventory document · 3 locate document ·
 4 challenge document · 5 candidates file · 6 sealed record set · 7 sourcesets and
@@ -242,8 +243,11 @@ not such a JSON response is taken as the body itself) with every HTML comment
 removed, as UTF-8 bytes in `body.html`; its sha256 is `html_sha256`, which is
 the source's `source_sha` everywhere (hard rule 3).
 
-**One source's directory**, all written by the renderer (*not implemented*:
-*scripts/sources/render_html.py*) except the first:
+**One source's directory.** `cf sourceset fetch` and `cf sourceset adopt` write
+`source.raw.html`, `body.html` and `source.json`; the renderer,
+`scripts/sources/render_html.py` (`web-html/1`, whose module docstring states the
+rule in full and freezes it), writes `body.html` again and every file after it
+when `cf sourceset render` runs:
 
 | file | what |
 |---|---|
@@ -251,13 +255,13 @@ the source's `source_sha` everywhere (hard rule 3).
 | `source.json` | the manifest entry, as the source's own record |
 | `body.html` | the canonical body (`html_sha256`) |
 | `layer.txt` | the **Literature Links text layer** (`layer_sha256`): the body's DOM `textContent` — every text node in document order, MathML token text, TeX annotations and citation markers included — then the WHATWG *strip and collapse ASCII whitespace* (each run of U+0009, U+000A, U+000C, U+000D, U+0020 to one space, ends stripped); no Unicode normalisation. The only view quotes are cut from and gated against |
-| `formulas.json` | `[{"span": [a, b], "alttext": "{\\displaystyle G}"}]`: each formula's half-open layer span (the whole `.mwe-math-element`, else the `math` element), sorted and disjoint; the alttext is `math@alttext`, else the `x-tex` annotation, else the fallback image's `alt` |
+| `formulas.json` | `[{"span": [a, b], "alttext": "{\\displaystyle G}"}]`: each formula's half-open layer span (the whole `.mwe-math-element`, else the `math` element), sorted and disjoint; the alttext is `math@alttext`, else the `x-tex` annotation, else the fallback image's `alt`. A formula with no text in the layer (an image only) has no span and no entry, and `render.json` counts it as `formulas_without_text` |
 | `head.txt` | the head text: `layer.txt` with each formula span replaced by `⟦normalized alttext⟧`. Derived; the definition is `scripts/gate/locate_text.py`'s `HeadMap`, which also maps offsets both ways |
-| `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references, reference lists, style and script dropped, headings as `#`-prefixed lines (one `#` per level), a blank line between blocks |
-| `layer_map.json` | `{"schema": "cf-layer-map/1", "segments": [[t0, t1, l0, l1], …]}`: `text.txt[t0:t1]` is `layer.txt[l0:l1]`; equal lengths map character by character, unequal ones (a formula, a collapsed run) only as a whole |
-| `sections.json` | `[{"path": ["Theorems"], "fragment": "Theorems", "level": 2, "span": [l0, l1]}]`, the lead first with `path: []` and `fragment: null`; spans tile the layer |
-| `paragraphs.json` | `[{"span": [l0, l1], "section": ["Theorems"], "block": "p", "formulas": 2, "math": true}]`: every block (`p`, `li`, `dd`, `dt`, `blockquote`, a theorem box, a displayed formula) that holds text. `math` is true when the block holds a formula or a deterministic finder hit, and those are the paragraphs gate rule 8's coverage floor reads |
-| `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), each starting at the first character of a word |
+| `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references (`sup.reference`), reference lists (`ol.references`, `.reflist`, `.mw-references-wrap`), edit links, style and script dropped, headings as `#`-prefixed lines (one `#` per level), `- ` before a list item, ` \| ` between table cells, a blank line between blocks; it ends with one newline |
+| `layer_map.json` | `{"schema": "cf-layer-map/1", "segments": [[t0, t1, l0, l1], …]}`, sorted: `text.txt[t0:t1]` is `layer.txt[l0:l1]`; equal lengths map character by character, unequal ones (a formula) only as a whole. A character the copy adds — a heading's `#`s, a bullet, a separator, a line break — is in no segment and has no layer offset |
+| `sections.json` | `[{"path": ["Theorems"], "fragment": "Theorems", "level": 2, "span": [l0, l1]}]`, the lead first with `path: []`, `fragment: null` and `level: 0`; a heading's fragment is its `id`, else its `.mw-headline`'s; spans tile the layer |
+| `paragraphs.json` | `[{"span": [l0, l1], "section": ["Theorems"], "block": "p", "formulas": 2, "math": true}]`: every block (`p`, `li`, `dd`, `dt`, `blockquote`, a theorem box, a displayed formula) that holds text, outside the reference lists; blocks may nest (an `li` holding a `p` is two entries). `math` is true when the block holds a formula or a deterministic finder hit, and those are the paragraphs gate rule 8's coverage floor reads |
+| `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), sorted by start, each starting at the first character of a word of the head text; a finder hit whose element's text is glued to the word before it is dropped and counted in `render.json`'s `finders_dropped` |
 | `render.json` | `{"renderer": "web-html/1", "html_sha256", "layer_sha256", "head_sha256", "text_sha256", "counts": {…}}` |
 
 Offsets are code-point offsets. A passage's `span` is a layer span; its id is

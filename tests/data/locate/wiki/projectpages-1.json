@@ -1,0 +1,50 @@
+{
+ "json": {
+  "continue": {
+   "continue": "-||",
+   "wppcontinue": "1002"
+  },
+  "query": {
+   "projects": {
+    "Mathematics": [
+     {
+      "assessment": {
+       "class": "B",
+       "importance": "High"
+      },
+      "ns": 0,
+      "pageid": 1001,
+      "title": "Widget lemma"
+     },
+     {
+      "assessment": {
+       "class": "B",
+       "importance": "High"
+      },
+      "ns": 1,
+      "pageid": 5001,
+      "title": "Talk:Widget lemma"
+     },
+     {
+      "assessment": {
+       "class": "Start",
+       "importance": "Mid"
+      },
+      "ns": 0,
+      "pageid": 1002,
+      "title": "Gadget theorem"
+     }
+    ]
+   }
+  }
+ },
+ "query": {
+  "action": "query",
+  "format": "json",
+  "formatversion": "2",
+  "list": "projectpages",
+  "wppassessments": "1",
+  "wpplimit": "500",
+  "wppprojects": "Mathematics"
+ }
+}

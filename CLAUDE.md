@@ -87,9 +87,12 @@ Those two lines move together or not at all.
   (curl, raw HTML kept, never a summarising fetch), an explicit
   `cf onboard --download` of a PDF the author publishes himself, the
   run/harvest commands (ssh/rsync to an allowlisted host), and the Wikipedia
-  fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — curl, the raw bytes
-  kept, one fixed parameter set, each revision fetched once — which is *not
-  implemented*: until it exists, nothing here fetches a web source.
+  fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — `scripts/sources/wikinet.py`,
+  the one module that may reach Wikipedia: curl, the raw bytes kept, one fixed
+  parameter set, each revision fetched once, and only under an explicit
+  `cf sourceset fetch --execute` or `cf sourceset enumerate-wikiproject --execute`
+  (`--fixtures <dir>` replays recorded responses instead). A test refuses any
+  other module that fetches from Wikipedia.
 - Every module starts with a docstring saying **what** it was ported from — the
   v1 campaign script, cell or workflow, named for what it did — or saying it is
   new code, and pointing at the section it implements:
@@ -260,6 +263,9 @@ The M1 tests read five more: `CF_TAO_PDF` (the published Tao PDF for
 `CF_M1_ENFORCE_BARS=1` (assert the proposal's recall bars instead of only
 reporting them), `CF_M1_REPORT=<file>` (write the calibration figures as JSON)
 and `CF_TEST_TMP` (the parent of the M1 tests' temporary directories).
+`CF_WIKILEAN_LAYER` (a directory of `<name>.body.html` + `<name>.layer.txt` pairs
+from the consumer's own text layer) turns on `tests/test_locate_sources.py`'s
+renderer-parity test, which skips without it.
 Discovery and inference tests use fixture repos and synthetic text: no network,
 and the only PDFs read are the fixture PDFs the suite generates in a temporary
 directory. `tests/_hermetic.py` is what makes that true: importing it pins HOME

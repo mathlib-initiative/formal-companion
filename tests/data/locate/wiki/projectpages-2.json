@@ -1,0 +1,30 @@
+{
+ "json": {
+  "query": {
+   "projects": {
+    "Mathematics": [
+     {
+      "assessment": {
+       "class": "Stub",
+       "importance": "Low"
+      },
+      "ns": 0,
+      "pageid": 1003,
+      "title": "Sprocket"
+     }
+    ]
+   }
+  }
+ },
+ "query": {
+  "action": "query",
+  "continue": "-||",
+  "format": "json",
+  "formatversion": "2",
+  "list": "projectpages",
+  "wppassessments": "1",
+  "wppcontinue": "1002",
+  "wpplimit": "500",
+  "wppprojects": "Mathematics"
+ }
+}
