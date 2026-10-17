@@ -60,6 +60,11 @@ scripts/annotations/ the skill's tooling around the legacy format, not a stage:
                      itself (schema, checker, id rules) is
                      vendor/formal_companion_annotations/
 scripts/overlay/     the overlay generator behind `cf overlay` (docs/overlay.md)
+scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped planner and
+                     its three presets, outcomes with the derived status, and the
+                     Literature Links export (references/locate-documents.md);
+                     records.py and passage_ids.py import no cflib, so the gate
+                     directory carries them to a run host
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites
 templates/  workflows/  tests/  .github/workflows/
