@@ -817,6 +817,17 @@ class TestSync(OverlayCase):
         self.assertIn("notes-of-my-own.txt", caught.exception.message)
         self.assertTrue((self.overlay / "notes-of-my-own.txt").is_file(), "a refusal deletes nothing")
 
+    def test_a_committed_verso_json_is_the_companions_own_input(self):
+        self.ready()
+        raw = b'{"hovers":{},"schema":"formal-companion/overlay-verso","schema_version":1,"statements":{}}\n'
+        (self.overlay / "verso.json").write_bytes(raw)
+        result = overlay_sync.sync(self.companion)
+        self.assertNotIn("verso.json", result.written + result.deleted)
+        self.assertEqual((self.overlay / "verso.json").read_bytes(), raw, "sync never writes or removes it")
+        self.assertNotIn("verso.json", [row["path"] for row in self.record()["files"]])
+        self.assertEqual(overlay_sync.sync_problems(self.companion), [])
+        self.assertEqual(self.check()[0], 0)
+
     def test_it_refuses_a_symlinked_pdf_overlay(self):
         elsewhere = self.root / "elsewhere"
         elsewhere.mkdir()
@@ -1046,6 +1057,26 @@ class TestCheckGenerated(OverlayCase):
         self.assertEqual(done.returncode, 1)
         self.assertIn("viewer/extra.js", done.stderr)
         self.assertIn("THIRD_PARTY.md", done.stderr)
+
+    def test_it_checks_a_committed_verso_json_for_the_form_pages_writes(self):
+        self.ready()
+        key = "https://git.example.invalid/notes/Notes/Box.lean#L3"
+        value = {"build": {"commit": "1" * 40}, "hovers": {"1": {"signature": "Nat"}},
+                 "schema": "formal-companion/overlay-verso", "schema_version": 1,
+                 "statements": {key: [[["kw", "def"], ["tx", " x : "], ["const", "Nat", 1]]]}}
+        path = self.overlay / "verso.json"
+        path.write_text(json.dumps(value), encoding="utf-8")
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 0, done.stderr)
+        value["statements"][key][0][2] = ["const", "Nat", 1, None, "Notes/Nat/index.html#Nat"]
+        path.write_text(json.dumps(value), encoding="utf-8")
+        done = self.tool("check_generated")
+        self.assertEqual(done.returncode, 1)
+        self.assertIn(f"verso.json: statements[{key!r}]: a run carries a link", done.stderr)
+        path.write_text("{", encoding="utf-8")
+        self.assertIn("verso.json: invalid JSON", self.tool("check_generated").stderr)
+        path.unlink()
+        self.assertEqual(self.tool("check_generated").returncode, 0)
 
     def test_it_fails_on_a_config_section_three_refuses(self):
         self.ready()
