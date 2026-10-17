@@ -340,6 +340,7 @@ task), and the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) an
 | `BENCH_SPLITS` | `dev` · `eval` · `test` |
 | `FNF_CAUSES` | `inventory_miss` · `scope_demotion` · `absence` · `weak_relation` · `unresolved` · `gate_failed` — why a gold-formalized passage did not end `formalized`; unresolved and gate-failed tasks are misses, never exclusions |
 | `ERROR_CODES` | `E-INVENTORY-MISS` · `E-RETRIEVAL-MISS` · `E-REJECTED-CORRECT` · `E-WRONG-RELATION` · `E-FALSE-ABSENCE` · `E-WRONG-SCOPE` · `E-UNRESOLVED` · `E-MEMORY` — the mechanical code of every miss in the improvement loop |
+| `BENCH_LABEL_MODES` | `anchor` (a G1 entry to a passage, its relation adjudicated once) · `label` (a G3 span, blind) · `calibrate` (the hunters' recall *h*, tag-blind, on anchored G1 passages) · `inventory` (an article exhaustively, GX) — what one call of the frozen labeler does (`references/locate-bench.md`) |
 
 Licence classes are §1.6's `LICENCE_CLASSES`.
 

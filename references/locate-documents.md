@@ -596,6 +596,8 @@ passage the run planned and no document answered has `outcome: null` and
 passage's `challenge` is one value over its records: owed when any is owed, else
 `downgraded` when any changed, else `survived` when any was judged, else
 `sampled_out` or `not_required`.
+The bench (`references/locate-bench.md` §8) joins runs to gold by the row's
+layer `span`, and reads it from the inventory documents when a row lacks it.
 
 ## 11. Campaigns
 
