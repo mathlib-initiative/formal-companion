@@ -474,6 +474,9 @@ XREF = {"VersoHtml.constant": {"contents": {
                                                  "userName": "Notes.Hidden.secret"}}],
     "Notes.Hidden.two'": [{"address": "/Notes/Geo/", "id": "Notes___Geo___carrier",
                            "data": {"module": "Notes.Hidden", "private": False, "userName": "Notes.Hidden.two'"}}],
+    "Notes.Hidden.«x y»": [{"address": "/Notes/Hidden/", "id": anchor,
+                            "data": {"module": "Notes.Hidden", "private": False, "userName": "Notes.Hidden.«x y»"}}
+                           for anchor in ("Notes___Hidden___two___", "_private___0___Notes___Hidden___secret")],
 }}}
 #: The commit the build's pages were made from, which the cards pin.
 BUILD_COMMIT = "c0ffee" + "0" * 34
@@ -554,6 +557,9 @@ class TestPagesOfABuildElsewhere(PagesCase):
                 remote_end("Notes.Hidden.two'", "def two' := 2", module="Notes.Hidden", line=2),
                 remote_end("Notes.Hidden.secret", "private theorem secret : True := trivial", module="Notes.Hidden",
                            line=4))
+        self.assertEqual(VERSO.declaration_ids(VERSO.Site(self.site)),
+                         {("Notes.Hidden.secret", "Notes.Hidden"): "_private___0___Notes___Hidden___secret"},
+                         "a name filed under two anchors on its page is not used either")
         value, counts = self.pages(*ends)
         self.assertEqual(counts["statements"], 3, "an entry on another page than the module's is not used")
         self.assertEqual(value["statements"][remote_key("Notes.Hidden", 4)][0][4], ["const", "secret", 112])
@@ -584,7 +590,10 @@ class TestPagesOfABuildElsewhere(PagesCase):
         end = remote_end("Notes.Box.three", "def three := 3")
         value, _ = self.pages(end, commit=self.COMMIT)
         self.assertEqual(value["build"], {"commit": self.COMMIT, "verso": {"inputRev": "v0.0.0-test", "rev": "2" * 40}})
-        (self.site.parent.parent.parent / "lake-manifest.json").unlink()
+        project = self.site.parent.parent.parent
+        self.assertEqual(VERSO.build_record(project / "out" / "html" / "literate-html", self.COMMIT),
+                         {"commit": self.COMMIT}, "pages outside the project's .lake/build name no Verso of its")
+        (project / "lake-manifest.json").unlink()
         self.assertEqual(self.pages(end, commit=self.COMMIT)[0]["build"], {"commit": self.COMMIT})
         uncommitted = self.pages(end, commit=None)[0]
         self.assertNotIn("build", uncommitted)
@@ -614,9 +623,21 @@ class TestPagesOfABuildElsewhere(PagesCase):
             for argv in ([], ["--commit", "HEAD"], ["--commit", "abc123"]):
                 with self.subTest(argv=argv), self.assertRaises(SystemExit):
                     VERSO.main([*command, *argv])
-        bundle.write_text("{}", encoding="utf-8")
-        with contextlib.redirect_stderr(io.StringIO()):
-            self.assertEqual(VERSO.main([*command, "--commit", self.COMMIT]), 1)
+        real = self.site.parent / "real.json"
+        real.write_text("kept", encoding="utf-8")
+        linked = self.site.parent / "linked.json"
+        linked.symlink_to(real)
+        with contextlib.redirect_stderr(io.StringIO()) as said:
+            self.assertEqual(VERSO.main([*command[:-1], str(linked), "--commit", self.COMMIT]), 1)
+        self.assertIn("STOP", said.getvalue())
+        self.assertEqual((linked.is_symlink(), real.read_text(encoding="utf-8")), (True, "kept"),
+                         "never written through a symlink")
+        rows = json.loads(bundle.read_text(encoding="utf-8"))
+        for value in ({}, {**rows, "schema": "formal-companion/overlay-generated"}):
+            bundle.write_text(json.dumps(value), encoding="utf-8")
+            with self.subTest(bundle=sorted(value)), contextlib.redirect_stderr(io.StringIO()) as said:
+                self.assertEqual(VERSO.main([*command, "--commit", self.COMMIT]), 1)
+                self.assertIn("bundle", said.getvalue())
 
 
 VERSO_KEY_START = REMOTE.encode("utf-8")
@@ -641,10 +662,13 @@ class TestTheCommittedFile(PagesCase):
             ("a run carries a link", lambda v: v["statements"][key][0].append(["const", "Box", None, None, "Box/#B"])),
             ("is not in hovers", lambda v: v["hovers"].pop("10")),
             ("not a known kind", lambda v: v["statements"][key][0].append(["html", "<b>"])),
+            ("not a known kind", lambda v: v["statements"][key][0].append(["tx", ""])),
             ("binding", lambda v: v["statements"][key][0].append(["var", "b", None, 0])),
             ("expected schema", lambda v: v.update(schema_version=2)),
             ("unknown key", lambda v: v.update(links={})),
             ("hovers['x']", lambda v: v["hovers"].update(x={"signature": "s"})),
+            ("hovers['10']", lambda v: v["hovers"]["10"].update(html="<b>B</b>")),
+            ("hovers['10']", lambda v: v["hovers"]["10"].update(doc="")),
             ("build", lambda v: v["build"].update(commit="HEAD")),
             ("build", lambda v: v["build"].pop("commit")),
             ("build", lambda v: v.pop("build")),
@@ -691,6 +715,14 @@ class TestTheCommittedFile(PagesCase):
                          f"cut from a build of {BUILD_COMMIT}, but the cards pin {other}")
         many = [remote_end("Notes.Box.three", "def three := 3", line=8, version=f"{n}" * 40) for n in range(1, 6)]
         self.assertTrue(VERSO.unpinned(value, entries(*many)).endswith("and 2 more"))
+
+    def test_a_statement_two_cards_find_alike_is_kept_once(self):
+        snippet = "def «x y» := 1\ndef two' := 2"
+        value, counts = self.pages(remote_end("Notes.Hidden.«x y»", snippet, module="Notes.Hidden", line=1),
+                                   remote_end("Notes.Hidden.two'", snippet, module="Notes.Hidden", line=1))
+        self.assertEqual(counts, {"statements": 1, "targets": 2})
+        [runs] = value["statements"][remote_key("Notes.Hidden", 1)]
+        self.assertEqual(joined(runs), snippet)
 
 if __name__ == "__main__":                                   # pragma: no cover
     unittest.main(verbosity=2)
