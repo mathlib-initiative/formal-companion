@@ -477,6 +477,11 @@ FNF_CAUSES = frozenset({"inventory_miss", "scope_demotion", "absence", "weak_rel
 ERROR_CODES = frozenset({"E-INVENTORY-MISS", "E-RETRIEVAL-MISS", "E-REJECTED-CORRECT",
                          "E-WRONG-RELATION", "E-FALSE-ABSENCE", "E-WRONG-SCOPE",
                          "E-UNRESOLVED", "E-MEMORY"})
+#: What one call of the frozen labeler does (workflows/locate-label.workflow.js,
+#: references/locate-bench.md): ``anchor`` a G1 entry to a passage and adjudicate
+#: its relation, ``label`` a G3 span blind, ``calibrate`` the hunters' recall
+#: tag-blind on anchored G1 passages, ``inventory`` an article exhaustively (GX).
+BENCH_LABEL_MODES = frozenset({"anchor", "label", "calibrate", "inventory"})
 
 
 def check(value: str, allowed: Iterable[str], field: str) -> str:
