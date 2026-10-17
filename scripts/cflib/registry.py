@@ -17,16 +17,28 @@ registry and deleting the overlay row.
 licence notes only.  That is a copyright boundary, not a convention: it is what
 makes it safe to commit the registry to a public repo while the text it
 describes stays gitignored in a workspace.
+
+Two additions are new code for docs/proposals/wikipedia-locate.md (sections
+2.1 and 10): every entry may carry a ``licence_class`` (``vocab.LICENCE_CLASSES``,
+``closed`` when absent, so every older entry is unchanged), and the file may
+carry ``families:`` -- one row per WEB-SOURCE FAMILY (``enwiki``), never one
+per page revision.  A web source's id is ``<family>-<pageid>-<revision>``
+(:func:`web_source_id`); its shas live in a sourceset manifest, which is not
+implemented, and the family supplies only what every revision shares: the
+licence, the attribution template and the permalink template.  Nothing here
+fetches anything.
 """
 from __future__ import annotations
 
 import re
+import string
 import unicodedata
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any, Container, Iterable, Sequence
 
+from . import vocab
 from .errors import CfError
 from .jsonio import atomic_write
 from .paths import registry_dir
@@ -95,6 +107,9 @@ class RegistryEntry:
     #: ``current`` (the edition to audit against), ``draft`` or ``superseded``;
     #: `cf ingest` refuses the last two without ``--override-edition``
     edition_status: str = "current"
+    #: what an exported record may quote of this source (``vocab.LICENCE_CLASSES``);
+    #: ``closed`` unless the entry says otherwise
+    licence_class: str = vocab.DEFAULT_LICENCE_CLASS
     origin: str = "skill"
 
     @classmethod
@@ -130,11 +145,24 @@ class RegistryEntry:
             confirmed=bool(data.get("confirmed")),
             notes=str(data.get("notes") or ""),
             edition_status=str(data.get("edition_status") or EDITION_CURRENT),
+            licence_class=str(data.get("licence_class") or vocab.DEFAULT_LICENCE_CLASS),
             origin=origin,
         )
 
     def to_dict(self) -> dict:
-        """The registry-file body of this entry (``origin`` is not stored)."""
+        """The registry-file body of this entry (``origin`` is not stored).
+
+        ``licence_class`` is written only when it is not the default.  An overlay
+        row is merged over the shipped entry key by key, so an overlay that
+        wrote ``closed`` on every row would silently close a source the shipped
+        registry calls open; absent, the shipped class stands.
+        """
+        body = self._body()
+        if self.licence_class != vocab.DEFAULT_LICENCE_CLASS:
+            body["licence_class"] = self.licence_class
+        return body
+
+    def _body(self) -> dict:
         return {
             "title": self.title,
             "authors": list(self.authors),
@@ -190,13 +218,167 @@ class RegistryEntry:
         return bool(self.download_url) and str(self.licence.get("fetch") or "none") != "none"
 
 
+# --------------------------------------------------------------------------
+# web-source families (docs/proposals/wikipedia-locate.md section 2.1)
+# --------------------------------------------------------------------------
+
+#: A family id is the first token of every web source id it names, so it may
+#: hold no ``-``: ``enwiki-28767-1371234567`` must split one way only.
+FAMILY_ID = re.compile(r"[a-z][a-z0-9]{1,23}\Z")
+#: ``<family>-<pageid>-<revision>``: a page id and a MediaWiki oldid, never a title
+#: (titles carry ``/`` and move).
+WEB_SOURCE_ID = re.compile(r"(?P<family>[a-z][a-z0-9]{1,23})-(?P<pageid>[1-9][0-9]*)"
+                           r"-(?P<revision>[1-9][0-9]*)\Z")
+#: The fields an attribution template may name, and the ones it must: CC BY and
+#: CC BY-SA attribution is the title, a link to the revision and the licence.
+ATTRIBUTION_FIELDS = frozenset({"title", "pageid", "revision", "url", "licence"})
+ATTRIBUTION_REQUIRED = frozenset({"title", "url", "licence"})
+#: The fields a permalink template may name, and the one it must.
+REVISION_URL_FIELDS = frozenset({"pageid", "revision"})
+REVISION_URL_REQUIRED = frozenset({"revision"})
+#: An SPDX licence id: letters, digits, ``.``, ``-`` and ``+``.
+_SPDX = re.compile(r"[A-Za-z0-9][A-Za-z0-9.+-]*\Z")
+
+
+def web_source_id(family: str, pageid: int, revision: int) -> str:
+    """``enwiki-28767-1371234567``: the id of one rendering of one page revision."""
+    sid = f"{family}-{pageid}-{revision}"
+    if (not FAMILY_ID.match(str(family)) or isinstance(pageid, bool)
+            or isinstance(revision, bool) or not WEB_SOURCE_ID.match(sid)):
+        raise CfError(f"not a web source id: {sid!r}",
+                      hint="<family>-<pageid>-<revision>: a family id with no '-', and two "
+                           "positive integers")
+    return sid
+
+
+def parse_web_source_id(source_id: str) -> tuple[str, int, int] | None:
+    """``(family, pageid, revision)`` of a web source id, or ``None`` for any other id."""
+    match = WEB_SOURCE_ID.match(str(source_id or ""))
+    if not match:
+        return None
+    return match.group("family"), int(match.group("pageid")), int(match.group("revision"))
+
+
+def _template_fields(template: str) -> tuple[set[str], str]:
+    """The fields a ``str.format`` template names, and a problem ('' when it parses)."""
+    names: set[str] = set()
+    try:
+        for _literal, name, spec, conversion in string.Formatter().parse(template):
+            if name is None:
+                continue
+            if spec or conversion or not name.isidentifier():
+                return names, f"{{{name}}} must be a bare field name"
+            names.add(name)
+    except ValueError as exc:
+        return names, str(exc)
+    return names, ""
+
+
+@dataclass(frozen=True)
+class SourceFamily:
+    """What every source of one web family shares.  No per-revision facts, ever."""
+
+    id: str
+    title: str = ""
+    site: str = ""
+    #: the CSL ``container-title`` of every record (``Wikipedia``)
+    container_title: str = ""
+    licence_class: str = vocab.DEFAULT_LICENCE_CLASS
+    #: ``{spdx, note, redistribute: false}``
+    licence: dict = field(default_factory=dict)
+    #: ``str.format`` over ``ATTRIBUTION_FIELDS``
+    attribution: str = ""
+    #: ``str.format`` over ``REVISION_URL_FIELDS``: a revision's permalink
+    revision_url: str = ""
+    confirmed: bool = False
+    notes: str = ""
+    origin: str = "skill"
+
+    @classmethod
+    def from_dict(cls, family_id: str, data: dict, origin: str = "skill") -> "SourceFamily":
+        data = dict(data or {})
+        return cls(
+            id=family_id,
+            title=str(data.get("title") or ""),
+            site=str(data.get("site") or ""),
+            container_title=str(data.get("container_title") or ""),
+            licence_class=str(data.get("licence_class") or vocab.DEFAULT_LICENCE_CLASS),
+            licence=dict(data.get("licence") or {}),
+            attribution=str(data.get("attribution") or ""),
+            revision_url=str(data.get("revision_url") or ""),
+            confirmed=bool(data.get("confirmed")),
+            notes=str(data.get("notes") or ""),
+            origin=origin,
+        )
+
+    @property
+    def spdx(self) -> str:
+        return str((self.licence or {}).get("spdx") or "")
+
+    def source_id(self, pageid: int, revision: int) -> str:
+        return web_source_id(self.id, pageid, revision)
+
+    def revision_link(self, pageid: int, revision: int) -> str:
+        """The permalink of one revision, from ``revision_url``."""
+        self.source_id(pageid, revision)          # refuses a bad page id or revision
+        return self.revision_url.format(pageid=pageid, revision=revision)
+
+    def attribution_for(self, *, title: str, pageid: int, revision: int) -> str:
+        """The attribution line a quote of this revision carries."""
+        return self.attribution.format(title=title, pageid=pageid, revision=revision,
+                                       url=self.revision_link(pageid, revision),
+                                       licence=self.spdx)
+
+    def problems(self) -> list[str]:
+        """Structural problems: id, licence class and block, both templates."""
+        fid = self.id
+        out: list[str] = []
+        if not FAMILY_ID.match(fid):
+            out.append(f"family {fid}: the id must be 2-24 lowercase letters and digits with "
+                       f"no '-', because it is the first token of every web source id")
+        if not self.title:
+            out.append(f"family {fid}: title is required")
+        if not self.site.startswith("https://"):
+            out.append(f"family {fid}: site must be an https:// URL")
+        if self.licence_class not in vocab.LICENCE_CLASSES:
+            out.append(f"family {fid}: licence_class must be "
+                       f"{'|'.join(sorted(vocab.LICENCE_CLASSES))}")
+        if (self.licence or {}).get("redistribute"):
+            out.append(f"family {fid}: licence.redistribute must be false (nothing is "
+                       f"redistributed)")
+        if self.licence_class in vocab.ATTRIBUTION_LICENCE_CLASSES and not _SPDX.match(self.spdx):
+            out.append(f"family {fid}: an {self.licence_class} family names its licence "
+                       f"as licence.spdx")
+        for name, template, allowed, required in (
+                ("attribution", self.attribution, ATTRIBUTION_FIELDS, ATTRIBUTION_REQUIRED),
+                ("revision_url", self.revision_url, REVISION_URL_FIELDS, REVISION_URL_REQUIRED)):
+            if not template:
+                out.append(f"family {fid}: {name} is required")
+                continue
+            names, problem = _template_fields(template)
+            if problem:
+                out.append(f"family {fid}: {name}: {problem}")
+                continue
+            for unknown in sorted(names - allowed):
+                out.append(f"family {fid}: {name} names {{{unknown}}}; it may name "
+                           f"{', '.join('{%s}' % n for n in sorted(allowed))}")
+            for missing in sorted(required - names):
+                out.append(f"family {fid}: {name} must name {{{missing}}}")
+        if self.revision_url and not self.revision_url.startswith("https://"):
+            out.append(f"family {fid}: revision_url must be an https:// URL")
+        return out
+
+
 class Registry:
     """The skill registry with a workspace overlay on top."""
 
     def __init__(self, entries: dict[str, RegistryEntry], *,
                  skill_path: Path | None = None, overlay_path: Path | None = None,
-                 shadowed: Sequence[str] = ()):
+                 shadowed: Sequence[str] = (),
+                 families: dict[str, SourceFamily] | None = None):
         self.entries = entries
+        #: web-source families by id (``enwiki``); never counted as editions
+        self.families: dict[str, SourceFamily] = dict(families or {})
         self.skill_path = skill_path
         self.overlay_path = overlay_path
         #: ids where an overlay row sits on top of a CONFIRMED skill entry -- the
@@ -237,12 +419,30 @@ class Registry:
                 origin[sid] = "overlay"
         entries = {sid: RegistryEntry.from_dict(sid, body, origin.get(sid, "skill"))
                    for sid, body in merged.items()}
+        families = _merged_families(skill_path, overlay_path)
         return cls(entries, skill_path=skill_path, overlay_path=overlay_path,
-                   shadowed=sorted(shadowed))
+                   shadowed=sorted(shadowed), families=families)
 
     # -- lookups -------------------------------------------------------
     def get(self, source_id: str) -> RegistryEntry | None:
         return self.entries.get(source_id)
+
+    def family(self, family_id: str) -> SourceFamily | None:
+        return self.families.get(family_id)
+
+    def family_of(self, source_id: str) -> SourceFamily | None:
+        """The family a web source id names (``enwiki-28767-1371234567`` -> enwiki)."""
+        parsed = parse_web_source_id(source_id)
+        return self.families.get(parsed[0]) if parsed else None
+
+    def licence_class(self, source_id: str) -> str:
+        """What an exported record may quote of ``source_id``: its entry's class,
+        else its family's, else ``closed`` -- an unknown source is never open."""
+        entry = self.entries.get(source_id)
+        if entry is not None:
+            return entry.licence_class
+        family = self.family_of(source_id)
+        return family.licence_class if family is not None else vocab.DEFAULT_LICENCE_CLASS
 
     def by_sha(self, sha: str) -> RegistryEntry | None:
         sha = (sha or "").strip().lower()
@@ -414,6 +614,12 @@ class Registry:
             fetch = str((entry.licence or {}).get("fetch") or "none")
             if fetch not in {"none", "author_site", "open"}:
                 problems.append(f"{sid}: licence.fetch must be none|author_site|open")
+            if entry.licence_class not in vocab.LICENCE_CLASSES:
+                problems.append(f"{sid}: licence_class must be "
+                                f"{'|'.join(sorted(vocab.LICENCE_CLASSES))}")
+            if self.family_of(sid) is not None:
+                problems.append(f"{sid}: a web source is a sourceset row under its family, "
+                                f"never a registry entry of its own")
             if entry.edition_status not in EDITION_STATUSES:
                 problems.append(f"{sid}: edition_status must be "
                                 f"{'|'.join(EDITION_STATUSES)}")
@@ -444,6 +650,8 @@ class Registry:
                     problems.append(f"{sid}: same_work names unknown source {other}")
                 elif sid not in (self.entries[other].same_work or ()):
                     problems.append(f"{sid}: same_work {other} does not name {sid} back")
+        for fid, family in sorted(self.families.items()):
+            problems.extend(family.problems())
         return problems
 
 
@@ -458,9 +666,21 @@ ENTRY_KEYS = frozenset({
     "title", "authors", "edition", "isbn", "sha256", "bytes", "pages",
     "download_url", "book_page_url", "errata_url", "licence", "offset",
     "offset_confidence", "offset_method", "kinds", "same_work", "page_map_to",
-    "aliases", "confirmed", "notes", "added", "edition_status",
+    "aliases", "confirmed", "notes", "added", "edition_status", "licence_class",
 })
 LICENCE_KEYS = frozenset({"note", "fetch", "redistribute"})
+#: Every key a web-source family may carry.  No sha, no byte count, no page id
+#: and no revision: those are facts about one revision, and a family has none.
+FAMILY_KEYS = frozenset({
+    "title", "site", "container_title", "licence_class", "licence", "attribution",
+    "revision_url", "confirmed", "notes",
+})
+FAMILY_LICENCE_KEYS = frozenset({"spdx", "note", "redistribute"})
+#: A family's free-text fields and their word caps; everything else is a label,
+#: an id or a URL, capped at ``MAX_FIELD_WORDS``.
+FAMILY_FREE_TEXT_FIELDS = {"notes": 150, "licence.note": 150, "attribution": 40}
+#: The top-level keys of a registry file.
+TOP_LEVEL_KEYS = frozenset({"version", "sources", "families"})
 PAGE_MAP_KEYS = frozenset({"default_shift", "exception_shift", "exceptions",
                            "note", "confirmed_by"})
 ALIAS_KEYS = frozenset({"sha256_prefixes", "urls", "filenames", "titles"})
@@ -493,10 +713,10 @@ _SECOND_SENTENCE = re.compile(r"[a-z]{3,}[.!?]\s+[A-Z(]")
 MIN_SECOND_SENTENCE_WORDS = 6
 
 
-def _field_cap(path: str) -> int:
+def _field_cap(path: str, caps: dict[str, int] = FREE_TEXT_FIELDS) -> int:
     generic = re.sub(r"page_map_to\.[^.]+\.", "page_map_to.*.", path)
     generic = re.sub(r"\[\d+\]", "", generic)
-    return FREE_TEXT_FIELDS.get(generic, MAX_FIELD_WORDS)
+    return caps.get(generic, MAX_FIELD_WORDS)
 
 
 def _runs_to_a_second_sentence(value: str) -> bool:
@@ -508,17 +728,18 @@ def _runs_to_a_second_sentence(value: str) -> bool:
     return False
 
 
-def _prose_problems(sid: str, path: str, value: str) -> list[str]:
+def _prose_problems(sid: str, path: str, value: str,
+                    caps: dict[str, int] = FREE_TEXT_FIELDS) -> list[str]:
     """Is this string metadata, or is it a passage out of the book?"""
     out: list[str] = []
     words = value.split()
-    cap = _field_cap(path)
+    cap = _field_cap(path, caps)
     if len(words) > cap:
         out.append(f"{sid}: {path} is {len(words)} words (cap {cap}); the registry holds "
                    f"metadata about an edition, never a passage of it")
     if cap == MAX_FIELD_WORDS and _runs_to_a_second_sentence(value):
         out.append(f"{sid}: {path} runs to a second sentence, which no field but "
-                   f"{', '.join(sorted(FREE_TEXT_FIELDS))} may do")
+                   f"{', '.join(sorted(caps))} may do")
     return out
 
 
@@ -543,8 +764,9 @@ def metadata_problems(path: Path | str) -> list[str]:
     problems: list[str] = []
     if int(data.get("version") or 0) != REGISTRY_VERSION:
         problems.append(f"{path}: version must be {REGISTRY_VERSION}")
-    for key in sorted(set(data) - {"version", "sources"}):
+    for key in sorted(set(data) - TOP_LEVEL_KEYS):
         problems.append(f"{path}: unknown top-level key `{key}`")
+    problems.extend(_family_metadata_problems(path, data.get("families")))
     sources = data.get("sources") or {}
     if not isinstance(sources, dict):
         return problems + [f"{path}: `sources:` must be a map keyed by source_id"]
@@ -566,17 +788,41 @@ def metadata_problems(path: Path | str) -> list[str]:
     return problems
 
 
-def _walk_strings(sid: str, prefix: str, body: Any) -> list[str]:
+def _family_metadata_problems(path: Path, families: Any) -> list[str]:
+    """The same shape-and-free-text check for the ``families:`` block."""
+    if families is None:
+        return []
+    if not isinstance(families, dict):
+        return [f"{path}: `families:` must be a map keyed by family id"]
+    problems: list[str] = []
+    for fid, body in sorted(families.items()):
+        where = f"family {fid}"
+        if not isinstance(body, dict):
+            problems.append(f"{where}: the entry must be a map")
+            continue
+        problems.extend(f"{where}: unknown key `{key}` (a family holds nothing about "
+                        f"one revision)" for key in sorted(set(body) - FAMILY_KEYS))
+        licence = body.get("licence")
+        if isinstance(licence, dict):
+            problems.extend(f"{where}: unknown licence key `{k}`"
+                            for k in sorted(set(licence) - FAMILY_LICENCE_KEYS))
+        problems.extend(_walk_strings(where, "", body, FAMILY_FREE_TEXT_FIELDS))
+    return problems
+
+
+def _walk_strings(sid: str, prefix: str, body: Any,
+                  caps: dict[str, int] = FREE_TEXT_FIELDS) -> list[str]:
     """Every string in the entry, with the dotted path it was found at."""
     out: list[str] = []
     if isinstance(body, dict):
         for key, value in body.items():
-            out.extend(_walk_strings(sid, f"{prefix}.{key}" if prefix else str(key), value))
+            out.extend(_walk_strings(sid, f"{prefix}.{key}" if prefix else str(key), value,
+                                     caps))
     elif isinstance(body, (list, tuple)):
         for index, value in enumerate(body):
-            out.extend(_walk_strings(sid, f"{prefix}[{index}]", value))
+            out.extend(_walk_strings(sid, f"{prefix}[{index}]", value, caps))
     elif isinstance(body, str) and prefix:
-        out.extend(_prose_problems(sid, prefix, body))
+        out.extend(_prose_problems(sid, prefix, body, caps))
     return out
 
 
@@ -742,6 +988,34 @@ def _read_registry_file(path: Path) -> dict[str, dict]:
     if not isinstance(sources, dict):
         raise CfError(f"{path}: `sources:` must be a map keyed by source_id")
     return {str(k): (v or {}) for k, v in sources.items()}
+
+
+def _read_registry_families(path: Path | None) -> dict[str, dict]:
+    """The ``families:`` block of one registry file (``{}`` when it has none)."""
+    if not path or not Path(path).exists():
+        return {}
+    data = read_yaml(path)
+    families = (data or {}).get("families") if isinstance(data, dict) else None
+    if families is None:
+        return {}
+    if not isinstance(families, dict):
+        raise CfError(f"{path}: `families:` must be a map keyed by family id")
+    return {str(k): (v or {}) for k, v in families.items()}
+
+
+def _merged_families(skill_path: Path, overlay_path: Path | None) -> dict[str, SourceFamily]:
+    """The shipped families, with the overlay's non-null keys on top, as for sources."""
+    merged: dict[str, dict] = {}
+    origin: dict[str, str] = {}
+    for fid, body in _read_registry_families(skill_path).items():
+        merged[fid] = dict(body)
+        origin[fid] = "skill"
+    for fid, body in _read_registry_families(overlay_path).items():
+        base = dict(merged.get(fid) or {})
+        base.update({k: v for k, v in (body or {}).items() if v is not None})
+        merged[fid] = base
+        origin[fid] = "overlay"
+    return {fid: SourceFamily.from_dict(fid, body, origin[fid]) for fid, body in merged.items()}
 
 
 def entry_from_claim(source_id: str, claim, *, pdf=None) -> RegistryEntry:

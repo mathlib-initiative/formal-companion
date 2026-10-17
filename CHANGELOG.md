@@ -118,6 +118,37 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- The foundation of locate (`docs/proposals/wikipedia-locate.md`, milestone
+  L-M0, vocabulary and keys only; every stage that uses them is not
+  implemented). `cflib.vocab` gains the three locate run modes
+  (`locate-inventory`, `locate`, `locate-challenge`) with their kinds
+  (`PASSAGE`, `LOCATION`, `ABSENCE`, `UNRESOLVED`), the relations,
+  `noMatch`, passage kinds, prominence, scopes, proof statuses with
+  `decide_proof_status` in their decision order, the derived statuses with
+  `derive_status` implementing the proposal's §2.6 table, challenge
+  verdicts, licence classes and the extension namespace
+  (`references/vocabulary.md` §1.11). `FINDING_KINDS` is unchanged: a locate
+  kind is not a faithfulness kind, so the ledger, the answer key and the
+  substantive kinds read exactly what they read before.
+- One new item production, `In-text #<hex>` (8 to 16 lowercase hex digits):
+  a passage keyed by the hash of its head, parsed whitespace-tolerantly, with
+  the reject `bad_passage_id` for a malformed hash, and conversions to and
+  from the hex (`passage_item`, `passage_hex`) and the vendored
+  `passage-<8 hex>` id. `clean()` and `finding_id` are untouched; the only
+  labels whose parse or join key changed are ones that were rejects before
+  (`In-text #…`, then `in_text_no_target`). `cflib.passages` computes the hex:
+  the vendored `passage_quote_id` over a renderer-independent head (formulas
+  as `⟦normalized alttext⟧`, twelve words extended to forty until unique in
+  the source), refusing two passages that still collide with
+  `PassageIdError`.
+- Licence classes (`closed` by default, `open_attribution`,
+  `open_share_alike`, `public_domain`): an optional registry `licence_class`
+  that every existing entry passes without, `POLICY.md` §4.1, hard rule 6.
+  The registry gains `families:`, web-source families with no per-revision
+  rows; it ships one, `enwiki` (`open_share_alike`, an attribution template
+  and a permalink template), validated by `cf sources validate-registry`.
+  `CLAUDE.md` §3 names the Wikipedia fetcher, not implemented, as the next
+  network exception.
 - Verso hovers in the overlay viewer. `build_site.py` cuts each card's
   statement out of the built site's Verso pages (`tools/verso_extract.py`),
   a tagged example's by its tag comment on its module's page, and writes
