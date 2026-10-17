@@ -118,6 +118,22 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- The locate gate, `scripts/gate/verify_locate.py` (proposal §4): rules 1-8 out
+  of tree over only the task's own documents — the change set's
+  `findings/<task-id>/<source-id>.json`, or `--findings` — loading only the
+  sources, L2 candidates files and task manifests they name. Schema per mode
+  with the header pins and a strict JSON parse; every implied record through the
+  vendored Literature Links checker, both vendored packages verified against
+  their manifests and `gate.json`'s pins at start; quotes exactly once on the
+  pinned layer at the passage start, ids recomputed over the whole inventory;
+  every named declaration in `corpus.sqlite`'s exact table at the universe's
+  commit, `proof_status`/`commit`/`version` refused; L2 curated hits read by the
+  gate itself (off in the blind arm); three distinct queries per absence; at
+  most five ranked locations; ownership by task id, by `orchestrator.sqlite`
+  (an assumed schema, looked up defensively) or by the single-stem rule, named
+  on the last line; the finder and coverage floor of inventories. Exit 0/1/3 as
+  `verify_findings.py`, one JSON line per call in the gate log.
+  `references/locate-documents.md` §2-§4 and §9 state each rule precisely.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the

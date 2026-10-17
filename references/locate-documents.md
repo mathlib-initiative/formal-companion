@@ -78,10 +78,24 @@ third genuine reviewer rejection (proposal §6), never by a worker.
 - `finder` ∈ {`theorem_box`, `bold_definition`, `lead`, `model`}: which finder
   proposed the passage. Deterministic finders' passages are pre-filled in the
   task; dropping one needs a `skips` entry naming its span.
-- `item` must equal the passage id of `span` (§2.2 of the proposal); the gate
-  recomputes it.
-- Every paragraph of the source with `formal_math` content is covered by a
-  passage span or a `skips` span (the coverage floor).
+- `item` must equal the passage id of `span` (§2.2 of the proposal), written
+  `In-text #<8 hex>`; the gate recomputes every id of the document over all
+  its passages, so `head_words` must be the shortest unique head.
+- **The quote rule**: `quote.exact` (non-empty, at most 1,500 characters, each
+  context at most 200 — `gate.json` may change both) matches the layer
+  **exactly once** with its `prefix` immediately before it and its `suffix`
+  immediately after, the match starts at `span[0]`, and `exact` lies inside
+  the span. A passage may not start inside a formula.
+- A passage whose `finder` is a deterministic one must start where that finder's
+  passage of the task starts; a passage the enumerator found is `model`. A
+  deterministic passage of the task is dropped only with a skip whose span
+  covers its whole span.
+- Every paragraph of the source with `formal_math` content — every
+  `paragraphs.json` entry with `math: true` — overlaps a passage span or a
+  `skips` span (the coverage floor).
+- With L2 curated hits for the article (§5; gate rule 4, off in the blind arm),
+  the inventory keeps at least one `formal_math` passage and no `subject`
+  passage is scoped `expository` or `non_math`.
 
 ## 3. Locate document (`mode: locate`)
 
@@ -108,13 +122,23 @@ A locate task carries at most eight passages of one frozen inventory.
     "reason": "the passage's quantifier is ambiguous", "receipt": {"queries": [], "candidates": []}}]}
 ```
 
-- `outcome` ∈ {`located`, `absent`, `unresolved`}. `absent` may carry
-  `relatedMatch` locations only.
+- `outcome` ∈ {`located`, `absent`, `unresolved`}. `located` needs a location
+  whose relation is not `relatedMatch` (with only related ones the passage is
+  absent, beside them); `absent` may carry `relatedMatch` locations only;
+  `unresolved` has no locations and says why in `reason`.
+- The document's passages are exactly the task's (the task manifest, §9), each
+  once.
 - `relation` ∈ the six locate relations; `rank` 1..5, distinct; `confidence` ∈
   {`high`, `medium`, `low`}.
 - `closeMatch` requires a non-empty `note` naming the convention difference.
 - Every curated candidate handed to the task (§5) must appear in `candidates`,
-  accepted or rejected with a reason.
+  accepted or rejected with a reason, or be located; the gate reads the
+  candidates file itself (rule 4).
+- Every declaration a location or an `accepted` candidate names exists in
+  `corpus.sqlite` at that library and the universe's commit (rule 3). No
+  document carries `proof_status`, `commit` or `version` anywhere.
+- An absence's receipt lists at least three distinct queries (whitespace and
+  case folded) (rule 5).
 
 ## 4. Challenge document (`mode: locate-challenge`)
 
@@ -140,8 +164,15 @@ A locate task carries at most eight passages of one frozen inventory.
   changes a relation, `refute` removes a location, `overturn` replaces an
   absence or unresolved outcome (or a scope) with the given locations — all
   three give `challenge: downgraded` on the affected records.
-- A record not named by any verdict is `not_required` or `sampled_out`, as the
-  challenge plan said.
+- The actions a target admits: `location` — `confirm`, `downgrade` (naming the
+  weaker `relation`), `refute`; `absence` and `unresolved` — `uphold`,
+  `overturn` (with `locations`, at least one whose relation counts); `scope` —
+  `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
+  `uphold`, `overturn` (naming the new `prominence`).
+- A challenge task's records are its task manifest's, and each gets exactly one
+  verdict (rule 1); overturn locations are checked like a locate document's.
+- A record of the run not named by any challenge task is `not_required` or
+  `sampled_out`, as the challenge plan said.
 
 ## 5. Candidates file (L2)
 
@@ -359,12 +390,13 @@ A locate run is planned from a sourceset and a universe (*not implemented*:
 
   An inventory task's documents carry `"finders": [...]` (`finders.json`'s
   passages, pre-filled) instead of `passages`; a challenge task's carry
-  `"records": [...]`, the records it judges, each with its `location_key` or
-  its outcome.
+  `"records": [...]`, the records it judges: `{item, target, location_key}`
+  (the key for a `location` target only), with the passage's `span` and
+  `passage_kind`.
 - `findings/<task-id>/<source-id>.json` — the documents (§1–§4); a contribution
   may change only its own task's directory and `tasks/<task-id>.yaml`.
-- `gate.json` — read by the out-of-tree locate gate (*not implemented*:
-  *scripts/gate/verify_locate.py*):
+- `gate.json` — read by the out-of-tree locate gate,
+  `scripts/gate/verify_locate.py`:
 
   ```json
   {"schema": "cf-gate-locate/1", "mode": "locate", "preset": "locate", "run_id": "r-…",
@@ -388,8 +420,23 @@ A locate run is planned from a sourceset and a universe (*not implemented*:
   `inventory` is the frozen inventory a `locate` run reads (null for
   `locate-inventory`); `blind: true` is the G1-blind arm (curated candidates and
   gate rule 4 off). The gate directory also holds `scripts/gate/locate_text.py`,
-  the two host tools of §8, and `vendor/` with both vendored packages, whose
-  manifest shas the gate verifies at start.
+  `scripts/gate/verify_findings.py` (whose hardened change-set reader the locate
+  gate reuses), the two host tools of §8, and `vendor/` with both vendored
+  packages, whose manifest shas the gate verifies at start.
+
+  The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
+  <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
+  validation and pre-merge commands, `--findings <file>` for one document, or
+  `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus. It
+  validates only the documents the change set touched (or names), loads only
+  the sources, candidates files and task manifests those documents name, exits
+  0 / 1 (rejected) / 3 (could not run) like `verify_findings.py`, prefixes each
+  refusal with its rule (`[rule 2] …`), and its last line says which ownership
+  rule judged the change set: `--task-id`/`TEND_TASK_ID`, the task id recovered
+  from `orchestrator.sqlite` (whose schema is assumed, not known: any table
+  with a worktree-path-like and a task-id-like column, one task id or none), or
+  the single-stem rule. Documents are parsed strictly: a duplicate key or a
+  `NaN` is a refusal.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256}, inventory_run, challenged_runs, arm, per_task,
