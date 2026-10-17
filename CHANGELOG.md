@@ -67,9 +67,12 @@ release has something to say.
   (`snippet_files_sha` for `snippets_sha`).
 - A definition's snippet (`def`, `abbrev`, `instance`, `structure`, `class`,
   `inductive`, `opaque`) is the whole declaration, up to the next command and
-  at most 60 lines; a theorem's is still its statement through the `:=`. A
-  declaration with an attribute on its line is located, one inside a comment
-  is not. The viewer clamps a statement only past 20 lines, to 14.
+  at most 60 lines; a theorem's is still its statement through the `:=` of
+  its proof, now past a `:=` in brackets, a comment, a string, a `let` or a
+  `have`. A field's snippet keeps the lines that continue its type. A
+  declaration with an attribute or an instance priority on its line is
+  located, one inside a comment is not, and a `mutual` block's `end` keeps
+  the namespace. The viewer clamps a statement only past 20 lines, to 14.
 - The vendored annotation format is the release candidate
   `formal-companion-annotations v1.0.0rc2` (identifier
   `formal-companion/annotations`; the withdrawn `v1.0.0` is not compatible).

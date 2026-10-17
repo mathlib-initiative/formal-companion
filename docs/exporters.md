@@ -51,7 +51,7 @@ The exporter reads, at the pinned commit,
 | `<data-dir>/faithfulness-verdicts.json` | `verdicts`, with a `resolution` read from the summary prose and the commits it names |
 | `<official-source>` | the PDF source's URLs, bytes and retrieval time |
 | every tracked `.lean` file | every declaration (`adapters.leanparse`), the statement-hash ids and signatures of anonymous ones (`formal_companion_annotations.ids`), the section 5.1 cut for named ones |
-| the tracked Lean file the ledger names for each id the refinement lists | its `snippet` (`adapters.leansnippets`, the rule of `extract_declaration_snippets.py` at measure_theory ef0a424 except that a definition is shown whole: a theorem's keyword through the `:=` of its proof; a `def`, `abbrev`, `instance`, `structure`, `class`, `inductive` or `opaque` with its body, fields or constructors, up to the next command; a field at its line under its structure's header; an `example:<slug>` by its tag comment; past 14 lines, or 60 for a definition, cut and marked `…`, `truncated`); an id it cannot locate gets none and is listed in the report's `snippets_unlocated` |
+| the tracked Lean file the ledger names for each id the refinement lists | its `snippet` (`adapters.leansnippets`, the rule of `extract_declaration_snippets.py` at measure_theory ef0a424 except that a definition is shown whole: a theorem's keyword through the `:=` of its proof, the first one outside brackets, comments and strings that closes no `let` or `have`; a `def`, `abbrev`, `instance`, `structure`, `class`, `inductive` or `opaque` with its body, fields or constructors, up to the next command; a field at its line under its structure's header, with the deeper lines that continue its type; an `example:<slug>` by its tag comment; past 14 lines, or 60 for a definition, cut and marked `…`, `truncated`); an id it cannot locate gets none and is listed in the report's `snippets_unlocated` |
 | a Lake build's `lib/lean` (`--lean-build`, default `<checkout>/.lake/build/lib/lean`) | an anonymous instance's generated name as `lean_name`, when the `.ilean` postdates the file's last commit |
 
 When that build's trace hashes match a file's text, its declarations are read
@@ -344,6 +344,8 @@ differ from them in five ways, all deliberate and recorded in
 4. An equation's title is marked `title_source: producer` (measure_theory:
    `equation-1.2` and `equation-1.3`).
 5. A definition's snippet is the whole declaration up to the next command
-   (at most 60 lines), not its first 14 lines (measure_theory).
+   (at most 60 lines), not its first 14 lines; a theorem's runs past a `:=`
+   in a named argument, a structure instance, a `let` or a `have` to its
+   proof's; a field's keeps the lines that continue its type (measure_theory).
 
 Every other record is byte for byte what the prototypes wrote.
