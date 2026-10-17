@@ -399,6 +399,85 @@ CHALLENGE_VERDICTS = frozenset({CHALLENGE_SURVIVED, CHALLENGE_DOWNGRADED,
 #: the relations a stratified challenge sample re-judges as weak (section 5)
 WEAK_RELATIONS = frozenset({RELATED_MATCH, NARROW_MATCH, HAS_PART})
 
+# --- the locate documents (references/locate-documents.md): the values the
+# stages exchange, defined once here so the renderer, the planner, the gate and
+# the bench read one set
+#: the ``schema`` of every inventory, locate and challenge document
+LOCATE_DOCUMENT_SCHEMA = "cf-locate/1"
+#: the renderer of every web source of the first corpus (section 2.1); a source's
+#: ``renderer`` field, and a pin of every run, gate and score document
+RENDERER_WEB_HTML = "web-html/1"
+#: What one formal_math passage of a locate document ends with (section 2.6), and
+#: the finding kind each one is tallied under.
+OUTCOME_LOCATED = "located"
+OUTCOME_ABSENT = "absent"
+OUTCOME_UNRESOLVED = "unresolved"
+LOCATE_OUTCOMES = frozenset({OUTCOME_LOCATED, OUTCOME_ABSENT, OUTCOME_UNRESOLVED})
+OUTCOME_KIND = {OUTCOME_LOCATED: LOCATION, OUTCOME_ABSENT: ABSENCE,
+                OUTCOME_UNRESOLVED: UNRESOLVED}
+#: Which finder proposed an inventory passage.  The three deterministic finders'
+#: passages are pre-filled in an inventory task, and dropping one needs a skip
+#: naming its span (gate rule 8); ``model`` is the enumerator's own.
+FINDER_THEOREM_BOX = "theorem_box"
+FINDER_BOLD_DEFINITION = "bold_definition"
+FINDER_LEAD = "lead"
+FINDER_MODEL = "model"
+DETERMINISTIC_FINDERS = frozenset({FINDER_THEOREM_BOX, FINDER_BOLD_DEFINITION, FINDER_LEAD})
+FINDERS = DETERMINISTIC_FINDERS | {FINDER_MODEL}
+#: a location's ``confidence``: the worker's own, recorded, never a status input
+CONFIDENCES = frozenset({"high", "medium", "low"})
+#: a receipt candidate's ``verdict``: every curated candidate handed to a task is
+#: accepted or rejected with a reason (gate rule 4)
+CANDIDATE_ACCEPTED = "accepted"
+CANDIDATE_REJECTED = "rejected"
+CANDIDATE_VERDICTS = frozenset({CANDIDATE_ACCEPTED, CANDIDATE_REJECTED})
+#: How an L2 candidate was found deterministically (section 3, L2): a library's
+#: ``@[wikidata]`` tag on the article's own QID, Mathlib's two curated lists, a
+#: Wikipedia URL in a docstring, and a library's own metadata (FormalFrontier
+#: ``formalization.yaml`` main results).  Every one is a ``curated`` hit, which
+#: gate rule 4 reads; lexical retrieval is not.
+CANDIDATE_VIA = frozenset({"wikidata_tag", "mathlib_1000", "mathlib_100", "docstring_url",
+                           "library_metadata"})
+#: the tags the library index parses from a declaration's source span and docstring
+TAG_KINDS = frozenset({"wikidata", "stacks", "kerodon", "wikipedia"})
+#: What a challenge verdict judges, and what it does (section 5).  ``confirm`` and
+#: ``uphold`` keep the record (``survived``); ``downgrade``, ``refute`` and
+#: ``overturn`` change it (``downgraded``).
+CHALLENGE_TARGETS = frozenset({"location", "absence", "unresolved", "scope", "prominence"})
+CHALLENGE_KEEP = frozenset({"confirm", "uphold"})
+CHALLENGE_CHANGE = frozenset({"downgrade", "refute", "overturn"})
+CHALLENGE_ACTIONS = CHALLENGE_KEEP | CHALLENGE_CHANGE
+#: an absence's receipt lists at least this many distinct queries (gate rule 5)
+MIN_ABSENCE_QUERIES = 3
+#: a locate task carries at most this many formal_math passages (section 3, L3b)
+MAX_PASSAGES_PER_LOCATE_TASK = 8
+#: a challenge task judges about this many records (section 5)
+CHALLENGE_BATCH_RECORDS = 20
+#: the export's quote caps (section 2.7): words of ``exact``, characters of each
+#: of ``prefix`` and ``suffix``
+EXPORT_QUOTE_WORDS = 12
+EXPORT_CONTEXT_CHARS = 32
+#: the reason an attempt-capped task's document is UNRESOLVED (section 6,
+#: Convergence): written by the bridge, never by a worker
+UNRESOLVED_ATTEMPT_CAP = "attempt_cap"
+
+# --- the benchmark (sections 8 and 9)
+#: the gold tiers, never pooled
+BENCH_TIERS = frozenset({"G1", "G3", "GX", "G4", "P"})
+#: G1 is scored in two arms that are never pooled (section 8.1)
+BENCH_ARM_ASSISTED = "assisted"
+BENCH_ARM_BLIND = "blind"
+BENCH_ARMS = frozenset({BENCH_ARM_ASSISTED, BENCH_ARM_BLIND})
+BENCH_SPLITS = frozenset({"dev", "eval", "test"})
+#: why a gold-formalized passage did not end ``formalized`` (the safety metric's
+#: cause breakdown, section 8.2); unresolved and gate-failed are misses
+FNF_CAUSES = frozenset({"inventory_miss", "scope_demotion", "absence", "weak_relation",
+                        "unresolved", "gate_failed"})
+#: the mechanical error code of every miss (section 9, step 1)
+ERROR_CODES = frozenset({"E-INVENTORY-MISS", "E-RETRIEVAL-MISS", "E-REJECTED-CORRECT",
+                         "E-WRONG-RELATION", "E-FALSE-ABSENCE", "E-WRONG-SCOPE",
+                         "E-UNRESOLVED", "E-MEMORY"})
+
 
 def check(value: str, allowed: Iterable[str], field: str) -> str:
     """Return ``value`` if it is in ``allowed``; otherwise raise CfError."""

@@ -118,6 +118,21 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- The locate contract the wave-2 packages are built against
+  (`references/locate-documents.md` §7–§11): the sourceset manifest and a
+  rendered web source's files (the Literature Links layer, `formulas.json`, the
+  head text, the reading copy and its layer map, sections, paragraphs, the
+  deterministic finders), the universe and library-index shapes and the
+  `corpus.sqlite` schema, a locate run's task manifest, `gate.json` and
+  `run.yaml` blocks, the harvested finding rows and passage outcomes, and
+  campaigns. `cflib.vocab` gains the values those documents carry
+  (`references/vocabulary.md` §1.11), `cflib.hashing.location_key` the run-free
+  key of a location, `cflib.paths` the sourceset, universe, export, bench and
+  campaign paths, and `cf init`'s `.gitignore` ignores library indexes and
+  `corpus.sqlite`. `scripts/gate/locate_text.py` is the standard-library head
+  text, offset map, head id and exact-once quote match every reader of a web
+  source shares, the gate on a host included; its head id is
+  `cflib.passages`' frozen rule restated in lockstep, which a test pins.
 - The foundation of locate (`docs/proposals/wikipedia-locate.md`, milestone
   L-M0, vocabulary and keys only; every stage that uses them is not
   implemented). `cflib.vocab` gains the three locate run modes
