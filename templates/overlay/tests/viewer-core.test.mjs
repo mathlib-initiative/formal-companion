@@ -22,12 +22,15 @@ import {
   VERDICT_LABELS,
   buildIndex,
   cardHref,
+  cardTarget,
   cardsMatching,
   coverageSummary,
   coverageWord,
   declarationVerdictDisplay,
+  docBlocks,
   endRegion,
   firstKeyCard,
+  hoverText,
   labelParts,
   leanTokens,
   locatorTail,
@@ -43,6 +46,7 @@ import {
   quadToViewport,
   readConfig,
   readAnnotationsBlock,
+  readVerso,
   regionCoverage,
   regionVerdict,
   resolutionText,
@@ -51,6 +55,7 @@ import {
   safeHttpsUrl,
   sha256Hex,
   sharedRole,
+  siteHref,
   splitCards,
   siteRootFor,
   splitName,
@@ -60,13 +65,16 @@ import {
   verdictLine,
   verifyPdfBytes,
   versoFragment,
+  versoRuns,
 } from "../runtime/viewer/viewer-core.js";
 import {
+  HERE,
   ORIGIN,
   OTHER_SOURCE_ID,
   PDF_BYTES,
   PDF_ROUTE,
   SOURCE_ID,
+  VERSO_TARGET,
   VIEWER_DIR,
   fakeSha256,
   fakeViewport,
@@ -77,6 +85,7 @@ import {
   linkRecord,
   makeGenerated,
   makeSections,
+  makeVerso,
 } from "./fixtures.mjs";
 
 const PDF_SHA256 = await sha256Hex(PDF_BYTES);
@@ -747,4 +756,82 @@ test("lean: the tint runs join back to the snippet exactly", () => {
   const heads = leanTokens("private noncomputable def f\nexample : True\nprotected axiom a\nexamples");
   assert.deepEqual(heads.filter(([kind]) => kind === "kw").map(([, part]) => part),
                    ["private", "noncomputable", "def", "example", "protected", "axiom"]);
+});
+
+// --- Verso statements and hovers ----------------------------------------------
+
+test("verso: a card's target is its page and anchor, as cardHref builds them and the extractor keys them", async () => {
+  const table = JSON.parse(await readFile(path.join(HERE, "card-targets.json"), "utf8"));
+  assert.equal(table.namespace, NAMESPACE);
+  for (const { declaration, destination, location, target } of table.cases) {
+    const end = { extensions: { [NAMESPACE]: { ...(destination ? { destination } : {}), ...(declaration ? { declaration } : {}) } },
+                  location };
+    assert.equal(cardTarget(end), target, JSON.stringify({ declaration, destination, location }));
+    if (target && destination.resolution === "exact") {
+      const [page, fragment] = target.split("#");
+      assert.equal(cardHref(end, `${ORIGIN}/`, ORIGIN), new URL(`${page}#${encodeURIComponent(fragment)}`, `${ORIGIN}/`).href);
+    }
+  }
+  const { index } = fixture();
+  const [key] = cardsOf(index, "item:theorem-1.1");
+  assert.equal(key.target, VERSO_TARGET);
+  const plain = cardsOf(index, "plain-link")[0];
+  assert.equal(plain.target, null, "an end from elsewhere has no statement in verso.json");
+});
+
+test("verso: the file is read run by run, and a statement with a run that does not read is dropped", () => {
+  assert.equal(readVerso(null), null);
+  assert.equal(readVerso({ ...makeVerso(), schema: "other" }), null);
+  assert.equal(readVerso({ ...makeVerso(), schema_version: 2 }), null);
+  const raw = makeVerso();
+  raw.hovers["9"] = { signature: "" };
+  raw.hovers.x = { signature: "not an id" };
+  raw.statements["Other/index.html#a"] = [[["kw", "def"], ["tx", 7]], [["weird", "def"], ["tx", " f", 99, -1, ""]]];
+  raw.statements["Other/index.html#b"] = [[]];
+  raw.hovers["0"] = { doc: "Hover ids start at zero." };
+  raw.statements["Other/index.html#c"] = [[["kw", "by", 0]]];
+  const verso = readVerso(raw);
+  assert.deepEqual([...verso.hovers.keys()].sort(), ["0", "1", "2", "3", "4"]);
+  assert.deepEqual(verso.statements.get("Other/index.html#c"), [[["kw", "by", "0", null, null]]]);
+  assert.deepEqual(verso.statements.get("Other/index.html#a"), [[["tx", "def", null, null, null], ["tx", " f", null, null, null]]],
+                   "an unknown kind is plain text; an unknown hover, a bad binding and an empty href are none");
+  assert.equal(verso.statements.has("Other/index.html#b"), false);
+  const [runs] = verso.statements.get(VERSO_TARGET);
+  assert.deepEqual(runs[5], ["var", "b", "2", 1, null]);
+  assert.deepEqual(runs[7], ["const", "Box", "3", null, "Notes/Box/index.html#Notes___Box"]);
+});
+
+test("verso: a statement is used only when its runs join to the card's snippet, exactly", () => {
+  const verso = readVerso(makeVerso());
+  const snippet = "theorem volume_nonneg (b : Box) : 0 <= b.volume";
+  const card = { snippet: { text: snippet }, target: VERSO_TARGET };
+  assert.equal(versoRuns(verso, card).map(([, part]) => part).join(""), snippet);
+  assert.equal(versoRuns(verso, { ...card, snippet: { text: `${snippet} ` } }), null, "one more space is another text");
+  assert.equal(versoRuns(verso, { ...card, target: "Notes/Box/index.html#other" }), null);
+  assert.equal(versoRuns(verso, { ...card, target: null }), null);
+  assert.equal(versoRuns(null, card), null, "no verso.json, no runs");
+});
+
+test("verso: a hover is the entry's signature, a variable's as name and type, and its docstring as blocks", () => {
+  const verso = readVerso(makeVerso());
+  const [runs] = verso.statements.get(VERSO_TARGET);
+  assert.deepEqual(hoverText(verso, runs[2]), { doc: "The volume of a box is never negative.",
+                                                signature: "Notes.Box.volume_nonneg (b : Box) : 0 <= b.volume" });
+  assert.deepEqual(hoverText(verso, runs[5]), { doc: "", signature: "b : Box" });
+  assert.equal(hoverText(verso, runs[0]), null, "a run with no hover has none");
+  assert.deepEqual(docBlocks("A box: a product of `n` intervals,\nclosed.\n\n* one\n* two ``a`b``\n\n```lean\nexample : True := trivial\n```"), [
+    { code: false, parts: [["tx", "A box: a product of "], ["code", "n"], ["tx", " intervals, closed."]] },
+    { code: false, parts: [["tx", "* one\n* two "], ["code", "a`b"]] },
+    { code: true, parts: [["code", "example : True := trivial"]] },
+  ]);
+  assert.deepEqual(docBlocks("an `unclosed tick"), [{ code: false, parts: [["tx", "an `unclosed tick"]] }]);
+  assert.deepEqual(docBlocks(""), []);
+});
+
+test("verso: a token links only a page of this site", () => {
+  const site = `${ORIGIN}/`;
+  assert.equal(siteHref("Notes/Box/index.html#Notes___Box", site, ORIGIN), `${ORIGIN}/Notes/Box/index.html#Notes___Box`);
+  for (const elsewhere of ["https://elsewhere.invalid/x.html", "javascript:alert(1)", "//elsewhere.invalid/x"]) {
+    assert.equal(siteHref(elsewhere, site, ORIGIN), null, elsewhere);
+  }
 });

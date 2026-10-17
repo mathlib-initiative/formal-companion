@@ -54,7 +54,7 @@ from overlay import shards as overlay_shards
 
 __all__ = [
     "ANNOTATIONS_DIRNAME", "BUNDLE_NAME", "BUNDLE_SCHEMA", "FORMAT_PACKAGE", "GENERATED_NAME",
-    "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INSTANCE_FILES",
+    "GENERATED_SCHEMA", "GENERATED_SCHEMA_VERSION", "GENERATOR_NAME", "INPUT_FILES", "INSTANCE_FILES",
     "LINKS_RELATIVE", "OVERLAY_DIRNAME", "Annotations", "SyncResult", "annotation_count", "annotation_files",
     "annotations_dir", "bundle_bytes", "bundle_differences", "bundle_records", "check", "defaults_above", "digest",
     "format_pin", "generated_document", "generated_files", "generator_commit", "init", "manifest_sha256", "overlay_dir",
@@ -66,6 +66,9 @@ __all__ = [
 OVERLAY_DIRNAME = "pdf-overlay"
 GENERATED_NAME = "GENERATED.json"
 INSTANCE_FILES = (overlay_config.CONFIG_NAME,)
+#: A companion's own input beside the config, which `sync` never writes, lists or removes: the
+#: `verso.json` that `tools/verso_extract.py --pages` cut from a Verso build made elsewhere.
+INPUT_FILES = ("verso.json",)
 #: The annotation directory, relative to the companion root (contract section 2).
 ANNOTATIONS_DIRNAME = overlay_shards.DIRECTORY
 #: The bundle `sync` writes beside `GENERATED.json`: every annotation, for the viewer.
@@ -566,7 +569,7 @@ def sync(companion: str | Path) -> SyncResult:
         raise CfError(f"{overlay} holds something that is not an ordinary file: {odd[0]}",
                       hint="; ".join(odd[1:]) or "remove it and re-run")
 
-    known = set(generated) | set(previous) | set(INSTANCE_FILES) | {GENERATED_NAME, BUNDLE_NAME}
+    known = set(generated) | set(previous) | set(INSTANCE_FILES) | set(INPUT_FILES) | {GENERATED_NAME, BUNDLE_NAME}
     unexpected = sorted(set(present) - known)
     if unexpected:
         rest = (f"the other {len(unexpected) - 1}: {', '.join(unexpected[1:])}"
@@ -577,7 +580,7 @@ def sync(companion: str | Path) -> SyncResult:
     annotations, bundle = _annotations_for_sync(companion, record)
 
     result = SyncResult(overlay=overlay)
-    for relative in sorted(set(previous) - set(generated) - set(INSTANCE_FILES)):
+    for relative in sorted(set(previous) - set(generated) - set(INSTANCE_FILES) - set(INPUT_FILES)):
         if relative in (GENERATED_NAME, BUNDLE_NAME) or relative not in present:
             continue
         path = _resolve_inside(overlay, relative, f"the previous {GENERATED_NAME}")
@@ -621,7 +624,8 @@ def sync_problems(companion: str | Path) -> list[str]:
     for relative in sorted(set(expected) & set(present)):
         if expected[relative] != present[relative]:
             out.append(f"changed: {relative}")
-    for relative in sorted(set(present) - set(expected) - set(INSTANCE_FILES) - {GENERATED_NAME, BUNDLE_NAME}):
+    for relative in sorted(set(present) - set(expected) - set(INSTANCE_FILES) - set(INPUT_FILES)
+                           - {GENERATED_NAME, BUNDLE_NAME}):
         out.append(f"extra: {relative}")
 
     path = overlay / GENERATED_NAME

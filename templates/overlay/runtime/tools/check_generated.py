@@ -14,7 +14,11 @@ It reports, one line per problem, and exits 1 when there is one:
 
 * every file `GENERATED.json` lists exists, is an ordinary file, and has the
   sha256 recorded for it, and `pdf-overlay/` holds nothing else but
-  `GENERATED.json`, the bundle and the instance file `overlay.config.json`;
+  `GENERATED.json`, the bundle, the instance file `overlay.config.json` and
+  the companion's own `verso.json`, if it commits one: that one must have the
+  form `tools/verso_extract.py --pages` writes and be of a build of a commit
+  the bundle's cards pin (a statement that no longer joins to its card's
+  snippet is not a problem: `build_site.py` drops it);
 * `GENERATED.json`'s `format` block names the Literature Links release whose
   package `cf overlay sync` shipped in `tools/literature_links/`;
 * `overlay.config.json` satisfies section 3 -- the same rules as the skill's
@@ -105,6 +109,7 @@ sys.dont_write_bytecode = True
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import overlay_annotations  # noqa: E402  (beside this file in pdf-overlay/tools/)
+import verso_extract  # noqa: E402  (beside this file in pdf-overlay/tools/)
 
 
 # ---------------------------------------------------------------------------
@@ -395,7 +400,7 @@ def generated_problems(overlay: Path, record: Any) -> tuple[list[str], list[str]
 
     block = record.get("annotations")
     bundle = block.get("bundle") if isinstance(block, dict) else None
-    allowed = set(listed) | set(instance) | {GENERATED_NAME}
+    allowed = set(listed) | set(instance) | {GENERATED_NAME, verso_extract.FILE_NAME}
     if isinstance(bundle, dict) and isinstance(bundle.get("path"), str) \
             and overlay_annotations.BUNDLE_FILE.match(bundle["path"]):
         allowed.add(bundle["path"])
@@ -518,7 +523,27 @@ def problems(overlay: Path) -> list[str]:
         out += found
         if not found:
             source_id = config["source_id"]
-    return out + annotations_problems(overlay, source_id)
+    return out + verso_problems(overlay) + annotations_problems(overlay, source_id)
+
+
+def verso_problems(overlay: Path) -> list[str]:
+    """A committed `verso.json`, when there is one, against the form `verso_extract.py --pages` writes
+    and the commit the bundle's cards pin (a bundle that does not read is `annotations_problems`')."""
+    path = overlay / verso_extract.FILE_NAME
+    if not path.is_symlink() and not path.exists():
+        return []
+    try:
+        value = strict_json(read_bytes(path, verso_extract.FILE_NAME), verso_extract.FILE_NAME)
+    except Unreadable as error:
+        return [str(error)]
+    found = verso_extract.committed_problems(value)
+    if not found:
+        try:
+            stale = verso_extract.unpinned(value, overlay_annotations.read_bundle(overlay))
+        except overlay_annotations.AnnotationError:
+            stale = None
+        found = [stale] if stale else []
+    return [f"{verso_extract.FILE_NAME}: {line}" for line in found]
 
 
 def main(argv: list[str] | None = None) -> int:

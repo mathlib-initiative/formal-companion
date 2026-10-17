@@ -1300,6 +1300,114 @@ kbd {
   color: var(--faint);
 }
 
+/* Verso tokens: a variable in italics, a link dotted, a hover's token and its binding lit. */
+.tk-var {
+  font-style: italic;
+}
+
+.tk-sort {
+  color: var(--kw);
+}
+
+.tk-lit {
+  color: var(--ok);
+}
+
+.lean a {
+  color: inherit;
+  text-decoration: underline dotted var(--ghost);
+  text-underline-offset: 3px;
+}
+
+.lean a:hover {
+  text-decoration-style: solid;
+  text-decoration-color: currentColor;
+}
+
+.lean .has-hover {
+  cursor: help;
+}
+
+.lean a.has-hover {
+  cursor: pointer;
+}
+
+.lean .has-hover:hover,
+.lean .is-bound {
+  border-radius: 3px;
+  background: var(--bridge-soft);
+}
+
+.lean .has-hover:focus-visible,
+.lean a:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--bridge);
+  outline-offset: 1px;
+}
+
+.hover-card {
+  position: fixed;
+  z-index: 40;
+  top: 0;
+  left: 0;
+  box-sizing: border-box;
+  max-width: min(560px, calc(100vw - 16px));
+  max-height: min(50vh, 420px);
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.hover-sig {
+  display: block;
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.hover-doc,
+.hover-code {
+  margin: 6px 0 0;
+}
+
+.hover-sig + .hover-doc,
+.hover-sig + .hover-code {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.hover-doc {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.hover-doc code,
+.hover-code {
+  border-radius: 3px;
+  background: var(--code-bg);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.hover-doc code {
+  padding: 0 3px;
+}
+
+.hover-code {
+  padding: 6px 8px;
+  white-space: pre-wrap;
+}
+
 .show-all {
   margin-top: 6px;
 }

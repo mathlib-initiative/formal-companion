@@ -15,7 +15,12 @@ the Literature Links annotation files, with their `_defaults.json`, into
 `<output_root>/<annotations directory>/`, so that a card's rendered page,
 relative to the site root, is a page of `<output_root>`; replace a previous
 copy atomically; insert or replace one marked
-link block in the index; write `receipt.json`. It never runs the build:
+link block in the index; write `receipt.json`. Beside the bundle it writes
+`verso.json`, each card's statement as the site's Verso pages highlight
+it, with their hovers (`verso_extract.py`). For a site with no Verso pages
+it is the companion's committed `pdf-overlay/verso.json`, cut from a Verso
+build of the commit its cards pin made elsewhere, when there is one, and
+else empty; the receipt says which. It never runs the build:
 `serve.py --build` does that first.
 """
 
@@ -42,6 +47,7 @@ sys.dont_write_bytecode = True
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import overlay_annotations  # noqa: E402  (beside this file in pdf-overlay/tools/)
+import verso_extract  # noqa: E402  (beside this file in pdf-overlay/tools/)
 
 
 CONFIG_NAME = "overlay.config.json"
@@ -282,8 +288,9 @@ def load_config(overlay: Path) -> Config:
     )
 
 
-def collect_annotations(overlay: Path, config: Config) -> tuple[str, str, dict[str, bytes]]:
-    """``(directory, bundle path, {path in the directory: bytes})``: the files whose records the bundle holds.
+def collect_annotations(overlay: Path, config: Config) -> tuple[str, str, dict[str, bytes], list]:
+    """``(directory, bundle path, {path in the directory: bytes}, bundle entries)``: the files whose
+    records the bundle holds, and the records as the viewer reads them.
 
     The bundle must have its recorded sha256 and hold exactly the records the
     shipped reader reads from the files on disk; anything else is refused
@@ -304,7 +311,8 @@ def collect_annotations(overlay: Path, config: Config) -> tuple[str, str, dict[s
     if not files:
         fail(f"{GENERATED_NAME} records no annotation file; `cf overlay export` writes them")
     prefix = block["directory"] + "/"
-    return block["directory"], block["bundle"]["path"], {p[len(prefix):]: raw for p, raw in files.items()}
+    return (block["directory"], block["bundle"]["path"], {p[len(prefix):]: raw for p, raw in files.items()},
+            entries)
 
 
 # ---------------------------------------------------------------------------
@@ -394,9 +402,40 @@ def linked_index(raw: bytes, href: str, text: str) -> bytes:
     return (prefix + link_block(href, text, indent) + suffix).encode("utf-8")
 
 
+def verso_file(overlay: Path, output_root: Path, entries: list) -> tuple[dict[str, Any], dict[str, Any]]:
+    """`(verso.json, where it came from)`: the site's own Verso pages (`source` "site"); for a site
+    with none (no hover table and no statement from its pages), the companion's committed
+    `pdf-overlay/verso.json` ("committed"), refused unless it has the form `verso_extract.py --pages`
+    writes and is of a build of a commit the cards pin, and cut to the bundle's cards, a statement
+    whose texts no longer join to its card's snippet dropped; else an empty file ("none")."""
+    value, counts = verso_extract.extract(output_root, entries)
+    if counts["statements"] or verso_extract.is_verso_site(output_root):
+        return value, {"source": "site", **counts}
+    path = overlay / verso_extract.FILE_NAME
+    label = f"{overlay.name}/{verso_extract.FILE_NAME}"
+    try:
+        path.lstat()
+    except FileNotFoundError:
+        return value, {"source": "none", **counts}
+    except OSError as error:                                 # pragma: no cover
+        fail(f"{label}: cannot inspect {path}: {error}")
+    raw = require_regular(path, label).read_bytes()
+    committed = strict_json(raw, label)
+    problems = verso_extract.committed_problems(committed)
+    if problems:
+        fail(f"{label}: {problems[0]}; write it again with `verso_extract.py --pages`")
+    stale = verso_extract.unpinned(committed, entries)
+    if stale:
+        fail(f"{label}: {stale}; write it again with `verso_extract.py --pages` from a build of that commit")
+    value, counts = verso_extract.joined(committed, entries)
+    return value, {"source": "committed", "sha256": sha256(raw), "commit": committed["build"]["commit"], **counts}
+
+
 def receipt_value(config: Config, contents: dict[str, bytes], href: str,
-                  index_raw: bytes, directory: str, annotations: dict[str, bytes]) -> dict[str, Any]:
-    """Every file this run wrote, by sha256: the contract's `receipt.json`."""
+                  index_raw: bytes, directory: str, annotations: dict[str, bytes],
+                  verso: dict[str, Any]) -> dict[str, Any]:
+    """Every file this run wrote, by sha256, and where `verso.json` came from: the contract's
+    `receipt.json`."""
     return {
         "annotations": {
             "directory": directory,
@@ -418,6 +457,7 @@ def receipt_value(config: Config, contents: dict[str, bytes], href: str,
         "schema": RECEIPT_SCHEMA,
         "schema_version": 1,
         "source_id": config.source_id,
+        "verso": verso,
     }
 
 
@@ -572,7 +612,7 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
     require_directory(overlay, "overlay directory")
     root = overlay.parent
     config = load_config(overlay)
-    directory, bundle, annotations = collect_annotations(overlay, config)
+    directory, bundle, annotations, entries = collect_annotations(overlay, config)
     contents = collect_runtime(overlay, bundle)
     if PurePosixPath(directory).parts[0] == PurePosixPath(config.mount).parts[0]:
         fail(f"the annotation directory {directory} and the mount {config.mount} would overlap")
@@ -587,6 +627,10 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
         if not stat.S_ISDIR(mode):
             fail(f"site output root: not an ordinary directory: {current}")
     output_root = current
+    if verso_extract.FILE_NAME in contents:
+        fail(f"the generated runtime already has a {verso_extract.FILE_NAME}, which this tool writes")
+    verso, verso_record = verso_file(overlay, output_root, entries)
+    contents[verso_extract.FILE_NAME] = verso_extract.dumps(verso)
 
     index_parts = PurePosixPath(config.index).parts
     current = output_root
@@ -599,7 +643,8 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
 
     href = link_href(config)
     final_index = linked_index(index_path.read_bytes(), href, config.link_text)
-    receipt_raw = canonical_json(receipt_value(config, contents, href, final_index, directory, annotations))
+    receipt_raw = canonical_json(receipt_value(config, contents, href, final_index, directory, annotations,
+                                               verso_record))
     token = token_factory()
     if not re.fullmatch(r"[0-9a-f]{16}", token):
         fail("temporary token provider did not return 16 lowercase hex digits")
@@ -627,6 +672,7 @@ def build_site(overlay: Path, *, token_factory=lambda: secrets.token_hex(8)) -> 
         "mount": config.mount,
         "output_root": config.output_root,
         "receipt_sha256": sha256(receipt_raw),
+        "verso": verso_record,
     }
 
 

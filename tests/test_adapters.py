@@ -432,6 +432,231 @@ class LeanSnippetsTest(unittest.TestCase):
                 tracked(rel)
 
 
+DEFINITIONS_LEAN = '''\
+namespace Demo
+
+/-- A box with a docstring per field. -/
+structure Box where
+  /-- the left end, documented
+over two lines -/
+  left : Nat
+
+  right : Nat
+deriving DecidableEq
+
+/-- Kinds of interval. -/
+inductive Kind
+  | closed
+  | open
+  deriving Repr
+
+class inductive Shape
+  | dot
+
+@[simp] private noncomputable def double (n : Nat) : Nat :=
+  match n with
+  | 0 => 0
+  | k + 1 => go k
+where
+  go : Nat → Nat
+    | 0 => 2
+    | k + 1 => go k + 2
+termination_by n
+
+protected abbrev Small := Fin 3
+set_option linter.unusedVariables false in
+theorem small_le (a : Small) :
+    a.val ≤ 3 := by
+  omega
+
+instance instInhabitedBox : Inhabited Box where
+  default := ⟨0, 0⟩
+open Nat in
+class HasArea (α : Type) where
+  area : α → Nat
+-- a note between declarations
+opaque secret : Nat
+attribute [simp] double
+/- `example:demo-small` -/
+example : (2 : Small).val = 2 := rfl
+def lastOne : Nat :=
+  1'''
+
+#: an indented line of its own, so the definition runs on past the cap
+LONG_DEFINITION = "def long : Nat :=\n" + "".join(f"  {k} +\n" for k in range(70)) + "  0\n\n#check long\n"
+
+
+class LeanSnippetsDefinitionTest(unittest.TestCase):
+    """A definition is shown whole (body, fields, constructors), up to the next command."""
+
+    def setUp(self):
+        self.found = leansnippets.index_text(DEFINITIONS_LEAN)
+        self.lines = DEFINITIONS_LEAN.split("\n")
+
+    def text(self, ident: str) -> str:
+        return self.found[ident][1]
+
+    def test_a_structure_keeps_its_fields_docstrings_and_deriving(self):
+        self.assertEqual(self.found["Demo.Box"], (4, "\n".join(self.lines[3:10])))
+        self.assertTrue(self.text("Demo.Box").endswith("  right : Nat\nderiving DecidableEq"))
+        self.assertEqual(self.found["Demo.Box.left"], (7, "structure Box where\n  …\n  left : Nat"))
+        self.assertNotIn("Demo.Box.over", self.found, "a docstring's line is not a field")
+
+    def test_an_inductive_keeps_its_constructors(self):
+        self.assertEqual(self.text("Demo.Kind"), "inductive Kind\n  | closed\n  | open\n  deriving Repr")
+        self.assertEqual(self.text("Demo.Shape"), "class inductive Shape\n  | dot")
+
+    def test_attributes_and_modifiers_and_a_where_with_a_match(self):
+        line, text = self.found["Demo.double"]
+        self.assertEqual(line, 21)
+        self.assertTrue(text.startswith("@[simp] private noncomputable def double (n : Nat) : Nat :=\n  match n with"))
+        self.assertTrue(text.endswith("where\n  go : Nat → Nat\n    | 0 => 2\n    | k + 1 => go k + 2\ntermination_by n"))
+
+    def test_each_ends_at_the_next_command(self):
+        self.assertEqual(self.text("Demo.Small"), "protected abbrev Small := Fin 3")
+        self.assertEqual(self.text("Demo.instInhabitedBox"),
+                         "instance instInhabitedBox : Inhabited Box where\n  default := ⟨0, 0⟩")
+        self.assertEqual(self.text("Demo.HasArea"), "class HasArea (α : Type) where\n  area : α → Nat")
+        self.assertEqual(self.text("Demo.secret"), "opaque secret : Nat")
+
+    def test_a_definition_at_the_end_of_the_file(self):
+        self.assertEqual(self.text("Demo.lastOne"), "def lastOne : Nat :=\n  1")
+
+    def test_a_theorem_is_still_cut_at_the_proof(self):
+        self.assertEqual(self.text("Demo.small_le"), "theorem small_le (a : Small) :\n    a.val ≤ 3 := by")
+        self.assertEqual(self.text("example:demo-small"), "example : (2 : Small).val = 2 := rfl")
+
+    def test_a_long_definition_is_cut_at_the_cap_and_marked(self):
+        text = leansnippets.index_text(LONG_DEFINITION)["long"][1]
+        lines = text.split("\n")
+        self.assertEqual(len(lines), leansnippets.DEFINITION_MAX_LINES + 1)
+        self.assertEqual(lines[:-1], LONG_DEFINITION.split("\n")[:leansnippets.DEFINITION_MAX_LINES])
+        self.assertEqual(lines[-1], "  " + leansnippets.MARKER)
+
+    def test_a_declaration_in_a_comment_is_not_one(self):
+        found = leansnippets.index_text("/- Prose:\ndef fake : Nat := 0\nnamespace Fake\n-/\ndef real : Nat := 1\n")
+        self.assertEqual(found, {"real": (5, "def real : Nat := 1")})
+
+    def test_deriving_instance_is_a_command_of_its_own(self):
+        found = leansnippets.index_text("inductive Two\n  | a\n  | b\nderiving instance Repr for Two\n")
+        self.assertEqual(found["Two"][1], "inductive Two\n  | a\n  | b")
+
+    def test_definition_text_reads_from_any_line(self):
+        lines = ["  def inner : Nat :=", "    1", "  theorem t : True := trivial"]
+        self.assertEqual(leansnippets.definition_text(lines, 0), "  def inner : Nat :=\n    1")
+
+
+STATEMENTS_LEAN = '''\
+namespace Demo
+
+theorem with_let (x : Nat) :
+    let y := x + 1
+    y = x + 1 := by
+  rfl
+
+theorem with_named : f (n := 1) =
+    2 := by
+  rfl
+
+theorem with_instance :
+    ({ lower := 0, upper := 1 } : Interval).lower =
+      0 := rfl
+
+theorem with_have :
+    have h : 1 = 1 := rfl
+    True := trivial
+
+theorem with_comment (x : Nat) : -- not a proof: a := b
+    x = x := rfl
+
+theorem with_string : "a := b".length =
+    6 := by decide
+
+theorem with_char : '(' ≠
+    ')' := by decide
+
+@[deprecated (since := "2025-01-01")] theorem old_name (x : Nat) :
+    x + 0 = x := by
+  simp
+
+@[to_additive (attr := simp)] theorem mul_one' (x : Nat) (y : Nat)
+    (h : x = y) : x * 1 = y := by
+  simp [h]
+
+/- `example:demo-let` -/
+example :
+    let z := 2
+    z = 2 := rfl
+
+structure Laws where
+  box (b : Nat) : b =
+    b
+  /-- the next field -/
+  next : Nat
+
+mutual
+def isEven : Nat → Bool
+  | 0 => true
+  | n + 1 => isOdd n
+def isOdd : Nat → Bool
+  | 0 => false
+  | n + 1 => isEven n
+end
+
+def after : Nat := 1
+
+instance (priority := 100) fooInst : Inhabited Nat := ⟨0⟩
+
+end Demo'''
+
+
+class LeanSnippetsStatementTest(unittest.TestCase):
+    """A theorem's statement runs to its proof's `:=`, past every other `:=` in it."""
+
+    def setUp(self):
+        self.found = leansnippets.index_text(STATEMENTS_LEAN)
+
+    def text(self, ident: str) -> str:
+        return self.found[ident][1]
+
+    def test_a_let_or_have_in_the_statement_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_let"), "theorem with_let (x : Nat) :\n    let y := x + 1\n    y = x + 1 := by")
+        self.assertEqual(self.text("Demo.with_have"), "theorem with_have :\n    have h : 1 = 1 := rfl\n    True := trivial")
+        self.assertEqual(self.text("example:demo-let"), "example :\n    let z := 2\n    z = 2 := rfl")
+
+    def test_a_named_argument_or_a_structure_instance_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_named"), "theorem with_named : f (n := 1) =\n    2 := by")
+        self.assertEqual(self.text("Demo.with_instance"),
+                         "theorem with_instance :\n    ({ lower := 0, upper := 1 } : Interval).lower =\n      0 := rfl")
+
+    def test_a_comment_a_string_or_a_character_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.with_comment"),
+                         "theorem with_comment (x : Nat) : -- not a proof: a := b\n    x = x := rfl")
+        self.assertEqual(self.text("Demo.with_string"), 'theorem with_string : "a := b".length =\n    6 := by decide')
+        self.assertEqual(self.text("Demo.with_char"), "theorem with_char : '(' ≠\n    ')' := by decide")
+
+    def test_an_attribute_on_the_line_is_not_the_proof(self):
+        self.assertEqual(self.text("Demo.old_name"),
+                         '@[deprecated (since := "2025-01-01")] theorem old_name (x : Nat) :\n    x + 0 = x := by')
+        self.assertEqual(self.text("Demo.mul_one'"),
+                         "@[to_additive (attr := simp)] theorem mul_one' (x : Nat) (y : Nat)\n"
+                         "    (h : x = y) : x * 1 = y := by")
+
+    def test_proof_start_is_none_without_a_proof_assignment(self):
+        lines = ["theorem t : ∀ n : Nat, n = n", "  | 0 => rfl", "  | _ + 1 => rfl"]
+        self.assertIsNone(leansnippets.proof_start(lines, 0, len(lines)))
+        self.assertEqual(leansnippets.proof_start(["theorem t :", "  (x := 1) = 1 := rfl"], 0, 2), (1, 15))
+
+    def test_a_field_keeps_the_lines_that_continue_its_type(self):
+        self.assertEqual(self.text("Demo.Laws.box"), "structure Laws where\n  …\n  box (b : Nat) : b =\n    b")
+        self.assertEqual(self.text("Demo.Laws.next"), "structure Laws where\n  …\n  next : Nat")
+
+    def test_a_mutual_block_keeps_the_namespace_and_a_priority_is_read(self):
+        self.assertIn("Demo.isEven", self.found)
+        self.assertEqual(self.text("Demo.after"), "def after : Nat := 1")
+        self.assertEqual(self.text("Demo.fooInst"), "instance (priority := 100) fooInst : Inhabited Nat := ⟨0⟩")
+
+
 def valid_row(**overrides) -> dict:
     row = base.make_row(
         item_raw="Exercise 1.3.19", item="Exercise 1.3.19", sub="", item_kind="Exercise",
