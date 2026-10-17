@@ -1,0 +1,22 @@
+{
+  "about": "Object ends and the key verso.json files their statement under: viewer-core.js cardTarget and tools/verso_extract.py card_target must agree on every one.",
+  "namespace": "org.mathlib-initiative.formal-companion.overlay",
+  "cases": [
+    {"destination": {"resolution": "exact"}, "location": {"declaration": "Notes.Box.mk«x»", "module": "Notes.Box"},
+     "target": "Notes/Box/index.html#Notes___Box___mk«x»"},
+    {"destination": {"resolution": "exact"}, "location": {"declaration": " Notes.Box.mk ", "module": " Notes.Box "},
+     "target": "Notes/Box/index.html#Notes___Box___mk"},
+    {"destination": {"href": "Other/index.html", "fragment": "a b", "resolution": "exact"},
+     "location": {"declaration": "Notes.Box.mk", "module": "Notes.Box"}, "target": "Other/index.html#a b"},
+    {"destination": {"href": "Other/", "resolution": "exact"}, "location": {"declaration": "Notes.Box.mk"},
+     "target": "Other/#Notes___Box___mk"},
+    {"destination": {"resolution": "fallback", "fallback_label": "module page"},
+     "location": {"declaration": "Notes.Box.mk", "module": "Notes.Box"}, "target": null},
+    {"destination": {"resolution": "exact", "fragment": ""}, "location": {"declaration": "Notes.Box.mk", "module": "Notes.Box"},
+     "target": null},
+    {"destination": {"resolution": "exact"}, "location": {"lines": [3], "module": "Notes.Box"}, "target": null},
+    {"destination": {"resolution": "exact"}, "location": {"declaration": "X"}, "target": null},
+    {"destination": {"href": "", "resolution": "exact"}, "location": {"declaration": "X", "module": "Notes.Box"}, "target": null},
+    {"location": {"declaration": "Notes.Box.mk", "module": "Notes.Box"}, "target": null}
+  ]
+}
