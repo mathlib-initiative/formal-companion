@@ -158,6 +158,19 @@ implemented*), never here. `Registry.family_of(source_id)` finds the family,
 `SourceFamily.attribution_for(title=…, pageid=…, revision=…)` fills the
 attribution template, and `SourceFamily.revision_link` the permalink.
 
+A workspace's `registry.yaml` may carry a `families:` map too, merged as
+sources are: field by field, the overlay's non-null keys winning, and an
+overlay-only family is the overlay's, licence included. A row over a
+**confirmed** shipped family is held to two rules (`Registry.load`):
+`confirmed` stays `true`, and its `licence_class` and `licence` keep the
+curated values, because they decide what every record of the family may quote
+and under which licence (`POLICY.md` §4.1) — a workspace file that could open
+`enwiki` to `public_domain` would drop the CC BY-SA attribution of every
+Wikipedia record. The shadow is reported, never silently obeyed:
+`Registry.validate()` names the family and any licence key it did not apply,
+so `cf status` and `cf sources validate-registry --overlay` print it. A
+non-map `families:` block or family row in either file is refused.
+
 What `cf sources validate-registry` checks on a family: no key outside the list
 above (a `sha256`, `pageid` or `revision` is refused — a family holds nothing
 about one revision), `licence_class` in the enum, `licence.redistribute` false,

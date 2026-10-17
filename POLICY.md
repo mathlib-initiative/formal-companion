@@ -108,7 +108,8 @@ A web source is not a registry entry: Wikipedia has millions of revisions and
 the registry holds none of them. Its class comes from its **family**, one row
 per site (`registry/README.md`, "Web-source families"), and
 `Registry.licence_class(source_id)` answers for any id — `closed` for one it
-does not know.
+does not know. A workspace overlay cannot change the class or the licence of
+a confirmed shipped family; it can only be reported for trying.
 
 ## 5. Contributing an edition
 

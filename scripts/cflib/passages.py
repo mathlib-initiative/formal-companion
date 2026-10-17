@@ -15,9 +15,10 @@ Literature Links text layer with each formula replaced by
 :func:`formula_token` of its alttext, so the head does not depend on which
 renderer drew the formula (MathML token text, an image, a TeX string).  The
 renderer that produces the layer (not implemented) produces this text too,
-and passage starts are character offsets into it.  The token is
-``FORMULA_OPEN + normalize_alttext(alttext) + FORMULA_CLOSE`` -- for a
-MediaWiki ``{\\displaystyle G}``, ``⟦G⟧``.
+and passage starts are character offsets into it, each the first character of
+a word (offset 0, or just after whitespace; anything else is refused).  The
+token is ``FORMULA_OPEN + normalize_alttext(alttext) + FORMULA_CLOSE`` -- for
+a MediaWiki ``{\\displaystyle G}``, ``⟦G⟧``.
 
 **Words.**  The head text from a passage start is put through the vendored
 passage normaliser (``ids.normalize_text``: NFKC, then each run of Unicode
@@ -126,6 +127,16 @@ def _is_white(ch: str) -> bool:
 
 
 def _check_start(head_text: str, start) -> int:
+    """``start`` if it is the first character of a word of ``head_text``; else refused.
+
+    A word starts at offset 0 or right after whitespace (by the vendored
+    normaliser's definition, the one the words are split by).  A start inside a
+    word would hash a fragment -- ``ello world ...`` for ``hello world ...`` --
+    and :func:`hex_at` would reproduce that wrong id, so an off-by-one offset
+    from the renderer is refused here rather than keyed.  A passage that opens
+    with punctuation (``(Sylow) ...``) starts at the punctuation: the word is
+    ``(Sylow)``.
+    """
     if isinstance(start, bool) or not isinstance(start, int):
         raise PassageIdError(f"a passage start must be a character offset, not {start!r}",
                              starts=(start,))
@@ -137,6 +148,11 @@ def _check_start(head_text: str, start) -> int:
                              starts=(start,),
                              hint="the renderer gives each passage the offset of its first "
                                   "word in the head text")
+    if start > 0 and not _is_white(head_text[start - 1]):
+        raise PassageIdError(f"passage start {start} is inside a word, not the start of one",
+                             starts=(start,),
+                             hint="the renderer gives each passage the offset of its first "
+                                  "word in the head text: 0, or just after whitespace")
     return start
 
 
@@ -270,9 +286,14 @@ def passage_id(head_text: str, start: int, starts: Iterable[int]) -> tuple[str, 
     The one-passage view of :func:`assign_passage_ids`, which it calls over
     ``starts`` plus ``start`` -- so a collision anywhere in the source refuses
     here too, because a source whose passage table cannot be keyed is refused
-    as a whole.  Keying a whole source, call :func:`assign_passage_ids` once.
+    as a whole, and so does an offset ``starts`` gives twice.  ``start`` is
+    added only when ``starts`` does not already hold it.  Keying a whole
+    source, call :func:`assign_passage_ids` once.
     """
-    offsets = list(dict.fromkeys([*starts, start]))
+    _check_start(str(head_text if head_text is not None else ""), start)
+    offsets = list(starts)
+    if start not in offsets:
+        offsets.append(start)
     for head in assign_passage_ids(head_text, offsets):
         if head.start == start:
             return head.hex, head.head_words

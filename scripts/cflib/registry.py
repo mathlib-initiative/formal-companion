@@ -375,10 +375,16 @@ class Registry:
     def __init__(self, entries: dict[str, RegistryEntry], *,
                  skill_path: Path | None = None, overlay_path: Path | None = None,
                  shadowed: Sequence[str] = (),
-                 families: dict[str, SourceFamily] | None = None):
+                 families: dict[str, SourceFamily] | None = None,
+                 shadowed_families: dict[str, Sequence[str]] | None = None):
         self.entries = entries
         #: web-source families by id (``enwiki``); never counted as editions
         self.families: dict[str, SourceFamily] = dict(families or {})
+        #: family ids where an overlay row sits on a CONFIRMED shipped family,
+        #: each with the licence keys (``FAMILY_HELD_KEYS``) the overlay tried
+        #: to change and did not.  Reported by ``validate()``, as ``shadowed`` is.
+        self.shadowed_families: dict[str, tuple[str, ...]] = {
+            fid: tuple(keys) for fid, keys in sorted((shadowed_families or {}).items())}
         self.skill_path = skill_path
         self.overlay_path = overlay_path
         #: ids where an overlay row sits on top of a CONFIRMED skill entry -- the
@@ -419,9 +425,10 @@ class Registry:
                 origin[sid] = "overlay"
         entries = {sid: RegistryEntry.from_dict(sid, body, origin.get(sid, "skill"))
                    for sid, body in merged.items()}
-        families = _merged_families(skill_path, overlay_path)
+        families, shadowed_families = _merged_families(skill_path, overlay_path)
         return cls(entries, skill_path=skill_path, overlay_path=overlay_path,
-                   shadowed=sorted(shadowed), families=families)
+                   shadowed=sorted(shadowed), families=families,
+                   shadowed_families=shadowed_families)
 
     # -- lookups -------------------------------------------------------
     def get(self, source_id: str) -> RegistryEntry | None:
@@ -650,6 +657,14 @@ class Registry:
                     problems.append(f"{sid}: same_work names unknown source {other}")
                 elif sid not in (self.entries[other].same_work or ()):
                     problems.append(f"{sid}: same_work {other} does not name {sid} back")
+        for fid, held in self.shadowed_families.items():
+            kept = (f"; its {', '.join(held)} {'was' if len(held) == 1 else 'were'} not "
+                    f"applied, because a confirmed family's licence decides what every "
+                    f"record of it may quote (POLICY.md section 4.1)" if held else "")
+            problems.append(
+                f"family {fid}: the workspace overlay shadows a CONFIRMED family in the "
+                f"skill's registry -- delete that row from {OVERLAY_FILE} so the curated "
+                f"one is used{kept}")
         for fid, family in sorted(self.families.items()):
             problems.extend(family.problems())
         return problems
@@ -676,6 +691,11 @@ FAMILY_KEYS = frozenset({
     "revision_url", "confirmed", "notes",
 })
 FAMILY_LICENCE_KEYS = frozenset({"spdx", "note", "redistribute"})
+#: The keys of a CONFIRMED shipped family an overlay row may not change: they
+#: decide what every record of the family may quote and under which licence
+#: (POLICY.md section 4.1), so -- like ``confirmed`` itself -- the curated value
+#: is a fact the overlay cannot retract, and an attempt is reported.
+FAMILY_HELD_KEYS = ("licence_class", "licence")
 #: A family's free-text fields and their word caps; everything else is a label,
 #: an id or a URL, capped at ``MAX_FIELD_WORDS``.
 FAMILY_FREE_TEXT_FIELDS = {"notes": 150, "licence.note": 150, "attribution": 40}
@@ -1000,22 +1020,56 @@ def _read_registry_families(path: Path | None) -> dict[str, dict]:
         return {}
     if not isinstance(families, dict):
         raise CfError(f"{path}: `families:` must be a map keyed by family id")
-    return {str(k): (v or {}) for k, v in families.items()}
+    out: dict[str, dict] = {}
+    for key, body in families.items():
+        if body is not None and not isinstance(body, dict):
+            raise CfError(f"{path}: family {key}: the entry must be a map",
+                          hint="cf sources validate-registry --overlay lists every problem")
+        out[str(key)] = body or {}
+    return out
 
 
-def _merged_families(skill_path: Path, overlay_path: Path | None) -> dict[str, SourceFamily]:
-    """The shipped families, with the overlay's non-null keys on top, as for sources."""
+def _merged_families(skill_path: Path, overlay_path: Path | None
+                     ) -> tuple[dict[str, SourceFamily], dict[str, tuple[str, ...]]]:
+    """The shipped families with the overlay's non-null keys on top -- as for sources.
+
+    Field by field, the overlay winning, with the two rules ``Registry.load``
+    applies to a CONFIRMED skill entry: ``confirmed`` is asymmetric (an overlay
+    cannot retract the skill's ``true``), and the shadow is reported, never
+    silently obeyed.  A family adds one: its ``FAMILY_HELD_KEYS`` -- the licence
+    class and block -- keep the curated values too, because a workspace file
+    that could open ``enwiki`` to ``public_domain`` would drop the CC BY-SA
+    attribution of every Wikipedia record with nothing said.  Returns the
+    families and ``{family id: held keys the overlay tried to change}`` for every
+    overlay row on a confirmed family.  An overlay-only family (or one on an
+    unconfirmed shipped row) is the overlay's, every key included.
+    """
     merged: dict[str, dict] = {}
     origin: dict[str, str] = {}
     for fid, body in _read_registry_families(skill_path).items():
         merged[fid] = dict(body)
         origin[fid] = "skill"
+    shadowed: dict[str, tuple[str, ...]] = {}
     for fid, body in _read_registry_families(overlay_path).items():
-        base = dict(merged.get(fid) or {})
-        base.update({k: v for k, v in (body or {}).items() if v is not None})
+        shipped = dict(merged.get(fid) or {})
+        base = dict(shipped)
+        base.update({k: v for k, v in body.items() if v is not None})
+        if shipped.get("confirmed"):
+            held = []
+            for key in FAMILY_HELD_KEYS:
+                if key in base and base.get(key) != shipped.get(key):
+                    held.append(key)
+                if key in shipped:
+                    base[key] = shipped[key]
+                else:
+                    base.pop(key, None)
+            base["confirmed"] = True
+            shadowed[fid] = tuple(held)
         merged[fid] = base
         origin[fid] = "overlay"
-    return {fid: SourceFamily.from_dict(fid, body, origin[fid]) for fid, body in merged.items()}
+    families = {fid: SourceFamily.from_dict(fid, body, origin[fid])
+                for fid, body in merged.items()}
+    return families, shadowed
 
 
 def entry_from_claim(source_id: str, claim, *, pdf=None) -> RegistryEntry:
