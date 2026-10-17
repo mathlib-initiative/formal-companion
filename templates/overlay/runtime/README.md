@@ -1,4 +1,4 @@
-# `pdf-overlay/` — generated; do not edit by hand
+# `pdf-overlay/`: generated, do not edit by hand
 
 This directory is **generated** by the formal-companion skill's
 `cf overlay sync`: the viewer, its tools, the configuration schema, PDF.js and
@@ -26,12 +26,12 @@ python3 pdf-overlay/tools/serve.py --build    # run the build commands and build
 python3 pdf-overlay/tools/build_site.py       # publish into an already-built site
 ```
 
-The PDF is fetched over HTTPS from the URLs the annotations' source names,
-verified against its pinned sha256, cached under `pdf.cache_dir` and served
-only on loopback at `pdf.route`; it is never committed. `build_site.py` copies
-the viewer and the bundle into `<site.output_root>/<site.mount>/` and the
-annotation files into `<site.output_root>/annotations/`: their relative
-targets are relative to that published layout, not to the repository.
+The PDF is fetched over HTTPS from the URLs the annotations' PDF ends name,
+verified against their sha256, cached under `pdf.cache_dir` and served only on
+loopback at `pdf.route`; it is never committed. `build_site.py` copies the
+viewer and the bundle into `<site.output_root>/<site.mount>/` and the
+annotation files into `<site.output_root>/annotations/`; a declaration's
+rendered page is a page of `<site.output_root>`.
 
 ## Checking it in CI
 

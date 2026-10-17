@@ -41,40 +41,50 @@ export async function shellHtml() {
 
 // --- the records ------------------------------------------------------------
 
+/** The repository the synthetic companion's ends name, at a synthetic commit. */
+export const REPOSITORY = "https://git.example.invalid/an-owner/notes-companion";
+
+/** A subject end of the PDF, with no location: what every region of it shares. */
 export function pdfSource(sha256, { id = SOURCE_ID, pages = 12 } = {}) {
   return {
+    citation: { id, title: "Elementary Sets: Lecture Notes (synthetic)", type: "book",
+                URL: "https://notes.example.invalid/elementary-sets.pdf" },
     extensions: { [NAMESPACE]: { bytes: PDF_BYTES.byteLength, physical_page_count: pages, source_id: id } },
-    pin: { sha256, title: "Elementary Sets: Lecture Notes (synthetic)", type: "book",
-           url: "https://notes.example.invalid/elementary-sets.pdf" },
+    sha256,
     type: "pdf",
     uri: "https://notes.example.invalid/elementary-sets.pdf",
   };
 }
 
-function repository(module, declaration) {
-  return { commit: "0".repeat(40), declaration, module, path: `${module.replaceAll(".", "/")}.lean`,
-           type: "repository", url: "https://git.example.invalid/an-owner/notes-companion" };
+/** One region of the PDF as a subject end: `ext` is merged into its extension. */
+function region(sha256, { page, rect, region: id, title, ext = {}, source = {} }) {
+  const end = pdfSource(sha256, source);
+  end.extensions[NAMESPACE] = { ...end.extensions[NAMESPACE], ...(id ? { region: id } : {}), ...ext };
+  return { ...end, location: { page, rect }, title };
 }
 
-/** One link record: `extra` is merged into the record, `ext` into its extension. */
-function link(sha256, { id, item, region, page, rect, role, decl, module = "Notes.Box", uri, ext = {},
-                        extra = {} }) {
-  const record = {
-    extensions: { [NAMESPACE]: { declaration: { id: decl, kind: "theorem" }, item, region, role, ...ext } },
-    id,
-    location: { page, rect },
-    source: pdfSource(sha256),
-    ...extra,
+/** A declaration in the repository as an object end: `ext` is merged into its extension. */
+function lean({ role, decl, module = "Notes.Box", location, ext = {} }) {
+  return {
+    extensions: { [NAMESPACE]: { declaration: { id: decl, kind: "theorem" }, ...ext } },
+    location: location ?? { declaration: decl, module },
+    role,
+    type: "lean",
+    uri: REPOSITORY,
+    version: "0".repeat(40),
   };
-  if (decl !== undefined) {
-    record.target = { pin: repository(module, decl), uri };
-  }
-  return record;
 }
 
-const THEOREM = { item: "item:theorem-1.1", kind: "theorem", label: "Theorem 1.1", page: 2,
-                  rect: [0.25, 0.125, 0.5, 0.125], region: "loc:0001", status: "formalized" };
-const SHARED = { ...THEOREM, rect: [0.1, 0.4, 0.7, 0.1], region: "loc:0004" };
+/** The record of one link: `extra` is merged into the record, `ext` into its extension. */
+function link(subject, object, { item, ext = {}, extra = {} }) {
+  return { extensions: { [NAMESPACE]: ext }, id: item, object: [object], subject, ...extra };
+}
+
+const THEOREM = { item: "item:theorem-1.1", kind: "theorem", page: 2, rect: [0.25, 0.125, 0.5, 0.125],
+                  region: "loc:0001", status: "formalized", title: "Theorem 1.1" };
+/** A region the theorem shares with a remark, which the curation names first. */
+const SHARED = { ...THEOREM, rect: [0.1, 0.4, 0.7, 0.1], region: "loc:0004",
+                 ext: { region_items: ["item:remark-4.1", "item:theorem-1.1"] } };
 const CURATION = { actor: "agent", confirmed_by_human: false, method: "curation" };
 const THEOREM_VERDICTS = [{
   evidence: ["Notes/Box.lean:12", "source page 2"],
@@ -87,41 +97,67 @@ const THEOREM_VERDICTS = [{
   verdict: "deviation",
 }];
 
-function theoremLinks(sha256, where) {
-  const base = (role, decl, rest = {}) => link(sha256, {
-    decl, extra: { kind: where.kind, label: where.label, status: where.status }, id: `${where.item}/${role}/${decl}`,
-    item: where.item, page: where.page, rect: where.rect, region: where.region, role, ...rest,
-    ext: { locator: { physical: [2], text: "Chapter 1, Theorem 1.1" }, provenance: CURATION,
-           verdicts: THEOREM_VERDICTS, ...(rest.ext ?? {}) },
-  });
+/** The theorem's five links, each one record whose subject is both of its regions. */
+function theoremLinks(sha256) {
+  const subject = () => [region(sha256, THEOREM), region(sha256, SHARED)];
+  const base = (role, decl, { end = {}, ext = {}, extra = {}, module } = {}) => link(
+    subject(), lean({ decl, module, role, ...end }),
+    { ext: { locator: { physical: [2], text: "Chapter 1, Theorem 1.1" }, provenance: CURATION,
+             verdicts: THEOREM_VERDICTS, ...ext },
+      extra: { kind: THEOREM.kind, status: THEOREM.status, ...extra }, item: THEOREM.item },
+  );
   // Deliberately not in role order: the viewer is what orders them.
   return [
     base("helper", "Notes.Set.union_comm", {
-      ext: { declaration: { id: "Notes.Set.union_comm", kind: "theorem", sorry: "exercise" },
-             destination: { resolution: "exact" } },
-      module: "Notes.Set", uri: "../../Notes/Set/index.html#Notes___Set___union_comm",
+      end: { ext: { declaration: { id: "Notes.Set.union_comm", kind: "theorem", sorry: "exercise" },
+                    destination: { resolution: "exact" } }, module: "Notes.Set" },
     }),
     base("key", "Notes.Box.volume_nonneg", {
-      ext: { declaration_verdict: { note: "repaired in place", status: "fixed", verdict: "faithful" },
-             destination: { resolution: "exact" }, relation: "exact",
-             snippet: { line: 12, text: "theorem volume_nonneg (b : Box) : 0 <= b.volume" } },
-      uri: "../../Notes/Box/index.html#Notes___Box___volume_nonneg",
+      end: { ext: { declaration_verdict: { note: "repaired in place", status: "fixed", verdict: "faithful" },
+                    destination: { resolution: "exact" },
+                    snippet: { line: 12, text: "theorem volume_nonneg (b : Box) : 0 <= b.volume" } } },
+      extra: { relation: "exactMatch" },
     }),
     base("example", "example:0123456789ab", {
-      ext: { declaration: { anonymous: true, id: "example:0123456789ab", kind: "example" },
-             provenance: { actor: "tool", confirmed_by_human: true, method: "pipeline" } },
-      module: "Notes.Set", uri: "../../Notes/Set.lean",
+      end: { ext: { declaration: { anonymous: true, id: "example:0123456789ab", kind: "example" } },
+             location: { lines: [30], module: "Notes.Set" } },
+      ext: { provenance: { actor: "tool", confirmed_by_human: true, method: "pipeline" } },
     }),
     base("support", "Notes.Set.inter_sub", {
-      ext: { destination: { resolution: "exact" } },
-      module: "Notes.Set", uri: "https://notes.example.invalid/api/Notes/Set.html#Notes___Set___inter_sub",
+      end: { ext: { destination: { href: "https://notes.example.invalid/api/Notes/Set.html", resolution: "exact" } },
+             module: "Notes.Set" },
     }),
     base("attributed", "Notes.Box.volume_mono", {
-      ext: { declaration_verdict: { note: "left unchanged", status: "fixed", verdict: "deviation" },
-             destination: { fallback_label: "module page (fallback)", resolution: "fallback" } },
-      uri: "../../Notes/Box/index.html",
+      end: { ext: { declaration_verdict: { note: "left unchanged", status: "fixed", verdict: "deviation" },
+                    destination: { fallback_label: "module page (fallback)", resolution: "fallback" } } },
     }),
   ];
+}
+
+/** The record of a link with this item, role and declaration. */
+export function linkRecord(sections, item, role, declaration) {
+  return Object.values(sections).flat().find((record) => record.id === item
+    && record.object?.some((end) => end.role === role && (end.location?.declaration ?? end.extensions?.[NAMESPACE]
+      ?.declaration?.id) === declaration));
+}
+
+/**
+ * A copy of a link record that links `name` instead: `role` and `kind` replace
+ * its end's, and `drop` names extension members its end leaves out.
+ */
+export function relinked(record, name, { role, kind, drop = [] } = {}) {
+  const copy = structuredClone(record);
+  const [end] = copy.object;
+  const ext = end.extensions[NAMESPACE];
+  end.location = { ...end.location, declaration: name };
+  ext.declaration = { id: name, kind: kind ?? ext.declaration.kind };
+  if (role) {
+    end.role = role;
+  }
+  for (const key of drop) {
+    delete ext[key];
+  }
+  return copy;
 }
 
 /**
@@ -130,60 +166,59 @@ function theoremLinks(sha256, where) {
  * (`annotationFiles`).
  */
 export function makeSections(sha256) {
-  const definition = link(sha256, {
-    decl: "Notes.Set.inter_sub",
-    ext: { destination: { resolution: "exact" }, locator: { physical: [3], printed: [1] },
-           quads: [[0.1, 0.2, 0.9, 0.2, 0.9, 0.3, 0.1, 0.3]] },
-    extra: { kind: "definition", label: "Definition 2.1",
-             note: "The companion states the neighbouring box lemma, not this definition.",
-             status: "support_only" },
-    id: "item:definition-2.1/support/Notes.Set.inter_sub", item: "item:definition-2.1", module: "Notes.Set",
-    page: 3, rect: [0.1, 0.2, 0.8, 0.1], region: "loc:0002", role: "support",
-    uri: "https://notes.example.invalid/api/Notes/Set.html#Notes___Set___inter_sub",
-  });
+  const definition = link(
+    [region(sha256, { ext: { quads: [[0.1, 0.2, 0.9, 0.2, 0.9, 0.3, 0.1, 0.3]] }, page: 3,
+                      rect: [0.1, 0.2, 0.8, 0.1], region: "loc:0002", title: "Definition 2.1" })],
+    lean({ decl: "Notes.Set.inter_sub", ext: { destination: { href: "https://notes.example.invalid/api/Notes/Set.html",
+                                                              resolution: "exact" } },
+           module: "Notes.Set", role: "support" }),
+    { ext: { coverage: "support_only", locator: { physical: [3], printed: [1] } },
+      extra: { kind: "definition", note: "The companion states the neighbouring box lemma, not this definition.",
+               status: "not_formalized" },
+      item: "item:definition-2.1" },
+  );
   const unlinked = {
-    extensions: { [NAMESPACE]: { clusters: ["cluster:sets"], item: "item:exercise-3.1", region: "loc:0003" } },
-    id: "item:exercise-3.1", kind: "exercise", label: "Exercise 3.1",
-    location: { page: 5, rect: [0.1, 0.1, 0.4, 0.1] },
-    source: pdfSource(sha256),
+    extensions: { [NAMESPACE]: { clusters: ["cluster:sets"] } },
+    id: "item:exercise-3.1", kind: "exercise", object: [],
+    subject: [region(sha256, { page: 5, rect: [0.1, 0.1, 0.4, 0.1], region: "loc:0003", title: "Exercise 3.1" })],
   };
-  const remark = link(sha256, {
-    decl: "Notes.Internal.aux",
-    ext: { declaration: { id: "private:Notes.Internal:Notes.Internal.aux", kind: "lemma", private: true },
-           destination: { resolution: "exact" } },
-    extra: { kind: "passage", label: "A remark on unions", status: "formalized" },
-    id: "item:remark-4.1/key/private", item: "item:remark-4.1", module: "Notes.Internal",
-    page: 2, rect: SHARED.rect, region: "loc:0004", role: "key",
-    uri: "../../Notes/Internal/index.html#Notes___Internal___aux",
-  });
+  const remark = link(
+    [region(sha256, { ...SHARED, title: "A remark on unions" })],
+    lean({ decl: "Notes.Internal.aux", module: "Notes.Internal", role: "key",
+           ext: { declaration: { id: "private:Notes.Internal:Notes.Internal.aux", kind: "lemma", private: true },
+                  destination: { resolution: "exact" } } }),
+    { extra: { kind: "passage", status: "formalized" }, item: "item:remark-4.1" },
+  );
   // One region, two items: the curation names the remark first, and the
   // equation split off its label (no card) comes first in file order.
   const pair = { region_items: ["item:remark-7.1", "item:equation-7"] };
+  const seven = { ext: pair, page: 7, rect: [0.1, 0.5, 0.8, 0.1], region: "loc:0005" };
   const equation = {
-    extensions: { [NAMESPACE]: { ...pair, item: "item:equation-7", region: "loc:0005" } },
-    id: "item:equation-7", kind: "equation", label: "Equation 7",
-    location: { page: 7, rect: [0.1, 0.5, 0.8, 0.1] },
-    source: pdfSource(sha256),
+    extensions: { [NAMESPACE]: {} },
+    id: "item:equation-7", kind: "equation", object: [],
+    subject: [region(sha256, { ...seven, title: "Equation 7" })],
   };
-  const remarkSeven = link(sha256, {
-    decl: "Notes.Box.volume_nonneg",
-    ext: { ...pair, destination: { resolution: "exact" }, provenance: CURATION },
-    extra: { kind: "remark", label: "Remark 7.1 and equation (7)", status: "formalized" },
-    id: "item:remark-7.1/key/Notes.Box.volume_nonneg", item: "item:remark-7.1",
-    page: 7, rect: [0.1, 0.5, 0.8, 0.1], region: "loc:0005", role: "key",
-    uri: "../../Notes/Box/index.html#Notes___Box___volume_nonneg",
-  });
-  // A record from elsewhere: no overlay extension at all.
+  const remarkSeven = link(
+    [region(sha256, { ...seven, title: "Remark 7.1 and equation (7)" })],
+    lean({ decl: "Notes.Box.volume_nonneg", ext: { destination: { resolution: "exact" } }, role: "key" }),
+    { ext: { provenance: CURATION }, extra: { kind: "remark", status: "formalized" }, item: "item:remark-7.1" },
+  );
+  // A record from elsewhere: no overlay extension on the record or its object end.
   const plain = {
-    id: "plain-link", label: "Lemma 6.1", location: { page: 6, rect: [0.2, 0.2, 0.2, 0.2] },
-    source: pdfSource(sha256), target: "../../Notes/Plain/index.html",
+    id: "plain-link", object: [{ type: "html", uri: "../../Notes/Plain/index.html" }],
+    subject: [region(sha256, { page: 6, rect: [0.2, 0.2, 0.2, 0.2], title: "Lemma 6.1" })],
   };
-  plain.source = { ...plain.source };
+  // The key link again, with only the shared region: a producer may split a
+  // subject, and the item still has one card per link.
+  const [, key] = theoremLinks(sha256);
+  const split = { ...key, subject: [key.subject[1]] };
   // A record of another PDF: not this overlay's business.
-  const other = { ...unlinked, id: "elsewhere", source: pdfSource(fakeSha256("e"), { id: OTHER_SOURCE_ID }) };
+  const other = { ...unlinked, id: "elsewhere",
+                  subject: [region(fakeSha256("e"), { page: 5, rect: [0.1, 0.1, 0.4, 0.1], region: "loc:0003",
+                                                      source: { id: OTHER_SOURCE_ID }, title: "Elsewhere" })] };
   return {
-    1: [...theoremLinks(sha256, THEOREM), definition, other],
-    2: [unlinked, remark, ...theoremLinks(sha256, SHARED), plain, equation, remarkSeven],
+    1: [...theoremLinks(sha256), definition, other],
+    2: [unlinked, remark, split, plain, equation, remarkSeven],
   };
 }
 

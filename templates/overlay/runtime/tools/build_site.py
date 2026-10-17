@@ -12,10 +12,9 @@ file's own path; the inventory is whatever `cf overlay sync` copied under
 `docs/overlay.md` section 5 is the contract -- copy the viewer, the config,
 `GENERATED.json` and the annotation bundle into `<output_root>/<mount>/` and
 the Literature Links annotation files, with their `_defaults.json`, into
-`<output_root>/<annotations directory>/`. Their relative target
-references are relative to this published site layout (`../../<page>` from a
-section folder is a page of `<output_root>`), not to the repository, where
-they resolve to nothing; replace a previous copy atomically; insert or replace one marked
+`<output_root>/<annotations directory>/`, so that a card's rendered page,
+relative to the site root, is a page of `<output_root>`; replace a previous
+copy atomically; insert or replace one marked
 link block in the index; write `receipt.json`. It never runs the build:
 `serve.py --build` does that first.
 """

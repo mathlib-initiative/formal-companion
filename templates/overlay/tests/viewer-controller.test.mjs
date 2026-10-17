@@ -26,8 +26,10 @@ import {
   makeConfig,
   bundleText,
   makeGenerated,
+  linkRecord,
   makeSections,
   memoryStorage,
+  relinked,
   notFound,
   shellHtml,
   throwingStorage,
@@ -221,18 +223,20 @@ test("start-up: a bundle that matches its sha256 but is not a bundle is refused"
   }
 });
 
-test("start-up: each record's target resolves against its own file's URL", async () => {
+test("start-up: a card's page is under the site root, and an end from elsewhere under its own file", async () => {
   const sections = makeSections(PDF_SHA256);
-  const record = sections[1].find((entry) => entry.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
-  record.target = { ...record.target, uri: "beside.html" };
+  const record = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
+  record.object[0].extensions[NAMESPACE].destination.href = "beside.html";
+  sections[2].find((entry) => entry.id === "plain-link").object[0].uri = "beside.html";
   const { result } = await start({ sections });
   const [key] = result.state.index.items.get("item:theorem-1.1").cards;
-  assert.equal(key.href, `${ORIGIN}/annotations/1/beside.html`);
+  assert.equal(key.href, `${ORIGIN}/beside.html#Notes___Box___volume_nonneg`);
+  assert.equal(result.state.index.items.get("plain-link").cards[0].href, `${ORIGIN}/annotations/2/beside.html`);
 });
 
 test("start-up: a record that cannot be placed is reported in the page notice", async () => {
   const sections = makeSections(PDF_SHA256);
-  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  sections[2][0].subject[0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
   const { documentRef, result } = await start({ sections });
   assert.equal(el(documentRef, "notice").hidden, false);
   assert.match(el(documentRef, "notice").textContent, /^ⓘ 1 region\(s\) could not be placed/);
@@ -414,14 +418,10 @@ test("item: a related row is one plain link to its source, with no statement", a
 
 test("item: past eight key cards the rest wait behind a button that hands focus on", async () => {
   const sections = makeSections(PDF_SHA256);
-  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  const key = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
   for (let n = 0; n < 11; n += 1) {
     const name = `Notes.Part.p${String(n).padStart(2, "0")}`;
-    const copy = structuredClone(key);
-    copy.id = `item:theorem-1.1/key/${name}`;
-    copy.target.pin.declaration = name;
-    copy.extensions[NAMESPACE].declaration = { id: name, kind: "theorem" };
-    sections[1].push(copy);
+    sections[1].push(relinked(key, name, { kind: "theorem" }));
   }
   const documentRef = fakeDocument(SHELL);
   const focused = [];
@@ -446,8 +446,8 @@ test("item: past eight key cards the rest wait behind a button that hands focus 
 test("item: a statement is clamped by the lines it wraps to, not only by its source lines", async () => {
   const statement = async (text) => {
     const sections = makeSections(PDF_SHA256);
-    const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
-    key.extensions[NAMESPACE].snippet.text = text;
+    const key = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
+    key.object[0].extensions[NAMESPACE].snippet.text = text;
     const { documentRef, result } = await start({ sections });
     await selectPageRegion(documentRef, result.state, "loc:0001");
     const [[, , pre, button]] = keyCards(documentRef);
@@ -464,8 +464,8 @@ test("item: a statement is clamped by the lines it wraps to, not only by its sou
 test("item: a line's closing colon is kept with the word before it", async () => {
   const text = "theorem t (x : ℝ) (hx : 0 < x) :\n    (h : Prop) :\n    a_name_longer_than_sixteen :\n    x = x :=\n  rfl :";
   const sections = makeSections(PDF_SHA256);
-  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
-  key.extensions[NAMESPACE].snippet.text = text;
+  const key = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
+  key.object[0].extensions[NAMESPACE].snippet.text = text;
   const { documentRef, result } = await start({ sections });
   await selectPageRegion(documentRef, result.state, "loc:0001");
   const [[, , pre]] = keyCards(documentRef);
@@ -582,11 +582,8 @@ test("minimal: the passage, its links and their statements stay; the metadata go
 
 test("minimal: several key cards need no count", async () => {
   const sections = makeSections(PDF_SHA256);
-  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
-  const second = structuredClone(key);
-  second.id = "item:theorem-1.1/key/Notes.Box.volume_pos";
-  second.target.pin.declaration = "Notes.Box.volume_pos";
-  sections[1].push(second);
+  const key = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
+  sections[1].push(relinked(key, "Notes.Box.volume_pos"));
   const plain = await start({ sections });
   await selectPageRegion(plain.documentRef, plain.result.state, "loc:0001");
   assert.equal(el(plain.documentRef, "key-count").hidden, false, "the default overlay counts them");
@@ -614,17 +611,10 @@ test("minimal: an item that links nothing says so, without its ledger cluster", 
 
 test("minimal: a long list has no filter or count, and every card stays reachable", async () => {
   const sections = makeSections(PDF_SHA256);
-  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  const key = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
   for (let n = 0; n < 30; n += 1) {
     const name = `Notes.Fill.f${String(n).padStart(2, "0")}`;
-    const copy = structuredClone(key);
-    copy.id = `item:theorem-1.1/attributed/${name}`;
-    copy.target.pin.declaration = name;
-    const ext = copy.extensions[NAMESPACE];
-    ext.role = "attributed";
-    ext.declaration = { id: name, kind: "def" };
-    delete ext.snippet;
-    sections[1].push(copy);
+    sections[1].push(relinked(key, name, { drop: ["snippet"], kind: "def", role: "attributed" }));
   }
   const { documentRef, result } = await start({ config: makeConfig(MINIMAL), sections });
   await selectPageRegion(documentRef, result.state, "loc:0001");
@@ -638,7 +628,7 @@ test("minimal: a long list has no filter or count, and every card stays reachabl
 
 test("minimal: a record that cannot be placed is still reported", async () => {
   const sections = makeSections(PDF_SHA256);
-  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  sections[2][0].subject[0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
   const { documentRef } = await start({ config: makeConfig(MINIMAL), sections });
   assert.equal(el(documentRef, "notice").hidden, false);
 });
@@ -670,8 +660,8 @@ test("item: a region opens the item its curation names first, and never an empty
   assert.deepEqual(choices.children.map((button) => button.textContent), ["Remark 7.1 and equation (7)", "Equation 7"]);
   assert.equal(itemTitle(documentRef), "Remark 7.1 and equation (7)", "a parenthetical with no letter stays");
   const sections = makeSections(PDF_SHA256);
-  for (const record of sections[2]) {
-    const ext = record.extensions?.[NAMESPACE];
+  for (const end of sections[2].flatMap((record) => record.subject)) {
+    const ext = end.extensions?.[NAMESPACE];
     if (ext?.region === "loc:0005") {
       ext.region_items = ["item:equation-7", "item:remark-7.1"];
     }
@@ -720,17 +710,10 @@ test("item: the strip steps through the page's passages and returns to the page"
 
 test("item: past twenty cards a filter narrows both lists, and the related rows page by 25", async () => {
   const sections = makeSections(PDF_SHA256);
-  const key = sections[1].find((record) => record.id === "item:theorem-1.1/key/Notes.Box.volume_nonneg");
+  const key = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
   for (let n = 0; n < 30; n += 1) {
     const name = `Notes.Fill.f${String(n).padStart(2, "0")}`;
-    const copy = structuredClone(key);
-    copy.id = `item:theorem-1.1/attributed/${name}`;
-    copy.target.pin.declaration = name;
-    const ext = copy.extensions[NAMESPACE];
-    ext.role = "attributed";
-    ext.declaration = { id: name, kind: "def" };
-    delete ext.snippet;
-    sections[1].push(copy);
+    sections[1].push(relinked(key, name, { drop: ["snippet"], kind: "def", role: "attributed" }));
   }
   const { documentRef, result } = await start({ sections });
   await selectPageRegion(documentRef, result.state, "loc:0001");
@@ -764,17 +747,8 @@ test("item: past twenty cards a filter narrows both lists, and the related rows 
 
 test("item: a related row whose role and kind are one word says it once", async () => {
   const sections = makeSections(PDF_SHA256);
-  const mono = sections[1].find((record) => record.id === "item:theorem-1.1/attributed/Notes.Box.volume_mono");
-  const copy = (role, name, kind) => {
-    const record = structuredClone(mono);
-    record.id = `item:theorem-1.1/${role}/${name}`;
-    record.target.pin.declaration = name;
-    const ext = record.extensions[NAMESPACE];
-    ext.role = role;
-    ext.declaration = { id: name, kind };
-    delete ext.declaration_verdict;
-    return record;
-  };
+  const mono = linkRecord(sections, "item:theorem-1.1", "attributed", "Notes.Box.volume_mono");
+  const copy = (role, name, kind) => relinked(mono, name, { drop: ["declaration_verdict"], kind, role });
   for (let n = 0; n < 4; n += 1) {
     sections[1].push(copy("attributed", `Notes.Box.a${n}`, "theorem"));
   }

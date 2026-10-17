@@ -47,7 +47,6 @@ from cflib import __version__, gitsafe, vendored  # noqa: F401  (vendor/ on sys.
 from cflib.errors import CfError
 from cflib.paths import skill_root, templates_dir
 from literature_links import discovery
-from literature_links.companion import normalize
 
 from overlay import config as overlay_config
 from overlay import defaults
@@ -146,8 +145,9 @@ def format_pin() -> dict:
     """`GENERATED.json`'s `format`: the Literature Links release shipped in `tools/`."""
     manifest = format_manifest()
     pin = {"package": FORMAT_PACKAGE, "version": manifest["version"], "commit": manifest["commit"]}
-    if manifest.get("tag"):
-        pin["tag"] = manifest["tag"]
+    for key in ("tag", "branch"):
+        if manifest.get(key):
+            pin[key] = manifest[key]
     return pin
 
 
@@ -673,44 +673,68 @@ def sync_problems(companion: str | Path) -> list[str]:
 # check: the config, the annotations, the inputs and the overlay's own rules
 # ---------------------------------------------------------------------------
 
-def target_problems(path: str, record: dict) -> list[str]:
-    """A target the viewer can open: an `https:` URL, or a relative reference that stays in the site."""
-    uri = (normalize(record).get("target") or {}).get("uri")
-    if uri is None or _HTTPS.fullmatch(uri):
-        return []
-    if re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", uri) or uri.startswith(("/", "\\")):
-        return [f"{path}: {record.get('id')!r}: target {uri!r} is neither https: nor a relative reference"]
-    joined = posixpath.normpath(posixpath.join(posixpath.dirname(path), uri.split("#", 1)[0]))
-    if joined == ".." or joined.startswith("../"):
-        return [f"{path}: {record.get('id')!r}: target {uri!r} climbs out of the site"]
-    return []
+def _ends(record: dict, side: str) -> list[dict]:
+    ends = record.get(side)
+    return [end for end in ends if isinstance(end, dict)] if isinstance(ends, list) else []
+
+
+def _extension(node: dict) -> dict:
+    """The overlay's extension object of a record or an end, or {}, as the viewer reads it."""
+    extensions = node.get("extensions")
+    value = extensions.get(overlay_shards.NAMESPACE) if isinstance(extensions, dict) else None
+    return value if isinstance(value, dict) else {}
+
+
+def link_problems(path: str, record: dict) -> list[str]:
+    """Where a card links: a project ``uri`` that is ``https:`` or relative, and a page that stays in the site.
+
+    A destination's own ``href`` is an ``https:`` URL or a path below the site root.
+    """
+    out = []
+    for end in _ends(record, "object"):
+        uri = end.get("uri")
+        if isinstance(uri, str) and not _HTTPS.fullmatch(uri) \
+                and (re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", uri) or uri.startswith(("/", "\\"))):
+            out.append(f"{path}: {record.get('id')!r}: object {uri!r} is neither https: nor a relative reference")
+        ext = _extension(end)
+        href = (ext.get("destination") or {}).get("href") if isinstance(ext.get("destination"), dict) else None
+        if href is None or isinstance(href, str) and _HTTPS.fullmatch(href):
+            continue
+        if not isinstance(href, str) or re.match(r"[A-Za-z][A-Za-z0-9+.-]*:", href) or href.startswith(("/", "\\")):
+            out.append(f"{path}: {record.get('id')!r}: page {href!r} is neither https: nor a site path")
+            continue
+        joined = posixpath.normpath(href.split("#", 1)[0])
+        if joined == ".." or joined.startswith("../"):
+            out.append(f"{path}: {record.get('id')!r}: page {href!r} climbs out of the site")
+    return out
 
 
 def overlay_problems(companion: str | Path, source_id: str) -> list[str]:
-    """The overlay's rules beyond Literature Links: one PDF the config names, its pages, the targets."""
-    root = Path(companion).expanduser().resolve()
+    """The overlay's rules beyond Literature Links: one PDF the config names, its pages, the links."""
     out: list[str] = []
     sources: dict[str, dict] = {}
     for path, record in read_annotations(companion).records.items():
-        source = record.get("source") or {}
-        ext = (source.get("extensions") or {}).get(overlay_shards.NAMESPACE) or {}
-        if source.get("type") != "pdf" or ext.get("source_id") != source_id:
-            continue
-        sources.setdefault(json.dumps(source, sort_keys=True), source)
-        count = ext.get("physical_page_count")
-        page = (record.get("location") or {}).get("page")
-        if isinstance(count, int) and isinstance(page, int) and page > count:
-            out.append(f"{path}: {record.get('id')!r} is on page {page}, past the "
-                       f"source's {count} pages")
-        out += target_problems(path, record)
+        out += link_problems(path, record)
+        for end in _ends(record, "subject"):
+            ext = _extension(end)
+            if end.get("type") != "pdf" or ext.get("source_id") != source_id:
+                continue
+            identity = {k: end.get(k) for k in ("uri", "sha256", "citation", "identifiers")}
+            identity["extensions"] = {k: ext.get(k) for k in ("bytes", "physical_page_count", "alternate_urls")}
+            sources.setdefault(json.dumps(identity, sort_keys=True), end)
+            count = ext.get("physical_page_count")
+            page = (end.get("location") or {}).get("page")
+            if isinstance(count, int) and isinstance(page, int) and page > count:
+                out.append(f"{path}: {record.get('id')!r} is on page {page}, past the "
+                           f"source's {count} pages")
     if not sources:
         out.append(f"no annotation is a record of the PDF {source_id!r}, which "
                    f"{overlay_config.CONFIG_NAME} names")
     elif len(sources) > 1:
         out.append(f"the records of {source_id!r} carry {len(sources)} different sources; "
                    "the overlay shows one PDF")
-    elif not re.fullmatch(r"[0-9a-f]{64}", str((next(iter(sources.values())).get("pin") or {}).get("sha256"))):
-        out.append(f"the source {source_id!r} pins no sha256, which the viewer verifies the PDF by")
+    elif not re.fullmatch(r"[0-9a-f]{64}", str(next(iter(sources.values())).get("sha256"))):
+        out.append(f"the PDF {source_id!r} states no sha256, which the viewer verifies it by")
     return out
 
 

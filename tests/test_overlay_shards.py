@@ -1,4 +1,4 @@
-"""The annotation document → Literature Links annotation files mapping (`scripts/overlay/shards.py`).
+"""The annotation document → Literature Links 2.0 annotation files mapping (`scripts/overlay/shards.py`).
 
 docs/overlay.md section 7, record by record, on a synthetic document: what a
 link, a region, a quad region, an item that links nothing, a destination, a
@@ -138,10 +138,19 @@ def document() -> dict:
 
 
 def by_id(conversion: shards.Conversion) -> dict[str, list[dict]]:
+    """The records by item id, and by link id (``<item>/<role>/<declaration>``) for a record with a link."""
     out: dict[str, list[dict]] = {}
     for record in conversion.records:
         out.setdefault(record["id"], []).append(record)
+        if record.get("relation") != "noMatch":
+            for end in record["object"]:
+                key = f"{record['id']}/{end['role']}/{end['extensions'][NS]['declaration']['id']}"
+                out.setdefault(key, []).append(record)
     return out
+
+
+def ext(node: dict) -> dict:
+    return node["extensions"][NS]
 
 
 class TestTheMapping(unittest.TestCase):
@@ -154,128 +163,198 @@ class TestTheMapping(unittest.TestCase):
         self.assertEqual(self.conversion.counts["regions"], 5)
         self.assertEqual(self.conversion.counts["records"], 7)
 
-    def test_a_link_is_one_record_with_the_pdf_source_and_a_repository_pin(self):
+    def test_a_link_is_one_record_with_the_pdf_regions_as_subject_and_the_declaration_as_object(self):
         [record] = self.records["theorem-1.2.3/key/Notes.Box.mono"]
-        self.assertEqual(record["source"], {
-            "type": "pdf", "uri": "https://notes.example.invalid/notes.pdf",
-            "pin": {"type": "book", "title": "Notes (synthetic)", "edition": "second", "sha256": SHA,
-                    "url": "https://notes.example.invalid/notes.pdf", "retrieved": "2026-01-02T00:00:00Z",
-                    "isbn": "9780000000002", "identifiers": {"doi": "10.0000/x", "isbn-2": "9780000000019"}},
+        self.assertEqual(record["subject"], [{
+            "type": "pdf", "uri": "https://notes.example.invalid/notes.pdf", "sha256": SHA,
+            "citation": {"id": "notes-pdf", "type": "book", "title": "Notes (synthetic)", "edition": "second",
+                         "URL": "https://notes.example.invalid/notes.pdf",
+                         "accessed": {"date-parts": [[2026, 1, 2]], "raw": "2026-01-02T00:00:00Z"},
+                         "ISBN": "9780000000002", "DOI": "10.0000/x"},
+            "identifiers": {"isbn-2": "9780000000019"},
+            "location": {"page": 2, "rect": [0.1, 0.2, 0.5, 0.15]},
+            "title": "Theorem 1.2.3 (Boxes)",
             "extensions": {NS: {"source_id": "notes-pdf", "bytes": 1234, "physical_page_count": 9,
-                                "alternate_urls": ["https://mirror.example.invalid/notes.pdf"]}}})
-        self.assertEqual(record["location"], {"page": 2, "rect": [0.1, 0.2, 0.5, 0.15]})
-        self.assertEqual(record["target"], {
-            "uri": "../../../Notes/Box/index.html#Notes___Box___mono%C2%ABx%C2%BB",
-            "pin": {"type": "repository", "url": "https://git.example.invalid/owner/notes", "commit": "1" * 40,
-                    "path": "Notes/Box.lean", "line": 10, "module": "Notes.Box", "declaration": "Notes.Box.mono"}})
-        self.assertEqual((record["kind"], record["label"], record["status"]),
-                         ("theorem", "Theorem 1.2.3 (Boxes)", "formalized"))
-        ext = record["extensions"][NS]
-        self.assertEqual(ext["item"], "theorem-1.2.3")
-        self.assertEqual(ext["region"], "theorem-1.2.3@p002")
-        self.assertEqual(ext["role"], "key")
-        self.assertEqual(ext["declaration"], {"id": "Notes.Box.mono", "kind": "theorem"})
-        self.assertEqual(ext["snippet"], {"text": "theorem mono : True", "line": 10})
-        self.assertEqual(ext["destination"], {"resolution": "exact"})
-        self.assertEqual(ext["signoff"], {"method": "agent_visual", "verifier": "agent:one"})
-        self.assertEqual(ext["verdicts"], [{"verdict": "deviation", "severity": "low", "status": "fixed",
-                                            "summary": "closed boxes only", "evidence": ["Notes/Box.lean:10"],
-                                            "resolution": {"state": "fixed", "pr": 3},
-                                            "provenance": {"actor": "agent", "method": "adjudication",
-                                                           "confirmed_by_human": False,
-                                                           "note": "two readings and a reconciler"}}])
-        self.assertEqual(ext["provenance"], {"actor": "agent", "method": "curation", "confirmed_by_human": False})
-        self.assertEqual(ext["locator"], {"physical": [2], "printed": [1]})
-        self.assertNotIn("region_items", ext)
-        self.assertEqual(ext["declaration_verdict"], {"verdict": "faithful", "status": "fixed", "note": "repaired"})
+                                "alternate_urls": ["https://mirror.example.invalid/notes.pdf"],
+                                "region": "theorem-1.2.3@p002",
+                                "signoff": {"method": "agent_visual", "verifier": "agent:one"}}}}])
+        [end] = record["object"]
+        self.assertEqual({k: v for k, v in end.items() if k != "extensions"}, {
+            "type": "lean", "uri": "https://git.example.invalid/owner/notes", "version": "1" * 40,
+            "location": {"declaration": "Notes.Box.mono", "module": "Notes.Box"}, "role": "key"})
+        self.assertEqual(ext(end), {
+            "declaration": {"id": "Notes.Box.mono", "kind": "theorem"},
+            "snippet": {"text": "theorem mono : True", "line": 10},
+            "destination": {"resolution": "exact", "fragment": "Notes___Box___mono«x»"},
+            "declaration_verdict": {"verdict": "faithful", "status": "fixed", "note": "repaired"}})
+        self.assertEqual((record["id"], record["kind"], record["status"]), ("theorem-1.2.3", "theorem", "formalized"))
+        self.assertNotIn("relation", record, "a link with no relation token claims none")
+        self.assertEqual(ext(record), {
+            "locator": {"physical": [2], "printed": [1]},
+            "provenance": {"actor": "agent", "method": "curation", "confirmed_by_human": False},
+            "verdicts": [{"verdict": "deviation", "severity": "low", "status": "fixed",
+                          "summary": "closed boxes only", "evidence": ["Notes/Box.lean:10"],
+                          "resolution": {"state": "fixed", "pr": 3},
+                          "provenance": {"actor": "agent", "method": "adjudication", "confirmed_by_human": False,
+                                         "note": "two readings and a reconciler"}}]})
 
-    def test_a_fallback_destination_has_no_fragment_and_keeps_its_label(self):
+    def test_the_records_about_one_item_share_its_id_and_its_regions(self):
+        records = self.records["theorem-1.2.3"]
+        self.assertEqual(sorted(r["object"][0]["role"] for r in records), ["attributed", "key"])
+        self.assertEqual(records[0]["subject"], records[1]["subject"])
+
+    def test_a_page_the_module_gives_keeps_only_its_resolution(self):
         [record] = self.records["theorem-1.2.3/attributed/Notes.Box.part"]
-        self.assertEqual(record["target"]["uri"], "../../../Notes/Box/index.html", "one folder deeper, in its item's")
-        self.assertEqual(record["extensions"][NS]["destination"],
+        self.assertEqual(ext(record["object"][0])["destination"],
                          {"resolution": "fallback", "fallback_label": "module page"})
-        self.assertEqual(record["extensions"][NS]["snippet"]["truncated"], True)
+        self.assertEqual(ext(record["object"][0])["snippet"]["truncated"], True)
+        self.assertEqual((shards.page_of("Notes.Box"), shards.verso_fragment("Notes.Box.part")),
+                         ("Notes/Box/index.html", "Notes___Box___part"))
 
-    def test_an_https_destination_is_kept_whole(self):
+    def test_an_https_destination_keeps_its_page_and_anchor(self):
         [record] = self.records["lemma-2.1/key/Notes.Box.ext"]
-        self.assertEqual(record["target"]["uri"], "https://docs.example.invalid/Notes/Box.html#Notes.Box.ext")
+        self.assertEqual(ext(record["object"][0])["destination"],
+                         {"resolution": "exact", "href": "https://docs.example.invalid/Notes/Box.html",
+                          "fragment": "Notes.Box.ext"})
 
-    def test_a_declaration_with_no_rendered_page_links_its_source_file(self):
+    def test_a_declaration_with_no_rendered_page_has_no_destination(self):
         [record] = self.records["passage-p5/support/Notes.Box.help"]
-        self.assertEqual(record["target"]["uri"], "../../Notes/Box.lean")
-        self.assertNotIn("line", record["target"]["pin"])
-        self.assertNotIn("destination", record["extensions"][NS])
-        self.assertEqual(record["extensions"][NS]["declaration"]["private"], True)
-        self.assertEqual(self.conversion.counts["targets_without_a_rendered_page"], 1)
+        [end] = record["object"]
+        self.assertEqual(end["location"], {"declaration": "Notes.Box.help", "module": "Notes.Box"})
+        self.assertNotIn("destination", ext(end))
+        self.assertEqual(ext(end)["declaration"]["private"], True)
+        self.assertEqual(self.conversion.counts["declarations_without_a_rendered_page"], 1)
+
+    def test_an_anonymous_declaration_is_its_module_and_the_line_it_starts_on(self):
+        doc = document()
+        doc["declarations"].append({"id": "example@Notes/Box.lean:30", "kind": "example", "module": "Notes.Box",
+                                    "file": "Notes/Box.lean", "line": 30, "anonymous": True})
+        doc["declarations"].append({"id": "example:lost", "kind": "example", "module": "Notes.Box",
+                                    "file": "Notes/Box.lean", "anonymous": True, "unlocated": True})
+        doc["links"] += [{"id": "lemma-2.1/example/example@Notes/Box.lean:30", "item": "lemma-2.1",
+                          "declaration": "example@Notes/Box.lean:30", "role": "example"},
+                         {"id": "lemma-2.1/example/example:lost", "item": "lemma-2.1",
+                          "declaration": "example:lost", "role": "example"}]
+        conversion = shards.convert(doc)
+        records = by_id(conversion)
+        [located] = records["lemma-2.1/example/example@Notes/Box.lean:30"]
+        self.assertEqual(located["object"][0]["location"], {"module": "Notes.Box", "lines": [30]})
+        self.assertEqual(ext(located["object"][0])["declaration"], {"id": "example@Notes/Box.lean:30",
+                                                                    "kind": "example", "anonymous": True})
+        [lost] = records["lemma-2.1/example/example:lost"]
+        self.assertEqual(lost["object"][0]["location"],
+                         {"profile": shards.UNLOCATED_PROFILE, "module": "Notes.Box", "id": "example:lost"})
+        self.assertEqual(conversion.counts["unlocated_anonymous_declarations"], 1)
+        self.assertEqual(shards.scan_problems(shards.file_bytes(conversion)), [])
 
     def test_an_orphaned_link_is_not_exported(self):
         self.assertNotIn("lemma-2.1/key/Notes.Box.orphan", self.records)
 
+    def test_a_relation_token_becomes_the_relation_and_one_it_does_not_name_alone_stays(self):
+        [record] = self.records["remark-1.2.4/attributed/Notes.Box.part"]
+        self.assertEqual(record["relation"], "hasPart")
+        self.assertNotIn("relation", ext(record))
+        for token, relation, kept in (("exact", "exactMatch", False), ("generalization", "broadMatch", False),
+                                      ("special_case", "narrowMatch", False), ("related", "relatedMatch", True),
+                                      ("invocation", "relatedMatch", True), ("uses", "relatedMatch", True),
+                                      ("states", None, True)):
+            doc = document()
+            doc["links"][2]["relation"] = token
+            [record] = by_id(shards.convert(doc))["remark-1.2.4/attributed/Notes.Box.part"]
+            with self.subTest(token=token):
+                self.assertEqual(record.get("relation"), relation)
+                self.assertEqual(ext(record).get("relation"), token if kept else None)
+
     def test_a_quad_region_is_its_bounding_rect_and_keeps_its_quads(self):
         [record] = self.records["remark-1.2.4/attributed/Notes.Box.part"]
-        self.assertEqual(record["location"], {"page": 2, "rect": [0.1, 0.5, 0.8, 0.2]})
-        self.assertEqual(record["extensions"][NS]["quads"],
+        [end] = record["subject"]
+        self.assertEqual(end["location"], {"page": 2, "rect": [0.1, 0.5, 0.8, 0.2]})
+        self.assertEqual(ext(end)["quads"],
                          [[0.1, 0.5, 0.9, 0.5, 0.9, 0.6, 0.1, 0.6], [0.1, 0.6, 0.4, 0.6, 0.4, 0.7, 0.1, 0.7]])
         self.assertEqual((record["status"], record["note"]), ("partial", "only the closed case"))
-        self.assertEqual(record["extensions"][NS]["relation"], "part")
 
     def test_a_pt_region_from_the_bottom_left_becomes_top_left_fractions(self):
         [record] = self.records["passage-p5/support/Notes.Box.help"]
-        self.assertEqual(record["location"], {"page": 5, "rect": [0.1, 0.8, 0.4, 0.1]})
-        self.assertEqual((record["kind"], record["label"]), ("passage", "A remark on unions"))
-        self.assertEqual(record["extensions"][NS]["locator"], {"physical": [5], "printed": [4]})
-        self.assertNotIn("provenance", record["extensions"][NS], "the link names no provenance")
+        self.assertEqual(record["subject"][0]["location"], {"page": 5, "rect": [0.1, 0.8, 0.4, 0.1]})
+        self.assertEqual((record["kind"], record["subject"][0]["title"]), ("passage", "A remark on unions"))
+        self.assertEqual(ext(record)["locator"], {"physical": [5], "printed": [4]})
+        self.assertNotIn("provenance", ext(record), "the link names no provenance")
 
-    def test_an_item_that_links_nothing_is_one_target_less_record_per_region(self):
+    def test_an_item_that_links_nothing_is_one_record(self):
         [record] = self.records["exercise-1.3.1"]
-        self.assertNotIn("target", record)
-        self.assertEqual(record["status"], {"value": "not_formalized", "pin": {
-            "type": "repository", "url": "https://git.example.invalid/owner/notes", "commit": "1" * 40}})
-        self.assertEqual(record["label"], "Exercise 1.3.1(ii)")
-        self.assertEqual(record["extensions"][NS]["clusters"], ["c:13"])
-        self.assertEqual(record["extensions"][NS]["locator"],
-                         {"text": "Section 1.3, Exercise 1.3.1", "physical": [3], "printed": [2]})
+        self.assertEqual((record["status"], record["relation"]), ("not_formalized", "noMatch"))
+        self.assertEqual(record["object"], [{"type": "lean", "uri": "https://git.example.invalid/owner/notes",
+                                             "version": "1" * 40}],
+                         "a checked absence: the repository at the commit")
+        self.assertEqual(record["subject"][0]["title"], "Exercise 1.3.1(ii)")
+        self.assertEqual(ext(record)["clusters"], ["c:13"])
+        self.assertEqual(ext(record)["locator"], {"text": "Section 1.3, Exercise 1.3.1", "physical": [3], "printed": [2]})
         [equation] = self.records["equation-1.1"]
+        self.assertEqual(equation["object"], [], "unlinked, and no claim that nothing matches")
         self.assertNotIn("status", equation)
-        self.assertEqual(equation["extensions"][NS]["region"], "remark-1.2.4@p002")
-        self.assertEqual(equation["label"], "Equation 1.1")
+        self.assertNotIn("relation", equation)
+        self.assertEqual(ext(equation["subject"][0])["region"], "remark-1.2.4@p002")
+        self.assertEqual(equation["subject"][0]["title"], "Equation 1.1")
+        self.assertEqual((self.conversion.counts["records_linking_nothing"],
+                          self.conversion.counts["checked_absences"]), (2, 1))
+
+    def test_status_is_a_recommended_value_and_another_class_stays_in_the_extension(self):
+        doc = document()
+        classes = {"passage-p5": "support_only", "lemma-2.1": "example_only"}
+        for item in doc["items"]:
+            item["coverage"] = classes.get(item["id"], item.get("coverage"))
+        records = by_id(shards.convert(doc))
+        [support] = records["passage-p5"]
+        self.assertEqual((support["status"], ext(support)["coverage"]), ("not_formalized", "support_only"))
+        self.assertNotIn("relation", support, "a support link claims no correspondence")
+        self.assertTrue(records["lemma-2.1"])
+        for record in records["lemma-2.1"]:
+            self.assertNotIn("status", record, "no recommended status names the class")
+            self.assertEqual(ext(record)["coverage"], "example_only")
+        for item in ("theorem-1.2.3", "remark-1.2.4", "exercise-1.3.1", "equation-1.1"):
+            for record in self.records[item]:
+                self.assertNotIn("coverage", ext(record), f"{item}: its status names its class")
 
     def test_a_region_keeps_the_order_its_curation_names_its_items_in(self):
-        for record in self.records["remark-1.2.4/attributed/Notes.Box.part"] + self.records["equation-1.1"]:
-            self.assertEqual(record["extensions"][NS]["region_items"], ["remark-1.2.4", "equation-1.1"])
+        for record in self.records["remark-1.2.4"] + self.records["equation-1.1"]:
+            self.assertEqual(ext(record["subject"][0])["region_items"], ["remark-1.2.4", "equation-1.1"])
         doc = document()
         doc["locations"][1]["x_item_order"] = ["remark-1.2.4", "lemma-2.1"]
         [equation] = by_id(shards.convert(doc))["equation-1.1"]
-        self.assertEqual(equation["extensions"][NS]["region_items"], ["equation-1.1", "remark-1.2.4"],
+        self.assertEqual(ext(equation["subject"][0])["region_items"], ["equation-1.1", "remark-1.2.4"],
                          "an order that names other items is ignored")
 
-    def test_an_item_on_several_pages_names_them_all_on_every_record(self):
+    def test_an_item_on_several_pages_is_one_record_per_link_with_every_region(self):
         doc = document()
         doc["locations"].append(location("theorem-1.2.3@p004", ["theorem-1.2.3"],
                                          selector(4, rect={"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.2})))
-        for record in by_id(shards.convert(doc))["theorem-1.2.3/key/Notes.Box.mono"]:
-            self.assertEqual(record["extensions"][NS]["locator"], {"physical": [2, 4], "printed": [1, 3]})
+        conversion = shards.convert(doc)
+        [record] = by_id(conversion)["theorem-1.2.3/key/Notes.Box.mono"]
+        self.assertEqual([ext(end)["region"] for end in record["subject"]],
+                         ["theorem-1.2.3@p002", "theorem-1.2.3@p004"])
+        self.assertEqual(ext(record)["locator"], {"physical": [2, 4], "printed": [1, 3]})
+        self.assertEqual(conversion.counts["records"], 7)
 
     def test_a_rect_that_reaches_the_edge_stays_on_the_page_in_exact_arithmetic(self):
         [record] = self.records["exercise-1.3.1"]
-        x, y, w, h = record["location"]["rect"]
+        x, y, w, h = record["subject"][0]["location"]["rect"]
         self.assertLessEqual(Fraction(repr(x)) + Fraction(repr(w)), 1)
         self.assertEqual(companion.validate(record), [])
 
     def test_a_location_on_another_source_is_not_exported(self):
-        regions = {r["extensions"][NS]["region"] for r in self.conversion.records}
+        regions = {ext(end)["region"] for r in self.conversion.records for end in r["subject"]}
         self.assertNotIn("elsewhere", regions)
 
     def test_every_record_validates(self):
-        for record in self.conversion.records:
-            with self.subTest(record=record["id"]):
+        for path, record in self.conversion.files.items():
+            with self.subTest(path=path):
                 self.assertEqual(companion.validate(record), [])
 
 
 class TestTheFiles(unittest.TestCase):
     def test_records_go_to_their_section(self):
         conversion = shards.convert(document())
-        self.assertEqual({name: sorted({r["extensions"][NS]["item"] for r in records})
+        self.assertEqual({name: sorted({r["id"] for r in records})
                           for name, records in conversion.sections.items()},
                          {"1.1": ["equation-1.1"], "1.2": ["remark-1.2.4", "theorem-1.2.3"],
                           "1.3": ["exercise-1.3.1"], "other": ["lemma-2.1", "passage-p5"]})
@@ -308,6 +387,21 @@ class TestTheFiles(unittest.TestCase):
         self.assertEqual(set(files) - {"1.2/theorem-1.2.3/_defaults.json", "_defaults.json"}, set(conversion.files))
         self.assertIn("lemma part…".encode("utf-8"), files["1.2/theorem-1.2.3/attributed__Notes.Box.part.json"])
 
+    def test_the_defaults_hold_an_end_template_for_each_side(self):
+        files = shards.file_bytes(shards.convert(document()))
+        top = json.loads(files["_defaults.json"])
+        self.assertEqual({k: top["subject"][k] for k in ("type", "uri", "sha256")},
+                         {"type": "pdf", "uri": "https://notes.example.invalid/notes.pdf", "sha256": SHA})
+        self.assertEqual(top["subject"]["citation"]["id"], "notes-pdf")
+        self.assertEqual(top["object"], {"type": "lean", "uri": "https://git.example.invalid/owner/notes",
+                                         "version": "1" * 40})
+        self.assertEqual(json.loads(files["1.3/exercise-1.3.1.json"]).get("object", "left out"), "left out",
+                         "a checked absence's object is the template alone")
+        self.assertEqual(json.loads(files["1.1/equation-1.1.json"])["object"], [])
+        item = json.loads(files["1.2/theorem-1.2.3/_defaults.json"])
+        self.assertEqual((item["id"], item["subject"]["title"]), ("theorem-1.2.3", "Theorem 1.2.3 (Boxes)"))
+        self.assertNotIn("subject", json.loads(files["1.2/theorem-1.2.3/key__Notes.Box.mono.json"]))
+
     def test_the_reader_reads_back_every_record_from_the_files(self):
         conversion = shards.convert(document())
         files = shards.file_bytes(conversion)
@@ -330,19 +424,17 @@ class TestTheFiles(unittest.TestCase):
     def test_every_file_passes_the_scan_and_a_broken_one_does_not(self):
         files = shards.file_bytes(shards.convert(document()))
         self.assertEqual(shards.scan_problems(files), [])
-        files["1.2/broken.json"] = (b'{"source": {"type": "pdf", "uri": "x"}, "target": null,'
-                                    b' "location": {"page": 1, "rect": [0.5, 0, 0.6, 1]}}\n')
+        files["1.2/broken.json"] = (b'{"subject": [{"type": "pdf", "uri": "x",'
+                                    b' "location": {"page": 1, "rect": [0.5, 0, 0.6, 1]}}], "object": []}\n')
         self.assertTrue(any("1.2/broken.json" in line and "PDF_RECT" in line for line in shards.scan_problems(files)))
 
 
 def named(*rows) -> list[dict]:
-    """Records with just what a file name is made of: ``(item, role, declaration, region)``."""
+    """Records with just what a file name is made of: ``(item, role, declaration)``."""
     out = []
-    for item, role, decl, region in rows:
-        ext = {"item": item, "region": region or f"{item}@p001"}
-        if role:
-            ext.update(role=role, declaration={"id": decl})
-        out.append({"extensions": {NS: ext}})
+    for item, role, decl in rows:
+        ends = [{"role": role, "extensions": {NS: {"declaration": {"id": decl}}}}] if role else []
+        out.append({"id": item, "object": ends})
     return out
 
 
@@ -352,86 +444,70 @@ def suffix(key: str) -> str:
 
 class TestFileNames(unittest.TestCase):
     def test_a_name_is_the_item_role_and_declaration(self):
-        self.assertEqual(shards.file_names(named(("theorem-1.2.3", "key", "Notes.Box.mono", None),
-                                                 ("exercise-1.3.1", None, None, None))),
+        self.assertEqual(shards.file_names(named(("theorem-1.2.3", "key", "Notes.Box.mono"),
+                                                 ("exercise-1.3.1", None, None))),
                          ["theorem-1.2.3__key__Notes.Box.mono.json", "exercise-1.3.1.json"])
 
     def test_every_character_outside_the_safe_set_becomes_a_dash(self):
-        self.assertEqual(shards.file_names(named(("thm 1.2/3", "key", "Notes.σ_finite'", None),
-                                                 (".hidden", None, None, None))),
+        self.assertEqual(shards.file_names(named(("thm 1.2/3", "key", "Notes.σ_finite'"),
+                                                 (".hidden", None, None))),
                          ["thm-1.2-3__key__Notes.-_finite-.json", "-hidden.json"])
-        for name in shards.file_names(named(("a:b", "key", "x/y\\z «w»", None))):
+        for name in shards.file_names(named(("a:b", "key", "x/y\\z «w»"))):
             self.assertRegex(name, shards.ANNOTATION_FILE)
 
     def test_a_long_name_is_truncated_and_hashed_from_the_full_key(self):
         decl = "Notes." + "veryLongDeclarationName" * 8
         key = f"theorem-1.2.3__key__{decl}"
-        [name] = shards.file_names(named(("theorem-1.2.3", "key", decl, None)))
+        [name] = shards.file_names(named(("theorem-1.2.3", "key", decl)))
         self.assertEqual(len(name), shards.MAX_NAME)
         self.assertEqual(name, key[:shards.MAX_NAME - len(suffix(key))] + suffix(key))
         self.assertRegex(name, shards.ANNOTATION_FILE)
         counts = collections.Counter()
-        shards.file_names(named(("theorem-1.2.3", "key", decl, None), ("t", "key", "short", None)), counts)
+        shards.file_names(named(("theorem-1.2.3", "key", decl), ("t", "key", "short")), counts)
         self.assertEqual((counts["files_truncated"], counts["files_hashed"]), (1, 1))
-        [exact] = shards.file_names(named(("x" * (shards.MAX_NAME - 5), None, None, None)))
+        [exact] = shards.file_names(named(("x" * (shards.MAX_NAME - 5), None, None)))
         self.assertEqual(exact, "x" * (shards.MAX_NAME - 5) + ".json", "exactly the limit is not truncated")
 
     def test_two_records_with_one_name_both_take_the_hash(self):
-        self.assertEqual(shards.file_names(named(("a b", None, None, None), ("a/b", None, None, None),
-                                                 ("c", None, None, None))),
+        self.assertEqual(shards.file_names(named(("a b", None, None), ("a/b", None, None),
+                                                 ("c", None, None))),
                          ["a-b" + suffix("a b"), "a-b" + suffix("a/b"), "c.json"])
 
     def test_names_that_differ_only_in_case_both_take_the_hash(self):
-        self.assertEqual(shards.file_names(named(("Lemma-1", None, None, None), ("lemma-1", None, None, None))),
+        self.assertEqual(shards.file_names(named(("Lemma-1", None, None), ("lemma-1", None, None))),
                          ["Lemma-1" + suffix("Lemma-1"), "lemma-1" + suffix("lemma-1")])
-
-    def test_one_item_in_two_regions_hashes_each_record_with_its_region(self):
-        names = shards.file_names(named(("t", "key", "D", "t@p002"), ("t", "key", "D", "t@p003")))
-        self.assertEqual(names, ["t__key__D" + suffix("t__key__D@t@p002"), "t__key__D" + suffix("t__key__D@t@p003")])
 
     def test_a_hashed_name_that_meets_a_plain_one_hashes_that_one_too(self):
         clash = "a-b" + suffix("a b")[:-len(".json")]
-        names = shards.file_names(named(("a b", None, None, None), ("a/b", None, None, None),
-                                        (clash, None, None, None)))
+        names = shards.file_names(named(("a b", None, None), ("a/b", None, None),
+                                        (clash, None, None)))
         self.assertEqual(len({n.lower() for n in names}), 3)
         self.assertEqual(names[2], clash + suffix(clash))
 
     def test_a_windows_device_name_is_hashed(self):
-        self.assertEqual(shards.file_names(named(("CON", None, None, None), ("nul.1", None, None, None),
-                                                 ("console", None, None, None))),
+        self.assertEqual(shards.file_names(named(("CON", None, None), ("nul.1", None, None),
+                                                 ("console", None, None))),
                          ["CON" + suffix("CON"), "nul.1" + suffix("nul.1"), "console.json"])
 
     def test_no_file_is_named_like_folder_defaults(self):
-        self.assertEqual(shards.file_names(named(("_defaults", None, None, None), ("_Defaults", "key", "D", None)),
+        self.assertEqual(shards.file_names(named(("_defaults", None, None), ("_Defaults", "key", "D")),
                                            in_item=False),
                          ["_defaults" + suffix("_defaults"), "_Defaults__key__D.json"])
-        self.assertEqual(shards.layout(named(("_defaults.json", "key", "D", "a"), ("_defaults.json", "key", "E", "a")))
+        self.assertEqual(shards.layout(named(("_defaults.json", "key", "D"), ("_defaults.json", "key", "E")))
                          [0].split("/")[0], "_defaults.json" + suffix("_defaults.json")[:-len(".json")])
 
     def test_one_item_in_a_folder_named_like_a_file_beside_it_hashes_both(self):
-        paths = shards.layout(named(("t", "key", "D", None), ("t", "key", "E", None), ("T", None, None, None)))
+        paths = shards.layout(named(("t", "key", "D"), ("t", "key", "E"), ("T", None, None)))
         self.assertEqual(paths, ["t/key__D.json", "t/key__E.json", "T.json"])
-        paths = shards.layout(named(("t.json", "key", "D", None), ("t.json", "key", "E", None), ("t", None, None, None)))
+        paths = shards.layout(named(("t.json", "key", "D"), ("t.json", "key", "E"), ("t", None, None)))
         self.assertEqual(paths[2], "t" + suffix("t"))
         self.assertTrue(paths[0].startswith("t.json" + suffix("t.json")[:-len(".json")] + "/"))
 
     def test_names_do_not_depend_on_the_record_order_but_the_records(self):
-        rows = [("a b", None, None, None), ("a/b", None, None, None), ("Z", "key", "D", None)]
+        rows = [("a b", None, None), ("a/b", None, None), ("Z", "key", "D")]
         forward = dict(zip([r[0] for r in rows], shards.file_names(named(*rows))))
         backward = dict(zip([r[0] for r in reversed(rows)], shards.file_names(named(*reversed(rows)))))
         self.assertEqual(forward, backward)
-
-    def test_two_conversions_of_a_document_with_one_item_in_two_regions(self):
-        doc = document()
-        doc["locations"].append(location("theorem-1.2.3@p004", ["theorem-1.2.3"],
-                                         selector(4, rect={"x0": 0.1, "y0": 0.1, "x1": 0.5, "y1": 0.2})))
-        conversion = shards.convert(doc)
-        self.assertEqual(conversion.problems, [])
-        names = [p for p in conversion.files if p.startswith("1.2/theorem-1.2.3/key__")]
-        self.assertEqual(names, sorted(
-            "1.2/theorem-1.2.3/key__Notes.Box.mono" + suffix(f"key__Notes.Box.mono@{region}")
-            for region in ("theorem-1.2.3@p002", "theorem-1.2.3@p004")))
-        self.assertEqual(shards.scan_problems(shards.file_bytes(conversion)), [])
 
 
 class TestRefusals(unittest.TestCase):
@@ -460,11 +536,20 @@ class TestRefusals(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "no url"):
             shards.convert(doc)
 
-    def test_a_local_checkout_has_no_repository_url(self):
+    def test_a_local_checkout_is_the_companion_root_relative_to_each_file(self):
         doc = document()
         doc["companion"]["repo"] = "local/notes"
-        [record] = by_id(shards.convert(doc))["theorem-1.2.3/key/Notes.Box.mono"]
-        self.assertNotIn("url", record["target"]["pin"])
+        conversion = shards.convert(doc)
+        self.assertEqual(conversion.files["1.2/theorem-1.2.3/key__Notes.Box.mono.json"]["object"][0]["uri"], "../../../")
+        self.assertEqual(conversion.files["other/lemma-2.1__key__Notes.Box.ext.json"]["object"][0]["uri"], "../../")
+        files = shards.file_bytes(conversion)
+        self.assertEqual(json.loads(files["_defaults.json"])["object"]["uri"], "../")
+        self.assertEqual(shards.scan_problems(files), [])
+
+    def test_a_link_to_a_declaration_twice_in_one_role_is_a_problem(self):
+        doc = document()
+        doc["links"].append(dict(doc["links"][1], id="theorem-1.2.3/key/again"))
+        self.assertTrue(any("share the key" in p for p in shards.convert(doc).problems))
 
 
 if __name__ == "__main__":                                   # pragma: no cover

@@ -2,9 +2,10 @@
  * The overlay viewer's pure half, against synthetic annotation files and configs.
  *
  * Everything the contract (docs/overlay.md section 4) says the viewer builds
- * from the annotations is checked here: the bundle, the refusals, geometry,
- * link ordering, one card per link however many regions repeat it, status and
- * note, the href rules, verdict display and sha256 verification. The
+ * from the Literature Links 2.0 annotations is checked here: the bundle, the
+ * refusals, geometry, link ordering, one card per link however many records
+ * repeat it, status and note, the href rules, verdict display and sha256
+ * verification. The
  * controller tests are in viewer-controller.test.mjs.
  */
 import assert from "node:assert/strict";
@@ -20,15 +21,18 @@ import {
   VERDICT_KINDS,
   VERDICT_LABELS,
   buildIndex,
+  cardHref,
   cardsMatching,
   coverageSummary,
   coverageWord,
   declarationVerdictDisplay,
+  endRegion,
   firstKeyCard,
   labelParts,
   leanTokens,
   locatorTail,
   locatorText,
+  modulePage,
   pageSummary,
   pageSummaryText,
   paginateCards,
@@ -39,7 +43,6 @@ import {
   quadToViewport,
   readConfig,
   readAnnotationsBlock,
-  recordRegion,
   regionCoverage,
   regionVerdict,
   resolutionText,
@@ -56,6 +59,7 @@ import {
   verdictFooter,
   verdictLine,
   verifyPdfBytes,
+  versoFragment,
 } from "../runtime/viewer/viewer-core.js";
 import {
   ORIGIN,
@@ -70,6 +74,7 @@ import {
   annotationFiles,
   bundleText,
   fileInputs,
+  linkRecord,
   makeGenerated,
   makeSections,
 } from "./fixtures.mjs";
@@ -175,31 +180,31 @@ test("bundle: every annotation with its path in file order, and anything else re
 
 // --- the source -------------------------------------------------------------
 
-test("source: the PDF is the records' source the config names, one sha256 for all", () => {
+test("source: the PDF is the records' subject ends the config names, one sha256 for all", () => {
   const files = fileInputs(makeSections(PDF_SHA256));
-  assert.equal(pdfSource(files, SOURCE_ID).pin.sha256, PDF_SHA256);
-  assert.equal(pdfSource(files, OTHER_SOURCE_ID).pin.sha256, fakeSha256("e"));
+  assert.equal(pdfSource(files, SOURCE_ID).sha256, PDF_SHA256);
+  assert.equal(pdfSource(files, OTHER_SOURCE_ID).sha256, fakeSha256("e"));
   assert.throws(() => pdfSource(files, "src:nowhere"), /No annotation is a record of the PDF "src:nowhere"/);
   const split = makeSections(PDF_SHA256);
-  split[2][0].source = { ...split[2][0].source, pin: { sha256: fakeSha256("1"), type: "book" } };
+  split[2][0].subject[0] = { ...split[2][0].subject[0], sha256: fakeSha256("1") };
   assert.throws(() => pdfSource(fileInputs(split), SOURCE_ID), /two different PDFs/);
   const unpinned = makeSections("not a digest");
-  assert.throws(() => pdfSource(fileInputs(unpinned), SOURCE_ID), /pins no sha256/);
+  assert.throws(() => pdfSource(fileInputs(unpinned), SOURCE_ID), /states no sha256/);
 });
 
 // --- geometry ---------------------------------------------------------------
 
 test("geometry: a rect is [x, y, width, height] from the top left", () => {
-  assert.deepEqual(recordRegion({ location: { page: 2, rect: [0.1, 0.2, 0.5, 0.25] } }), {
+  assert.deepEqual(endRegion({ location: { page: 2, rect: [0.1, 0.2, 0.5, 0.25] } }), {
     page: 2,
     quads: [[[0.1, 0.2], [0.6, 0.2], [0.6, 0.45], [0.1, 0.45]]],
   });
 });
 
 test("geometry: the extension's quads replace the bounding rect", () => {
-  const record = { extensions: { [NAMESPACE]: { quads: [[0.1, 0.2, 0.9, 0.2, 0.9, 0.3, 0.1, 0.3]] } },
-                   location: { page: 3, rect: [0.1, 0.2, 0.8, 0.1] } };
-  assert.deepEqual(recordRegion(record).quads, [[[0.1, 0.2], [0.9, 0.2], [0.9, 0.3], [0.1, 0.3]]]);
+  const end = { extensions: { [NAMESPACE]: { quads: [[0.1, 0.2, 0.9, 0.2, 0.9, 0.3, 0.1, 0.3]] } },
+                location: { page: 3, rect: [0.1, 0.2, 0.8, 0.1] } };
+  assert.deepEqual(endRegion(end).quads, [[[0.1, 0.2], [0.9, 0.2], [0.9, 0.3], [0.1, 0.3]]]);
 });
 
 test("geometry: a malformed, empty or off-page location is refused", () => {
@@ -212,10 +217,10 @@ test("geometry: a malformed, empty or off-page location is refused", () => {
     [{ page: 1, rect: [0.6, 0, 0.5, 0.5] }, /off the page/],
     [{ page: 1, rect: [0, 0, 1.2, 0.5] }, /no rect/],
   ]) {
-    assert.throws(() => recordRegion({ location }), pattern);
+    assert.throws(() => endRegion({ location }), pattern);
   }
   const bad = { extensions: { [NAMESPACE]: { quads: [[0, 0, 1]] } }, location: { page: 1, rect: [0, 0, 1, 1] } };
-  assert.throws(() => recordRegion(bad), /malformed quad/);
+  assert.throws(() => endRegion(bad), /malformed quad/);
 });
 
 test("geometry: a page fraction lands in the viewport through the displayed page", () => {
@@ -278,43 +283,82 @@ test("index: the regions on a page are in reading order, whatever order the file
   for (const index of [forward, backward]) {
     assert.deepEqual(index.pages.get(2).map((region) => region.id), ["loc:0001", "loc:0004"]);
   }
-  sections[1][0].location = { page: 2, rect: [0.8, 0.4, 0.1, 0.1] };
+  sections[1][0].subject[0].location = { page: 2, rect: [0.8, 0.4, 0.1, 0.1] };
   const beside = buildIndex(fileInputs(sections), config, { pageOrigin: ORIGIN });
   assert.deepEqual(beside.pages.get(2).map((region) => region.id), ["loc:0004", "loc:0001"],
-                   "on one line, left before right: the region sits where its first record put it");
+                   "on one line, left before right: the region sits where its first end put it");
 });
 
-test("index: the cards of one role are in record id order, whatever order the files came in", () => {
+test("index: the cards of one role are in declaration order, whatever order the files came in", () => {
   const sections = makeSections(PDF_SHA256);
-  const theorem = sections[1].find((record) => record.extensions[NAMESPACE].role === "key");
+  const theorem = linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg");
   const second = JSON.parse(JSON.stringify(theorem));
-  second.id = theorem.id.replace("volume_nonneg", "a_first");
-  second.target.pin.declaration = "Notes.Box.a_first";
+  second.object[0].location.declaration = "Notes.Box.a_first";
+  second.object[0].extensions[NAMESPACE].declaration.id = "Notes.Box.a_first";
   sections[2].push(second);
   const config = readConfig(makeConfig());
   for (const files of [fileInputs(sections), fileInputs(sections).reverse()]) {
     const keys = buildIndex(files, config, { pageOrigin: ORIGIN }).items.get("item:theorem-1.1").cards
       .filter((card) => card.role === "key").map((card) => card.id);
-    assert.deepEqual(keys, [second.id, theorem.id]);
+    assert.deepEqual(keys, ["item:theorem-1.1/key/Notes.Box.a_first", "item:theorem-1.1/key/Notes.Box.volume_nonneg"]);
   }
 });
 
-test("index: a record that cannot be placed is dropped with a warning, not guessed", () => {
+test("index: a region that cannot be placed is dropped with a warning, not guessed", () => {
   const sections = makeSections(PDF_SHA256);
-  sections[2][0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
-  sections[1][5].location = { page: 40, rect: [0.1, 0.1, 0.1, 0.1] };
+  sections[2][0].subject[0].location = { page: 5, rect: [0.9, 0.1, 0.4, 0.1] };
+  sections[1][5].subject[0].location = { page: 40, rect: [0.1, 0.1, 0.1, 0.1] };
   const { index } = fixture(sections);
   assert.equal(index.warnings.length, 2);
   assert.match(index.warnings.join("\n"), /item:exercise-3\.1: .*off the page/);
   assert.match(index.warnings.join("\n"), /page 40 is past the source's 12 pages/);
   assert.equal(index.pages.has(5), false);
+  assert.equal(index.items.has("item:definition-2.1"), false, "a record with no region left adds nothing");
+  const one = makeSections(PDF_SHA256);
+  linkRecord(one, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg").subject[0].location.page = 40;
+  const kept = fixture(one).index;
+  assert.equal(kept.warnings.length, 1);
+  assert.equal(cardsOf(kept, "item:theorem-1.1").length, 5, "the record's other region still places it");
 });
 
 test("index: one card per link, ordered key, attributed, support, example, helper", () => {
   const { index } = fixture();
   const cards = cardsOf(index, "item:theorem-1.1");
   assert.deepEqual(cards.map((card) => card.role), LINK_ROLES,
-                   "two regions repeat each link, and the item still has five cards");
+                   "a second record repeats the key link, and the item still has five cards");
+  assert.deepEqual(index.regions.find((region) => region.id === "loc:0004").itemIds,
+                   ["item:remark-4.1", "item:theorem-1.1"], "each subject end adds its region");
+});
+
+test("index: a checked absence adds no card", () => {
+  const sections = makeSections(PDF_SHA256);
+  Object.assign(sections[2][0], { object: [{ type: "lean", uri: "https://git.example.invalid/r", version: "1".repeat(40) }],
+                                  relation: "noMatch", status: "not_formalized" });
+  const exercise = fixture(sections).index.items.get("item:exercise-3.1");
+  assert.deepEqual([exercise.cards, exercise.coverage], [[], "not_formalized"]);
+});
+
+test("index: a record's status is the coverage when its extension names no class", () => {
+  const sections = makeSections(PDF_SHA256);
+  const [definition] = sections[1].filter((record) => record.id === "item:definition-2.1");
+  delete definition.extensions[NAMESPACE].coverage;
+  assert.equal(fixture(sections).index.items.get("item:definition-2.1").coverage, "not_formalized");
+  definition.status = "support_only";
+  assert.equal(fixture(sections).index.items.get("item:definition-2.1").coverage, "support_only");
+});
+
+test("index: a card with no declaration in its location is named by the end's title", () => {
+  const sections = makeSections(PDF_SHA256);
+  const [definition] = sections[1].filter((record) => record.id === "item:definition-2.1");
+  const [end] = definition.object;
+  end.location = { lines: [40], module: "Notes.Set" };
+  end.extensions[NAMESPACE].declaration = { id: "01.instance@Notes/Set.lean:40", kind: "instance" };
+  end.title = "instance@Notes/Set.lean:40";
+  const [card] = cardsOf(fixture(sections).index, "item:definition-2.1");
+  assert.equal(card.fullName, "instance@Notes/Set.lean:40");
+  assert.equal(card.declarationId, "01.instance@Notes/Set.lean:40", "the id still orders the card");
+  delete end.title;
+  assert.equal(cardsOf(fixture(sections).index, "item:definition-2.1")[0].fullName, "01.instance@Notes/Set.lean:40");
 });
 
 test("index: a card carries its snippet, link, badges and declaration verdict", () => {
@@ -324,17 +368,17 @@ test("index: a card carries its snippet, link, badges and declaration verdict", 
   assert.equal(key.fullName, "Notes.Box.volume_nonneg");
   assert.equal(key.module, "Notes.Box");
   assert.equal(key.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box___volume_nonneg`,
-               "a relative target resolves against its own file, in a section folder at the site root");
+               "the module's page under the site root, at the declaration's anchor");
   assert.deepEqual(key.snippet, { line: 12, text: "theorem volume_nonneg (b : Box) : 0 <= b.volume" });
   assert.deepEqual(key.verdict, { note: "repaired in place", status: "fixed", verdict: "faithful" });
-  assert.equal(key.relation, "exact");
   assert.deepEqual(key.badges, []);
   assert.equal(attributed.href, `${ORIGIN}/Notes/Box/index.html`);
   assert.deepEqual(attributed.badges, [], "a fallback is said by the source link, not a badge");
   assert.equal(attributed.resolution, "fallback");
   assert.equal(attributed.fallbackLabel, "module page (fallback)");
   assert.equal(support.href, "https://notes.example.invalid/api/Notes/Set.html#Notes___Set___inter_sub");
-  assert.equal(example.href, null, "a target with no rendered page is not a link");
+  assert.equal(example.href, null, "a declaration with no rendered page is not a link");
+  assert.equal(example.module, "Notes.Set");
   assert.deepEqual(example.badges, ["anonymous"], "a missing link is said by the source link, not a badge");
   assert.equal(example.fullName, "example:0123456789ab");
   assert.deepEqual(helper.badges, ["sorry: exercise"]);
@@ -343,7 +387,7 @@ test("index: a card carries its snippet, link, badges and declaration verdict", 
   assert.equal(aux.declarationId, "private:Notes.Internal:Notes.Internal.aux");
 });
 
-test("index: a record from elsewhere, with no overlay extension, still shows as a link", () => {
+test("index: an end from elsewhere, with no overlay extension, still shows as a link", () => {
   const { index } = fixture();
   const item = index.items.get("plain-link");
   assert.equal(item.label, "Lemma 6.1");
@@ -354,7 +398,7 @@ test("index: a record from elsewhere, with no overlay extension, still shows as 
 test("index: status, note, verdicts, locator and clusters ride on the item", () => {
   const { index } = fixture();
   const definition = index.items.get("item:definition-2.1");
-  assert.equal(definition.coverage, "support_only");
+  assert.equal(definition.coverage, "support_only", "the extension's class, which its status does not name");
   assert.equal(definition.coverageNote, "The companion states the neighbouring box lemma, not this definition.");
   const theorem = index.items.get("item:theorem-1.1");
   assert.equal(theorem.coverage, "formalized");
@@ -366,7 +410,7 @@ test("index: status, note, verdicts, locator and clusters ride on the item", () 
   assert.deepEqual(exercise.clusterIds, ["cluster:sets"]);
   assert.equal(exercise.coverage, "");
   const absent = makeSections(PDF_SHA256);
-  absent[2][0].status = { pin: { type: "repository" }, value: "not_formalized" };
+  absent[2][0].status = "not_formalized";
   assert.equal(fixture(absent).index.items.get("item:exercise-3.1").coverage, "not_formalized");
 });
 
@@ -472,6 +516,27 @@ test("href: a target resolves against its own file and must be https or this sit
   assert.equal(targetHref("../../A.html", file, "http://other.invalid:1"), null);
   assert.equal(safeHttpsUrl("https://a.invalid/x"), "https://a.invalid/x");
   assert.equal(safeHttpsUrl("https://a.invalid/x#y"), null);
+});
+
+test("href: a card's page is the module's under the site root, at the declaration's anchor", () => {
+  assert.equal(modulePage("Notes.Box"), "Notes/Box/index.html");
+  assert.equal(versoFragment("Notes.Box.mk«x»"), "Notes___Box___mk«x»");
+  const site = `${ORIGIN}/`;
+  const end = (destination, location = { declaration: "Notes.Box.mk«x»", module: "Notes.Box" }) => (
+    { extensions: { [NAMESPACE]: { destination } }, location });
+  assert.equal(cardHref(end({ resolution: "exact" }), site, ORIGIN),
+               `${ORIGIN}/Notes/Box/index.html#Notes___Box___mk%C2%ABx%C2%BB`);
+  assert.equal(cardHref(end({ resolution: "fallback", fallback_label: "module page" }), site, ORIGIN),
+               `${ORIGIN}/Notes/Box/index.html`);
+  assert.equal(cardHref(end({ href: "Other/index.html", fragment: "a b", resolution: "exact" }), site, ORIGIN),
+               `${ORIGIN}/Other/index.html#a%20b`);
+  assert.equal(cardHref(end({ href: "https://docs.example.invalid/B.html", resolution: "exact" }), site, ORIGIN),
+               "https://docs.example.invalid/B.html#Notes___Box___mk%C2%ABx%C2%BB");
+  assert.equal(cardHref(end({ resolution: "exact" }, { lines: [3], module: "Notes.Box" }), site, ORIGIN),
+               `${ORIGIN}/Notes/Box/index.html`, "an anonymous declaration has no anchor of its own");
+  assert.equal(cardHref(end(undefined), site, ORIGIN), null, "no destination, no page");
+  assert.equal(cardHref(end({ resolution: "exact" }, { declaration: "X" }), site, ORIGIN), null, "no module, no page");
+  assert.equal(cardHref(end({ href: "javascript:alert(1)", resolution: "fallback" }), site, ORIGIN), null);
 });
 
 test("href: the back link keeps its .. but never a scheme the config smuggled in", () => {

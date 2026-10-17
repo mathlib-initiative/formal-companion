@@ -355,7 +355,9 @@ class TestExport(OverlayCase):
         self.assertNotIn("bundle", block, "sync writes the bundle")
         raw = self.annotation().read_bytes()
         self.assertEqual(raw, overlay_defaults.dumps(json.loads(raw)))
-        self.assertIn('"uri": "../../Notes/Basic/index.html#Notes___Box___volume_nonneg"', raw.decode("utf-8"))
+        record = json.loads(raw)
+        self.assertEqual(record["object"][0]["location"], {"declaration": DECL, "module": "Notes.Basic"})
+        self.assertEqual(record["subject"][0]["location"]["page"], 7)
         self.assertEqual(overlay_shards.scan_problems({"1.2/x.json": raw}), [])
 
     def test_it_builds_the_cf_export_command_line(self):
@@ -680,8 +682,9 @@ class TestSync(OverlayCase):
                              hashlib.sha256((self.overlay / row["path"]).read_bytes()).hexdigest())
         sealed = json.loads(MANIFEST.read_text(encoding="utf-8"))
         expected = {"package": "literature-links", "version": sealed["version"], "commit": sealed["commit"]}
-        if "tag" in sealed:                                  # pragma: no cover - a tagged release
-            expected["tag"] = sealed["tag"]
+        for key in ("tag", "branch"):
+            if key in sealed:
+                expected[key] = sealed[key]
         self.assertEqual(record["format"], expected)
         block = record["annotations"]
         self.assertEqual((block["count"], block["manifest_sha256"]), (1, manifest(self.companion, [FILE])))
@@ -703,9 +706,9 @@ class TestSync(OverlayCase):
                          list(found.records.items()))
         self.assertEqual(list(found.records), [p for p in found.files if not p.endswith("_defaults.json")])
         row = bundle["annotations"][1]["annotation"]
-        self.assertEqual(row["source"]["extensions"][overlay_shards.NAMESPACE]["source_id"], SOURCE_ID)
-        self.assertEqual(row["target"]["uri"], "../../../Notes/Basic/index.html#Notes___Box___volume_nonneg",
-                         "relative to its own file, one folder deeper")
+        self.assertEqual(row["subject"][0]["extensions"][overlay_shards.NAMESPACE]["source_id"], SOURCE_ID)
+        self.assertEqual(row["subject"][0]["sha256"], SOURCE_SHA, "the end template of the top folder, applied")
+        self.assertEqual(row["object"][0]["location"]["declaration"], DECL)
         self.assertEqual(raw.count(b"\n"), 2 + 3, "one line per annotation")
         self.assertEqual(self.tool("check_generated").returncode, 0)
 
@@ -751,7 +754,7 @@ class TestSync(OverlayCase):
     def test_it_refuses_a_file_the_scan_refuses(self):
         self.assertEqual(self.init(), 0)
         self.annotation().parent.mkdir(parents=True)
-        self.annotation().write_text('{"source": {"type": "pdf"}}\n', encoding="utf-8")
+        self.annotation().write_text('{"subject": [{"type": "pdf"}], "object": []}\n', encoding="utf-8")
         with self.assertRaises(CfError) as caught:
             overlay_sync.sync(self.companion)
         self.assertIn(FILE, caught.exception.message)
@@ -944,7 +947,7 @@ class TestCheck(OverlayCase):
         self.assertIn("holds no annotation file", said)
 
     def test_it_reports_annotations_of_a_source_the_config_does_not_name(self):
-        self.hand_written(lambda r: r["source"]["extensions"][overlay_shards.NAMESPACE].update(
+        self.hand_written(lambda r: r["subject"][0]["extensions"][overlay_shards.NAMESPACE].update(
             source_id="other-pdf"))
         code, said = self.check()
         self.assertEqual(code, 1)
@@ -979,24 +982,40 @@ class TestCheck(OverlayCase):
         return overlay_sync.overlay_problems(self.companion, SOURCE_ID)
 
     def test_the_overlay_rules_hold_the_page_count(self):
-        problems = self.hand_written(lambda r: r["location"].update(page=40))
+        problems = self.hand_written(lambda r: r["subject"][0]["location"].update(page=40))
         self.assertTrue(any("page 40" in line and "12 pages" in line for line in problems), problems)
 
-    def test_the_overlay_rules_hold_the_targets(self):
-        for uri, word in (("../../../outside/index.html", "climbs out"), ("javascript:alert(1)", "neither"),
-                          ("http://plain.example.invalid/x", "neither")):
-            with self.subTest(uri=uri):
-                problems = self.hand_written(lambda r, uri=uri: r["target"].update(uri=uri))
+    def test_the_overlay_rules_hold_the_links(self):
+        def page(href):
+            return lambda r: r["object"][0]["extensions"][overlay_shards.NAMESPACE]["destination"].update(href=href)
+
+        for href, word in (("../outside/index.html", "climbs out"), ("javascript:alert(1)", "neither"),
+                           ("http://plain.example.invalid/x", "neither"), ("/Notes/index.html", "neither")):
+            with self.subTest(href=href):
+                problems = self.hand_written(page(href))
                 self.assertTrue(any(word in line for line in problems), problems)
-        self.assertEqual(self.hand_written(lambda r: r["target"].update(uri="https://docs.example.invalid/x")),
-                         [])
-        problems = self.hand_written(lambda r: r.update(target="javascript:alert(1)"))
+        self.assertEqual(self.hand_written(page("https://docs.example.invalid/x")), [])
+        self.assertEqual(self.hand_written(page("Notes/Other/index.html")), [])
+        problems = self.hand_written(lambda r: r["object"][0].update(uri="javascript:alert(1)"))
         self.assertTrue(any("neither" in line for line in problems), problems)
-        self.assertEqual(self.hand_written(lambda r: r.update(target="https://docs.example.invalid/x")), [])
+        self.assertEqual(self.hand_written(lambda r: r["object"][0].update(uri="../../")), [])
 
     def test_the_overlay_rules_hold_one_pdf(self):
-        problems = self.hand_written(lambda r: None, lambda r: r["source"]["pin"].update(sha256="e" * 64))
+        problems = self.hand_written(lambda r: None, lambda r: r["subject"][0].update(sha256="e" * 64))
         self.assertTrue(any("2 different sources" in line for line in problems), problems)
+        problems = self.hand_written(lambda r: r["subject"][0].pop("sha256"))
+        self.assertTrue(any("states no sha256" in line for line in problems), problems)
+
+    def test_the_overlay_rules_read_an_extension_that_is_not_an_object_as_none(self):
+        def replace(side, value):
+            return lambda r: r[side][0]["extensions"].update({overlay_shards.NAMESPACE: value})
+
+        for value in ("x", [1]):
+            with self.subTest(value=value):
+                self.assertEqual(self.hand_written(lambda r: None, replace("object", value),
+                                                   replace("subject", value)), [])
+                problems = self.hand_written(replace("subject", value))
+                self.assertTrue(any("no annotation is a record of the PDF" in line for line in problems), problems)
 
 
 # ---------------------------------------------------------------------------
@@ -1095,7 +1114,7 @@ class TestCheckGenerated(OverlayCase):
 
     def test_it_fails_on_a_file_the_scan_refuses(self):
         self.ready()
-        self.annotation().write_text('{"source": {"type": "pdf"}}\n', encoding="utf-8")
+        self.annotation().write_text('{"subject": [{"type": "pdf"}], "object": []}\n', encoding="utf-8")
         self.reseal()
         done = self.tool("check_generated")
         self.assertEqual(done.returncode, 1)

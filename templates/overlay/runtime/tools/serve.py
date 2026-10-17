@@ -5,9 +5,9 @@ Ported from the hand-written PDF workflow of the first companion overlay this
 template generalises: that script carried one book's sha256, byte count, URLs,
 cache file name and route as constants, pinned one toolchain and one package
 manifest, and ran one companion's build steps. Everything specific now comes
-from `pdf-overlay/overlay.config.json` and the `source` of the Literature Links
-annotations in the bundle `GENERATED.json` records (read through
-`overlay_annotations.py`), both found from this file's own path.
+from `pdf-overlay/overlay.config.json` and the PDF subject ends of the
+Literature Links annotations in the bundle `GENERATED.json` records (read
+through `overlay_annotations.py`), both found from this file's own path.
 
 `docs/overlay.md` section 5 is the contract; section 1 rule 4 is why
 the PDF is cached under an ignored directory and served only on loopback at one
@@ -412,22 +412,22 @@ def load_config(overlay: Path) -> Config:
 
 
 def load_source_record(overlay: Path, config: Config) -> SourceRecord:
-    """The PDF identity: the `source` of the records whose PDF the config names.
+    """The PDF identity: a subject end of the records whose PDF the config names.
 
-    `source.uri` and the book pin's `url` are the official addresses, then the
-    overlay extension's `alternate_urls`; `sha256` is the pin's and `bytes`
-    the extension's.
+    The end's `uri` and its citation's `URL` are the official addresses, then
+    the overlay extension's `alternate_urls`; `sha256` is the end's, `bytes`
+    the extension's and the title the citation's.
     """
     try:
         source = overlay_annotations.pdf_source(overlay, config.source_id)
     except overlay_annotations.AnnotationError as error:
         fail(str(error))
     label = f"source {config.source_id}"
-    pin = source.get("pin") if isinstance(source.get("pin"), dict) else {}
+    citation = source.get("citation") if isinstance(source.get("citation"), dict) else {}
     ext = overlay_annotations.extension(source)
-    digest = pin.get("sha256")
+    digest = source.get("sha256")
     if not isinstance(digest, str) or not HEX64.fullmatch(digest):
-        fail(f"{label}: the pin carries no lowercase sha256")
+        fail(f"{label}: the end carries no lowercase sha256")
     size = ext.get("bytes")
     if size is not None and (not isinstance(size, int) or isinstance(size, bool) or size < 0):
         fail(f"{label}: bytes is not a nonnegative integer")
@@ -437,9 +437,9 @@ def load_source_record(overlay: Path, config: Config) -> SourceRecord:
     if not isinstance(alternates, list):
         fail(f"{label}: alternate_urls is not an array")
     urls: list[str] = []
-    for where, candidate in [("uri", source.get("uri")), ("pin.url", pin.get("url")),
+    for where, candidate in [("uri", source.get("uri")), ("citation.URL", citation.get("URL")),
                              *((f"alternate_urls[{n}]", u) for n, u in enumerate(alternates))]:
-        if where in ("uri", "pin.url") and (candidate is None or (
+        if where in ("uri", "citation.URL") and (candidate is None or (
                 isinstance(candidate, str) and not urllib.parse.urlsplit(candidate).scheme)):
             continue                 # absent, or a relative reference: nothing to fetch
         url = validate_https_url(candidate, f"{label}.{where}")
@@ -447,7 +447,7 @@ def load_source_record(overlay: Path, config: Config) -> SourceRecord:
             urls.append(url)
     return SourceRecord(
         id=config.source_id,
-        title=nonempty_string(pin.get("title"), f"{label}.pin.title"),
+        title=nonempty_string(citation.get("title"), f"{label}.citation.title"),
         sha256=digest,
         bytes=size,
         urls=tuple(urls),
