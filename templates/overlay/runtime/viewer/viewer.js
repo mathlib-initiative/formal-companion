@@ -6,16 +6,21 @@
  * Literature Links annotation file with its path, in one fetch. It takes
  * every per-companion value from them: the page
  * title and heading, the back link, the PDF route and its sha256, the pages,
- * the regions, the items, the cards, the verdicts. The pure half (the bundle,
- * the records, geometry, href rules, hashing) is in viewer-core.js, so
- * `node --test` reaches it without a DOM; this file keeps the injectable
- * `fetch` / `document` / `storage` seams the tests drive it through.
+ * the regions, the items, the cards, the verdicts. `../verso.json`, when the
+ * site build wrote one, gives a key card's statement Verso's tokens and hovers;
+ * without it, or for a card it has no statement for, the plain statement
+ * stays. The pure half (the bundle, the records, geometry, href rules,
+ * hashing, the Verso runs) is in viewer-core.js, so `node --test` reaches it
+ * without a DOM; this file keeps the injectable `fetch` / `document` /
+ * `storage` seams the tests drive it through.
  *
  * Security (docs/overlay.md section 4): every string from those files reaches
  * the DOM through `textContent` or an attribute setter, never `innerHTML`; an
  * `href` is used only when a card's page resolves to an `https:` URL or a
- * page of this site; the PDF is requested only from `config.pdf.route`;
- * PDF.js runs with `isEvalSupported: false`.
+ * page of this site, and a token's only when it is a page of this site; the
+ * hover card is placed through CSSOM, never a style attribute; the PDF is
+ * requested only from `config.pdf.route`; PDF.js runs with
+ * `isEvalSupported: false`.
  */
 import {
   CARD_PAGE_SIZE,
@@ -23,12 +28,15 @@ import {
   GENERATED_URL,
   MAX_JSON_BYTES,
   VERDICT_LABELS,
+  VERSO_URL,
   buildIndex,
   cardsMatching,
   coverageSummary,
   coverageWord,
   declarationVerdictDisplay,
+  docBlocks,
   firstKeyCard,
+  hoverText,
   labelParts,
   leanTokens,
   locatorTail,
@@ -39,16 +47,19 @@ import {
   quadToViewport,
   readConfig,
   readAnnotationsBlock,
+  readVerso,
   regionCoverage,
   regionVerdict,
   reviewFooter,
   sha256Hex,
   sharedRole,
+  siteHref,
   splitCards,
   splitName,
   verdictFooter,
   verdictLine,
   verifyPdfBytes,
+  versoRuns,
 } from "./viewer-core.js";
 
 export const PDF_MEDIA_TYPE = "application/pdf";
@@ -119,6 +130,18 @@ export async function loadAnnotations(config, fetchImpl = globalThis.fetch, cryp
   const files = parseBundle(decodeUtf8(bytes, block.bundle.path), block)
     .map(({ annotation, path }) => ({ path, records: [annotation], url: new URL(path, base).href }));
   return { files, index: buildIndex(files, config, { pageOrigin: new URL(pageUrl).origin, siteUrl: base }) };
+}
+
+/**
+ * Read `verso.json`, or null: a site built without one, or a file that does
+ * not read, leaves every card with its plain statement and no hovers.
+ */
+export async function loadVerso(fetchImpl = globalThis.fetch, url = VERSO_URL) {
+  try {
+    return readVerso(parseJsonBytes(await checkedFetch(url, fetchImpl), "verso.json"));
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -226,6 +249,11 @@ const KEY_CARDS = 8;
 const FILTER_ABOVE = 20;
 /** Room the floating PDF controls take at the bottom of the PDF pane. */
 const CONTROLS_ROOM = 64;
+/** The gap between a token and its hover card, and between the card and the window's edge. */
+const HOVER_GAP = 6;
+const HOVER_MARGIN = 8;
+/** Keys that move focus between a statement's tokens, by how far. */
+const TOKEN_STEPS = Object.freeze({ ArrowLeft: -1, ArrowRight: 1 });
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -245,6 +273,7 @@ export async function bootstrapViewer({
   generatedUrl = GENERATED_URL,
   pageUrl = globalThis.location?.href,
   pdfjsLoader = () => import("../vendor/pdfjs/pdf.min.mjs"),
+  versoUrl = VERSO_URL,
   windowRef = globalThis,
   storage = (() => {
     try {
@@ -267,7 +296,7 @@ export async function bootstrapViewer({
       "item-head", "item-label", "item-locator", "target-summary", "coverage-note", "verdict-notes",
       "key-section", "key-head", "key-count", "key-note", "key-list", "key-more",
       "related-section", "related-heading", "related-count", "related-list", "filter-empty", "target-filter",
-      "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note",
+      "related-pager", "previous-targets", "next-targets", "target-page", "provenance-note", "hover-card",
     ].map((id) => [id, element(documentRef, id)]),
   );
   const state = {
@@ -278,14 +307,19 @@ export async function bootstrapViewer({
     faithfulness: false,
     index: null,
     keysAll: false,
+    pageOrigin: "",
     pdfDocument: null,
     region: null,
     renderEpoch: 0,
     renderTask: null,
     rotation: 0,
     selected: null,
+    siteUrl: "",
+    verso: null,
     zoom: 100,
   };
+  /** The token whose hover card is open, if any. */
+  const hover = { token: null };
 
   /** An element with a class and text, both optional; every string goes in as text. */
   function make(tag, className, value) {
@@ -412,9 +446,11 @@ export async function bootstrapViewer({
   /**
    * A Lean statement, lightly tinted; the text is the snippet's, exactly. Each
    * source line is its own block, so a line too long for the panel wraps under
-   * its own indentation (a hanging indent), not back at the left edge.
+   * its own indentation (a hanging indent), not back at the left edge. With
+   * Verso `runs` (their texts joined are the snippet) a token carries its
+   * kind, its hover, its binding and its link.
    */
-  function leanNode(source) {
+  function leanNode(source, runs = null, statement = { bindings: new Map(), reveal: null, stops: [] }) {
     const node = make("pre", "lean");
     let line = null;
     let indent = 0;
@@ -432,7 +468,9 @@ export async function bootstrapViewer({
     let nb = null;
     let at = 0;
     let broken = true;
-    for (const [kind, value] of leanTokens(source)) {
+    for (const run of runs ?? leanTokens(source)) {
+      const [kind, value] = run;
+      const plain = !run[2] && !run[3] && !run[4];
       for (const part of value.split(/(?<=\n)/)) {
         if (broken) {
           close();
@@ -451,7 +489,8 @@ export async function bootstrapViewer({
             }
           }
           const piece = cuts.length ? rest.slice(0, cuts[0] - at) : rest;
-          (nb ?? line).append(kind === "tx" ? piece : make("span", `tk-${kind}`, piece));
+          (nb ?? line).append(!plain ? tokenNode(run, piece, statement)
+            : kind === "tx" ? piece : make("span", `tk-${kind}`, piece));
           at += piece.length;
           rest = rest.slice(piece.length);
         }
@@ -459,7 +498,135 @@ export async function bootstrapViewer({
       }
     }
     close();
+    // One tab stop per statement: the arrow keys move between its tokens.
+    statement.stops.forEach((stop, index) => {
+      stop.tabIndex = index ? -1 : 0;
+    });
     return node;
+  }
+
+  /** One Verso token: tinted by kind, a link when its target is on the site, with a hover when it has one. */
+  function tokenNode(run, piece, statement) {
+    const [kind, , , binding, href] = run;
+    const target = href ? siteHref(href, state.siteUrl, state.pageOrigin) : null;
+    const node = make(target ? "a" : "span", kind === "tx" ? "tok" : `tk-${kind}`, piece);
+    if (target) {
+      node.setAttribute("href", target);
+    }
+    if (binding) {
+      node.dataset.binding = String(binding);
+      statement.bindings.set(binding, [...(statement.bindings.get(binding) ?? []), node]);
+    }
+    const shown = hoverText(state.verso, run);
+    setClass(node, "has-hover", shown);
+    const bind = (on) => {
+      for (const other of binding ? statement.bindings.get(binding) : []) {
+        setClass(other, "is-bound", on);
+      }
+    };
+    const enter = () => {
+      bind(true);
+      if (shown) {
+        showHover(node, shown);
+      }
+    };
+    const leave = () => {
+      bind(false);
+      if (hover.token === node) {
+        hideHover();
+      }
+    };
+    node.addEventListener("pointerenter", (event) => event.pointerType !== "touch" && enter());
+    node.addEventListener("pointerleave", (event) => event.pointerType !== "touch" && leave());
+    if (!shown && !target) {
+      return node;
+    }
+    statement.stops.push(node);
+    node.addEventListener("focus", () => {
+      for (const stop of statement.stops) {
+        stop.tabIndex = stop === node ? 0 : -1;
+      }
+      statement.reveal?.(node);
+      enter();
+    });
+    node.addEventListener("blur", leave);
+    // A first tap opens the hover; a second follows the link.
+    let tapped = null;
+    node.addEventListener("pointerdown", (event) => {
+      tapped = event.pointerType === "touch" ? hover.token === node : null;
+    });
+    node.addEventListener("click", (event) => {
+      if (tapped === false && shown) {
+        event.preventDefault();
+        enter();
+      }
+      tapped = null;
+    });
+    node.addEventListener("keydown", (event) => {
+      const stops = statement.stops;
+      const at = stops.indexOf(node);
+      const next = event.key === "Home" ? 0 : event.key === "End" ? stops.length - 1
+        : event.key in TOKEN_STEPS ? Math.min(Math.max(at + TOKEN_STEPS[event.key], 0), stops.length - 1) : null;
+      if (next !== null) {
+        // The arrows turn the PDF's pages everywhere else.
+        event.preventDefault();
+        event.stopPropagation?.();
+        stops[next].focus?.();
+      }
+    });
+    return node;
+  }
+
+  /** The hover card's content: the signature, then the docstring's paragraphs and code, all as text. */
+  function hoverNodes({ doc, signature }) {
+    const nodes = signature ? [make("code", "hover-sig", signature)] : [];
+    for (const block of docBlocks(doc)) {
+      const node = make(block.code ? "pre" : "p", block.code ? "hover-code" : "hover-doc");
+      for (const [kind, value] of block.parts) {
+        node.append(kind === "code" && !block.code ? make("code", "", value) : value);
+      }
+      nodes.push(node);
+    }
+    return nodes;
+  }
+
+  /** Open the hover card by a token. */
+  function showHover(node, shown) {
+    const card = ui["hover-card"];
+    if (hover.token !== node) {
+      hover.token?.removeAttribute?.("aria-describedby");
+      card.replaceChildren(...hoverNodes(shown));
+    }
+    hover.token = node;
+    node.setAttribute("aria-describedby", "hover-card");
+    card.hidden = false;
+    placeHover();
+  }
+
+  /** The open card under its token, or above it when there is no room below, inside the window. */
+  function placeHover() {
+    const card = ui["hover-card"];
+    const at = hover.token?.getBoundingClientRect?.();
+    if (!at) {
+      return;
+    }
+    const size = card.getBoundingClientRect?.() ?? { height: 0, width: 0 };
+    const width = windowRef?.innerWidth ?? size.width;
+    const height = windowRef?.innerHeight ?? size.height;
+    // A token scrolled out of the window takes its card with it, until it is back.
+    card.hidden = at.bottom < 0 || at.top > height;
+    const below = at.bottom + HOVER_GAP;
+    const above = at.top - HOVER_GAP - size.height;
+    const top = below + size.height <= height - HOVER_MARGIN || above < HOVER_MARGIN ? below : above;
+    const left = Math.max(HOVER_MARGIN, Math.min(at.left, width - size.width - HOVER_MARGIN));
+    card.style.left = `${Math.round(left)}px`;
+    card.style.top = `${Math.round(top)}px`;
+  }
+
+  function hideHover() {
+    hover.token?.removeAttribute?.("aria-describedby");
+    hover.token = null;
+    ui["hover-card"].hidden = true;
   }
 
   /**
@@ -467,8 +634,9 @@ export async function bootstrapViewer({
    * than that and STATEMENT_SLACK, with a button to show the rest. A long
    * line counts as the lines it wraps to.
    */
-  function statementNodes(source) {
-    const pre = leanNode(source);
+  function statementNodes(source, runs = null) {
+    const statement = { bindings: new Map(), reveal: null, stops: [] };
+    const pre = leanNode(source, runs, statement);
     const lines = source.split("\n")
       .reduce((total, line) => total + Math.max(1, Math.ceil(line.length / STATEMENT_COLUMNS)), 0);
     if (lines <= STATEMENT_LINES + STATEMENT_SLACK) {
@@ -479,12 +647,24 @@ export async function bootstrapViewer({
     button.type = "button";
     button.setAttribute("aria-expanded", "false");
     let clamped = true;
-    button.addEventListener("click", () => {
+    const toggle = () => {
       clamped = !clamped;
       setClass(pre, "is-clamped", clamped);
       button.setAttribute("aria-expanded", String(!clamped));
       button.textContent = clamped ? "Show all" : "Show less";
-    });
+    };
+    button.addEventListener("click", toggle);
+    // A token the clamp hides opens the statement when it takes focus. Focus
+    // first scrolls the clamped block itself (its overflow is hidden) to show
+    // the token, so a scrolled block counts as hiding it too.
+    statement.reveal = (token) => {
+      if (clamped && (pre.scrollTop > 0
+                      || token.getBoundingClientRect?.().bottom > pre.getBoundingClientRect?.().bottom)) {
+        toggle();
+        pre.scrollTop = 0;
+        token.scrollIntoView?.({ block: "nearest" });
+      }
+    };
     return [pre, button];
   }
 
@@ -736,7 +916,7 @@ export async function bootstrapViewer({
     name.title = card.fullName;
     li.append(eyebrow(card), name);
     if (card.snippet?.text) {
-      li.append(...statementNodes(card.snippet.text));
+      li.append(...statementNodes(card.snippet.text, versoRuns(state.verso, card)));
     }
     return li;
   }
@@ -797,6 +977,7 @@ export async function bootstrapViewer({
   }
 
   function renderCards() {
+    hideHover();
     const item = state.selected;
     if (!item) {
       return;
@@ -885,6 +1066,7 @@ export async function bootstrapViewer({
   }
 
   function selectItem(itemId) {
+    hideHover();
     const item = itemId ? state.index.items.get(itemId) ?? null : null;
     state.selected = item;
     state.cardPage = 1;
@@ -1147,6 +1329,9 @@ export async function bootstrapViewer({
     state.config = await loadConfig(fetchImpl, configUrl);
     applyConfig(state.config);
     state.index = (await loadAnnotations(state.config, fetchImpl, cryptoProvider, pageUrl, generatedUrl)).index;
+    state.siteUrl = new URL(state.config.siteRoot, pageUrl).href;
+    state.pageOrigin = new URL(pageUrl).origin;
+    state.verso = await loadVerso(fetchImpl, versoUrl);
   } catch (error) {
     ui.workspace.hidden = true;
     setStatus("bad", "Data not loaded");
@@ -1253,10 +1438,14 @@ export async function bootstrapViewer({
     else if (event.key === "-") changeZoom(state.zoom - 10);
     else if (event.key.toLowerCase() === "r") rotate(90);
     else if (event.key === "Escape") {
-      if (state.selected && ui.details.contains?.(documentRef.activeElement)) backToPage();
+      if (hover.token) hideHover();
+      else if (state.selected && ui.details.contains?.(documentRef.activeElement)) backToPage();
       else selectRegion(null);
     }
   });
+  // An open hover card follows its token when anything scrolls or the window resizes.
+  documentRef.addEventListener("scroll", placeHover, { capture: true, passive: true });
+  windowRef?.addEventListener?.("resize", placeHover);
   // An edited `#page=` in the address bar; the viewer's own replaceState fires no hashchange.
   windowRef?.addEventListener?.("hashchange", () => {
     const page = rememberedPage(null, { locationRef });

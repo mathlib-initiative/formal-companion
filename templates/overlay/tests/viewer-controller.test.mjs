@@ -18,6 +18,8 @@ import {
   PAGE_URL,
   PDF_BYTES,
   PDF_ROUTE,
+  VERSO_TARGET,
+  VERSO_URL,
   fakeDocument,
   fakePdfjs,
   fakeSha256,
@@ -28,6 +30,7 @@ import {
   makeGenerated,
   linkRecord,
   makeSections,
+  makeVerso,
   memoryStorage,
   relinked,
   notFound,
@@ -52,6 +55,7 @@ async function start({
   pdfjs = fakePdfjs(),
   served = undefined,
   storage = memoryStorage(),
+  verso = undefined,
   windowRef = undefined,
 } = {}) {
   const record = generated === undefined ? await makeGenerated(sections) : generated;
@@ -71,6 +75,9 @@ async function start({
     }
     if (url === BUNDLE_URL) {
       return jsonResponse(served ?? bundleText(sections));
+    }
+    if (url === VERSO_URL) {
+      return verso === undefined ? notFound() : jsonResponse(verso);
     }
     throw new Error(`the viewer asked for ${url}`);
   };
@@ -165,10 +172,10 @@ async function selectPageRegion(documentRef, state, regionId) {
 
 // --- start-up ---------------------------------------------------------------
 
-test("start-up: the config, GENERATED.json, the one bundle and the route are fetched", async () => {
+test("start-up: the config, GENERATED.json, the one bundle, verso.json and the route are fetched", async () => {
   const { fetched, pdfjs } = await start();
   assert.deepEqual(fetched.map((call) => call.url),
-                   ["../overlay.config.json", "../GENERATED.json", BUNDLE_URL, PDF_ROUTE]);
+                   ["../overlay.config.json", "../GENERATED.json", BUNDLE_URL, VERSO_URL, PDF_ROUTE]);
   for (const call of fetched) {
     assert.deepEqual(call.options, { cache: "no-store", credentials: "same-origin" });
   }
@@ -924,6 +931,9 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
   assert.match(SHELL, /connect-src 'self'/);
   assert.match(SHELL, /object-src 'none'/);
   assert.doesNotMatch(SHELL, /type=["']file|Choose PDF|pdf-file/);
+  assert.match(SHELL, /content="default-src 'self'; script-src 'self'; worker-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'"/,
+               "the CSP is exactly as it was");
+  assert.match(SHELL, /<div id="hover-card" class="hover-card" role="tooltip" hidden><\/div>/, "one hover card, empty");
   assert.doesNotMatch(SHELL, /<script(?![^>]*\ssrc=)/, "no inline script");
   assert.doesNotMatch(SHELL, /<style|\sstyle=/, "no inline style");
   for (const gone of ["Verified loopback PDF", "Source item", "keyboard-help", "role-filter", "rotate-left",
@@ -937,7 +947,8 @@ test("shell: index.html is generic, keeps its CSP and has no file picker", async
     (name) => readFile(path.join(VIEWER_DIR, name), "utf8")));
   for (const source of [SHELL, ...sources]) {
     assert.doesNotMatch(source.replaceAll("http://www.w3.org/2000/svg", ""), /https?:\/\//);
-    assert.doesNotMatch(source, /\.innerHTML\s*=|outerHTML|insertAdjacentHTML|document\.write\(/);
+    assert.doesNotMatch(source, /\.innerHTML\s*=|outerHTML|insertAdjacentHTML|document\.write\(|DOMParser|createContextualFragment/);
+    assert.doesNotMatch(source, /setAttribute\(\s*["']style|\.cssText|\beval\(|new Function/);
   }
 });
 
@@ -966,4 +977,211 @@ test("shell: the title and heading are placeholders the configuration replaces",
   assert.equal(documentRef.title, "Another title");
   assert.equal(el(documentRef, "page-heading").textContent, "Another title");
   assert.equal(el(documentRef, "page-lede").hidden, true);
+});
+
+// --- Verso statements and hovers ----------------------------------------------
+
+const STATEMENT = "theorem volume_nonneg (b : Box) : 0 <= b.volume";
+
+/** Every element in a statement that carries a token, in reading order. */
+function tokensOf(node) {
+  const found = [];
+  const walk = (child) => {
+    if (typeof child !== "object" || !child) {
+      return;
+    }
+    if (/\b(tk-\w+|tok)\b/.test(String(child.className))) {
+      found.push(child);
+    }
+    (child.children ?? []).forEach(walk);
+  };
+  walk(node);
+  return found;
+}
+
+/** The theorem's key card with `verso.json` served, and its statement's tokens. */
+async function versoCard(options = {}) {
+  const documentRef = fakeDocument(SHELL);
+  const focused = [];
+  const create = documentRef.createElement;
+  documentRef.createElement = (tag) => Object.assign(create(tag), { focus() { focused.push(this); } });
+  const { result } = await start({ documentRef, verso: makeVerso(), ...options });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const [[, , pre]] = keyCards(documentRef);
+  const tokens = tokensOf(pre);
+  const named = (text, nth = 0) => tokens.filter((node) => node.textContent === text)[nth];
+  return { card: el(documentRef, "hover-card"), documentRef, focused, named, pre, result, tokens };
+}
+
+test("verso: a key card's statement carries Verso's tokens and links, and says exactly the snippet", async () => {
+  const { pre, tokens } = await versoCard();
+  assert.equal(textOf(pre), STATEMENT, "the statement's text is the snippet's, exactly");
+  assert.deepEqual(tokens.map((node) => [node.tagName, node.className, node.textContent]), [
+    ["SPAN", "tk-kw", "theorem"],
+    ["SPAN", "tk-const has-hover", "volume_nonneg"],
+    ["SPAN", "tok", "("],
+    ["SPAN", "tk-var has-hover", "b"],
+    ["A", "tk-const has-hover", "Box"],
+    ["SPAN", "tok", ")"],
+    ["SPAN", "tk-var has-hover", "b"],
+    ["SPAN", "tk-const has-hover", "volume"],
+  ]);
+  assert.equal(tokens[4].attributes.href, `${ORIGIN}/Notes/Box/index.html#Notes___Box`);
+  assert.equal(tokens[7].attributes.href, undefined, "a token never links an address off the site");
+  assert.deepEqual(tokens.map((node) => node.tabIndex), [undefined, 0, undefined, -1, -1, undefined, -1, -1],
+                   "one tab stop per statement");
+  assert.deepEqual(tokens.map((node) => node.dataset.binding), [undefined, undefined, "2", "1", undefined, "2", "1", undefined]);
+});
+
+test("verso: a hover opens on the pointer and on focus, lights its binding, and Escape closes it", async () => {
+  const { card, documentRef, named, result } = await versoCard();
+  assert.equal(card.hidden, true);
+  const [b, otherB, box] = [named("b"), named("b", 1), named("Box")];
+  await fire(b, "pointerenter", { pointerType: "mouse" });
+  assert.equal(card.hidden, false);
+  assert.equal(textOf(card), "b : Box", "a variable's hover is its name and type");
+  assert.equal(b.attributes["aria-describedby"], "hover-card");
+  assert.ok([b, otherB].every((node) => node.classList.contains("is-bound")), "both uses of b are lit");
+  await fire(b, "pointerleave", { pointerType: "mouse" });
+  assert.equal(card.hidden, true);
+  assert.equal(b.attributes["aria-describedby"], undefined);
+  assert.ok(![b, otherB].some((node) => node.classList.contains("is-bound")));
+
+  await fire(box, "focus");
+  assert.equal(card.hidden, false);
+  assert.deepEqual(card.children.map((node) => [node.tagName, node.className]),
+                   [["CODE", "hover-sig"], ["P", "hover-doc"], ["P", "hover-doc"]]);
+  assert.deepEqual(card.children.map(textOf), ["Notes.Box : Type", "A box: a product of n intervals.", "See Box.volume."]);
+  assert.equal(card.children[1].children[1].tagName, "CODE", "inline code in a docstring is code");
+  assert.deepEqual([box.tabIndex, named("volume_nonneg").tabIndex], [0, -1], "focus moves the tab stop");
+  await fire(documentRef, "keydown", { key: "Escape", target: box });
+  assert.equal(card.hidden, true);
+  assert.equal(el(documentRef, "selection").hidden, false, "the first Escape only closes the hover");
+  assert.equal(result.state.selected?.id, "item:theorem-1.1");
+});
+
+test("verso: the arrow keys move between a statement's tokens and never turn the page", async () => {
+  const { focused, named, result } = await versoCard();
+  let at = named("Box");
+  const moves = [];
+  for (const key of ["ArrowRight", "ArrowRight", "ArrowRight", "Home", "ArrowLeft", "End", "ArrowLeft"]) {
+    let stopped = false;
+    let prevented = false;
+    await fire(at, "keydown", { key, preventDefault() { prevented = true; }, stopPropagation() { stopped = true; } });
+    at = focused.at(-1);
+    moves.push([at.textContent, stopped && prevented]);
+  }
+  assert.deepEqual(moves.map(([text]) => text), ["b", "volume", "volume", "volume_nonneg", "volume_nonneg", "volume", "b"]);
+  assert.ok(moves.every(([, kept]) => kept), "every move is the statement's own");
+  let prevented = false;
+  await fire(at, "keydown", { key: "Tab", preventDefault() { prevented = true; } });
+  assert.equal(prevented, false, "Tab leaves the statement");
+  assert.equal(result.state.currentPage, 2, "still the theorem's page");
+});
+
+test("verso: on touch a first tap opens the hover and a second follows the link", async () => {
+  const { card, named } = await versoCard();
+  const box = named("Box");
+  await fire(box, "pointerenter", { pointerType: "touch" });
+  assert.equal(card.hidden, true, "a touch never hovers");
+  const tap = async () => {
+    let prevented = false;
+    await fire(box, "pointerdown", { pointerType: "touch" });
+    await fire(box, "click", { preventDefault() { prevented = true; } });
+    return prevented;
+  };
+  assert.equal(await tap(), true);
+  assert.equal(card.hidden, false);
+  assert.equal(textOf(card.children[0]), "Notes.Box : Type");
+  assert.equal(await tap(), false, "the second tap is the link's");
+});
+
+test("verso: leaving the item closes an open hover", async () => {
+  const { card, documentRef, named } = await versoCard();
+  await fire(named("volume_nonneg"), "pointerenter", { pointerType: "mouse" });
+  assert.equal(card.hidden, false);
+  await fire(el(documentRef, "back-to-page"), "click");
+  assert.equal(card.hidden, true);
+});
+
+test("verso: without verso.json, or with another statement in it, a card keeps its plain statement", async () => {
+  const other = makeVerso();
+  other.statements[VERSO_TARGET][0][0] = ["kw", "lemma"];
+  for (const [label, verso] of [["absent", undefined], ["not JSON", "{oops"], ["another text", other],
+                                ["another schema", { ...makeVerso(), schema: "x" }]]) {
+    const { documentRef, result } = await start({ verso });
+    assert.equal(el(documentRef, "status").textContent, "Verified PDF", label);
+    assert.equal(el(documentRef, "error").hidden, true, label);
+    await selectPageRegion(documentRef, result.state, "loc:0001");
+    const [[, , pre]] = keyCards(documentRef);
+    assert.equal(textOf(pre), STATEMENT, label);
+    assert.deepEqual(tokensOf(pre).map((node) => node.className), ["tk-kw"], `${label}: the plain tint`);
+  }
+});
+
+test("verso: the hover card sits under its token, above it near the window's foot, and inside the window", async () => {
+  const documentRef = fakeDocument(SHELL);
+  const create = documentRef.createElement;
+  documentRef.createElement = (tag) => Object.assign(create(tag), {
+    getBoundingClientRect() { return this.rect ?? { bottom: 0, left: 0, right: 0, top: 0 }; },
+  });
+  const windowRef = { innerHeight: 800, innerWidth: 1000 };
+  const { result } = await start({ documentRef, verso: makeVerso(), windowRef });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const card = el(documentRef, "hover-card");
+  card.getBoundingClientRect = () => ({ height: 100, width: 300 });
+  const [[, , pre]] = keyCards(documentRef);
+  const box = tokensOf(pre).find((node) => node.textContent === "Box");
+  const place = async (rect) => {
+    box.rect = rect;
+    await fire(box, "pointerenter", { pointerType: "mouse" });
+    const at = [card.style.left, card.style.top, card.hidden];
+    await fire(box, "pointerleave", { pointerType: "mouse" });
+    return at;
+  };
+  assert.deepEqual(await place({ bottom: 120, left: 200, right: 230, top: 100 }), ["200px", "126px", false]);
+  assert.deepEqual(await place({ bottom: 760, left: 200, right: 230, top: 740 }), ["200px", "634px", false],
+                   "no room below: above the token");
+  assert.deepEqual(await place({ bottom: 120, left: 900, right: 930, top: 100 }), ["692px", "126px", false],
+                   "never past the window's right edge");
+  assert.deepEqual(await place({ bottom: -10, left: 200, right: 230, top: -30 }).then((at) => at[2]), true,
+                   "a token scrolled away hides its card");
+});
+
+test("verso: focus on a token the clamp hides opens the whole statement", async () => {
+  const sections = makeSections(PDF_SHA256);
+  const lines = Array.from({ length: 24 }, (_, n) => `  h${n} : b = b`);
+  const text = `theorem volume_nonneg (b : Box) :\n${lines.join("\n")}`;
+  linkRecord(sections, "item:theorem-1.1", "key", "Notes.Box.volume_nonneg").object[0].extensions[NAMESPACE].snippet.text = text;
+  const verso = makeVerso();
+  const tail = lines.flatMap((line, n) => [["tx", `\n  h${n} : `], ["var", "b", 2, 1], ["tx", " = "], ["var", "b", 2, 1]]);
+  verso.statements[VERSO_TARGET][0] = [...verso.statements[VERSO_TARGET][0].slice(0, 9), ["tx", " :"], ...tail];
+  const documentRef = fakeDocument(SHELL);
+  const create = documentRef.createElement;
+  documentRef.createElement = (tag) => Object.assign(create(tag), {
+    getBoundingClientRect() { return this.rect ?? { bottom: 0, left: 0, right: 0, top: 0 }; },
+  });
+  const { result } = await start({ documentRef, sections, verso });
+  await selectPageRegion(documentRef, result.state, "loc:0001");
+  const [[, , pre, button]] = keyCards(documentRef);
+  assert.equal(textOf(pre), text);
+  assert.deepEqual([pre.className, button.textContent], ["lean is-clamped", "Show all"]);
+  pre.rect = { bottom: 300, left: 0, right: 600, top: 0 };
+  const tokens = tokensOf(pre).filter((node) => node.textContent === "b");
+  tokens[1].rect = { bottom: 120, left: 0, right: 10, top: 100 };
+  await fire(tokens[1], "focus");
+  assert.equal(pre.className, "lean is-clamped", "a token in sight leaves the clamp");
+  tokens.at(-1).rect = { bottom: 520, left: 0, right: 10, top: 500 };
+  await fire(tokens.at(-1), "focus");
+  assert.deepEqual([pre.className, button.textContent, button.attributes["aria-expanded"]], ["lean", "Show less", "true"]);
+
+  // A browser scrolls the clamped block to the focused token, which is then in sight inside it.
+  await fire(button, "click");
+  assert.equal(pre.className, "lean is-clamped");
+  let shown = null;
+  tokens.at(-2).scrollIntoView = (options) => { shown = options; };
+  pre.scrollTop = 380;
+  await fire(tokens.at(-2), "focus");
+  assert.deepEqual([pre.className, pre.scrollTop, shown], ["lean", 0, { block: "nearest" }],
+                   "a block focus scrolled opens, back at its top, with the token in view");
 });
