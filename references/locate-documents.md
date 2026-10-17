@@ -434,6 +434,9 @@ challenge, which the export reads and nothing else writes:
  "runs": {"inventory": "r-…", "locate": "r-…", "challenge": "r-…"}}
 ```
 
+A row may also carry the passage's layer `span` from the frozen inventory; the
+bench (`references/locate-bench.md` §8) joins runs to gold by it, and reads it from
+the inventory documents when the row does not.
 `proof_status` and `statement` are joined from `corpus.sqlite` at harvest;
 `status` is `cflib.vocab.derive_status` over the surviving locations and the
 absence; an unresolved passage has `status: null`. A passage whose challenge is

@@ -118,6 +118,30 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- `cf bench build | anchor | freeze | score | compare`, the locate benchmark
+  (`docs/proposals/wikipedia-locate.md` §8 and §9; formats in
+  `references/locate-bench.md`). `build` resolves a tier list against a pinned
+  sourceset (refusing an article it lacks or holds unrendered), draws the
+  uniform and curated samples with recorded inclusion probabilities, clusters
+  articles by shared QIDs and G1 accept sets, splits by each cluster's hash and
+  samples the G3 spans from `paragraphs.json`, writing a label-free host
+  manifest. `anchor` resolves Mathlib's curated lists and the `@[wikidata]` tags
+  at the universe's commit through a rename table, widens the accept set with
+  `to_additive` twins, and drives the frozen labeler
+  (`workflows/locate-label.workflow.js`: G1 anchors, G3 blind labels with
+  independent hunters re-checked at the pin, the tag-blind recall *h*, GX
+  inventories) by emit and transcribe, refusing a result from another labeler.
+  `freeze` writes the gold manifest, irreversibly (a change is a new version),
+  and `--plant` the module-ablated index. `score` joins runs to gold by span
+  overlap (four whole words, one to one), computes every §8.2 metric per tier
+  with article-cluster bootstrap intervals, the false-not-formalized causes and
+  each miss's error code, and a `measurement_id` over every pin; it refuses an
+  incomplete receipt, edited gold, an uncovered split and a transcript holding a
+  label canary. `compare` refuses a model or renderer change and applies the §9
+  acceptance rule (paired intervals, safety bounds, strata, cost, the A/A run,
+  alpha-spending), claiming a decision only past 150 eval articles or 400 gold
+  positives, and records it in the loop ledger. `cflib.vocab` gains the
+  labeler's modes. `cf score` is unchanged.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the
