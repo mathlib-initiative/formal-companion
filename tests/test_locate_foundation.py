@@ -1139,9 +1139,12 @@ class TestTheDocumentsSayWhatIsBuilt(unittest.TestCase):
             self.assertIn(f"`{value}`", skill)
         self.assertIn("### 4.1 Licence classes", policy)
 
-    def test_the_network_exception_is_named_and_not_implemented(self):
+    def test_the_network_exception_is_named_with_its_one_module(self):
+        """Built by the sources package: the exception names the module and the opt-in."""
         claude = " ".join((SKILL / "CLAUDE.md").read_text(encoding="utf-8").split())
-        self.assertRegex(claude, r"the Wikipedia fetcher .{0,200}\*not implemented\*")
+        self.assertRegex(claude, r"the Wikipedia fetcher .{0,200}`scripts/sources/wikinet\.py`")
+        self.assertRegex(claude, r"wikinet\.py`.{0,400}--execute")
+        self.assertTrue((SCRIPTS / "sources" / "wikinet.py").is_file())
 
     def test_the_spec_states_the_new_production(self):
         spec = (SKILL / "docs" / "design" / "stage_map.md").read_text(encoding="utf-8")

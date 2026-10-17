@@ -1,0 +1,45 @@
+{
+ "json": {
+  "query": {
+   "pages": [
+    {
+     "ns": 0,
+     "pageid": 1001,
+     "pageprops": {
+      "wikibase_item": "Q99999001"
+     },
+     "revisions": [
+      {
+       "parentid": 1999,
+       "revid": 2002
+      }
+     ],
+     "title": "Widget lemma"
+    },
+    {
+     "ns": 0,
+     "pageid": 1002,
+     "pageprops": {
+      "wikibase_item": "Q99999002"
+     },
+     "revisions": [
+      {
+       "parentid": 2000,
+       "revid": 2003
+      }
+     ],
+     "title": "Gadget theorem"
+    }
+   ]
+  }
+ },
+ "query": {
+  "action": "query",
+  "format": "json",
+  "formatversion": "2",
+  "pageids": "1001|1002",
+  "ppprop": "wikibase_item",
+  "prop": "revisions|pageprops",
+  "rvprop": "ids"
+ }
+}

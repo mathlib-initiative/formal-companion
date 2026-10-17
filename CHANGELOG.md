@@ -118,6 +118,23 @@ release has something to say.
   `v1.0.0` must be regenerated.
 
 ### Added
+- Locate L1, web sources (`docs/proposals/wikipedia-locate.md` §2.1, §2.2, §3;
+  `references/locate-documents.md` §7). `cf sourceset create | enumerate-wikiproject
+  | adopt | fetch | render | status` keeps a sourceset of page revisions as
+  append-only, chained manifest versions (a dropped source, a changed recorded
+  value or a second writer is refused) with one directory per revision.
+  `scripts/sources/wikinet.py` is the one module that reaches Wikipedia — the
+  PageAssessments listing, page infos fifty at a time, and each revision's
+  `action=parse` output once with one fixed parameter set, through curl with
+  `maxlag`, a polite interval and retries, only under `--execute`; recorded
+  responses replay with `--fixtures`. `scripts/sources/websource.py` is the
+  identity (`params_sha256`, the manifest entry and its checks, the permalink
+  from the family's template). `scripts/sources/render_html.py`, frozen as
+  `web-html/1`, renders the canonical body into the Literature Links layer
+  (`textContent`, ASCII whitespace collapsed), the formulas, the head text, the
+  reading copy and its layer map, sections, blocks and the three deterministic
+  finders; a parity test against the consumer's text layer runs when
+  `CF_WIKILEAN_LAYER` names its output.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the
