@@ -285,8 +285,30 @@ def relation_to_mathlib(checkout: Path) -> str:
     return "mathlib" if family_of(checkout) else "none"
 
 
+#: ``cflib.gitsafe.SAFE_CONFIG`` and ``SAFE_ENV``, inlined because this file runs on
+#: the run host with no ``cflib`` on the path (the reason ``gate/verify_findings.py``
+#: inlines them too).  A library checkout is a third party's tree: these stop git
+#: from running an fsmonitor hook, a hooks path, an external diff, a pager, an ssh
+#: command or an askpass program it names.  ``tests/test_locate_corpus.py`` pins both
+#: equal to gitsafe's.
+_GIT_SAFE_CONFIG: tuple[str, ...] = (
+    "-c", "core.fsmonitor=",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "diff.external=",
+    "-c", "core.pager=cat",
+    "-c", "core.sshCommand=",
+    "-c", "core.askPass=",
+)
+_GIT_SAFE_ENV: dict[str, str] = {
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "GIT_OPTIONAL_LOCKS": "0",
+    "GIT_TERMINAL_PROMPT": "0",
+}
+
+
 def _git(directory: Path, *args: str) -> str:
-    out = subprocess.run(["git", "-C", str(directory), *args], capture_output=True, text=True)
+    out = subprocess.run(["git", *_GIT_SAFE_CONFIG, "-C", str(directory), *args], capture_output=True,
+                         text=True, env={**os.environ, **_GIT_SAFE_ENV})
     return out.stdout.strip() if out.returncode == 0 else ""
 
 
