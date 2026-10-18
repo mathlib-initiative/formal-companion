@@ -46,7 +46,9 @@ from plan import presets as presets_mod  # noqa: E402
 
 
 def scratch(case: unittest.TestCase) -> Path:
-    path = Path(tempfile.mkdtemp())
+    # resolved: the planner writes resolved paths, and on macOS the temporary directory
+    # is reached through a symlink (/var -> /private/var)
+    path = Path(tempfile.mkdtemp()).resolve()
     case.addCleanup(shutil.rmtree, path, ignore_errors=True)
     return path / "ws"
 
