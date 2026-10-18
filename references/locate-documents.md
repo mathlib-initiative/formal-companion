@@ -724,7 +724,13 @@ components, cut at a `.`, are (`Prime` and `Nat.Prime`). Within a tier the name
 with fewer words comes first, then `bm25`; `score` is `-bm25` of the match that
 found the row (the name phrase for an identifier), so it orders rows within a
 tier. `bm25` alone rewards a name that repeats the query's words, which on a
-real library put an identifier hundreds of rows under its own lemmas. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
+real library put an identifier hundreds of rows under its own lemmas. Every
+search reads the FTS5 index first and joins its matches to `decls` by rowid
+(`CROSS JOIN`, the library filter written `+d.library = ?` so no index serves
+it): a `--library` search costs what the unfiltered one does, never a walk of
+the library's rows with the match re-run per row (about 90 s a call on the field
+universe under SQLite 3.43's planner). The schema is unchanged, so a database
+built before this is read as it is. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
 (bad arguments, one that is not valid UTF-8 included), 3 (the database could not
 be read — a host problem); never a traceback.
 
