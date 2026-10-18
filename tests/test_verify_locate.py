@@ -105,7 +105,9 @@ class Fixture:
 
     def __init__(self, case: unittest.TestCase, mode: str = "locate-inventory", *,
                  curated: bool = True, blind: bool = False):
-        self.root = Path(tempfile.mkdtemp())
+        # resolved: the gate resolves --root, and on macOS the temp directory is
+        # a symlink (/var/folders -> /private/var/folders)
+        self.root = Path(tempfile.mkdtemp()).resolve()
         case.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
         self.mode = mode
         sdir = self.root / "sourcesets" / "wpm" / "sources" / SID
