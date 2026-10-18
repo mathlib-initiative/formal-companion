@@ -20,9 +20,17 @@ the files references/locate-documents.md section 8 fixes::
 ``cf`` never builds a library (the rule ``detect-proxies --lean`` follows):
 ``probe-command`` PRINTS the per-library pipeline for the operator to run on
 the host, and ``ingest`` reads the probe's output when it has come back.
+
+**Where a universe lives.**  In a workspace, ``corpora/<universe>/``.  Every
+subcommand also takes ``--base <dir>``: the universe is then
+``<dir>/<universe>/`` with the same layout (``cflib.paths.CorporaPaths``) and no
+workspace is read at all -- how a universe kept on the run host, beside the
+indexes the drivers wrote, is initialised, filled, built and searched.  A base
+inside this skill's checkout is refused, as ``cf init`` refuses a workspace there.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import shlex
@@ -33,6 +41,7 @@ from cflib import log
 from cflib.errors import CfError
 from cflib.hashing import short
 from cflib.log import format_table as _format_table
+from cflib.paths import CorporaPaths, skill_root
 from cflib.workspace import from_args
 
 from corpus import build_db, ingest as ingest_mod, query
@@ -45,15 +54,27 @@ DRIVERS = ("scripts/corpus/build_universe_host.sh", "scripts/corpus/probe_host.s
 DEFAULT_MIN_FREE_GB = 450
 
 
+def _base_option() -> argparse.ArgumentParser:
+    """``--base``, which every subcommand takes (the module docstring says what it is)."""
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--base", default=None, metavar="DIR",
+                        help="the directory holding <universe>/ (universe.yaml, index/, "
+                             "corpus.sqlite) when the universe is outside any workspace, e.g. "
+                             "on the run host; no workspace is read")
+    return common
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser("corpus", help="universes of Lean libraries: indexes and corpus.sqlite")
     sub = p.add_subparsers(dest="corpus_command", metavar="<subcommand>")
+    common = [_base_option()]
 
-    init = sub.add_parser("init", help="create corpora/<universe>/universe.yaml")
+    init = sub.add_parser("init", parents=common, help="create corpora/<universe>/universe.yaml")
     init.add_argument("universe")
     init.add_argument("--frozen", default=None, help="the date the set is fixed (default: today)")
 
-    add = sub.add_parser("add", help="pin one library in a universe, or exclude it with a reason")
+    add = sub.add_parser("add", parents=common,
+                         help="pin one library in a universe, or exclude it with a reason")
     add.add_argument("universe")
     add.add_argument("--library", required=True, help="the universe-local id (a document's `library`)")
     add.add_argument("--repo", help="https repository URL")
@@ -67,7 +88,8 @@ def register(subparsers) -> None:
     add.add_argument("--exclude", default=None, metavar="REASON",
                      help="record the library as excluded (failed to build or probe), with why")
 
-    probe = sub.add_parser("probe-command", help="print the host pipeline for one library (runs nothing)")
+    probe = sub.add_parser("probe-command", parents=common,
+                           help="print the host pipeline for one library (runs nothing)")
     probe.add_argument("universe")
     probe.add_argument("--library", default=None)
     probe.add_argument("--canary", action="store_true", help="the acceptance canary of a toolchain")
@@ -78,7 +100,8 @@ def register(subparsers) -> None:
     probe.add_argument("--min-free-gb", type=int, default=DEFAULT_MIN_FREE_GB,
                        help=f"the disk floor the driver keeps (default {DEFAULT_MIN_FREE_GB})")
 
-    ing = sub.add_parser("ingest", help="ingest a probe index (or a canary) into the universe")
+    ing = sub.add_parser("ingest", parents=common,
+                         help="ingest a probe index (or a canary) into the universe")
     ing.add_argument("universe")
     ing.add_argument("--library", default=None)
     ing.add_argument("--from", dest="source", required=True,
@@ -92,18 +115,21 @@ def register(subparsers) -> None:
                           "which the probe's canary never checked; the reason is recorded in "
                           "universe.yaml")
 
-    bdb = sub.add_parser("build-db", help="build corpus.sqlite from the ingested indexes")
+    bdb = sub.add_parser("build-db", parents=common,
+                         help="build corpus.sqlite from the ingested indexes")
     bdb.add_argument("universe")
     bdb.add_argument("--force", action="store_true", help="rebuild even when it is current")
     bdb.add_argument("--blind", action="store_true",
                      help="build corpus.blind.sqlite instead: the G1-blind database, with no tags "
                           "and no Wikipedia links in the docstrings")
 
-    st = sub.add_parser("status", help="libraries, canaries, indexes and the database")
+    st = sub.add_parser("status", parents=common,
+                        help="libraries, canaries, indexes and the database")
     st.add_argument("universe")
     st.add_argument("--json", action="store_true", dest="as_json")
 
-    se = sub.add_parser("search", help="word search over corpus.sqlite, as the host tool does")
+    se = sub.add_parser("search", parents=common,
+                        help="word search over corpus.sqlite, as the host tool does")
     se.add_argument("universe")
     se.add_argument("words", nargs="+")
     se.add_argument("--library", default=None)
@@ -112,7 +138,7 @@ def register(subparsers) -> None:
                     help="only declarations matching every word (default: any word)")
     se.add_argument("--json", action="store_true", dest="as_json")
 
-    sh = sub.add_parser("show", help="one declaration of corpus.sqlite")
+    sh = sub.add_parser("show", parents=common, help="one declaration of corpus.sqlite")
     sh.add_argument("universe")
     sh.add_argument("library")
     sh.add_argument("declaration")
@@ -124,27 +150,48 @@ def run(args) -> int:
     if not command:
         raise CfError("cf corpus needs a subcommand",
                       hint="init, add, probe-command, ingest, build-db, status, search or show")
-    workspace = from_args(args)
+    paths = universe_paths(args)
     handler = {"init": _init, "add": _add, "probe-command": _probe_command, "ingest": _ingest,
                "build-db": _build_db, "status": _status, "search": _search,
                "show": _show}[command]
-    return handler(workspace, args)
+    return handler(paths, args)
+
+
+def universe_paths(args):
+    """Where the universes are: ``--base <dir>``, else the workspace's ``corpora/``.
+
+    Both answers have the one layout (``CorporaPaths``); the handlers below use
+    nothing of a workspace but these paths.
+    """
+    base = getattr(args, "base", None)
+    if not base:
+        return from_args(args).paths
+    root = Path(base).expanduser().resolve()
+    skill = skill_root()
+    if root == skill or skill in root.parents:
+        raise CfError(f"refusing a universe base inside the skill repo ({skill})",
+                      hint="the skill repo holds code, templates and docs only; keep universes "
+                           "in a workspace's corpora/ or a directory such as ~/atlas/corpus")
+    if not root.is_dir():
+        raise CfError(f"--base {base}: no such directory",
+                      hint="create it first; --base names the directory that holds <universe>/")
+    return CorporaPaths(root)
 
 
 def format_table(rows: list[dict], columns: list[str]) -> str:
     return _format_table(columns, [[row.get(c) for c in columns] for row in rows])
 
 
-def _load(workspace, universe_id: str) -> Universe:
-    return Universe.load(workspace.paths.universe_yaml(universe_id))
+def _load(paths, universe_id: str) -> Universe:
+    return Universe.load(paths.universe_yaml(universe_id))
 
 
 # ---------------------------------------------------------------------------
 # init, add
 
 
-def _init(workspace, args) -> int:
-    path = workspace.paths.universe_yaml(args.universe)
+def _init(paths, args) -> int:
+    path = paths.universe_yaml(args.universe)
     universe = Universe.create(path, args.universe, args.frozen)
     path.parent.mkdir(parents=True, exist_ok=True)
     universe.save()
@@ -152,8 +199,8 @@ def _init(workspace, args) -> int:
     return 0
 
 
-def _add(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _add(paths, args) -> int:
+    universe = _load(paths, args.universe)
     if args.exclude is not None:
         row = universe.exclude(args.library, args.exclude)
         universe.save()
@@ -170,7 +217,7 @@ def _add(workspace, args) -> int:
         src = Path(args.conventions).expanduser()
         if not src.is_file():
             raise CfError(f"no conventions file at {src}")
-        dest = workspace.paths.universe_conventions_md(args.universe, args.library)
+        dest = paths.universe_conventions_md(args.universe, args.library)
         conventions = f"conventions/{dest.name}"
         if dest.exists() and dest.read_bytes() != src.read_bytes():
             raise CfError(f"{dest} already holds other conventions",
@@ -199,8 +246,8 @@ def _add(workspace, args) -> int:
 # probe-command
 
 
-def _probe_command(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _probe_command(paths, args) -> int:
+    universe = _load(paths, args.universe)
     if args.canary:
         if not args.toolchain:
             raise CfError("--canary needs --toolchain", hint="e.g. leanprover/lean4:v4.34.0")
@@ -305,8 +352,8 @@ def _canary_pipeline(universe: Universe, toolchain: str, root: str | None) -> st
 # ingest, build-db
 
 
-def _ingest(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _ingest(paths, args) -> int:
+    universe = _load(paths, args.universe)
     source = Path(args.source).expanduser()
     if args.canary:
         result = ingest_mod.check_canary(universe, source)
@@ -323,7 +370,7 @@ def _ingest(workspace, args) -> int:
     if checkout is not None and not checkout.is_dir():
         raise CfError(f"no checkout directory at {checkout}")
     manifest = ingest_mod.ingest(universe, args.library, source,
-                                 workspace.paths.universe_index_dir(args.universe, args.library),
+                                 paths.universe_index_dir(args.universe, args.library),
                                  checkout=checkout, accept_published=args.accept_published)
     universe.save()
     statuses = ", ".join(f"{k} {v}" for k, v in manifest["by_proof_status"].items())
@@ -347,11 +394,11 @@ def _ingest(workspace, args) -> int:
     return 0
 
 
-def _build_db(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
-    db = (workspace.paths.corpus_db_blind(args.universe) if args.blind
-          else workspace.paths.corpus_db(args.universe))
-    result = build_db.build(universe, workspace.paths.universe_dir(args.universe), db,
+def _build_db(paths, args) -> int:
+    universe = _load(paths, args.universe)
+    db = (paths.corpus_db_blind(args.universe) if args.blind
+          else paths.corpus_db(args.universe))
+    result = build_db.build(universe, paths.universe_dir(args.universe), db,
                             force=args.force, blind=args.blind)
     if result["built"]:
         universe.save()
@@ -368,12 +415,12 @@ def _build_db(workspace, args) -> int:
 # status, search, show
 
 
-def _status(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _status(paths, args) -> int:
+    universe = _load(paths, args.universe)
     databases = {}
     for blind, path, recorded in (
-            (False, workspace.paths.corpus_db(args.universe), universe.corpus_db),
-            (True, workspace.paths.corpus_db_blind(args.universe), universe.corpus_db_blind)):
+            (False, paths.corpus_db(args.universe), universe.corpus_db),
+            (True, paths.corpus_db_blind(args.universe), universe.corpus_db_blind)):
         state = "not built"
         if recorded:
             state = ("current" if build_db.current(universe, path, blind=blind)
@@ -388,7 +435,7 @@ def _status(workspace, args) -> int:
         conventions = lib.get("conventions")
         confirmed = False
         if conventions:
-            conv = workspace.paths.universe_dir(args.universe) / conventions
+            conv = paths.universe_dir(args.universe) / conventions
             confirmed = conv.is_file() and "confirmed_by:" in conv.read_text(encoding="utf-8")
         rows.append({"library": lib["id"], "commit": short(lib["commit"]),
                      "lean": lean_version(lib["toolchain"]),
@@ -426,9 +473,9 @@ def _status(workspace, args) -> int:
     return 0
 
 
-def _open(workspace, universe_id: str):
-    universe = _load(workspace, universe_id)
-    db = workspace.paths.corpus_db(universe_id)
+def _open(paths, universe_id: str):
+    universe = _load(paths, universe_id)
+    db = paths.corpus_db(universe_id)
     conn = query.open_db(db)
     if query.meta(conn).get("universe_sha256") != universe.sha256():
         log.warn(f"{db} was built for another state of universe {universe_id}; "
@@ -436,8 +483,8 @@ def _open(workspace, universe_id: str):
     return conn
 
 
-def _search(workspace, args) -> int:
-    conn = _open(workspace, args.universe)
+def _search(paths, args) -> int:
+    conn = _open(paths, args.universe)
     try:
         results = query.search(conn, args.words, library=args.library, limit=args.limit,
                                all_words=args.all_words)
@@ -456,8 +503,8 @@ def _search(workspace, args) -> int:
     return 0
 
 
-def _show(workspace, args) -> int:
-    conn = _open(workspace, args.universe)
+def _show(paths, args) -> int:
+    conn = _open(paths, args.universe)
     try:
         record = query.declaration(conn, args.library, args.declaration)
     finally:

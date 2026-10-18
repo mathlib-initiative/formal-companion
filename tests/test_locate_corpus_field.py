@@ -192,6 +192,76 @@ class TestD4TheTemplateFindsEscapedModulesSources(unittest.TestCase):
         self.assertIn("def probeRevision : Nat := 2", TEMPLATE.read_text(encoding="utf-8"))
 
 
+def run_cf(*argv) -> tuple[int, str]:
+    buf = io.StringIO()
+    with redirect_stdout(buf), redirect_stderr(buf):
+        code = cf_main.main(list(argv))
+    return code, buf.getvalue()
+
+
+class TestD1AUniverseOutsideAnyWorkspace(unittest.TestCase):
+    """D1: a universe directory on the host (``<base>/u1/``) could not be addressed at all."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.base = self.root / "corpus"
+        self.base.mkdir()
+        # a --workspace that does not exist: any subcommand that read a workspace would fail
+        self.nowhere = ["--workspace", str(self.root / "no-workspace-here")]
+
+    def cf(self, *argv) -> str:
+        code, out = run_cf(*argv, "--base", str(self.base), *self.nowhere)
+        self.assertEqual(code, 0, out)
+        return out
+
+    def test_every_subcommand_works_on_the_base_alone(self):
+        from test_locate_corpus import alpha_records, canary_records
+        self.cf("corpus", "init", "u1", "--frozen", "2026-10-17")
+        self.assertTrue((self.base / "u1" / "universe.yaml").is_file())
+        self.cf("corpus", "add", "u1", "--library", "alpha", "--repo", "https://example.org/alpha",
+                "--commit", ALPHA, "--toolchain", TOOLCHAIN, "--roots", "Alpha")
+        self.cf("corpus", "add", "u1", "--library", "gamma", "--exclude", "a private repository")
+        self.assertIn("build_universe_host.sh",
+                      self.cf("corpus", "probe-command", "u1", "--library", "alpha"))
+        canary = write_probe(self.root / "canary", canary_records(), library="cf-canary")
+        self.assertIn("PASSED", self.cf("corpus", "ingest", "u1", "--canary", "--from",
+                                        str(canary)))
+        self.cf("corpus", "ingest", "u1", "--library", "alpha", "--from",
+                str(write_probe(self.root / "pa", alpha_records())))
+        self.assertTrue((self.base / "u1" / "index" / "alpha" / "decls.jsonl").is_file())
+        self.cf("corpus", "build-db", "u1")
+        self.cf("corpus", "build-db", "u1", "--blind")
+        self.assertTrue((self.base / "u1" / "corpus.sqlite").is_file())
+        self.assertTrue((self.base / "u1" / "corpus.blind.sqlite").is_file())
+        status = json.loads(self.cf("corpus", "status", "u1", "--json"))
+        self.assertEqual(status["corpus_db_state"], "current")
+        hits = [json.loads(l) for l in self.cf("corpus", "search", "u1", "spanning",
+                                               "--json").splitlines()]
+        self.assertEqual(hits[0]["declaration"], "Widget.exists_spanning_gadget")
+        self.assertIn("axiom_dependent", self.cf("corpus", "show", "u1", "alpha",
+                                                 "Widget.bigAxiomThm"))
+        self.assertFalse((self.root / "no-workspace-here").exists())
+
+    def test_one_layout_for_a_workspace_and_a_base(self):
+        from cflib.paths import CorporaPaths, WorkspacePaths
+        ws = WorkspacePaths(self.root / "ws")
+        base = CorporaPaths(self.root / "ws" / "corpora")
+        for method, args in (("universe_dir", ("u1",)), ("universe_yaml", ("u1",)),
+                             ("universe_index_dir", ("u1", "alpha")),
+                             ("universe_conventions_md", ("u1", "alpha")),
+                             ("corpus_db", ("u1",)), ("corpus_db_blind", ("u1",))):
+            with self.subTest(method=method):
+                self.assertEqual(getattr(ws, method)(*args), getattr(base, method)(*args))
+        with self.assertRaises(CfError):
+            base.universe_dir("../escape")
+
+    def test_a_base_in_the_skill_repo_or_missing_is_refused(self):
+        for base in (SKILL, SKILL / "templates", self.root / "missing"):
+            with self.subTest(base=base), self.assertRaises(CfError):
+                cf_main.main(["corpus", "init", "u1", "--base", str(base), *self.nowhere])
+        self.assertFalse((SKILL / "templates" / "u1").exists())
+
+
 class TestD2AutoformsCompleteIsMappedByKind(unittest.TestCase):
     """D2: every record of a published index whose words are ``complete``/``wanted`` was refused."""
 
