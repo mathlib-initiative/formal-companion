@@ -10,8 +10,10 @@ bridge reads:
 
 * ``CF_EXTRA_TOOLS`` (the worker's wrapper only) -- the allowlist entries of the
   two read-only corpus tools, each with ``--db <the run's tools database>``
-  INSIDE the allowed prefix so a worker cannot point them at another database,
-  and of the passage-id tool in an inventory run;
+  INSIDE the allowed prefix, and of the passage-id tool in an inventory run.  The
+  prefix alone does not hold a database (argparse keeps the LAST ``--db``): the
+  tools refuse a repeated or abbreviated ``--db`` and, in the gate directory,
+  any database but the one ``gate.json`` pins (``corpus_search.check_db``);
 * ``CF_REVIEWER_TOOLS`` (the reviewer's wrapper only) -- the bridge's read-only
   default plus the gate itself, which the reviewer prompt has it run;
 * ``CF_TASK_MANIFESTS`` -- ``<gate>/tasks``, where the bridge finds the task

@@ -12,11 +12,12 @@ way it runs ``verify_findings.py``.  ``corpus_show.py`` imports its database
 helpers from here, and ``scripts/corpus/query.py`` (the workspace side) wraps
 the same functions, so there is one definition of how a declaration is found.
 
-**What it reads.**  The database only, opened ``mode=ro&immutable=1``: no
-journal, no lock, no write, whatever the file's permissions say.
+**What it reads.**  The database, opened ``mode=ro&immutable=1``: no journal,
+no lock, no write, whatever the file's permissions say -- and, in a gate
+directory, the ``gate.json`` beside it for the database's pin.
 
 **How it matches.**  A declaration's name and a query are split into words by
-ONE rule, :func:`words` (references/locate-documents.md section 8): a word is a
+ONE rule, :func:`iter_words` (references/locate-documents.md section 8): a word is a
 run of letters and digits, every other character -- ``.``, ``_``, FTS5's
 operators and quotes included -- separates, and a run is split again where a
 lower-case letter or a digit is followed by an upper-case one; words are
@@ -42,6 +43,15 @@ finds ``Nat.Prime``, ``nat degree`` finds ``Polynomial.natDegree``); within a
 tier the name with fewer words comes first (:func:`identifier_key`).  They are
 found through the index -- the query's words as one phrase of the name column
 -- never by a scan of the table.
+
+**Which database.**  In a gate directory the planner stages ``gate.json`` beside
+this file, and its ``tools_corpus_db.path`` is the one database these tools read:
+a ``--db`` naming any other file is refused (exit 2), as is ``--db`` given twice
+or abbreviated (argparse would keep the LAST of a repeated option, so
+``--db <pinned> --db <full corpus>`` read the full corpus past an allowlist
+whose prefix carries the pinned path).  Outside a gate directory -- no
+``gate.json`` beside the file -- ``--db`` is the caller's; a ``gate.json`` there
+that names no tools database is exit 3.
 
 **Output.**  One JSON object per line, best first: ``library``, ``declaration``,
 ``module``, ``path``, ``line``, ``end_line``, ``kind``, ``signature``, ``score``
@@ -321,15 +331,64 @@ def emit(record: dict) -> None:
 
 
 class _Parser(argparse.ArgumentParser):
+    """argparse with exit 2 for every bad argument and no abbreviated options
+    (``--d <file>`` is not ``--db``)."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("allow_abbrev", False)
+        super().__init__(*args, **kwargs)
+
     def error(self, message: str):  # noqa: D401 - argparse's hook
         self.print_usage(sys.stderr)
         sys.stderr.write(f"{self.prog}: {message}\n")
         raise SystemExit(EXIT_USAGE)
 
 
+class Once(argparse.Action):
+    """An option that may be given once: a second ``--db`` is an error, never the winner."""
+
+    def __call__(self, parser, namespace, values, option_string=None):
+        seen = f"_{self.dest}_given"
+        if getattr(namespace, seen, False):
+            parser.error(f"{option_string} is given twice; these tools read one database, the "
+                         f"run's")
+        setattr(namespace, seen, True)
+        setattr(namespace, self.dest, values)
+
+
+#: the gate directory's ``gate.json``: beside this file when the planner staged it
+GATE_JSON = Path(__file__).resolve().parent / "gate.json"
+
+
+def pinned_db(gate_json: Path = GATE_JSON) -> Path | None:
+    """The tools database ``gate.json`` beside this file pins, or None with no ``gate.json``.
+
+    A ``gate.json`` that cannot be read or names no ``tools_corpus_db.path`` is
+    :class:`CorpusError`: in a gate directory the pin is required.
+    """
+    if not gate_json.is_file():
+        return None
+    try:
+        data = json.loads(gate_json.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise CorpusError(f"{gate_json} is unreadable ({exc})") from None
+    tools = data.get("tools_corpus_db") if isinstance(data, dict) else None
+    path = tools.get("path") if isinstance(tools, dict) else None
+    if not isinstance(path, str) or not path:
+        raise CorpusError(f"{gate_json} pins no tools database (tools_corpus_db.path)")
+    return Path(path).expanduser()
+
+
+def check_db(ap: "argparse.ArgumentParser", db: str, gate_json: Path = GATE_JSON) -> None:
+    """Refuse (exit 2) a ``--db`` that is not the run's pinned tools database."""
+    pin = pinned_db(gate_json)
+    if pin is not None and Path(db).expanduser().resolve() != pin.resolve():
+        ap.error(f"--db {db} is not this run's tools database; {gate_json} pins {pin}")
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = _Parser(prog="corpus_search.py", description="search a universe's corpus.sqlite")
-    ap.add_argument("--db", required=True, help="the universe's corpus.sqlite")
+    ap.add_argument("--db", required=True, action=Once, help="the universe's corpus.sqlite")
     ap.add_argument("--library", default=None, help="only this library (its universe id)")
     ap.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
                     help=f"how many results (default {DEFAULT_LIMIT}, at most {MAX_LIMIT})")
@@ -339,6 +398,7 @@ def main(argv: list[str] | None = None) -> int:
         ap.error("--limit must be positive")
     check_text(ap, [args.db, args.library, *args.words])
     try:
+        check_db(ap, args.db)
         conn = connect(args.db)
         try:
             for record in search(conn, " ".join(args.words), library=args.library,

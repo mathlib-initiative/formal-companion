@@ -867,7 +867,11 @@ python3 <gate>/corpus_show.py --db <corpus.sqlite> <library> <declaration>
 Both print JSON lines (`library`, `declaration`, `module`, `path`, `line`,
 `end_line`, `kind`, `signature`; `corpus_search.py` adds its `score`,
 `corpus_show.py` adds `docstring` and `tags`, and neither shows a proof status),
-read nothing but the database and write nothing. The query is split into words
+read nothing but the database and write nothing. In a gate directory they read
+only the database the `gate.json` beside them pins (`tools_corpus_db.path`): a
+`--db` naming another file, a `--db` given twice (argparse would keep the last)
+and an abbreviated `--d` are bad arguments, and a `gate.json` there that pins no
+tools database is exit 3; outside one, `--db` is the caller's. The query is split into words
 by the rule above (at most 32), each quoted and the words OR-ed, so nothing a
 worker types reaches FTS5's own syntax; results are ranked by `bm25` with the name weighted over the signature
 over the docstring — after the declarations whose name matches the query as an
@@ -999,8 +1003,9 @@ like a faithfulness run:
   it lands at `corpora/<u>/planted-<sha16>.sqlite`). Each is accepted by the
   universe sha it was built for (`corpus.query.check_universe`), never by its
   bytes; its `sha256` is a recorded pin. The prompts and the worker's allowlist
-  put `--db <tools path>` inside the allowed prefix, so a worker cannot point
-  the tools elsewhere, and an inventory or locate plan refuses a source whose
+  put `--db <tools path>` inside the allowed prefix, and the tools themselves
+  refuse any other, a repeated or an abbreviated `--db` (§8), so a worker cannot
+  point them elsewhere; an inventory or locate plan refuses a source whose
   candidates file is missing or was retrieved from another kind of database
   (§5). `gate.local.json` is the same document with this machine's paths, and
   its `log_dir` is `runs/<run-id>/gate-local-log/`, so a gate run here never
