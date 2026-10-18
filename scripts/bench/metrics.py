@@ -522,14 +522,19 @@ EXIT_GATE_BROKEN = 3
 def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> dict:
     """Pre-gate rejection rates by rule and reason over every worker attempt of these runs.
 
-    A line with no ``task_id`` is the operator's own call (a harvest re-gate) and is
-    dropped; a line of another run is dropped; a call that exited 3 (the gate
+    The gate logs every call; an attempt is one of tend's, a line that judged a
+    change set (``changed_files: true``), whatever its ``task_id`` -- empty when
+    neither ``--task-id``, ``$TEND_TASK_ID`` nor ``orchestrator.sqlite`` gave one,
+    which is no reason to drop it.  A line that judged none (a worker's or a
+    reviewer's ``--findings`` self-check, the bridge's fallback) is dropped,
+    and so is a line of another run; the harvest's re-gate writes none
+    (``gate_corpus`` clears the log directory).  A call that exited 3 (the gate
     could not run) is an infrastructure failure, counted apart and never as a
     rejection.  A rule is counted from the line's ``by_rule`` when it carries one,
     else from its reasons' ``[rule N]`` prefixes.
     """
     wanted = set(run_ids) if run_ids is not None else None
-    calls = [l for l in lines if str(l.get("task_id") or "").strip()
+    calls = [l for l in lines if l.get("changed_files") is True
              and (wanted is None or str(l.get("run_id") or "") in wanted)]
     broken = [l for l in calls if l.get("exit") == EXIT_GATE_BROKEN]
     attempts = [l for l in calls if l.get("exit") != EXIT_GATE_BROKEN]

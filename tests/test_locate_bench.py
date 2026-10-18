@@ -854,10 +854,13 @@ class TestTheBootstrap(unittest.TestCase):
         self.assertTrue(draws and all(d == 0 for d in draws))
 
 
-def gate_line(run_id: str, task_id: str, problems=None, *, exit_code: int | None = None) -> dict:
-    """A gate log line as ``verify_locate.run_gate`` writes it, from the gate's own ``Problems``."""
+def gate_line(run_id: str, task_id: str, problems=None, *, exit_code: int | None = None,
+              changed_files: bool = True) -> dict:
+    """A gate log line as ``verify_locate.run_gate`` writes it, from the gate's own ``Problems``;
+    ``changed_files`` false is an agent's own ``--findings`` check, not one of tend's calls."""
     reasons = problems.lines() if problems is not None else []
     return {"at": "2026-10-18T00:00:00Z", "run_id": run_id, "mode": "locate", "task_id": task_id,
+            "changed_files": changed_files,
             "ok": not reasons and exit_code in (None, 0),
             "exit": exit_code if exit_code is not None else (1 if reasons else 0),
             "documents": 1, "by_rule": problems.by_rule() if problems is not None else {},
@@ -913,7 +916,8 @@ class TestGateRejections(unittest.TestCase):
                                                         "bbbbbbbbbbbb (a phantom declaration)"),
                      (6, f"{DOC}: {ITEM}", "ranks [1, 1] are not distinct"))),
                  gate_line("loc1", "t3", exit_code=3),           # the gate could not run
-                 gate_line("loc1", "", real_problems((1, DOC, "passages is a list"))),  # a re-gate
+                 gate_line("loc1", "t1", real_problems((1, DOC, "passages is a list")),
+                           changed_files=False),                 # the worker's own check
                  gate_line("inv1", "t9", real_problems((8, DOC, "the lead passage at [0, 84] was "
                                                                 "dropped with no skip covering its span")))]
         found = m.gate_rejections(lines, ["loc1"])
@@ -2070,7 +2074,7 @@ class TestTheRunSeams(unittest.TestCase):
     def test_the_harvested_host_files_are_the_defaults_item_68(self):
         lines = [gate_line("loc1", "t-loc", real_problems(
                      (5, f"{DOC}: {ITEM}", "an absence lists 1 distinct query; at least 2"))),
-                 gate_line("loc1", "t-loc"), gate_line("loc1", "")]
+                 gate_line("loc1", "t-loc"), gate_line("loc1", "t-loc", changed_files=False)]
         self.world.host("loc1", gate_lines=lines, canary={"scanned": 4, "hits": []})
         with self.assertRaises(CfError) as ctx:
             cf(self.world, "bench", "score", "b1", "--run", "loc1", "--split", "eval",

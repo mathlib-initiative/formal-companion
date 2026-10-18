@@ -1522,6 +1522,46 @@ class TestTheChangeSetsTaskAndLogLine(OwnershipCase):
         self.assertNotIn("--pre-merge", validation)
         self.assertIn("--pre-merge", pre_merge)
 
+    # -- what the readers of the log count ----------------------------------
+    def test_the_readers_count_tends_calls_only(self):
+        """Every gate call is logged, and says whether it judged a change set; the
+        watchdog and the bench count only the lines that did (``changed_files``):
+        tend's own validation calls, never an agent's ``--findings`` self-check."""
+        self.contribute()
+        doc = self.wt / "findings" / TASK / f"{SID}.json"
+        environ = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
+        environ["TEND_TASK_ID"] = TASK
+        for _ in range(3):                                   # a worker checking its document
+            proc = subprocess.run([sys.executable, str(GATE), "--gate-config",
+                                   str(self.fx.root / "gate" / "gate.json"), "--findings",
+                                   str(doc)], capture_output=True, text=True, env=environ)
+            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertEqual(self.cli("--task-id", TASK).returncode, 0)     # tend's validation
+        lines = self.lines()
+        self.assertEqual([(l["changed_files"], l["task_id"]) for l in lines],
+                         [(False, TASK)] * 3 + [(True, TASK)])
+        from bench import metrics
+        from run import watchdog
+
+        log = self.fx.root / "gate-log" / "gate.jsonl"
+        self.assertEqual(watchdog.gate_calls(log), (1, 0))
+        counted = metrics.gate_rejections(lines, run_ids=["r-1"])
+        self.assertEqual((counted["attempts"], counted["dropped_lines"]), (1, 3))
+
+    def test_a_validation_with_no_task_id_is_still_an_attempt(self):
+        """With no --task-id, no $TEND_TASK_ID and no orchestrator answer the line
+        names no task (task_id "", task_id_from null); it is still tend's call."""
+        self.contribute()
+        proc = self.cli()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        (line,) = self.lines()
+        self.assertEqual((line["task_id"], line["task_id_from"], line["changed_files"]),
+                         ("", None, True))
+        from bench import metrics
+
+        counted = metrics.gate_rejections([line], run_ids=["r-1"])
+        self.assertEqual((counted["attempts"], counted["dropped_lines"]), (1, 0))
+
     # -- by: attempt_cap is the bridge's -------------------------------------
     def capped(self, reason: str) -> None:
         self.fx.document(TASK, {"passages": [], "skips": [],

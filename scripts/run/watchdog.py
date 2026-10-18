@@ -24,8 +24,10 @@ What it reads, all of it outside every worktree:
   call that timed out used to add nothing at all (field defect T1).  It is
   still not the bill: the transcripts priced by ``scripts/cost`` at harvest
   stay the primary figure;
-* **the gate-failure rate** -- the fraction of calls in
-  ``<root>/gate-log/gate.jsonl`` that did not pass;
+* **the gate-failure rate** -- the fraction of tend's calls in
+  ``<root>/gate-log/gate.jsonl`` (the lines with ``changed_files: true``) that
+  did not pass; an agent's own ``--findings`` check is logged too, and counts
+  for nothing here;
 * **merged tasks** -- the task directories under ``findings/`` on the
   entrypoint's merge target (``git ls-tree``, with the boundary pinned).
 
@@ -137,7 +139,14 @@ def spend(usage_dir: Path) -> tuple[float, int]:
 
 
 def gate_calls(log_path: Path) -> tuple[int, int]:
-    """``(calls, failed)`` from the gate log."""
+    """``(calls, failed)`` over tend's calls in the gate log.
+
+    The gate logs every call and says whether it judged a change set
+    (``changed_files``): tend's validation and pre-merge commands do, a worker's
+    or a reviewer's ``--findings`` self-check does not.  Only the former count,
+    so an agent that re-runs the gate on its document neither drains the root
+    nor dilutes its failure rate.
+    """
     calls = failed = 0
     try:
         lines = log_path.read_text(encoding="utf-8").splitlines()
@@ -148,7 +157,7 @@ def gate_calls(log_path: Path) -> tuple[int, int]:
             record = json.loads(line)
         except ValueError:
             continue
-        if isinstance(record, dict):
+        if isinstance(record, dict) and record.get("changed_files") is True:
             calls += 1
             failed += 0 if record.get("ok") else 1
     return calls, failed
