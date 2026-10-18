@@ -352,6 +352,40 @@ class TestTheUniverse(unittest.TestCase):
             universe.add_library(library_id="beta", repo="https://example.org/beta", commit=BETA,
                                  toolchain=TOOLCHAIN, roots=["Beta"], brain_lib="alpha")
 
+    def test_r2_a_re_add_records_a_missing_licence_and_refuses_another(self):
+        """The review's LicenceNull variant: beta added without --licence, then re-added
+        with one, exited 0 and still said ``licence: null``."""
+        universe = make_universe(self.root, libs=("alpha", "beta"))
+        sha = universe.sha256()
+        self.assertIsNone(universe.library("beta")["licence"])
+        pin = dict(library_id="beta", repo="https://example.org/beta", commit=BETA,
+                   toolchain=TOOLCHAIN, roots=["Beta"])
+        row = universe.add_library(**pin, licence="Apache-2.0")
+        self.assertEqual(row["licence"], {"spdx": "Apache-2.0"})
+        universe.save()
+        again = Universe.load(universe.path)
+        self.assertEqual(again.library("beta")["licence"], {"spdx": "Apache-2.0"})
+        self.assertEqual(again.sha256(), sha)                  # outside universe_sha256
+        self.assertEqual(again.add_library(**pin)["licence"], {"spdx": "Apache-2.0"})
+        self.assertEqual(again.add_library(**pin, licence="Apache-2.0")["licence"],
+                         {"spdx": "Apache-2.0"})
+        with self.assertRaises(CfError) as caught:
+            again.add_library(**pin, licence="MIT")
+        self.assertIn("already records licence 'Apache-2.0'", str(caught.exception))
+        with self.assertRaises(CfError) as caught:
+            again.add_library(**pin, brain_lib="Beta!")
+        self.assertIn("already records brain_lib 'beta'", str(caught.exception))
+        self.assertEqual(again.library("beta")["licence"], {"spdx": "Apache-2.0"})
+        for bad in ("Apache-2.0;rm -rf", "<MIT>", "x" * 101):
+            with self.subTest(licence=bad), self.assertRaises(CfError):
+                universe.add_library(library_id="gamma", repo="https://example.org/gamma",
+                                     commit="c" * 40, toolchain=TOOLCHAIN, roots=["G"],
+                                     licence=bad)
+        self.assertEqual(universe.add_library(
+            library_id="delta", repo="https://example.org/delta", commit="d" * 40,
+            toolchain=TOOLCHAIN, roots=["D"], licence=" MIT OR Apache-2.0 ")["licence"],
+            {"spdx": "MIT OR Apache-2.0"})
+
     def test_canaries_match_every_spelling_of_a_toolchain(self):
         self.assertEqual(lean_version("leanprover/lean4:v4.34.0-rc2"), "4.34.0-rc2")
         self.assertEqual(lean_version("v4.34.0"), "4.34.0")
@@ -1226,6 +1260,21 @@ class TestTheCommand(unittest.TestCase):
         self.assertIn("flagged published_status", out)
         self.assertIn("accepted on trust", out)
         self.assertNotIn("isProp failed", out)
+
+    def test_r2_the_licence_a_first_add_left_out_is_recorded_by_a_re_add(self):
+        self.cf("corpus", "init", "u1", "--frozen", "2026-10-17")
+        pin = ["corpus", "add", "u1", "--library", "beta", "--repo", "https://example.org/beta",
+               "--commit", BETA, "--toolchain", TOOLCHAIN, "--roots", "Beta"]
+        out = self.cf(*pin)
+        self.assertIn("records no licence", out)
+        path = self.ws / "corpora" / "u1" / "universe.yaml"
+        self.assertIsNone(Universe.load(path).library("beta")["licence"])
+        out = self.cf(*pin, "--licence", "Apache-2.0")
+        self.assertNotIn("records no licence", out)
+        self.assertEqual(Universe.load(path).library("beta")["licence"], {"spdx": "Apache-2.0"})
+        with self.assertRaises(CfError):
+            cf_main.main([*pin, "--licence", "MIT", "--workspace", str(self.ws)])
+        self.assertEqual(Universe.load(path).library("beta")["licence"], {"spdx": "Apache-2.0"})
 
     def test_add_without_its_pin_is_refused(self):
         self.cf("corpus", "init", "u1")

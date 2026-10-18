@@ -41,6 +41,11 @@ release has something to say.
   refuses a new sourceset id outside it, where it is chosen (a `--set-id smoke+2`
   or a sourceset `wpm+math` had exported cleanly and been refused whole by the
   consumer).
+- The export refuses a universe with a library that records no licence, naming
+  it and the `cf corpus add … --licence` that settles it (`universe.json` had
+  carried `licence: null`, which the consumer refuses), and a re-add with
+  `--licence` now records a missing licence (it exited 0 and changed nothing); a
+  re-add naming another licence or `brain_lib` than recorded is refused.
 - `cf plan-locate` refuses a `--run-id` or `--challenge-of` id the export's run
   token cannot spell (`cflib.vocab.RUN_TOKEN_ID`: letters, digits and `._-`, at
   most 64), and `cf campaign plan` a campaign id over 128 characters: a run

@@ -329,6 +329,43 @@ class TestTheUniverseFile(_Exported):
         self.assertEqual(uni["excluded"], [{"id": "gamma", "reason": "did not build"}])
 
 
+class TestALibraryWithNoLicence(_Exported):
+    """R2-B: a library added without ``--licence`` is refused at export, by name.
+
+    The review's LicenceNull variant: ``universe.json`` carried ``licence: null``
+    for beta, the export refused nothing, and the consumer refused the whole set
+    (``libraries[1]: licence must be {spdx: <SPDX id>}``).
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.challenge()
+        from corpus.universe import Universe
+
+        self.universe_path = self.paths.universe_yaml(F.U)
+        universe = Universe.load(self.universe_path)
+        universe.library("beta")["licence"] = None
+        universe.save()
+
+    def test_r2_the_export_names_the_library_and_the_flag_and_writes_nothing(self):
+        code, out, err = self.export()
+        self.assertNotEqual(code, 0, out + err)
+        self.assertIn("1 library(ies) record no licence: beta", out + err)
+        self.assertIn("--library beta --repo https://example.org/beta", out + err)
+        self.assertIn("--licence <SPDX id>", out + err)
+        self.assertFalse(self.paths.export_dir("set-1").exists())
+        # the re-add the hint names records it, and the set then exports
+        code, out, err = ws(self.root, "corpus", "add", F.U, "--library", "beta", "--repo",
+                            F.LIBRARIES["beta"]["repo"], "--commit", F.BETA, "--toolchain",
+                            F.TOOLCHAIN, "--roots", "Beta", "--licence", "MIT")
+        self.assertEqual(code, 0, out + err)
+        code, out, err = self.export()
+        self.assertEqual(code, 0, out + err)
+        uni = read_json(self.paths.export_dir("set-1") / "universe.json")
+        self.assertEqual([lib["licence"] for lib in uni["libraries"]],
+                         [{"spdx": "Apache-2.0"}, {"spdx": "MIT"}])
+
+
 class TestTheRecords(_Exported):
 
     def test_m7_every_record_carries_its_passages_section_and_prominence(self):

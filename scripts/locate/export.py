@@ -167,7 +167,8 @@ def _universe_json(universe: inputs.Universe) -> dict:
     """``universe.json``: the universe's sha and frozen date, and its libraries as a list.
 
     Each library: ``id``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
-    ``roots``, ``licence`` (``{spdx}`` or null) and ``display_name`` -- the
+    ``roots``, ``licence`` (``{spdx}``: a library with none is refused, by name,
+    with the re-add that records it) and ``display_name`` -- the
     library's ``brain_lib``, the one name the universe gives it.  ``excluded`` is
     ``[{id, reason}]``.  Sorted by id; nothing the universe does not define.
     """
@@ -176,6 +177,18 @@ def _universe_json(universe: inputs.Universe) -> dict:
         raise CfError(f"universe {universe.id} records no frozen date",
                       hint="a universe made by `cf corpus init` carries one; set `frozen: "
                            "YYYY-MM-DD` in its universe.yaml to the day it was frozen")
+    unlicensed = [lid for lid, lib in sorted(universe.libraries.items())
+                  if not _spdx(lib.get("licence"))]
+    if unlicensed:
+        lib = universe.libraries[unlicensed[0]]
+        raise CfError(f"universe {universe.id}: {len(unlicensed)} library(ies) record no "
+                      f"licence: {', '.join(unlicensed)}",
+                      hint="a record set names every library's SPDX licence and its consumer "
+                           "refuses one without; record it with `cf corpus add "
+                           f"{universe.id} --library {unlicensed[0]} --repo {lib.get('repo')} "
+                           f"--commit {lib.get('commit')} --toolchain {lib.get('toolchain')} "
+                           f"--roots {' '.join(str(r) for r in lib.get('roots') or [])} "
+                           "--licence <SPDX id>` (outside universe_sha256: the pins stay valid)")
     libs = []
     for lid, lib in sorted(universe.libraries.items()):
         name = str(lib.get("brain_lib") or lid)
@@ -187,6 +200,13 @@ def _universe_json(universe: inputs.Universe) -> dict:
                 for row in sorted(universe.excluded, key=lambda r: str(r.get("id")))]
     return {"id": universe.id, "universe_sha256": universe.sha256, "frozen": frozen,
             "libraries": libs, "excluded": excluded}
+
+
+def _spdx(licence) -> str:
+    """A library row's ``{spdx}`` licence id, or '' when it records none."""
+    if isinstance(licence, dict) and set(licence) == {"spdx"} and isinstance(licence["spdx"], str):
+        return licence["spdx"].strip()
+    return ""
 
 
 def _source_record(entry: dict, fam) -> dict:
