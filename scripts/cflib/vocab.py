@@ -523,6 +523,15 @@ CHALLENGE_BATCH_RECORDS = 20
 #: of ``prefix`` and ``suffix``
 EXPORT_QUOTE_WORDS = 12
 EXPORT_CONTEXT_CHARS = 32
+#: the record set's tokens (references/locate-documents.md section 6), the grammar its
+#: consumer checks a seal against: ``set_id``, ``sourceset.id`` and a campaign id are
+#: letters, digits and ``._:-``, at most 128 (a campaign id never starts
+#: ``RUN_TOKEN_PREFIX``); a run in no campaign is sealed under ``run:<locate run>``
+#: [``+<challenge run>``], whose run ids are letters, digits and ``._-``, at most 64 --
+#: so a planner, ``cf sourceset create`` and the export refuse one id by one rule
+RECORDSET_TOKEN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+RUN_TOKEN_PREFIX = "run:"
+RUN_TOKEN_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
 #: the reason an attempt-capped task's document is UNRESOLVED (section 6,
 #: Convergence): written by the bridge, never by a worker
 UNRESOLVED_ATTEMPT_CAP = "attempt_cap"

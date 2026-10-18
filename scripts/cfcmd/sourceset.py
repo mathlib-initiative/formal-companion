@@ -37,7 +37,7 @@ from cflib.jsonio import iter_jsonl, write_json
 from cflib.paths import WorkspacePaths
 from cflib.workspace import from_args
 from sources import render_html, websource, wikinet
-from sources.sourceset import Sourceset, is_adopted
+from sources.sourceset import Sourceset, check_new_id, is_adopted
 
 #: how many fetched sources a version records at most, so a killed fetch loses
 #: at most this many manifest updates (the bytes on disk are reused next time)
@@ -262,6 +262,7 @@ def _create_from(workspace, args) -> int:
     discards the staging directory and seeds again.
     """
     paths = workspace.paths
+    check_new_id(args.sourceset_id)
     old = Sourceset.open(paths, args.seed)
     base = old.load(args.seed_version) if args.seed_version else old.latest()
     if args.family and args.family != base.family:

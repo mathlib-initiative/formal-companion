@@ -346,7 +346,12 @@ record no verdict judged.
 Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
 task), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
-`EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), and the run
+`EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's
+token grammars (`references/locate-documents.md` §6, the consumer's own): `RECORDSET_TOKEN`
+(letters, digits and `._:-`, at most 128, a letter or digit first: a seal's `set_id`, its
+`sourceset.id` and a campaign id, which never starts `RUN_TOKEN_PREFIX`, `run:`) and
+`RUN_TOKEN_ID` (letters, digits and `._-`, at most 64: a run id a run token
+`run:<locate run>[+<challenge run>]` can spell), and the run
 machinery's: `MAX_TASKS_PER_ROOT` (500 tasks in one tend root; a larger plan is campaign
 shards), `LOCATE_ATTEMPT_CAP` (3: the genuine reviewer rejection that reaches it writes the
 `UNRESOLVED` document), `SESSION_SLOTS` (15 `flock` slots, one below the account's 16 sessions)

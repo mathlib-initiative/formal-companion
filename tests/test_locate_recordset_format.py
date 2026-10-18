@@ -185,6 +185,71 @@ class TestTheCampaignToken(unittest.TestCase):
                                                    "loc-1", []), "w:p.m_3-a")
 
 
+class TestTheSealsOtherTokens(_Exported):
+    """R2-C: ``set_id`` and ``sourceset.id`` pass the consumer's token grammar.
+
+    The review's round trips: ``--set-id smoke+2`` and ``--set-id _draft``, and a
+    sourceset ``wpm+math``, each exported with nothing refused and each refused by
+    the consumer over the seal (``set_id must be a token``, ``sourceset.id must be
+    a token``).  The campaign token was already checked (P1); these were not.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.challenge()
+
+    def test_r2_a_set_id_the_grammar_refuses_writes_nothing(self):
+        for bad in ("smoke+2", "_draft", "a b", "s" * 129):
+            with self.subTest(set_id=bad):
+                code, out, err = self.export(set_id=bad)
+                self.assertNotEqual(code, 0, out + err)
+                self.assertIn("--set-id", out + err)
+                self.assertIn("not a token a record set's seal may carry", out + err)
+                self.assertFalse((self.paths.exports_dir / bad).exists())
+                self.assertFalse(self.paths.export_report_json(bad).exists())
+        code, out, err = self.export(set_id="smoke-2b:rerun.1")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_json(self.paths.export_dir("smoke-2b:rerun.1") / "SEAL.json")
+                         ["set_id"], "smoke-2b:rerun.1")
+
+
+class TestASourcesetIdTheSealCannotCarry(Campaign):
+    """R2-C: a sourceset made before ``cf sourceset create`` checked its id."""
+
+    BAD = "wpm+math"
+
+    def setUp(self):
+        from unittest import mock
+
+        with mock.patch.object(F, "SS", self.BAD), \
+                mock.patch("sources.sourceset.check_new_id", lambda sid: sid, create=True):
+            super().setUp()
+            self.locate()
+            self.challenge()
+
+    def test_r2_the_export_refuses_it_before_a_file_is_written(self):
+        self.assertEqual(read_yaml(self.paths.run_yaml("loc-1"))["locate"]["sourceset"]["id"],
+                         self.BAD)
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "set-1")
+        self.assertNotEqual(code, 0, out + err)
+        self.assertIn(f"sourceset id {self.BAD!r} is not a token", out + err)
+        self.assertFalse(self.paths.export_dir("set-1").exists())
+
+    def test_r2_cf_sourceset_create_refuses_it_where_it_is_chosen(self):
+        for bad in ("wpm+2", "_wpm", "w" * 129):
+            with self.subTest(sourceset=bad):
+                code, out, err = ws(self.root, "sourceset", "create", bad)
+                self.assertNotEqual(code, 0, out + err)
+                self.assertIn("is not letters, digits and ._:-", out + err)
+                self.assertFalse((self.paths.sourcesets_dir / bad).exists())
+                code, out, err = ws(self.root, "sourceset", "create", bad, "--from", self.BAD)
+                self.assertNotEqual(code, 0, out + err)
+                self.assertIn("is not letters, digits and ._:-", out + err)
+        code, out, err = ws(self.root, "sourceset", "create", "wpm-4:b")
+        self.assertEqual(code, 0, out + err)
+
+
 class TestTheUniverseFile(_Exported):
 
     def setUp(self):
