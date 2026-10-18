@@ -348,8 +348,9 @@ consumer shows (printable ASCII letters, digits, spaces and `,.()/+:'&_-` or `·
 at most 100: `export.DISPLAY_NAME_RE`), and null otherwise (`brain_lib` has no
 grammar, and a consumer refuses a set whose display name could read as another
 library's) — and `excluded`, `[{"id",
-"reason"}]`. Nothing the universe does not define (no index paths, no host
-instructions).
+"reason"}]`. `brain_lib`, `toolchain` and each root are at most 300 characters,
+a reason at most 1000 (§8, where they are refused). Nothing the universe does
+not define (no index paths, no host instructions).
 
 What every record carries beyond §2.7's example:
 
@@ -667,6 +668,10 @@ checked by the driver's own parser (`scripts/corpus/universe_host.py`). `host` i
 a pin is built, not what is pinned: it is outside `universe_sha256`, and `cf corpus
 probe-command` prints from it the universe's whole driver list (every library, those
 probed inside a workspace last) and the steps of that library's kind;
+`brain_lib`, `toolchain` and each root are at most 300 characters and an
+exclusion's reason at most 1000 (`corpus.universe.MAX_NAME_CHARS`,
+`MAX_REASON_CHARS`: the record set's consumer refuses a whole set over a longer
+one, so `cf corpus add` refuses it where it is written, as does a load);
 `excluded` lists `{id, reason}` (what a universe leaves out WITHIN a library is a
 choice of its `roots`, stated in the proposal's §2.3 for the default universe: Mathlib
 with its `Wanted` library of `proof_wanted` statements, Lean core without the `Lean`

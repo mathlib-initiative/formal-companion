@@ -62,6 +62,12 @@ TOOLCHAIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._+
 _MODULE = r"[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*"
 ROOT_GLOB = re.compile(rf"{_MODULE}(?:\.\+|\.\*)?\Z")
 _TOOLCHAIN_PREFIX = "leanprover/lean4:"
+#: the record set's length caps (references/locate-documents.md section 8), which its
+#: consumer refuses a whole set over: a library's ``brain_lib``, ``toolchain`` and each
+#: root are names of at most this many characters, an exclusion's reason a sentence or
+#: two of at most ``MAX_REASON_CHARS``
+MAX_NAME_CHARS = 300
+MAX_REASON_CHARS = 1000
 #: an SPDX licence id or expression, as a row's ``licence: {spdx: ...}`` carries it
 #: (``Apache-2.0``, ``MIT OR Apache-2.0``, ``LicenseRef-x``): a record set names it
 SPDX = re.compile(r"[A-Za-z0-9(][A-Za-z0-9.+:() -]{0,99}\Z")
@@ -310,6 +316,11 @@ class Universe:
         reason = " ".join(str(reason or "").split())
         if not reason:
             raise CfError("an exclusion needs a reason", hint="--exclude 'licence forbids ML use'")
+        if len(reason) > MAX_REASON_CHARS:
+            raise CfError(f"an exclusion's reason is {len(reason)} characters, longer than "
+                          f"{MAX_REASON_CHARS}",
+                          hint="a record set names it, and its consumer refuses a longer one; "
+                               "say why in a sentence or two")
         self.data["libraries"] = [lib for lib in self.libraries if lib.get("id") != library_id]
         rows = [r for r in self.excluded if r.get("id") != library_id]
         row = {"id": library_id, "reason": reason}
@@ -387,6 +398,10 @@ class Universe:
         for row in self.excluded:
             if not isinstance(row, dict) or not row.get("reason"):
                 problems.append(f"an exclusion carries no reason: {row!r}")
+            elif len(str(row["reason"])) > MAX_REASON_CHARS:
+                problems.append(f"the exclusion of {row.get('id')!r} has a reason of "
+                                f"{len(str(row['reason']))} characters, longer than "
+                                f"{MAX_REASON_CHARS}")
             elif row.get("id") in seen:
                 problems.append(f"library {row.get('id')!r} is both listed and excluded")
         kinds = {str(lib.get("id")): host_of(lib)["kind"] for lib in self.libraries
@@ -492,15 +507,27 @@ def _library_problems(lib: dict) -> list[str]:
                                     and SPDX.match(licence["spdx"])):
         problems.append(f"licence {licence!r} is not {{spdx: <SPDX id>}} (e.g. --licence "
                         f"Apache-2.0)")
-    if not TOOLCHAIN.match(str(lib.get("toolchain") or "")):
+    brain = lib.get("brain_lib")
+    if brain is not None and (not isinstance(brain, str) or not brain.strip()):
+        problems.append(f"brain_lib {brain!r} is not a non-empty name")
+    elif isinstance(brain, str) and len(brain) > MAX_NAME_CHARS:
+        problems.append(f"brain_lib is {len(brain)} characters, longer than {MAX_NAME_CHARS}")
+    if len(str(lib.get("toolchain") or "")) > MAX_NAME_CHARS:
+        problems.append(f"toolchain is {len(str(lib.get('toolchain')))} characters, longer "
+                        f"than {MAX_NAME_CHARS}")
+    elif not TOOLCHAIN.match(str(lib.get("toolchain") or "")):
         problems.append(f"toolchain {lib.get('toolchain')!r} is not an elan toolchain such as "
                         f"leanprover/lean4:v4.34.0")
     roots = lib.get("roots")
     if not isinstance(roots, list) or not roots:
         problems.append("roots must be a non-empty list of module names")
     else:
+        long = [r for r in roots if isinstance(r, str) and len(r) > MAX_NAME_CHARS]
         bad = [r for r in roots if not isinstance(r, str) or not ROOT_GLOB.match(r)]
-        if bad:
+        if long:
+            problems.append(f"{len(long)} root(s) longer than {MAX_NAME_CHARS} characters "
+                            f"({', '.join(str(len(r)) for r in long)})")
+        elif bad:
             problems.append(f"roots {bad!r} are not Lake module globs (a module name, "
                             f"optionally .+ or .*), which the host driver refuses")
         else:

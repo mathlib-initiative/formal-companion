@@ -415,6 +415,37 @@ class TestTheUniverse(unittest.TestCase):
         self.assertIn("'https://example.org/alpha/' is not an https repository URL",
                       str(caught.exception))
 
+    def test_r2_the_record_sets_length_caps_are_refused_where_the_value_is_chosen(self):
+        """The review's LongExclusion variant: a reason of about 390 characters exported and
+        was refused (with a message naming the wrong rule) by the consumer's cap, which it
+        has since written down: 300 characters for brain_lib, toolchain and each root, 1000
+        for an exclusion's reason."""
+        universe = make_universe(self.root)
+        pin = dict(library_id="gamma", repo="https://example.org/gamma", commit="c" * 40,
+                   toolchain=TOOLCHAIN, roots=["G"])
+        for bad, needle in (({"brain_lib": "B" * 301}, "brain_lib is 301 characters"),
+                            ({"toolchain": "leanprover/lean4:v" + "4" * 290},
+                             "toolchain is 308 characters"),
+                            ({"roots": ["G", "A" * 301]}, "1 root(s) longer than 300")):
+            with self.subTest(bad=bad), self.assertRaises(CfError) as caught:
+                universe.add_library(**{**pin, **bad})
+            self.assertIn(needle, str(caught.exception))
+        universe.add_library(**{**pin, "brain_lib": "B" * 300, "roots": ["A" * 300]})
+        with self.assertRaises(CfError) as caught:
+            universe.exclude("delta", "x" * 1001)
+        self.assertIn("1001 characters, longer than 1000", str(caught.exception))
+        self.assertNotIn("delta", [r["id"] for r in universe.excluded])
+        reason = " ".join(["the build failed at the pinned commit"] * 10)     # about 390
+        self.assertEqual(universe.exclude("delta", reason)["reason"], reason)
+        self.assertEqual(len(universe.exclude("epsilon", "y" * 1000)["reason"]), 1000)
+        universe.save()
+        path = self.root / "long.yaml"
+        path.write_text(universe.path.read_text(encoding="utf-8").replace("y" * 1000, "y" * 1001),
+                        encoding="utf-8")
+        with self.assertRaises(CfError) as caught:
+            Universe.load(path)
+        self.assertIn("a reason of 1001 characters, longer than 1000", str(caught.exception))
+
     def test_canaries_match_every_spelling_of_a_toolchain(self):
         self.assertEqual(lean_version("leanprover/lean4:v4.34.0-rc2"), "4.34.0-rc2")
         self.assertEqual(lean_version("v4.34.0"), "4.34.0")
