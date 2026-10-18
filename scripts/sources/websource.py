@@ -41,9 +41,10 @@ PARSE_PARAMS: dict[str, str] = {
 }
 FETCH_API = "action=parse"
 
-ORIGIN_ENUMERATED = "enumerated"
-ORIGIN_ADOPTED = "adopted"
-ORIGINS = frozenset({ORIGIN_ENUMERATED, ORIGIN_ADOPTED})
+#: the entry origins, defined in ``cflib.vocab`` (CLAUDE.md section 4: one vocabulary)
+ORIGIN_ENUMERATED = vocab.SOURCE_ORIGIN_ENUMERATED
+ORIGIN_ADOPTED = vocab.SOURCE_ORIGIN_ADOPTED
+ORIGINS = vocab.SOURCE_ORIGINS
 
 #: every field a manifest entry carries, in the contract's order; a value a
 #: source does not have yet is null
@@ -83,8 +84,18 @@ def _positive(value: Any, name: str) -> int:
     return value
 
 
-def family(family_id: str, workspace=None) -> registry_mod.SourceFamily:
-    """The registry family ``family_id``, refused when unknown or not confirmed."""
+def family(family_id: str, workspace=None, *, network: bool = False
+           ) -> registry_mod.SourceFamily:
+    """The registry family ``family_id``, refused when unknown or structurally broken.
+
+    Offline use (create, adopt, render, a replay of recorded responses) accepts
+    any family ``SourceFamily.problems()`` passes, an overlay-only one with its
+    own licence included, as registry/README.md says.  ``network=True`` -- the
+    caller is about to fetch from the family's ``site`` -- also refuses a family
+    nobody confirmed, and a confirmed one whose ``site`` the workspace overlay
+    changed: the one module that may reach Wikipedia fetches only from the site a
+    reviewed registry row names (CLAUDE.md section 3).
+    """
     reg = registry_mod.Registry.load(workspace)
     fam = reg.family(family_id)
     if fam is None:
@@ -95,6 +106,19 @@ def family(family_id: str, workspace=None) -> registry_mod.SourceFamily:
     problems = fam.problems()
     if problems:
         raise CfError(f"family {family_id}: " + "; ".join(problems))
+    if network:
+        if not fam.confirmed:
+            raise CfError(f"family {family_id} is not confirmed, so nothing is fetched from "
+                          f"its site {fam.site}",
+                          hint="a family is fetched from only once its registry row is "
+                               "reviewed (confirmed: true in registry/sources.yaml); "
+                               "--fixtures replays recorded responses without it")
+        shipped = registry_mod.Registry.load(None).family(family_id)
+        if shipped is not None and shipped.site != fam.site:
+            raise CfError(f"family {family_id}: the workspace overlay changes its site from "
+                          f"{shipped.site} to {fam.site}; nothing is fetched",
+                          hint=f"delete `site` from the {family_id} row of the workspace "
+                               f"{registry_mod.OVERLAY_FILE}")
     return fam
 
 
@@ -110,6 +134,9 @@ def entry(fam: registry_mod.SourceFamily, pageid: int, revision: int, *,
     """A new manifest entry: identity and metadata set, every sha null."""
     _positive(pageid, "page id")
     _positive(revision, "revision")
+    if assessment is not None and not isinstance(assessment, dict):
+        raise CfError(f"a web source's assessment is null or {{class, importance}}, not "
+                      f"{assessment!r}")
     record = {
         "source_id": fam.source_id(pageid, revision),
         "family": fam.id,
@@ -159,6 +186,8 @@ def entry_problems(record: Any) -> list[str]:
     for name in ("title", "wikidata", "renderer"):
         if record[name] is not None and not isinstance(record[name], str):
             out.append(f"{where}: {name} is a string or null")
+    if not _encodable(record):
+        out.append(f"{where}: a string holds a lone surrogate (it has no UTF-8 bytes)")
     if record["wikidata"] is not None and not _QID.match(str(record["wikidata"])):
         out.append(f"{where}: wikidata {record['wikidata']!r} is not a QID")
     assessment = record["assessment"]
@@ -189,6 +218,15 @@ def entry_problems(record: Any) -> list[str]:
     if adopted is not None and not isinstance(adopted, dict):
         out.append(f"{where}: adopted_from is an object")
     return out
+
+
+def _encodable(value: Any) -> bool:
+    """Every string inside ``value`` has UTF-8 bytes (no lone surrogate)."""
+    try:
+        json.dumps(value, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def revision_url(fam: registry_mod.SourceFamily, pageid: int, revision: int) -> str:

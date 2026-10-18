@@ -407,6 +407,14 @@ LOCATE_DOCUMENT_SCHEMA = "cf-locate/1"
 #: the renderer of every web source of the first corpus (section 2.1); a source's
 #: ``renderer`` field, and a pin of every run, gate and score document
 RENDERER_WEB_HTML = "web-html/1"
+#: Where a sourceset entry came from (references/locate-documents.md section 7):
+#: ``enumerated`` -- the PageAssessments listing, at the page's latest revision;
+#: ``adopted`` -- a consumer's pinned revision and bytes, recorded in
+#: ``adopted_from``, which a run plans instead of an enumerated revision of the
+#: same page (the proposal's section 2.1).
+SOURCE_ORIGIN_ENUMERATED = "enumerated"
+SOURCE_ORIGIN_ADOPTED = "adopted"
+SOURCE_ORIGINS = frozenset({SOURCE_ORIGIN_ENUMERATED, SOURCE_ORIGIN_ADOPTED})
 #: What one formal_math passage of a locate document ends with (section 2.6), and
 #: the finding kind each one is tallied under.
 OUTCOME_LOCATED = "located"

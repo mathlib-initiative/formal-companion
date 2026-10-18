@@ -12,11 +12,17 @@ a source's ``layer_sha256`` is pinned by every run, gate and score document, so
 any change to the rule below that can move one character of any view is a new
 renderer id, never an edit of this one.  The rule, in full:
 
-* **The canonical body** (:func:`canonical_body`) is the ``parse.text`` of a
-  ``formatversion=2`` ``action=parse`` JSON response (``parse.text["*"]`` of a
-  ``formatversion=1`` one; bytes that are no such response are the body itself),
-  decoded as UTF-8, with every HTML comment ``<!-- ... -->`` removed (an
-  unterminated one runs to the end, as an HTML parser reads it).  Its sha256 is
+* **The canonical body** (:func:`canonical_body`): the bytes are decoded as
+  UTF-8 with one leading byte-order mark dropped (the WHATWG *UTF-8 decode*); a
+  ``formatversion=2`` ``action=parse`` JSON response gives its ``parse.text``
+  (``parse.text["*"]`` of a ``formatversion=1`` one), and anything that is no
+  such response is the body itself.  Every HTML comment is then removed exactly
+  as the HTML tokenizer delimits one in the data state (:func:`strip_comments`):
+  from ``<!--`` to the first ``-->`` or ``--!>``, an abrupt ``<!-->`` or
+  ``<!--->`` being a whole (empty) comment and an unterminated one running to
+  the end, while a ``<!--`` inside a tag (an attribute value) or inside the raw
+  text of ``script style xmp iframe noembed noframes textarea title`` is text and
+  stays.  A body holding a lone surrogate is refused.  Its sha256 is
   ``html_sha256``, the source's ``source_sha``.
 * **The tree.**  Tags are lower-cased by the parser; character references are
   decoded except inside ``script`` and ``style``, whose content is raw text.
@@ -30,7 +36,10 @@ renderer id, never an edit of this one.  The rule, in full:
   ``td``, ``th``, ``caption``, ``button`` or ``object`` lies between; an ``li``
   by the next ``li`` of its list, a ``dt``/``dd`` by the next ``dt``/``dd`` of
   its ``dl``, a ``tr`` by the next ``tr`` of its table section, a ``td``/``th``
-  by the next cell or row, an ``option`` by the next ``option``.
+  by the next cell or row, an ``option`` by the next ``option``.  One newline
+  (LF, CR or CRLF) right after a ``pre``, ``listing`` or ``textarea`` start tag is
+  not text, as in the HTML5 tree builder.  A body that nests elements more than
+  :data:`MAX_DEPTH` deep is refused.
 * **The Literature Links text layer** (``layer.txt``) is the tree's DOM
   ``textContent`` -- every text node in document order, ``style`` and ``script``
   text, MathML token text, the TeX annotation and citation markers all included
@@ -39,20 +48,26 @@ renderer id, never an edit of this one.  The rule, in full:
   stripped.  No Unicode normalisation, so U+00A0 stays U+00A0.
 * **An element's layer span** is half-open, from its first non-whitespace text
   character to just after its last; an element with no such character has no
-  span.
+  span.  Its **kept span** is the same over the text outside the dropped regions
+  listed under the reading copy: a block or a finder passage is measured by its
+  kept span, so an inline TemplateStyles ``style`` at the start of a paragraph
+  is never the start of a passage, and a paragraph that holds only dropped text
+  is no block.
 * **Formulas** (``formulas.json``): every element whose class tokens include
   ``mwe-math-element``, and every ``math`` element outside one, is a formula; its
   span is its layer span and its alttext is the first descendant ``math``
   element's ``alttext``, else the text of an ``annotation`` whose ``encoding`` is
   ``application/x-tex``, else the ``alt`` of an ``img`` whose class names
   ``mwe-math-fallback-image``.  A formula with no alttext is ordinary text; one
-  with no span (an image only) contributes nothing to the layer and is counted in
-  ``render.json`` as ``formulas_without_text``.  Formulas never nest.
+  with no span (an image only) contributes nothing to the layer, is counted in
+  ``render.json`` as ``formulas_without_text``, and is written to the reading
+  copy as added characters.  Formulas never nest.
 * **The head text** (``head.txt``) is ``gate.locate_text.HeadMap`` over the layer
   and the formulas: each span replaced by ``⟦normalized alttext⟧``.
 * **Sections** (``sections.json``): every ``h1``-``h6`` starts one, at the layer
-  position of its first text; its title is its text without ``.mw-editsection``,
-  whitespace-collapsed; its fragment is its own ``id``, else the ``id`` of a
+  position of its first text; its title is its text outside the dropped regions
+  listed under the reading copy (``.mw-editsection``, a ``sup.reference``, an
+  inline ``style`` ...), ASCII-whitespace-collapsed; its fragment is its own ``id``, else the ``id`` of a
   ``.mw-headline`` inside it, else null; its path is the titles of the open
   headings of lower level, then its own.  The lead (path ``[]``, fragment null)
   comes first, and the spans tile the layer.
@@ -60,7 +75,7 @@ renderer id, never an edit of this one.  The rule, in full:
   ``blockquote``, every theorem box (class token ``math_theorem`` or
   ``math-theorem``) and every display formula (a formula whose class names
   ``mwe-math-element-block``, a ``div`` formula, or a ``math`` with
-  ``display="block"``) that has a span and lies outside the dropped regions
+  ``display="block"``) that has a kept span and lies outside the dropped regions
   below.  Blocks may nest (an ``li`` holding a ``p`` is two entries).
   ``formulas`` counts the formulas starting inside; ``math`` is true when there
   is one, or when a deterministic finder's passage starts inside.
@@ -70,22 +85,25 @@ renderer id, never an edit of this one.  The rule, in full:
   ``strong``; ``bold_definition`` -- each ``p`` with a ``b`` inside and no
   ``table``, ``caption`` or heading around it, ``term`` the first ``b``'s text;
   ``lead`` -- the first ``p`` of the lead section with at least
-  :data:`LEAD_MIN_WORDS` words and no ``table`` around it.  A passage starts at
-  its element's layer span start and must be a word start of the head text
+  :data:`LEAD_MIN_WORDS` words of kept text and no ``table`` around it.  A
+  passage starts at its element's kept span start and must be a word start of
+  the head text
   (``locate_text.check_start`` at ``HeadMap.to_head``); one that is not is
   dropped and counted in ``finders_dropped``.
 * **The reading copy** (``text.txt``) walks the same tree without the dropped
   regions -- ``style``, ``script``, ``sup.reference``, ``ol.references``,
   ``.reflist``, ``.mw-references-wrap``, ``.mw-editsection`` -- writing each
   formula as ``$<normalized alttext>$``, each heading as a line of ``#`` (one per
-  level) and its title, ``- `` before a list item, `` | `` between table cells,
-  a line break for ``br``, a blank line between blocks (inside a table cell a
-  block is only a space: a row is one line), and whitespace collapsed within a
-  block.  ``layer_map.json`` maps it back: in each segment
-  ``[t0, t1, l0, l1]``, ``text[t0:t1]`` is ``layer[l0:l1]``, character by
-  character when the lengths are equal and only as a whole for a formula.
-  Characters the copy adds (heading marks, bullets, separators, breaks) are in
-  no segment.
+  level) and its title, ``- `` before a list item, `` | `` between table cells
+  (one space each side, whatever whitespace the cells hold), a line break for
+  ``br``, a blank line between blocks (inside a table cell a block -- a display
+  formula too -- is only a space: a row is one line), and whitespace collapsed
+  within a block.  ``layer_map.json`` (``cf-layer-map/2``) maps it back: in each
+  segment ``[t0, t1, l0, l1, kind]``, ``text[t0:t1]`` is ``layer[l0:l1]``,
+  character by character when ``kind`` is 0 (text) and only as a whole when it
+  is 1 (a formula, whatever the two lengths are).  Characters the copy adds
+  (heading marks, bullets, separators, breaks, an image-only formula) are in no
+  segment.
 
 Offsets everywhere are code-point offsets.  Nothing here fetches anything:
 ``scripts/sources/wikinet.py`` is the one module that does.
@@ -94,8 +112,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sys
+import tempfile
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
@@ -134,7 +154,20 @@ _COPY_BLOCKS = frozenset({"p", "div", "li", "dd", "dt", "dl", "ul", "ol", "table
                           "footer", "header", "main", "nav", "form", "fieldset"})
 _BLOCK_TAGS = frozenset({"p", "li", "dd", "dt", "blockquote"})
 _THEOREM_CLASSES = frozenset({"math_theorem", "math-theorem"})
-_COMMENT = re.compile(r"<!--.*?-->", re.S)
+#: elements whose content the tokenizer reads as raw text (or RCDATA): a ``<!--``
+#: there is text, and so is anything that looks like a tag
+_RAW_TEXT = frozenset({"script", "style", "xmp", "iframe", "noembed", "noframes",
+                       "textarea", "title"})
+#: the HTML5 tree builder drops one newline right after these start tags
+_EAT_LF = frozenset({"pre", "listing", "textarea"})
+#: deeper nesting than this is refused, deterministically and well inside Python's
+#: recursion limit (the walk takes two frames a level)
+MAX_DEPTH = 256
+#: the layer map's schema, and its segment kinds
+LAYER_MAP_SCHEMA = "cf-layer-map/2"
+SEGMENT_TEXT = 0
+SEGMENT_FORMULA = 1
+_TAG_NAME = re.compile(r"[^\t\n\f\r />]*")
 
 
 class RenderError(ValueError):
@@ -145,11 +178,107 @@ class RenderError(ValueError):
 # the canonical body
 # --------------------------------------------------------------------------
 
+def _tag_end(html: str, i: int) -> int:
+    """Just past the ``>`` closing the tag that starts at ``i`` (or the end of the text).
+
+    The tokenizer's attribute states, reduced to what decides where a tag ends:
+    a ``"`` or ``'`` opens a quoted value only right after an ``=`` (and the
+    whitespace after it); inside one, ``>`` is text.
+    """
+    n = len(html)
+    j = i + 1
+    expecting_value = False
+    while j < n:
+        ch = html[j]
+        if ch == ">":
+            return j + 1
+        if ch == "=":
+            expecting_value = True
+            j += 1
+            continue
+        if ch in _WS:
+            j += 1
+            continue
+        if expecting_value and ch in "\"'":
+            close = html.find(ch, j + 1)
+            if close < 0:
+                return n
+            j = close + 1
+            expecting_value = False
+            continue
+        expecting_value = False
+        j += 1
+    return n
+
+
 def strip_comments(html: str) -> str:
-    """Every ``<!-- ... -->`` removed; an unterminated comment runs to the end."""
-    text = _COMMENT.sub("", html)
-    at = text.find("<!--")
-    return text[:at] if at >= 0 else text
+    """Every HTML comment removed, delimited as the tokenizer delimits it.
+
+    Scans the data state: a ``<!--`` opens a comment closed by the first ``-->``
+    or ``--!>`` (``<!-->`` and ``<!--->`` close at once, and an unterminated one
+    runs to the end); a tag is skipped whole, attribute values included; the
+    content of a raw-text element (``_RAW_TEXT``) runs to its end tag.  So a
+    ``<!--`` in an attribute or a stylesheet is text and stays.
+    """
+    out: list[str] = []
+    n = len(html)
+    i = 0
+    while i < n:
+        j = html.find("<", i)
+        if j < 0:
+            out.append(html[i:])
+            break
+        out.append(html[i:j])
+        if html.startswith("<!--", j):
+            k = j + 4
+            if html.startswith(">", k):
+                i = k + 1
+                continue
+            if html.startswith("->", k):
+                i = k + 2
+                continue
+            ends = [e + len(m) for m in ("-->", "--!>") for e in [html.find(m, k)] if e >= 0]
+            i = min(ends) if ends else n
+            continue
+        nxt = html[j + 1:j + 2]
+        if nxt.isascii() and nxt.isalpha():
+            k = _tag_end(html, j)
+            out.append(html[j:k])
+            name = _TAG_NAME.match(html, j + 1).group(0).lower()
+            if name in _RAW_TEXT and not html[j:k].endswith("/>"):
+                close = re.compile(r"</" + re.escape(name) + r"(?=[\t\n\f\r />])", re.I)
+                m = close.search(html, k)
+                end = m.start() if m else n
+                out.append(html[k:end])
+                i = end
+            else:
+                i = k
+            continue
+        if nxt == "/" and html[j + 2:j + 3].isascii() and html[j + 2:j + 3].isalpha():
+            k = _tag_end(html, j)
+            out.append(html[j:k])
+            i = k
+            continue
+        out.append("<")
+        i = j + 1
+    return "".join(out)
+
+
+def decode(raw: bytes) -> str:
+    """UTF-8, one leading byte-order mark dropped (the WHATWG UTF-8 decode); else refused."""
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RenderError(f"the bytes are not UTF-8 ({exc})") from None
+    return text[1:] if text.startswith("\ufeff") else text
+
+
+def response_json(raw: bytes):
+    """The JSON value the bytes hold (byte-order mark tolerated), or None when they hold none."""
+    try:
+        return json.loads(decode(raw))
+    except (RenderError, ValueError):
+        return None
 
 
 def parse_response_text(raw: bytes) -> tuple[str | None, dict]:
@@ -159,10 +288,7 @@ def parse_response_text(raw: bytes) -> tuple[str | None, dict]:
     ``parse.text["*"]``.  Anything else -- not JSON, not a parse response -- is
     ``(None, {})``, and the caller treats the bytes as a body.
     """
-    try:
-        data = json.loads(raw.decode("utf-8"))
-    except (UnicodeDecodeError, ValueError):
-        return None, {}
+    data = response_json(raw)
     if not isinstance(data, dict) or not isinstance(data.get("parse"), dict):
         return None, {}
     parse = data["parse"]
@@ -179,11 +305,22 @@ def canonical_body(raw: bytes) -> str:
     text, _parse = parse_response_text(raw)
     if text is None:
         try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
+            text = decode(raw)
+        except RenderError as exc:
             raise RenderError(f"the bytes are neither a parse response nor UTF-8 HTML "
                               f"({exc})") from None
+    _encodable(text)
     return strip_comments(text)
+
+
+def _encodable(text: str) -> str:
+    """``text``, refused when it holds a lone surrogate (it would have no UTF-8 bytes)."""
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise RenderError(f"the body holds a lone surrogate ({exc.reason} at {exc.start})",
+                          ) from None
+    return text
 
 
 def sha256_text(text: str) -> str:
@@ -230,6 +367,7 @@ class _TreeBuilder(HTMLParser):
         self.length = 0
         self.root = _Node("#root", {}, None, 0)
         self.stack = [self.root]
+        self.eat_lf = False
 
     # -- helpers -------------------------------------------------------
     def _close_to(self, index: int) -> None:
@@ -280,6 +418,7 @@ class _TreeBuilder(HTMLParser):
 
     # -- events --------------------------------------------------------
     def handle_starttag(self, tag, attrs):
+        self.eat_lf = False
         self._implied_closes(tag)
         parent = self.stack[-1]
         node = _Node(tag, {k: (v if v is not None else "") for k, v in attrs},
@@ -288,13 +427,18 @@ class _TreeBuilder(HTMLParser):
         if tag in _VOID:
             node.end = self.length
         else:
+            if len(self.stack) > MAX_DEPTH:
+                raise RenderError(f"the body nests elements more than {MAX_DEPTH} deep "
+                                  f"(at a {tag}); repair it before rendering")
             self.stack.append(node)
+            self.eat_lf = tag in _EAT_LF
 
     def handle_startendtag(self, tag, attrs):
         # HTML5 ignores the self-closing flag on a non-void element
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
+        self.eat_lf = False
         if tag in _VOID:
             return
         for i in range(len(self.stack) - 1, 0, -1):
@@ -302,7 +446,22 @@ class _TreeBuilder(HTMLParser):
                 self._close_to(i)
                 return
 
+    def handle_comment(self, data):
+        self.eat_lf = False
+
+    def handle_decl(self, decl):
+        self.eat_lf = False
+
+    def handle_pi(self, data):
+        self.eat_lf = False
+
     def handle_data(self, data):
+        if self.eat_lf:
+            self.eat_lf = False
+            for newline in ("\r\n", "\r", "\n"):
+                if data.startswith(newline):
+                    data = data[len(newline):]
+                    break
         if not data:
             return
         start = self.length
@@ -387,13 +546,36 @@ def _alttext(node: _Node, raw: str) -> str | None:
     return None
 
 
-def _texts(node: _Node) -> Iterable[tuple[int, int]]:
-    """Every raw text range under ``node``, in document order."""
-    for child in node.children:
-        if isinstance(child, _Node):
-            yield from _texts(child)
+def _texts(node: _Node, *, kept: bool = False) -> Iterable[tuple[int, int]]:
+    """Every raw text range under ``node`` in document order (``kept``: outside dropped regions)."""
+    stack = [iter(node.children)]
+    while stack:
+        child = next(stack[-1], None)
+        if child is None:
+            stack.pop()
+        elif isinstance(child, _Node):
+            if not (kept and _dropped(child)):
+                stack.append(iter(child.children))
         else:
             yield child
+
+
+def _kept_span(node: _Node, collapse: "_Collapse") -> tuple[int, int] | None:
+    """The layer span of the node's text outside the dropped regions, or None."""
+    first = last = None
+    for a, b in _texts(node, kept=True):
+        j = collapse.nxt[a]
+        if j < b:
+            if first is None:
+                first = j
+            last = collapse.prv[b]
+    if first is None:
+        return None
+    return collapse.emit[first], collapse.emit[last] + 1
+
+
+def _kept_text(node: _Node, raw: str) -> str:
+    return _ascii_collapse("".join(raw[a:b] for a, b in _texts(node, kept=True)))
 
 
 def _is_formula_root(node: _Node, inside: bool) -> bool:
@@ -480,7 +662,7 @@ class Rendering:
                 "text_sha256": self.text_sha256, "counts": dict(self.counts)}
 
     def layer_map(self) -> dict:
-        return {"schema": "cf-layer-map/1", "segments": [list(s) for s in self.segments]}
+        return {"schema": LAYER_MAP_SCHEMA, "segments": [list(s) for s in self.segments]}
 
     def head_map(self) -> locate_text.HeadMap:
         return locate_text.HeadMap(self.layer, self.formulas)
@@ -574,7 +756,7 @@ class _Copy:
         self._flush_space(span[0])
         t0 = self.length
         self._append(text)
-        self.atomic.append([t0, self.length, span[0], span[1]])
+        self.atomic.append([t0, self.length, span[0], span[1], SEGMENT_FORMULA])
         self.last_layer = span[1] - 1
         self.line_has_text = True
 
@@ -610,7 +792,7 @@ class _Copy:
                 segments.append(run)
                 run = None
             if at is not None:
-                run = [t, t + 1, at, at + 1]
+                run = [t, t + 1, at, at + 1, SEGMENT_TEXT]
         if run is not None:
             segments.append(run)
         segments.extend(s for s in self.atomic if s[1] <= cut)
@@ -628,7 +810,10 @@ class LayerMap:
 
     @classmethod
     def read(cls, directory: str | Path) -> "LayerMap":
-        data = json.loads((Path(directory) / "layer_map.json").read_text(encoding="utf-8"))
+        path = Path(directory) / "layer_map.json"
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("schema") != LAYER_MAP_SCHEMA:
+            raise RenderError(f"{path} is not a {LAYER_MAP_SCHEMA} layer map; re-render it")
         return cls(data["segments"])
 
     def text_to_layer(self, offset: int) -> int | None:
@@ -641,6 +826,7 @@ class LayerMap:
 
 
 def _lookup(segments, i: int, offset: int, side: int) -> int | None:
+    """Map ``offset`` through segment ``i`` from ``side`` (0: text, 2: layer) to the other."""
     if i < 0:
         return None
     seg = segments[i]
@@ -648,35 +834,19 @@ def _lookup(segments, i: int, offset: int, side: int) -> int | None:
     other = 2 - side
     if not a <= offset < b:
         return None
-    if seg[1] - seg[0] == seg[3] - seg[2]:
+    if seg[4] == SEGMENT_TEXT:
         return seg[other] + (offset - a)
-    return seg[other] if offset == a else None
+    return seg[other] if offset == a else None       # a formula maps only as a whole
 
 
 def text_to_layer(segments: list[list[int]], offset: int) -> int | None:
     """The layer offset of a reading-copy offset, or None where the copy added the character."""
-    i = bisect_right([s[0] for s in segments], offset) - 1
-    if i < 0:
-        return None
-    t0, t1, l0, l1 = segments[i]
-    if not t0 <= offset < t1:
-        return None
-    if t1 - t0 == l1 - l0:
-        return l0 + (offset - t0)
-    return l0 if offset == t0 else None
+    return _lookup(segments, bisect_right([s[0] for s in segments], offset) - 1, offset, 0)
 
 
 def layer_to_text(segments: list[list[int]], offset: int) -> int | None:
     """The reading-copy offset of a layer offset, or None where the copy has no character."""
-    i = bisect_right([s[2] for s in segments], offset) - 1
-    if i < 0:
-        return None
-    t0, t1, l0, l1 = segments[i]
-    if not l0 <= offset < l1:
-        return None
-    if t1 - t0 == l1 - l0:
-        return t0 + (offset - l0)
-    return t0 if offset == l0 else None
+    return _lookup(segments, bisect_right([s[2] for s in segments], offset) - 1, offset, 2)
 
 
 class _Walker:
@@ -708,6 +878,15 @@ class _Walker:
             self._element(child, in_formula=in_formula, dropped=dropped, in_table=in_table,
                           in_heading=in_heading, in_cell=in_cell)
 
+    def _formula_break(self, display: bool, in_cell: bool) -> None:
+        """Around a display formula: a block break, or inside a table cell a space."""
+        if not display:
+            return
+        if in_cell:
+            self.copy.pending_space = True
+        else:
+            self.copy.block_break()
+
     def _element(self, node: _Node, *, in_formula: bool, dropped: bool, in_table: bool,
                  in_heading: bool, in_cell: bool) -> None:
         c = self.c
@@ -718,31 +897,36 @@ class _Walker:
         if _is_formula_root(node, in_formula):
             alt = _alttext(node, c.raw)
             if alt is not None:
+                display = _is_display(node)
+                tex = "$" + locate_text.normalize_alttext(alt) + "$"
                 if span is None:
                     self.no_text_formulas += 1
                 else:
                     self.formulas.append({"span": [span[0], span[1]], "alttext": alt})
                     self.formula_nodes[id(node)] = span
-                    display = _is_display(node)
-                    if not drop_here:
-                        if display:
-                            self.blocks.append((node, "math", span, False))
-                            self.copy.block_break()
-                        self.copy.atom("$" + locate_text.normalize_alttext(alt) + "$", span)
-                        if display:
-                            self.copy.block_break()
-                    return
+                if not drop_here:
+                    if display and span is not None:
+                        self.blocks.append((node, "math", span, False))
+                    self._formula_break(display, in_cell)
+                    if span is None:
+                        self.copy.literal(tex)      # an image only: added characters
+                    else:
+                        self.copy.atom(tex, span)
+                    self._formula_break(display, in_cell)
+                return
         heading = _HEADINGS.get(tag)
         if heading is not None and not in_formula:
             self.headings.append((node, heading))
-        if not drop_here and span is not None:
+        kept = (_kept_span(node, c)
+                if not drop_here and (tag in _BLOCK_TAGS or _is_theorem_box(node)) else None)
+        if kept is not None:
             if tag in _BLOCK_TAGS:
-                self.blocks.append((node, tag, span, in_table))
+                self.blocks.append((node, tag, kept, in_table))
             if _is_theorem_box(node):
-                self.blocks.append((node, "theorem_box", span, in_table))
-                self.boxes.append((node, span))
+                self.blocks.append((node, "theorem_box", kept, in_table))
+                self.boxes.append((node, kept))
             if tag == "p":
-                self.paras.append((node, span, in_table, in_heading))
+                self.paras.append((node, kept, in_table, in_heading))
         copy = self.copy
         # inside a table cell a block is only a word break: a cell is one line
         breaks = (tag in _COPY_BLOCKS or _is_theorem_box(node)) and not in_cell
@@ -751,6 +935,7 @@ class _Walker:
                 copy.line_break()
             elif tag in ("td", "th"):
                 if copy.line_has_text:
+                    copy.pending_space = False     # the separator brings its own spaces
                     copy.literal(" | ")
             elif breaks:
                 copy.block_break()
@@ -772,17 +957,7 @@ class _Walker:
 
 
 def _heading_title(node: _Node, raw: str) -> str:
-    parts: list[str] = []
-
-    def walk(n: _Node) -> None:
-        for child in n.children:
-            if isinstance(child, tuple):
-                parts.append(raw[child[0]:child[1]])
-            elif not _dropped(child):
-                walk(child)
-
-    walk(node)
-    return _ascii_collapse("".join(parts))
+    return _kept_text(node, raw)
 
 
 def _heading_fragment(node: _Node) -> str | None:
@@ -796,10 +971,14 @@ def _heading_fragment(node: _Node) -> str | None:
 
 def _iter_kept(node: _Node):
     """Every descendant element outside a dropped region, in document order."""
-    for child in node.children:
-        if isinstance(child, _Node) and not _dropped(child):
+    stack = [iter(node.children)]
+    while stack:
+        child = next(stack[-1], None)
+        if child is None:
+            stack.pop()
+        elif isinstance(child, _Node) and not _dropped(child):
             yield child
-            yield from _iter_kept(child)
+            stack.append(iter(child.children))
 
 
 def _first_text(node: _Node, raw: str, predicate) -> str | None:
@@ -815,6 +994,7 @@ def render(body: str) -> Rendering:
     """Every view of one canonical body.  Deterministic: the same body, the same bytes."""
     if not isinstance(body, str):
         raise RenderError("the body is text: decode it (canonical_body) first")
+    _encodable(body)
     builder = _TreeBuilder()
     try:
         builder.feed(body)
@@ -886,7 +1066,7 @@ def render(body: str) -> Rendering:
     for node, span, in_table, _in_heading in walker.paras:
         if in_table or span[0] >= lead_end:
             continue
-        if len(layer[span[0]:span[1]].split(" ")) >= LEAD_MIN_WORDS:
+        if len(_kept_text(node, raw).split(" ")) >= LEAD_MIN_WORDS:
             propose("lead", span, None)
             break
     seen = set()
@@ -931,33 +1111,58 @@ def render(body: str) -> Rendering:
 def write_rendering(directory: str | Path, rendering: Rendering) -> dict:
     """Write every file of :data:`RENDER_FILES` into ``directory``; returns ``render.json``.
 
-    Each file is written atomically; an unchanged file is left alone, so a
-    re-render of the same body changes nothing on disk.
+    Each file is written atomically as the exact UTF-8 bytes of its content (no
+    newline translation, so a body holding a CR keeps the sha it was recorded
+    with); an unchanged file is left alone, so a re-render of the same body
+    changes nothing on disk.
     """
-    from cflib.jsonio import atomic_write
-
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     for name, content in rendering.files().items():
         path = directory / name
+        data = content.encode("utf-8")
         try:
-            if path.read_text(encoding="utf-8") == content:
+            if path.read_bytes() == data:
                 continue
-        except (OSError, UnicodeDecodeError):
+        except OSError:
             pass
-        atomic_write(path, content)
+        write_bytes(path, data)
     return rendering.record()
+
+
+def write_bytes(path: str | Path, data: bytes) -> None:
+    """Write ``data`` to ``path`` atomically (temp file in the same directory, then replace)."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def read_body(path: str | Path) -> str:
+    """A ``body.html`` as its exact text: UTF-8, no newline translation."""
+    try:
+        return Path(path).read_bytes().decode("utf-8")
+    except FileNotFoundError:
+        raise RenderError(f"{path} is missing: fetch or adopt the source first") from None
+    except UnicodeDecodeError as exc:
+        raise RenderError(f"{path} is not UTF-8 ({exc})") from None
 
 
 def render_directory(directory: str | Path) -> Rendering:
     """Render the ``body.html`` of a source directory and write every view beside it."""
     directory = Path(directory)
-    body_path = directory / "body.html"
-    try:
-        body = body_path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        raise RenderError(f"{body_path} is missing: fetch or adopt the source first") from None
-    rendering = render(body)
+    rendering = render(read_body(directory / "body.html"))
     write_rendering(directory, rendering)
     return rendering
 

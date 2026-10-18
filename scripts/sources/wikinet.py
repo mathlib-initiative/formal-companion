@@ -62,12 +62,20 @@ MAX_FILESIZE = "64M"
 TIMEOUT = 120
 #: page ids per page-info request (the API's limit for an ordinary client)
 INFO_BATCH = 50
+#: the least wait after a ``maxlag`` refusal (the API's own Retry-After floor), and
+#: the most any Retry-After may make a retry wait
+MAXLAG_WAIT = 5.0
+MAX_RETRY_WAIT = 120.0
 #: parameters a transport adds to every request and a recording does not key on
 TRANSPORT_PARAMS = frozenset({"maxlag"})
 
 
 class WikiError(CfError):
     """Wikipedia answered, and the answer is not what was asked for."""
+
+
+class WikiUnavailable(WikiError):
+    """Wikipedia is refusing or rate-limiting requests: retrying soon will not help."""
 
 
 class Transport(Protocol):
@@ -118,13 +126,16 @@ class CurlTransport:
         self._last = None
         self.requests = 0
 
-    def argv(self, url: str, out: str) -> list[str]:
+    def argv(self, url: str, out: str, headers: str | None = None) -> list[str]:
         """The exact command line, so a test can pin the bounds."""
         exe = self.exe or shutil.which("curl") or "curl"
-        return [exe, "-sS", "--fail", "--proto", "=https", "--proto-redir", "=https",
+        argv = [exe, "-sS", "--fail", "--proto", "=https", "--proto-redir", "=https",
                 "--max-redirs", "3", "--max-filesize", MAX_FILESIZE,
                 "--max-time", str(self.timeout), "-A", self.user_agent,
-                "-o", out, "-w", "%{http_code}", url]
+                "-o", out, "-w", "%{http_code}"]
+        if headers:
+            argv += ["-D", headers]
+        return argv + [url]
 
     def _wait(self) -> None:
         if self._last is not None:
@@ -136,34 +147,73 @@ class CurlTransport:
     def get(self, site: str, params: Mapping[str, str]) -> bytes:
         url = request_url(site, {**params, "maxlag": MAXLAG})
         problem = "no attempt was made"
+        delay = 0.0
         for attempt in range(max(1, self.attempts)):
             if attempt:
-                self.sleep(BACKOFF[min(attempt - 1, len(BACKOFF) - 1)])
+                self.sleep(delay)
             self._wait()
             fd, tmp = tempfile.mkstemp(prefix="cf-wiki-", suffix=".json")
             os.close(fd)
+            fd, hdr = tempfile.mkstemp(prefix="cf-wiki-", suffix=".headers")
+            os.close(fd)
             try:
                 self.requests += 1
-                proc = self.runner(self.argv(url, tmp), capture_output=True, text=True)
+                try:
+                    proc = self.runner(self.argv(url, tmp, hdr), capture_output=True, text=True)
+                except OSError as exc:
+                    raise WikiError(f"curl could not be run ({exc})",
+                                    hint="install curl or put it on PATH; nothing was "
+                                         "written for this request") from None
                 status = (proc.stdout or "").strip()[-3:]
                 body = Path(tmp).read_bytes() if os.path.exists(tmp) else b""
+                headers = Path(hdr).read_bytes() if os.path.exists(hdr) else b""
             finally:
-                try:
-                    os.unlink(tmp)
-                except OSError:
-                    pass
+                for path in (tmp, hdr):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+            backoff = BACKOFF[min(attempt, len(BACKOFF) - 1)]
+            wanted = retry_after(headers)
             if proc.returncode == 0 and status == "200":
-                if _lagged(body):
-                    problem = "the replicas are lagged (maxlag)"
-                    continue
-                return body
-            problem = f"curl exit {proc.returncode}, HTTP {status or '?'}: " \
-                      f"{(proc.stderr or '').strip()[:200]}"
-            if status not in ("429", "500", "502", "503", "504") and proc.returncode not in (
+                if not _lagged(body):
+                    return body
+                problem = "the replicas are lagged (maxlag)"
+                delay = max(backoff, wanted or 0.0, MAXLAG_WAIT)
+            elif status == "403":
+                raise WikiUnavailable(f"GET {url} was refused (HTTP 403)",
+                                      hint="the API is blocking this client; stop, and "
+                                           "re-run much later")
+            elif status in ("429", "500", "502", "503", "504") or proc.returncode in (
                     6, 7, 28, 35, 52, 55, 56):
-                break
-        raise WikiError(f"GET {url} failed: {problem}",
-                        hint="re-run later; nothing was written for this request")
+                problem = f"curl exit {proc.returncode}, HTTP {status or '?'}: " \
+                          f"{(proc.stderr or '').strip()[:200]}"
+                delay = max(backoff, wanted or 0.0)
+            else:
+                raise WikiError(f"GET {url} failed: curl exit {proc.returncode}, HTTP "
+                                f"{status or '?'}: {(proc.stderr or '').strip()[:200]}",
+                                hint="nothing was written for this request")
+            delay = min(delay, MAX_RETRY_WAIT)
+        raise WikiUnavailable(f"GET {url} failed {max(1, self.attempts)} time(s): {problem}",
+                              hint="Wikipedia is lagged or rate-limiting; re-run later, "
+                                   "nothing was written for this request")
+
+
+def retry_after(headers: bytes) -> float | None:
+    """The seconds a ``Retry-After`` header of the LAST response asks for, or None.
+
+    ``curl -D`` writes every response of a redirect chain; the last block is the
+    answer.  Only the delta-seconds form is read (an HTTP-date is ignored).
+    """
+    text = headers.decode("latin-1", errors="replace")
+    blocks = [b for b in text.replace("\r\n", "\n").split("\n\n") if b.strip()]
+    for line in (blocks[-1].split("\n") if blocks else []):
+        name, _, value = line.partition(":")
+        if name.strip().lower() == "retry-after":
+            value = value.strip()
+            if value.isdigit():
+                return float(value)
+    return None
 
 
 def _lagged(body: bytes) -> bool:
@@ -212,7 +262,8 @@ class FixtureTransport:
 
 def _json(body: bytes, what: str) -> dict:
     try:
-        data = json.loads(body.decode("utf-8"))
+        text = body.decode("utf-8")
+        data = json.loads(text[1:] if text.startswith("\ufeff") else text)
     except (UnicodeDecodeError, ValueError) as exc:
         raise WikiError(f"{what}: the response is not JSON ({exc})") from None
     if not isinstance(data, dict):
@@ -228,6 +279,17 @@ def fetch_parse(transport: Transport, site: str, revision: int) -> bytes:
     """One revision's ``action=parse`` response, as raw bytes; checked, never altered."""
     params = websource.parse_params(revision)
     body = transport.get(site, params)
+    check_parse(body, revision)
+    return body
+
+
+def check_parse(body: bytes, revision: int) -> dict:
+    """``parse`` of an ``action=parse`` response of ``revision``; else :class:`WikiError`.
+
+    The checks every recorded fetch passes, whether the bytes just arrived or were
+    found on disk from an earlier run: JSON, a ``parse.text``, and the revision
+    asked for (a missing ``revid`` is accepted, as the API omits it for none).
+    """
     data = _json(body, f"parse of revision {revision}")
     parse = data.get("parse")
     if not isinstance(parse, dict) or not isinstance(parse.get("text"), (str, dict)):
@@ -235,7 +297,7 @@ def fetch_parse(transport: Transport, site: str, revision: int) -> bytes:
     if parse.get("revid") not in (None, revision):
         raise WikiError(f"parse of revision {revision} answered for revision "
                         f"{parse.get('revid')}")
-    return body
+    return parse
 
 
 def project_pages(transport: Transport, site: str, project: str, *,
