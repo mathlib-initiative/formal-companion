@@ -87,7 +87,12 @@ third genuine reviewer rejection (proposal §6), never by a worker.
   context at most 200 — `gate.json` may change both) matches the layer
   **exactly once** with its `prefix` immediately before it and its `suffix`
   immediately after, the match starts at `span[0]`, and `exact` lies inside
-  the span. A passage may not start inside a formula.
+  the span. A passage may not start inside a formula. And the EXPORT must be
+  able to quote it: `locate_records.cap_quote` (`scripts/locate/records.py`:
+  twelve words, at most 32 characters of context) must find it exactly once,
+  or the passage is refused under rule 1 — a worker's longer quote may be
+  unique where the exported one is not, and the refusal comes while the start
+  can still move, not at `cf export literature-links`.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
@@ -135,7 +140,11 @@ A locate task carries at most eight passages of one frozen inventory.
 - `closeMatch` requires a non-empty `note` naming the convention difference.
 - Every curated candidate handed to the task (§5) must appear in `candidates`,
   accepted or rejected with a reason, or be located; the gate reads the
-  candidates file itself (rule 4).
+  candidates file itself (rule 4). "Handed to the task" is the task manifest
+  document's `curated: [{library, declaration}]` list intersected with the
+  candidates file (a manifest cannot add a hit): the planner gives each of a
+  source's curated hits to exactly one of its tasks. A manifest without the key
+  hands the task every curated hit of the file.
 - Every declaration a location or an `accepted` candidate names exists in
   `corpus.sqlite` at that library and the universe's commit (rule 3). No
   document carries `proof_status`, `commit` or `version` anywhere.
@@ -592,7 +601,16 @@ like a faithfulness run:
   since nobody can count code points or hash a head by hand),
   `locate_records.py` (`scripts/locate/records.py`, the record builder, which
   needs no `cflib`), the two host tools of §8, and `vendor/` with both vendored
-  packages and their manifests, whose shas the gate verifies at start.
+  packages and their manifests, whose shas the gate verifies at start. Rule 1
+  builds every implied record with `locate_records` itself (`location_record`,
+  `absence_record`, `unresolved_record` and `cap_quote`; the challenge value,
+  the location key and the joined proof status are placeholders, the source's
+  citation fields too unless the `sources` entry carries `uri`, `title`,
+  `container_title` and `licence`), from the gate directory, or from the
+  checkout's `scripts/locate/records.py` when the harvest runs the gate
+  in-process. A sibling that is missing or does not import is exit 3 with one
+  `FAIL` line naming it, never a traceback. Every SQLite database is opened
+  through a percent-quoted `file:` URI with `mode=ro&immutable=1`.
 
   The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
   <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's

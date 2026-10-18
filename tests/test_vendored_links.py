@@ -119,8 +119,6 @@ class TestTheVendoredBytesAreTheRevision(unittest.TestCase):
     #: ``vendor/`` on ``sys.path`` itself (the copy beside it in a gate directory,
     #: else the checkout's) before it imports the package.
     HOST_BOOTSTRAPPED = {
-        "scripts/gate/verify_locate.py":
-            "the locate gate; references/locate-documents.md section 9",
         "scripts/locate/records.py":
             "the record builder, copied into the gate directory as locate_records.py",
     }
