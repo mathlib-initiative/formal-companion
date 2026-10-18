@@ -29,7 +29,7 @@ instead of running the agent CLI themselves:
 * **The envelope is kept.**  The agent's stdout -- Claude's JSON envelope, with
   its usage and ``total_cost_usd`` -- is copied to
   ``<usage-dir>/<task-id>.<role>.<UTC stamp>.<pid>.json`` (``.out`` when it is
-  not JSON), outside the worktree, where the spend watchdog and the cost
+  not a JSON object), outside the worktree, where the spend watchdog and the cost
   cross-check read it.  The bridges used to delete it.
 * **A call that left no envelope still leaves a record.**  A timeout, a
   signal, an empty stdout or one that is not a JSON object writes, under the
@@ -144,15 +144,17 @@ def is_envelope(raw: bytes) -> bool:
 
 def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str,
                   suffix: str | None = None) -> Path | None:
-    """Copy the envelope outside the worktree; a failure to keep it never fails the call."""
+    """Copy the envelope outside the worktree; a failure to keep it never fails the call.
+
+    ``.json`` only for a JSON object (:func:`is_envelope`); anything else -- prose,
+    or JSON that is no object, such as an array -- is kept as ``.out``, so the
+    record :func:`call_record` writes under the same name with ``.json`` in the
+    same second never replaces the raw output it is about.
+    """
     if usage_dir is None:
         return None
     if suffix is None:
-        try:
-            json.loads(raw.decode("utf-8"))
-            suffix = "json"
-        except (UnicodeDecodeError, ValueError):
-            suffix = "out"
+        suffix = "json" if is_envelope(raw) else "out"
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     safe_task = re.sub(r"[^A-Za-z0-9._-]", "_", task_id or "no-task")[:120]
     try:
