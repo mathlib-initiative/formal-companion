@@ -46,6 +46,9 @@ release has something to say.
   carried `licence: null`, which the consumer refuses), and a re-add with
   `--licence` now records a missing licence (it exited 0 and changed nothing); a
   re-add naming another licence or `brain_lib` than recorded is refused.
+- An absence receipt's `queries` and `candidates` counts are the lengths of the
+  sidecar's lists: an exactly repeated query is listed once (the record had said
+  `queries: 3` beside a sidecar listing 4, and the consumer refused the set).
 - `universe.json` writes a library's `display_name` as its `brain_lib` only when
   that is a display name the consumer shows (printable ASCII, `,.()/+:'&_-·`, at
   most 100), and null otherwise: a `brain_lib` such as `Beta!` had made the

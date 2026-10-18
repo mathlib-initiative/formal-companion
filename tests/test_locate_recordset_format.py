@@ -560,6 +560,66 @@ class TestTheBudget(_Exported):
                             for r in report["refused"]))
 
 
+class TestTheReceiptCountsItsFile(_Exported):
+    """R2-D: an absence receipt's counts are the lengths of the sidecar's lists.
+
+    The review's DuplicateQuery variant: every absence receipt listed one query twice;
+    the staged gate admitted the documents (it folds case and space and needs 3
+    distinct), the export refused nothing, and the record said ``queries: 3`` while
+    the sidecar listed 4 -- the consumer refused the whole set ("receipt counts
+    differ from the receipt file").
+    """
+
+    def test_r2_a_gate_valid_receipt_with_a_repeated_query(self):
+        import test_verify_locate as tvl
+
+        fx = tvl.Fixture(self, "locate")
+        fx.manifest("t-loc-0001", tvl.locate_manifest_doc(fx))
+        body = tvl.locate_body()
+        absence = body["passages"][1]
+        absence["receipt"]["queries"].append(absence["receipt"]["queries"][-1])
+        result = fx.run(fx.document("t-loc-0001", body))
+        self.assertEqual(result["exit"], tvl.vl.EXIT_OK, result["problems"])
+        digest, text, ref = records.receipt_document(tvl.SID, absence["item"], absence["receipt"],
+                                                    {"id": "u1", "sha256": "f" * 64})
+        sidecar = json.loads(text)
+        self.assertEqual(ref["queries"], len(sidecar["queries"]))
+        self.assertEqual(ref["candidates"], len(sidecar["candidates"]))
+        self.assertEqual(sidecar["queries"],
+                         ["widget lemma", "finite widget spanning", "Widget.spanning"])
+        self.assertEqual(digest, records.sha256_text(text))
+
+    def test_r2_every_exported_absence_counts_its_sidecar(self):
+        shutil.rmtree(self.paths.corpus_run_dir("loc-1"))
+        docs = F.locate_documents(self.paths, "loc-1")
+        repeated = 0
+        for doc in docs.values():
+            for passage in doc["passages"]:
+                if passage["outcome"] == "absent":
+                    passage["receipt"]["queries"].insert(1, passage["receipt"]["queries"][0])
+                    repeated += 1
+        self.assertTrue(repeated)
+        F.write_harvest(self.paths, "loc-1", docs)
+
+        def uphold_absence(rec):
+            if rec["target"] == "absence":
+                return {"item": rec["item"], "target": "absence", "action": "uphold",
+                        "witness": "searched gadget lattice height bounds"}
+            return F.default_verdict(rec)
+        self.challenge(verdict=uphold_absence)
+        code, out, err = self.export()
+        self.assertEqual(code, 0, out + err)
+        out_dir = self.paths.export_dir("set-1")
+        absences = [r for r in _records(out_dir) if r.get("relation") == "noMatch"]
+        self.assertEqual(len(absences), repeated)
+        for rec in absences:
+            receipt = rec["extensions"][EXT]["receipt"]
+            sidecar = read_json(out_dir / "receipts" / f"{receipt['sha256']}.json")
+            self.assertEqual((receipt["queries"], receipt["candidates"]),
+                             (len(sidecar["queries"]), len(sidecar["candidates"])))
+            self.assertEqual(len(sidecar["queries"]), len(set(sidecar["queries"])))
+
+
 class TestRecordUnits(unittest.TestCase):
     """The record builder on the field case's shapes, without a campaign."""
 

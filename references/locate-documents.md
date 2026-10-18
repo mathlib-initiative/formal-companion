@@ -330,7 +330,11 @@ so the runs and the manifest version are the export report's, not the seal's):
 - `byte_budget` — the per-source budget that applied, `0` for none (below).
 
 A receipt's name, the absence record's `receipt.sha256` and the seal's entry are
-one value: the sha256 of the receipt file's exact bytes.
+one value: the sha256 of the receipt file's exact bytes. The record's
+`receipt.queries` and `receipt.candidates` are the lengths of that file's
+`queries` and `candidates` lists, which a consumer checks; a query a document
+repeats exactly (the gate counts distinct queries, so it admits one) is listed
+once, in its first place.
 
 `universe.json` is the universe as proposal §2.3 writes it: `id`,
 `universe_sha256`, `frozen` (the `YYYY-MM-DD` it was frozen; the export refuses a
