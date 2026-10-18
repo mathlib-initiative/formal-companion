@@ -90,8 +90,10 @@ Every source has a **licence class**, and it decides one thing: what an
 
 The cap is the locate record's (`docs/proposals/wikipedia-locate.md` §2.7):
 twelve words of the quote itself and at most 32 characters either side of it —
-quotation, not reproduction. The export that applies it is *not implemented*;
-until it exists no command quotes more of an open source than of a closed one.
+quotation, not reproduction. `cf export literature-links` is the export that
+applies it: it quotes only a source whose class is open (and, for an
+attribution class, only with the licence named), and refuses a closed one; no
+other command quotes more of an open source than of a closed one.
 
 What a class does **not** change:
 
@@ -101,8 +103,9 @@ What a class does **not** change:
   entry and every family. Quoting a capped span with attribution is quotation;
   copying an article is redistribution, and the skill does not do it;
 - **fetching** is section 2's business (`licence.fetch`), not the class's. The
-  one fetcher a web family will use is a named network exception in
-  `CLAUDE.md` §3, and it is *not implemented*.
+  one fetcher a web family uses is a named network exception in `CLAUDE.md`
+  §3: `scripts/sources/wikinet.py`, which `cf sourceset fetch` and
+  `enumerate-wikiproject` reach only under `--execute`.
 
 A web source is not a registry entry: Wikipedia has millions of revisions and
 the registry holds none of them. Its class comes from its **family**, one row

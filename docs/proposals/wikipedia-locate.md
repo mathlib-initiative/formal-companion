@@ -1,6 +1,6 @@
 # Locate: where is a source formalized, in any library
 
-**Status: proposal v2, 2026-10-17. Nothing below is built unless §1 says so.**
+**Status: proposal v2, 2026-10-17; milestones L-M0 to L-M3 built on synthetic fixtures 2026-10-18 (§1). Nothing has run on `$HOST` yet: §12's L-M2 smoke run is the next step.**
 v1 of this document was reviewed by four adversarial readers (scale and
 operations, measurement, contract and model, consumer); every blocker and
 major issue they raised is either resolved here or listed in §12.
@@ -39,22 +39,32 @@ run host, named only in a workspace's `workspace.yaml`, never here —
 
 ## 1. What exists
 
+Built and tested on synthetic fixtures only (`tests/test_locate_*.py`, the end-to-end
+`tests/e2e/locate_synthetic/`); none of it has run on `$HOST`, against a real page or
+a real library index, or with a model.
+
 | part | path | state |
 |---|---|---|
-| companion/source/item/finding model; frozen `clean()` and `finding_id` | `scripts/cflib/items.py`, `cflib/hashing.py` | keys numbered items, `In-text p.N` and (built, L-M0) the `In-text #<hex>` passage of §2.2, tried after the page and the cross-reference so no existing label moved |
-| the passage head id of §2.2 (built, L-M0) | `scripts/cflib/passages.py` | `assign_passage_ids` over a head text the renderer will produce; the renderer is not implemented |
-| the locate vocabulary of §2.2, §2.4, §2.6 and §5 (built, L-M0) | `scripts/cflib/vocab.py`, `references/vocabulary.md` §1.11 | values, `decide_proof_status`, `derive_status`; no stage uses them yet |
-| licence classes and web-source families of §10 (built, L-M0) | `scripts/cflib/registry.py`, `registry/sources.yaml`, `POLICY.md` §4.1 | ships `enwiki`; a source's class is read, nothing exports by it yet |
-| text manuscripts located by heading path + line | `scripts/sources/locator.py`, `prepare_source.py` | an `.html` source is copied raw into `text.txt`; the quote gate then runs against markup |
+| companion/source/item/finding model; frozen `clean()` and `finding_id` | `scripts/cflib/items.py`, `cflib/hashing.py` | keys numbered items, `In-text p.N` and the `In-text #<hex>` passage of §2.2, tried after the page and the cross-reference so no existing label moved; `hashing.location_key` is §2.7's run-free key |
+| the passage head id of §2.2 | `scripts/cflib/passages.py`, `scripts/gate/locate_text.py` | the frozen head rule, restated stdlib-only for the gate in lockstep (a test pins the two) with the layer/head offset map and the exact-once quote match |
+| the locate vocabulary of §2.2, §2.4, §2.6, §5, §8 and §9 | `scripts/cflib/vocab.py`, `references/vocabulary.md` §1.11 | values, bounds, `decide_proof_status`, `derive_status` |
+| licence classes and web-source families of §10 | `scripts/cflib/registry.py`, `registry/sources.yaml`, `POLICY.md` §4.1 | ships `enwiki`; `cf export literature-links` exports quotes only from an open class |
+| L1: web sources, the renderer, sourcesets | `scripts/sources/render_html.py`, `websource.py`, `wikinet.py`, `sourceset.py`; `cf sourceset` | renderer `web-html/1` (layer, formulas, head text, reading copy and its map, sections, blocks, deterministic finders); append-only manifests; the one Wikipedia client, under `--execute` only. Parity with `$WIKILEAN`'s text layer is a test that runs only when `CF_WIKILEAN_LAYER` names its output: **unverified** |
+| L0: universes, ingest, `corpus.sqlite`, the host tools | `scripts/corpus/`, `templates/corpus/`; `cf corpus` | §2.4's proof status re-decided at ingest; the canary gate per toolchain; the exact table, FTS5 and tags; a blind build for G1-blind; the probe and its host drivers as run on `$HOST` (44 of 45 libraries, before two driver fixes, §12) |
+| L2: candidates | `scripts/locate/candidates.py`; `cf locate candidates` | curated joins and lexical retrieval over `corpus.sqlite` |
+| L3a/L3b/L5: the locate planner and presets | `scripts/locate/`, `scripts/cfcmd/plan_locate.py`, `templates/prompts/locate-*.md.tmpl`; `cf plan-locate` | sourceset-scoped runs, task manifests, the tend root with the out-of-tree gate directory |
+| L4: the locate gate | `scripts/gate/verify_locate.py` | rules 1–8 over only the task's own documents; the ownership rule names itself; the task id read from `orchestrator.sqlite` assumes a schema nobody has checked against tend |
+| the bridge and the host | `scripts/run/agent_call.py`, `attempt_cap.py`, `watchdog.py`, the bridges | 15 flock slots, `timeout 45m`, an empty or 409 envelope exits non-zero, envelopes kept under `usage/`, the attempt cap that writes `UNRESOLVED` |
+| L6: harvest, tally, export | `scripts/harvest/` (recursive), `scripts/locate/outcomes.py`, `records.py`, `export.py`; `cf harvest`, `cf tally --locate`, `cf export literature-links` | sealed record sets every record of which the vendored checker accepts |
+| campaigns | `scripts/run/campaign.py`, `templates/campaign/`; `cf campaign` | the host sequencer and the spend watchdog are rendered, never run here |
+| the benchmark | `scripts/bench/`, `workflows/locate-label.workflow.js`, `references/locate-bench.md`; `cf bench` | §8's gold tiers, metrics with clustered intervals and `measurement_id`, §9's acceptance rule; no gold exists yet |
+| text manuscripts located by heading path + line | `scripts/sources/locator.py`, `prepare_source.py` | the faithfulness stages' own: an `.html` source there is copied raw into `text.txt`; locate does not use it |
 | S0 ingest, S1 inventory (deterministic halves) | `scripts/pipeline/` | PDF-only; the passage enumerator is deferred; measured passage recall 19/222 |
-| per-run companion declaration index | `scripts/plan/decl_index.py` | names only, per companion |
-| tend + agentbox fleet, out-of-tree gate, harvest, transcript costing | `scripts/plan`, `run`, `gate`, `harvest`, `cost` | one 383-task differential ran on a host; the gate is O(N) per call and the bridge deletes Claude's JSON envelope |
-| scoring with a recall denominator | `scripts/score` | defect kinds only; no pins in the score document |
+| scoring with a recall denominator | `scripts/score` | defect kinds only; `cf score` is unchanged by locate |
 | Literature Links 2.0 (vendored, `format-2.0` @ `2bb328c`), overlay viewer | `vendor/literature_links`, `templates/overlay/runtime` | the viewer reads `pdf` ends only |
 
-Nothing answers "which library formalizes this passage". Mathlib scores 0 on
-every adapter and should not be onboarded: a library is not a companion of
-Wikipedia.
+Mathlib scores 0 on every adapter and should not be onboarded: a library is not a
+companion of Wikipedia, which is why locate plans from a sourceset and a universe.
 
 ## 2. The model
 
@@ -88,8 +98,8 @@ assessment: {class: B, importance: high}
 - **Adopt the consumer's bytes.** When a consumer (WikiLean) already pins a
   revision of the page and holds the cached parse bytes, the sourceset adopts
   that revision and those bytes instead of choosing its own (§11.1).
-- **Two text views of one document.** *scripts/sources/render_html.py*
-  (*not implemented*, stdlib) computes from the canonical body:
+- **Two text views of one document.** `scripts/sources/render_html.py`
+  (stdlib) computes from the canonical body:
   1. the **Literature Links text layer** — the HTML `textContent`
      whitespace-collapsed exactly as the Literature Links spec defines it
      (MathML token text and its TeX annotation included, citation markers
@@ -102,7 +112,7 @@ assessment: {class: B, importance: high}
   3. `layer_map.json`, a character-offset map from `text.txt` to the layer,
      and `sections.json` (heading path, fragment id, layer span).
 - **Sourcesets.** Twenty thousand sources do not fit `workspace.yaml`, which
-  every command validates. Web sources live in a **sourceset** (*not implemented*):
+  every command validates. Web sources live in a **sourceset** (`cf sourceset`):
   `sourcesets/<id>/manifest-<n>.jsonl`, append-only and versioned, plus one
   directory per source, validated lazily. A run pins `(sourceset id, manifest
   sha)`; the gate checks per-source shas from that pin.
@@ -157,7 +167,7 @@ Links record (§2.7) carries the passage kind as its `kind`.
 ### 2.3 Universes
 
 ```yaml
-# corpora/u1/universe.yaml   (*not implemented*)
+# corpora/u1/universe.yaml
 id: u1
 frozen: 2026-10-17
 libraries:
@@ -189,9 +199,10 @@ universe_sha256: <sha over sorted (id, commit, index sha)>
 
 ### 2.4 Library indexes and `corpus.sqlite`
 
-Each library index is a directory of per-module JSONL shards in
-`autoform-library-index/v0` shape (the format `$AUTOFORM` and ATLAS publish),
-so a probe rerun skips finished modules. Declaration records add:
+The probe writes sharded JSONL in `autoform-library-index/v0` shape (the format
+`$AUTOFORM` and ATLAS publish), so a probe rerun skips finished shards; ingest
+normalises it into one `decls.jsonl` plus `manifest.json` per library
+(`cf-library-index/1`, `references/locate-documents.md` §8). Declaration records add:
 
 | field | meaning | computed |
 |---|---|---|
@@ -223,7 +234,7 @@ hidden in a private proof body of a `module` file, a `theorem_wanted`, a
 `Prop`-valued def, and an axiom-dependent theorem; the probe must classify all
 four before any library on that toolchain is ingested.
 
-`corpus.sqlite` (*not implemented*, derived, rebuildable) holds every declaration of the
+`corpus.sqlite` (derived, rebuildable) holds every declaration of the
 universe: an exact table `(library, commit, name)` for existence checks, an
 FTS5 index over name segments, signature and docstring, and a tag table. It is
 built with `journal_mode=DELETE`, lives in a read-only host directory outside
@@ -231,13 +242,13 @@ every entrypoint, is opened with `mode=ro&immutable=1` everywhere, and its sha
 is verified once at `cf run`'s verify stage and recorded in `gate.json`.
 
 **`cf` never builds a library**, the rule `detect-proxies --lean` already
-follows: `cf corpus probe-command` (*not implemented*) prints a per-library pipeline (disk
+follows: `cf corpus probe-command` prints a per-library pipeline (disk
 floor check → `ulimit -n 65536` → cache fetch → build → probe → `cf corpus
 ingest` → remove `.lake`, keeping the index); the operator runs it on `$HOST`.
 
 ### 2.5 The probe
 
-*templates/corpus/probe.lean.tmpl* (*not implemented*), adapted from `$AUTOFORM`'s
+`templates/corpus/probe.lean.tmpl`, adapted from `$AUTOFORM`'s
 library probe at a pinned commit (MIT; the header says so). It uses the
 long-stable `Environment` API so one template serves every toolchain in the
 universe, and falls back where a newer API (the module system's olean levels)
@@ -342,20 +353,21 @@ prefix and suffix) and carry the CSL citation and licence pointer above.
 | L3b locate | tasks of **≤ 8 `formal_math` passages** from frozen inventories; each passage ends located, absent or unresolved | fleet | yes |
 | L4 gate | §4 | out of tree | no |
 | L5 challenge | separate tasks over batches of records; per-record verdicts (§5) | fleet | yes |
-| L6 harvest, export | receipts, tally, derived status, `cf export literature-links` (*not implemented*) with a per-source byte budget | local | no |
+| L6 harvest, export | receipts, tally, derived status, `cf export literature-links` with a per-source byte budget | local | no |
 | L7 consume | consumers import sealed record sets with their own credentials (§11) | consumer | no |
 
 L3a/L3b/L5 are three presets (`locate-inventory`, `locate`,
-`locate-challenge`; *not implemented*) on a **new locate planner** (sourceset-scoped, not
-companion-scoped; *cfcmd/plan_locate.py*) that renders tend roots on the same
+`locate-challenge`) on a **new locate planner** (sourceset-scoped, not
+companion-scoped; `scripts/cfcmd/plan_locate.py`) that renders tend roots on the same
 gate/bridge/harvest machinery. Locate documents use the library id as `repo`
 and `library:declaration@commit` as the declaration list, so `finding_id`,
 the tally key and receipts work unchanged; a sourceset-level state file
 replaces `companions/<name>/state.json` for locate.
 
 Findings layout: one document per source under
-`findings/<task-id>/<source-id>.json`; `check_changed`, harvest's listing and
-its checksums become recursive (`find -print0`).
+`findings/<task-id>/<source-id>.json`, harvested to
+`corpus/<run-id>/<task-id>/<source-id>.json`; the locate gate's changed-file
+check, harvest's listing and its checksums are recursive (`find -print0`).
 
 ## 4. Gates (locate mode)
 
@@ -429,14 +441,14 @@ Hard rule 5 applies per record: nothing leaves the workspace without a
 - **Roots** hold at most 500 tasks, fed in waves (`--max-open-tasks` about
   twice the session count); task YAML stays small; candidates and sources live
   in read-only host directories keyed by source id.
-- **Cost and spend.** The bridge keeps Claude's JSON envelope (*not implemented*) outside
+- **Cost and spend.** The bridge keeps Claude's JSON envelope outside
   the worktree as a cross-check; primary cost comes from transcripts priced by
   `scripts/cost`, exported within days of each run (transcripts age out after
   about thirty days). A host-side, model-free **watchdog** per shard drains the
   root when its spend passes the cap recorded in `run.yaml`, or when the
   gate-failure rate or cost per merged task exceeds a multiple of the pilot's
   p90. A recorded cap is a precondition of `cf run --execute` for locate.
-- **`cf campaign`** (*not implemented*) renders a host-side sequencer (shell, no `cflib`)
+- **`cf campaign`** renders a host-side sequencer (shell, no `cflib`)
   that starts shard k+1 when shard k ends, runs the watchdog, exports usage and
   prunes transcripts per shard; the operator's machine only harvests receipts.
 - **Builds** run as the user, with a clean environment and nice/ionice. The
@@ -460,7 +472,7 @@ concept article is roughly $250k and 40 days. Hence:
 
 1. L0–L2 run over everything and cost nothing;
 2. an **article-level tier** first: one subject passage per concept article
-   (about 19.5k passages, bundled ten per task), which answers "is this
+   (about 19.5k passages, bundled up to eight per task), which answers "is this
    article's subject formalized, and where" for the whole project;
 3. passage-level work by tier (Tier A, then Mid), ordered within a tier by L2
    candidate yield;
@@ -469,7 +481,7 @@ concept article is roughly $250k and 40 days. Hence:
 
 ## 8. The benchmark
 
-`cf bench` (*not implemented*: `build | anchor | freeze | score | compare`) sits beside
+`cf bench` (`build | anchor | freeze | score | compare`) sits beside
 `cf score`, which stays as it is.
 
 ### 8.1 Gold
@@ -648,6 +660,16 @@ bundle; each library maps to a `brain_lib` token unique per repository.
 | L-M4 | pilot: baseline A/A plus one pre-registered comparison | a baseline with intervals and one recorded accept/reject decision |
 | L-M5 | article-level tier over all concept articles | every shard receipt complete with UNRESOLVED ≤ 5%, residual queued |
 | L-M6 | passage-level Tier A | as L-M5, within the signed budget |
+
+**State, 2026-10-18.** The code of L-M0 to L-M3 is built and passes its unit tests
+and the synthetic end-to-end test (`tests/e2e/locate_synthetic/`). Every "done when"
+that needs something this repository cannot hold is open: renderer parity with
+`$WIKILEAN`'s text layer, the per-toolchain canary on `$HOST`, the 10-article
+smoke run, and bench v0's gold. The universe built on `$HOST` (44 of 45 libraries)
+predates two fixes to the host drivers — the probe now receives a library's
+`SRC_DIR`, and the disk floor measures the volume the work is written to — so a
+library whose sources sit under a `SRC_DIR` other than `.` must be re-probed, and
+its index re-ingested, before it counts.
 
 ## 13. Open questions for the maintainer
 

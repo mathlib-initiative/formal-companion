@@ -30,7 +30,10 @@ is what let an earlier copy fall one rule behind without anyone noticing.
   otherwise; `POLICY.md` §4.1), and the registry's `families:` map holds
   web-source families, one row per site and none per revision (an overlay
   row cannot change a confirmed family's `confirmed`, `licence_class` or
-  `licence`, and is reported); a web source itself is not implemented.
+  `licence`, and is reported). A **web source** — one rendering of one page
+  revision, `<family>-<pageid>-<revision>` — lives in a **sourceset**
+  (`cf sourceset`; `references/locate-documents.md` §7), never in
+  `workspace.yaml`: twenty thousand of them fit no file every command validates.
 - A **companion** is a Lean repository whose declarations claim to formalise a
   source's numbered items. A companion is audited against a **list** of
   sources; one of them is its **anchor source**, the edition whose pagination
@@ -38,6 +41,16 @@ is what let an earlier copy fall one rule behind without anyone noticing.
 - A **workspace** is the directory the operator works in: N companions, M
   sources, in any arrangement. A **differential** is possible exactly where two
   companions' source lists overlap.
+- **Locate** asks the inverse question, over libraries rather than companions
+  (`docs/proposals/wikipedia-locate.md` §2). A **library** is a Lean package at a
+  40-hex commit; a **universe** is a named, frozen set of them
+  (`corpora/<u>/universe.yaml`, `universe_sha256`); a **passage** is a span of a
+  web source keyed `In-text #<hex>`; a **location** is (passage,
+  declaration@commit, relation), keyed run-free by `cflib.hashing.location_key`;
+  an **absence** is a checked statement that a passage was searched for in a
+  universe and nothing was found. A passage ends located, absent or unresolved,
+  and its derived status is `cflib.vocab.derive_status` over what survived the
+  challenge.
 - An **item** is the pair `(source_id, item)`. Two sources may legitimately
   both have an `Exercise 1.3.19`, so a bare item string is never a cross-source
   key. One string spelling exists — `source_id::item`
@@ -124,7 +137,20 @@ lines move together or not at all.
   reports/                    tally.<run>.json, union.<name>.json,
                               agreed_high.json, coverage.json, score.<run>.json,
                               pin.<run>.json, recheck.<name>.json,
-                              handoff.<date>.md
+                              handoff.<date>.md, locate-outcomes.<run>.jsonl,
+                              locate-tally.<run>.json, export.<set>.json
+  sourcesets/<id>/            locate's web sources: manifest-<n>.jsonl (append-only,
+                              committed), state.json, candidates/<u>/<source>.json,
+                              sources/<source_id>/ (GITIGNORED: raw bytes, body,
+                              layer, head text, reading copy, map, sections,
+                              blocks, finders)
+  corpora/<u>/                universe.yaml and conventions/ (committed);
+                              index/<lib>/, corpus.sqlite, corpus.blind.sqlite
+                              (GITIGNORED: large, derived, rebuildable)
+  exports/<set>/              sealed Literature Links record sets
+  benches/<id>/               the locate benchmark (references/locate-bench.md);
+                              host/ is the only label-free part
+  campaigns/<id>/             campaign.yaml and the rendered host sequencer
   fixes/  reviews/            created by `cf init`, written by nothing in v1:
                               they are the extension points for the
                               out-of-scope `fix` and `review-pr` stages
@@ -341,6 +367,36 @@ second `cf onboard` re-derives rather than duplicating. **One state file per
 companion**: `companions/<name>/state.json` (version 2, a per-source
 `{sha, rows, items}` map and an `anchor_source`), written through
 `cflib.state`'s atomic read-modify-write; `cf status` prints only what it read.
+
+### 4.0 The locate stages
+
+Locate plans from a **sourceset and a universe**, never from a companion, and
+its stages share the run, gate, bridge, harvest and cost machinery above
+(`docs/proposals/wikipedia-locate.md` §3; the formats are
+`references/locate-documents.md`).
+
+| stage | command | writes |
+|---|---|---|
+| L0 universe | `cf corpus init / add / probe-command / ingest / build-db` | `corpora/<u>/{universe.yaml, index/<lib>/, corpus.sqlite}`; `probe-command` prints the host pipeline and runs nothing |
+| L1 sources | `cf sourceset create / enumerate-wikiproject / adopt / fetch / render` | `sourcesets/<id>/manifest-<n>.jsonl` and each source's rendered files (`web-html/1`) |
+| L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json` |
+| L3a/L3b/L5 | `cf plan-locate --preset locate-inventory / locate / locate-challenge` | `runs/<id>/{run.yaml (a locate block), tasks/, prompts/, gate.json, gate.local.json, challenge-plan.json, tend-root/}` |
+| L4 gate | `scripts/gate/verify_locate.py`, out of tree | nothing but its own log line; exit 0 / 1 / 3 |
+| — | `cf run`, `cf campaign plan / render / status` | `run.yaml`'s records; `campaigns/<id>/` |
+| L6 | `cf harvest`, `cf tally --locate`, `cf export literature-links` | `corpus/<run>/<task>/<source>.json` + `RECEIPT.json`, `reports/locate-{outcomes,tally}.<run>.*`, `exports/<set>/` |
+| bench | `cf bench build / anchor / freeze / score / compare` | `benches/<id>/` |
+
+Three rules hold for every locate stage. **Nothing about a declaration is a
+worker's**: `proof_status` is re-decided at ingest by
+`cflib.vocab.decide_proof_status`, joined from `corpus.sqlite` downstream, and
+refused in any document a worker wrote; the commit is the universe's. **A
+locate run is pinned by content**: the sourceset by `(id, version, manifest
+sha)`, the universe by `universe_sha256` (a `corpus.sqlite` is matched to it by
+its `meta.universe_sha256`, since two builds of one universe are not byte
+identical), the renderer by its id. **Its state lives in the sourceset**:
+`sourcesets/<id>/state.json`, written only through
+`sources.sourceset.Sourceset.record_state`, replaces
+`companions/<name>/state.json` for locate.
 
 ### 4.1 The four stages a Python process cannot finish
 

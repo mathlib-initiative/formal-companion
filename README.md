@@ -3,8 +3,11 @@
 Two tools for Lean 4 / Mathlib **book companions**: an audit that checks a
 companion against the sources it formalizes, and a generator for its PDF
 overlay, which shows a source with each item linked to the declarations that
-formalize it. It ships the `cf` CLI and installs as the Claude Code skill
-`companion-faithfulness`.
+formalize it. A third, **locate**, asks the inverse question — which passages
+of a source (first corpus: English Wikipedia's WikiProject Mathematics) are
+formalized in which Lean library, at which commit and how closely — and
+measures its own answers. It ships the `cf` CLI and installs as the Claude Code
+skill `companion-faithfulness`.
 
 A companion is a Lean repository whose declarations claim to formalize the
 numbered items of one or more textbooks. The audit finds the declarations that
@@ -84,7 +87,8 @@ SKILL.md          when to use it, the default program, the command index, the ha
 CONTRIBUTING.md   how to send a change; CLAUDE.md is the same ground for an agent
 POLICY.md         the copyright rule the registry and the exports implement
 docs/design/      stage_map.md (the current spec) and archive/ (the design record)
-docs/proposals/   designs not yet built: pdf-to-companion.md, the PDF-to-companion pipeline
+docs/proposals/   designs: pdf-to-companion.md (the PDF-to-companion pipeline, not yet built)
+                  and wikipedia-locate.md (locate; its §1 lists what is built)
 docs/pipeline.md  what of that pipeline is built: S0 (cf ingest) and S1 (cf inventory)
 docs/overlay.md   the contract for the generated companion PDF overlay (`cf overlay`)
 references/       method, vocabulary, schemas, review patterns, traps, server runbook
@@ -113,11 +117,19 @@ scripts/annotations/
                   checker, id rules) is vendor/formal_companion_annotations/
 scripts/overlay/  the overlay generator behind `cf overlay`: config, export,
                   sync, annotation files and folder defaults (docs/overlay.md)
+scripts/corpus/   locate's universes of libraries and corpus.sqlite (`cf corpus`)
+scripts/locate/   locate's candidates, planner, outcomes and export
+                  (`cf locate`, `cf plan-locate`, `cf tally --locate`,
+                  `cf export literature-links`); the web sources are
+                  scripts/sources/ (`cf sourceset`), the gate
+                  scripts/gate/verify_locate.py, campaigns `cf campaign`
+scripts/bench/    locate's benchmark (`cf bench`; references/locate-bench.md)
 templates/        workspace.yaml, adapter.yaml, conventions.md, prompts, tend config, tasks
 templates/overlay/
                   runtime/, copied verbatim into a companion's pdf-overlay/ (the
                   viewer, its tools and schemas, PDF.js), and tests/ (its node suites)
-workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local)
+workflows/        Workflow-tool scripts (adjudicate, challenge, verify-claims, fleet-local,
+                  and locate-label, the bench's frozen labeler)
 tests/            stdlib unittest; baseline regressions skip unless the env names the baseline
 ```
 
@@ -356,6 +368,14 @@ manual`, `confirmed: false` until a human says otherwise.
   detect/<name>/             proxy-detection artifacts
   reports/                   tally.<run>.json, union.<name>.json, coverage.json,
                              score.<run>.json, handoff.<date>.md
+  sourcesets/<id>/           locate's web sources: append-only manifest-<n>.jsonl,
+                             state.json, candidates/, and sources/<source_id>/
+                             (GITIGNORED: the page bytes and their rendered views)
+  corpora/<u>/               a universe of libraries: universe.yaml, conventions/, and
+                             (GITIGNORED, rebuildable) index/ and corpus.sqlite
+  exports/<set>/             sealed Literature Links record sets (`cf export literature-links`)
+  benches/<id>/              the locate benchmark's frame, gold and scores
+  campaigns/<id>/            a sequence of locate shards and its host sequencer
   fixes/  reviews/           created by `cf init` and written by nothing in v1: they
                              are the extension points for the out-of-scope stages
 ```
@@ -416,6 +436,13 @@ about which is which:
   anything here, and the five runs that produced the baseline pre-date this
   code. The local Workflow fleet (`cf run <id> --local`, under ~100 items) is
   the fleet path that has been driven from this repo.
+- **Locate is exercised on synthetic inputs only**: a made-up WikiProject in
+  recorded API responses, two made-up libraries and a synthetic probe index,
+  driven through every stage by `tests/e2e/locate_synthetic/` (universe,
+  sourceset, candidates, the three presets, the out-of-tree gate over good and
+  bad documents, harvest, tally, the sealed export, the bench). No real page,
+  no real library index, no host and no model has been through it; the run
+  host's library indexes were built by the probe drivers outside this repo.
 - **Not generalized yet, and where a second book will hurt first**: a numbering
   grammar that is not `<Kind> <n>.<n>`, a source whose items are not headed by
   a capitalized kind word, and a companion convention no adapter recognizes.
@@ -456,7 +483,9 @@ The audit reports findings only; `cf overlay` writes only a companion's
 `pdf-overlay/` and `annotations/`. `fix`, `review-pr`, `camera-ready` and
 `publish-verdicts` are designed and documented but not implemented. Of the PDF-to-companion
 pipeline (`docs/proposals/pdf-to-companion.md`), the deterministic parts of S0
-and S1 are built (`docs/pipeline.md`); its agents and stages S2 to S9 are not. See `SKILL.md` for the hard
+and S1 are built (`docs/pipeline.md`); its agents and stages S2 to S9 are not. Locate's
+milestones L-M0 to L-M3 are built and tested on synthetic inputs
+(`docs/proposals/wikipedia-locate.md` §1 and §12); its host smoke run is next. See `SKILL.md` for the hard
 rules, `docs/design/stage_map.md` for the data model, `CONTRIBUTING.md` for how
 to send a change, and `CHANGELOG.md` for what a version number promises.
 

@@ -193,10 +193,13 @@ keys (`x_ledger_verdict`).
 
 ### 1.11 Locate — where a source is formalized, in any library
 
-The vocabulary of `docs/proposals/wikipedia-locate.md`, in `cflib.vocab`'s locate block. **Only
-the vocabulary is built** (with `vocab.derive_status`, `vocab.decide_proof_status`, the
-`In-text #<hex>` item of §4 and the head hash in `scripts/cflib/passages.py`); the planner,
-presets, gate, renderer, sourcesets and export that use it are not implemented. The extension
+The vocabulary of `docs/proposals/wikipedia-locate.md`, in `cflib.vocab`'s locate block, with
+`vocab.derive_status`, `vocab.decide_proof_status`, the `In-text #<hex>` item of §4 and the head
+hash in `scripts/cflib/passages.py`. The stages that use it are `scripts/sources/` (the renderer
+and sourcesets), `scripts/corpus/` (universes and `corpus.sqlite`), `scripts/locate/` (candidates,
+the planner, outcomes and the export), `scripts/gate/verify_locate.py` and `scripts/bench/`; the
+host-side copies of these values (the gate, the bridge helpers) are pinned to this block by
+tests. The extension
 namespace of every locate record is `org.mathlib-initiative.formal-companion.locate`
 (`LOCATE_EXTENSION`).
 

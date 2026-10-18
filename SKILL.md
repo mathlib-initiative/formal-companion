@@ -1,6 +1,6 @@
 ---
 name: companion-faithfulness
-description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalizes — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace. It is not a proof checker, not a Lean linter and not a fixer — the audit reads repositories and reports findings, and never edits Lean or repairs a proof; the one command that writes into a companion is `cf overlay`, and it writes only pdf-overlay/ and annotations/.
+description: Audit a Lean 4 / Mathlib "book companion" repository against the sources it formalizes — does the Lean actually match the book? — and produce challenged, routed findings. Use for a faithfulness or autoformalization audit of a companion, a blueprint or a formalization repo against a textbook, lecture notes or a preprint; for statement-level checks of whether definitions, lemmas, theorems and exercises say what the source says; to run differential or adversarial ("attack") fleets over a companion; to adjudicate, tally, route or report faithfulness findings; or to onboard a new companion repository into an audit workspace; and to locate which passages of a source (a Wikipedia article) which Lean library formalizes. It is not a proof checker, not a Lean linter and not a fixer — the audit reads repositories and reports findings, and never edits Lean or repairs a proof; the one command that writes into a companion is `cf overlay`, and it writes only pdf-overlay/ and annotations/.
 ---
 
 # Companion faithfulness audits
@@ -30,6 +30,8 @@ not.
 - Adjudicating, challenging, tallying, routing or reporting findings that a
   previous run produced.
 - Onboarding a new companion repo into a workspace.
+- Locating where a source's passages are formalized across a universe of Lean
+  libraries (Mathlib, core, Batteries and others), and scoring that against gold.
 
 Do **not** use it to fix Lean proofs, to review a PR, or to answer a single
 "does this one lemma match the book" question that a direct read settles.
@@ -167,6 +169,33 @@ receipt and the same gate. A directory this workspace never planned has no gate
 config to build, so it lands `gate: null` and warns; re-harvest it with
 `--gate-config` when you want it checked.
 
+## The locate program
+
+The inverse question — which passages of a source are formalized, in which
+library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
+`references/locate-documents.md`). A library is never onboarded as a companion.
+
+1. `cf corpus init <u>`, `cf corpus add <u> --library … --commit <40 hex>`, then
+   on the host the pipeline `cf corpus probe-command` prints (**cf never builds a
+   library**), `cf corpus ingest` (refused until the toolchain's canary passed)
+   and `cf corpus build-db <u>` (`--blind` too, for the G1-blind arm).
+2. `cf sourceset create <s>`, `enumerate-wikiproject` / `adopt`, `fetch` and
+   `render` — append-only manifests; nothing reaches Wikipedia without `--execute`.
+3. `cf locate candidates --sourceset <s> --universe <u>` — L2's curated joins and
+   lexical hits, per source.
+4. `cf plan-locate --preset locate-inventory`, then `--preset locate
+   --inventory-run <r>`, then `--preset locate-challenge --challenge-of <r>`; each
+   run goes through `cf run` (a spend cap is required) and `cf harvest`, whose
+   locate gate runs out of tree over each task's own documents. Larger work is a
+   `cf campaign` of shards.
+5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
+   derived status; then `cf export literature-links` — a sealed record set,
+   every record checked by the vendored Literature Links checker, quotes capped
+   and only from an open licence class.
+6. `cf bench build | anchor | freeze | score | compare` — gold, metrics with
+   article-clustered intervals, and the acceptance rule; labels never go to the
+   host.
+
 ## Command index
 
 Run everything as `cf <command> …`, or as
@@ -228,9 +257,9 @@ model-free checks that exist today live in `detect-proxies` and `pair`).
 
 ## Workflow stages
 
-Four stages do their model work in a **Workflow script** under `workflows/`,
+Five stages do their model work in a **Workflow script** under `workflows/`,
 which only a Claude Code session can launch: a Python CLI cannot start one. The
-shape is the same in all four — `cf` emits the arguments, **you** invoke the
+shape is the same in all five — `cf` emits the arguments, **you** invoke the
 Workflow tool, `cf` transcribes the result.
 
 | stage | emit | you run | transcribe |
@@ -276,6 +305,11 @@ you use it.
 - **Three presets cannot be planned at all**: `differential-legacy`,
   `attack-legacy` and `mechanical` describe imported corpora, and `cf plan-run`
   exits 2 on them.
+- **Locate** (`docs/proposals/wikipedia-locate.md`) is built and tested on
+  synthetic inputs only: no real page has been rendered against the consumer's
+  text layer (`CF_WIKILEAN_LAYER`), no locate root has run under `tend` (the
+  `orchestrator.sqlite` schema the gate reads a task id from is assumed), no
+  campaign sequencer or watchdog has run on a host, and no bench gold exists.
 
 ## Substrate
 
@@ -328,8 +362,9 @@ needs neither.
    `open_share_alike` — Wikipedia's text — or `public_domain`); an open class
    lets an exported record quote twelve words with a citation and the licence
    named, and changes nothing else: no class puts source text in the skill
-   repo or lets anything be redistributed. The export that applies it is not
-   implemented. `POLICY.md` is the whole rule and `registry/README.md` is how
+   repo or lets anything be redistributed. `cf export literature-links` is the
+   export that applies it, and it quotes nothing from a closed source.
+   `POLICY.md` is the whole rule and `registry/README.md` is how
    the registry implements it.
 7. **Consent and allowlist for runs.** `cf run` refuses any host not in
    `workspace.yaml` `hosts.allowlist` and requires `--i-have-consent`, recorded
@@ -378,8 +413,10 @@ One set, defined in `scripts/cflib/vocab.py`, documented in
 - source role: `audited` `reference`; licence fetch: `none` `author_site`
   `open`; licence class: `closed` `open_attribution` `open_share_alike`
   `public_domain`
-- locate (where a source is formalized; vocabulary only, every stage not
-  implemented): `references/vocabulary.md` §1.11
+- locate (where a source is formalized): `references/vocabulary.md` §1.11; the
+  stages are `sourceset`, `corpus`, `locate candidates`, `plan-locate`, the
+  locate gate, `harvest`, `tally --locate`, `export literature-links`, `campaign`
+  and `bench`, and their formats `references/locate-documents.md`
 
 **An item is the pair `(source_id, item)`.** The item half follows one strict
 grammar (`cflib/items.py`): `<Kind> <n>[.<n>…]`, one to four numeric levels, the

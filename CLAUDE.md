@@ -34,7 +34,8 @@ source or their owners' details into this repo.
 SKILL.md README.md CLAUDE.md CONTRIBUTING.md CHANGELOG.md POLICY.md LICENSE
 docs/design/stage_map.md   the current spec; change it in the same commit as the code
 docs/design/archive/       the design record it came from (historical)
-docs/proposals/            designs not yet built (pdf-to-companion.md)
+docs/proposals/            designs: pdf-to-companion.md (not yet built) and
+                           wikipedia-locate.md (locate; its §1 says what is built)
 references/          prose the skill points agents at
 registry/            the shipped source registry (metadata only)
 vendor/              literature_links/: Literature Links 2.0.0, unreleased,
@@ -52,7 +53,8 @@ scripts/cflib/       shared library (no stage logic, no network):
                      adapters_api, vendored
 scripts/cfcmd/       one module per command: register(subparsers) + run(args)
 scripts/<stage>/     adapters, sources, pair, plan, gate, run, harvest, ledger,
-                     route, detect, report, recheck, score, share, cost, pipeline
+                     route, detect, report, recheck, score, share, cost, pipeline,
+                     and for locate corpus, locate, bench (below)
 scripts/annotations/ the skill's tooling around the legacy format, not a stage:
                      export/ (the companion exporters behind `cf export`),
                      review_tags.py (`cf review-tags`), see docs/exporters.md, and
@@ -68,9 +70,15 @@ scripts/locate/      the locate stage: L2 candidates, the sourceset-scoped plann
                      its three presets, outcomes with the derived status, and the
                      Literature Links export (references/locate-documents.md);
                      records.py and passage_ids.py import no cflib, so the gate
-                     directory carries them to a run host
+                     directory carries them to a run host beside
+                     gate/verify_locate.py, gate/verify_findings.py (which it
+                     imports), gate/locate_text.py and the two corpus host tools
+scripts/bench/       locate's benchmark (`cf bench`; references/locate-bench.md) and
+                     workflows/locate-label.workflow.js, its frozen labeler
 templates/overlay/   runtime/ is copied verbatim into a companion's pdf-overlay/;
                      tests/ holds its node --test suites
+templates/campaign/  the host-side sequencer `cf campaign render` writes
+templates/tend/      the tend root's config, faithfulness and locate (`*-locate*`)
 templates/  workflows/  tests/  .github/workflows/
 ```
 
