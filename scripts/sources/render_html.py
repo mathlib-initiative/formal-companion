@@ -33,8 +33,14 @@ in full:
 * **The tree.**  Tags are lower-cased by the parser; character references are
   decoded except inside ``script`` and ``style``, whose content is raw text.
   The void elements (``area base br col embed hr img input link meta param
-  source track wbr``) never hold content; a self-closing flag on any other tag
-  is ignored, as HTML5 ignores it.  An end tag closes the nearest open element
+  source track wbr``) never hold content.  A self-closing flag is honoured on a
+  MathML or SVG element (``<mspace/>`` holds nothing) and ignored on an HTML one,
+  as the HTML5 tree builder does: an element is MathML or SVG when it is a
+  ``math`` or ``svg``, or its parent is one and it is no HTML integration point's
+  child (SVG ``foreignObject desc title``; a MathML ``annotation-xml`` whose
+  ``encoding`` is ``text/html`` or ``application/xhtml+xml``; a MathML ``mi mo mn
+  ms mtext``, except for an ``mglyph`` or ``malignmark``) and no HTML element
+  that breaks out of foreign content (``b``, ``div``, ``p``, ``span`` ... ).  An end tag closes the nearest open element
   of its name and everything opened inside it; one with no open element is
   ignored.  A ``p`` is closed by the start of a block (``address article aside
   blockquote center details dir div dl fieldset figcaption figure footer form
@@ -349,10 +355,47 @@ def sha256_text(text: str) -> str:
 # the tree
 # --------------------------------------------------------------------------
 
-class _Node:
-    __slots__ = ("tag", "attrs", "classes", "children", "parent", "start", "end")
+#: an element's namespace, as far as the tree needs it (where a self-closing flag counts)
+_NS_HTML, _NS_MATHML, _NS_SVG = "html", "mathml", "svg"
+#: MathML's text integration points: a start tag inside one is HTML, but these two
+_MATHML_TEXT_POINTS = frozenset({"mi", "mo", "mn", "ms", "mtext"})
+_MATHML_TEXT_POINT_FOREIGN = frozenset({"mglyph", "malignmark"})
+#: SVG's HTML integration points (html.parser lower-cases ``foreignObject``)
+_SVG_HTML_POINTS = frozenset({"foreignobject", "desc", "title"})
+#: the HTML start tags that break out of foreign content (the HTML5 tree builder)
+_BREAKOUT = frozenset({"b", "big", "blockquote", "body", "br", "center", "code", "dd", "div",
+                       "dl", "dt", "em", "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+                       "hr", "i", "img", "li", "listing", "menu", "meta", "nobr", "ol", "p",
+                       "pre", "ruby", "s", "small", "span", "strong", "strike", "sub", "sup",
+                       "table", "tt", "u", "ul", "var"})
 
-    def __init__(self, tag: str, attrs: dict, parent: "_Node | None", start: int):
+
+def _namespace(tag: str, attrs: dict, parent: "_Node") -> str:
+    """The namespace a start tag of ``tag`` gets under ``parent`` (see the module docstring)."""
+    pns = parent.ns
+    if pns == _NS_MATHML:
+        if parent.tag in _MATHML_TEXT_POINTS and tag not in _MATHML_TEXT_POINT_FOREIGN:
+            pns = _NS_HTML
+        elif parent.tag == "annotation-xml":
+            encoding = parent.attrs.get("encoding", "").lower()
+            if tag == "svg":
+                return _NS_SVG
+            if encoding in ("text/html", "application/xhtml+xml"):
+                pns = _NS_HTML
+    elif pns == _NS_SVG and parent.tag in _SVG_HTML_POINTS:
+        pns = _NS_HTML
+    if pns == _NS_HTML:
+        return {"math": _NS_MATHML, "svg": _NS_SVG}.get(tag, _NS_HTML)
+    if tag in _BREAKOUT or (tag == "font" and set(attrs) & {"color", "face", "size"}):
+        return _NS_HTML
+    return pns
+
+
+class _Node:
+    __slots__ = ("tag", "attrs", "classes", "children", "parent", "start", "end", "ns")
+
+    def __init__(self, tag: str, attrs: dict, parent: "_Node | None", start: int,
+                 ns: str = _NS_HTML):
         self.tag = tag
         self.attrs = attrs
         self.classes = frozenset((attrs.get("class") or "").split())
@@ -360,6 +403,7 @@ class _Node:
         self.parent = parent
         self.start = start
         self.end = start
+        self.ns = ns
 
     def ancestors(self):
         node = self.parent
@@ -440,14 +484,14 @@ class _TreeBuilder(HTMLParser):
                 self._close_to(i)
 
     # -- events --------------------------------------------------------
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs, *, self_closing: bool = False):
         self.eat_lf = False
         self._implied_closes(tag)
         parent = self.stack[-1]
-        node = _Node(tag, {k: (v if v is not None else "") for k, v in attrs},
-                     parent, self.length)
+        attrs = {k: (v if v is not None else "") for k, v in attrs}
+        node = _Node(tag, attrs, parent, self.length, _namespace(tag, attrs, parent))
         parent.children.append(node)
-        if tag in _VOID:
+        if tag in _VOID or (self_closing and node.ns != _NS_HTML):
             node.end = self.length
         else:
             if len(self.stack) > MAX_DEPTH:
@@ -459,8 +503,8 @@ class _TreeBuilder(HTMLParser):
                 self.skipping += 1
 
     def handle_startendtag(self, tag, attrs):
-        # HTML5 ignores the self-closing flag on a non-void element
-        self.handle_starttag(tag, attrs)
+        # HTML5 honours the self-closing flag in MathML and SVG, ignores it on HTML
+        self.handle_starttag(tag, attrs, self_closing=True)
 
     def handle_endtag(self, tag):
         self.eat_lf = False
