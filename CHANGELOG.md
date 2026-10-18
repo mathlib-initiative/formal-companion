@@ -65,6 +65,9 @@ release has something to say.
   that is a display name the consumer shows (printable ASCII, `,.()/+:'&_-·`, at
   most 100), and null otherwise: a `brain_lib` such as `Beta!` had made the
   consumer refuse the whole set.
+- `cf corpus add` (and loading a universe) refuses a `brain_lib`, `toolchain` or
+  root over 300 characters and an exclusion reason over 1000, the caps the record
+  set's consumer applies to `universe.json`, with the value's length in the message.
 - A library's `repo` follows the record set consumer's repository grammar (a
   dotted host, one to four path segments of `[A-Za-z0-9_.~-]`, no `.`, `..`, empty
   segment or trailing slash), refused at `cf corpus add` and when a universe is
