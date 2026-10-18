@@ -657,6 +657,30 @@ release has something to say.
   that exist on one machine.
 
 ### Fixed
+- Corpus fixes from building a 48-library universe on the run host (the field
+  defects D1-D12). **Host-driver changes**: a module whose name needs «»
+  escaping (`Alpha/Problems/1.lean` is `Alpha.Problems.«1»`) is indexed instead
+  of skipped with a warning and a successful exit, the probe template finds its
+  source file (`probeRevision` 2), and a file no module name can express stops
+  the expansion; the universe list gains the kinds `core` (Lean's `Init`/`Std`
+  at the workspace toolchain's `Lean.githash`, lean4 repository paths) and
+  `package-in-workspace` (a Lake package at the workspace manifest's rev), both
+  probed inside a built `WORKSPACE` and recorded at their own commit; the bash
+  driver's git runs with gitsafe's pins and content-filter blanks. `cf corpus`:
+  every subcommand takes `--base <dir>` for a universe outside any workspace;
+  `add --host-kind/--host-ref/--host-option` records how the driver indexes a
+  library, and `probe-command` prints that library's own kind, ref and
+  options, the universe's whole driver list (never one shared one-line list),
+  and lines that run as printed (placeholders only in comments, `$CF_DRIVERS`
+  for the drivers). Ingest maps Autoform's published `complete` by kind
+  (`proved` for a theorem, `definition` for data) and its `lemma` to
+  `theorem`; tags come from whole attribute lists (nested brackets, multi-line
+  `to_additive` lists, a twin's `(attr := …)`) and from `attribute […] Name`
+  commands, resolved through the enclosing namespaces. `cflib.jsonio` writes a
+  new file with the umask's mode instead of mkstemp's 0600 and keeps an
+  existing file's mode. The default universe's scope is stated (proposal
+  §2.3): Mathlib with its `Wanted` library, Lean core without `Lean`,
+  formal-conjectures with `FormalConjecturesForMathlib`.
 - The viewer's shortcuts ignored a key typed with Shift, so `+` never zoomed
   on a layout that types it with Shift; Shift now disqualifies a named key
   such as ArrowRight only.
