@@ -26,7 +26,11 @@ And from the re-export of smoke 2 in the agreed format (the proof run):
 
 * P1 -- the seal still carried ``runs`` and ``sourceset.version`` beside the agreed
   keys, and the consumer refuses a seal with any other key; a run token named every
-  challenge run, where the agreed grammar admits one.
+  challenge run, where the agreed grammar admits one;
+* P2 -- FTC #19a718e1's downgrade note was its witness's first sentence, which
+  quotes 19 words of the article ("The passage says only that '...' -- i.e. ..."),
+  and the export refused the passage over the quote cap: the note is the first
+  sentence the cap admits, and "i.e." ends no sentence.
 """
 from __future__ import annotations
 
@@ -268,6 +272,35 @@ class TestTheRecords(_Exported):
         self.assertEqual(rec["note"],
                          "The declaration indexes gadgets from 0 where the passage counts from 1.")
 
+    def test_p2_a_witness_that_opens_by_quoting_the_passage_lends_its_next_sentence(self):
+        """Field case FTC #19a718e1, reduced: the witness's first sentence quotes 14
+        words of the article and runs through an "i.e."; the old note was that
+        sentence (cut at the "i.e."), and the export refused the passage."""
+        witness = ("The passage says only that 'every finite widget has a spanning gadget, and "
+                   "it is a central result of the subject' -- i.e. G has one. The declaration "
+                   "indexes gadgets from 0 where the passage counts from 1. Otherwise it "
+                   "states the passage.")
+
+        def downgrade(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "location" and rec.get("relation") == "exactMatch" \
+                    and rec.get("declaration") == "Widget.exists_spanning_gadget":
+                v = {"item": rec["item"], "target": "location",
+                     "location_key": rec["location_key"], "action": "downgrade",
+                     "relation": "closeMatch", "witness": witness}
+            return v
+        self.challenge(verdict=downgrade)
+        code, out, err = self.export()
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_json(self.paths.export_report_json("set-1"))["refused"], [])
+        (rec,) = [r for r in _records(self.paths.export_dir("set-1"))
+                  if r["object"] and r["object"][0].get("location", {}).get("declaration")
+                  == "Widget.exists_spanning_gadget"]
+        self.assertEqual((rec["relation"], rec["extensions"][EXT]["challenge"]),
+                         ("closeMatch", "downgraded"))
+        self.assertEqual(rec["note"],
+                         "The declaration indexes gadgets from 0 where the passage counts from 1.")
+
     def test_m6_the_challengers_own_note_wins(self):
         self.assertEqual(outcomes.downgrade_note({"note": " 0 ∈ ℕ here ", "witness": "Long."}),
                          "0 ∈ ℕ here")
@@ -276,6 +309,36 @@ class TestTheRecords(_Exported):
         self.assertLessEqual(len(note), outcomes.NOTE_FROM_WITNESS_CHARS + 1)
         self.assertTrue(note.endswith("\u2026"))
         self.assertEqual(outcomes.downgrade_note({}), "")
+
+
+class TestTheDowngradeNote(unittest.TestCase):
+    """``outcomes.downgrade_note`` against a layer (P2), without a campaign."""
+
+    LAYER = ("In widget theory, the widget lemma states that every finite widget has a "
+             "spanning gadget, and it is a central result of the subject that every course "
+             "on widgets covers.")
+    QUOTING = ("The passage says only that 'every finite widget has a spanning gadget, and it "
+               "is a central result of the subject' -- i.e. G has one.")
+
+    def test_p2_an_abbreviation_ends_no_sentence(self):
+        self.assertEqual(outcomes.witness_sentences(
+            "It holds, i.e. for all n. It is stronger (e.g. strict). Done!  Next?"),
+            ["It holds, i.e. for all n.", "It is stronger (e.g. strict).", "Done!", "Next?"])
+        self.assertEqual(outcomes.witness_sentences(" \n "), [])
+
+    def test_p2_the_first_sentence_the_quote_cap_admits(self):
+        verdict = {"witness": self.QUOTING + " It indexes from 0. It states the rest."}
+        self.assertEqual(outcomes.downgrade_note(verdict, self.LAYER), "It indexes from 0.")
+        self.assertIsNone(records.verbatim_run(outcomes.downgrade_note(verdict, self.LAYER),
+                                               self.LAYER))
+        # without the layer nothing can be checked: the first sentence, as before
+        self.assertEqual(outcomes.downgrade_note(verdict), self.QUOTING)
+        # every sentence quotes: the first, which the export refuses by name
+        self.assertEqual(outcomes.downgrade_note({"witness": self.QUOTING}, self.LAYER),
+                         self.QUOTING)
+        # the challenger's own note is never second-guessed here
+        self.assertEqual(outcomes.downgrade_note({"note": "0-indexed", "witness": self.QUOTING},
+                                                 self.LAYER), "0-indexed")
 
 
 class TestTheBudget(_Exported):

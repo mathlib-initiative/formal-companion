@@ -201,9 +201,14 @@ A locate task carries at most eight passages of one frozen inventory.
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
   `uphold`, `overturn` (naming the new `prominence`).
 - A `downgrade` to `closeMatch` may give `note`, the convention difference the
-  record will carry; without one, the first sentence of its `witness` (at most
-  300 characters) becomes the note, since an exported `closeMatch` always names
-  one (§6).
+  record will carry; without one, a sentence of its `witness` (at most 300
+  characters) becomes the note, since an exported `closeMatch` always names one
+  (§6): the first sentence that carries no more of the source verbatim than the
+  export's quote cap (`EXPORT_QUOTE_WORDS`), checked against the source's layer
+  — a witness that opens by quoting the passage lends its next sentence — where
+  a sentence ends at `.`, `!` or `?` before a space but not after an
+  abbreviation (`i.e.`, `e.g.`, `cf.` …). When every sentence quotes past the
+  cap the first is taken, and the export refuses the passage by name.
 - A challenge task's records are its task manifest's, and each gets exactly one
   verdict (rule 1); overturn locations are checked like a locate document's.
   A verdict names its record by string `item` (and string `location_key` for a
@@ -340,7 +345,8 @@ What every record carries beyond §2.7's example:
   guessed one). A consumer treats `end_line` as optional and renders `line N`.
 - A `closeMatch` always carries a non-empty `note`, a downgraded one too: a
   challenge downgrade to `closeMatch` takes the verdict's `note`, else the first
-  sentence of its witness (§4); a `closeMatch` with no note is refused.
+  sentence of its witness the quote cap admits (§4); a `closeMatch` with no note
+  is refused.
 - An absence keeps one lean end per universe library, each **minimal**:
   `{"type": "lean", "uri": <repo>, "version": <40-hex commit>}` and nothing else
   (no `role`, no extension; `universe.json` says which library a repository is),

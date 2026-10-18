@@ -63,7 +63,7 @@ from cflib.yamlio import read_yaml
 
 from corpus import query
 
-from . import inputs
+from . import inputs, records
 
 CHALLENGE_PLAN_SCHEMA = "cf-locate-challenge-plan/1"
 #: a relation's strength, strongest first: a ``downgrade`` names a WEAKER one
@@ -117,6 +117,24 @@ def task_manifests(paths: WorkspacePaths, run_id: str) -> list[dict]:
     if not directory.is_dir():
         return []
     return [read_json(p) for p in sorted(directory.glob("*.json"))]
+
+
+class _Layers:
+    """``layer_of(source_id)``: a source's rendered layer, read once, or None when the
+    sourceset holds no rendering of it (a downgrade note is then chosen without it)."""
+
+    def __init__(self, paths: WorkspacePaths, sourceset_id: str):
+        self.paths, self.sourceset_id, self.read = paths, sourceset_id, {}
+
+    def __call__(self, source_id: str) -> str | None:
+        if source_id not in self.read:
+            try:
+                self.read[source_id] = (inputs.source_view(self.paths, self.sourceset_id,
+                                                           source_id).layer()
+                                        if self.sourceset_id else None)
+            except (CfError, OSError):
+                self.read[source_id] = None
+        return self.read[source_id]
 
 
 def _documents(paths: WorkspacePaths, run_id: str, *, require_gate: bool
@@ -541,8 +559,9 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
             if key[0] not in run_sources:
                 continue
             outcomes.append(_scoped_out(run_id, key[0], base["item"], base, inv_run))
+        layer_of = _Layers(paths, sourceset_id)
         for row in outcomes:
-            _apply_challenge(row, c_planned, c_verdicts, universe, db, problems)
+            _apply_challenge(row, c_planned, c_verdicts, universe, db, problems, layer_of)
             _derive(row, problems)
             for scratch in ("record_challenge", "prominence_challenge",
                             "passage_challenge_override"):
@@ -644,7 +663,7 @@ def _scoped_out(run_id: str, sid: str, item: str, base: dict, inv_run: str) -> d
 
 
 def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
-                     problems: list[str]) -> None:
+                     problems: list[str], layer_of=None) -> None:
     sid, item = row["source_id"], row["item"]
     outcome_seen = row["outcome"]
     # locations first: their own records
@@ -680,7 +699,7 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                 else:
                     loc["relation"] = relation
                     if relation == vocab.CLOSE_MATCH and not str(loc.get("note") or "").strip():
-                        loc["note"] = downgrade_note(verdict)
+                        loc["note"] = downgrade_note(verdict, layer_of(sid) if layer_of else None)
         kept.append(loc)
     row["locations"] = _renumbered(kept)
     # the passage-level record: an absence, an unresolved outcome, a scope or a prominence
@@ -777,25 +796,66 @@ NOTE_FROM_WITNESS_CHARS = 300
 _SENTENCE_END = re.compile(r"(?<=[.!?])\s")
 
 
-def downgrade_note(verdict: dict) -> str:
+#: abbreviations whose full stop ends no sentence of a witness ("i.e. F(x) = ...")
+_ABBREVIATIONS = frozenset({"i.e.", "e.g.", "cf.", "resp.", "etc.", "viz.", "vs.", "w.r.t."})
+
+
+def witness_sentences(witness: str) -> list[str]:
+    """A witness's sentences, whitespace collapsed, each cut at a word at
+    :data:`NOTE_FROM_WITNESS_CHARS`.
+
+    A sentence ends at ``.``, ``!`` or ``?`` before whitespace, except after an
+    abbreviation (:data:`_ABBREVIATIONS`): the field witness's "-- i.e. F(x) =
+    ..." is one sentence, not two.
+    """
+    text = " ".join(str(witness or "").split())
+    sentences: list[str] = []
+    start = 0
+    for brk in _SENTENCE_END.finditer(text):
+        last = text[start:brk.start()].rsplit(" ", 1)[-1].lstrip("([{'\"")
+        if last.lower() in _ABBREVIATIONS:
+            continue
+        sentences.append(text[start:brk.start()])
+        start = brk.end()
+    if text[start:]:
+        sentences.append(text[start:])
+    out = []
+    for sentence in sentences:
+        if len(sentence) > NOTE_FROM_WITNESS_CHARS:
+            cut = sentence.rfind(" ", 0, NOTE_FROM_WITNESS_CHARS)
+            sentence = (sentence[:cut if cut > 0 else NOTE_FROM_WITNESS_CHARS].rstrip(" ,;:")
+                        + "\u2026")
+        out.append(sentence)
+    return out
+
+
+def downgrade_note(verdict: dict, layer: str | None = None) -> str:
     """The note of a location a challenge downgraded to ``closeMatch``.
 
     A ``closeMatch`` names its convention difference in ``note`` (proposal
     section 2.6), and a downgrade from ``exactMatch`` is exactly the challenger
-    saying there is one: the verdict's own ``note`` when it gives one, else the
-    first sentence of its ``witness`` (whitespace collapsed, cut at a word at
-    :data:`NOTE_FROM_WITNESS_CHARS`).  Empty only when the verdict says nothing,
-    which the gate refuses and the export would refuse by name.
+    saying there is one: the verdict's own ``note`` when it gives one, else a
+    sentence of its ``witness`` (:func:`witness_sentences`) -- the first one that
+    carries no more of the source verbatim than the export's quote cap
+    (``records.verbatim_run`` against the passage's ``layer``).  A witness opens
+    by quoting the passage as often as not (field case FTC #19a718e1: "The
+    passage says only that '<19 words of the article>'"), and a note is exported,
+    so that sentence is passed over for the next.  Without a layer, or when every
+    sentence quotes past the cap, the first sentence, which the export refuses by
+    name.  Empty only when the verdict says nothing, which the gate refuses and
+    the export would refuse by name.
     """
     note = " ".join(str(verdict.get("note") or "").split())
     if note:
         return note
-    witness = " ".join(str(verdict.get("witness") or "").split())
-    first = _SENTENCE_END.split(witness, maxsplit=1)[0] if witness else ""
-    if len(first) > NOTE_FROM_WITNESS_CHARS:
-        cut = first.rfind(" ", 0, NOTE_FROM_WITNESS_CHARS)
-        first = first[:cut if cut > 0 else NOTE_FROM_WITNESS_CHARS].rstrip(" ,;:") + "\u2026"
-    return first
+    sentences = witness_sentences(str(verdict.get("witness") or ""))
+    if not sentences:
+        return ""
+    if layer:
+        for sentence in sentences:
+            if records.verbatim_run(sentence, layer) is None:
+                return sentence
+    return sentences[0]
 
 
 def _renumbered(locations: list[dict]) -> list[dict]:
