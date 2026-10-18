@@ -217,7 +217,7 @@ class TestTheBridge(BridgeCase):
         self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read,Glob,Grep,Bash(git:*)")
 
     def test_the_reviewer_may_run_the_gate_and_nothing_wider(self):
-        """P1: the reviewer prompt renders the gate command; claude -p denies an unlisted one."""
+        """P1: the reviewer prompt renders the gate command; the agent CLI denies an unlisted one."""
         self.agentbox(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
         gate = "python3 /srv/cf/r-gate/verify_locate.py --gate-config /srv/cf/r-gate/gate.json"
         extra = "Bash(python3 /srv/cf/r-gate/corpus_search.py:*)"

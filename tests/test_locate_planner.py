@@ -504,7 +504,7 @@ class TestTheStagedRootDrivesTheBridge(Campaign):
 
     P1: the locate reviewer's prompt renders the gate command and makes "the
     gate passes" a check, but the bridge allowlisted only Read, Glob, Grep and
-    git for a reviewer, so ``claude -p`` would deny the call.  And the smoke
+    git for a reviewer, so the agent CLI would deny the call.  And the smoke
     plan found ``agent_call.py``, ``attempt_cap.py`` and ``watchdog.py`` absent
     from the staged bin/ (only cf run's transfer fallback shipped them), so a
     root used as planned had a bridge that exits 78 before any call.
