@@ -215,8 +215,8 @@ def _locate(workspace, args) -> int:
     gate = built["gate"]
     result = {"run_id": run_id, "mode": built["mode"], "sourceset": built["sourceset"],
               "universe": built["universe"], "challenge_runs": built["challenge_runs"],
-              "gate": gate, "counts": built["counts"], "problems": built["problems"],
-              "rows": built["rows"]}
+              "gate": gate, "gates": built["gates"], "counts": built["counts"],
+              "problems": built["problems"], "rows": built["rows"]}
     if args.as_json:
         print(json.dumps({k: v for k, v in result.items() if k != "rows"}, indent=1,
                          sort_keys=True))
@@ -225,10 +225,17 @@ def _locate(workspace, args) -> int:
         log.info(f"locate tally {run_id} [{built['mode']}]: {len(built['rows'])} finding row(s)")
         for key in sorted(counts):
             log.info(f"  {key}: {counts[key]}")
-    if not gate.get("receipt") or not gate.get("complete") or not gate.get("gate_ok"):
-        log.warn(f"run {run_id} is not a complete, gated harvest (receipt={gate.get('receipt')}, "
-                 f"complete={gate.get('complete')}, gate ok={gate.get('gate_ok')}): the counts "
-                 "above are not ones the export will accept")
+    # every run read -- the locate run, its frozen inventory, each challenge run -- is named
+    # when it is not a complete, gated harvest (a challenge whose plan required nothing
+    # was never harvested and needs no receipt)
+    for rid, g in sorted(built["gates"].items()):
+        if g.get("required") == 0:
+            continue
+        if not g.get("receipt") or not g.get("complete") or not g.get("gate_ok"):
+            log.warn(f"{g.get('role')} run {rid} is not a complete, gated harvest "
+                     f"(receipt={g.get('receipt')}, complete={g.get('complete')}, gate "
+                     f"ok={g.get('gate_ok')}): the counts above are not ones the export will "
+                     "accept")
     for problem in built["problems"][:20]:
         log.warn(problem)
     if not args.no_write:
@@ -238,8 +245,7 @@ def _locate(workspace, args) -> int:
                         [outcomes_mod.outcome_row(r) for r in built["outcomes"]])
         sourceset = (built["sourceset"] or {}).get("id")
         if sourceset:
-            with ss_state.update(paths, sourceset) as st:
-                ss_state.record(st, "tallies", run_id, {"mode": built["mode"],
-                                                        "challenge_runs": built["challenge_runs"],
-                                                        **built["counts"]})
+            ss_state.record(paths, sourceset, "tallies", run_id,
+                            {"mode": built["mode"], "challenge_runs": built["challenge_runs"],
+                             **built["counts"]})
     return 0

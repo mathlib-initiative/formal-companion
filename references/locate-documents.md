@@ -79,7 +79,11 @@ third genuine reviewer rejection (proposal §6), never by a worker.
 
 - `finder` ∈ {`theorem_box`, `bold_definition`, `lead`, `model`}: which finder
   proposed the passage. Deterministic finders' passages are pre-filled in the
-  task; dropping one needs a `skips` entry naming its span.
+  task, one row per (finder, start); two finders may share a start (a lead
+  paragraph with a bold term, a theorem box and its first paragraph), and the
+  worker writes ONE passage per start, its `finder` any one of that start's
+  finders. Dropping a start needs a `skips` entry covering each of its
+  finders' spans.
 - `item` must equal the passage id of `span` (§2.2 of the proposal), written
   `In-text #<8 hex>`; the gate recomputes every id of the document over all
   its passages, so `head_words` must be the shortest unique head.
@@ -133,9 +137,12 @@ A locate task carries at most eight passages of one frozen inventory.
 - `relation` ∈ the six locate relations; `rank` 1..5, distinct; `confidence` ∈
   {`high`, `medium`, `low`}.
 - `closeMatch` requires a non-empty `note` naming the convention difference.
-- Every curated candidate handed to the task (§5) must appear in `candidates`,
-  accepted or rejected with a reason, or be located; the gate reads the
-  candidates file itself (rule 4).
+- Every curated candidate handed to the task — the task manifest document's
+  `curated` list (§9), a subset of the candidates file's `curated` hits (§5) —
+  must appear in `candidates`, accepted or rejected with a reason, or be
+  located; the gate reads the candidates file itself (rule 4) and intersects it
+  with that list. A source split over several tasks hands its curated hits to
+  one of them.
 - Every declaration a location or an `accepted` candidate names exists in
   `corpus.sqlite` at that library and the universe's commit (rule 3). No
   document carries `proof_status`, `commit` or `version` anywhere.
@@ -179,14 +186,19 @@ A locate task carries at most eight passages of one frozen inventory.
 ## 5. Candidates file (L2)
 
 Read-only on the run host at `candidates/<source-id>.json` (in the workspace,
-`sourcesets/<id>/candidates/<universe>/<source-id>.json`):
+`sourcesets/<id>/candidates/<universe>/<source-id>.json` for candidates retrieved
+from the full database, and `…/candidates/<universe>/blind/` or
+`…/candidates/<universe>/planted-<sha16>/` for the G1-blind and a planted tools
+database, §9 — one directory per database kind, so one arm never overwrites
+another's files):
 
 ```json
 {"schema": "cf-locate-candidates/1",
  "source_id": "enwiki-1001-2002", "source_sha": "<html_sha256>",
  "universe": "u1", "universe_sha256": "<hex>",
+ "corpus_db": {"kind": "full", "sha256": "<hex>"},
  "article_qid": "Q99999001", "article_title": "Widget lemma",
- "terms": ["widget lemma", "spanning gadget"],
+ "terms": ["Widget lemma", "widget lemma theorem"], "blind": false,
  "curated": [
    {"library": "alpha", "declaration": "…",
     "via": "wikidata_tag", "evidence": "@[wikidata Q99999001] at Alpha/Widget.lean:612"}],
@@ -194,10 +206,16 @@ Read-only on the run host at `candidates/<source-id>.json` (in the workspace,
    {"library": "beta", "declaration": "…", "score": 12.4, "matched": "title"}]}
 ```
 
-`via` ∈ `cflib.vocab.CANDIDATE_VIA`. `terms` are the title, its redirects or
-aliases where known and the lead's bold terms, which lexical retrieval queried;
-`matched` names which. Only `curated` hits bind gate rule 4. In the G1-blind
-arm (proposal §8.1) `curated` is empty and the file says `"blind": true`.
+`via` ∈ `cflib.vocab.CANDIDATE_VIA`. `terms` are the title and the lead's bold
+terms (`bold_definition` finders whose `section` is the lead's `[]`), which
+lexical retrieval — the host tool's own search, `corpus.query.search`, every
+word first and any word only to fill up — queried; `matched` (`title` or
+`bold_term`) names which. `corpus_db` is the database the file was retrieved
+from (§9's tools database): `full`, `blind` or `planted`, with its sha. Only
+`curated` hits bind gate rule 4. In the G1-blind arm (proposal §8.1) the file is
+retrieved from `corpus.blind.sqlite`, no curated join is computed (`curated`
+and `dropped` are empty, `article_qid` is null, nothing filters the lexical
+hits) and it says `"blind": true`.
 
 `cf locate candidates` writes it (`scripts/locate/candidates.py`). Every curated
 declaration is checked in `corpus.sqlite`'s exact table at the universe's commit,
@@ -205,10 +223,21 @@ and one that is not there, or whose library is not in the universe, is listed in
 `"dropped": [{library, declaration, via, evidence, reason}]` instead of
 `curated` — a phantom the gate would refuse a worker for not locating is never
 kept. Its curated inputs are the operator's files, read as data: a QID-keyed
-`1000.yaml` (`--curated-1000`), a numbered `100.yaml` matched by normalised title
-or an entry's own `wikidata` (`--curated-100`), both naming `--curated-library`
-(default `mathlib`), and a library-metadata file of main results
-(`--library-metadata`):
+`1000.yaml` (`--curated-1000`; a suffixed key such as `Q180345X` is a further
+theorem under the base QID, and a key that is no QID is refused), a numbered
+`100.yaml` matched by an entry's own `wikidata` or by normalised title
+(`--curated-100`), both naming `--curated-library` (default: the universe's
+Mathlib library, `corpus.universe.Universe.mathlib_library`), and a
+library-metadata file of main results (`--library-metadata`). A title join keys
+on the article's TITLE only (a bold term may be another article's subject),
+with apostrophe and dash look-alikes folded, and an entry that names another
+QID than the article's is dropped with the reason `the entry names another QID
+(<qid>)` rather than joined. A docstring URL joins on the canonical page URL
+`corpus.ingest.wikipedia_urls` writes, so a mobile link joins too.
+`--blind` reads `corpus.blind.sqlite` and `--tools-corpus-db <file>` a planted
+database; the sourceset's `state.json` records each run under
+`candidates.<universe>` (or `candidates.<universe>/<kind dir>`), with `partial`
+and `written` when `--source` narrowed it:
 
 ```json
 {"libraries": {"alpha": [{"wikidata": "Q99999001", "title": "Widget lemma",
@@ -218,10 +247,11 @@ or an entry's own `wikidata` (`--curated-100`), both naming `--curated-library`
 ## 6. Sealed record set (export)
 
 ```
-<set>/SEAL.json        {"schema": "cf-locate-recordset/1", "campaign", "universe": {"id", "sha256"},
-                        "sourceset": {"id", "manifest_sha256"}, "skill_commit", "created",
-                        "files": {"<relative path>": "<sha256>"}}
-<set>/universe.json    the universe: per library id, repo, commit, toolchain, brain_lib, display_name, licence
+<set>/SEAL.json        {"schema": "cf-locate-recordset/1", "campaign", "runs": {"locate", "challenge",
+                        "inventory"}, "universe": {"id", "sha256"},
+                        "sourceset": {"id", "version", "manifest_sha256"}, "skill_commit",
+                        "created", "files": {"<relative path>": "<sha256>"}}
+<set>/universe.json    the universe: per library id, repo, commit, toolchain, brain_lib, licence
 <set>/sources.jsonl    per source: source_id, pageid, revision, title, wikidata, html_sha256,
                        layer_sha256, renderer, assessment
 <set>/records/<source-id>.jsonl   Literature Links 2.0 records (proposal §2.7)
@@ -230,20 +260,36 @@ or an entry's own `wikidata` (`--curated-100`), both naming `--curated-library`
 
 `SEAL.json` lists every other file with its sha256; a consumer refuses a set
 whose files do not match. It also names the runs the set was made from
-(`"runs": {"locate", "challenge", "inventory"}`), and `created` is the newest of
-those runs' harvest times, so the set is a function of its inputs and a
-re-export is byte-identical.
+(`"runs": {"locate", "challenge", "inventory"}`), `campaign` is the locate run's
+`run.yaml` `locate.campaign` (which `cf campaign plan` stamps into a shard; null
+for a run in no campaign), `skill_commit` is the exporting checkout's, and
+`created` is the newest of those runs' harvest times, so the set is a function of
+its inputs and a re-export is byte-identical. A receipt's name, the absence
+record's `receipt.sha256` and the seal's entry are one value: the sha256 of the
+receipt file's exact bytes.
 
 `cf export literature-links --run <locate run> --challenge-run <run> --set-id
 <id>` writes it (`scripts/locate/export.py`, the records from
-`scripts/locate/records.py`) under `exports/<id>/` and what it refused, by
-passage, to `reports/export.<id>.json`, exiting 1 when it refused anything: a
-passage whose challenge is owed, one whose outcome could not be derived, a
-record the checker rejects, a quote no context can make unique, and a whole
-source whose records pass `--byte-budget` (default 262,144 bytes). Only
+`scripts/locate/records.py`) under `exports/<id>/` (or `--out DIR`) and what it
+refused, by passage, to `reports/export.<id>.json`, exiting 1 when it refused
+anything: a passage whose challenge is owed, one whose outcome row carries a
+`problem` (§10: an outcome that could not be derived, a location that could not
+be joined, a document off the pinned rendering, a challenge that no longer fits
+its record), a `formal_math` passage with no outcome, a record the checker
+rejects, a quote no context can make unique, a receipt query or reason or a
+location note carrying more than `EXPORT_QUOTE_WORDS` words of the source
+verbatim, and a whole source whose records and receipts pass `--byte-budget`
+(default 262,144 bytes) or whose licence does not allow it — its manifest
+entry's `licence_class` must be the registry's for the source, one of
+`cflib.vocab.OPEN_LICENCE_CLASSES`, and an attribution class needs the family's
+SPDX id. A receipt keeps each candidate's documented keys only. Only
 `formal_math` passages with an outcome are exported; the subject end's `uri` and
-`URL` are the family's `revision_url` (titles move), its licence the family's
-SPDX id.
+`URL` are `sources.websource.revision_url` (titles move), its container title
+and licence the family's. The target is never the skill checkout or a companion
+repository, never a symlink, and never a non-empty directory without a
+`cf-locate-recordset/1` seal or holding a file its seal does not name; a
+re-export removes only what the previous seal named and the new set does not
+carry.
 
 Records are the proposal's §2.7 shape with one addition the vendored checker
 requires: the subject end's CSL `citation` carries `"id"` (the source id) beside
@@ -538,19 +584,33 @@ like a faithfulness run:
                   "layer_sha256": "<hex>", "renderer": "web-html/1",
                   "passages": [{"item": "In-text #3fa91c07", "span": [10234, 10612],
                                 "head_words": 12, "prominence": "central",
-                                "passage_kind": "theorem"}]}]}
+                                "passage_kind": "theorem", "text_span": [9871, 10190],
+                                "section": ["Statement"],
+                                "quote": {"exact": "…", "prefix": "", "suffix": ""}}],
+                  "curated": [{"library": "alpha",
+                               "declaration": "Widget.exists_spanning_gadget"}]}]}
   ```
 
-  An inventory task's documents carry `"finders": [...]` (`finders.json`'s
-  passages, pre-filled) instead of `passages`; a challenge task's carry
-  `"records": [...]`, the records it judges: `{key, target, item, span, run_id,
-  prominence, scope, passage_kind, outcome}` and, for a location, its
-  `location_key`, `library`, `declaration`, `relation` and `rank`.
+  `span` is a `layer.txt` offset; `text_span` is the same passage in `text.txt`
+  (through `layer_map.json`), and `section` and the inventory's `quote` say where
+  it is, so a worker can find what it reads. `curated` is the curated hits of the
+  source's candidates file this task answers for (gate rule 4): all of them go to
+  the one task of the source holding its subject passage, else its first task,
+  and every other task of the source gets `[]`. An inventory task's documents
+  carry `"finders": [...]` (`finders.json`'s passages, pre-filled, one row per
+  finder and start) instead of `passages` and `curated`; a challenge task's carry
+  `"records": [...]`, the records it judges: `{key, target, item, span,
+  text_span, section, quote, run_id, prominence, scope, passage_kind, outcome}`
+  and, for a location, its `location_key`, `library`, `declaration`, `relation`
+  and `rank`. Every task manifest of the plan is also kept beside `run.yaml`, in
+  `runs/<run-id>/planned.json` (`{schema: "cf-locate-planned/1", run_id,
+  tasks}`), which the outcomes read the planned passages from — the tend root is
+  not something a workspace commits.
 - `challenge-plan.json` (a challenge run only) — every record of the challenged
   runs, required or not: `{schema: "cf-locate-challenge-plan/1", run_id,
   challenged_runs, seed, sample_rate, counts, records: [{key, target, source_id,
   item, location_key, library, declaration, relation, run_id, prominence, scope,
-  rule, stratum, planned, task_id}]}`. `rule` is `refute_by_default`, `hunt`,
+  outcome, rule, stratum, planned, task_id}]}`. `rule` is `refute_by_default`, `hunt`,
   `sample` or `none`; `planned` is `required`, `sampled_out` or `not_required`.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
   for an absence, unresolved outcome, scope or prominence. The outcomes read it
@@ -568,12 +628,14 @@ like a faithfulness run:
    "universe": {"id": "u1", "sha256": "<hex>",
                 "libraries": {"alpha": {"repo": "https://…", "commit": "<40 hex>"}}},
    "corpus_db": {"path": "<host path>/corpus.sqlite", "sha256": "<hex>"},
+   "tools_corpus_db": {"path": "<host path>/corpus.sqlite", "sha256": "<hex>",
+                       "kind": "full"},
    "sourceset": {"id": "wpm", "version": 3, "manifest_sha256": "<hex>",
                  "sources_dir": "<host path>/sources"},
    "sources": {"enwiki-1001-2002": {"html_sha256": "<hex>", "layer_sha256": "<hex>",
                                     "renderer": "web-html/1"}},
    "candidates_dir": "<host path>/candidates/u1", "blind": false,
-   "inventory": {"run_id": "r-…", "dir": "<host path>/inventory"},
+   "inventory": {"run_id": "r-…"}, "challenged_runs": [], "findings_dir": "findings",
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
    "orchestrator_db": "<tend root>/orchestrator.sqlite",
    "max_locations": 5, "min_absence_queries": 3,
@@ -581,18 +643,41 @@ like a faithfulness run:
               "formal_companion_annotations": "<manifest sha256>"}}
   ```
 
-  `inventory` is the frozen inventory a `locate` run reads (null for
-  `locate-inventory` and `locate-challenge`); `blind: true` is the G1-blind arm
-  (curated candidates and gate rule 4 off). The planner also writes
-  `challenged_runs` (a challenge run's locate runs) and `findings_dir:
-  "findings"`. The gate directory also holds `locate_text.py`,
-  `verify_findings.py` (whose hardened change-set reader the locate gate reuses),
-  `passage_ids.py` (`scripts/locate/passage_ids.py`: the tool an inventory worker
-  runs to fill each passage's `span`, `head_words` and `item` from its quote,
-  since nobody can count code points or hash a head by hand),
-  `locate_records.py` (`scripts/locate/records.py`, the record builder, which
-  needs no `cflib`), the two host tools of §8, and `vendor/` with both vendored
-  packages and their manifests, whose shas the gate verifies at start.
+  `inventory` names the frozen inventory a `locate` run reads (null for
+  `locate-inventory` and `locate-challenge`); it reaches the host only through
+  the task manifests, which the planner derives from it. `blind: true` is the
+  G1-blind arm (curated candidates and gate rule 4 off). `challenged_runs` are a
+  challenge run's locate runs. Two databases are named: `corpus_db`, the CHECK
+  database — always the universe's full `corpus.sqlite`, which rule 3, the
+  outcomes' join, the export and the bench gold read — and `tools_corpus_db`,
+  the one the worker's two host tools search, `kind` `full` (the same file),
+  `blind` (`corpora/<u>/corpus.blind.sqlite`, `cf plan-locate --blind`, refused
+  when it was never built) or `planted` (`cf plan-locate --tools-corpus-db
+  <file>`, a full build for the same universe, for the P tier; on a remote host
+  it lands at `corpora/<u>/planted-<sha16>.sqlite`). Each is accepted by the
+  universe sha it was built for (`corpus.query.check_universe`), never by its
+  bytes; its `sha256` is a recorded pin. The prompts and the worker's allowlist
+  put `--db <tools path>` inside the allowed prefix, so a worker cannot point
+  the tools elsewhere, and an inventory or locate plan refuses a source whose
+  candidates file is missing or was retrieved from another kind of database
+  (§5). `gate.local.json` is the same document with this machine's paths, and
+  its `log_dir` is `runs/<run-id>/gate-local-log/`, so a gate run here never
+  writes into the workers' log.
+
+  The gate directory holds, every file required (a missing one is a planning
+  error): `verify_locate.py`, `verify_findings.py` (which it imports; its
+  hardened change-set reader), `locate_text.py`, `passage_ids.py`
+  (`scripts/locate/passage_ids.py`: the tool an inventory worker runs to fill
+  each passage's `span`, `head_words` and `item` from its quote, since nobody can
+  count code points or hash a head by hand), `locate_records.py`
+  (`scripts/locate/records.py`, the record builder, which needs no `cflib`), the
+  two host tools of §8 (`corpus_show.py` imports `corpus_search.py`), `vendor/`
+  with both vendored packages and their manifests, whose shas the gate verifies
+  at start, `tasks/` and `gate.json`. The tend root's `bin/` holds the bridge with
+  `normalize_result.py`, `extract_final_json.py`, `agent_call.py` and
+  `attempt_cap.py` — for every run, a faithfulness one too — and, for a locate
+  run, `watchdog.py`. No library checkout is named to the challenger: nothing
+  creates, transfers or verifies one on a run host.
 
   The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
   <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
@@ -609,14 +694,30 @@ like a faithfulness run:
   `NaN` is a refusal.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
-  sha256, corpus_db_sha256}, inventory_run, challenged_runs, arm, per_task,
-  subject_only, seed, sample_rate, documents, passages, source_ids, skipped}`,
-  and `remote` names the host directories of the sourceset's sources, the
-  universe, the candidates and the inventory (`sourcesets/<id>/sources`,
-  `corpora/<u>`, `sourcesets/<id>/candidates/<u>`, `inventories/<run>`);
-  `repos` and `sources` are empty. `budget.max_cost` is required before
-  `cf run --execute` sends a locate run anywhere (proposal §6). The run's counts
-  land in the sourceset's `state.json`, not in a companion's.
+  sha256, corpus_db_sha256, tools_corpus_db: {kind, sha256}}, inventory_run,
+  challenged_runs, arm, skill_commit, gate_files, per_task, subject_only, seed,
+  sample_rate, documents, passages, source_ids, skipped}`. `arm` is `blind` with
+  `--blind`, else `assisted`, and a locate plan whose inventory run, or a
+  challenge plan whose challenged runs, are of another arm is refused;
+  `skill_commit` is the planning checkout's HEAD; `gate_files` is `{path under
+  the tend root: sha256}` of every file staged into `gate/` and `bin/` (the task
+  manifests aside). The planner never writes `locate.campaign` (`cf campaign
+  plan` stamps it). `passages` counts what the tasks owe: an inventory task's
+  distinct finder starts, a locate task's passages, a challenge task's records;
+  a source the inventory covered with every passage scoped out is planned as
+  `skipped` and still in `source_ids`. `remote` names the host directories of
+  the sourceset's sources, the universe and the candidates
+  (`sourcesets/<id>/sources`, `corpora/<u>`, `sourcesets/<id>/candidates/<u>`);
+  `repos` and `sources` are empty. `budget.max_cost` comes only from
+  `--max-cost` (the workspace default is recorded as
+  `budget.workspace_max_cost_usd`, which nothing reads as a cap), and is
+  required before `cf run --execute` sends a locate run anywhere (proposal §6).
+  A challenge whose plan requires no record (every one `not_required` or
+  `sampled_out`) is still planned, with no task: its `challenge-plan.json` is the
+  result, and it needs no harvest. A re-plan checks everything before it writes
+  anything, and refuses a run id that names a run it reads or a run of another
+  preset. The run's counts land in the sourceset's `state.json`, through
+  `Sourceset.record_state`, not in a companion's.
 
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
 JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
@@ -629,9 +730,12 @@ per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
 `~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
 `CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3), `CF_TASK_MANIFESTS`
 (the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the allowlist entries for the two
-host tools — and in an inventory run the passage-id tool — worker role only) and
-`CF_FINDINGS_GLOB` (`findings/$TEND_TASK_ID/*.json` for the nested layout), all
-exported by the generated wrappers in `bin/`. A timeout exits 124 and
+host tools, each `Bash(python3 <gate>/corpus_search.py --db <tools path>:*)` —
+and in an inventory run the passage-id tool — worker role only),
+`CF_REVIEWER_TOOLS` (the reviewer's read-only default plus the gate, which its
+prompt has it run; reviewer role only) and `CF_FINDINGS_GLOB`
+(`findings/$TEND_TASK_ID/*.json` for the nested layout), all exported by the
+generated wrappers in `bin/`. A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
 same worktree; only a `request_changes` from a call that completed counts as a
 rejection.
@@ -657,10 +761,14 @@ declaration list:
 | absent passage | one `ABSENCE` (beside one `LOCATION` per `relatedMatch`) | the universe id | none |
 | unresolved passage, or an `unresolved` document | one `UNRESOLVED` | the universe id (inventory: the sourceset id) | none |
 
+Every row also carries the `source_sha` and `layer_sha256` of its document.
+
 `cf tally --locate --run <run> [--challenge-run <run>]…` computes them
 (`scripts/locate/outcomes.py`) and writes `reports/locate-tally.<run-id>.json`
-(the rows and the counts) and `reports/locate-outcomes.<run-id>.jsonl`, one row
-per passage after challenge:
+(the rows, the counts, and `gates`: `{run id: {role, receipt, complete,
+gate_ok}}` for the locate run, its inventory and each challenge run, each one
+not a complete gated harvest named in a warning) and
+`reports/locate-outcomes.<run-id>.jsonl`, one row per passage after challenge:
 
 ```json
 {"source_id": "enwiki-1001-2002", "item": "In-text #3fa91c07", "passage_kind": "theorem",
@@ -677,15 +785,37 @@ per passage after challenge:
 the declaration's `module`, `path`, `line`, `end_line` and `kind`), and a
 `proof_status` a document wrote is ignored and named; `status` is
 `cflib.vocab.derive_status` over the surviving locations and the absence; an
-unresolved passage has `status: null`. A passage whose challenge is still owed
-carries `challenge: null`, and the export refuses it (hard rule 5). A row also
-carries `span`, `head_words`, `section`, `reason`, `unresolved_by` (`worker` or
-`attempt_cap`), `refuted` (the locations a challenge removed) and `task_id`; a
-passage the run planned and no document answered has `outcome: null` and
-`missing: true`, and an inventory passage scoped out has `outcome: null`. The
-passage's `challenge` is one value over its records: owed when any is owed, else
-`downgraded` when any changed, else `survived` when any was judged, else
-`sampled_out` or `not_required`.
+unresolved passage has `status: null` (one that carries locations anyway is
+named as a problem). A passage whose challenge is still owed carries
+`challenge: null`, and the export refuses it (hard rule 5). A row also carries
+`span`, `head_words`, `section`, `source_sha`, `layer_sha256`, `reason`,
+`unresolved_by` (`worker` — the default — or `attempt_cap`), `refuted` (the
+locations a challenge removed), `task_id`, and `problem` when something about
+the passage is wrong: a location that could not be joined, a document whose
+universe or `source_sha`/`layer_sha256` is not the run's pin, an outcome that is
+not one of the three, a challenge that no longer fits its record. A passage the
+run planned (`planned.json`, §9; its count must be `run.yaml`'s) and no document
+answered has `outcome: null` and `missing: true`, and an inventory passage scoped
+out has `outcome: null`. A passage answered in another task's document than its
+own is ignored there, and a declaration listed twice keeps its best rank. The
+passage's `challenge` is one value over its records — its locations, the
+refuted ones included, and its passage-level and prominence records: owed when
+any is owed, else `downgraded` when any changed, else `survived` when any was
+judged, else `sampled_out` or `not_required`.
+
+A challenge run is applied only to a locate run its plan's `challenged_runs`
+names, only through the plan records whose `run_id` is that run, and a verdict
+counts only on a record the plan REQUIRED (one on any other is named and
+ignored). A location's verdict applies only while its relation is the one the
+plan saw, a passage-level one only while the outcome is (otherwise the record
+is owed again); a `downgrade` must name a strictly weaker relation (exact,
+then close, then broad/narrow/hasPart, then related); a prominence changes only
+by `overturn`; an `overturn` puts the challenger's locations first in their own
+order, then the kept `relatedMatch` ones, renumbered and capped at five; and a
+scope overturned with no location makes the passage `formal_math` with no
+outcome and a `problem`, which the export refuses. The counts' `unresolved`
+is every answered passage with no status — the worker's and those a challenge
+left without a location that counts.
 The bench (`references/locate-bench.md` §8) joins runs to gold by the row's
 layer `span`, and reads it from the inventory documents when a row lacks it.
 

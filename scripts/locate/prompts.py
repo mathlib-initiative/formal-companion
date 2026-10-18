@@ -62,7 +62,9 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
                   universe, per_task: int, merge_target_branch: str = "main") -> dict[str, Any]:
     """Every slot the locate templates read, from the run's host paths and its universe."""
     gate_dir = host["gate_dir"]
-    db = host["corpus_db"]
+    # the TOOLS database (references/locate-documents.md section 9): the one the
+    # allowlist pins the two tools to, never the gate's check database
+    db = host["tools_corpus_db"]
     lines = []
     for lid, lib in sorted(universe.libraries.items()):
         lines.append(f"- `{lid}` — {lib.get('repo') or '(no repo url)'} at "
