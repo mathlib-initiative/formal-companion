@@ -379,8 +379,10 @@ spaces, UTF-8):
   `adopted_from: {consumer, pins_sha256}`. A pin is `{revision, pageid | title,
   bytes?, wikidata?, assessment?}`: one without bytes is adopted with null shas
   and fetched at exactly that revision by `cf sourceset fetch`; one with a title
-  and no page id has its page resolved from its revision (`action=query&revids=`,
-  under `--execute`), never from the title, which moves. A new adopted revision
+  and no page id has its page resolved from its revision, never from the title,
+  which moves: from the sourceset when it already holds that revision (a
+  revision id names one page, so re-running the same pins asks nothing), else
+  by `action=query&revids=` under `--execute`. A new adopted revision
   takes the `assessment`, `wikidata` and `title` its pin does not carry from its
   page's other sources (an enumerated one first), and an enumeration fills them
   on an adopted entry whose page it lists, so a pinned page stays in every frame
