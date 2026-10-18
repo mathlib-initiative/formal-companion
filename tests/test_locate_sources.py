@@ -588,7 +588,8 @@ class TestTheRecordedTransport(unittest.TestCase):
     def test_page_infos(self):
         infos = wikinet.page_infos(self.t, SITE, [1003, 1001, 1002])
         self.assertEqual(infos[1001], {"revision": 2002, "title": "Widget lemma",
-                                       "wikidata": "Q99999001"})
+                                       "wikidata": "Q99999001", "redirect": False,
+                                       "disambiguation": False})
         self.assertIsNone(infos[1003]["wikidata"])
 
     def test_maxlag_does_not_key_a_recording(self):
@@ -714,8 +715,8 @@ class TestOneModuleTalksToWikipedia(unittest.TestCase):
         r"from\s+http\s+import\s+[^\n]*\bclient\b|^\s*(?:import|from)\s+(?:requests|httpx|urllib3)\b|"
         r"\bsocket\b|[\"']curl[\"']|shutil\.which\(\s*[\"']curl", re.M)
     #: anything that names Wikipedia or builds a request to a web-source family
-    WIKI = re.compile(r"wikipedia\.org|api\.php|\bapi_url\(|\brequest_url\(|\bwikinet\b|"
-                      r"\bwebsource\b|\.site\b")
+    WIKI = re.compile(r"wikipedia\.org|wikidata\.org|api\.php|\bapi_url\(|\brequest_url\(|"
+                      r"\bwikinet\b|\bwebsource\b|\.site\b")
 
     def test_no_other_module_fetches_from_wikipedia(self):
         offenders = []
@@ -2170,6 +2171,230 @@ class TestFieldS4AnEnumerationFillsAnAdoptedRevision(_FieldCase):
         self.assertEqual((e["assessment"], e["wikidata"], e["title"]),
                          ({"class": "B", "importance": "high"}, "Q99999001", "Widget lemma"))
         self.assertNotIn("enwiki-1001-2002", self.ss.latest().entries)
+
+
+def _listing_query(**cont) -> dict:
+    return {"action": "query", "list": "projectpages", "wppprojects": "Mathematics",
+            "wppassessments": "1", "wpplimit": "500", "format": "json", "formatversion": "2",
+            **cont}
+
+
+def _row(pageid, title, cls, importance=None, ns=0):
+    return {"pageid": pageid, "ns": ns, "title": title,
+            "assessment": {"class": cls, "importance": importance or "Low"}}
+
+
+#: a synthetic WikiProject whose listing holds every kind of page the field met
+FLAG_LISTING = [
+    (_listing_query(), {"continue": {"continue": "-||", "wppcontinue": "1103"},
+                        "query": {"projects": {"Mathematics": [
+                            _row(1101, "Widget group", "B", "High"),
+                            _row(1102, "Widget (disambiguation)", "Disambig", "NA"),
+                            _row(5101, "Talk:Widget group", "B", "High", ns=1),
+                            _row(5102, "Category:Widgets", "Category", "NA", ns=14),
+                            _row(5103, "Template:Widget", "Template", "NA", ns=10)]}}}),
+    (_listing_query(**{"continue": "-||", "wppcontinue": "1103"}),
+     {"query": {"projects": {"Mathematics": [
+         _row(1103, "List of widgets", "List", "Low"),
+         _row(1104, "Old widget name", "Redirect", "NA"),
+         _row(1105, "Ada Widgetson", "Start", "Low"),
+         _row(1106, "Widget theorem", "Start", "Mid")]}}}),
+]
+FLAG_IDS = "1101|1102|1103|1104|1105|1106"
+
+
+def _info_query(ids=FLAG_IDS, **cont) -> dict:
+    return {**wikinet.PAGE_INFO_PARAMS, "pageids": ids, **cont}
+
+
+#: the page infos, the second half of one page's answer in a continuation (S8)
+FLAG_INFOS = [
+    (_info_query(), {"continue": {"continue": "||", "rvcontinue": "1105|3105"},
+                     "query": {"pages": [
+                         {"pageid": 1101, "ns": 0, "title": "Widget group",
+                          "revisions": [{"revid": 3101}],
+                          "pageprops": {"wikibase_item": "Q99999101"}},
+                         {"pageid": 1102, "ns": 0, "title": "Widget (disambiguation)",
+                          "revisions": [{"revid": 3102}],
+                          "pageprops": {"disambiguation": ""}},
+                         {"pageid": 1103, "ns": 0, "title": "List of widgets",
+                          "revisions": [{"revid": 3103}]},
+                         {"pageid": 1104, "ns": 0, "title": "Old widget name",
+                          "redirect": True, "revisions": [{"revid": 3104}]},
+                         {"pageid": 1105, "ns": 0, "title": "Ada Widgetson",
+                          "pageprops": {"wikibase_item": "Q99999105"}},
+                         {"pageid": 1106, "ns": 0, "title": "Widget theorem", "redirect": True,
+                          "revisions": [{"revid": 3106}]}]}}),
+    (_info_query(**{"continue": "||", "rvcontinue": "1105|3105"}),
+     {"query": {"pages": [{"pageid": 1105, "ns": 0, "title": "Ada Widgetson",
+                           "revisions": [{"revid": 3105}]}]}}),
+]
+
+
+def _flag_fixtures(case, *, listing=True, infos=True, first_answer_only=False) -> Path:
+    directory = _scratch(case)
+    recorded = []
+    if listing:
+        recorded += FLAG_LISTING[:1] if first_answer_only else FLAG_LISTING
+    if infos:
+        recorded += FLAG_INFOS
+    for n, (query, answer) in enumerate(recorded):
+        _record(directory, f"r{n}", query, answer)
+    return directory
+
+
+class TestFieldS5S6S8FlagsAndCounts(_FieldCase):
+    """S5: redirects, disambiguation pages, lists and biographies went in unflagged;
+    S6: the listing's other rows were dropped uncounted; S8: page info ignored
+    ``continue``."""
+
+    def test_s5_s6_s8_an_enumeration_flags_counts_and_follows_continuations(self):
+        code, out = self.enumerate(fixtures=_flag_fixtures(self))
+        self.assertEqual(code, 0, out)
+        self.assertIn("3 row(s) of the listing are no article", out)
+        self.assertIn("by namespace: 1 1, 10 1, 14 1", out)
+        m = self.ss.latest()
+        flags = {e["pageid"]: e["flags"] for e in m}
+        self.assertEqual(sorted(flags), [1101, 1102, 1103, 1104, 1105, 1106])   # S8: 1105 too
+        self.assertEqual(m.get("enwiki-1105-3105")["wikidata"], "Q99999105")
+        self.assertEqual(flags[1101], {"redirect": False, "disambiguation": False,
+                                       "list": False, "biography": None})
+        self.assertTrue(flags[1102]["disambiguation"])            # pageprops and class
+        self.assertTrue(flags[1103]["list"])
+        self.assertTrue(flags[1104]["redirect"])                  # info and class
+        self.assertTrue(flags[1106]["redirect"])                  # info alone
+        self.assertEqual([p for p, f in flags.items() if not any(f.values())], [1101, 1105])
+        state = self.ss.read_state()["commands"]["enumerate-wikiproject"]
+        self.assertEqual(state["non_article_rows"],
+                         {"total": 3, "by_namespace": {"1": 1, "10": 1, "14": 1}})
+        self.assertEqual(state["flagged"], {"redirect": 2, "disambiguation": 1, "list": 1})
+        # a plain fetch leaves the redirect and disambiguation stubs out
+        code, out = cf(self.root, "sourceset", "fetch", "wpm")
+        self.assertIn("dry run: 3 source(s) of wpm have no bytes yet", out)
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--include-flagged")
+        self.assertIn("dry run: 6 source(s)", out)
+
+    def test_s5_the_biography_step_asks_wikidata(self):
+        self.enumerate(fixtures=_flag_fixtures(self))
+        code, out = cf(self.root, "sourceset", "flag-biographies", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 Wikidata item(s): 1 query(ies)", out)
+        query = ("SELECT ?item WHERE { VALUES ?item { wd:Q99999101 wd:Q99999105 } "
+                 "?item wdt:P31 wd:Q5 . }")
+        answers = _scratch(self)
+        _record(answers, "p31", {"query": query, "format": "json"},
+                {"results": {"bindings": [
+                    {"item": {"type": "uri",
+                              "value": "http://www.wikidata.org/entity/Q99999105"}}]}})
+        code, out = cf(self.root, "sourceset", "flag-biographies", "wpm", "--fixtures",
+                       str(answers))
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertIs(m.get("enwiki-1105-3105")["flags"]["biography"], True)
+        self.assertIs(m.get("enwiki-1101-3101")["flags"]["biography"], False)
+        self.assertIsNone(m.get("enwiki-1103-3103")["flags"]["biography"])   # no QID
+        code, out = cf(self.root, "sourceset", "flag-biographies", "wpm", "--fixtures",
+                       str(_scratch(self)))
+        self.assertEqual(code, 0, out)                             # nothing left to ask
+        # a determined flag never changes
+        e = dict(m.get("enwiki-1105-3105"))
+        e["flags"] = dict(e["flags"], biography=False)
+        with self.assertRaisesRegex(SourcesetError, "flag biography"):
+            self.ss.write_version(m, [e if x["source_id"] == e["source_id"] else x for x in m])
+
+    def test_s5_a_sourceset_enumerated_before_flags_takes_them_at_the_next_listing(self):
+        fam = websource.family("enwiki")
+        old = websource.entry(fam, 1104, 3104, title="Old widget name",
+                              assessment={"class": "Redirect", "importance": "na"})
+        self.ss.write_version(self.ss.latest(), [old])
+        code, out = self.enumerate(fixtures=_flag_fixtures(self))
+        self.assertEqual(code, 0, out)
+        e = self.ss.latest().get("enwiki-1104-3104")
+        self.assertTrue(e["flags"]["redirect"])
+        self.assertEqual(self.ss.read_state()["commands"]["enumerate-wikiproject"]
+                         ["flags_filled"], 1)
+
+    def test_s6_the_client_counts_what_it_skips(self):
+        t = wikinet.FixtureTransport(_flag_fixtures(self, infos=False))
+        skipped: dict = {}
+        pages = list(wikinet.project_pages(t, SITE, "Mathematics", skipped=skipped))
+        self.assertEqual(len(pages), 6)
+        self.assertEqual(skipped, {1: 1, 14: 1, 10: 1})
+
+    def test_s8_a_repeating_page_info_continuation_is_refused(self):
+        fake = _Fake(lambda p: {"continue": {"rvcontinue": "1"},
+                                "query": {"pages": [{"pageid": 1, "revisions": []}]}})
+        with self.assertRaisesRegex(wikinet.WikiError, "repeats"):
+            wikinet.page_infos(fake, SITE, [1])
+
+
+class TestFieldS7EnumerationCheckpoints(_FieldCase):
+    """S7: 666 requests and twelve minutes, all or nothing."""
+
+    def test_s7_a_failed_page_info_request_resumes_without_listing_again(self):
+        code, out = self.enumerate(fixtures=_flag_fixtures(self, infos=False))
+        self.assertEqual(code, 2, out)
+        self.assertIn("are kept in", out)
+        checkpoint = self.paths.sourceset_enumerate_checkpoint("wpm")
+        data = json.loads(checkpoint.read_text())
+        self.assertTrue(data["listing"]["done"])
+        self.assertEqual(len(data["listing"]["pages"]), 6)
+        self.assertEqual(self.ss.versions(), [1])                  # nothing half-written
+        # the listing is not recorded here: a request for it would be refused
+        code, out = self.enumerate(fixtures=_flag_fixtures(self, listing=False))
+        self.assertEqual(code, 0, out)
+        self.assertIn("resuming the enumeration", out)
+        self.assertEqual(len(self.ss.latest()), 6)
+        self.assertFalse(checkpoint.exists())
+        self.assertTrue(self.ss.read_state()["commands"]["enumerate-wikiproject"]["resumed"])
+
+    def test_s7_a_listing_cut_off_resumes_from_its_continuation(self):
+        code, out = self.enumerate(fixtures=_flag_fixtures(self, infos=False,
+                                                           first_answer_only=True))
+        self.assertEqual(code, 2, out)
+        data = json.loads(self.paths.sourceset_enumerate_checkpoint("wpm").read_text())
+        self.assertEqual(data["listing"]["continue"], {"continue": "-||", "wppcontinue": "1103"})
+        resume = _scratch(self)
+        for n, (query, answer) in enumerate(FLAG_LISTING[1:] + FLAG_INFOS):
+            _record(resume, f"r{n}", query, answer)
+        code, out = self.enumerate(fixtures=resume)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.ss.latest()), 6)
+        self.assertIn("3 row(s) of the listing are no article", out)
+
+    def test_s7_a_checkpoint_of_another_project_is_refused_until_restarted(self):
+        self.enumerate(fixtures=_flag_fixtures(self, infos=False))
+        code, out = cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project",
+                       "Physics", "--fixtures", str(_scratch(self)))
+        self.assertEqual(code, 2, out)
+        self.assertIn("not 'Physics'", out)
+        code, out = self.enumerate("--restart", fixtures=_flag_fixtures(self))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("resuming", out)
+        self.assertFalse(self.paths.sourceset_enumerate_checkpoint("wpm").exists())
+
+
+class TestFieldS5TheWikidataRequest(unittest.TestCase):
+
+    transport = TestCurlTransport.transport
+
+    def test_s5_the_query_service_gets_one_fixed_get_with_no_maxlag(self):
+        body = json.dumps({"results": {"bindings": [
+            {"item": {"value": "http://www.wikidata.org/entity/Q99999105"}}]}}).encode()
+        t, run, _s = self.transport([(0, "200", body)])
+        self.assertEqual(wikinet.wikidata_humans(t, ["Q99999105", "Q99999101"]), {"Q99999105"})
+        (argv,) = run.argvs
+        url = argv[-1]
+        self.assertTrue(url.startswith("https://query.wikidata.org/sparql?"), url)
+        self.assertNotIn("maxlag", url)
+        self.assertIn("wdt%3AP31+wd%3AQ5", url)
+        self.assertIn(wikinet.USER_AGENT, argv)
+
+    def test_s5_only_qids_are_asked_and_only_the_two_endpoints_exist(self):
+        with self.assertRaises(wikinet.WikiError):
+            wikinet.wikidata_humans(_Fake(lambda p: {}), ["Q1 } DELETE {"])
+        with self.assertRaises(wikinet.WikiError):
+            wikinet.request_url(SITE, {"a": "1"}, "/w/index.php")
 
 
 if __name__ == "__main__":

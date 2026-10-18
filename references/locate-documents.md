@@ -322,6 +322,26 @@ spaces, UTF-8):
   enumerate-wikiproject` adds no revision of a page a consumer pinned (unless
   `--include-adopted`), and `cf sourceset fetch` does not fetch an enumerated
   revision of a page whose adopted bytes are in.
+- **Page flags.** An entry may carry `flags: {redirect, disambiguation, list,
+  biography}` (`cflib.vocab.PAGE_FLAGS`), each `true`, `false` or `null` (not
+  determined), describing the page as the listing found it.
+  `enumerate-wikiproject` sets the first three from the page info (`info`
+  `redirect`, `pageprops` `disambiguation`) and the assessment class (Redirect,
+  Disambig, List or FL; a "List of" title), on every entry of a listed page
+  that lacks them; the optional `cf sourceset flag-biographies` sets `biography`
+  from Wikidata (P31 = Q5) for every entry with a QID. A page with a flag true
+  is no concept article (`websource.concept_page`), and a plain `fetch` leaves
+  the redirects and disambiguation pages out (`--include-flagged` fetches them).
+  Each flag is append-only on its own: a determined flag never changes, an
+  undetermined one may be set later.
+- **The enumeration** records, in `state.json`, the listing's rows of other
+  namespaces it skipped (`non_article_rows`, by namespace), the flagged page
+  counts and whether it resumed. Its network answers are checkpointed in
+  `sourcesets/<id>/enumerate.checkpoint.json` every 20 answers and when a request
+  fails; a re-run of the same project resumes from it (the listing from its
+  continuation, the page infos not asked twice) and deletes it once the version
+  is written; `--restart` discards it. A page-info answer is followed through
+  its `continue`.
 - A field the source does not have yet is `null` (`raw_sha256` before the fetch,
   `layer_sha256` before the render). **Append-only**: version n+1 holds every
   `source_id` of version n, and every non-null field of n unchanged — a field

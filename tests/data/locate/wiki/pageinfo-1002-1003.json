@@ -35,8 +35,8 @@
   "format": "json",
   "formatversion": "2",
   "pageids": "1002|1003",
-  "ppprop": "wikibase_item",
-  "prop": "revisions|pageprops",
+  "ppprop": "disambiguation|wikibase_item",
+  "prop": "info|revisions|pageprops",
   "rvprop": "ids"
  }
 }
