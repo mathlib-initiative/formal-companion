@@ -132,9 +132,13 @@ release has something to say.
   from the family's template). `scripts/sources/render_html.py`, frozen as
   `web-html/1`, renders the canonical body into the Literature Links layer
   (`textContent`, ASCII whitespace collapsed), the formulas, the head text, the
-  reading copy and its layer map, sections, blocks and the three deterministic
-  finders; a parity test against the consumer's text layer runs when
-  `CF_WIKILEAN_LAYER` names its output.
+  reading copy and its layer map (`cf-layer-map/2`, formula segments flagged),
+  sections, blocks and the three deterministic finders, both measured over the
+  text the reading copy keeps; comments are removed as the HTML tokenizer
+  delimits them, a byte-order mark is dropped, and a body with a lone surrogate
+  or nesting deeper than 256 is refused. A page a consumer pinned keeps its
+  adopted revision (`Manifest.preferred()`); a parity test against the
+  consumer's text layer runs when `CF_WIKILEAN_LAYER` names its output.
 - Locate's corpus (`docs/proposals/wikipedia-locate.md` §2.3–§2.5 and §6,
   `references/locate-documents.md` §8): `cf corpus init | add | probe-command |
   ingest | build-db | status | search | show`. A universe is

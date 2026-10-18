@@ -255,10 +255,11 @@ class TestTheReadingCopy(unittest.TestCase):
 
     def test_the_map(self):
         r = self.r
-        for t0, t1, l0, l1 in r.segments:
-            if t1 - t0 == l1 - l0:
+        for t0, t1, l0, l1, kind in r.segments:
+            if kind == rh.SEGMENT_TEXT:
                 self.assertEqual(r.text[t0:t1], r.layer[l0:l1])
             else:
+                self.assertEqual(kind, rh.SEGMENT_FORMULA)
                 self.assertTrue(r.text[t0:t1].startswith("$"))
         at = r.text.index("spanning gadget.")
         self.assertEqual(r.layer[r.text_to_layer(at):].split(".")[0], "spanning gadget")
@@ -268,7 +269,7 @@ class TestTheReadingCopy(unittest.TestCase):
         self.assertEqual(r.text[r.layer_to_text(formula[0])], "$")
         self.assertIsNone(r.layer_to_text(formula[0] + 1))
         self.assertIsNone(r.layer_to_text(r.layer.index("[1]")))
-        self.assertEqual(r.layer_map()["schema"], "cf-layer-map/1")
+        self.assertEqual(r.layer_map()["schema"], "cf-layer-map/2")
 
 
     def test_the_map_reads_back_from_its_file(self):
@@ -573,21 +574,267 @@ class TestCurlTransport(unittest.TestCase):
 class TestOneModuleTalksToWikipedia(unittest.TestCase):
     """CLAUDE.md section 3: the Wikipedia fetcher is one named exception, in one module."""
 
+    #: anything that can open a connection or run curl
+    NETWORK = re.compile(
+        r"\burllib\.request\b|from\s+urllib\s+import\s+[^\n]*\brequest\b|\bhttp\.client\b|"
+        r"from\s+http\s+import\s+[^\n]*\bclient\b|^\s*(?:import|from)\s+(?:requests|httpx|urllib3)\b|"
+        r"\bsocket\b|[\"']curl[\"']|shutil\.which\(\s*[\"']curl", re.M)
+    #: anything that names Wikipedia or builds a request to a web-source family
+    WIKI = re.compile(r"wikipedia\.org|api\.php|\bapi_url\(|\brequest_url\(|\bwikinet\b|"
+                      r"\bwebsource\b|\.site\b")
+
     def test_no_other_module_fetches_from_wikipedia(self):
-        network = re.compile(r"\burllib\.request\b|\bhttp\.client\b|^\s*import requests\b|"
-                             r"\bsocket\.create_connection\b", re.M)
         offenders = []
         for path in sorted(SCRIPTS.rglob("*.py")):
             rel = path.relative_to(SCRIPTS).as_posix()
             if rel == "sources/wikinet.py":
                 continue
             text = path.read_text(encoding="utf-8")
-            wiki = "wikipedia.org" in text or "api.php" in text
-            if wiki and (network.search(text) or re.search(r"[\"']curl[\"']", text)):
+            if self.WIKI.search(text) and self.NETWORK.search(text):
                 offenders.append(rel)
             if "CurlTransport(" in text and rel != "cfcmd/sourceset.py":
                 offenders.append(rel)
         self.assertEqual(offenders, [])
+
+    def test_the_check_sees_the_spellings_it_is_written_for(self):
+        for sample in ("from urllib import request\nrequest.urlopen(websource.api_url(f))",
+                       "import urllib.request\nurllib.request.urlopen(fam.site)",
+                       "subprocess.run(['curl', wikinet.request_url(s, p)])",
+                       "import requests\nrequests.get(websource.api_url(fam))"):
+            with self.subTest(sample=sample):
+                self.assertTrue(self.WIKI.search(sample) and self.NETWORK.search(sample))
+
+
+# ---------------------------------------------------------------------------
+# review fixes: the renderer
+# ---------------------------------------------------------------------------
+
+class TestReviewFixesRenderer(unittest.TestCase):
+    """Regression tests for the adversarial review of the renderer (ids in the names)."""
+
+    def test_00_a_formula_maps_only_as_a_whole_whatever_its_lengths(self):
+        for html in ('<p>x <math alttext="a"><mi>a</mi><mo>+</mo><mi>b</mi></math> y</p>',
+                     '<p>Let <math alttext="x^{2}"><semantics><msup><mi>x</mi><mn>2</mn>'
+                     '</msup><annotation encoding="application/x-tex">x^{2}</annotation>'
+                     '</semantics></math> be.</p>'):
+            with self.subTest(html=html):
+                r = rh.render(html)
+                (a, b), = [f["span"] for f in r.formulas]
+                seg = next(s for s in r.segments if s[2] == a)
+                self.assertEqual(seg[4], rh.SEGMENT_FORMULA)
+                self.assertEqual(r.text[r.layer_to_text(a)], "$")
+                for inside in range(a + 1, b):
+                    self.assertIsNone(r.layer_to_text(inside))
+                self.assertIsNone(r.text_to_layer(seg[0] + 1))
+                m = rh.LayerMap(r.segments)
+                self.assertIsNone(m.layer_to_text(a + 1))
+
+    def test_00_an_old_layer_map_is_refused(self):
+        out = _scratch(self)
+        (out / "layer_map.json").write_text('{"schema": "cf-layer-map/1", "segments": []}')
+        with self.assertRaises(rh.RenderError):
+            rh.LayerMap.read(out)
+
+    def test_01_blocks_and_finders_skip_dropped_text(self):
+        css = ('<style data-mw-deduplicate="TemplateStyles:r1">.mw-parser-output .texhtml'
+               '{font-family:"Nimbus Roman No9 L","Times New Roman",Times,serif}</style>')
+        glued = rh.render(f'<div><p>{css}<span class="texhtml"><i>G</i></span> is called a '
+                          f'<b>widget group</b> when it has a spanning gadget.</p></div>')
+        self.assertEqual(glued.finders, [])            # "...serif}G" is no word start
+        self.assertEqual(glued.counts["finders_dropped"], 2)
+        (block,) = glued.paragraphs
+        self.assertTrue(glued.layer[block["span"][0]:].startswith("G is called"))
+        spaced = rh.render(f'<p>{css} <i>G</i> is called a <b>widget group</b> when it has '
+                           f'a spanning gadget.</p>')
+        starts = {x["finder"]: x["start"] for x in spaced.finders}
+        self.assertEqual(set(starts), {"bold_definition", "lead"})
+        for start in starts.values():
+            self.assertTrue(spaced.layer[start:].startswith("G is called"))
+            self.assertIsNotNone(spaced.layer_to_text(start))
+        only_css = rh.render(f'<p>{css}</p>\n<p>A <b>widget</b> is a small gadget with five '
+                             f'parts.</p>')
+        self.assertEqual(len(only_css.paragraphs), 1)
+        lead = next(x for x in only_css.finders if x["finder"] == "lead")
+        self.assertTrue(only_css.layer[lead["start"]:].startswith("A widget"))
+
+    def test_02_cells_get_one_separator_whatever_their_whitespace(self):
+        self.assertEqual(rh.render("<table><tr>\n<td>a\n</td>\n<td>b\n</td></tr></table>").text,
+                         "a | b\n")
+        self.assertEqual(rh.render('<table class="wikitable">\n<tbody><tr>\n<th>a\n</th>\n'
+                                   '<th>b\n</th></tr>\n<tr>\n<td>c\n</td>\n<td>d\n</td></tr>'
+                                   '</tbody></table>').text, "a | b\n\nc | d\n")
+        self.assertEqual(rh.render("<table><tr><td><p>x</p></td><td>y</td></tr></table>").text,
+                         "x | y\n")
+
+    def test_03_a_display_formula_in_a_cell_stays_on_the_row(self):
+        html = ('<table><tr><td>x <span class="mwe-math-element mwe-math-element-block">'
+                '<math alttext="a=b" display="block"><mi>a</mi></math></span> y</td>'
+                '<td>z</td></tr></table>')
+        self.assertEqual(rh.render(html).text, "x $a=b$ y | z\n")
+
+    def test_04_an_image_only_formula_is_in_the_reading_copy(self):
+        r = rh.render('<p>Let <span class="mwe-math-element"><img class="mwe-math-fallback-'
+                      'image-inline" alt="{\\displaystyle G}"></span> be a finite widget group '
+                      'here.</p>')
+        self.assertEqual(r.text, "Let $G$ be a finite widget group here.\n")
+        self.assertEqual(r.layer, "Let be a finite widget group here.")
+        at = r.text.index("$G$")
+        self.assertIsNone(r.text_to_layer(at))
+        self.assertEqual(r.counts["formulas_without_text"], 1)
+
+    def test_05_a_title_is_its_text_outside_the_dropped_regions(self):
+        r = rh.render('<h2 id="History">History<sup class="reference"><a>[1]</a></sup></h2>'
+                      '<h2 id="X">Case <style>.texhtml{font-family:serif}</style>'
+                      '<span class="texhtml">n</span></h2>')
+        self.assertEqual([s["path"] for s in r.sections[1:]], [["History"], ["Case n"]])
+        self.assertIn("History[1]", r.layer)
+
+    def test_06_the_newline_after_pre_listing_textarea_is_not_text(self):
+        self.assertEqual(rh.render("<p>See:</p><pre>\ncode here</pre>").layer, "See:code here")
+        self.assertEqual(rh.render("<p>a</p><textarea>\nb</textarea>").layer, "ab")
+        self.assertEqual(rh.render("<p>a</p><listing>\nb</listing>").layer, "ab")
+        self.assertEqual(rh.render("<p>a</p><pre>\r\nb</pre>").layer, "ab")
+        self.assertEqual(rh.render("<p>See:</p><pre>\n\ncode</pre>").layer, "See: code")
+        self.assertEqual(rh.render("<p>a</p><pre><b>\nb</b></pre>").layer, "a b")
+
+    def test_07_comments_are_removed_as_the_tokenizer_delimits_them(self):
+        cases = {
+            "<style>.a::before{content:'<!--'}</style><p>The widget lemma states a fact.</p>":
+                "<style>.a::before{content:'<!--'}</style><p>The widget lemma states a fact.</p>",
+            "<p>x<span title='<!-- y'>z</span> rest</p>":
+                "<p>x<span title='<!-- y'>z</span> rest</p>",
+            "<p>a<!-->b-->c</p>": "<p>ab-->c</p>",
+            "<p>a<!--->b-->c</p>": "<p>ab-->c</p>",
+            "<p>a<!-- x --!>b</p>": "<p>ab</p>",
+            "<p>good<!-- real comment -->text</p>": "<p>goodtext</p>",
+            "<p>q<!-- open": "<p>q",
+            "<script>if (a<!--b) {}</script><p>s</p>": "<script>if (a<!--b) {}</script><p>s</p>",
+            "<p>a<!-- one --><b>b</b><!-- two\n lines -->c</p>": "<p>a<b>b</b>c</p>",
+            "<p>1 < 2 <!-- c --></p>": "<p>1 < 2 </p>",
+        }
+        for html, body in cases.items():
+            with self.subTest(html=html):
+                self.assertEqual(rh.canonical_body(html.encode()), body)
+        self.assertEqual(rh.render(rh.canonical_body(
+            b"<style>.a::before{content:'<!--'}</style><p>The widget lemma.</p>")).layer,
+            ".a::before{content:'<!--'}The widget lemma.")
+
+    def test_08_a_byte_order_mark_is_dropped(self):
+        raw = b'\xef\xbb\xbf{"parse": {"revid": 2002, "text": "<p>Widget lemma text</p>"}}'
+        self.assertEqual(rh.canonical_body(raw), "<p>Widget lemma text</p>")
+        self.assertEqual(rh.parse_response_text(raw)[1]["revid"], 2002)
+        self.assertEqual(rh.canonical_body(b"\xef\xbb\xbf<p>x</p>"), "<p>x</p>")
+
+    def test_09_a_body_with_a_cr_keeps_its_bytes_and_its_sha(self):
+        out = _scratch(self)
+        body = rh.canonical_body(b"<p>a\r\nb</p>")
+        rh.write_bytes(out / "body.html", body.encode("utf-8"))
+        r = rh.render_directory(out)
+        self.assertEqual(r.html_sha256, websource_sha(out / "body.html"))
+        self.assertEqual(json.loads((out / "render.json").read_text())["html_sha256"],
+                         websource_sha(out / "body.html"))
+        (out / "text.txt").write_bytes(r.text.replace("\n", "\r\n").encode("utf-8"))
+        rh.write_rendering(out, r)
+        self.assertEqual((out / "text.txt").read_bytes(), r.text.encode("utf-8"))
+
+    def test_10_deep_nesting_is_refused_not_a_crash(self):
+        for html in ("<div>" * 500 + "<p>text <b>x</b></p>" + "</div>" * 500,
+                     "<p>" + "<span>" * 500 + "x"):
+            with self.subTest(n=len(html)), self.assertRaises(rh.RenderError):
+                rh.render(html)
+        ok = "<div>" * 200 + "<p>text</p>" + "</div>" * 200
+        self.assertEqual(rh.render(ok).layer, "text")
+
+    def test_17_a_lone_surrogate_is_refused(self):
+        with self.assertRaises(rh.RenderError):
+            rh.canonical_body(b'{"parse": {"revid": 2002, "text": "<p>x\\ud800y</p>"}}')
+        with self.assertRaises(rh.RenderError):
+            rh.render("<p>x\ud800y</p>")
+
+
+# ---------------------------------------------------------------------------
+# review fixes: the client and the identity
+# ---------------------------------------------------------------------------
+
+class _HeaderRun(_Run):
+    """A fake curl that also writes response headers to -D."""
+
+    def __init__(self, script):
+        super().__init__([(c, s, b) for c, s, b, _h in script])
+        self.headers = [h for _c, _s, _b, h in script]
+
+    def __call__(self, argv, capture_output=True, text=True):
+        headers = self.headers.pop(0)
+        if "-D" in argv:
+            Path(argv[argv.index("-D") + 1]).write_bytes(headers)
+        return super().__call__(argv, capture_output=capture_output, text=text)
+
+
+class TestReviewFixesClient(unittest.TestCase):
+
+    def transport(self, run):
+        sleeps: list[float] = []
+        now = [0.0]
+
+        def sleep(s):
+            sleeps.append(s)
+            now[0] += s
+
+        return wikinet.CurlTransport(runner=run, sleep=sleep, clock=lambda: now[0],
+                                     exe="curl"), sleeps
+
+    def test_16_retry_after_is_honoured_and_maxlag_waits_five_seconds(self):
+        ok = json.dumps({"parse": {"revid": 3, "text": "x"}}).encode()
+        lag = json.dumps({"error": {"code": "maxlag"}}).encode()
+        run = _HeaderRun([(22, "429", b"", b"HTTP/1.1 429 Too Many\r\nRetry-After: 30\r\n\r\n"),
+                          (0, "200", lag, b"HTTP/1.1 200 OK\r\n\r\n"),
+                          (0, "200", ok, b"HTTP/1.1 200 OK\r\n\r\n")])
+        t, sleeps = self.transport(run)
+        self.assertEqual(wikinet.fetch_parse(t, SITE, 3), ok)
+        # the 429 asked for 30 s; the lag waits at least MAXLAG_WAIT, above the 4 s backoff
+        self.assertEqual(sleeps[:2], [30.0, wikinet.MAXLAG_WAIT])
+        self.assertIn("-D", run.argvs[0])
+        huge = _HeaderRun([(22, "503", b"", b"HTTP/1.1 503\r\nRetry-After: 9999\r\n\r\n"),
+                           (0, "200", ok, b"")])
+        t, sleeps = self.transport(huge)
+        wikinet.fetch_parse(t, SITE, 3)
+        self.assertEqual(sleeps[0], wikinet.MAX_RETRY_WAIT)
+
+    def test_16_exhausted_retries_and_a_403_are_unavailable(self):
+        t, _s = self.transport(_Run([(22, "429", b"")] * 4))
+        with self.assertRaises(wikinet.WikiUnavailable):
+            wikinet.fetch_parse(t, SITE, 3)
+        run = _Run([(22, "403", b""), (0, "200", b"{}")])
+        t, _s = self.transport(run)
+        with self.assertRaises(wikinet.WikiUnavailable):
+            wikinet.fetch_parse(t, SITE, 3)
+        self.assertEqual(len(run.argvs), 1)
+
+    def test_20_a_missing_curl_is_a_named_refusal(self):
+        def missing(argv, capture_output=True, text=True):
+            raise FileNotFoundError(2, "No such file or directory", "curl")
+
+        t = wikinet.CurlTransport(runner=missing, sleep=lambda s: None, exe="curl")
+        with self.assertRaisesRegex(wikinet.WikiError, "curl could not be run"):
+            wikinet.fetch_parse(t, SITE, 3)
+
+    def test_13_check_parse_is_the_fetch_check(self):
+        good = json.dumps({"parse": {"revid": 3, "text": "<p>x</p>"}}).encode()
+        self.assertEqual(wikinet.check_parse(good, 3)["revid"], 3)
+        for bad in (b"<p>html</p>", json.dumps({"parse": {"revid": 4, "text": "x"}}).encode(),
+                    json.dumps({"parse": {"revid": 3}}).encode()):
+            with self.subTest(bad=bad), self.assertRaises(wikinet.WikiError):
+                wikinet.check_parse(bad, 3)
+
+    def test_17_19_the_entry_checks(self):
+        fam = websource.family("enwiki")
+        with self.assertRaises(CfError):
+            websource.entry(fam, 1001, 2002, assessment="B")
+        e = websource.entry(fam, 1001, 2002, title="Widget")
+        self.assertTrue(any("surrogate" in p
+                            for p in websource.entry_problems(dict(e, title="x\ud800"))))
+        self.assertIs(websource.ORIGINS, vocab.SOURCE_ORIGINS)
+        self.assertEqual(vocab.SOURCE_ORIGINS, {"enumerated", "adopted"})
 
 
 # ---------------------------------------------------------------------------
@@ -854,6 +1101,249 @@ class TestTheSourcesetCommand(unittest.TestCase):
         code, out = cf(self.root, "sourceset", "status", "nope")
         self.assertEqual(code, 2)
         self.assertIn("no sourceset", out)
+
+
+class TestReviewFixesSourcesets(unittest.TestCase):
+    """Regression tests for the adversarial review of the sourceset code (ids in the names)."""
+
+    def setUp(self):
+        self.root = _workspace(self)
+        self.paths = WorkspacePaths(self.root)
+        code, out = cf(self.root, "sourceset", "create", "wpm")
+        self.assertEqual(code, 0, out)
+        self.ss = Sourceset.open(self.paths, "wpm")
+        self.pins = _scratch(self)
+
+    def pin(self, name: str, rows: list[dict], files: dict[str, bytes]) -> str:
+        for fname, data in files.items():
+            (self.pins / fname).write_bytes(data)
+        path = self.pins / name
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return str(path)
+
+    def adopt(self, rows, files, *extra):
+        return cf(self.root, "sourceset", "adopt", "wpm", "--from",
+                  self.pin("pins.jsonl", rows, files), *extra)
+
+    def parse(self, revid=2002, pageid=1001, text="<p>The <b>widget lemma</b> holds.</p>",
+              title="Widget lemma") -> bytes:
+        return json.dumps({"parse": {"revid": revid, "pageid": pageid, "title": title,
+                                     "text": text}}).encode()
+
+    def test_08_24_json_that_is_no_parse_response_is_refused(self):
+        bom = b"\xef\xbb\xbf" + self.parse(revid=9999)
+        code, out = self.adopt([{"pageid": 1001, "revision": 2011, "bytes": "b.json"}],
+                               {"b.json": bom})
+        self.assertEqual(code, 2, out)
+        self.assertIn("the parse of revision 9999", out)
+        code, out = self.adopt([{"pageid": 1001, "revision": 2011, "bytes": "e.json"}],
+                               {"e.json": b'{"error": {"code": "nosuchrevid"}}'})
+        self.assertEqual(code, 2, out)
+        self.assertIn("nosuchrevid", out)
+        code, out = self.adopt([{"pageid": 1001, "revision": 2011, "bytes": "w.json"}],
+                               {"w.json": b'{"parse": {"revid": 2011, "wikitext": "x"}}'})
+        self.assertEqual(code, 2, out)
+        self.assertEqual(self.ss.versions(), [1])
+
+    def test_11_22_a_line_separator_in_a_value_does_not_wedge_the_sourceset(self):
+        title = "Widget lemma and\u0085more"
+        code, out = self.adopt([{"pageid": 1001, "revision": 2002, "title": title,
+                                 "bytes": "b.json"}], {"b.json": self.parse()},
+                               "--consumer", "wiki\u0085lean")
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertEqual(m.get("enwiki-1001-2002")["title"], title)
+        self.assertEqual(m.get("enwiki-1001-2002")["adopted_from"]["consumer"], "wiki\u0085lean")
+        self.assertEqual(len(m.path.read_bytes().split(b"\n")), 3)
+        self.assertEqual(cf(self.root, "sourceset", "status", "wpm")[0], 0)
+
+    def test_12_23_a_crlf_body_renders(self):
+        code, out = self.adopt([{"pageid": 1001, "revision": 2002, "bytes": "b.html"}],
+                               {"b.html": b"<p>Widget lemma.</p>\r\n<p>Every widget spans.</p>\r\n"})
+        self.assertEqual(code, 0, out)
+        code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertIsNotNone(self.ss.latest().get("enwiki-1001-2002")["layer_sha256"])
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 0, out)
+
+    def test_10_a_body_the_renderer_refuses_is_a_recorded_refusal(self):
+        deep = "<div>" * 500 + "<p>x</p>" + "</div>" * 500
+        self.adopt([{"pageid": 1001, "revision": 2002, "bytes": "a.html"},
+                    {"pageid": 1002, "revision": 2003, "bytes": "b.html"}],
+                   {"a.html": deep.encode(), "b.html": b"<p>A fine body.</p>"})
+        code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 1, out)
+        self.assertIn("nests elements", out)
+        m = self.ss.latest()
+        self.assertIsNone(m.get("enwiki-1001-2002")["layer_sha256"])
+        self.assertIsNotNone(m.get("enwiki-1002-2003")["layer_sha256"])
+
+    def test_13_reused_bytes_are_checked_and_an_interrupted_adopt_is_not_fetched(self):
+        cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project", "Mathematics",
+           "--fixtures", str(FIXTURES), "--limit", "1")
+        d = self.ss.source_dir("enwiki-1001-2002")
+        d.mkdir(parents=True)
+        (d / "source.raw.html").write_bytes(b"<p>consumer cached HTML</p>")
+        (d / "source.json").write_text(json.dumps({"adopted_from": {"consumer": "wikilean"}}))
+        empty = _scratch(self)
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--fixtures", str(empty))
+        self.assertEqual(code, 1, out)
+        self.assertIn("interrupted adopt", out)
+        self.assertIsNone(self.ss.latest().get("enwiki-1001-2002")["fetch"])
+        (d / "source.json").unlink()
+        (d / "source.raw.html").write_bytes(self.parse(revid=2999))
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--fixtures", str(empty))
+        self.assertEqual(code, 1, out)
+        self.assertIn("answered for revision 2999", out)
+        self.assertIsNone(self.ss.latest().get("enwiki-1001-2002")["raw_sha256"])
+
+    def test_14_a_racing_writer_cannot_leave_a_sha_with_no_bytes(self):
+        cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project", "Mathematics",
+           "--fixtures", str(FIXTURES), "--limit", "1")
+        from cfcmd import sourceset as cmd
+        recorded = json.loads((FIXTURES / "parse-2002.json").read_text())["json"]
+        theirs = json.dumps(dict(recorded, theirs=True)).encode()
+        mine = json.dumps(recorded).encode()
+        raw_path = self.ss.source_dir("enwiki-1001-2002") / "source.raw.html"
+
+        class Racing:
+            def get(self, site, params):
+                raw_path.parent.mkdir(parents=True, exist_ok=True)
+                raw_path.write_bytes(theirs)          # the other writer, mid-request
+                return mine
+
+        with mock.patch.object(cmd, "_transport", lambda *a: Racing()):
+            code, out = cf(self.root, "sourceset", "fetch", "wpm", "--execute")
+        self.assertEqual(code, 0, out)
+        e = self.ss.latest().get("enwiki-1001-2002")
+        self.assertEqual(e["raw_sha256"], websource_sha(raw_path))
+        self.assertEqual(raw_path.read_bytes(), theirs)
+        self.assertEqual(self.ss.source_problems(e), [])
+
+    def test_15_a_pin_whose_bytes_name_another_page_is_refused(self):
+        code, out = self.adopt([{"pageid": 1003, "revision": 2002, "title": "Sprocket",
+                                 "bytes": "b.json"}], {"b.json": self.parse()})
+        self.assertEqual(code, 2, out)
+        self.assertIn("pageid 1001", out)
+        code, out = self.adopt([{"pageid": 1001, "revision": 2002, "bytes": "b.json"}],
+                               {"b.json": self.parse()})
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ss.latest().get("enwiki-1001-2002")["title"], "Widget lemma")
+
+    def test_16_a_fetch_stops_when_wikipedia_keeps_refusing(self):
+        cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project", "Mathematics",
+           "--fixtures", str(FIXTURES))
+        from cfcmd import sourceset as cmd
+        calls = []
+
+        class Limited:
+            def get(self, site, params):
+                calls.append(params["oldid"])
+                if params["oldid"] == "2002":
+                    return json.dumps(json.loads((FIXTURES / "parse-2002.json").read_text())
+                                      ["json"]).encode()
+                raise wikinet.WikiUnavailable("rate-limited")
+
+        with mock.patch.object(cmd, "_transport", lambda *a: Limited()), \
+                mock.patch.object(cmd, "MAX_UNAVAILABLE", 2):
+            code, out = cf(self.root, "sourceset", "fetch", "wpm", "--execute")
+        self.assertEqual(code, 2, out)
+        self.assertIn("stopped after 2", out)
+        self.assertEqual(calls, ["2002", "2003", "2004"])
+        self.assertIsNotNone(self.ss.latest().get("enwiki-1001-2002")["raw_sha256"])
+
+    def test_17_27_malformed_pins_are_refusals_naming_the_line(self):
+        cases = [
+            ({"s.json": b'{"parse":{"revid":2002,"text":"<p>x\\ud800y</p>"}}'}, "s.json",
+             None, "surrogate"),
+            ({"l.html": "<p>café widget</p>".encode("latin-1")}, "l.html", None, "UTF-8"),
+            ({"a.json": self.parse()}, "a.json", "B", "assessment"),
+        ]
+        for files, name, assessment, needle in cases:
+            row = {"pageid": 1001, "revision": 2002, "bytes": name}
+            if assessment is not None:
+                row["assessment"] = assessment
+            with self.subTest(case=needle):
+                code, out = self.adopt([row], files)
+                self.assertEqual(code, 2, out)
+                self.assertIn("pins.jsonl:1", out)
+                self.assertIn(needle, out)
+        self.assertEqual(self.ss.versions(), [1])
+
+    def test_17_a_fetched_body_with_a_surrogate_fails_that_source_only(self):
+        cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project", "Mathematics",
+           "--fixtures", str(FIXTURES))
+        fx = _scratch(self)
+        for p in FIXTURES.glob("*.json"):
+            shutil.copy(p, fx / p.name)
+        bad = json.loads((fx / "parse-2003.json").read_text())
+        bad["body"] = ('{"parse": {"revid": 2003, "pageid": 1002, '
+                       '"text": "<p>x\\ud800y</p>"}}')
+        del bad["json"]
+        (fx / "parse-2003.json").write_text(json.dumps(bad))
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--fixtures", str(fx))
+        self.assertEqual(code, 1, out)
+        self.assertIn("surrogate", out)
+        m = self.ss.latest()
+        self.assertIsNotNone(m.get("enwiki-1001-2002")["raw_sha256"])
+        self.assertIsNone(m.get("enwiki-1002-2003")["raw_sha256"])
+        self.assertFalse((self.ss.source_dir("enwiki-1002-2003") / "source.raw.html").exists())
+
+    def overlay(self, body: str) -> None:
+        with (self.root / "registry.yaml").open("a", encoding="utf-8") as fh:
+            fh.write(body)
+
+    def test_18_26_the_network_reaches_only_a_reviewed_site(self):
+        self.overlay("families:\n"
+                     "  testwiki:\n"
+                     "    title: Test Wiki\n"
+                     "    site: https://wiki.example.org\n"
+                     "    licence_class: open_attribution\n"
+                     "    licence: {spdx: CC-BY-4.0, note: CC BY 4.0 text, redistribute: false}\n"
+                     "    attribution: '\"{title}\", Test Wiki, {url}, {licence}'\n"
+                     "    revision_url: \"https://wiki.example.org/?oldid={revision}\"\n"
+                     "  enwiki:\n"
+                     "    site: https://mirror.example.net\n")
+        code, out = cf(self.root, "sourceset", "create", "tw", "--family", "testwiki")
+        self.assertEqual(code, 0, out)                      # offline use is the overlay's
+        from cfcmd import sourceset as cmd
+        built = []
+        with mock.patch.object(cmd.wikinet, "CurlTransport", lambda *a, **k: built.append(1)):
+            code, out = cf(self.root, "sourceset", "enumerate-wikiproject", "tw", "--project",
+                           "P", "--execute")
+            self.assertEqual(code, 2, out)
+            self.assertIn("not confirmed", out)
+            code, out = cf(self.root, "sourceset", "fetch", "wpm", "--execute")
+            self.assertEqual(code, 2, out)
+            self.assertIn("changes its site", out)
+        self.assertEqual(built, [])
+
+    def test_25_a_page_a_consumer_pinned_keeps_its_adopted_revision(self):
+        code, out = self.adopt([{"pageid": 1001, "revision": 2011, "bytes": "b.json"}],
+                               {"b.json": self.parse(revid=2011)})
+        self.assertEqual(code, 0, out)
+        code, out = cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project",
+                       "Mathematics", "--fixtures", str(FIXTURES))
+        self.assertEqual(code, 0, out)
+        self.assertIn("pinned by a consumer", out)
+        m = self.ss.latest()
+        self.assertNotIn("enwiki-1001-2002", m.entries)
+        self.assertEqual(m.preferred()[1001], "enwiki-1001-2011")
+        code, out = cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project",
+                       "Mathematics", "--fixtures", str(FIXTURES), "--include-adopted")
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertIn("enwiki-1001-2002", m.entries)
+        self.assertEqual(m.preferred()[1001], "enwiki-1001-2011")   # still the adopted one
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--fixtures", str(FIXTURES))
+        self.assertEqual(code, 0, out)
+        self.assertIn("left to their consumer's adopted revision", out)
+        m = self.ss.latest()
+        self.assertIsNone(m.get("enwiki-1001-2002")["raw_sha256"])
+        self.assertIsNotNone(m.get("enwiki-1002-2003")["raw_sha256"])
+        self.assertEqual(m.preferred(), {1001: "enwiki-1001-2011", 1002: "enwiki-1002-2003",
+                                         1003: "enwiki-1003-2004"})
 
 
 if __name__ == "__main__":

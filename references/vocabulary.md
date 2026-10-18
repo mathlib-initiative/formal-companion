@@ -316,6 +316,7 @@ not a bool (absent or `null` is `false`); and any value outside these sets.
 |---|---|
 | `LOCATE_DOCUMENT_SCHEMA` | `cf-locate/1`: the `schema` of every inventory, locate and challenge document |
 | `RENDERER_WEB_HTML` | `web-html/1`: the renderer of the first corpus's web sources, pinned by every run, gate and score document |
+| `SOURCE_ORIGINS` | `enumerated` (the PageAssessments listing, at a page's latest revision) · `adopted` (a consumer's pinned revision and bytes, recorded in `adopted_from`; a run plans it instead of an enumerated revision of the same page) — a sourceset entry's `origin` |
 | `LOCATE_OUTCOMES` | `located` · `absent` · `unresolved` — what one `formal_math` passage of a locate document ends with; `OUTCOME_KIND` tallies them as `LOCATION`, `ABSENCE` and `UNRESOLVED` |
 | `FINDERS` | `theorem_box` · `bold_definition` · `lead` (the `DETERMINISTIC_FINDERS`, whose passages are pre-filled in an inventory task and may be dropped only with a skip naming their span) · `model` (the enumerator's own) |
 | `CONFIDENCES` | `high` · `medium` · `low` — a location's confidence, recorded and never an input to a status |
