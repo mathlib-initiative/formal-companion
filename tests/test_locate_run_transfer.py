@@ -267,6 +267,26 @@ class TestTheVerifyStageChecksTheSourceLayers(HostCase):
         self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
         self.assertIn(f"source layers: {len(gate['sources'])} pinned sha256 verified",
                       done.stdout)
+        # verifier, round 4: the gate's SourceView also opens the two tables beside the
+        # layer, which gate.json does not pin, and fails every call without them
+        for name, damage in (("formulas.json", None), ("paragraphs.json", "{}"),
+                             ("paragraphs.json", "[1, 2]"), ("formulas.json", "[{")):
+            table = hosted / F.W1 / name
+            kept = table.read_bytes()
+            if damage is None:
+                table.unlink()
+            else:
+                table.write_text(damage, encoding="utf-8")
+            done = on_host(step["argv"][2])
+            self.assertNotEqual(done.returncode, 0, (name, damage))
+            self.assertIn(f"{F.W1}/{name}: FAILED", done.stdout)
+            self.assertNotIn("layer.txt: FAILED", done.stdout)
+            self.assertIn(f"1 of {len(gate['sources'])} source(s)", done.stderr)
+            self.assertIn("--include-source-text", done.stderr)
+            table.write_bytes(kept)
+            if os.geteuid() == 0:
+                os.chown(table, NOBODY, NOBODY)
+        self.assertEqual(on_host(step["argv"][2]).returncode, 0)
         layer = hosted / F.W2 / "layer.txt"
         layer.write_text(layer.read_text(encoding="utf-8") + "edited", encoding="utf-8")
         done = on_host(step["argv"][2])
@@ -313,6 +333,8 @@ class TestAShardOfThousandsOfSources(unittest.TestCase):
             layer = self.local_sources / sid / "layer.txt"
             layer.parent.mkdir(parents=True)
             layer.write_text(f"Widget lemma, part {i}\n", encoding="utf-8")
+            for name in ("formulas.json", "paragraphs.json"):
+                (layer.parent / name).write_text("[]", encoding="utf-8")
             self.pins[sid] = {"layer_sha256": hashing.sha256_file(layer)}
 
     def gate(self, sources_dir: Path) -> dict:
@@ -336,13 +358,15 @@ class TestAShardOfThousandsOfSources(unittest.TestCase):
         self.assertNotEqual(done.returncode, 0)
         self.assertIn(f"{self.ids[7]}/layer.txt: FAILED open or read", done.stdout)
         self.assertIn(f"{self.ids[9]}/layer.txt: FAILED", done.stdout)
-        self.assertIn(f"2 of {self.N} source layer(s)", done.stderr)
+        self.assertIn(f"2 of {self.N} source(s)", done.stderr)
         shutil.rmtree(self.host_sources)
         done = subprocess.run(["sh", "-c", command], capture_output=True, text=True)
         self.assertNotEqual(done.returncode, 0)
         self.assertEqual(len([ln for ln in done.stdout.splitlines() if ": FAILED" in ln]),
                          remote.LAYERS_NAMED)
-        self.assertIn(f"... and {self.N - remote.LAYERS_NAMED} more", done.stdout)
+        # three files a source: the layer and the two tables the gate opens beside it
+        self.assertIn(f"... and {3 * self.N - remote.LAYERS_NAMED} more", done.stdout)
+        self.assertIn(f"{self.N} of {self.N} source(s)", done.stderr)
 
     def test_no_step_of_the_plan_has_an_argument_over_the_cap(self):
         run_dir = self.tmp / "ws" / "runs" / "shard"

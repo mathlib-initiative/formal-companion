@@ -2184,8 +2184,17 @@ class TestTheCuratedJoins(unittest.TestCase):
             with self.subTest(title=title, written=written):
                 (want,) = wikipedia_urls(f"See {site}/wiki/{written} for more.")
                 self.assertIn(want, cand_mod.article_urls(site, title))
+        # verifier, round 4: a link typed by hand with the trailing '?' raw is stored up to
+        # it, as d1's article side read the title; a '?' inside a title leaves another
+        # article's whole name, which is not read as this one's
         self.assertEqual(cand_mod.article_urls(site, "What Is Mathematics?"),
-                         [f"{site}/wiki/What_Is_Mathematics?"])
+                         [f"{site}/wiki/What_Is_Mathematics", f"{site}/wiki/What_Is_Mathematics?"])
+        (raw,) = wikipedia_urls(f"See {site}/wiki/What_Is_Mathematics? for more.")
+        self.assertIn(raw, cand_mod.article_urls(site, "What Is Mathematics?"))
+        (raw,) = wikipedia_urls(f"See {site}/wiki/Who?_(film) for more.")
+        self.assertEqual(raw, f"{site}/wiki/Who")
+        self.assertEqual(cand_mod.article_urls(site, "Who? (film)"), [f"{site}/wiki/Who?_(film)"])
+        self.assertEqual(cand_mod.article_urls(site, "?"), [f"{site}/wiki/?"])
         self.assertEqual(cand_mod.article_urls(site, "Widget lemma!"),
                          [f"{site}/wiki/Widget_lemma", f"{site}/wiki/Widget_lemma!"])
         self.assertEqual(cand_mod.article_urls(site, ""), [])
@@ -2218,7 +2227,8 @@ class TestTheCuratedJoins(unittest.TestCase):
         """Review C-10, through the join itself: the docstring side stores
         ``What_Is_Mathematics%3F`` as ``.../What_Is_Mathematics?`` (the reader decodes it),
         and the article's own side used to read the raw ``?`` as a query and a ``"`` as
-        the end of its URL, so neither article joined."""
+        the end of its URL, so neither article joined.  A link typed with the trailing
+        ``?`` raw, which the docstring side stores without it, still joins (round 4)."""
         from corpus.ingest import wikipedia_urls
         site = "https://en.wikipedia.org"
         F.write_universe(self.paths)
@@ -2226,8 +2236,9 @@ class TestTheCuratedJoins(unittest.TestCase):
         conn = inputs.open_corpus(self.paths.corpus_db(F.U), universe)
         self.addCleanup(conn.close)
         for title, written in (("What Is Mathematics?", "What_Is_Mathematics%3F"),
+                               ("What Is Mathematics?", "What_Is_Mathematics?"),
                                ('"Hello, World!" program', "%22Hello,_World!%22_program")):
-            with self.subTest(title=title):
+            with self.subTest(title=title, written=written):
                 (stored,) = wikipedia_urls(f"See {site}/wiki/{written} for more.")
                 rows = {stored: [{"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
                                   "value": stored, "path": "Alpha/Widget.lean", "line": 1}]}
