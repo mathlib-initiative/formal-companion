@@ -170,7 +170,7 @@ libraries:
     licence: {spdx: Apache-2.0}
     conventions: corpora/u1/conventions/mathlib.md   # confirmed_by stamp required
     index: {path: index/mathlib/, sha256: <hex>, declarations: 0}
-  - id: lean-core                       # Init, Std, Lean at mathlib's toolchain
+  - id: lean-core                       # Init and Std at mathlib's toolchain
   - id: batteries                       # at mathlib's manifest rev
   - ...
 excluded:
@@ -178,9 +178,36 @@ excluded:
 universe_sha256: <sha over sorted (id, commit, index sha)>
 ```
 
-- Core packages (`Init`, `Std`, `Lean`, `Batteries`) are libraries of their
-  own, pinned from Mathlib's toolchain and lake manifest, so true locations in
-  core are not reported absent.
+- Core packages (`Init`, `Std`, `Batteries`) are libraries of their own,
+  pinned from Mathlib's toolchain and lake manifest, so true locations in core
+  are not reported absent. The host driver indexes them as the kinds `core`
+  (the toolchain's `Lean.githash`, paths in the lean4 repository) and
+  `package-in-workspace` (the manifest's rev), both probed inside Mathlib's
+  built workspace (`scripts/corpus/universe_host.py`).
+- **Scope is chosen per library, by its roots, and the choice is stated** (a
+  row's `roots`, and this list for the default universe). A root left out is
+  out of the universe: its declarations are absences, not misses.
+  - *mathlib*: `Mathlib` and `Wanted`. `Wanted` is Mathlib's own `lean_lib`
+    of `proof_wanted` statements (`Wanted/X/Y.lean` beside `Mathlib/X/Y.lean`);
+    a `proof_wanted` elaborates to a private placeholder whose type is
+    `ProofWanted T`, which the probe keeps although private and classifies
+    `wanted`, so without this root no wanted statement of Mathlib is
+    locatable. `Archive`, `Counterexamples`, `MathlibTest`, `Cache` and `docs`
+    are out. The build targets follow the roots, so `Wanted` is built too.
+  - *lean-core*: `Init.*` and `Std.*`. The `Lean` namespace — the compiler,
+    elaborator and metaprogramming API — is out by choice: no passage of a
+    mathematical source states one of its tens of thousands of declarations.
+  - *batteries*: `Batteries.*`.
+  - *formal-conjectures*: `FormalConjectures.+` and
+    `FormalConjecturesForMathlib`, the separate `lean_lib` that holds the
+    project's `proof_wanted` statements and the definitions its problems
+    share; `FormalConjecturesUtil` (tooling) and `FormalConjecturesTest`
+    (tests) are out.
+- `brain_lib` is one token per library. A library whose roots are several of a
+  consumer's libraries (lean-core's `Init` and `Std`) carries one token; a
+  consumer that needs one per root splits it into two universe libraries at the
+  same commit, one root each — a token may name only one repository, and a
+  repository may carry several tokens.
 - **One universe per campaign**, frozen into every shard's `gate.json`. A
   library that fails to build or probe is `excluded` with its reason, and
   absences honestly name the smaller universe.
