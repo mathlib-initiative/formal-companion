@@ -707,7 +707,10 @@ class TestOwnership(GateTestCase):
         self.contribute()
         con = sqlite3.connect(self.fx.root / "orchestrator.sqlite")
         con.execute("CREATE TABLE worktrees (id TEXT, task_id TEXT, path TEXT, status TEXT)")
-        con.execute("INSERT INTO worktrees VALUES ('w1', ?, ?, 'running')", (TASK, str(self.wt)))
+        # tend records the worktree's real path, the one git reports (on macOS the
+        # temporary directory /var/folders/... resolves to /private/var/folders/...)
+        con.execute("INSERT INTO worktrees VALUES ('w1', ?, ?, 'running')",
+                    (TASK, str(self.wt.resolve())))
         con.execute("INSERT INTO worktrees VALUES ('w2', 't-inv-0002', '/elsewhere', 'running')")
         con.commit()
         con.close()
