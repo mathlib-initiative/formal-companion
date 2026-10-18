@@ -213,6 +213,60 @@ def frame_curated(frame: dict, sid: str) -> bool:
     return next(a for a in frame["articles"] if a["source_id"] == sid)["curated"]
 
 
+class TestTheFrameReadsTheAdoptedRevision(unittest.TestCase):
+    """A consumer-pinned page is read at its pin, even once a newer revision is rendered.
+
+    The field case, reduced: a page enumerated at its latest revision and a
+    consumer's older pin adopted beside it, both rendered.  A frame that took
+    the highest rendered revision benched the newer one, which no run reads.
+    """
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=3)
+        w = self.world
+        # page 1001: the enumerated latest (2002) and an adopted older pin (1990),
+        # recorded, as adopt can, without the page's QID and assessment
+        self.pin0 = w.add_revision(0, 1990, origin="adopted", wikidata=None, assessment=None,
+                                   adopted_from={"consumer": "c", "pins_sha256": "9" * 64})
+        # page 1002: the consumer pinned the enumerated revision itself (2003), and a
+        # newer enumerated revision (2100) was rendered later
+        self.newer1 = w.add_revision(1, 2100)
+        w.change_entry(w.sid(1), adopted_from={"consumer": "c", "pins_sha256": "9" * 64})
+
+    def test_a_page_id_resolves_to_the_adopted_revision_with_the_pages_facts(self):
+        manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+        frame = draw_mod.build_frame([{"pageid": 1001}, {"pageid": 1002}, {"pageid": 1003}],
+                                     manifest, {"Q99999000"})
+        by_page = {a["pageid"]: a for a in frame["articles"]}
+        self.assertEqual(by_page[1001]["source_id"], self.pin0)
+        self.assertEqual(by_page[1001]["revision_basis"], "adopted")
+        self.assertEqual(by_page[1001]["wikidata"], "Q99999000")
+        self.assertEqual(by_page[1001]["assessment"], {"class": "B", "importance": "mid"})
+        self.assertEqual(by_page[1001]["page_facts_from"],
+                         {"wikidata": self.world.sid(0), "assessment": self.world.sid(0)})
+        self.assertTrue(by_page[1001]["curated"])
+        self.assertEqual(by_page[1002]["source_id"], self.world.sid(1))
+        self.assertEqual(by_page[1002]["revision_basis"], "adopted")
+        self.assertEqual(by_page[1003]["revision_basis"], "enumerated")
+        self.assertEqual(frame["N_adopted"], 2)
+
+    def test_an_unrendered_pin_is_not_replaced_by_a_rendered_revision(self):
+        self.world.change_entry(self.pin0, layer_sha256=None, renderer=None)
+        manifest = inputs.load_manifest(WorkspacePaths(self.world.root), fx.SOURCESET)
+        with self.assertRaises(CfError) as ctx:
+            draw_mod.build_frame([{"pageid": 1001}], manifest, set())
+        self.assertIn(self.pin0, str(ctx.exception))
+
+    def test_the_build_benches_the_pins(self):
+        cf(self.world, "bench", "build", "b1", "--sourceset", fx.SOURCESET,
+           "--frame", self.world.frame_file(), "--uniform", 3, "--curated", 0, "--seed", 7)
+        lay = layout_of(self.world)
+        drawn = {r["source_id"] for r in json.loads(lay.draw_json.read_text())["articles"]}
+        self.assertEqual(drawn, {self.pin0, self.world.sid(1), self.world.sid(2)})
+        host = json.loads(lay.host_manifest.read_text())["articles"]
+        self.assertNotIn(self.newer1, sum(host.values(), []))
+
+
 class TestClustersAndSplits(unittest.TestCase):
 
     ARTICLES = [{"source_id": f"s{i}", "wikidata": f"Q{i}" if i != 3 else "Q0"} for i in range(6)]

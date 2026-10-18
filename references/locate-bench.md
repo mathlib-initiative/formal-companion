@@ -42,14 +42,23 @@ stay local too.
 
 - the **frame** file: page ids or source ids, one per line (`#` comments), or a JSON list of
   them or of `{"pageid"}`/`{"source_id"}` objects. Each row resolves to one source of the
-  pinned sourceset manifest (by page id: its highest rendered revision); a row the manifest
-  does not hold, or holds unrendered, is **refused by name**, because a frame that quietly
-  lost an article biases every inclusion probability;
+  pinned sourceset manifest: a source id is taken as given, and a page id resolves to the
+  source a run reads — the sourceset's own rule (`Manifest.preferred()`,
+  `references/locate-documents.md` §7): the page's adopted revision when a consumer pinned
+  it, else its highest enumerated revision — never the highest *rendered* one, which would
+  bench a newer revision than the pin as soon as both are rendered. The article's QID and
+  assessment are the page's: when the resolved entry has none, the one value the page's
+  other entries agree on is used, and `page_facts_from` names the entry it came from. A row
+  the manifest does not hold, or holds unrendered, is **refused by name**, because a frame
+  that quietly lost an article biases every inclusion probability; a second row for a page
+  already in the frame is a duplicate;
 - the **curated QIDs**: a list, or any mapping keyed by QID (`$MATHLIB/docs/1000.yaml`).
 
 `frame.json`: `{schema: cf-bench-frame/1, bench, sourceset: {id, version, manifest_sha256},
 frame_file_sha256, curated_file_sha256, articles: [{source_id, pageid, revision, title,
-wikidata, assessment, layer_sha256, renderer, curated}], N, N_curated, duplicates}`.
+wikidata, assessment, layer_sha256, renderer, revision_basis, page_facts_from, curated}], N,
+N_curated, N_adopted, duplicates}`. `revision_basis` is `adopted`, `enumerated` or `source_id`
+(the frame file named the source).
 
 `draw.json`: two simple random samples without replacement, each from its own seeded
 generator (`random.Random("<seed>:uniform")`, `"<seed>:curated"`): `uniform` (n of the whole
