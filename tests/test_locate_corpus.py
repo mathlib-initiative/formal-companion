@@ -1125,7 +1125,8 @@ class TestTheCommand(unittest.TestCase):
                        ALPHA):
             with self.subTest(needle=needle):
                 self.assertIn(needle, out)
-        self.assertIn('cp -R templates/corpus/canary/. "$ATLAS_ROOT/canary/4.34.0"/', canary)
+        self.assertIn('cp -R "$CF_DRIVERS/templates/corpus/canary/." "$ATLAS_ROOT/canary/4.34.0"/',
+                      canary)
         self.assertIn("cf corpus ingest u1 --canary", canary)
 
     def test_atlas_root_is_set_once_so_the_cleanup_never_names_root(self):
