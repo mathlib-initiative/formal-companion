@@ -70,7 +70,7 @@ class TestTheDocumentValues(unittest.TestCase):
                   | vocab.CHALLENGE_TARGETS | vocab.CHALLENGE_ACTIONS | vocab.BENCH_TIERS
                   | vocab.BENCH_ARMS | vocab.BENCH_SPLITS | vocab.FNF_CAUSES | vocab.ERROR_CODES
                   | vocab.SOURCE_ORIGINS | vocab.UNRESOLVED_BY | vocab.CHALLENGE_RULES
-                  | vocab.CHALLENGE_PLANNED | vocab.INDEX_FLAGS
+                  | vocab.CHALLENGE_PLANNED | vocab.INDEX_FLAGS | set(vocab.TOOLS_DB_KINDS)
                   | {vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML,
                      vocab.UNRESOLVED_ATTEMPT_CAP, vocab.AGENT_TIMEOUT})
         for value in sorted(values):
@@ -91,6 +91,33 @@ class TestTheDocumentValues(unittest.TestCase):
                 self.assertIn(f"`{name}`", VOCABULARY_MD)
         from corpus import ingest
         self.assertEqual(set(ingest.FLAG_MEANINGS), vocab.INDEX_FLAGS)
+
+    def test_the_tiers_and_the_tools_databases_are_one_definition(self):
+        """The tools-database kinds and the tier tuples were defined in locate.inputs,
+        bench.score and bench.compare beside vocab.BENCH_TIERS (CLAUDE.md S4)."""
+        from bench import compare, layout, score
+        from locate import inputs
+        self.assertEqual(vocab.TOOLS_DB_KINDS, ("full", "blind", "planted"))
+        self.assertEqual(set(vocab.BENCH_TIER_ORDER), vocab.BENCH_TIERS)
+        self.assertEqual(len(vocab.BENCH_TIER_ORDER), len(vocab.BENCH_TIERS))
+        self.assertLess(set(vocab.BENCH_LABELLED_TIERS), vocab.BENCH_TIERS)
+        self.assertLess(set(vocab.BENCH_CLAIM_TIERS), vocab.BENCH_TIERS)
+        self.assertEqual(set(layout.LABEL_FILES), set(vocab.BENCH_LABELLED_TIERS))
+        self.assertIs(compare.TIERS, vocab.BENCH_TIER_ORDER)
+        self.assertIs(compare.CLAIM_TIERS, vocab.BENCH_CLAIM_TIERS)
+        self.assertIs(inputs.TOOLS_KINDS, vocab.TOOLS_DB_KINDS)
+        self.assertEqual((score.TOOLS_FULL, score.TOOLS_BLIND, score.TOOLS_PLANTED),
+                         vocab.TOOLS_DB_KINDS)
+        for name in ("TOOLS_DB_KINDS", "BENCH_TIER_ORDER", "BENCH_LABELLED_TIERS",
+                     "BENCH_CLAIM_TIERS"):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", VOCABULARY_MD)
+        for path in ("locate/inputs.py", "bench/score.py", "bench/compare.py",
+                     "cfcmd/locate.py", "cfcmd/bench.py"):
+            text = (SKILL / "scripts" / path).read_text(encoding="utf-8")
+            with self.subTest(path=path):
+                self.assertNotRegex(text, r'== "(?:full|blind|planted)"|or "full"')
+                self.assertNotIn('("G1", "G3"', text)
 
     def test_the_documents_name_the_values_they_carry(self):
         for value in (vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML, "cf-sourceset/1",

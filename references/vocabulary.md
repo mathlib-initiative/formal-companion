@@ -353,7 +353,8 @@ keep copies of these, which tests pin.
 
 | enum | values |
 |---|---|
-| `BENCH_TIERS` | `G1` · `G3` · `GX` · `G4` · `P` — never pooled |
+| `BENCH_TIERS` | `G1` · `G3` · `GX` · `G4` · `P` — never pooled; `BENCH_TIER_ORDER` is the same tiers in the order a score and a comparison report them, `BENCH_LABELLED_TIERS` the four whose gold is labelled (`G1` · `G3` · `GX` · `G4`; P's gold is the planted ablation) and `BENCH_CLAIM_TIERS` the ones a pre-registered claim may come from (`G1` blind-arm only · `G3` · `P`) |
+| `TOOLS_DB_KINDS` | `full` (`corpus.sqlite`) · `blind` (the G1-blind `corpus.blind.sqlite`) · `planted` (a module-ablated database, the P tier) — the database a locate run's workers search: a candidates file's `corpus_db.kind`, `gate.json`'s and `run.yaml`'s `tools_corpus_db.kind`, a score's pin (`references/locate-documents.md` §9) |
 | `BENCH_ARMS` | `assisted` (production) · `blind` (L2's curated joins, gate rule 4 and the tag table off for the scored items); never pooled |
 | `BENCH_SPLITS` | `dev` · `eval` · `test` |
 | `FNF_CAUSES` | `inventory_miss` · `scope_demotion` · `absence` · `weak_relation` · `unresolved` · `gate_failed` — why a gold-formalized passage did not end `formalized`; unresolved and gate-failed tasks are misses, never exclusions |

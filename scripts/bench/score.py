@@ -56,8 +56,9 @@ UNRECORDED = "unrecorded"
 AUDIT_SIZE = 30
 AUDIT_RELATIONS = frozenset({vocab.EXACT_MATCH, vocab.BROAD_MATCH})
 DEFAULT_REPLICATES = 2000
-#: the tools database kinds of run.yaml locate.universe.tools_corpus_db
-TOOLS_FULL, TOOLS_BLIND, TOOLS_PLANTED = "full", "blind", "planted"
+#: the tools database kinds of run.yaml locate.universe.tools_corpus_db (cflib.vocab)
+TOOLS_FULL, TOOLS_BLIND, TOOLS_PLANTED = (vocab.TOOLS_DB_FULL, vocab.TOOLS_DB_BLIND,
+                                          vocab.TOOLS_DB_PLANTED)
 STAGES = ("inventory", "locate", "challenge")
 
 
@@ -633,7 +634,7 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         strata_out["P"] = _strata(p_result, clusters, replicates, f"{seed}:P")
         positives["P"] = len(p_gold)
         all_misses.extend(p_result.misses)
-    for tier in (() if planted else ("G1", "G3", "GX", "G4")):
+    for tier in (() if planted else vocab.BENCH_LABELLED_TIERS):
         info = (manifest.get("tiers") or {}).get(tier)
         if not info:
             continue

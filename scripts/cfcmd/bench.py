@@ -645,7 +645,7 @@ def _freeze(ws, args) -> int:
     clusters = _recluster(paths, layout, bench)
     articles_split = clusters["articles"]
     tiers = {}
-    for tier in ("G1", "G3", "GX", "G4"):
+    for tier in vocab.BENCH_LABELLED_TIERS:
         info = gold_mod.tier_summary(layout, tier)
         if info:
             tiers[tier] = info
@@ -653,7 +653,8 @@ def _freeze(ws, args) -> int:
         raise CfError("the GX inventories carry no maintainer signature",
                       hint="transcribe them with --signed-by <name>")
     dev_decls: set[str] = set()
-    rows_by_tier = {t: gold_mod.read_labels(layout, t, required=False) for t in ("G1", "G3", "GX", "G4")}
+    rows_by_tier = {t: gold_mod.read_labels(layout, t, required=False)
+                    for t in vocab.BENCH_LABELLED_TIERS}
 
     def keys(row: dict) -> set[str]:
         found = {f"{a['library']}:{a['declaration']}" for a in row.get("accept") or []}

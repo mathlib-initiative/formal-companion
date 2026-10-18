@@ -32,7 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from cflib import hashing
+from cflib import hashing, vocab
 from cflib.errors import CfError
 from cflib.jsonio import read_json
 from cflib.paths import WorkspacePaths
@@ -45,11 +45,11 @@ from sources import render_html
 from sources.sourceset import Manifest, Sourceset
 
 #: the database kinds a run's TOOLS database can be (references/locate-documents.md
-#: section 9): the full one, the G1-blind one, a planted (module-ablated) one
-TOOLS_FULL = "full"
-TOOLS_BLIND = "blind"
-TOOLS_PLANTED = "planted"
-TOOLS_KINDS = (TOOLS_FULL, TOOLS_BLIND, TOOLS_PLANTED)
+#: section 9), defined in ``cflib.vocab`` (CLAUDE.md section 4: one vocabulary)
+TOOLS_FULL = vocab.TOOLS_DB_FULL
+TOOLS_BLIND = vocab.TOOLS_DB_BLIND
+TOOLS_PLANTED = vocab.TOOLS_DB_PLANTED
+TOOLS_KINDS = vocab.TOOLS_DB_KINDS
 
 
 # --------------------------------------------------------------------------
