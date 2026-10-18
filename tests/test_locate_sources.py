@@ -16,6 +16,7 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import hashlib
 import io
 import json
 import os
@@ -1746,3 +1747,87 @@ class TestFieldBoldLabelsAreNoDefinitions(unittest.TestCase):
         for label in sorted(vocab.BOLD_LABELS | vocab.BOLD_LABELS_PUNCTUATED):
             with self.subTest(label=label):
                 self.assertIn(f"`{label}`", text)
+
+
+#: the page every view of which is pinned to the renderer id: the real-shaped
+#: page, the suite's page, a fixture page, and one of each field case
+GOLDEN_EXTRA = (
+    '<h2 id="More">More</h2>\n'
+    '<p><b>Proof.</b> Split the widget; let <b>R</b> be its ring.</p>\n'
+    '<dl><dd><span class="texhtml"><i>a</i> = <i>x</i><sub>0</sub> &lt; <i>b</i></span></dd>'
+    '</dl>\n<p>Spaced <span class="mwe-math-element"><math alttext="{\\displaystyle a\\,b}">'
+    '<mrow><mi>a</mi><mspace width="0.167em"/><mi>b</mi></mrow></math></span> out.</p>\n')
+
+#: sha256 of every file write_rendering writes for the golden page, per renderer id
+GOLDEN_VIEWS = {
+    "web-html/2": {
+        "body.html": "adf883de75208f77f7c558b176b5c833cc2ed1d164ee81ed95111227eff5bb8f",
+        "finders.json": "dae197e64e3d8a4b9c9a384ef0dc46baf3182ff033e3da9899db771bdccdb7da",
+        "formulas.json": "8539aec3aeaafa945c013ed34c78008fd8fa805a2014c55292c0ce398eb7eb97",
+        "head.txt": "1838f6844084223bffbd0be45a176f327587984f1cd7372531901bda093df2fb",
+        "layer.txt": "9a95ca0666dcf41f40c93868ac1c407ce27bcdcd3ececeaee1dad8fdd3494909",
+        "layer_map.json": "214d1b6b84b9e0584a238f518ca34a29909150feea142a23be4a822c311461bb",
+        "paragraphs.json": "bc3b030c9c6396f3ac3156d2c3ab37ae740a1cfe748afae78450c1183dcb9ddf",
+        "render.json": "017ac93754ddca9b914dacc856d13124573e4fd558c9e374e9415dddc0c78dc1",
+        "sections.json": "b70c3527079235f0e5dbcd659cd57fcdc0575f8db837734270caa6f01d664f07",
+        "text.txt": "3e0a85699ad46f101f46a793a43edd7726846719d3caf8b36af8e88cfcbf63aa",
+    },
+}
+
+
+def golden_rendering():
+    return rh.render(rh.canonical_body(
+        (MW_PAGE + PAGE + fixture_body(2004) + GOLDEN_EXTRA).encode("utf-8")))
+
+
+class TestFieldL1EveryViewIsPinnedToTheRendererId(_FieldCase):
+    """L1: a view's format changed (cf-layer-map/1 to /2) under one renderer id."""
+
+    def test_l1_every_view_of_the_golden_page_is_the_renderer_ids(self):
+        self.assertIn(rh.RENDERER, GOLDEN_VIEWS,
+                      "a new renderer id: add its row of view shas to GOLDEN_VIEWS")
+        r = golden_rendering()
+        for name, content in sorted(r.files().items()):
+            with self.subTest(view=name):
+                self.assertEqual(
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    GOLDEN_VIEWS[rh.RENDERER].get(name),
+                    f"{name} changed under {rh.RENDERER}: a change to any view, or to the "
+                    f"layout of its file, is a new renderer id -- bump render_html.RENDERER "
+                    f"and cflib.vocab.RENDERER_WEB_HTML and add a GOLDEN_VIEWS row")
+        self.assertEqual(set(r.files()), set(rh.RENDER_FILES))
+
+    def test_l1_a_map_another_renderer_wrote_is_refused(self):
+        out = _scratch(self)
+        rh.write_rendering(out, golden_rendering())
+        self.assertTrue(rh.LayerMap.read(out).segments)
+        path = out / "layer_map.json"
+        good = path.read_text(encoding="utf-8")
+        data = json.loads(good)
+        for renderer in ("web-html/1", None):
+            with self.subTest(renderer=renderer):
+                changed = dict(data, renderer=renderer) if renderer else \
+                    {k: v for k, v in data.items() if k != "renderer"}
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaisesRegex(rh.RenderError, "renderer"):
+                    rh.LayerMap.read(out)
+        path.write_text(good, encoding="utf-8")
+        record = json.loads((out / "render.json").read_text(encoding="utf-8"))
+        (out / "render.json").write_text(json.dumps(dict(record, renderer="web-html/1")),
+                                         encoding="utf-8")
+        with self.assertRaisesRegex(rh.RenderError, "render.json names renderer"):
+            rh.LayerMap.read(out)
+
+    def test_l1_status_verify_names_a_view_of_another_renderer(self):
+        self.enumerate("--limit", "1")
+        self.fetch()
+        cf(self.root, "sourceset", "render", "wpm")
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 0, out)
+        d = self.ss.source_dir("enwiki-1001-2002")
+        data = json.loads((d / "layer_map.json").read_text(encoding="utf-8"))
+        (d / "layer_map.json").write_text(json.dumps(dict(data, renderer="web-html/1")),
+                                          encoding="utf-8")
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 1, out)
+        self.assertIn("layer_map.json says renderer 'web-html/1'", out)

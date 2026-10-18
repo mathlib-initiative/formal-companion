@@ -119,8 +119,10 @@ in full:
   (one space each side, whatever whitespace the cells hold), a line break for
   ``br``, a blank line between blocks (inside a table cell a block -- a display
   formula too -- is only a space: a row is one line), and whitespace collapsed
-  within a block (``White_Space``, as in the layer).  ``layer_map.json`` (``cf-layer-map/2``) maps it back: in each
-  segment ``[t0, t1, l0, l1, kind]``, ``text[t0:t1]`` is ``layer[l0:l1]``,
+  within a block (``White_Space``, as in the layer).  ``layer_map.json``
+  (``cf-layer-map/2``, naming the renderer that wrote it; :meth:`LayerMap.read`
+  refuses a map of any other renderer) maps it back: in each segment ``[t0, t1,
+  l0, l1, kind]``, ``text[t0:t1]`` is ``layer[l0:l1]``,
   character by character when ``kind`` is 0 (text) and only as a whole when it
   is 1 (a formula, whatever the two lengths are).  Characters the copy adds
   (heading marks, bullets, separators, breaks, an image-only formula) are in no
@@ -741,7 +743,8 @@ class Rendering:
                 "text_sha256": self.text_sha256, "counts": dict(self.counts)}
 
     def layer_map(self) -> dict:
-        return {"schema": LAYER_MAP_SCHEMA, "segments": [list(s) for s in self.segments]}
+        return {"schema": LAYER_MAP_SCHEMA, "renderer": RENDERER,
+                "segments": [list(s) for s in self.segments]}
 
     def head_map(self) -> locate_text.HeadMap:
         return locate_text.HeadMap(self.layer, self.formulas)
@@ -889,10 +892,30 @@ class LayerMap:
 
     @classmethod
     def read(cls, directory: str | Path) -> "LayerMap":
-        path = Path(directory) / "layer_map.json"
+        """A source directory's map, refused unless THIS renderer wrote it and the views.
+
+        A map's segments are offsets into one renderer's ``text.txt`` and
+        ``layer.txt``; read against another renderer's views they point at the
+        wrong characters, so a map whose ``schema`` or ``renderer`` is not this
+        module's, or whose directory's ``render.json`` names another renderer, is
+        refused rather than read.
+        """
+        directory = Path(directory)
+        path = directory / "layer_map.json"
         data = json.loads(path.read_text(encoding="utf-8"))
+        hint = ("re-render the source under " + RENDERER + " (a recorded layer never changes: "
+                "seed a new sourceset with `cf sourceset create <new> --from <old>`)")
         if not isinstance(data, dict) or data.get("schema") != LAYER_MAP_SCHEMA:
-            raise RenderError(f"{path} is not a {LAYER_MAP_SCHEMA} layer map; re-render it")
+            raise RenderError(f"{path} is not a {LAYER_MAP_SCHEMA} layer map; {hint}")
+        if data.get("renderer") != RENDERER:
+            raise RenderError(f"{path} was written by renderer {data.get('renderer')!r}, and "
+                              f"this one is {RENDERER}; {hint}")
+        record = directory / "render.json"
+        if record.is_file():
+            written_by = json.loads(record.read_text(encoding="utf-8")).get("renderer")
+            if written_by != RENDERER:
+                raise RenderError(f"{directory}: render.json names renderer {written_by!r}, "
+                                  f"the layer map {RENDERER}; {hint}")
         return cls(data["segments"])
 
     def text_to_layer(self, offset: int) -> int | None:
