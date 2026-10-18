@@ -103,8 +103,9 @@ class TestTheLocateValues(unittest.TestCase):
                                                 "proved", "definition"))
         self.assertEqual(vocab.DERIVED_STATUSES, ("formalized", "statement_only", "partial",
                                                   "not_formalized"))
+        # proposal section 2.7, with challenge_pending since smoke 2's CH2
         self.assertEqual(vocab.CHALLENGE_VERDICTS, {"survived", "downgraded", "not_required",
-                                                    "sampled_out"})
+                                                    "sampled_out", "challenge_pending"})
         self.assertEqual(vocab.LICENCE_CLASSES, {"closed", "open_attribution",
                                                  "open_share_alike", "public_domain"})
         self.assertEqual(vocab.DEFAULT_LICENCE_CLASS, "closed")
