@@ -165,6 +165,12 @@ A locate task carries at most eight passages of one frozen inventory.
   document carries `proof_status`, `commit` or `version` anywhere.
 - An absence's receipt lists at least three distinct queries (whitespace and
   case folded) (rule 5).
+- No location's `note`, and no query or candidate `reason` of an absence's
+  receipt, carries more than `EXPORT_QUOTE_WORDS` consecutive words of the
+  layer verbatim (rule 1): the export refuses such a passage (§6), so the gate
+  applies the export's own check (`locate_records.check_note` and
+  `receipt_document`) while the worker can still rewrite it. A located
+  passage's receipt is not exported and is not capped.
 - A located passage that says several things may carry a **coverage claim**
   (the maintainer's decision D1, `references/vocabulary.md` §1.11): its
   `hasPart` locations together state every clause of the passage, and no part
@@ -1015,7 +1021,8 @@ like a faithfulness run:
   run, `watchdog.py`. No library checkout is named to the challenger: nothing
   creates, transfers or verifies one on a run host. Rule 1
   builds every implied record with `locate_records` itself (`location_record`,
-  `absence_record`, `unresolved_record` and `cap_quote`; the challenge value,
+  `absence_record` over the absence's real receipt through `receipt_document`,
+  `unresolved_record`, `cap_quote` and `check_note`; the challenge value,
   the location key and the joined proof status are placeholders, the source's
   citation fields too unless the `sources` entry carries `uri`, `title`,
   `container_title` and `licence`), from the gate directory, or from the

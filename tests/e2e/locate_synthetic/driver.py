@@ -541,10 +541,23 @@ class Pipeline:
                 p["receipt"]["candidates"] = []
         def close_without_note(doc):
             doc["passages"][located]["locations"][0]["relation"] = "closeMatch"
+        layer = (cf_main_paths(self.ws).sourceset_source_dir(SS, WIDGET) / "layer.txt"
+                 ).read_text(encoding="utf-8")
+        verbatim = " ".join(layer.split()[:14])     # past the export's twelve-word cap
+        def note_verbatim(doc):
+            doc["passages"][located]["locations"][0]["note"] = verbatim
+        def query_verbatim(doc):
+            p = doc["passages"][located]
+            p.update(outcome="absent", locations=[])
+            p["receipt"]["queries"][0] = verbatim
+            for cand in p["receipt"]["candidates"]:
+                cand.update(verdict="rejected", reason="states the subject, not this")
         cases = {"rule 3 phantom": phantom, "rule 3 proof_status": status,
                  "rule 3 commit": commit, "rule 5": few_queries, "rule 6 count": too_many,
                  "rule 6 rank": duplicate_rank, "rule 4": curated_ignored,
-                 "closeMatch note": close_without_note}
+                 "closeMatch note": close_without_note,
+                 # the export's verbatim-source cap, applied by the gate (rule 1)
+                 "rule 1 note verbatim": note_verbatim, "rule 1 query verbatim": query_verbatim}
         for name, fn in cases.items():
             path = self.write_json(self.made / "loc-bad" / name.replace(" ", "-")
                                    / task_id / f"{WIDGET}.json", mutate(fn))

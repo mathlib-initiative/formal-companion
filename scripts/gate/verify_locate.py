@@ -713,15 +713,21 @@ def _preview_universe(cfg: GateConfig) -> dict:
 
 def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id: str,
                   layer: str, span: tuple[int, int], quote: dict, item: str,
-                  passage_kind: Any, outcome: str | None, locations: list[dict]) -> None:
+                  passage_kind: Any, outcome: str | None, locations: list[dict],
+                  receipt: dict | None = None) -> None:
     """Rule 1: build the records this passage implies with the EXPORT'S builder, and check them.
 
     ``locate_records`` (``scripts/locate/records.py``, staged in the gate
     directory) is the code ``cf export literature-links`` runs, so a document
     this passes is one the export can turn into records the vendored checker
-    accepts.  What the worker does not control -- the challenge value, the
-    location key, the proof status joined from the index, the source's citation
-    fields when ``gate.json`` does not carry them -- is a placeholder.
+    accepts.  That includes the export's cap on free text: every location's note
+    goes through ``locate_records.check_note``, and an absence's receipt is built
+    by ``locate_records.receipt_document`` -- the export's own two calls -- so a
+    note, a query or a candidate's reason that carries more than the quote cap of
+    the source verbatim is refused here, while the worker can still rewrite it.
+    What the worker does not control -- the challenge value, the location key,
+    the proof status joined from the index, the source's citation fields when
+    ``gate.json`` does not carry them -- is a placeholder.
     """
     source = _preview_source(cfg, source_id)
     universe = _preview_universe(cfg)
@@ -729,6 +735,24 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
                "passage_kind": passage_kind if passage_kind in PASSAGE_KINDS else "other",
                "absence": {"challenge": "not_required"}}
     span_sha = lr.sha256_text(layer[span[0]:span[1]])
+    verbatim = False
+    for loc in locations:
+        try:
+            lr.check_note(item, loc.get("note") if isinstance(loc.get("note"), str) else "",
+                          layer)
+        except lr.RecordError as exc:
+            problems.add(1, where, f"{exc}; the export refuses it: say it in your own words")
+            verbatim = True
+    reference = {"sha256": _PLACEHOLDER_SHA, "queries": 0, "candidates": 0}
+    if outcome == "absent":
+        try:
+            _digest, _text, reference = lr.receipt_document(source_id, item, receipt or {},
+                                                            universe, layer)
+        except lr.RecordError as exc:
+            problems.add(1, where, f"{exc}; the export refuses it: say it in your own words")
+            verbatim = True
+    if verbatim:
+        return
     records: list[dict] = []
     try:
         for loc in locations:
@@ -748,9 +772,7 @@ def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id:
                                               span_sha256=span_sha))
         if outcome == "absent" and universe["libraries"]:
             records.append(lr.absence_record(source, passage, universe, quote,
-                                             span_sha256=span_sha,
-                                             receipt={"sha256": _PLACEHOLDER_SHA, "queries": 0,
-                                                      "candidates": 0}))
+                                             span_sha256=span_sha, receipt=reference))
         elif not locations:
             records.append(lr.unresolved_record(source, passage, universe, quote,
                                                 span_sha256=span_sha))
@@ -1283,7 +1305,7 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
         check_records(cfg, problems, where, source_id=source_id, layer=source.layer, span=span,
                       quote=frozen[item]["quote"], item=item,
                       passage_kind=frozen[item].get("passage_kind"), outcome=outcome,
-                      locations=locations)
+                      locations=locations, receipt=receipt)
     missing = sorted(set(frozen) - set(written))
     if missing:
         problems.add(2, name, f"the task's passages {', '.join(missing)} have no outcome")

@@ -431,6 +431,16 @@ def _free_text(item: str, what: str, text: str, layer: str) -> None:
                           f"verbatim ({run[:40]!r}...), past the {QUOTE_WORDS}-word quote cap")
 
 
+def check_note(item: str, note: Any, layer: str) -> None:
+    """Refuse (:class:`RecordError`) a location's note that carries the source past the cap.
+
+    The one definition of the note half of the export's free-text rule: the
+    export's :func:`passage_records` and the gate's rule 1 both call it, and the
+    receipt half is :func:`receipt_document`, which both call too.
+    """
+    _free_text(item, "a location's note", str(note or ""), layer)
+
+
 def receipt_document(source_id: str, item: str, receipt: Mapping[str, Any],
                      universe: Mapping[str, Any], layer: str = "") -> tuple[str, str, dict]:
     """``(sha256, the sidecar's text, the reference)`` for an absence's search receipt.
@@ -491,7 +501,7 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
         if loc.get("relation") == CLOSE_MATCH and not str(loc.get("note") or "").strip():
             raise RecordError(f"{passage['item']}: the closeMatch {loc['library']}:"
                               f"{loc['declaration']} names no convention difference in its note")
-        _free_text(str(passage["item"]), "a location's note", str(loc.get("note") or ""), layer)
+        check_note(str(passage["item"]), loc.get("note"), layer)
         why = location_problem(loc)
         if why:
             raise RecordError(f"{passage['item']}: {why}")
