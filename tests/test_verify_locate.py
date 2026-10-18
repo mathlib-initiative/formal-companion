@@ -719,6 +719,59 @@ class TestOwnership(GateTestCase):
         self.assertEqual(task, "")
         self.assertIn("no task", how)
 
+    def test_a_live_writers_wal_row_is_seen(self):
+        """G1: tend writes orchestrator.sqlite in WAL mode and the gate runs mid-run.
+
+        The writer below is the shape of tend's: WAL journal, its connection held
+        open, no checkpoint since the worktree row was committed, so the row lives
+        only in ``-wal``.  A read of the main file alone (what ``immutable=1``
+        does) finds no table at all; the gate must still name the task.
+        """
+        self.contribute()
+        db = self.fx.root / "orchestrator.sqlite"
+        writer = sqlite3.connect(db, isolation_level=None)
+        self.addCleanup(writer.close)
+        self.assertEqual(writer.execute("PRAGMA journal_mode = WAL").fetchone()[0], "wal")
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("CREATE TABLE worktrees (worktree_id TEXT PRIMARY KEY, task_id TEXT, "
+                       "path TEXT, state TEXT)")
+        writer.execute("INSERT INTO worktrees VALUES ('w-1', ?, ?, 'worker_running')",
+                       (TASK, str(self.wt)))
+        writer.execute("INSERT INTO worktrees VALUES ('w-2', 't-inv-0002', '/elsewhere/w-2', "
+                       "'pending')")
+        self.assertTrue(Path(f"{db}-wal").is_file())
+        frozen = sqlite3.connect(f"file:{db.as_posix()}?mode=ro&immutable=1", uri=True)
+        try:   # the reproduction: the main file alone does not hold the row yet
+            self.assertEqual(frozen.execute("SELECT name FROM sqlite_master").fetchall(), [])
+        finally:
+            frozen.close()
+        task, how = vl.task_from_orchestrator(db, self.wt)
+        self.assertEqual((task, how), (TASK, "orchestrator.sqlite"))
+        proc = self.cli()
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn(f"against task {TASK}", proc.stdout.splitlines()[-1])
+        self.assertIn("orchestrator.sqlite", proc.stdout.splitlines()[-1])
+        # the lookup took no lock the writer then waits on
+        writer.execute("INSERT INTO worktrees VALUES ('w-3', 't-inv-0003', '/elsewhere/w-3', "
+                       "'pending')")
+
+    def test_a_path_recorded_through_a_symlink_is_this_worktree(self):
+        """tend records the path it was configured with; the gate is handed the resolved cwd."""
+        self.contribute()
+        link = self.fx.root / "linked-root"
+        link.symlink_to(self.fx.root, target_is_directory=True)
+        db = self.fx.root / "orchestrator.sqlite"
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE worktrees (worktree_id TEXT, task_id TEXT, path TEXT)")
+        con.execute("INSERT INTO worktrees VALUES ('w-1', ?, ?)", (TASK, f"{link}/worktree/"))
+        # another root's worktree of the same name is not this one
+        con.execute("INSERT INTO worktrees VALUES ('w-9', 't-inv-0002', '/elsewhere/worktree')")
+        con.commit()
+        con.close()
+        self.assertEqual(vl.task_from_orchestrator(db, self.wt.resolve()),
+                         (TASK, "orchestrator.sqlite"))
+        self.assertEqual(vl.task_from_orchestrator(db, Path("/nowhere/worktree"))[0], "")
+
     def test_an_ambiguous_orchestrator_falls_back_to_the_single_stem_rule(self):
         self.contribute()
         con = sqlite3.connect(self.fx.root / "orchestrator.sqlite")

@@ -87,3 +87,49 @@ def get(name: str) -> Preset:
 def shape(name: str) -> LocateShape:
     get(name)
     return SHAPES[name]
+
+
+#: the account's concurrent-session cap when the workspace records none
+#: (references/traps.md C3; ``cf run`` refuses a plan over it)
+DEFAULT_SESSION_CAP = 16
+
+
+def concurrency(preset: Preset, workspace, *, workers: int | None = None,
+                reviewers: int | None = None) -> dict:
+    """The run's worker and reviewer limits, each with where it came from.
+
+    ``--workers``/``--reviewers`` first, then the workspace's
+    ``defaults.max_concurrent_workers``/``max_concurrent_reviewers`` -- the
+    operator's setting for this account and host -- and the preset's own numbers
+    only when the workspace says nothing.  The planner used to write the preset's
+    8/4 into ``run.yaml`` and ``config.yaml`` whatever the workspace said, and
+    ``cf run`` prefers ``run.yaml``, so a workspace that asked for 6 workers got
+    8 at the raise stage (field defect P3).  Returns ``{"workers", "reviewers",
+    "source": {"workers", "reviewers"}, "warnings"}``.
+    """
+    out: dict = {"source": {}, "warnings": []}
+    for role, flag, key, fallback in (
+            ("workers", workers, "max_concurrent_workers", preset.max_workers),
+            ("reviewers", reviewers, "max_concurrent_reviewers", preset.max_reviewers)):
+        if flag is not None:
+            value, source = flag, f"--{role}"
+        elif workspace.default(key) is not None:
+            value, source = workspace.default(key), f"workspace.defaults.{key}"
+        else:
+            value, source = fallback, f"preset.{preset.name}"
+        try:
+            number = int(value)
+        except (TypeError, ValueError):
+            number = 0
+        if number < 1 or isinstance(value, bool) or str(number) != str(value).strip():
+            raise CfError(f"{source} is {value!r}; a concurrency limit is a whole number >= 1",
+                          hint=f"fix {source}, or pass --{role} N")
+        out[role] = number
+        out["source"][role] = source
+    cap = int(workspace.default("max_concurrent_sessions", DEFAULT_SESSION_CAP) or 0)
+    if cap and out["workers"] + out["reviewers"] > cap:
+        out["warnings"].append(
+            f"{out['workers']} workers + {out['reviewers']} reviewers = "
+            f"{out['workers'] + out['reviewers']} concurrent sessions, over the account cap of "
+            f"{cap}: `cf run` will refuse to raise to it (references/traps.md C3)")
+    return out

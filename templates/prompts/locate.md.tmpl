@@ -48,6 +48,6 @@ Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
 {{gate_command}} --findings findings/$TEND_TASK_ID/<source-id>.json
 ```
 
-`exit 1` means it refused your document: fix what it names. Any other non-zero exit is an infrastructure fault — stop and finish `blocked`, quoting it.
+{{gate_exits}}
 
 {{finish_block}}

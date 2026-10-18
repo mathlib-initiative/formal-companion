@@ -32,6 +32,33 @@ from . import presets as locate_presets
 
 PROMPT_FILES = ("worker-system.md", "worker.md", "reviewer-system.md", "reviewer.md")
 
+#: the locate gate's exit vocabulary and the lines it prints with each
+#: (``scripts/gate/verify_locate.py``; a test pins these to the gate's own
+#: constants and output).  The prompts read the gate by these and nothing else:
+#: before the gate guarded its imports, a missing module came out as Python's
+#: exit 1, which every prompt read as "your document is wrong" (field defect P2).
+GATE_EXIT_REJECTED = 1
+GATE_EXIT_BROKEN = 3
+GATE_REJECTED_MARK = "VALIDATION FAILED"
+GATE_BROKEN_MARK = "the gate could not run"
+
+
+def gate_exits(role: str) -> str:
+    """How a ``role`` reads the gate's exit status; one sentence for every locate prompt."""
+    broken = (f"**exit {GATE_EXIT_BROKEN}** (its `FAIL: … {GATE_BROKEN_MARK}` line), any other "
+              f"non-zero exit, or an exit {GATE_EXIT_REJECTED} without the "
+              f"`{GATE_REJECTED_MARK}` list (a crash) means the gate itself could not run")
+    if role == "reviewer":
+        return (f"**exit {GATE_EXIT_REJECTED}**, which always comes with a "
+                f"`{GATE_REJECTED_MARK}` list, is a verdict on the document: request changes "
+                f"naming what it refused. {broken}: an infrastructure fault, not grounds for "
+                "rejecting the worker; say so in your notes.")
+    return (f"**exit 0** passes. **exit {GATE_EXIT_REJECTED}**, which always comes with a "
+            f"`{GATE_REJECTED_MARK}` list, is a verdict on your document: fix what it names "
+            f"and run the gate again. {broken}: an infrastructure fault, not a verdict on your "
+            "work — stop, finish with status `blocked`, quote what the gate printed, and do not "
+            "weaken your document to make it pass.")
+
 
 def finish_block(preset: Preset) -> str:
     """The worker's one way to finish, on this preset's bridge."""
@@ -90,6 +117,8 @@ def build_context(preset: Preset, *, run_id: str, host: Mapping[str, str],
         "per_task": per_task,
         "batch": vocab.CHALLENGE_BATCH_RECORDS,
         "is_inventory": preset.mode == vocab.LOCATE_INVENTORY,
+        "gate_exits": gate_exits("worker"),
+        "gate_exits_reviewer": gate_exits("reviewer"),
         "finish_sentence": finish_sentence(preset),
         "finish_block": finish_block(preset),
         "finish_via_tool": channel == "final_result",
