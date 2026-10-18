@@ -1,91 +1,65 @@
-"""Read what the other locate packages write, by the documented formats only.
+"""Read what the other locate packages write -- through the packages that own it.
 
-New code.  The bench reads four producers' files and imports none of their
-modules, because it was built beside them (references/locate-documents.md
-sections 7-10 are the contract):
+New code.  The bench reads four producers' artifacts (references/locate-documents.md
+sections 7 to 10) and re-implements none of their readers, so a format has one
+definition:
 
-* a sourceset (section 7): ``manifest-<n>.jsonl`` -- a header line, then one
-  canonical entry per source -- and a source directory's ``layer.txt``,
-  ``sections.json``, ``paragraphs.json`` and ``finders.json``;
-* a universe (section 8): ``universe.yaml`` and ``corpus.sqlite``, opened
-  ``mode=ro&immutable=1`` as everywhere else;
-* a harvested locate run (sections 9 and 10): ``runs/<run>/run.yaml``, the task
-  manifests under the tend root's ``gate/tasks/``, ``corpus/<run>/RECEIPT.json``,
-  the documents under ``corpus/<run>/`` and ``reports/locate-outcomes.<run>.jsonl``;
-* the gate log (section 9): one JSON line per gate call.
+* a sourceset: ``sources.sourceset.Sourceset`` (its manifests, append-only and
+  chained) and the rendered files of a source directory;
+* a universe: ``corpus.universe.Universe`` and ``corpus.sqlite`` through
+  ``corpus.query`` -- opened with ``open_db`` (read-only, immutable, the path
+  quoted) and checked with ``check_universe``, so gold is never labelled against
+  a database that describes another state of the universe it stamps;
+* a harvested locate run: ``locate.outcomes`` (``run_yaml``, ``task_manifests``,
+  the frozen ``inventory``), ``locate.inputs`` (``harvested_documents`` and the
+  gated-receipt rule ``require_gated``), and the receipt bytes, whose sha the
+  score pins;
+* the host artifacts ``cf harvest`` brings home under ``runs/<run>/host/``: the
+  gate log and the canary scan.
 
-Everything here only reads.  A file in the wrong shape is a ``CfError`` naming
-it, never a silently empty answer -- an empty answer would score as a run that
-found nothing.
+Everything here only reads.  A file in the wrong shape is a ``CfError`` naming it,
+never a silently empty answer -- an empty answer would score as a run that found
+nothing.
 """
 from __future__ import annotations
 
 import hashlib
-import json
 import sqlite3
-from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 from cflib.errors import CfError
 from cflib.jsonio import read_json
 from cflib.paths import WorkspacePaths
-from cflib.yamlio import read_yaml
+
+from corpus import query
+from corpus.universe import Universe
+from locate import inputs as locate_inputs
+from locate import outcomes as locate_outcomes
+from sources.sourceset import Manifest, Sourceset
 
 from .layout import read_jsonl_rows
+
+#: the host artifacts ``cf harvest`` fetches into ``runs/<run>/host/``
+#: (references/locate-documents.md section 9)
+HOST_GATE_LOG = "gate.jsonl"
+HOST_CANARY = "canary.json"
 
 
 # --------------------------------------------------------------------------
 # sourcesets
 # --------------------------------------------------------------------------
 
-@dataclass
-class Manifest:
-    """One version of a sourceset manifest."""
-
-    sourceset: str
-    version: int
-    path: Path
-    sha256: str
-    header: dict
-    entries: dict[str, dict] = field(default_factory=dict)
-
-    @property
-    def pin(self) -> dict:
-        return {"id": self.sourceset, "version": self.version, "manifest_sha256": self.sha256}
-
-
 def load_manifest(paths: WorkspacePaths, sourceset: str, version: int | None = None) -> Manifest:
-    """The pinned (or the latest) manifest of a sourceset."""
-    available = paths.sourceset_manifests(sourceset)
-    if not available:
-        raise CfError(f"sourceset {sourceset!r} has no manifest under {paths.sourceset_dir(sourceset)}",
-                      hint="create and enumerate the sourceset first")
-    if version is None:
-        version, path = available[-1]
-    else:
-        path = paths.sourceset_manifest(sourceset, version)
-        if not path.is_file():
-            raise CfError(f"sourceset {sourceset!r} has no manifest version {version}",
-                          hint="versions on disk: " + ", ".join(str(n) for n, _ in available))
-    raw = path.read_bytes()
-    lines = [line for line in raw.decode("utf-8").splitlines() if line.strip()]
-    if not lines:
-        raise CfError(f"{path} is empty: a manifest's first line is its header")
-    try:
-        header = json.loads(lines[0])
-        rows = [json.loads(line) for line in lines[1:]]
-    except json.JSONDecodeError as exc:
-        raise CfError(f"{path}: not JSON lines ({exc.msg})") from exc
-    if not isinstance(header, dict) or header.get("schema") != "cf-sourceset/1":
-        raise CfError(f"{path}: the first line is not a cf-sourceset/1 header")
-    entries: dict[str, dict] = {}
-    for row in rows:
-        sid = row.get("source_id") if isinstance(row, dict) else None
-        if not sid:
-            raise CfError(f"{path}: an entry with no source_id")
-        entries[str(sid)] = row
-    return Manifest(sourceset, int(version), path, hashlib.sha256(raw).hexdigest(), header, entries)
+    """The pinned (or the latest) manifest of a sourceset, read by its owner."""
+    ss = Sourceset.open(paths, sourceset)
+    return ss.latest() if version is None else ss.load(version)
+
+
+def pinned_manifest(paths: WorkspacePaths, pin: dict) -> Manifest:
+    """The manifest a bench pinned, refused when its bytes are not the pinned ones."""
+    return Sourceset.open(paths, str(pin["id"])).pinned(int(pin["version"]),
+                                                        str(pin["manifest_sha256"]))
 
 
 def source_dir(paths: WorkspacePaths, sourceset: str, source_id: str) -> Path:
@@ -118,64 +92,56 @@ def read_source_json(paths: WorkspacePaths, sourceset: str, source_id: str, name
 
 
 # --------------------------------------------------------------------------
-# universes
+# universes and corpus.sqlite
 # --------------------------------------------------------------------------
 
-def load_universe(paths: WorkspacePaths, universe: str) -> dict:
-    path = paths.universe_yaml(universe)
-    if not path.is_file():
-        raise CfError(f"universe {universe!r} has no universe.yaml at {path}",
-                      hint="create the universe and add its libraries first")
-    doc = read_yaml(path)
-    if not isinstance(doc, dict) or not isinstance(doc.get("libraries"), list):
-        raise CfError(f"{path} is not a universe: it has no libraries list")
-    return doc
+def load_universe(paths: WorkspacePaths, universe_id: str) -> Universe:
+    """``corpus.universe.Universe.load``: the universe's one validating reader."""
+    return Universe.load(paths.universe_yaml(universe_id))
 
 
-def libraries(universe: dict) -> dict[str, dict]:
-    """``{library id: entry}`` of a loaded universe, each with a 40-hex commit."""
-    out: dict[str, dict] = {}
-    for entry in universe.get("libraries") or []:
-        if not isinstance(entry, dict) or not entry.get("id"):
-            continue
-        commit = str(entry.get("commit") or "")
-        if len(commit) != 40 or any(c not in "0123456789abcdef" for c in commit):
-            raise CfError(f"universe library {entry.get('id')!r} has no 40-hex commit")
-        out[str(entry["id"])] = entry
-    return out
+def libraries(universe: Universe) -> dict[str, dict]:
+    """``{library id: row}`` of a loaded universe."""
+    return {str(lib["id"]): lib for lib in universe.libraries}
 
 
-def open_corpus(path: Path) -> sqlite3.Connection:
-    """``corpus.sqlite`` read-only and immutable (references/locate-documents.md section 8)."""
-    if not Path(path).is_file():
-        raise CfError(f"no corpus.sqlite at {path}", hint="build corpus.sqlite from the universe's indexes first")
-    uri = f"file:{Path(path).resolve()}?mode=ro&immutable=1"
-    conn = sqlite3.connect(uri, uri=True)
-    conn.row_factory = sqlite3.Row
+def universe_pin(universe: Universe) -> dict:
+    """What gold stamps: the id and the RECOMPUTED sha, never the recorded one."""
+    return {"id": universe.id, "sha256": universe.sha256()}
+
+
+def open_checked(paths: WorkspacePaths, universe: Universe,
+                 db: Path | None = None) -> sqlite3.Connection:
+    """``corpus.sqlite`` of ``universe``, refused unless it describes the universe as it is now.
+
+    The universe must record a built database (``corpus_db``; an ingest after
+    the build clears it), and the database's ``meta.universe_sha256`` must be the
+    universe's recomputed sha (``corpus.query.check_universe``).  A database
+    built for another state of the universe would resolve gold against
+    declarations the stamped universe does not hold.
+    """
+    if universe.corpus_db is None:
+        raise CfError(f"universe {universe.id} records no built corpus.sqlite (an index was "
+                      f"ingested after the last build)",
+                      hint=f"`cf corpus build-db {universe.id}` rebuilds it")
+    conn = query.open_db(db or paths.corpus_db(universe.id))
+    try:
+        query.check_universe(conn, universe, blind=False)
+    except CfError:
+        conn.close()
+        raise
     return conn
 
 
-def decl(conn: sqlite3.Connection, library: str, commit: str, name: str) -> dict | None:
-    """The exact-table row of one declaration, or None."""
-    row = conn.execute(
-        "SELECT id, library, commit_sha, name, module, path, line, end_line, kind, "
-        "proof_status, statement, signature, docstring FROM decls "
-        "WHERE library = ? AND commit_sha = ? AND name = ?", (library, commit, name)).fetchone()
-    return dict(row) if row else None
+def declaration(conn: sqlite3.Connection, library: str, commit: str, name: str) -> dict | None:
+    """The exact-table row of one declaration at a commit (``corpus.query.declaration``), or None."""
+    return query.declaration(conn, library, name, commit=commit)
 
 
-def tagged(conn: sqlite3.Connection, tag: str, value: str,
-           library_ids: Iterable[str]) -> list[dict]:
-    """Declarations of these libraries carrying ``tag = value``."""
-    wanted = sorted(set(library_ids))
-    if not wanted:
-        return []
-    marks = ",".join("?" for _ in wanted)
-    rows = conn.execute(
-        "SELECT d.library, d.commit_sha, d.name, d.module FROM tags t JOIN decls d ON d.id = t.decl_id "
-        f"WHERE t.tag = ? AND t.value = ? AND d.library IN ({marks}) ORDER BY d.library, d.name",
-        (tag, value, *wanted)).fetchall()
-    return [dict(r) for r in rows]
+def tagged(conn: sqlite3.Connection, tag: str, value: str, library_ids) -> list[dict]:
+    """``corpus.query.tagged`` rows of these libraries."""
+    wanted = set(library_ids)
+    return [row for row in query.tagged(conn, tag, value) if row["library"] in wanted]
 
 
 def sha256_file(path: Path) -> str:
@@ -187,33 +153,22 @@ def sha256_file(path: Path) -> str:
 
 
 # --------------------------------------------------------------------------
-# runs
+# runs (the planner's and the harvest's formats, through their owners)
 # --------------------------------------------------------------------------
 
 def run_yaml(paths: WorkspacePaths, run_id: str) -> dict:
-    path = paths.run_yaml(run_id)
-    if not path.is_file():
-        raise CfError(f"run {run_id!r} has no run.yaml at {path}")
-    doc = read_yaml(path)
-    if not isinstance(doc, dict):
-        raise CfError(f"{path} is not a mapping")
-    return doc
+    """A locate run's ``run.yaml`` (``locate.outcomes.run_yaml``: it must hold a locate block)."""
+    return locate_outcomes.run_yaml(paths, run_id)
 
 
 def receipt(paths: WorkspacePaths, run_id: str) -> tuple[dict, str]:
-    """``(RECEIPT.json, its sha256)`` of a harvested run."""
-    path = paths.receipt_json(run_id)
-    if not path.is_file():
-        raise CfError(f"run {run_id!r} has no RECEIPT.json at {path}",
-                      hint=f"harvest it first: cf harvest {run_id}")
-    raw = path.read_bytes()
-    try:
-        doc = json.loads(raw.decode("utf-8"))
-    except json.JSONDecodeError as exc:
-        raise CfError(f"{path}: invalid JSON ({exc.msg})") from exc
-    if not isinstance(doc, dict):
-        raise CfError(f"{path} is not a JSON object")
-    return doc, hashlib.sha256(raw).hexdigest()
+    """``(RECEIPT.json, its sha256)`` of a harvested run that is complete and passed its gate.
+
+    The gate rule is the planner's (``locate.inputs.require_gated``): the export
+    and plan-locate refuse an ungated run, and so does the bench.
+    """
+    got = locate_inputs.require_gated(paths.corpus_run_dir(run_id), run_id, "run")
+    return got, sha256_file(paths.receipt_json(run_id))
 
 
 def outcomes(paths: WorkspacePaths, run_id: str) -> list[dict]:
@@ -225,43 +180,59 @@ def outcomes(paths: WorkspacePaths, run_id: str) -> list[dict]:
     return read_jsonl_rows(path)
 
 
-def documents(paths: WorkspacePaths, run_id: str) -> list[dict]:
-    """Every locate document landed under ``corpus/<run>/`` (recursive)."""
-    root = paths.corpus_run_dir(run_id)
-    out = []
-    if not root.is_dir():
-        return out
-    for path in sorted(root.rglob("*.json")):
-        if path.name.startswith(".") or path.name == "RECEIPT.json":
-            continue
-        try:
-            doc = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(doc, dict) and doc.get("schema") == "cf-locate/1":
-            out.append(doc)
-    return out
+def tally(paths: WorkspacePaths, run_id: str) -> dict:
+    """``reports/locate-tally.<run>.json``: which challenge runs the outcomes were built with."""
+    path = paths.locate_tally_json(run_id)
+    if not path.is_file():
+        raise CfError(f"run {run_id!r} has no locate tally at {path}",
+                      hint="the outcome rows and the tally are written together by the locate tally")
+    doc = read_json(path)
+    if not isinstance(doc, dict):
+        raise CfError(f"{path} is not a JSON object")
+    return doc
+
+
+def inventory(paths: WorkspacePaths, run_id: str) -> dict:
+    """The frozen inventory of a gated inventory run (``locate.outcomes.inventory``)."""
+    return locate_outcomes.inventory(paths, run_id, require_gate=True)
+
+
+def locate_documents(paths: WorkspacePaths, run_id: str) -> list[tuple[str, dict]]:
+    """``[(relative path, document)]`` of a harvested run (``locate.inputs.harvested_documents``)."""
+    return locate_inputs.harvested_documents(paths.corpus_run_dir(run_id))
 
 
 def task_manifests(paths: WorkspacePaths, run_id: str) -> list[dict]:
-    """The task manifests a locate run was planned with (``gate/tasks/*.json`` in its tend root)."""
-    directory = paths.tend_root(run_id) / "gate" / "tasks"
-    out = []
-    if directory.is_dir():
-        for path in sorted(directory.glob("*.json")):
-            doc = read_json(path)
-            if isinstance(doc, dict):
-                out.append(doc)
-    return out
+    """The task manifests a run was planned with (``locate.outcomes.task_manifests``)."""
+    return locate_outcomes.task_manifests(paths, run_id)
 
 
-def gate_log(directory: Path) -> list[dict]:
-    """Every gate call recorded under a ``gate-log/`` directory (or one file)."""
-    path = Path(directory)
+# --------------------------------------------------------------------------
+# what cf harvest brings home from the host
+# --------------------------------------------------------------------------
+
+def run_host_dir(paths: WorkspacePaths, run_id: str) -> Path:
+    """``runs/<run>/host/``: where ``cf harvest`` lands the host's artifacts."""
+    accessor = getattr(paths, "run_host_dir", None)
+    return Path(accessor(run_id)) if callable(accessor) else paths.run_dir(run_id) / "host"
+
+
+def gate_log(path: Path) -> list[dict]:
+    """Every gate call recorded in a ``gate.jsonl`` (or every one under a directory)."""
+    path = Path(path)
     files = [path] if path.is_file() else sorted(path.rglob("*.jsonl")) if path.is_dir() else []
     if not files:
-        raise CfError(f"no gate log at {path}", hint="pass the harvested copy of <tend root>/gate-log/")
+        raise CfError(f"no gate log at {path}",
+                      hint="cf harvest fetches the host's gate log into runs/<run>/host/gate.jsonl")
     rows: list[dict] = []
     for file in files:
         rows.extend(read_jsonl_rows(file))
     return rows
+
+
+def canary_report(path: Path) -> dict:
+    """A host-side canary scan: ``{"scanned": <files>, "hits": [<file names>]}``."""
+    doc = read_json(path)
+    if not isinstance(doc, dict) or not isinstance(doc.get("hits", []), list):
+        raise CfError(f"{path} is not a canary scan ({{scanned, hits}})")
+    return doc

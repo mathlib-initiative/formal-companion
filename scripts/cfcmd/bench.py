@@ -12,6 +12,7 @@ measurement and is untouched.
     cf bench freeze <id> [--plant] [--supersede]
     cf bench score <id> --run <locate-run> --split eval --transcripts <dir>
     cf bench compare <id> <baseline-score> <candidate-score> --claim G3.fnf_rate --aa <replicate>
+    cf bench compare <id> <baseline> <candidate> --claim G3.fnf_rate --aa <r> --replication b0:loop-…
 
 Labels never leave this machine: ``benches/<id>/host/`` is the only part a run
 host may be given (the article lists of each split and the canary strings).
@@ -39,7 +40,8 @@ from bench import gold as gold_mod
 from bench import inputs
 from bench import score as score_mod
 from bench.layout import (BENCH_SCHEMA, CLUSTERS_SCHEMA, DRAW_SCHEMA, FRAME_SCHEMA, G1_RESOLVED_SCHEMA,
-                          GOLD_SCHEMA, HOST_SCHEMA, SPANS_SCHEMA, BenchLayout, now, sha_of)
+                          GOLD_SCHEMA, HOST_SCHEMA, LABEL_FILES, SPANS_SCHEMA, BenchLayout, now,
+                          sha_of)
 
 NAME = "bench"
 
@@ -116,11 +118,13 @@ def register(subparsers) -> None:
                    help="the G1 arm the run is (default: what its run.yaml says)")
     s.add_argument("--gold-version", type=int, default=None, help="default: the latest")
     s.add_argument("--gate-log", type=Path, default=None,
-                   help="the harvested gate-log directory of the run's tend roots")
+                   help="a gate log (a gate.jsonl, or a directory of them) for every run of the "
+                        "score (default: each run's harvested runs/<run>/host/gate.jsonl)")
     s.add_argument("--transcripts", type=Path, default=None,
                    help="the run's transcripts, scanned for the label canary")
     s.add_argument("--canary-report", type=Path, default=None,
-                   help="a host-side canary scan ({scanned, hits}) instead of --transcripts")
+                   help="a host-side canary scan ({scanned, hits}) instead of --transcripts "
+                        "(default: each run's harvested runs/<run>/host/canary.json)")
     s.add_argument("--no-canary-check", action="store_true",
                    help="score without a canary scan (recorded in the score)")
     s.add_argument("--article-costs", type=Path, default=None,
@@ -140,11 +144,13 @@ def register(subparsers) -> None:
     c.add_argument("baseline", type=Path)
     c.add_argument("candidate", type=Path)
     c.add_argument("--claim", required=True, help="the pre-registered metric, e.g. G3.fnf_rate")
-    c.add_argument("--aa", type=Path, default=None, help="the baseline's A/A replicate score")
-    c.add_argument("--ledger", type=Path, default=None, help="default: benches/<id>/ledger.jsonl")
-    c.add_argument("--alpha", type=float, default=compare_mod.DEFAULT_ALPHA)
-    c.add_argument("--replication", action="store_true",
-                   help="this comparison replicates a claim on a fresh draw (spends no alpha)")
+    c.add_argument("--aa", type=Path, default=None,
+                   help="the score of a distinct replicate run of the baseline's configuration")
+    c.add_argument("--alpha", type=float, default=compare_mod.DEFAULT_ALPHA,
+                   help="the one-sided level, 0 < alpha < 0.5 (default 0.05)")
+    c.add_argument("--replication", default=None, metavar="BENCH:ENTRY",
+                   help="the accepted claim of another bench (a fresh draw) this comparison "
+                        "replicates, by its ledger entry; it spends no alpha")
     c.add_argument("--bootstrap", type=int, default=2000)
     c.add_argument("--seed", type=int, default=0)
     c.add_argument("--note", default="")
@@ -173,13 +179,15 @@ def _frozen(layout: BenchLayout) -> bool:
     return bool(layout.gold_manifests())
 
 
-def _articles(layout: BenchLayout) -> dict[str, dict]:
+def _articles_of(frame_doc: dict, draw_doc: dict) -> dict[str, dict]:
     """The drawn articles, from the frame, with their inclusion probabilities."""
-    frame = {a["source_id"]: a for a in read_json(layout.frame_json)["articles"]}
-    out = {}
-    for row in read_json(layout.draw_json)["articles"]:
-        out[row["source_id"]] = {**frame[row["source_id"]], "pi": row["pi"]}
-    return out
+    frame = {a["source_id"]: a for a in frame_doc["articles"]}
+    return {row["source_id"]: {**frame[row["source_id"]], "pi": row["pi"]}
+            for row in draw_doc["articles"]}
+
+
+def _articles(layout: BenchLayout) -> dict[str, dict]:
+    return _articles_of(read_json(layout.frame_json), read_json(layout.draw_json))
 
 
 def _recluster(paths, layout: BenchLayout, bench: dict) -> dict:
@@ -202,25 +210,56 @@ def _recluster(paths, layout: BenchLayout, bench: dict) -> dict:
     return doc
 
 
-def _universe(paths, bench: dict, requested: str | None) -> tuple[str, dict]:
+def _universe(paths, bench: dict, requested: str | None):
+    """The ``corpus.universe.Universe`` gold is (or will be) labelled at."""
     uid = requested or (bench.get("universe") or {}).get("id")
     if not uid:
         raise CfError("no universe: gold is labelled at a universe's pins", hint="pass --universe <id>")
-    return uid, inputs.load_universe(paths, uid)
+    return inputs.load_universe(paths, uid)
 
 
-def _library(universe: dict, requested: list[str]) -> str:
+def _labelled(layout: BenchLayout) -> bool:
+    """Does the bench hold anything labelled at its universe (resolved G1 or a label file)?"""
+    return layout.g1_resolved.is_file() or any(layout.label_file(t).is_file() for t in LABEL_FILES)
+
+
+def _stamp_universe(layout: BenchLayout, bench: dict, universe, supersede: bool) -> None:
+    """Stamp the universe's id and RECOMPUTED sha; refuse a change under existing gold.
+
+    Gold is labelled at one state of one universe: a different universe is
+    refused outright, and a new state of the same one (an index re-ingested and
+    rebuilt) is refused once anything is labelled, unless ``--supersede`` starts
+    the gold over at it.
+    """
+    pin = inputs.universe_pin(universe)
+    old = bench.get("universe") or {}
+    if old.get("id") and old["id"] != pin["id"]:
+        raise CfError(f"the bench's gold is labelled at universe {old['id']!r}, not {pin['id']!r}")
+    if old.get("sha256") and old["sha256"] != pin["sha256"] and _labelled(layout) and not supersede:
+        raise CfError(f"the bench's gold is labelled at universe {pin['id']} as it was "
+                      f"({str(old['sha256'])[:12]}…); it is now {pin['sha256'][:12]}…",
+                      hint="label at one state: pass --supersede to resolve and label again at "
+                           "the new one (then cf bench freeze --supersede)")
+    bench["universe"] = pin
+
+
+def _library(universe, requested: list[str]) -> str:
+    """The library the curated lists name: ``--library``, else the universe's Mathlib.
+
+    ``corpus.universe.Universe.mathlib_library`` is the one rule, shared with
+    ``cf locate candidates``.
+    """
     libs = inputs.libraries(universe)
     if requested:
         for lib in requested:
             if lib not in libs:
                 raise CfError(f"library {lib!r} is not in the universe")
         return requested[0]
-    found = [lib for lib, e in libs.items() if e.get("brain_lib") == "Mathlib" or lib == "mathlib"]
-    if len(found) != 1:
-        raise CfError("the universe holds no single Mathlib library for the curated lists",
+    found = universe.mathlib_library()
+    if found is None:
+        raise CfError(f"universe {universe.id} holds no Mathlib library for the curated lists",
                       hint="name it with --library <id>")
-    return found[0]
+    return str(found["id"])
 
 
 def _skill_root() -> str:
@@ -231,6 +270,12 @@ def _skill_root() -> str:
 # build
 # --------------------------------------------------------------------------
 
+def _same_json(path: Path, doc: dict) -> bool:
+    """Is ``path`` the JSON document ``doc`` (as ``write_json`` would write it)?"""
+    return path.is_file() and json.loads(path.read_text(encoding="utf-8")) == json.loads(
+        json.dumps(doc, sort_keys=True))
+
+
 def _build(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
@@ -239,33 +284,18 @@ def _build(ws, args) -> int:
         raise CfError(f"bench {args.bench_id} is frozen; its draw is part of its gold",
                       hint="build a new bench id for a new draw")
     had_gold = layout.gold_dir.is_dir() and any(layout.gold_dir.iterdir())
-    old_draw = layout.draw_json.read_bytes() if layout.draw_json.is_file() else None
     manifest = inputs.load_manifest(paths, args.sourceset, args.manifest_version)
     rows = draw_mod.read_frame_list(args.frame)
     curated = draw_mod.read_qids(args.curated_qids) if args.curated_qids else set()
     frame = draw_mod.build_frame(rows, manifest, curated)
-    write_json(layout.frame_json, {"schema": FRAME_SCHEMA, "bench": args.bench_id,
-                                   "sourceset": manifest.pin,
-                                   "frame_file_sha256": inputs.sha256_file(args.frame),
-                                   "curated_file_sha256": (inputs.sha256_file(args.curated_qids)
-                                                           if args.curated_qids else None),
-                                   **frame}, sort_keys=True)
+    frame_doc = {"schema": FRAME_SCHEMA, "bench": args.bench_id, "sourceset": manifest.pin(),
+                 "frame_file_sha256": inputs.sha256_file(args.frame),
+                 "curated_file_sha256": (inputs.sha256_file(args.curated_qids)
+                                         if args.curated_qids else None),
+                 **frame}
     drawn = draw_mod.draw(frame, uniform=args.uniform, curated=args.curated, seed=args.seed)
     draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
-    if had_gold and old_draw is not None and json.loads(old_draw) != draw_doc:
-        raise CfError(f"bench {args.bench_id} already holds gold labelled for another draw",
-                      hint="a new draw is a new bench: build it under a new id")
-    write_json(layout.draw_json, draw_doc, sort_keys=True)
-    bench = {"schema": BENCH_SCHEMA, "id": args.bench_id,
-             "created": (previous or {}).get("created") or now(),
-             "sourceset": manifest.pin, "seed": args.seed,
-             "draw": {"uniform": args.uniform, "curated": args.curated},
-             "spans_per_article": args.spans_per_article,
-             "fractions": {"dev": args.dev, "eval": args.eval, "test": args.test},
-             "canary": (previous or {}).get("canary") or gold_mod.new_canary(),
-             "universe": (previous or {}).get("universe"), "state": "built"}
-    _save_bench(layout, bench)
-    articles = _articles(layout)
+    articles = _articles_of(frame_doc, draw_doc)
     spans = []
     for sid in sorted(articles):
         layer = inputs.read_layer(paths, args.sourceset, sid, articles[sid].get("layer_sha256"))
@@ -277,11 +307,43 @@ def _build(ws, args) -> int:
                                        articles[sid]["pi"])
         draw_mod.check_spans_disjoint(layer, chosen)
         spans.extend(chosen)
-    write_json(layout.spans_json, {"schema": SPANS_SCHEMA, "bench": args.bench_id,
-                                   "per_article": args.spans_per_article, "spans": spans,
-                                   "drawn_from": "paragraphs.json blocks with at least four words, "
-                                                 "sectioned by sections.json; no run"},
-               sort_keys=True)
+    spans_doc = {"schema": SPANS_SCHEMA, "bench": args.bench_id,
+                 "per_article": args.spans_per_article, "spans": spans,
+                 "drawn_from": "paragraphs.json blocks with at least four words, nested blocks "
+                               "collapsed to the outermost, sectioned by sections.json; no run"}
+    fractions = {"dev": args.dev, "eval": args.eval, "test": args.test}
+    if had_gold:
+        # gold is labelled for one frame, draw, span sample and split: every refusal comes
+        # before anything is written, so a refused rebuild changes nothing
+        changed = [name for name, same in (
+            ("frame.json", _same_json(layout.frame_json, frame_doc)),
+            ("draw.json", _same_json(layout.draw_json, draw_doc)),
+            ("spans.json", layout.spans_json.is_file() and {
+                k: v for k, v in read_json(layout.spans_json).items() if k in ("per_article", "spans")
+            } == json.loads(json.dumps({"per_article": spans_doc["per_article"],
+                                        "spans": spans_doc["spans"]}))),
+            ("the split fractions", (previous or {}).get("fractions") == fractions),
+            ("the seed", (previous or {}).get("seed") == args.seed),
+            ("the sourceset pin", (previous or {}).get("sourceset") == manifest.pin()))
+            if not same]
+        if changed:
+            raise CfError(f"bench {args.bench_id} already holds gold labelled for another draw "
+                          f"({', '.join(changed)} would change)",
+                          hint="a new draw is a new bench: build it under a new id")
+    write_json(layout.frame_json, frame_doc, sort_keys=True)
+    write_json(layout.draw_json, draw_doc, sort_keys=True)
+    write_json(layout.spans_json, spans_doc, sort_keys=True)
+    # what anchoring recorded survives a same-input rebuild of a labelled bench
+    carried = {k: v for k, v in (previous or {}).items() if k in ("library", "gx_articles")}
+    bench = {**carried, "schema": BENCH_SCHEMA, "id": args.bench_id,
+             "created": (previous or {}).get("created") or now(),
+             "sourceset": manifest.pin(), "seed": args.seed,
+             "draw": {"uniform": args.uniform, "curated": args.curated},
+             "spans_per_article": args.spans_per_article, "fractions": fractions,
+             "canary": (previous or {}).get("canary") or gold_mod.new_canary(),
+             "universe": (previous or {}).get("universe"),
+             "state": ((previous or {}).get("state") or "built") if had_gold else "built"}
+    _save_bench(layout, bench)
     clusters = _recluster(paths, layout, bench)
     counts = {s: sum(1 for v in clusters["articles"].values() if v == s) for s in ("dev", "eval", "test")}
     print(f"built bench {args.bench_id}: frame {frame['N']} article(s) ({frame['N_curated']} curated), "
@@ -310,18 +372,16 @@ def _anchor(ws, args) -> int:
         raise CfError(f"bench {args.bench_id} is frozen: its gold is never edited",
                       hint="pass --supersede to start a new gold version, then "
                            "cf bench freeze --supersede")
-    uid, universe = _universe(paths, bench, args.universe)
-    usha = str(universe.get("universe_sha256") or "")
-    if bench.get("universe") and bench["universe"].get("id") != uid:
-        raise CfError(f"the bench's gold is labelled at universe {bench['universe']['id']!r}, not {uid!r}")
-    bench["universe"] = {"id": uid, "sha256": usha}
-    _save_bench(layout, bench)
-    articles = _articles(layout)
-    conn = inputs.open_corpus(paths.corpus_db(uid))
+    universe = _universe(paths, bench, args.universe)
+    # the database must describe the universe as it is now, before anything is stamped
+    conn = inputs.open_checked(paths, universe)
     try:
+        _stamp_universe(layout, bench, universe, args.supersede)
+        _save_bench(layout, bench)
+        articles = _articles(layout)
         if resolving:
             library = _library(universe, args.library)
-            commit = inputs.libraries(universe)[library]["commit"]
+            commit = str(inputs.libraries(universe)[library]["commit"])
             lists = []
             if args.curated_1000:
                 lists.append(("mathlib_1000", gold_mod.read_curated_1000(args.curated_1000)))
@@ -334,6 +394,12 @@ def _anchor(ws, args) -> int:
             write_json(layout.g1_resolved, {"schema": G1_RESOLVED_SCHEMA, "bench": args.bench_id,
                                             "universe": bench["universe"], "library": library,
                                             "commit": commit, **resolved}, sort_keys=True)
+            # the G1 labels follow the resolution: a label of an entry no longer resolved goes
+            if layout.label_file("G1").is_file():
+                keep = {e["entry_id"] for e in resolved["entries"]}
+                rows = [{k: v for k, v in r.items() if k not in ("canary", "tier")}
+                        for r in gold_mod.read_labels(layout, "G1") if r["gold_id"] in keep]
+                gold_mod.write_labels(layout, "G1", rows, bench["canary"], after_freeze=args.supersede)
             bench["library"] = library
             bench["state"] = "anchored"
             _save_bench(layout, bench)
@@ -425,6 +491,69 @@ def _anchor(ws, args) -> int:
 # freeze
 # --------------------------------------------------------------------------
 
+def _check_g1(layout: BenchLayout) -> None:
+    """The frozen G1 tier, the resolution and the clusters describe the same entries."""
+    resolved = ({e["entry_id"] for e in read_json(layout.g1_resolved).get("entries") or []}
+                if layout.g1_resolved.is_file() else set())
+    labelled = {r["gold_id"] for r in gold_mod.read_labels(layout, "G1", required=False)}
+    stale, unlabelled = sorted(labelled - resolved), sorted(resolved - labelled)
+    if stale or unlabelled:
+        raise CfError(f"G1 does not match its resolution: {len(stale)} label(s) of entries no longer "
+                      f"resolved, {len(unlabelled)} resolved entr(ies) with no label"
+                      + (f" ({', '.join((stale + unlabelled)[:4])})" if stale or unlabelled else ""),
+                      hint=f"cf bench anchor {layout.bench_id} --emit-args anchor, run the labeler, "
+                           "then --transcribe its result")
+
+
+def _check_calibration(layout: BenchLayout) -> dict | None:
+    """h is over every anchored G1 passage, from one labeler run of them all, or not at all."""
+    if not layout.calibration_json.is_file():
+        return None
+    calibration = read_json(layout.calibration_json)
+    anchored = {r["gold_id"] for r in gold_mod.read_labels(layout, "G1", required=False)
+                if r.get("level") == "passage"}
+    rows = {r["gold_id"] for r in calibration.get("rows") or []}
+    if rows != anchored or calibration.get("h") is None:
+        raise CfError(f"h is not over the anchored G1 passages: calibration holds {len(rows)} of "
+                      f"{len(anchored)}" + (f", missing {', '.join(sorted(anchored - rows)[:4])}"
+                                             if anchored - rows else ""),
+                      hint=f"cf bench anchor {layout.bench_id} --emit-args calibrate, run the "
+                           "labeler on every task, then --transcribe")
+    return calibration
+
+
+def _labeler(layout: BenchLayout, calibration: dict | None) -> dict:
+    """The labeler of each mode, from the rows it wrote (never from args on disk)."""
+    by_mode = {"anchor": gold_mod.read_labels(layout, "G1", required=False),
+               "label": gold_mod.read_labels(layout, "G3", required=False),
+               "inventory": gold_mod.read_labels(layout, "GX", required=False),
+               "calibrate": (calibration or {}).get("rows") or []}
+    labeler = {"version": gold_mod.LABELER_VERSION, "skill_commit": {}, "workflow_sha256": {},
+               "prompt_sha256": {}}
+    for mode, rows in sorted(by_mode.items()):
+        if not rows:
+            continue
+        shas = {r.get("labeler_sha256") for r in rows}
+        if None in shas or len(shas) != 1:
+            raise CfError(f"the {mode} labels came from {len(shas - {None})} labeler(s)"
+                          + (" and some carry none" if None in shas else ""),
+                          hint="one tier, one labeler: re-run that mode on every task and "
+                               "transcribe the full result")
+        sha = shas.pop()
+        labeler["workflow_sha256"][mode] = sha
+        # the prompts are inline in the workflow, so its sha is theirs
+        labeler["prompt_sha256"][mode] = sha
+        labeler["skill_commit"][mode] = ",".join(sorted({str(r.get("labeler_commit") or
+                                                             score_mod.UNRECORDED) for r in rows}))
+    return labeler
+
+
+def _p_tier(ablation_path: Path, planted_db: Path, ablation: dict) -> dict:
+    return {"ablation_sha256": inputs.sha256_file(ablation_path),
+            "corpus_sha256": inputs.sha256_file(planted_db),
+            "removed_declarations": len(ablation["removed"]), "modules": len(ablation["modules"])}
+
+
 def _freeze(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
@@ -433,6 +562,9 @@ def _freeze(ws, args) -> int:
         raise CfError("gold is labelled at a universe; the bench has none yet",
                       hint=f"cf bench anchor {args.bench_id} --universe <id> ...")
     gold_mod.check_canaries(layout, bench["canary"])
+    _check_g1(layout)
+    calibration = _check_calibration(layout)
+    labeler = _labeler(layout, calibration)
     clusters = _recluster(paths, layout, bench)
     articles_split = clusters["articles"]
     tiers = {}
@@ -458,65 +590,66 @@ def _freeze(ws, args) -> int:
                 dev_decls |= keys(row)
     seen = sorted(row["gold_id"] for rows in rows_by_tier.values() for row in rows
                   if articles_split.get(row["source_id"]) in ("eval", "test") and keys(row) & dev_decls)
-    if args.plant:
-        eval_g1 = [r for r in rows_by_tier["G1"] if articles_split.get(r["source_id"]) == "eval"]
-        ablation = gold_mod.plant(layout, paths.corpus_db(bench["universe"]["id"]), eval_g1)
-        tiers["P"] = {"ablation_sha256": inputs.sha256_file(layout.ablation_json),
-                      "corpus_sha256": ablation["corpus_sha256"],
-                      "removed_declarations": len(ablation["removed"]),
-                      "modules": len(ablation["modules"])}
-    elif layout.ablation_json.is_file():
-        ablation = read_json(layout.ablation_json)
-        tiers["P"] = {"ablation_sha256": inputs.sha256_file(layout.ablation_json),
-                      "corpus_sha256": ablation["corpus_sha256"],
-                      "removed_declarations": len(ablation["removed"]),
-                      "modules": len(ablation["modules"])}
-    calibration = read_json(layout.calibration_json) if layout.calibration_json.is_file() else None
-    labeler = {"version": gold_mod.LABELER_VERSION, "skill_commit": score_mod.skill_commit(),
-               "workflow_sha256": {}, "prompt_sha256": {}}
-    for mode in sorted(vocab.BENCH_LABEL_MODES):
-        emitted = layout.label_args(mode)
-        if emitted.is_file():
-            sha = read_json(emitted)["labeler"]["workflow_sha256"]
-            labeler["workflow_sha256"][mode] = sha
-            # the prompts are inline in the workflow, so its sha is theirs
-            labeler["prompt_sha256"][mode] = sha
-    doc = {
-        "schema": GOLD_SCHEMA, "bench": args.bench_id,
-        "sourceset": bench["sourceset"], "universe": bench["universe"],
-        "library": bench.get("library"),
-        "frame_sha256": inputs.sha256_file(layout.frame_json),
-        "draw_sha256": inputs.sha256_file(layout.draw_json),
-        "spans_sha256": inputs.sha256_file(layout.spans_json),
-        "clusters_sha256": inputs.sha256_file(layout.clusters_json),
-        "clusters": clusters["clusters"],
-        "splits": {s: sorted(a for a, v in articles_split.items() if v == s)
-                   for s in ("dev", "eval", "test")},
-        "tiers": tiers, "seen": seen,
-        "h": ({"found": calibration["found"], "total": calibration["total"], "h": calibration["h"],
-               "tag_blind": True} if calibration else None),
-        "labeler": labeler,
-        "canary_sha256": sha_of(bench["canary"]),
-    }
     manifests = layout.gold_manifests()
-    if manifests:
-        last_version, last = gold_mod.latest_manifest(layout)
-        if gold_mod.manifest_body(last) == gold_mod.manifest_body(gold_mod.seal(dict(doc))):
-            print(f"bench {args.bench_id} is frozen at gold version {last_version} "
-                  f"({last['manifest_sha256'][:12]}); nothing changed")
-            return 0
-        if not args.supersede:
-            raise CfError(f"bench {args.bench_id} is frozen and its gold changed",
-                          hint="gold is never edited: pass --supersede to write gold version "
-                               f"{last_version + 1}")
-        doc["version"] = last_version + 1
-        doc["previous_sha256"] = last["manifest_sha256"]
-    else:
-        doc["version"] = 1
-        doc["previous_sha256"] = None
-    doc["created"] = now()
-    gold_mod.seal(doc)
-    write_json(layout.gold_manifest(doc["version"]), doc, sort_keys=True)
+    last_version, last = gold_mod.latest_manifest(layout) if manifests else (0, None)
+    staging = layout.planted_dir.with_name("planted.staging")
+    shutil.rmtree(staging, ignore_errors=True)
+    try:
+        if args.plant:
+            eval_g1 = [r for r in rows_by_tier["G1"] if articles_split.get(r["source_id"]) == "eval"]
+            universe = inputs.load_universe(paths, bench["universe"]["id"])
+            if universe.sha256() != bench["universe"]["sha256"]:
+                raise CfError(f"gold is labelled at universe {universe.id} as it was "
+                              f"({str(bench['universe']['sha256'])[:12]}…), which is now "
+                              f"{universe.sha256()[:12]}…: its planted index would be of another state",
+                              hint="re-anchor with --supersede at the new state, or plant at the old one")
+            # planted into a staging directory, moved into gold/planted/ only with its manifest
+            ablation = gold_mod.plant(layout, paths, universe, eval_g1, staging)
+            tiers["P"] = _p_tier(staging / layout.ablation_json.name,
+                                 staging / layout.planted_db.name, ablation)
+        elif last is not None and (last.get("tiers") or {}).get("P"):
+            # the frozen planted tier carries over, as frozen (verify_frozen checks its files)
+            gold_mod.verify_planted(layout, last["tiers"]["P"])
+            tiers["P"] = dict(last["tiers"]["P"])
+        doc = {
+            "schema": GOLD_SCHEMA, "bench": args.bench_id,
+            "sourceset": bench["sourceset"], "universe": bench["universe"],
+            "library": bench.get("library"),
+            "frame_sha256": inputs.sha256_file(layout.frame_json),
+            "draw_sha256": inputs.sha256_file(layout.draw_json),
+            "spans_sha256": inputs.sha256_file(layout.spans_json),
+            "clusters_sha256": inputs.sha256_file(layout.clusters_json),
+            "clusters": clusters["clusters"],
+            "splits": {s: sorted(a for a, v in articles_split.items() if v == s)
+                       for s in ("dev", "eval", "test")},
+            "tiers": tiers, "seen": seen,
+            "h": ({"found": calibration["found"], "total": calibration["total"],
+                   "h": calibration["h"], "tag_blind": True} if calibration else None),
+            "labeler": labeler,
+            "canary_sha256": sha_of(bench["canary"]),
+        }
+        if last is not None:
+            if gold_mod.manifest_body(last) == gold_mod.manifest_body(gold_mod.seal(dict(doc))):
+                print(f"bench {args.bench_id} is frozen at gold version {last_version} "
+                      f"({last['manifest_sha256'][:12]}); nothing changed")
+                return 0
+            if not args.supersede:
+                raise CfError(f"bench {args.bench_id} is frozen and its gold changed",
+                              hint="gold is never edited: pass --supersede to write gold version "
+                                   f"{last_version + 1}")
+            doc["version"] = last_version + 1
+            doc["previous_sha256"] = last["manifest_sha256"]
+        else:
+            doc["version"] = 1
+            doc["previous_sha256"] = None
+        doc["created"] = now()
+        gold_mod.seal(doc)
+        if args.plant:
+            shutil.rmtree(layout.planted_dir, ignore_errors=True)
+            staging.replace(layout.planted_dir)
+        write_json(layout.gold_manifest(doc["version"]), doc, sort_keys=True)
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
     bench["state"] = "frozen"
     bench["frozen_version"] = doc["version"]
     _save_bench(layout, bench)
@@ -547,7 +680,8 @@ def _score(ws, args) -> int:
     doc = score_mod.score(paths, layout, bench, run_id=args.run, split=args.split, arm=args.arm,
                           gold_version=args.gold_version, gate_log=args.gate_log,
                           transcripts=args.transcripts, canary_report=args.canary_report,
-                          no_canary_check=args.no_canary_check, article_costs=args.article_costs,
+                          no_canary_check=args.no_canary_check,
+                          article_costs_path=args.article_costs,
                           audit_labels=args.audit_labels, replicates=args.bootstrap,
                           seed=args.seed, pin_overrides=overrides, checkpoint=args.checkpoint)
     if args.as_json:
@@ -575,10 +709,16 @@ def _compare(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
     _bench(layout)
+    replication = None
+    if args.replication:
+        other, sep, entry_id = args.replication.partition(":")
+        if not sep or not other or not entry_id:
+            raise CfError(f"--replication {args.replication!r} is not BENCH:ENTRY",
+                          hint="name the replicated claim as <bench id>:<ledger entry id>")
+        replication = compare_mod.replicated_entry(BenchLayout.of(paths, other), entry_id)
     entry = compare_mod.compare(layout, args.baseline, args.candidate, claim=args.claim,
-                                aa_path=args.aa, ledger=args.ledger, alpha=args.alpha,
-                                replication=args.replication, replicates=args.bootstrap,
-                                seed=args.seed, note=args.note)
+                                aa_path=args.aa, alpha=args.alpha, replication=replication,
+                                replicates=args.bootstrap, seed=args.seed, note=args.note)
     if args.as_json:
         print(json.dumps(entry, indent=1, sort_keys=True))
         return 0

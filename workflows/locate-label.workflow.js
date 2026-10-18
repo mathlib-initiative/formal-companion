@@ -19,9 +19,11 @@ export const meta = {
 // What it must never do: see a run. The args carry the bench's spans, the
 // curated declarations (anchor mode only), the sources' files and the universe's
 // pins -- nothing a locate run wrote -- and every prompt forbids looking for one.
-// That is what makes G3 a blind label and h a tag-blind calibration.
+// That is what makes G3 a blind label and h a tag-blind calibration: in calibrate
+// mode no prompt carries the article's Wikidata QID, the labeler judges only what
+// the hunters found, and the transcriber counts only those finds.
 
-const LABELER_VERSION = 'locate-label/1'
+const LABELER_VERSION = 'locate-label/2'
 const A = args || {}
 const MODE = A.mode
 const TASKS = A.tasks || []
@@ -72,9 +74,10 @@ const huntTools = `Hunt with tools the system under test does not use, all of th
 Record every query you ran.`
 
 const quoteRules = `A QUOTE is copied character for character from the source's layer file (the "layer" path below; it is one
-long line -- Grep it for a phrase rather than reading it whole). \`exact\` is the start of the passage, at most a
-sentence; add \`prefix\` and/or \`suffix\` (at most 32 characters of the layer immediately around it) only when
-\`exact\` occurs more than once. A quote that does not match the layer exactly once is discarded.`
+long line -- Grep it for a phrase rather than reading it whole). \`exact\` is the start of the passage: at least
+FOUR WHOLE WORDS, never cutting a word at either end, and at most a sentence; add \`prefix\` and/or \`suffix\` (at
+most 32 characters of the layer immediately around it) only when \`exact\` occurs more than once. A quote that
+does not match the layer exactly once, or holds fewer than four whole words, is discarded.`
 
 const ANCHOR_SCHEMA = {
   type: 'object', required: ['task_id', 'quote', 'relation', 'passage_kind', 'evidence'],
@@ -124,9 +127,13 @@ const ENUM_SCHEMA = {
 
 function sourceBlock(t) {
   const s = srcOf(t.source_id)
-  return 'SOURCE ' + t.source_id + ' -- "' + (s.title || '?') + '" (revision ' + (s.revision || '?') + ', Wikidata ' + (s.qid || 'none') + ')' +
+  // tag-blind: calibrate never names the article's Wikidata item, the key of the tag joins
+  const qid = MODE === 'calibrate' ? '' : ', Wikidata ' + (s.qid || 'none')
+  return 'SOURCE ' + t.source_id + ' -- "' + (s.title || '?') + '" (revision ' + (s.revision || '?') + qid + ')' +
     '\n  reading copy: ' + (s.text || '?') + '\n  layer: ' + (s.layer || '?')
 }
+
+const TAG_BLIND = '\nTAG-BLIND: do NOT search for @[wikidata], @[stacks] or @[kerodon] attributes, Wikipedia URLs in docstrings, or Mathlib\'s $MATHLIB/docs/1000.yaml and $MATHLIB/docs/100.yaml -- this run measures how well hunting finds a formalization WITHOUT them.'
 
 function spanBlock(t) {
   return sourceBlock(t) + '\nTHE SPAN (layer characters ' + JSON.stringify(t.span) + (t.section ? ', section ' + JSON.stringify(t.section) : '') + '):\n' +
@@ -134,9 +141,7 @@ function spanBlock(t) {
 }
 
 async function hunt(t, tagBlind) {
-  const blind = tagBlind
-    ? '\nTAG-BLIND: do NOT search for @[wikidata], @[stacks] or @[kerodon] attributes, Wikipedia URLs in docstrings, or Mathlib\'s $MATHLIB/docs/1000.yaml and $MATHLIB/docs/100.yaml -- this run measures how well hunting finds a formalization WITHOUT them.'
-    : ''
+  const blind = tagBlind ? TAG_BLIND : ''
   const votes = await parallel(Array.from({ length: HUNTERS }, (_, k) => () =>
     agent(`${RULES}
 
@@ -152,7 +157,7 @@ Copy task_id "${t.task_id}" unchanged.`,
   return votes.filter(Boolean)
 }
 
-async function adjudicateSpan(t, votes) {
+async function adjudicateSpan(t, votes, tagBlind) {
   const seen = {}
   const pool = []
   for (const v of votes) for (const c of (v.candidates || [])) {
@@ -170,7 +175,9 @@ ${JSON.stringify(pool, null, 1)}
 
 You are the labeler. Read the span and the reading copy around it, decide the scope and the passage kind, and for
 EACH candidate read its statement in the pinned checkout yourself and keep it only with the relation you can
-defend; drop any you cannot find at the pin. Add nothing you have not read at the pin. If the span is not
+defend; drop any you cannot find at the pin. ${tagBlind
+    ? 'Add NO declaration: judge only the hunters\' candidates, which is what this run measures.' + TAG_BLIND
+    : 'Add nothing you have not read at the pin.'} If the span is not
 formal_math, return no declarations. Copy task_id "${t.task_id}" unchanged.`,
     { label: 'label:' + t.task_id, phase: 'Adjudicate', schema: LABEL_SCHEMA, model: MODEL, effort: 'high' })
   if (!label) return null
@@ -188,7 +195,7 @@ formal_math, return no declarations. Copy task_id "${t.task_id}" unchanged.`,
 async function anchor(t) {
   const decls = (t.declarations || []).map(d => '  ' + d.library + ':' + d.declaration +
     (d.path ? '  (' + d.path + (d.line ? ':' + d.line : '') + ')' : '') + (d.signature ? '\n      ' + d.signature : '')).join('\n')
-  return agent(`${RULES}
+  const r = await agent(`${RULES}
 
 ${quoteRules}
 
@@ -202,6 +209,8 @@ Find the ONE passage of the article they formalize and quote its start. Read eac
 adjudicate the relation of the accept set to that passage, once. If no passage of the article states what they
 state, return quote null and say why. Copy task_id "${t.task_id}" unchanged.`,
     { label: 'anchor:' + t.task_id, phase: 'Adjudicate', schema: ANCHOR_SCHEMA, model: MODEL, effort: 'high' })
+  // the task is the one asked, whatever id the agent wrote back
+  return r ? { ...r, task_id: t.task_id } : null
 }
 
 async function inventory(t) {
@@ -219,7 +228,12 @@ you must also judge (keep each that is a passage):
 ${finders || '  (none)'}
 Copy task_id "${t.task_id}" unchanged.`,
     { label: 'enum' + k + ':' + t.task_id, phase: 'Enumerate', schema: ENUM_SCHEMA, model: MODEL, effort: 'high' })
-  const lists = (await parallel([0, 1].map(k => () => enumerate(k)))).map(x => x || { passages: [] })
+  const lists = await parallel([0, 1].map(k => () => enumerate(k)))
+  if (lists.some(x => !x)) {
+    // an inventory from one enumerator is not the two-enumerator inventory GX is
+    log('inventory ' + t.task_id + ': enumerator ' + (lists[0] ? 'B' : 'A') + ' failed; left unlabelled')
+    return null
+  }
   const merged = await agent(`${RULES}
 
 ${quoteRules}
@@ -241,7 +255,8 @@ Copy task_id "${t.task_id}" unchanged.`,
         properties: { quote: ENUM_SCHEMA.properties.passages.items.properties.quote,
           passage_kind: { type: 'string', enum: KINDS }, scope: { type: 'string', enum: SCOPES },
           from: { type: 'array', items: { type: 'string', enum: ['A', 'B', 'F'] } } } } } } } })
-  return merged ? { task_id: t.task_id, source_id: t.source_id, passages: merged.passages || [] } : null
+  return merged ? { task_id: t.task_id, source_id: t.source_id, enumerators: ['A', 'B'],
+    passages: merged.passages || [] } : null
 }
 
 log('locate labeler ' + LABELER_VERSION + ': ' + TASKS.length + ' ' + MODE + ' task(s), model ' + MODEL)
@@ -250,7 +265,8 @@ let labels = []
 if (MODE === 'anchor') {
   labels = await pipeline(TASKS, t => anchor(t))
 } else if (MODE === 'label' || MODE === 'calibrate') {
-  labels = await pipeline(TASKS, t => hunt(t, MODE === 'calibrate').then(votes => votes.length ? adjudicateSpan(t, votes) : null))
+  const tagBlind = MODE === 'calibrate'
+  labels = await pipeline(TASKS, t => hunt(t, tagBlind).then(votes => votes.length ? adjudicateSpan(t, votes, tagBlind) : null))
 } else if (MODE === 'inventory') {
   labels = await pipeline(TASKS, t => inventory(t))
 } else {
