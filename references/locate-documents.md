@@ -1159,7 +1159,10 @@ per gate call: `at`, `run_id`, `mode`, `task_id`, `task_id_from` (`--task-id`,
 `$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `changed_files`
 (whether the call judged a change set), `ownership` (the call's ownership line,
 null without `--changed-files`), `ownership_note` (why no task id was found),
-`ok`, `exit`, `documents`, `by_rule`, `reasons`), and the per-user slot directory the bridge's 15-slot
+`ok`, `exit`, `documents`, `by_rule`, `reasons`; the watchdog's gate-failure rate
+and the bench's `gate_rejections` count only the `changed_files: true` lines,
+tend's validation and pre-merge calls, whatever their `task_id`, and never a
+worker's or a reviewer's `--findings` check), and the per-user slot directory the bridge's 15-slot
 `flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
 `scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
 `~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
@@ -1409,7 +1412,8 @@ priced envelopes' `total_cost_usd` plus, for each call that left no priced
 envelope, its elapsed seconds times the root's highest dollars-per-second
 (`--unpriced-usd-per-hour` before any priced envelope has a duration; the
 record says `estimated_unpriced_usd: null` when neither exists) —
-or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
+or the gate-failure rate of tend's calls in `gate-log/gate.jsonl` (its `changed_files: true`
+lines, over at least 20 of them) or
 the cost per merged task (over at least `min_tasks`) passes `multiple` times the
 pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
 `<root>/watchdog.json`; `--min-gate-calls` and `--min-tasks` are at least 1. The

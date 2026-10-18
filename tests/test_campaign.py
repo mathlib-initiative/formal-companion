@@ -137,8 +137,11 @@ class TestTheWatchdog(_WatchdogRoot):
     def test_the_gate_log_and_merged_tasks_feed_the_rules(self):
         log = self.root / "gate-log"
         log.mkdir()
-        (log / "gate.jsonl").write_text("".join(json.dumps({"ok": i % 2 == 0}) + "\n"
-                                                for i in range(30)))
+        # thirty of tend's calls (changed_files), and ten of an agent's own --findings
+        # checks, which the rate leaves out
+        lines = ([{"ok": i % 2 == 0, "changed_files": True} for i in range(30)]
+                 + [{"ok": False, "changed_files": False}] * 10)
+        (log / "gate.jsonl").write_text("".join(json.dumps(l) + "\n" for l in lines))
         entry = self.tmp / "entry"
         entry.mkdir()
         git(entry, "init", "-q", "-b", "main")
