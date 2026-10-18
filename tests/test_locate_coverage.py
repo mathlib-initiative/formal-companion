@@ -461,5 +461,52 @@ class TestTheBatches(unittest.TestCase):
         self.assertEqual(got, [["p1", "p1", "p1", "p2"], ["p2"]])
 
 
+class TestThePrompts(unittest.TestCase):
+    """When to claim coverage, and how a challenger checks a claim: adversarially."""
+
+    @classmethod
+    def setUpClass(cls):
+        from locate import inputs, plan as lplan, presets as lp, prompts as lprompts
+        from test_locate_planner import scratch
+
+        cls.rendered = {}
+        case = unittest.TestCase()
+        paths = F.make_workspace(scratch(case))
+        F.write_universe(paths)
+        db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
+        layout = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
+                                   universe_id=F.U, tools_db=db, remote_root="/srv/cf")["host"]
+        for mode in (vocab.LOCATE, vocab.LOCATE_CHALLENGE):
+            preset = lp.get(mode)
+            ctx = lprompts.build_context(preset, run_id="r1", host=layout,
+                                         universe=inputs.load_universe(paths, F.U), per_task=8)
+            cls.rendered[mode] = lprompts.render_prompts(preset, ctx)
+        case.doCleanups()
+
+    def test_the_worker_is_told_when_to_claim(self):
+        worker = self.rendered[vocab.LOCATE]["worker.md"]
+        self.assertIn('"coverage": {"complete": true, "parts": [1, 2]', worker)
+        self.assertIn("**together** state **every** clause", worker)
+        self.assertIn("no part assumes more than the passage does", worker)
+        self.assertIn("at least 2 of this passage's `hasPart` locations", worker)
+        self.assertIn("Never put `coverage` on an `absent` or `unresolved` passage", worker)
+        self.assertIn("the Chinese remainder theorem as a ring isomorphism", worker)
+        system = self.rendered[vocab.LOCATE]["worker-system.md"]
+        self.assertIn("a coverage claim on a passage that is not located", system)
+
+    def test_the_challenger_refutes_unless_every_clause_is_matched(self):
+        worker = self.rendered[vocab.LOCATE_CHALLENGE]["worker.md"]
+        self.assertIn("`prominence` or `coverage`", worker)
+        self.assertIn("**refute** it unless every clause of the passage is matched by a part "
+                      "AND no part adds a hypothesis the passage does not have", worker)
+        self.assertIn("The worker's `note` is a claim to check, not evidence", worker)
+        self.assertIn('"target": "coverage", "action": "refute"', worker)
+        self.assertIn("a coverage claim takes `confirm` or `refute` only", worker)
+        self.assertNotIn("downgraded", worker)
+        for name, text in self.rendered[vocab.LOCATE_CHALLENGE].items():
+            with self.subTest(name=name):
+                self.assertNotRegex(text, r"\{\{")
+
+
 if __name__ == "__main__":
     unittest.main()

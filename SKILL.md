@@ -190,7 +190,9 @@ library, at which commit (`docs/proposals/wikipedia-locate.md`; formats in
    locate gate runs out of tree over each task's own documents. Larger work is a
    `cf campaign` of shards.
 5. `cf tally --locate --run <r> --challenge-run <c>` — passage outcomes and the
-   derived status; then `cf export literature-links` — a sealed record set,
+   derived status (`references/vocabulary.md` §1.11: a coverage claim over
+   `hasPart` parts counts only once a challenger confirms it); then
+   `cf export literature-links` — a sealed record set,
    every record checked by the vendored Literature Links checker, quotes capped
    and only from an open licence class.
 6. `cf bench build | anchor | freeze | score | compare` — gold, metrics with
