@@ -1129,6 +1129,33 @@ _PATH_COLUMN = re.compile(r"(?:^|_)(?:worktree(?:_path|_dir)?|path|cwd|directory
 _TASK_COLUMN = re.compile(r"task(?:_?id)?$", re.I)
 
 
+def _open_orchestrator(db_path: pathlib.Path) -> sqlite3.Connection:
+    """A read-only connection to tend's LIVE database that sees its committed writes.
+
+    tend keeps ``orchestrator.sqlite`` in WAL mode, and a row it has committed
+    sits in ``-wal`` until a checkpoint copies it into the main file.  An
+    ``immutable=1`` open reads the main file alone, so it missed every worktree
+    tend had created since the last checkpoint -- on a live run, nearly all of
+    them, and the gate fell back to the single-stem rule (field defect G1).
+    ``mode=ro`` reads the WAL through the shared-memory index, takes no write
+    lock and never blocks the writer.  ``immutable=1`` stays only as the
+    fallback for a database nobody is writing whose directory this user cannot
+    write (no ``-shm`` can be made there), where it is also correct.
+    """
+    uri = f"file:{db_path.as_posix()}"
+    try:
+        con = sqlite3.connect(f"{uri}?mode=ro", uri=True, timeout=5.0)
+    except sqlite3.Error:
+        con = None
+    if con is not None:
+        try:
+            con.execute("SELECT count(*) FROM sqlite_master").fetchone()
+            return con
+        except sqlite3.Error:
+            con.close()
+    return sqlite3.connect(f"{uri}?mode=ro&immutable=1", uri=True)
+
+
 def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path) -> tuple[str, str]:
     """``(task id, how)`` recovered from tend's ``orchestrator.sqlite``, or ``('', why not)``.
 
@@ -1136,17 +1163,24 @@ def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path)
     lookup, never a parse of a documented shape: every table with a
     worktree-path-like column and a task-id-like column is asked for rows whose
     path is this worktree, and the answer counts only when exactly one task id
-    comes back.  The database is opened ``mode=ro&immutable=1``, so the lookup
-    can neither write it nor wait on tend's lock.  This is an ASSUMPTION to
-    verify on the host after every tend upgrade (references/runbook-server.md
-    names the same check for ``TEND_TASK_ID``).
+    comes back.  A recorded path is this worktree when it is the same spelling
+    or resolves to the same directory: tend records the path it was configured
+    with, while the gate is handed the resolved working directory, and the two
+    differ wherever a component is a symlink (``/var`` -> ``/private/var`` on
+    macOS, a symlinked home on a host).  The database is opened read-only
+    through :func:`_open_orchestrator`, so the lookup can neither write it nor
+    wait on tend's lock, and it sees what tend committed to its WAL.  The schema
+    is an ASSUMPTION to verify on the host after every tend upgrade
+    (references/runbook-server.md names the same check for ``TEND_TASK_ID``).
     """
     if db_path is None or not db_path.is_file():
         return "", "no orchestrator.sqlite"
-    candidates = {str(worktree), str(worktree.resolve())}
+    resolved = str(worktree.resolve())
+    candidates = {str(worktree), resolved}
+    suffix = "/" + worktree.resolve().name
     found: set[str] = set()
     try:
-        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro&immutable=1", uri=True)
+        con = _open_orchestrator(db_path)
     except sqlite3.Error as exc:
         return "", f"orchestrator.sqlite will not open ({exc})"
     try:
@@ -1157,11 +1191,18 @@ def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path)
             tasks = [c for c in columns if _TASK_COLUMN.fullmatch(c)]
             for pcol in paths:
                 for tcol in tasks:
-                    q = (f'SELECT DISTINCT "{tcol.replace(chr(34), "")}" FROM '
-                         f'"{table.replace(chr(34), "")}" WHERE "{pcol.replace(chr(34), "")}" IN '
-                         f'({",".join("?" * len(candidates))})')
-                    for (value,) in con.execute(q, sorted(candidates)):
-                        if value not in (None, ""):
+                    p = f'"{pcol.replace(chr(34), "")}"'
+                    # The rows spelled like this worktree, or ending in its name
+                    # (substr, not LIKE: a worktree name may hold `_` or `%`);
+                    # which of the latter is this worktree is decided by resolving.
+                    q = (f'SELECT DISTINCT {p}, "{tcol.replace(chr(34), "")}" FROM '
+                         f'"{table.replace(chr(34), "")}" WHERE {p} IN '
+                         f'({",".join("?" * len(candidates))}) '
+                         f"OR substr(rtrim({p}, '/'), ?) = ?")
+                    for path, value in con.execute(q, [*sorted(candidates), -len(suffix), suffix]):
+                        if value in (None, "") or not isinstance(path, str):
+                            continue
+                        if path in candidates or os.path.realpath(path) == resolved:
                             found.add(str(value))
     except sqlite3.Error as exc:
         return "", f"orchestrator.sqlite could not be read ({exc})"
