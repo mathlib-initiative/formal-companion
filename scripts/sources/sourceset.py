@@ -43,6 +43,8 @@ from . import websource
 
 SCHEMA = "cf-sourceset/1"
 STATE_SCHEMA = "cf-sourceset-state/1"
+#: keys of state.json that are no section: the header, and what refresh_state owns
+_STATE_RESERVED = frozenset({"schema", "id", "family", "manifest", "counts", "updated_at"})
 #: a source directory's files whose shas an entry records
 SHA_FILES = {"raw_sha256": "source.raw.html", "html_sha256": "body.html",
              "layer_sha256": "layer.txt"}
@@ -371,13 +373,43 @@ class Sourceset:
         data = read_json(path, default={}) if path.exists() else {}
         return data if isinstance(data, dict) else {}
 
-    def record_state(self, section: str, payload: dict) -> dict:
-        """Read-modify-write one section of ``state.json``; other sections are kept."""
+    def record_state(self, section: str, payload: dict, key: str | None = None) -> dict:
+        """Read-modify-write one section of ``state.json``; every other section is kept.
+
+        This class is the file's one writer (references/locate-documents.md
+        section 7): the sourceset commands, the planner, the outcomes and the
+        export all record through here, so the file always carries its
+        ``schema`` and ``id`` header and nothing else's.  With no ``key`` the
+        section becomes ``payload``; with one, ``state[section][key]`` becomes
+        ``{**what it was, **payload, "at": <now>}`` -- one run's, one command's
+        or one export's row merged, its siblings kept.  The header keys and the
+        counts ``refresh_state`` owns are not a section anyone else may write.
+        """
+        if not self.paths.sourceset_manifests(self.id):
+            raise SourcesetError(f"no sourceset {self.id!r} in this workspace",
+                                 hint="create it with `cf sourceset create <id>`")
+        if section in _STATE_RESERVED:
+            raise SourcesetError(f"{section!r} is a header of the sourceset state, not a section",
+                                 hint=f"the reserved keys are {', '.join(sorted(_STATE_RESERVED))}")
+        if not isinstance(payload, dict):
+            raise SourcesetError(f"a state section is a mapping, not {type(payload).__name__}")
         state = self.read_state()
         state.setdefault("schema", STATE_SCHEMA)
         state["id"] = self.id
-        state[section] = payload
-        state["updated_at"] = state_mod.now()
+        now = state_mod.now()
+        if key is None:
+            state[section] = payload
+        else:
+            block = state.get(section)
+            if block is None:
+                block = {}
+            elif not isinstance(block, dict):
+                raise SourcesetError(f"state section {section!r} is not a mapping; it cannot "
+                                     f"hold a row per key")
+            existing = block.get(key) if isinstance(block.get(key), dict) else {}
+            block[str(key)] = {**existing, **payload, "at": now}
+            state[section] = block
+        state["updated_at"] = now
         write_json(self.paths.sourceset_state_json(self.id), state, sort_keys=True)
         return state
 

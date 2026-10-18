@@ -270,6 +270,23 @@ release has something to say.
   alpha-spending), claiming a decision only past 150 eval articles or 400 gold
   positives, and records it in the loop ledger. `cflib.vocab` gains the
   labeler's modes. `cf score` is unchanged.
+- The shared interfaces the locate packages meet at (integration wave 1). The corpus's
+  read API (`scripts/corpus/query.py`) is what every consumer calls instead of a
+  private reader: `check_universe` refuses a database built for another state of the
+  universe, `declaration` takes the exact-table `commit`, `tagged` and the new
+  `tags_of_kind` return each tag's declaration path, line and value, and `search`
+  (and `corpus_search.search`, `cf corpus search --all-words`) has an all-words mode.
+  `corpus.sqlite` gains a nullable `decls.deprecated_to` (a deprecated alias's new
+  name) and `meta.blind`; `cf corpus build-db --blind` writes `corpus.blind.sqlite`,
+  the G1-blind copy with no tags and no Wikipedia links in its docstrings, recorded
+  as `corpus_db_blind` (`cflib.paths.WorkspacePaths.corpus_db_blind`).
+  `Universe.mathlib_library()` is the one rule for which library Mathlib's curated
+  lists name. `Sourceset.record_state(section, payload, key=None)` merges one keyed
+  row, as the sourceset state file's one writer. `cflib.vocab` now defines the
+  values packages had kept privately: `MAX_TASKS_PER_ROOT`, `LOCATE_ATTEMPT_CAP`,
+  `SESSION_SLOTS`, `AGENT_TIMEOUT`, `UNRESOLVED_BY`, `CHALLENGE_RULES`,
+  `CHALLENGE_PLANNED` and `INDEX_FLAGS`. `cf init`'s `.gitignore` also ignores the
+  blind database, the bench's planted database copy and the labeler's excerpts.
 - Review fixes to the corpus. Ingest reads the library, commit and toolchain from
   the index's own header and manifest (which may not disagree, and a missing
   toolchain is refused), refuses an index whose bytes or record counts are not

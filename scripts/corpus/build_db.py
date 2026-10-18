@@ -5,7 +5,7 @@ with exactly the schema references/locate-documents.md section 8 fixes: the
 ``meta`` and ``libraries`` tables, the exact table ``decls`` keyed ``UNIQUE
 (library, commit_sha, name)`` for existence checks, the FTS5 index
 ``decls_fts`` over ``name_words``, signature and docstring (rowid = ``decls.id``),
-and ``tags``.
+and ``tags``.  ``decls.deprecated_to`` is the new name a deprecated alias points at.
 
 The database is DERIVED: everything in it comes from ``universe.yaml`` and the
 ``decls.jsonl`` each library's index pins by sha256, and the build refuses an
@@ -35,6 +35,7 @@ from cflib.errors import CfError
 from cflib.hashing import sha256_file
 
 from .corpus_search import SCHEMA, CorpusError, connect, name_words
+from .ingest import strip_wikipedia_urls
 from .universe import Universe
 
 #: the section 8 schema, statement by statement
@@ -45,7 +46,7 @@ DDL = (
     "CREATE TABLE decls (id INTEGER PRIMARY KEY, library TEXT NOT NULL, commit_sha TEXT NOT NULL, "
     "name TEXT NOT NULL, module TEXT, path TEXT, line INTEGER, end_line INTEGER, kind TEXT, "
     "proof_status TEXT NOT NULL, statement INTEGER NOT NULL DEFAULT 0, "
-    "printable INTEGER NOT NULL DEFAULT 1, signature TEXT, docstring TEXT, "
+    "printable INTEGER NOT NULL DEFAULT 1, signature TEXT, docstring TEXT, deprecated_to TEXT, "
     "UNIQUE (library, commit_sha, name))",
     "CREATE VIRTUAL TABLE decls_fts USING fts5(name_words, signature, docstring, "
     "tokenize = 'unicode61')",
@@ -77,9 +78,9 @@ def _decls(path: Path) -> Iterator[dict]:
                     raise CfError(f"{path} line {line_no} is not JSON ({exc.msg})") from None
 
 
-def current(universe: Universe, db: Path) -> bool:
+def current(universe: Universe, db: Path, *, blind: bool = False) -> bool:
     """Does ``db`` already describe ``universe``, byte for byte as recorded?"""
-    recorded = universe.corpus_db
+    recorded = universe.corpus_db_blind if blind else universe.corpus_db
     if not recorded or not Path(db).is_file():
         return False
     if recorded.get("universe_sha256") != universe.sha256():
@@ -96,21 +97,37 @@ def current(universe: Universe, db: Path) -> bool:
         return False
     finally:
         conn.close()
-    return meta.get("schema") == SCHEMA and meta.get("universe_sha256") == universe.sha256()
+    return (meta.get("schema") == SCHEMA and meta.get("universe_sha256") == universe.sha256()
+            and meta.get("blind") == ("1" if blind else "0"))
 
 
-def build(universe: Universe, universe_dir: Path, db: Path, *, force: bool = False) -> dict:
+def _deprecated_to(record: dict) -> str | None:
+    """The new name a deprecated alias points at (the probe's ``deprecated.new_name``)."""
+    value = record.get("deprecated")
+    if isinstance(value, dict) and isinstance(value.get("new_name"), str) and value["new_name"]:
+        return value["new_name"]
+    return None
+
+
+def build(universe: Universe, universe_dir: Path, db: Path, *, force: bool = False,
+          blind: bool = False) -> dict:
     """Write ``db`` from the universe's indexes; returns ``{built, sha256, declarations, ...}``.
 
-    ``universe`` is changed in memory (its ``corpus_db``); the caller saves it.
+    ``blind`` builds the G1-blind database (docs/proposals/wikipedia-locate.md
+    section 8.1: "the tag table turned off"): the same declarations with an
+    EMPTY ``tags`` table, every Wikipedia link stripped from the docstrings in
+    ``decls`` and ``decls_fts``, and ``meta.blind = 1`` -- so neither the
+    curated joins nor the host tools can reach an article's tag or URL.  It is
+    recorded as ``corpus_db_blind``, the full one as ``corpus_db``.
+    ``universe`` is changed in memory; the caller saves it.
     """
     problems = universe.validate(require_indexes=True)
     if problems:
         raise CfError("the universe cannot be built into a database: " + "; ".join(problems[:5]),
                       hint="ingest every library (`cf corpus ingest`) or exclude it")
     db = Path(db)
-    if not force and current(universe, db):
-        recorded = universe.corpus_db or {}
+    if not force and current(universe, db, blind=blind):
+        recorded = (universe.corpus_db_blind if blind else universe.corpus_db) or {}
         return {"built": False, "sha256": recorded.get("sha256"),
                 "declarations": recorded.get("declarations"), "path": str(db)}
     _check_fts5()
@@ -139,7 +156,8 @@ def build(universe: Universe, universe_dir: Path, db: Path, *, force: bool = Fal
             conn.execute(statement)
         conn.executemany("INSERT INTO meta (key, value) VALUES (?, ?)",
                          [("schema", SCHEMA), ("universe", universe.id),
-                          ("universe_sha256", universe.sha256()), ("built", built)])
+                          ("universe_sha256", universe.sha256()), ("built", built),
+                          ("blind", "1" if blind else "0")])
         decl_id = 0
         for lib, decls in indexes:
             count = 0
@@ -147,16 +165,20 @@ def build(universe: Universe, universe_dir: Path, db: Path, *, force: bool = Fal
             for record in _decls(decls):
                 decl_id += 1
                 count += 1
+                docstring = record.get("docstring")
+                if blind:
+                    docstring = strip_wikipedia_urls(docstring)
                 rows.append((decl_id, lib["id"], lib["commit"], record["name"], record.get("module"),
                              record.get("path"), record.get("line"), record.get("end_line"),
                              record.get("kind"), record["proof_status"],
                              int(bool(record.get("statement"))),
                              int(bool(record.get("printable", True))),
-                             record.get("signature"), record.get("docstring")))
+                             record.get("signature"), docstring, _deprecated_to(record)))
                 fts.append((decl_id, name_words(record["name"]), record.get("signature") or "",
-                            record.get("docstring") or ""))
-                for tag in record.get("tags") or []:
-                    tags.append((decl_id, tag["tag"], tag["value"]))
+                            docstring or ""))
+                if not blind:
+                    for tag in record.get("tags") or []:
+                        tags.append((decl_id, tag["tag"], tag["value"]))
                 if len(rows) >= _BATCH:
                     tag_rows += _flush(conn, rows, fts, tags)
                     rows, fts, tags = [], [], []
@@ -182,16 +204,17 @@ def build(universe: Universe, universe_dir: Path, db: Path, *, force: bool = Fal
     conn.close()
     digest = sha256_file(staged)
     os.replace(staged, db)
-    universe.set_corpus_db(sha256=digest, built=built, declarations=total)
+    universe.set_corpus_db(sha256=digest, built=built, declarations=total, blind=blind)
     return {"built": True, "sha256": digest, "declarations": total, "tags": tag_rows,
-            "libraries": len(indexes), "path": str(db)}
+            "libraries": len(indexes), "path": str(db), "blind": blind}
 
 
 def _flush(conn: sqlite3.Connection, rows: list, fts: list, tags: list) -> int:
     if rows:
         conn.executemany("INSERT INTO decls (id, library, commit_sha, name, module, path, line, "
                          "end_line, kind, proof_status, statement, printable, signature, "
-                         "docstring) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
+                         "docstring, deprecated_to) "
+                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", rows)
         conn.executemany("INSERT INTO decls_fts (rowid, name_words, signature, docstring) "
                          "VALUES (?, ?, ?, ?)", fts)
     if tags:

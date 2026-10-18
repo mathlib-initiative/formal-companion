@@ -122,12 +122,13 @@ PUBLISHED_STATUSES = {
 }
 DATA_KINDS = frozenset({"inductive", "structure", "class"})
 DEFINITION_KINDS = frozenset({"def", "abbrev", "opaque"})
-#: what each record flag means, for the command's summary line
+#: what each record flag (``cflib.vocab.INDEX_FLAGS``) means, for the command's summary line
 FLAG_MEANINGS = {
-    "is_prop_unknown": "the probe's isProp failed, so the status is the conservative "
-                       "statement_only",
-    "published_status": "the status is the publishing library's own word, accepted on "
-                        "trust with --accept-published, not re-decided from a closure",
+    vocab.INDEX_FLAG_IS_PROP_UNKNOWN: "the probe's isProp failed, so the status is the "
+                                      "conservative statement_only",
+    vocab.INDEX_FLAG_PUBLISHED_STATUS: "the status is the publishing library's own word, "
+                                       "accepted on trust with --accept-published, not "
+                                       "re-decided from a closure",
 }
 #: records per in-memory chunk when the input has to be sorted
 CHUNK_RECORDS = 50_000
@@ -256,7 +257,7 @@ def decide(record: dict) -> tuple[str, bool, list[str]]:
     status = vocab.decide_proof_status(wanted=wanted, axioms=closure, is_prop=bool(is_prop))
     if is_prop is None and status in (vocab.PROOF_PROVED, vocab.PROOF_DEFINITION):
         status = vocab.PROOF_STATEMENT_ONLY
-        flags.append("is_prop_unknown")
+        flags.append(vocab.INDEX_FLAG_IS_PROP_UNKNOWN)
     statement = statement_flag(kind, record.get("signature")) and status != vocab.PROOF_PROVED
     return status, statement, flags
 
@@ -273,22 +274,13 @@ def _printable(record: dict) -> bool:
 # tags
 # --------------------------------------------------------------------------
 
-def wikipedia_urls(text: str) -> list[str]:
-    """Every Wikipedia article URL in ``text``, in one canonical form, sorted and distinct.
+def _wikipedia_links(text: str) -> Iterator[tuple[int, int, str | None]]:
+    """``(start, end, canonical URL or None)`` of every Wikipedia article link in ``text``.
 
-    A title runs to whitespace or a character no URL in prose carries (``<``,
-    ``>``, a quote mark, a backtick, a bracket, ``|``); an apostrophe is part
-    of it (``Wilson's_theorem``), and so is a BALANCED pair of parentheses
-    (``Lagrange's_theorem_(group_theory)``) -- an unmatched ``)`` ends it, which
-    is how a markdown link's own parenthesis is left out.  A fragment or a query
-    ends the title and is dropped, and so is sentence punctuation at its end.
-    The canonical form is ``https://<lang>.wikipedia.org/wiki/<title>``: the
-    mobile host folded, the title percent-decoded, spaces and runs of
-    underscores one underscore, the first letter upper-case as MediaWiki stores
-    it (references/locate-documents.md section 8) -- so the L2 join on the page
-    URL is an exact one.
+    ``end`` covers the whole link as written -- a fragment or query included --
+    which is what :func:`strip_wikipedia_urls` removes; the canonical URL is
+    what :func:`wikipedia_urls` keeps, None when the link names no title.
     """
-    found: set[str] = set()
     text = str(text or "")
     for match in _WIKIPEDIA.finditer(text):
         lang = match.group(1).lower()
@@ -308,15 +300,54 @@ def wikipedia_urls(text: str) -> list[str]:
                 opened.pop()
             title.append(ch)
             i += 1
+        end = i
+        if i < len(text) and text[i] in "#?":
+            # the fragment or query: no part of the title, part of the link
+            while end < len(text) and text[end] not in _URL_STOP and text[end] != ")":
+                end += 1
+            while end > i + 1 and text[end - 1] in _URL_TRAILING:
+                end -= 1                    # a sentence's punctuation after the fragment
         if depth:
             # an unclosed '(' is no part of a title: cut back to before it
             title = title[:opened[0]]
         raw = "".join(title).rstrip(_URL_TRAILING)
+        if end == i:
+            end = match.end() + len(raw)
         decoded = urllib.parse.unquote(raw, errors="strict") if "%" in raw else raw
         decoded = re.sub(r"[\s_]+", "_", decoded).strip("_")
-        if decoded:
-            found.add(f"https://{lang}.wikipedia.org/wiki/{decoded[0].upper()}{decoded[1:]}")
-    return sorted(found)
+        url = (f"https://{lang}.wikipedia.org/wiki/{decoded[0].upper()}{decoded[1:]}"
+               if decoded else None)
+        yield match.start(), end, url
+
+
+def wikipedia_urls(text: str) -> list[str]:
+    """Every Wikipedia article URL in ``text``, in one canonical form, sorted and distinct.
+
+    A title runs to whitespace or a character no URL in prose carries (``<``,
+    ``>``, a quote mark, a backtick, a bracket, ``|``); an apostrophe is part
+    of it (``Wilson's_theorem``), and so is a BALANCED pair of parentheses
+    (``Lagrange's_theorem_(group_theory)``) -- an unmatched ``)`` ends it, which
+    is how a markdown link's own parenthesis is left out.  A fragment or a query
+    ends the title and is dropped, and so is sentence punctuation at its end.
+    The canonical form is the desktop page URL
+    ``https://<lang>.wikipedia.org/wiki/<title>``: the mobile host folded, the
+    title percent-decoded, spaces and runs of underscores one underscore, the
+    first letter upper-case as MediaWiki stores it (references/locate-documents.md
+    section 8) -- so the L2 join on the page URL is an exact one.
+    """
+    return sorted({url for _s, _e, url in _wikipedia_links(text) if url})
+
+
+def strip_wikipedia_urls(text: str | None) -> str | None:
+    """``text`` with every Wikipedia article link removed: the G1-blind database's docstrings."""
+    if not text:
+        return text
+    out, cursor = [], 0
+    for start, end, _url in _wikipedia_links(text):
+        out.append(text[cursor:start])
+        cursor = end
+    out.append(text[cursor:])
+    return "".join(out)
 
 
 def checkout_head(root: Path) -> str | None:
@@ -533,10 +564,10 @@ def normalise(record: dict, module_paths: dict, checkout: _Checkout, *,
                           f"{', '.join(sorted(PUBLISHED_STATUSES))}",
                           hint="a status ingest cannot map is refused, never guessed")
         statement = statement_flag(kind, record.get("signature")) and status != vocab.PROOF_PROVED
-        flags = ["published_status"]
+        flags = [vocab.INDEX_FLAG_PUBLISHED_STATUS]
     elif published:
         status, statement, flags = decide(record)
-        flags = sorted(set(flags) | {"published_status"})
+        flags = sorted(set(flags) | {vocab.INDEX_FLAG_PUBLISHED_STATUS})
     else:
         if probe_status not in PROBE_STATUSES:
             raise CfError(f"{name}: probe status {probe_status!r} is not one of "

@@ -69,12 +69,28 @@ class TestTheDocumentValues(unittest.TestCase):
                   | vocab.CANDIDATE_VERDICTS | vocab.CANDIDATE_VIA | vocab.TAG_KINDS
                   | vocab.CHALLENGE_TARGETS | vocab.CHALLENGE_ACTIONS | vocab.BENCH_TIERS
                   | vocab.BENCH_ARMS | vocab.BENCH_SPLITS | vocab.FNF_CAUSES | vocab.ERROR_CODES
-                  | vocab.SOURCE_ORIGINS
+                  | vocab.SOURCE_ORIGINS | vocab.UNRESOLVED_BY | vocab.CHALLENGE_RULES
+                  | vocab.CHALLENGE_PLANNED | vocab.INDEX_FLAGS
                   | {vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML,
-                     vocab.UNRESOLVED_ATTEMPT_CAP})
+                     vocab.UNRESOLVED_ATTEMPT_CAP, vocab.AGENT_TIMEOUT})
         for value in sorted(values):
             with self.subTest(value=value):
                 self.assertIn(f"`{value}`", VOCABULARY_MD)
+
+    def test_the_run_bounds_and_the_shared_sets(self):
+        """Wave 1 #85: the values packages had defined privately, now one definition."""
+        self.assertEqual((vocab.MAX_TASKS_PER_ROOT, vocab.LOCATE_ATTEMPT_CAP, vocab.SESSION_SLOTS,
+                          vocab.AGENT_TIMEOUT), (500, 3, 15, "45m"))
+        self.assertEqual(vocab.UNRESOLVED_BY, {"worker", "attempt_cap"})
+        self.assertEqual(vocab.CHALLENGE_RULES, {"refute_by_default", "hunt", "sample", "none"})
+        self.assertEqual(vocab.CHALLENGE_PLANNED, {"required", "sampled_out", "not_required"})
+        self.assertEqual(vocab.INDEX_FLAGS, {"is_prop_unknown", "published_status"})
+        for name in ("MAX_TASKS_PER_ROOT", "LOCATE_ATTEMPT_CAP", "SESSION_SLOTS", "AGENT_TIMEOUT",
+                     "UNRESOLVED_BY", "CHALLENGE_RULES", "CHALLENGE_PLANNED", "INDEX_FLAGS"):
+            with self.subTest(name=name):
+                self.assertIn(f"`{name}`", VOCABULARY_MD)
+        from corpus import ingest
+        self.assertEqual(set(ingest.FLAG_MEANINGS), vocab.INDEX_FLAGS)
 
     def test_the_documents_name_the_values_they_carry(self):
         for value in (vocab.LOCATE_DOCUMENT_SCHEMA, vocab.RENDERER_WEB_HTML, "cf-sourceset/1",
@@ -139,6 +155,27 @@ class TestTheLocatePaths(unittest.TestCase):
         self.assertIn("\nsources/\n", GITIGNORE)
         self.assertEqual(self.paths.sourceset_source_dir("wpm", "enwiki-1-2").parent.name, "sources")
         self.assertIn("corpora/*/corpus.sqlite", GITIGNORE)
+
+    def test_the_derived_databases_and_the_labeler_excerpts_are_ignored(self):
+        """Wave 1 #91: a universe database copy and source excerpts never enter git."""
+        import fnmatch
+
+        from cfcmd.init import GITIGNORE
+
+        patterns = [line for line in GITIGNORE.splitlines() if line and not line.startswith("#")]
+        for pattern in ("corpora/*/corpus.blind.sqlite", "benches/*/gold/planted/*.sqlite",
+                        "benches/*/labeler/"):
+            with self.subTest(pattern=pattern):
+                self.assertIn(pattern, patterns)
+        for path in ("corpora/u1/corpus.sqlite", "corpora/u1/corpus.blind.sqlite",
+                     "benches/v0/gold/planted/corpus.sqlite"):
+            with self.subTest(path=path):
+                self.assertTrue(any(fnmatch.fnmatch(path, p) for p in patterns), path)
+        self.assertEqual(self.paths.corpus_db_blind("u1"),
+                         self.root / "corpora/u1/corpus.blind.sqlite")
+        # the gold labels themselves stay tracked, as corpus/ does
+        self.assertFalse(any(fnmatch.fnmatch("benches/v0/gold/labels.jsonl", p)
+                             for p in patterns))
 
     def test_the_manifests_are_listed_in_version_order(self):
         directory = self.paths.sourceset_dir("wpm")

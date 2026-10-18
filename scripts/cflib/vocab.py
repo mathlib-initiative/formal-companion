@@ -468,6 +468,43 @@ EXPORT_CONTEXT_CHARS = 32
 #: the reason an attempt-capped task's document is UNRESOLVED (section 6,
 #: Convergence): written by the bridge, never by a worker
 UNRESOLVED_ATTEMPT_CAP = "attempt_cap"
+#: who wrote an UNRESOLVED document's ``unresolved.by``: the worker that could not
+#: decide, or the bridge at the attempt cap
+UNRESOLVED_BY_WORKER = "worker"
+UNRESOLVED_BY = frozenset({UNRESOLVED_BY_WORKER, UNRESOLVED_ATTEMPT_CAP})
+
+# --- the run machinery's bounds (sections 6 and 7); the host-side scripts that
+# cannot import cflib (the bridge's agent call, the attempt cap, the gate) keep
+# copies a test pins to these
+#: one tend root holds at most this many tasks; a larger plan is campaign shards
+MAX_TASKS_PER_ROOT = 500
+#: the reviewer rejection whose count reaches this writes the UNRESOLVED document
+LOCATE_ATTEMPT_CAP = 3
+#: the bridge's flock semaphore: one slot below the account's 16 sessions
+SESSION_SLOTS = 15
+#: every agent call runs under ``timeout`` this long; expiry is infrastructure
+AGENT_TIMEOUT = "45m"
+
+# --- the challenge plan (section 5): why a record is in a challenge task, and
+# what the plan says it is owed
+CHALLENGE_RULE_REFUTE = "refute_by_default"
+CHALLENGE_RULE_HUNT = "hunt"
+CHALLENGE_RULE_SAMPLE = "sample"
+CHALLENGE_RULE_NONE = "none"
+CHALLENGE_RULES = frozenset({CHALLENGE_RULE_REFUTE, CHALLENGE_RULE_HUNT, CHALLENGE_RULE_SAMPLE,
+                             CHALLENGE_RULE_NONE})
+#: a record the plan put in a challenge task: its verdict is owed
+CHALLENGE_REQUIRED = "required"
+CHALLENGE_PLANNED = frozenset({CHALLENGE_REQUIRED, CHALLENGE_SAMPLED_OUT,
+                               CHALLENGE_NOT_REQUIRED})
+
+# --- the library index (references/locate-documents.md section 8): a normalised
+# declaration's ``flags``
+#: the probe's isProp failed, so the status is the conservative statement_only
+INDEX_FLAG_IS_PROP_UNKNOWN = "is_prop_unknown"
+#: the status is a published index's own word, accepted with --accept-published
+INDEX_FLAG_PUBLISHED_STATUS = "published_status"
+INDEX_FLAGS = frozenset({INDEX_FLAG_IS_PROP_UNKNOWN, INDEX_FLAG_PUBLISHED_STATUS})
 
 # --- the benchmark (sections 8 and 9)
 #: the gold tiers, never pooled

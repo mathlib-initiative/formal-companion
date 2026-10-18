@@ -16,7 +16,8 @@ shape references/locate-documents.md section 8 fixes.  One file per universe,
 * ``canaries`` -- one row per toolchain whose acceptance canary was ingested
   (section 2.4): no library on a toolchain without a passed canary is ingested;
 * ``corpus_db`` -- ``corpus.sqlite``'s sha256, set by ``build-db`` and cleared
-  by any ingest that changes an index;
+  by any ingest that changes an index; ``corpus_db_blind`` the same for
+  ``corpus.blind.sqlite``, the G1-blind database ``build-db --blind`` writes;
 * ``universe_sha256`` -- recomputed on every save: sha256 over
   ``<id>\\t<commit>\\t<index sha256>``, one line per library sorted by id,
   joined with ``\\n``.
@@ -104,7 +105,7 @@ class Universe:
         if not _DATE.match(str(frozen)):
             raise CfError(f"--frozen {frozen!r} is not a YYYY-MM-DD date")
         data = {"id": universe_id, "frozen": str(frozen), "libraries": [], "excluded": [],
-                "canaries": [], "corpus_db": None}
+                "canaries": [], "corpus_db": None, "corpus_db_blind": None}
         return cls(Path(path), data)
 
     @classmethod
@@ -120,6 +121,7 @@ class Universe:
         data.setdefault("excluded", [])
         data.setdefault("canaries", [])
         data.setdefault("corpus_db", None)
+        data.setdefault("corpus_db_blind", None)
         if data.get("frozen") is not None:
             data["frozen"] = str(data["frozen"])
         universe = cls(path, data)
@@ -155,6 +157,12 @@ class Universe:
         value = self.data.get("corpus_db")
         return value if isinstance(value, dict) else None
 
+    @property
+    def corpus_db_blind(self) -> dict | None:
+        """The G1-blind database's record (``build-db --blind``), or None."""
+        value = self.data.get("corpus_db_blind")
+        return value if isinstance(value, dict) else None
+
     def library_ids(self) -> list[str]:
         return [str(lib.get("id")) for lib in self.libraries]
 
@@ -172,6 +180,23 @@ class Universe:
 
     def sha256(self) -> str:
         return universe_sha256(self.libraries)
+
+    def mathlib_library(self) -> dict | None:
+        """The universe's Mathlib: the one library whose ``brain_lib`` is ``Mathlib``, else
+        the one whose id is ``mathlib``, else None.
+
+        The one rule for which library Mathlib's own curated lists (its
+        ``1000.yaml`` and ``100.yaml``) name, which the candidates stage and the
+        bench both need.  Two libraries carrying the ``Mathlib`` token is refused, not guessed.
+        """
+        tokened = [lib for lib in self.libraries if lib.get("brain_lib") == "Mathlib"]
+        if len(tokened) > 1:
+            raise CfError(f"universe {self.id} has {len(tokened)} libraries with brain_lib "
+                          f"Mathlib: {', '.join(str(lib.get('id')) for lib in tokened)}",
+                          hint="a brain_lib token names one repository")
+        if tokened:
+            return tokened[0]
+        return next((lib for lib in self.libraries if lib.get("id") == "mathlib"), None)
 
     def canary(self, toolchain: str) -> dict | None:
         """The canary row of a toolchain, matched on the Lean version, or None."""
@@ -267,14 +292,18 @@ class Universe:
         self.data["canaries"] = sorted(rows, key=lambda r: str(r.get("lean_version")))
         return row
 
-    def set_corpus_db(self, *, sha256: str, built: str, declarations: int) -> None:
-        self.data["corpus_db"] = {"path": "corpus.sqlite", "sha256": sha256, "built": built,
-                                  "declarations": int(declarations),
-                                  "universe_sha256": self.sha256()}
+    def set_corpus_db(self, *, sha256: str, built: str, declarations: int,
+                      blind: bool = False) -> None:
+        """Record a built database: ``corpus_db``, or with ``blind`` ``corpus_db_blind``."""
+        key, name = (("corpus_db_blind", "corpus.blind.sqlite") if blind
+                     else ("corpus_db", "corpus.sqlite"))
+        self.data[key] = {"path": name, "sha256": sha256, "built": built,
+                          "declarations": int(declarations), "universe_sha256": self.sha256()}
 
     def clear_corpus_db(self) -> None:
-        """An index changed: the database no longer describes this universe."""
+        """An index changed: neither database describes this universe any more."""
         self.data["corpus_db"] = None
+        self.data["corpus_db_blind"] = None
 
     # -- checking and writing ----------------------------------------------
     def validate(self, *, require_indexes: bool = False) -> list[str]:
@@ -325,7 +354,8 @@ class Universe:
         out = {"id": self.id, "frozen": self.frozen,
                "libraries": sorted(libraries, key=lambda lib: str(lib.get("id"))),
                "excluded": self.excluded, "canaries": self.canaries,
-               "corpus_db": self.corpus_db, "universe_sha256": universe_sha256(libraries)}
+               "corpus_db": self.corpus_db, "corpus_db_blind": self.corpus_db_blind,
+               "universe_sha256": universe_sha256(libraries)}
         self.data = out
         return write_yaml(self.path, out,
                           header=f"# universe.yaml -- {self.id} (references/locate-documents.md "

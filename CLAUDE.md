@@ -159,6 +159,9 @@ Those two lines move together or not at all.
   through `cflib.state` (atomic read-modify-write), version 2: a per-source
   `{sha, rows, items}` map and an `anchor_source`, never one top-level sha.
   Every stage writes its counts there; `cf status` prints only what it read.
+  Locate, which plans from a sourceset rather than a companion, writes its counts
+  to `sourcesets/<id>/state.json` instead, and only through `Sourceset.record_state`
+  and `refresh_state` (`scripts/sources/sourceset.py`), the file's one writer.
 - **Idempotence.** Every command may be re-run. Extraction keys on (repo
   commit, adapter key including any ledger/export sha); planning is
   deterministic given `run.yaml`; harvest diffs against the previous receipt;
