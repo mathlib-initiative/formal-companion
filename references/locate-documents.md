@@ -406,6 +406,13 @@ with `\n` — so a re-probe that changes one index changes the universe.
  "deprecated": null, "private": false, "probe_proof_status": "proved", "flags": []}
 ```
 
+`module` is the module's name as Lean prints it, a component that is no
+identifier escaped (`Alpha.Problems.«1»`, `Alpha.Arxiv.«0805.3777».Rank`), and
+`path` the file Lake reads it from, its components unescaped
+(`Alpha/Problems/1.lean`). The host driver expands a root glob into such names
+(`scripts/corpus/probe_merge.py` `module_of_file`), compares names by their
+components, and stops — never skips — at a file no module name can express.
+
 **Ingest refuses an index that is not the pinned one, whole**
 (`scripts/corpus/ingest.py`): the library, commit and toolchain are read from the
 index's own header and its `manifest.json`, which must both name the pin and may

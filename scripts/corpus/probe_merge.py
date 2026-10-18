@@ -35,8 +35,14 @@ from pathlib import Path
 
 #: The schema the probe writes; ``autoform-library-index/v0`` is its base shape.
 SCHEMA = "formal-companion-library-index/v0"
-#: Module names the probe can import: plain identifiers joined by dots.
-_MODULE = re.compile(r"[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*")
+#: A name component the probe writes as it is: a plain ASCII identifier.
+_PLAIN_COMPONENT = re.compile(r"[A-Za-z_][A-Za-z0-9_'!?]*")
+#: a component as Lean PRINTS one unescaped: Lean leaves any identifier plain, Unicode
+#: letters included (``Foo.ö``), so a name read back from the probe is parsed this loosely
+_PRINTED_COMPONENT = re.compile(r"[^.«»\s\x00-\x1f\x7f]+")
+#: what may stand between « and »: anything but the guillemets and control characters, so
+#: an escaped component can neither close early nor carry a newline into the rendered probe
+_ESCAPED_BODY = re.compile(r"[^«»\x00-\x1f\x7f]+")
 _LIBRARY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _PLACEHOLDERS = ("@@IMPORTS@@", "@@LIBRARY_ID@@", "@@ROOTS@@", "@@PREFIXES@@", "@@SRC_DIRS@@")
 KINDS = ("abbrev", "axiom", "class", "def", "inductive", "instance", "opaque", "structure", "theorem")
@@ -69,10 +75,128 @@ def sha256_file(path: Path) -> str:
 
 
 def split_list(value: str) -> list[str]:
-    """A comma/space/newline separated list, or ``@FILE`` naming one item per line."""
+    """A comma/space/newline separated list, or ``@FILE`` naming one item per line.
+
+    A separator inside ``«…»`` is part of the item: an escaped module name may
+    hold a space or a comma (``Foo.«a, b»``) and is still one item.
+    """
     if value.startswith("@"):
         value = Path(value[1:]).read_text(encoding="utf-8")
-    return [item for item in re.split(r"[\s,]+", value) if item]
+    items: list[str] = []
+    current: list[str] = []
+    quoted = False
+    for ch in value:
+        if quoted:
+            current.append(ch)
+            quoted = ch != "»"
+        elif ch == "«":
+            current.append(ch)
+            quoted = True
+        elif ch.isspace() or ch == ",":
+            if current:
+                items.append("".join(current))
+            current = []
+        else:
+            current.append(ch)
+    if current:
+        items.append("".join(current))
+    return items
+
+
+# ---------------------------------------------------------------------------
+# module names
+# ---------------------------------------------------------------------------
+#
+# Lake names a module after its file: ``FormalConjectures/ErdosProblems/1.lean`` is
+# the module whose last component is the string ``1``, and a directory
+# ``Arxiv/0805.3777/`` is ONE component holding a dot.  Neither is an identifier, so
+# Lean writes them escaped -- ``FormalConjectures.ErdosProblems.«1»``,
+# ``FormalConjectures.Arxiv.«0805.3777».TensorRank`` -- and that is the only spelling
+# an ``import`` line can parse.  These four functions are the one place the drivers
+# turn a file into a module name and a module name back into its components.  An
+# escaped spelling and a plain one of the same components are the same module
+# (``Foo.«ö»`` is ``Foo.ö``), which is why names are compared by
+# :func:`module_components`, never as strings.
+
+
+def escape_component(component: str) -> str:
+    """One name component as an ``import`` line may spell it: plain, or ``«escaped»``.
+
+    Refused (``ProbeError``): an empty component, and one holding ``«``, ``»`` or a
+    control character, which no escape can carry.
+    """
+    if _PLAIN_COMPONENT.fullmatch(component):
+        return component
+    if not component or not _ESCAPED_BODY.fullmatch(component):
+        raise ProbeError(f"the name component {component!r} cannot be written as a Lean module "
+                         f"name (it is empty, or holds «, » or a control character)")
+    return f"«{component}»"
+
+
+def module_name(components: "list[str] | tuple[str, ...]") -> str:
+    """The dotted, escaped name of a module given by its components."""
+    if not components:
+        raise ProbeError("a module name needs at least one component")
+    return ".".join(escape_component(c) for c in components)
+
+
+def module_components(name: str, *, strict: bool = False) -> "tuple[str, ...] | None":
+    """The components of a dotted module name, plain or ``«escaped»``; None when malformed.
+
+    ``Foo.«0805.3777».Bar`` is ``("Foo", "0805.3777", "Bar")``.  Malformed: an empty
+    component, an unclosed ``«``, text after a ``»`` before the next dot, an escaped
+    component holding a control character, and a plain one holding whitespace or a
+    control character -- or, with ``strict``, a plain one that is not an ASCII
+    identifier: the spelling this file WRITES into an ``import`` line.  Without it a
+    plain component is read as Lean prints one (``Foo.ö``, which Lean leaves unescaped).
+    """
+    plain = _PLAIN_COMPONENT if strict else _PRINTED_COMPONENT
+    parts: list[str] = []
+    i, n = 0, len(name)
+    while True:
+        if i < n and name[i] == "«":
+            close = name.find("»", i + 1)
+            if close < 0:
+                return None
+            body = name[i + 1:close]
+            if not _ESCAPED_BODY.fullmatch(body):
+                return None
+            parts.append(body)
+            i = close + 1
+        else:
+            dot = name.find(".", i)
+            end = n if dot < 0 else dot
+            piece = name[i:end]
+            if not plain.fullmatch(piece):
+                return None
+            parts.append(piece)
+            i = end
+        if i == n:
+            return tuple(parts)
+        if name[i] != ".":
+            return None
+        i += 1
+        if i == n:
+            return None
+
+
+def module_of_file(relative: "Path | str") -> str:
+    """The module a ``.lean`` file is, given its path relative to the source directory."""
+    parts = Path(relative).with_suffix("").parts
+    return module_name(list(parts))
+
+
+def module_file(name: str) -> str:
+    """The ``.lean`` path a module name is read from, relative to its source directory."""
+    components = module_components(name)
+    if components is None:
+        raise ProbeError(f"{name!r} is not a module name")
+    return "/".join(components) + ".lean"
+
+
+def module_ok(name: str) -> bool:
+    """A name this file may write into an ``import`` line: every component plain ASCII or escaped."""
+    return module_components(name, strict=True) is not None
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +213,9 @@ def render(template: str, library: str, roots: list[str], prefixes: list[str],
     if not roots:
         raise ProbeError("no root module to import")
     for module in roots + prefixes:
-        if not _MODULE.fullmatch(module):
+        # plain or «escaped» components only: the name is written into an `import` line,
+        # and no component can close its escape early or carry a newline there
+        if not module_ok(module):
             raise ProbeError(f"{module!r} is not a module name the probe can import")
     for directory in src_dirs:
         parts = directory.split("/")
@@ -304,6 +430,33 @@ def dumps(record: dict) -> str:
     return json.dumps(record, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+def check_roots_indexed(roots: list[str], prefixes: list[str], modules: list[str]) -> None:
+    """Every root inside the library's prefixes is one of the probe's module records.
+
+    Names are compared by their components, so the probe's own spelling of a module
+    (Lean escapes only what it must) and the driver's agree whatever each escaped.  A
+    root missing here is a module the probe imported but did not index -- a prefix
+    the probe parsed differently, say -- and the merge refuses it rather than write an
+    index short of the roots it names.
+    """
+    have = {module_components(m) for m in modules}
+    wanted = [module_components(p) for p in prefixes]
+    if None in wanted:
+        raise ProbeError(f"a module prefix of the probe header is not a module name: {prefixes}")
+    missing = []
+    for root in roots:
+        parts = module_components(root)
+        if parts is None:
+            raise ProbeError(f"the probe header names the root {root!r}, which is not a module name")
+        inside = any(parts[:len(p)] == p for p in wanted)
+        if inside and parts not in have:
+            missing.append(root)
+    if missing:
+        raise ProbeError(f"{len(missing)} root module(s) inside the prefixes {prefixes} have no "
+                         f"module record: {missing[:5]}; the probe imported them but did not "
+                         "index them")
+
+
 def merge(work: Path, count: int, checkout: Path, out_dir: Path, template: Path, probe: Path,
           parallel: int, started: str) -> dict:
     """Merge the shards in ``work`` into ``out_dir``/index.jsonl and manifest.json."""
@@ -323,6 +476,8 @@ def merge(work: Path, count: int, checkout: Path, out_dir: Path, template: Path,
     if len(modules) != header0["module_count"]:
         raise ProbeError(f"header counts {header0['module_count']} modules, shard 0 emitted {len(modules)}")
     module_names = {m["name"] for m in modules}
+    check_roots_indexed(header0.get("roots") or [], header0.get("module_prefixes") or [],
+                        [m["name"] for m in modules])
     declarations: dict[tuple[str, str], dict] = {}
     for _h, _m, decls, _e in shards:
         for record in decls:

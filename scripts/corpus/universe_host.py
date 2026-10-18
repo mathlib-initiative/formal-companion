@@ -21,7 +21,11 @@ ignored::
     id <TAB> repo-url <TAB> ref <TAB> roots <TAB> kind [<TAB> options]
 
 `ref` is a 40-hex commit, a branch or a tag. `roots` are Lake globs separated
-by commas (`Mod`, `Mod.+` for the submodules of `Mod`, `Mod.*` for both).
+by commas (`Mod`, `Mod.+` for the submodules of `Mod`, `Mod.*` for both). A
+glob's base is a plain module name; the modules it expands to are named after
+their files as Lake names them, a component that is no identifier written
+escaped (`Mod/1.lean` is `Mod.«1»`, a directory `0805.3777` the component
+`«0805.3777»`), and a file no module name can express stops the expansion.
 `kind` is `build` (clone, fetch caches, build, probe) or `published-index`
 (clone, copy the index the library publishes, write a manifest). `options` are
 `KEY=VALUE` pairs separated by `;`; the keys are `OPTION_DEFAULTS` below.
@@ -56,6 +60,15 @@ import sys
 import time
 from collections import Counter
 from pathlib import Path
+
+# The module-name rules (a file to its «escaped» module name and back) are defined once,
+# in probe_merge.py, which sits beside this file on the host as in the tree; run as a
+# script under `python3 -I` the script's directory is not on sys.path, so it is put there.
+if __package__:
+    from . import probe_merge as _names
+else:  # pragma: no cover - the host's `python3 -I universe_host.py`
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import probe_merge as _names
 
 #: Packages that come with Mathlib at a given Mathlib commit and dominate a workspace's disk.
 FAMILY = ("mathlib", "batteries", "aesop", "Qq", "proofwidgets", "plausible",
@@ -223,7 +236,16 @@ def shell_assignments(entry: Entry) -> str:
 # ---------------------------------------------------------------------------
 
 def expand_roots(checkout: Path, globs: list[str], src_dir: str) -> tuple[list[str], list[str]]:
-    """Lake globs to module names (sorted), and the smallest prefix set that covers them."""
+    """Lake globs to module names (sorted), and the smallest prefix set that covers them.
+
+    A glob's ``.+`` is every ``.lean`` file under the base's directory, as Lake
+    reads it: each path component is one name component, so ``ErdosProblems/1.lean``
+    is ``….ErdosProblems.«1»`` and a directory ``0805.3777`` the one component
+    ``«0805.3777»`` -- written escaped (``probe_merge.module_of_file``), the only
+    spelling an ``import`` line parses.  A file no module name can express (a
+    component holding ``«``, ``»`` or a control character) is a refusal: skipping
+    it would index a library short of its roots and still report success.
+    """
     src = checkout / src_dir
     modules: set[str] = set()
     for glob in globs:
@@ -239,11 +261,11 @@ def expand_roots(checkout: Path, globs: list[str], src_dir: str) -> tuple[list[s
             base_dir = src.joinpath(*base.split("."))
             found = 0
             for path in sorted(base_dir.rglob("*.lean")) if base_dir.is_dir() else []:
-                name = ".".join(path.relative_to(src).with_suffix("").parts)
-                if not _MODULE_RE.fullmatch(name):
-                    print(f"universe_host: skipping {path.relative_to(checkout)}: not a module name",
-                          file=sys.stderr)
-                    continue
+                try:
+                    name = _names.module_of_file(path.relative_to(src))
+                except _names.ProbeError as error:
+                    raise UniverseError(f"{path.relative_to(checkout)} is a module of {glob} that no "
+                                        f"Lean module name can express ({error})") from None
                 modules.add(name)
                 found += 1
             if not found and suffix == ".+":
