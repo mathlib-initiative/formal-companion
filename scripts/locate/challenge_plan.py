@@ -7,6 +7,9 @@ passage outcomes of harvested locate runs (``locate.outcomes``):
   default** -- required;
 * every absence and every unresolved outcome on a ``subject`` or ``central``
   passage is **hunted** -- required;
+* every **coverage claim** (the maintainer's decision D1), whatever the
+  passage's prominence, is refuted by default -- required: it upgrades the
+  passage's derived status, so no claim leaves unchallenged;
 * a **stratified sample** -- seeded, one stratum per scope a passage was
   demoted to, one for ``supporting`` demotions and one per weak relation
   (``relatedMatch``, ``narrowMatch``, ``hasPart``) on the remaining locations
@@ -17,7 +20,9 @@ passage outcomes of harvested locate runs (``locate.outcomes``):
 The draw is a function of the seed and the record keys alone (each record's
 rank is ``sha256(seed, key)``), so re-planning gives the same plan.  The
 required records are batched about ``cflib.vocab.CHALLENGE_BATCH_RECORDS`` to a
-task, one source's records kept together and in order.  The whole plan --
+task, one source's records kept together and in order, and a passage with a
+coverage claim never split over two tasks: one challenger judges the claim and
+the parts it names.  The whole plan --
 including every record's planned challenge value -- is written to
 ``runs/<id>/challenge-plan.json``, which the outcomes read back: a record a
 plan required and no verdict judged is owed, never silently ``not_required``.
@@ -42,6 +47,10 @@ REFUTE = vocab.CHALLENGE_RULE_REFUTE
 HUNT = vocab.CHALLENGE_RULE_HUNT
 SAMPLE = vocab.CHALLENGE_RULE_SAMPLE
 NONE = vocab.CHALLENGE_RULE_NONE
+
+
+#: what a coverage record names of each of its parts, for the challenger
+_PART_KEYS = ("location_key", "library", "declaration", "relation", "rank")
 
 
 def _rank(seed: int, key: str) -> str:
@@ -78,6 +87,15 @@ def classify(rows: Iterable[dict], *, run_id: str) -> list[dict]:
                 rec.update(rule=SAMPLE, stratum=f"relation:{loc['relation']}")
             else:
                 rec.update(rule=NONE, stratum=None)
+            out.append(rec)
+        claim = row.get("coverage")
+        if claim:
+            rec = _record(row, vocab.COVERAGE_TARGET, run_id=run_id)
+            by_key = {loc["location_key"]: loc for loc in row.get("locations") or []}
+            rec["parts"] = [{k: by_key.get(key, {}).get(k) for k in _PART_KEYS}
+                            | {"location_key": key} for key in claim["parts"]]
+            rec["note"] = claim.get("note")
+            rec.update(rule=REFUTE, stratum=None)
             out.append(rec)
         outcome = row.get("outcome")
         if outcome in (vocab.OUTCOME_ABSENT, vocab.OUTCOME_UNRESOLVED):
@@ -118,15 +136,30 @@ def draw(records: list[dict], *, seed: int, sample_rate: float) -> list[dict]:
 
 
 def batches(records: list[dict], *, size: int = vocab.CHALLENGE_BATCH_RECORDS) -> list[list[dict]]:
-    """The required records in tasks of at most ``size``, sources kept in order."""
+    """The required records in tasks of at most ``size``, sources kept in order.
+
+    A passage with a coverage claim is one unit: its records go to one task
+    (alone in a task when they are more than ``size``), so the challenger who
+    judges the claim judges the parts it names too.
+    """
     required = sorted((r for r in records if r["planned"] == vocab.CHALLENGE_REQUIRED),
                       key=lambda r: (r["source_id"], (r.get("span") or [0])[0], r["item"],
                                      r["target"], r["key"]))
-    out: list[list[dict]] = []
+    together = {(r["source_id"], r["item"]) for r in required
+                if r["target"] == vocab.COVERAGE_TARGET}
+    units: list[list[dict]] = []
     for rec in required:
-        if not out or len(out[-1]) >= size:
+        passage = (rec["source_id"], rec["item"])
+        if passage in together and units and (units[-1][0]["source_id"],
+                                              units[-1][0]["item"]) == passage:
+            units[-1].append(rec)
+        else:
+            units.append([rec])
+    out: list[list[dict]] = []
+    for unit in units:
+        if not out or len(out[-1]) + len(unit) > size:
             out.append([])
-        out[-1].append(rec)
+        out[-1].extend(unit)
     return out
 
 
@@ -179,7 +212,9 @@ def plan_document(run_id: str, built: dict, *, seed: int, sample_rate: float,
             "key", "target", "source_id", "item", "location_key", "library", "declaration",
             "relation", "outcome", "run_id", "prominence", "scope", "rule", "stratum",
             "planned")}
-            | {"task_id": task_of.get(rec["key"])})
+            | {"task_id": task_of.get(rec["key"])}
+            | ({"parts": [part["location_key"] for part in rec["parts"]]}
+               if rec["target"] == vocab.COVERAGE_TARGET else {}))
     counts: dict[str, int] = defaultdict(int)
     for rec in rows:
         counts[rec["planned"]] += 1

@@ -17,18 +17,21 @@ Three steps, in this order, each a function of what landed:
    ``survived``; ``downgrade``, ``refute`` and ``overturn`` change it and make
    the affected records ``downgraded``, except that a location an overturn
    adds is the challenger's own witnessed finding, ``survived``; the
-   locations a refute leaves are ranked 1..n again).  A record the challenge plan did not
-   require keeps the value the plan recorded (``not_required``,
-   ``sampled_out``) -- unless a prominence overturn to ``subject`` or
-   ``central`` put it under a rule that requires it, which makes it
+   locations a refute leaves are ranked 1..n again).  A passage's coverage
+   claim (the maintainer's decision D1) is its own record: ``confirm`` makes
+   it ``survived``, ``refute`` removes it and leaves its parts ``hasPart``.  A
+   record the challenge plan did not require keeps the value the plan
+   recorded (``not_required``, ``sampled_out``) -- unless a prominence
+   overturn to ``subject`` or ``central`` put it under a rule that requires
+   it, which makes it
    ``challenge_pending``; a record the plan required and no verdict judged has
    challenge ``None`` -- owed, which the export refuses (hard rule 5).
 3. **Status.**  ``proof_status`` and the ``statement`` flag are joined from
    ``corpus.sqlite`` (never read from a document) with ``corpus.query.
    declaration``, and ``cflib.vocab.derive_status`` computes the passage's
-   status over the surviving locations and the absence.  An unresolved passage
-   has no status and is counted on its own, never as not formalized.  The
-   database is the run's CHECK database, the full one, accepted when it was
+   status over the surviving locations, the absence and the coverage claim.
+   An unresolved passage has no status and is counted on its own, never as
+   not formalized.  The database is the run's CHECK database, the full one, accepted when it was
    built for the universe the run pinned (``corpus.query.check_universe``):
    a rebuild of an unchanged universe is the same database, whatever its bytes.
 
@@ -367,13 +370,16 @@ def _passage_challenge(row: dict) -> str | None:
     """One value for a passage over all of its records.
 
     Its locations' (the refuted ones included: a refutation is a judged record),
-    its absence's or unresolved outcome's, and its prominence record's when a
-    plan named one: owed (``None``) when any of them is owed, else
-    ``challenge_pending`` when a rule now requires one nobody judged
+    its absence's or unresolved outcome's, its coverage claim's (a refuted one
+    included), and its prominence record's when a plan named one: owed
+    (``None``) when any of them is owed, else ``challenge_pending`` when a rule now requires one nobody judged
     (:func:`_reopen`), else ``downgraded`` when any changed, else ``survived``
     when any was judged.
     """
     values = [loc.get("challenge") for loc in [*row["locations"], *(row.get("refuted") or [])]]
+    for claim in (row.get("coverage"), row.get("coverage_refuted")):
+        if claim is not None:
+            values.append(claim.get("challenge"))
     if row.get("record_challenge", "unset") != "unset":
         values.append(row.get("record_challenge"))
     if row.get("prominence_challenge", "unset") != "unset":
@@ -564,7 +570,7 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
             _apply_challenge(row, c_planned, c_verdicts, universe, db, problems, layer_of)
             _derive(row, problems)
             for scratch in ("record_challenge", "prominence_challenge",
-                            "passage_challenge_override"):
+                            "passage_challenge_override", "coverage_lapsed"):
                 row.pop(scratch, None)
         outcomes.sort(key=lambda r: (r["source_id"], r["span"][0] if r.get("span") else -1,
                                      r["item"]))
@@ -630,8 +636,13 @@ def _outcome(run_id: str, sid: str, item: str, p: dict, doc: dict, base: dict,
         own.append(f"{sid} {item}: an unresolved passage has no locations "
                    f"({len(locations)} given)")
     receipt = p.get("receipt") if isinstance(p.get("receipt"), dict) else {}
+    coverage = None
+    if p.get("coverage") is not None:
+        coverage, why = coverage_claim(p["coverage"], outcome, locations)
+        if why:
+            own.append(f"{sid} {item}: {why}")
     row = {**_base_fields(sid, item, base), **_stamp(doc), "outcome": outcome,
-           "locations": locations,
+           "locations": locations, "coverage": coverage, "coverage_refuted": None,
            "absence": ({"receipt": receipt, "challenge": None}
                        if outcome == vocab.OUTCOME_ABSENT else None),
            "receipt": receipt, "reason": p.get("reason") or "",
@@ -646,8 +657,44 @@ def _outcome(run_id: str, sid: str, item: str, p: dict, doc: dict, base: dict,
     return row
 
 
+def coverage_claim(given, outcome, locations: list[dict]) -> tuple[dict | None, str]:
+    """A locate document's coverage claim, its parts turned from ranks into location keys.
+
+    ``(claim, "")`` -- ``{complete: True, parts: [location_key, ...], note,
+    challenge: None}``, the parts in the order the document names them -- or
+    ``(None, why)`` when the claim is not one the record set can carry: not on a
+    located passage, not ``complete: true``, fewer than
+    ``cflib.vocab.MIN_COVERAGE_PARTS`` distinct parts, a part that is the rank of
+    no joined ``hasPart`` location, or no note (references/locate-documents.md
+    section 3; the gate refuses each of these first).
+    """
+    if outcome != vocab.OUTCOME_LOCATED:
+        return None, f"a coverage claim on an {outcome} passage is not one"
+    if not isinstance(given, dict) or given.get("complete") is not True:
+        return None, "a coverage claim says complete: true"
+    ranks = given.get("parts")
+    if not isinstance(ranks, list) or not all(isinstance(r, int) and not isinstance(r, bool)
+                                              for r in ranks) \
+            or len(set(ranks)) != len(ranks) or len(ranks) < vocab.MIN_COVERAGE_PARTS:
+        return None, (f"a coverage claim names at least {vocab.MIN_COVERAGE_PARTS} distinct "
+                      f"ranks, not {ranks!r}")
+    by_rank = {loc.get("rank"): loc for loc in locations}
+    keys = []
+    for rank in ranks:
+        loc = by_rank.get(rank)
+        if loc is None or loc.get("relation") != vocab.HAS_PART:
+            return None, (f"coverage part {rank} is not the rank of one of the passage's "
+                          "joined hasPart locations")
+        keys.append(loc["location_key"])
+    note = " ".join(str(given.get("note") or "").split())
+    if not note:
+        return None, "a coverage claim says in its note how the parts state every clause"
+    return {"complete": True, "parts": keys, "note": note, "challenge": None}, ""
+
+
 def _missing(run_id: str, sid: str, item: str, base: dict, plan: dict) -> dict:
     return {**_base_fields(sid, item, base), "outcome": None, "locations": [],
+            "coverage": None, "coverage_refuted": None,
             "absence": None, "receipt": {}, "reason": "no document landed for this passage",
             "unresolved_by": None, "missing": True, "refuted": [], "challenge": None,
             "status": None, "runs": {"inventory": None, "locate": run_id, "challenge": None},
@@ -656,6 +703,7 @@ def _missing(run_id: str, sid: str, item: str, base: dict, plan: dict) -> dict:
 
 def _scoped_out(run_id: str, sid: str, item: str, base: dict, inv_run: str) -> dict:
     return {**_base_fields(sid, item, base), "outcome": None, "locations": [],
+            "coverage": None, "coverage_refuted": None,
             "absence": None, "receipt": {}, "reason": f"scoped {base.get('scope')}",
             "unresolved_by": None, "missing": False, "refuted": [], "challenge": None,
             "status": None, "runs": {"inventory": inv_run, "locate": run_id, "challenge": None},
@@ -702,6 +750,8 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                         loc["note"] = downgrade_note(verdict, layer_of(sid) if layer_of else None)
         kept.append(loc)
     row["locations"] = _renumbered(kept)
+    if row.get("coverage") is not None:
+        _apply_coverage(row, planned, verdicts, problems)
     # the passage-level record: an absence, an unresolved outcome, a scope or a prominence
     target = {vocab.OUTCOME_ABSENT: "absence", vocab.OUTCOME_UNRESOLVED: "unresolved"}.get(
         row["outcome"])
@@ -769,6 +819,53 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                 _reopen(row)
 
 
+def _apply_coverage(row: dict, planned: dict, verdicts: dict, problems: list[str]) -> None:
+    """A coverage claim's challenge (the maintainer's decision D1).
+
+    Every claim is refuted by default: ``confirm`` makes it ``survived``;
+    ``refute`` removes it (kept under ``coverage_refuted``, ``downgraded``) and
+    leaves its parts ``hasPart`` locations.  A verdict applies only while the
+    claim names the parts the plan saw, and an action outside
+    ``cflib.vocab.COVERAGE_ACTIONS`` leaves it owed.  A claim whose part a
+    location verdict refuted or downgraded no longer holds: it upgrades nothing
+    and the passage carries a problem, which the export refuses, until the claim
+    is challenged again.
+    """
+    sid, item, claim = row["source_id"], row["item"], row["coverage"]
+    key = record_key(vocab.COVERAGE_TARGET, sid, item)
+    plan = planned.get(key)
+    verdict = verdicts.get(key)
+    if plan is not None and sorted(plan.get("parts") or []) != sorted(claim["parts"]):
+        claim["challenge"] = None
+        _problem(row, problems, f"{sid} {item}: the coverage claim was planned with other "
+                                "parts; it is owed again")
+    elif verdict is not None and verdict.get("action") not in vocab.COVERAGE_ACTIONS:
+        claim["challenge"] = None
+        _problem(row, problems, f"{sid} {item}: a coverage verdict is confirm or refute, not "
+                                f"{verdict.get('action')!r}; the claim is owed")
+    else:
+        claim["challenge"] = _challenge_value(key, planned, verdicts)
+        if verdict is not None:
+            row["runs"]["challenge"] = verdict["challenge_run"]
+            if verdict.get("action") == "refute":
+                row["coverage_refuted"] = {**claim, "challenge": vocab.CHALLENGE_DOWNGRADED,
+                                           "witness": verdict.get("witness", "")}
+                row["coverage"] = None
+                row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
+                return
+    standing = {loc["location_key"]: loc for loc in row["locations"]
+                if loc["relation"] == vocab.HAS_PART}
+    gone = [k for k in claim["parts"] if k not in standing]
+    if gone:
+        named = {loc["location_key"]: f"{loc['library']}:{loc['declaration']}"
+                 for loc in [*row["locations"], *row["refuted"]]}
+        row["coverage_lapsed"] = True
+        _problem(row, problems, f"{sid} {item}: the coverage claim names "
+                                f"{', '.join(named.get(k, k[:12]) for k in gone)}, which the "
+                                "challenge refuted or downgraded; the claim no longer holds "
+                                "and is to be challenged again")
+
+
 def _reopen(row: dict) -> None:
     """A prominence overturned to ``subject``/``central`` reopens the passage's records.
 
@@ -789,6 +886,9 @@ def _reopen(row: dict) -> None:
     if row.get("absence") is not None and \
             row["absence"].get("challenge") in vocab.CHALLENGE_UNJUDGED:
         row["absence"]["challenge"] = vocab.CHALLENGE_PENDING
+    if row.get("coverage") is not None and \
+            row["coverage"].get("challenge") in vocab.CHALLENGE_UNJUDGED:
+        row["coverage"]["challenge"] = vocab.CHALLENGE_PENDING
 
 
 #: the longest note a downgrade's witness lends a closeMatch, in characters
@@ -894,11 +994,13 @@ def _derive(row: dict, problems: list[str]) -> None:
     if row["outcome"] in (None, vocab.OUTCOME_UNRESOLVED) or row["missing"]:
         row["status"] = None
         return
+    joined = [l for l in row["locations"] if l.get("proof_status")]
+    coverage = row.get("coverage")
+    if row.get("coverage_lapsed") or len(joined) != len(row["locations"]):
+        coverage = None             # named as a problem already, or not joined at all
     try:
         row["status"] = vocab.derive_status(row["passage_kind"] or vocab.PASSAGE_OTHER,
-                                            [l for l in row["locations"]
-                                             if l.get("proof_status")],
-                                            row["absence"] is not None)
+                                            joined, row["absence"] is not None, coverage)
     except CfError as exc:
         _problem(row, problems, f"{row['source_id']} {row['item']}: {exc}")
         row["status"] = None
@@ -939,9 +1041,9 @@ def _locate_counts(outcomes: list[dict], rows: list[dict]) -> dict:
 def outcome_row(row: dict) -> dict:
     """The section 10 row as written to ``reports/locate-outcomes.<run>.jsonl``."""
     keep = ("source_id", "item", "passage_kind", "prominence", "scope", "outcome", "locations",
-            "absence", "challenge", "status", "runs", "span", "head_words", "section",
-            "source_sha", "layer_sha256", "reason", "unresolved_by", "missing", "refuted",
-            "task_id")
+            "coverage", "absence", "challenge", "status", "runs", "span", "head_words",
+            "section", "source_sha", "layer_sha256", "reason", "unresolved_by", "missing",
+            "refuted", "coverage_refuted", "task_id")
     out = {k: row.get(k) for k in keep}
     if row.get("problem"):
         out["problem"] = row["problem"]

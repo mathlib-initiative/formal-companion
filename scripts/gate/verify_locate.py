@@ -40,7 +40,9 @@ references/locate-documents.md sections 2-4 and 9):
 1. the schema of the document for its mode, with the header pins; every
    record the document implies passes the vendored ``literature_links.check``;
    both vendored packages match their manifests and the manifests the shas in
-   ``gate.json``;
+   ``gate.json``; a coverage claim sits on a located passage and names at
+   least two of its ``hasPart`` locations, with a note in the worker's own
+   words, and no challenge document confirms one while refuting a part;
 2. every quote matches exactly once on the source's layer, at its passage's
    span start and inside the span, and its ``In-text #<hex>`` is the hash of
    that start's head (an inventory's ids recomputed over all its passages; a
@@ -208,6 +210,11 @@ CHALLENGE_COMBOS = {
     "coverage": frozenset({"confirm", "refute"}),
 }
 UNRESOLVED_BY = frozenset({"worker", "attempt_cap"})
+HAS_PART = "hasPart"
+#: a coverage claim's keys and its least number of parts (cflib.vocab.MIN_COVERAGE_PARTS;
+#: references/locate-documents.md section 3)
+COVERAGE_KEYS = frozenset({"complete", "parts", "note"})
+MIN_COVERAGE_PARTS = 2
 MAX_LOCATIONS_PER_PASSAGE = 5
 MIN_ABSENCE_QUERIES = 3
 LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
@@ -903,6 +910,72 @@ def _check_receipt(cfg: GateConfig, ctx: Context, problems: Problems, where: str
     return {"queries": queries, "candidates": [c for c in candidates if isinstance(c, dict)]}
 
 
+def _rank_of(location: dict) -> int | None:
+    rank = location.get("rank")
+    return rank if isinstance(rank, int) and not isinstance(rank, bool) else None
+
+
+def _check_coverage(problems: Problems, where: str, coverage: Any, *, outcome: Any,
+                    locations: list[dict], layer: str) -> None:
+    """Rule 1: a passage's coverage claim (the maintainer's decision D1).
+
+    ``{"complete": true, "parts": [<rank>, ...], "note": "<one sentence>"}`` on a
+    LOCATED passage only: at least two distinct parts, each the rank of one of the
+    passage's ``hasPart`` locations, and a note in the worker's own words -- at
+    most ``NOTES_MAX`` characters, and no more of the source verbatim than the
+    export's quote cap (``locate_records.verbatim_run``).  A claim upgrades the
+    passage's derived status once a challenger confirms it, so a malformed one is
+    refused here, while the worker can still fix it.
+    """
+    at = f"{where}: coverage"
+    if outcome != "located":
+        problems.add(1, at, f"a coverage claim belongs to a located passage; this one is "
+                            f"{outcome}")
+        return
+    if not isinstance(coverage, dict):
+        problems.add(1, at, "coverage is {complete: true, parts: [<ranks>], note: <one "
+                            "sentence>}")
+        return
+    extra = sorted(set(coverage) - COVERAGE_KEYS)
+    if extra:
+        problems.add(1, at, f"carries {', '.join(map(repr, extra))}; a claim is complete, "
+                            f"parts and note, nothing else")
+    if coverage.get("complete") is not True:
+        problems.add(1, at, "complete is true: a passage claims coverage only when its parts "
+                            "together state every clause")
+    parts = coverage.get("parts")
+    if not isinstance(parts, list) or not all(isinstance(r, int) and not isinstance(r, bool)
+                                              for r in parts):
+        problems.add(1, at, "parts is a list of the ranks of this passage's hasPart locations")
+    else:
+        if len(set(parts)) != len(parts):
+            problems.add(1, at, f"parts {parts} names a rank twice")
+        if len(set(parts)) < MIN_COVERAGE_PARTS:
+            problems.add(1, at, f"a coverage claim names at least {MIN_COVERAGE_PARTS} parts "
+                                f"(one location that states the whole passage is an "
+                                f"exactMatch, not a hasPart)")
+        by_rank = {_rank_of(loc): loc for loc in locations if _rank_of(loc) is not None}
+        for rank in sorted(set(parts)):
+            loc = by_rank.get(rank)
+            if loc is None:
+                problems.add(1, at, f"part {rank} is the rank of no location of this passage")
+            elif loc.get("relation") != HAS_PART:
+                problems.add(1, at, f"part {rank} is a {loc.get('relation')} location; a "
+                                    f"claim's parts are its hasPart locations")
+    note = coverage.get("note")
+    if not _nonempty_str(note):
+        problems.add(1, at, "note says, in one sentence of your own, how the parts together "
+                            "state every clause")
+    elif len(note) > NOTES_MAX:
+        problems.add(1, at, f"note is {len(note)} characters; at most {NOTES_MAX}")
+    else:
+        run = lr.verbatim_run(note, layer)
+        if run is not None:
+            problems.add(1, at, f"note carries {len(run.split())}+ words of the source verbatim "
+                                f"({run[:40]!r}...), past the {lr.QUOTE_WORDS}-word quote cap: "
+                                f"say it in your own words")
+
+
 def _curated(ctx: Context, source_id: str) -> list[tuple[str, str]]:
     data = ctx.candidates(source_id)
     if not data:
@@ -1188,6 +1261,9 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
                 problems.add(1, where, "an unresolved passage has no locations")
             if not _nonempty_str(p.get("reason")) and not unresolved:
                 problems.add(1, where, "an unresolved passage says why (reason)")
+        if "coverage" in p:
+            _check_coverage(problems, where, p["coverage"], outcome=outcome,
+                            locations=locations, layer=source.layer)
         # Rule 4's "located or rejected with a reason": a location whose relation
         # COUNTS locates a hit (a relatedMatch is "relevant but states something
         # else", so it discharges nothing on its own), and a rejection with a
@@ -1313,6 +1389,22 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                               span=span, quote=quote, item=str(v.get("item")),
                               passage_kind=rec.get("passage_kind"), outcome="located",
                               locations=locations)
+    # one document may not confirm a coverage claim and refute or downgrade one of the
+    # parts it names: the claim then names a location that is no longer a hasPart one
+    changed = {v.get("location_key") for v in verdicts if isinstance(v, dict)
+               and v.get("target") == "location" and v.get("action") in ("refute", "downgrade")}
+    for i, v in enumerate(verdicts):
+        if not (isinstance(v, dict) and v.get("target") == "coverage"
+                and v.get("action") == "confirm"):
+            continue
+        rec = records.get((v.get("item"), "coverage", None)) or {}
+        hit = sorted(str(part.get("location_key")) for part in rec.get("parts") or []
+                     if isinstance(part, dict) and part.get("location_key") in changed)
+        if hit:
+            problems.add(1, f"{name}: verdicts[{i}]",
+                         f"confirms the coverage claim of {v.get('item')} and refutes or "
+                         f"downgrades its part(s) {', '.join(k[:12] for k in hit)}: a claim "
+                         f"stands only while every part is a hasPart location; refute it")
     owed = [k for k in records if k not in judged]
     if owed:
         problems.add(1, name, f"{len(owed)} record(s) of this task have no verdict "
