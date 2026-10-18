@@ -435,13 +435,18 @@ class Sourceset:
         """What on disk disagrees with one entry's shas (checked only when asked).
 
         With ``views`` the rendered views are checked too: ``layer.txt`` against
-        ``layer_sha256``, and ``render.json`` and ``layer_map.json`` against the
-        entry's renderer and layer, so a view another renderer wrote is caught.
+        ``layer_sha256``, ``render.json`` and ``layer_map.json`` against the
+        entry's renderer and layer, so a view another renderer wrote is caught,
+        and every view ``render.json`` records under ``views`` against its sha,
+        so a view rewritten under the same renderer is caught too.  A rendering
+        of the current renderer (``cflib.vocab.RENDERER_WEB_HTML``) must record
+        them; an older one's ``render.json`` predates the record.
         """
         sid = entry.get("source_id")
         directory = self.source_dir(sid)
         out: list[str] = []
         if views and entry.get("renderer"):
+            record = None
             for name, keys in (("render.json", ("renderer", "layer_sha256")),
                                ("layer_map.json", ("renderer",))):
                 try:
@@ -449,11 +454,14 @@ class Sourceset:
                 except (OSError, ValueError):
                     out.append(f"{sid}: {name} is missing or unreadable")
                     continue
+                if name == "render.json" and isinstance(data, dict):
+                    record = data
                 for key in keys:
                     if not isinstance(data, dict) or data.get(key) != entry.get(key):
                         got = data.get(key) if isinstance(data, dict) else None
                         out.append(f"{sid}: {name} says {key} {got!r}, the manifest records "
                                    f"{entry.get(key)!r}")
+            out.extend(self._view_problems(sid, directory, entry, record))
         for key, name in SHA_FILES.items():
             if key == "layer_sha256" and not views:
                 continue
@@ -468,6 +476,31 @@ class Sourceset:
             if got != want:
                 out.append(f"{sid}: {name} has sha {got[:12]}..., the manifest records "
                            f"{want[:12]}...")
+        return out
+
+    @staticmethod
+    def _view_problems(sid: str, directory: Path, entry: dict, record: dict | None) -> list[str]:
+        """Every view ``render.json`` records under ``views`` whose file is not that sha."""
+        if record is None:
+            return []
+        recorded = record.get("views")
+        if recorded is None:
+            if entry.get("renderer") == vocab.RENDERER_WEB_HTML:
+                return [f"{sid}: render.json records no view shas, which every "
+                        f"{vocab.RENDERER_WEB_HTML} rendering does"]
+            return []
+        if not isinstance(recorded, dict):
+            return [f"{sid}: render.json's views is not a map of file names to shas"]
+        out = []
+        for name, want in sorted(recorded.items()):
+            path = directory / str(name)
+            if "/" in str(name) or not path.is_file():
+                out.append(f"{sid}: {name} is missing, render.json records its sha")
+                continue
+            got = sha256_file(path)
+            if got != want:
+                out.append(f"{sid}: {name} has sha {got[:12]}..., render.json records "
+                           f"{str(want)[:12]}...")
         return out
 
     # -- state ---------------------------------------------------------

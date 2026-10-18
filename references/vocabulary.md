@@ -320,7 +320,7 @@ not a bool (absent or `null` is `false`); and any value outside these sets.
 | enum | values |
 |---|---|
 | `LOCATE_DOCUMENT_SCHEMA` | `cf-locate/1`: the `schema` of every inventory, locate and challenge document |
-| `RENDERER_WEB_HTML` | `web-html/2`: the renderer of the first corpus's web sources, pinned by every run, gate and score document (`web-html/1` kept style and script text in the layer and collapsed ASCII whitespace only; no layer of it is read any more) |
+| `RENDERER_WEB_HTML` | `web-html/3`: the renderer of the first corpus's web sources, pinned by every run, gate and score document (`web-html/1` kept style and script text in the layer and collapsed ASCII whitespace only; `web-html/2` took a named concept's bold for a paragraph label and recorded no view shas in `render.json`; no layer of either is read any more) |
 | `PAGE_FLAGS` | `redirect` · `disambiguation` · `list` · `biography` — what a sourceset entry's `flags` say of its page, each `true`, `false` or `null` (not determined): the first three set at enumeration from the page info and the assessment, `biography` (Wikidata P31 = Q5) by `cf sourceset flag-biographies`; a page with one of them true is no concept article |
 | `SOURCE_ORIGINS` | `enumerated` (the PageAssessments listing, at a page's latest revision) · `adopted` (a consumer's pinned revision and bytes, recorded in `adopted_from`; a run plans it instead of an enumerated revision of the same page) — a sourceset entry's `origin` |
 | `LOCATE_OUTCOMES` | `located` · `absent` · `unresolved` — what one `formal_math` passage of a locate document ends with; `OUTCOME_KIND` tallies them as `LOCATION`, `ABSENCE` and `UNRESOLVED` |

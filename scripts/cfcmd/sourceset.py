@@ -1035,6 +1035,7 @@ def _render(workspace, args) -> int:
     entries = {e["source_id"]: dict(e) for e in base}
     rendered, unchanged, refused, waiting = 0, 0, [], 0
     older_renderer = 0
+    restored = 0
     for e in base:
         sid = e["source_id"]
         if wanted and sid not in wanted:
@@ -1059,7 +1060,21 @@ def _render(workspace, args) -> int:
         if e.get("layer_sha256"):
             if e["layer_sha256"] == rendering.layer_sha256 and \
                     e.get("renderer") == render_html.RENDERER:
-                render_html.write_rendering(directory, rendering)   # restore missing views
+                # a recorded rendering is only ever COMPLETED: a missing view is restored,
+                # and a view that exists with other bytes than this renderer writes is
+                # refused by name -- the renderer's rule (a label set, say) changed under
+                # its id, or the file was edited, and rewriting it would change a pinned
+                # source's views in place
+                missing, differing = render_html.view_differences(directory, rendering)
+                if differing:
+                    refused.append(f"{sid}: {', '.join(differing)} on disk is not what "
+                                   f"{render_html.RENDERER} renders from this body, and a "
+                                   f"recorded rendering is never rewritten (the renderer's "
+                                   f"rule changed without a new id, or the file was edited)")
+                    continue
+                if missing:
+                    render_html.write_rendering(directory, rendering)
+                    restored += 1
                 unchanged += 1
                 continue
             refused.append(f"{sid}: the layer would become {rendering.layer_sha256[:12]}... "
@@ -1077,10 +1092,12 @@ def _render(workspace, args) -> int:
         rendered += 1
     manifest = ss.write_version(base, entries.values())
     ss.refresh_state(command="render", details={"rendered": rendered, "unchanged": unchanged,
+                                                "views_restored": restored,
                                                 "refused": len(refused),
                                                 "renderer": render_html.RENDERER})
-    log.info(f"rendered {rendered} source(s), {unchanged} unchanged, {waiting} waiting for "
-             f"bytes, {len(refused)} refused")
+    log.info(f"rendered {rendered} source(s), {unchanged} unchanged"
+             + (f" ({restored} with missing views restored)" if restored else "")
+             + f", {waiting} waiting for bytes, {len(refused)} refused")
     for line in refused[:20]:
         log.warn(f"  {line}")
     if older_renderer:

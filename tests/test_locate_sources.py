@@ -137,7 +137,7 @@ class TestTheLayer(unittest.TestCase):
     def test_the_shas_are_of_the_utf8(self):
         r = rh.render(PAGE)
         self.assertEqual(r.layer_sha256, rh.sha256_text(r.layer))
-        self.assertEqual(r.record()["renderer"], "web-html/2")
+        self.assertEqual(r.record()["renderer"], "web-html/3")
         self.assertEqual(rh.RENDERER, vocab.RENDERER_WEB_HTML)
 
 
@@ -1729,8 +1729,8 @@ class TestFieldBoldLabelsAreNoDefinitions(unittest.TestCase):
 
     def test_a_label_only_bold_makes_no_passage(self):
         for label in ("Proof", "Proof.", "Example.", "Definition:", "Example 2:", "Case 1:",
-                      "Proof of the lemma.", "Theorem (Widget lemma).", "Solution:",
-                      "Base case:", "Remark 3.1."):
+                      "Proof of the lemma.", "Proof (sketch).", "Solution:", "Problem 3.",
+                      "Base case:", "Remark 3.1.", "Case 2", "Example (iii)"):
             with self.subTest(label=label):
                 self.assertEqual(self.finder_terms(
                     f"<p><b>{label}</b> Split the widget along its spine.</p>"), [])
@@ -1750,6 +1750,31 @@ class TestFieldBoldLabelsAreNoDefinitions(unittest.TestCase):
             ["solution"])
         self.assertEqual(self.finder_terms("<p>The <b>Pi</b> gadget.</p>"), ["Pi"])
 
+    def test_a_named_concept_or_statement_is_a_term(self):
+        """web-html/2 stripped a trailing letter, roman numeral or parenthesised token as an
+        enumerator, and a parenthesised name, so these named concepts and statements made
+        no passage, with no count anywhere: no inventory pre-fill, no rule 8 obligation,
+        and no L2 query."""
+        for term in ("property (T)", "Axiom A", "Problem P", "Statement A",
+                     "Theorem (Widget lemma).", "Lemma (Gadget)."):
+            with self.subTest(term=term):
+                self.assertFalse(vocab.is_bold_label(term))
+                self.assertEqual(self.finder_terms(
+                    f"<p>A widget group has <b>{term}</b> when every gadget spans it.</p>"),
+                    [term])
+
+    def test_the_label_rule_s_drops_are_counted(self):
+        r = rh.render('<p>The widget article opens with this lead paragraph here.</p>\n'
+                      '<h2 id="S">Section</h2>\n'
+                      '<p><b>Proof.</b> Split the widget along its spine.</p>\n'
+                      '<p><b>Definition:</b> A <b>widget group</b> is a group.</p>\n'
+                      '<p>Let <b>R</b> be a widget ring.</p>\n'
+                      '<p><b>Example 2:</b> the trivial widget.</p>')
+        # the Proof. and Example 2: paragraphs: a label kept each from a passage; the
+        # Definition: one has its term, and the bold R is a symbol, not a label
+        self.assertEqual(r.counts["bold_labels_dropped"], 2)
+        self.assertEqual(r.record()["counts"]["bold_labels_dropped"], 2)
+
     def test_every_label_is_in_the_vocabulary_document(self):
         text = (SKILL / "references" / "vocabulary.md").read_text(encoding="utf-8")
         for label in sorted(vocab.BOLD_LABELS | vocab.BOLD_LABELS_PUNCTUATED):
@@ -1767,7 +1792,20 @@ GOLDEN_EXTRA = (
     '<mrow><mi>a</mi><mspace width="0.167em"/><mi>b</mi></mrow></math></span> out.</p>\n')
 
 #: sha256 of every file write_rendering writes for the golden page, per renderer id
+#: (an older row is the record of what that renderer wrote; only the current one is checked)
 GOLDEN_VIEWS = {
+    "web-html/3": {
+        "body.html": "adf883de75208f77f7c558b176b5c833cc2ed1d164ee81ed95111227eff5bb8f",
+        "finders.json": "dae197e64e3d8a4b9c9a384ef0dc46baf3182ff033e3da9899db771bdccdb7da",
+        "formulas.json": "8539aec3aeaafa945c013ed34c78008fd8fa805a2014c55292c0ce398eb7eb97",
+        "head.txt": "1838f6844084223bffbd0be45a176f327587984f1cd7372531901bda093df2fb",
+        "layer.txt": "9a95ca0666dcf41f40c93868ac1c407ce27bcdcd3ececeaee1dad8fdd3494909",
+        "layer_map.json": "78d2146ee929e589ce379db4627afc6c4233b99db979027d2857c5847a21f94b",
+        "paragraphs.json": "bc3b030c9c6396f3ac3156d2c3ab37ae740a1cfe748afae78450c1183dcb9ddf",
+        "render.json": "297dc359d9a615c71ce9e8b349da77e4d0fe0928ca7c01de3f34be22fc280b6b",
+        "sections.json": "b70c3527079235f0e5dbcd659cd57fcdc0575f8db837734270caa6f01d664f07",
+        "text.txt": "3e0a85699ad46f101f46a793a43edd7726846719d3caf8b36af8e88cfcbf63aa",
+    },
     "web-html/2": {
         "body.html": "adf883de75208f77f7c558b176b5c833cc2ed1d164ee81ed95111227eff5bb8f",
         "finders.json": "dae197e64e3d8a4b9c9a384ef0dc46baf3182ff033e3da9899db771bdccdb7da",
@@ -1839,6 +1877,117 @@ class TestFieldL1EveryViewIsPinnedToTheRendererId(_FieldCase):
         code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
         self.assertEqual(code, 1, out)
         self.assertIn("layer_map.json says renderer 'web-html/1'", out)
+
+
+#: bold texts the paragraph-label rule is asked about for its fingerprint: labels,
+#: punctuated words with and without their mark, enumerators, names and terms
+LABEL_PROBES = (
+    "Proof", "Proof.", "Proof of the lemma:", "Proof (sketch).", "Example 2:", "Example (iii)",
+    "Case 2", "Case 1:", "Step 1a.", "Remark 3.1.", "Definition:", "Base case:", "Theorem.",
+    "Theorem (Widget lemma).", "Lemma (Gadget).", "Solution", "Solution:", "solution",
+    "Problem 3.", "Problem 3", "Problem P", "Axiom A", "Axiom A.", "Statement A",
+    "property (T)", "Property (T):", "Answer (b):", "widget group", "Widget lemma", "R", "Pi")
+
+
+def label_rule_fingerprint() -> str:
+    """sha256 of everything the finders' label rule is: its sets, patterns and answers."""
+    blob = json.dumps({
+        "labels": sorted(vocab.BOLD_LABELS), "punctuated": sorted(vocab.BOLD_LABELS_PUNCTUATED),
+        "trim": vocab._LABEL_TRIM, "enumerator": vocab._LABEL_ENUMERATOR.pattern,
+        "min_term_letters": rh.MIN_TERM_LETTERS,
+        "answers": {text: vocab.is_bold_label(text) for text in LABEL_PROBES},
+        "terms": {text: rh.is_term(text) for text in LABEL_PROBES}},
+        sort_keys=True, ensure_ascii=False)
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
+#: the label rule's fingerprint per renderer id (web-html/2 pinned none: its label sets
+#: could change under it, which is how the review found the finders unpinned)
+GOLDEN_LABEL_RULE = {
+    "web-html/3": "04bc36725586278b8671382080cd380b3e7cc5af2ca56fc6677f88f7661645ae",
+}
+
+
+class TestTheLabelRuleIsPinnedToTheRendererId(_FieldCase):
+    """The finder rule calls cflib.vocab.is_bold_label, whose label sets live in the
+    vocabulary and change like any other: adding "solution" to BOLD_LABELS left every
+    golden view equal yet changed finders.json of a page with a bold "solution"."""
+
+    def test_the_rule_is_the_renderer_ids(self):
+        self.assertIn(rh.RENDERER, GOLDEN_LABEL_RULE,
+                      "a new renderer id: add its label-rule fingerprint to GOLDEN_LABEL_RULE")
+        self.assertEqual(label_rule_fingerprint(), GOLDEN_LABEL_RULE[rh.RENDERER],
+                         f"the paragraph-label rule changed under {rh.RENDERER}: the finders "
+                         f"read it, so a change to it or to its label sets is a new renderer "
+                         f"id -- bump render_html.RENDERER and cflib.vocab.RENDERER_WEB_HTML "
+                         f"and add rows to GOLDEN_VIEWS and GOLDEN_LABEL_RULE")
+
+    def test_a_label_set_edit_changes_the_fingerprint(self):
+        before = label_rule_fingerprint()
+        with mock.patch.object(vocab, "BOLD_LABELS", vocab.BOLD_LABELS | {"solution"}):
+            self.assertNotEqual(label_rule_fingerprint(), before)
+
+    def rendered_term_source(self) -> tuple[str, list[str]]:
+        self.enumerate()
+        self.fetch()
+        code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 0, out)
+        for e in self.ss.latest():
+            if not e.get("layer_sha256"):
+                continue
+            finders = json.loads((self.ss.source_dir(e["source_id"]) / "finders.json")
+                                 .read_text(encoding="utf-8"))
+            terms = [f["term"] for f in finders if f["finder"] == "bold_definition"]
+            if terms:
+                return e["source_id"], terms
+        self.fail("no rendered fixture source has a bold_definition finder")
+
+    def test_a_render_never_rewrites_a_recorded_view(self):
+        """After a label edit, `render` rewrote finders.json in place under the frozen id
+        and counted the source unchanged (exit 0); render.json recorded no sha of it."""
+        sid, terms = self.rendered_term_source()
+        d = self.ss.source_dir(sid)
+        before = {n: (d / n).read_bytes() for n in rh.RENDER_FILES}
+        version = self.ss.latest().version
+        labels = vocab.BOLD_LABELS | {t.casefold() for t in terms}
+        with mock.patch.object(vocab, "BOLD_LABELS", labels):
+            code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"{sid}: finders.json", out)
+        self.assertIn("never rewritten", out)
+        self.assertEqual({n: (d / n).read_bytes() for n in rh.RENDER_FILES}, before)
+        self.assertEqual(self.ss.latest().version, version)
+        # a MISSING view is still restored, the rest left as they are
+        (d / "head.txt").unlink()
+        code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 with missing views restored", out)
+        self.assertEqual((d / "head.txt").read_bytes(), before["head.txt"])
+
+    def test_every_view_sha_is_recorded_and_verified(self):
+        sid, _terms = self.rendered_term_source()
+        d = self.ss.source_dir(sid)
+        record = json.loads((d / "render.json").read_text(encoding="utf-8"))
+        self.assertEqual(sorted(record["views"]), sorted(rh.VIEW_FILES))
+        for name, sha in record["views"].items():
+            self.assertEqual(hashlib.sha256((d / name).read_bytes()).hexdigest(), sha)
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 0, out)
+        paragraphs = json.loads((d / "paragraphs.json").read_text(encoding="utf-8"))
+        paragraphs[0]["math"] = not paragraphs[0]["math"]          # what the gate reads live
+        (d / "paragraphs.json").write_text(json.dumps(paragraphs), encoding="utf-8")
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 1, out)
+        self.assertIn(f"{sid}: paragraphs.json has sha", out)
+        from locate import inputs as locate_inputs
+        with self.assertRaises(CfError) as ctx:
+            locate_inputs.check_source(self.paths, "wpm", self.ss.latest().get(sid))
+        self.assertIn("paragraphs.json", str(ctx.exception))
+        # a current rendering whose record lost its view shas is caught too
+        (d / "render.json").write_text(json.dumps({k: v for k, v in record.items()
+                                                   if k != "views"}), encoding="utf-8")
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertIn("render.json records no view shas", out)
 
 
 class TestFieldS11ManifestDeltas(unittest.TestCase):

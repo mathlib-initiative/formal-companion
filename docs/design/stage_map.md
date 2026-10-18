@@ -384,7 +384,7 @@ its stages share the run, gate, bridge, harvest and cost machinery above
 | stage | command | writes |
 |---|---|---|
 | L0 universe | `cf corpus init / add / probe-command / ingest / build-db` | `corpora/<u>/{universe.yaml, index/<lib>/, corpus.sqlite}`; `probe-command` prints the host pipeline and runs nothing |
-| L1 sources | `cf sourceset create / enumerate-wikiproject / adopt / fetch / render` | `sourcesets/<id>/manifest-<n>.jsonl` and each source's rendered files (`web-html/1`) |
+| L1 sources | `cf sourceset create / enumerate-wikiproject / adopt / fetch / flag-biographies / render / status` | `sourcesets/<id>/manifest-<n>.jsonl` (append-only versions, page flags), `state.json`, and each source's rendered files (`web-html/3`; `create --from` seeds a new sourceset for a new renderer) |
 | L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json`; `--blind` or `--tools-corpus-db` write their own `<kind>/` directory under it |
 | L3a/L3b/L5 | `cf plan-locate --preset locate-inventory / locate / locate-challenge` | `runs/<id>/{run.yaml (a locate block), tasks/, prompts/, gate.json, gate.local.json, challenge-plan.json, tend-root/}` |
 | L4 gate | `scripts/gate/verify_locate.py`, out of tree | nothing but its own log line; exit 0 / 1 / 3 |

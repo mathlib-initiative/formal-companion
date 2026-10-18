@@ -42,7 +42,7 @@ Every locate document starts with:
  "mode": "locate-inventory",
  "run_id": "r-…", "task_id": "t-…",
  "source_id": "enwiki-1001-2002",
- "source_sha": "<html_sha256>", "layer_sha256": "<hex>", "renderer": "web-html/2",
+ "source_sha": "<html_sha256>", "layer_sha256": "<hex>", "renderer": "web-html/3",
  "universe": "u1", "universe_sha256": "<hex>"}
 ```
 
@@ -53,7 +53,7 @@ document covers one source; it lives at `findings/<task-id>/<source-id>.json`
 writes documents writes one for every source its task manifest names (rule 1),
 each a regular file (a symlink is refused).
 `schema` is `cflib.vocab.LOCATE_DOCUMENT_SCHEMA`; `renderer` is the source's
-(`web-html/2` for the first corpus).
+(`web-html/3` for the first corpus).
 
 A task that could not be finished writes one document per source with a
 document-level `"unresolved": {"reason": "…", "by": "worker" | "attempt_cap"}`:
@@ -369,7 +369,7 @@ spaces, UTF-8):
  "origin": "enumerated", "licence_class": "open_share_alike",
  "fetch": {"api": "action=parse", "params_sha256": "<hex>"},
  "raw_sha256": "<hex>", "html_sha256": "<hex>", "layer_sha256": "<hex>",
- "renderer": "web-html/2"}
+ "renderer": "web-html/3"}
 ```
 
 - `origin` is `enumerated` (from the PageAssessments listing) or `adopted` (a
@@ -467,9 +467,12 @@ lone surrogate, or nesting elements more than 256 deep, is refused.
 
 **One source's directory.** `cf sourceset fetch` and `cf sourceset adopt` write
 `source.raw.html`, `body.html` and `source.json`; the renderer,
-`scripts/sources/render_html.py` (`web-html/2`, whose module docstring states the
+`scripts/sources/render_html.py` (`web-html/3`, whose module docstring states the
 rule in full and freezes it), writes `body.html` again and every file after it
-when `cf sourceset render` runs:
+when `cf sourceset render` runs. A source whose layer is recorded is only ever
+completed, never rewritten: `render` restores a missing view, and refuses by name
+a view that exists with other bytes than the current renderer writes from the
+body (the rule changed under its id, or the file was edited):
 
 | file | what |
 |---|---|
@@ -480,11 +483,11 @@ when `cf sourceset render` runs:
 | `formulas.json` | `[{"span": [a, b], "alttext": "{\\displaystyle G}"}]`: each formula's half-open layer span (the whole `.mwe-math-element`, else the `math` element), sorted and disjoint; the alttext is `math@alttext`, else the `x-tex` annotation, else the fallback image's `alt`. A formula with no text in the layer (an image only) has no span and no entry, `render.json` counts it as `formulas_without_text`, and the reading copy still writes it as `$<normalized alttext>$`, in no segment |
 | `head.txt` | the head text: `layer.txt` with each formula span replaced by `⟦normalized alttext⟧`. Derived; the definition is `scripts/gate/locate_text.py`'s `HeadMap`, which also maps offsets both ways |
 | `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references (`sup.reference`), reference lists (`ol.references`, `.reflist`, `.mw-references-wrap`), edit links, style, script and template dropped, headings as `#`-prefixed lines (one `#` per level), `- ` before a list item, ` \| ` between table cells (one space each side), a blank line between blocks (inside a table cell a block, a display formula included, is only a space: a row is one line); it ends with one newline |
-| `layer_map.json` | `{"schema": "cf-layer-map/2", "renderer": "web-html/2", "segments": [[t0, t1, l0, l1, kind], …]}`, sorted: `text.txt[t0:t1]` is `layer.txt[l0:l1]`, character by character when `kind` is `0` (text) and only as a whole when it is `1` (a formula: only `t0` and `l0` correspond, whatever the two lengths are). A character the copy adds — a heading's `#`s, a bullet, a separator, a line break, an image-only formula — is in no segment and has no layer offset. The map names the renderer that wrote it: its offsets point into that renderer's views only, so `LayerMap.read` refuses a map, or a directory whose `render.json`, names another, and `cf sourceset status --verify` reports such a view |
+| `layer_map.json` | `{"schema": "cf-layer-map/2", "renderer": "web-html/3", "segments": [[t0, t1, l0, l1, kind], …]}`, sorted: `text.txt[t0:t1]` is `layer.txt[l0:l1]`, character by character when `kind` is `0` (text) and only as a whole when it is `1` (a formula: only `t0` and `l0` correspond, whatever the two lengths are). A character the copy adds — a heading's `#`s, a bullet, a separator, a line break, an image-only formula — is in no segment and has no layer offset. The map names the renderer that wrote it: its offsets point into that renderer's views only, so `LayerMap.read` refuses a map, or a directory whose `render.json`, names another, and `cf sourceset status --verify` reports such a view |
 | `sections.json` | `[{"path": ["Theorems"], "fragment": "Theorems", "level": 2, "span": [l0, l1]}]`, the lead first with `path: []`, `fragment: null` and `level: 0`; a heading's title is its text outside the reading copy's dropped regions (an edit link, a reference marker, an inline `style`), its fragment its `id`, else its `.mw-headline`'s; spans tile the layer |
 | `paragraphs.json` | `[{"span": [l0, l1], "section": ["Theorems"], "block": "p", "formulas": 2, "texhtml": 0, "math": true}]`: every block (`p`, `li`, `dd`, `dt`, `blockquote`, a theorem box, a displayed formula) that holds text outside the reading copy's dropped regions, its span measured over that kept text alone (an inline TemplateStyles `style` opening a paragraph is outside its span; a paragraph holding only such text is no block), outside the reference lists; blocks may nest (an `li` holding a `p` is two entries). `formulas` counts the `formulas.json` formulas starting inside it and `texhtml` the formulas written as HTML (each outermost element of class `texhtml`, MediaWiki's `{{math}}` and `{{mvar}}`, which carry no TeX and so are no `formulas.json` formula); `math` is true when the block holds either or a deterministic finder hit, and those are the paragraphs gate rule 8's coverage floor reads |
-| `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), sorted by start, each spanning its element's kept text (as for blocks) and starting at the first character of a word of the head text; a finder hit whose kept text is glued to the word before it (a citation marker with no space after it, say) is dropped and counted in `render.json`'s `finders_dropped`. A `bold_definition` is a paragraph's first bold that names a term: at least two letters, and not only a paragraph label (`cflib.vocab.is_bold_label` over `BOLD_LABELS`: "Proof.", "Example 2:", "Definition:"); a paragraph whose every bold is a label or a symbol makes none. Finders of different kinds may share a start (a lead paragraph that opens on a bold term); one passage at that start keeps them all (gate rule 8) |
-| `render.json` | `{"renderer": "web-html/2", "html_sha256", "layer_sha256", "head_sha256", "text_sha256", "counts": {…}}` |
+| `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), sorted by start, each spanning its element's kept text (as for blocks) and starting at the first character of a word of the head text; a finder hit whose kept text is glued to the word before it (a citation marker with no space after it, say) is dropped and counted in `render.json`'s `finders_dropped`. A `bold_definition` is a paragraph's first bold that names a term: at least two letters, and not only a paragraph label (`cflib.vocab.is_bold_label` over `BOLD_LABELS`: "Proof.", "Example 2:", "Definition:"; a word of `BOLD_LABELS_PUNCTUATED` only with a label's punctuation, "Solution:", never for an enumerator alone, so "Axiom A" and "property (T)" are terms; a label word with a parenthesised name, "Theorem (Widget lemma).", names a statement and is a term too); a paragraph whose every bold is a label or a symbol makes none, and `render.json` counts the paragraphs a label alone kept from a passage (`bold_labels_dropped`). Finders of different kinds may share a start (a lead paragraph that opens on a bold term); one passage at that start keeps them all (gate rule 8) |
+| `render.json` | `{"renderer": "web-html/3", "html_sha256", "layer_sha256", "head_sha256", "text_sha256", "counts": {…}, "views": {"layer.txt": "<sha256>", …}}`: `views` holds the sha256 of the bytes of every other file a rendering writes (`body.html`, whose sha is `html_sha256`, and `render.json` itself excepted), which `cf sourceset status --verify` and the planner's check of a source (`locate.inputs.check_source`) compare with the files; a current rendering without it is refused |
 
 The `web-html/1` rule was corrected once, before any rendering under it was
 pinned anywhere, after an adversarial review of the renderer. The corrections:
@@ -504,7 +507,27 @@ MathML or SVG element (`<mspace/>` holds nothing, as in the HTML5 tree builder;
 the flag on an HTML element is still ignored), and a block holding only a
 formula written as HTML (`texhtml`, MediaWiki's `{{math}}`) is a `math` block
 that the coverage floor reads; a bold that only labels its paragraph ("Proof.")
-or is a symbol (a bold R) makes no `bold_definition`. A `/1` rendering cannot be re-rendered in
+or is a symbol (a bold R) makes no `bold_definition`.
+
+**`web-html/3`** keeps the layer, the head text, the reading copy and the
+sections of `/2` character for character, so no passage id moves (a block's
+`math` flag follows the finders, so it changes where a finder now starts, and
+`layer_map.json` names the new id); it changes two things. The paragraph-label rule no longer takes a named concept
+or statement for a label: `/2` dropped a trailing single letter, roman numeral
+or parenthesised token as an enumerator even after a word of
+`BOLD_LABELS_PUNCTUATED`, and a parenthesised name after any label word, so
+"property (T)", "Axiom A", "Problem P", "Statement A" and "Theorem (Widget
+lemma)." made no `bold_definition` passage — no inventory pre-fill, no rule 8
+obligation, no L2 query — with nothing counted; `/3` counts what the rule still
+drops (`bold_labels_dropped`). And `render.json` records every view's sha
+(`views`): under `/2` a later edit of the label sets (which live in
+`cflib.vocab`) changed `finders.json` of a recorded source in place under the
+same id, which `render` counted unchanged and `status --verify` could not see.
+The label rule is part of the frozen renderer: `tests/test_locate_sources.py`
+pins its fingerprint (the two label sets, its patterns and its answers on a
+fixed list of bolds) to the renderer id beside the golden views.
+
+A `/1` or `/2` rendering cannot be re-rendered in
 place (a recorded `layer_sha256` never changes): `cf sourceset create <new>
 --from <old>` seeds a new sourceset with the old one's identities and bytes and
 no layers, and `cf sourceset render <new>` renders it under the current id. The
@@ -736,7 +759,7 @@ like a faithfulness run:
   ```json
   {"task_id": "t-…", "mode": "locate", "run_id": "r-…",
    "documents": [{"source_id": "enwiki-1001-2002", "source_sha": "<hex>",
-                  "layer_sha256": "<hex>", "renderer": "web-html/2",
+                  "layer_sha256": "<hex>", "renderer": "web-html/3",
                   "passages": [{"item": "In-text #3fa91c07", "span": [10234, 10612],
                                 "head_words": 12, "prominence": "central",
                                 "passage_kind": "theorem", "text_span": [9871, 10190],
@@ -788,7 +811,7 @@ like a faithfulness run:
    "sourceset": {"id": "wpm", "version": 3, "manifest_sha256": "<hex>",
                  "sources_dir": "<host path>/sources"},
    "sources": {"enwiki-1001-2002": {"html_sha256": "<hex>", "layer_sha256": "<hex>",
-                                    "renderer": "web-html/2"}},
+                                    "renderer": "web-html/3"}},
    "candidates_dir": "<host path>/candidates/u1", "blind": false,
    "inventory": {"run_id": "r-…"}, "challenged_runs": [], "findings_dir": "findings",
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
