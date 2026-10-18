@@ -46,6 +46,10 @@ release has something to say.
   carried `licence: null`, which the consumer refuses), and a re-add with
   `--licence` now records a missing licence (it exited 0 and changed nothing); a
   re-add naming another licence or `brain_lib` than recorded is refused.
+- `universe.json` writes a library's `display_name` as its `brain_lib` only when
+  that is a display name the consumer shows (printable ASCII, `,.()/+:'&_-·`, at
+  most 100), and null otherwise: a `brain_lib` such as `Beta!` had made the
+  consumer refuse the whole set.
 - A library's `repo` follows the record set consumer's repository grammar (a
   dotted host, one to four path segments of `[A-Za-z0-9_.~-]`, no `.`, `..`, empty
   segment or trailing slash), refused at `cf corpus add` and when a universe is
