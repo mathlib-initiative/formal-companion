@@ -132,10 +132,19 @@ What it does, in order — and each step is one you can also do by hand:
 4. **Smoke test 1/1.** Set limits to one worker and one reviewer, start the run, and watch exactly
    one task through worker → gate → reviewer → merge. Do not launch hundreds of tasks blind: model
    ids that have never been exercised from this machine fail immediately and repeatedly.
-5. **Read that task's gate output once per tend version.** Its last line is `changed files: …`.
-   `ownership checked against task <id>` means the orchestrator exported `TEND_TASK_ID` into the
-   validation command's environment and the full ownership rule is running. `ownership: single-stem
-   rule` means it did not: only the weaker rule (one task's findings/task pair per contribution) is
+5. **Read that task's gate output once per tend version** — the validation command's, not the
+   worker's or the reviewer's own. Its last line is `changed files: …`, and the same line is the
+   `ownership` field of that call's `gate-log/gate.jsonl` record, beside `task_id_from` (where the
+   id came from: `--task-id`, `$TEND_TASK_ID` or `orchestrator.sqlite`) and `changed_files` (true
+   for a validation or pre-merge call). An agent runs with `TEND_TASK_ID` in its environment, so
+   the worker's and the reviewer's own gate calls log the task id from `$TEND_TASK_ID`: a non-empty
+   `task_id` in the log is **not** by itself evidence that the validation command found it, and
+   only a `--changed-files` record says how the validation found it. `ownership checked against
+   task <id> (task id from $TEND_TASK_ID)` on a validation call means the orchestrator exported
+   `TEND_TASK_ID` into the validation command's environment; `(task id recovered from
+   orchestrator.sqlite: …)` means it did not and the gate found the id in tend's database; either
+   way the full ownership rule is running. `ownership: single-stem
+   rule` means neither: only the weaker rule (one task's findings/task pair per contribution) is
    in force, so a worker that rewrites a neighbour's landed findings file inside its own single
    stem is not caught. **Whether tend exports it has never been verified here**, and it is a
    property of the orchestrator version, not of the run — so check it again after an upgrade. To
@@ -259,7 +268,7 @@ root, bridge and harvest, with these differences:
   agent call's JSON envelope, a cost cross-check), `attempts/<task-id>.json` (genuine reviewer
   rejections only; the third makes the worker bridge write `UNRESOLVED` documents with
   `unresolved.by: attempt_cap`, which the reviewer bridge approves mechanically), `gate-log/gate.jsonl`
-  (one line per gate call, by rule).
+  (one line per gate call, by rule, with its `ownership` line, `task_id_from` and `changed_files`).
 - **The worker's tools.** The worker allowlist adds the two corpus host tools by absolute path,
   pinned to the run's database (`CF_EXTRA_TOOLS`), and an inventory worker's passage-id tool.
 - **Bringing it home.** `cf harvest <run-id>` lands `corpus/<run-id>/<task-id>/<source-id>.json`,

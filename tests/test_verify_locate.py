@@ -896,6 +896,60 @@ class TestOwnership(GateTestCase):
         self.assertEqual((record["task_id"], record["ok"], record["mode"]),
                          (TASK, True, "locate-inventory"))
 
+    def last_log(self) -> dict:
+        lines = (self.fx.root / "gate-log" / "gate.jsonl").read_text().splitlines()
+        return json.loads(lines[-1])
+
+    def test_w1_the_log_says_how_the_task_id_was_obtained(self):
+        """Field watch item W1: an agent runs with TEND_TASK_ID in its environment, so its
+        own gate calls logged a task id, and a non-empty task_id was taken for proof
+        that the validation command's orchestrator.sqlite lookup worked.  Each line
+        now carries the ownership line, where the id came from and --changed-files."""
+        self.contribute()
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rec = self.last_log()
+        self.assertEqual((rec["task_id"], rec["task_id_from"], rec["changed_files"]),
+                         (TASK, "--task-id", True))
+        self.assertEqual(rec["ownership"],
+                         f"ownership checked against task {TASK} (task id from --task-id)")
+        self.assertIn(rec["ownership"], proc.stdout.splitlines()[-1])
+
+        proc = self.cli(env={"TEND_TASK_ID": TASK})          # what an agent's own call does
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rec = self.last_log()
+        self.assertEqual((rec["task_id"], rec["task_id_from"]), (TASK, "$TEND_TASK_ID"))
+        self.assertIn("(task id from $TEND_TASK_ID)", rec["ownership"])
+
+        proc = self.cli()                                    # no id, no orchestrator table
+        rec = self.last_log()
+        self.assertEqual((rec["task_id"], rec["task_id_from"], rec["changed_files"]),
+                         ("", None, True))
+        self.assertIn("single-stem rule", rec["ownership"])
+        self.assertTrue(rec["ownership_note"])
+
+    def test_w1_the_orchestrator_lookup_and_a_plain_validation_are_logged_as_such(self):
+        self.contribute()
+        con = sqlite3.connect(self.fx.root / "orchestrator.sqlite")
+        con.execute("CREATE TABLE worktrees (id TEXT, task_id TEXT, path TEXT)")
+        con.execute("INSERT INTO worktrees VALUES ('w1', ?, ?)", (TASK, str(self.wt.resolve())))
+        con.commit()
+        con.close()
+        self.assertEqual(self.cli().returncode, 0)
+        rec = self.last_log()
+        self.assertEqual((rec["task_id"], rec["task_id_from"]), (TASK, "orchestrator.sqlite"))
+        self.assertIn("recovered from orchestrator.sqlite", rec["ownership"])
+        doc = self.wt / "findings" / TASK / f"{SID}.json"
+        environ = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
+        environ.pop("TEND_TASK_ID", None)
+        proc = subprocess.run([sys.executable, str(GATE), "--gate-config",
+                               str(self.fx.root / "gate" / "gate.json"), "--findings", str(doc)],
+                              capture_output=True, text=True, env=environ)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        rec = self.last_log()
+        self.assertEqual((rec["changed_files"], rec["ownership"], rec["task_id_from"]),
+                         (False, None, None))
+
     def test_an_unwritable_log_never_fails_the_gate(self):
         self.contribute()
         blocker = self.fx.root / "blocker"

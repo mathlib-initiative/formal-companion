@@ -1605,18 +1605,29 @@ def _lacking_documents(ctx: Context, task_id: str, have: set[str],
             and not (directory is not None and (directory / f"{sid}.json").is_file())]
 
 
+#: where a task id came from (:func:`ownership_line`, the gate log's ``task_id_from``)
+TASK_ID_FROM_FLAG = "--task-id"
+TASK_ID_FROM_ENV = "$TEND_TASK_ID"
+
+
 def ownership_line(task_id: str, how: str) -> str:
     """The gate's last line: which rule judged the change set, and why when it is the weak one.
 
-    ``how`` is where the task id came from (``--task-id``, ``orchestrator.sqlite``,
-    which may carry :data:`IMMUTABLE_NOTE`), or, with no task id, why the
-    lookup found none -- said on the line, never dropped.
+    ``how`` is where the task id came from (``--task-id``, ``$TEND_TASK_ID``,
+    ``orchestrator.sqlite``, which may carry :data:`IMMUTABLE_NOTE`), or, with
+    no task id, why the lookup found none -- said on the line, never dropped.
+    An agent runs with ``TEND_TASK_ID`` in its environment, so a worker's or a
+    reviewer's own call names its task that way; the line says so, and a
+    task id on it is not by itself proof that a validation command's
+    ``orchestrator.sqlite`` lookup works (field watch item W1).
     """
     if task_id and how.startswith("orchestrator.sqlite"):
         note = how[len("orchestrator.sqlite"):].strip().strip("()")
         return (f"ownership checked against task {task_id} (task id recovered from "
                 f"orchestrator.sqlite: an assumed schema, verify on the host"
                 + (f"; {note}" if note else "") + ")")
+    if task_id and how in (TASK_ID_FROM_FLAG, TASK_ID_FROM_ENV):
+        return f"ownership checked against task {task_id} (task id from {how})"
     if task_id:
         return f"ownership checked against task {task_id}"
     return ("ownership: single-stem rule (no task id); pass --task-id or export TEND_TASK_ID "
@@ -1698,11 +1709,15 @@ def incomplete_message() -> str:
 def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path] | None = None,
              findings_dir: str = DEFAULT_FINDINGS_DIR, changed_files: bool = False,
              base: str = "main", task_id: str = "", allow_empty: bool = False,
-             check_vendor: bool = True) -> dict:
+             check_vendor: bool = True, task_id_from: str | None = None) -> dict:
     """Run the gate in-process; ``{exit, problems, broken, documents, ownership, ...}``.
 
     ``cf harvest`` calls this over a landed corpus; ``main`` is the CLI around it.
-    Raises nothing: an infrastructure failure is ``exit: 3`` with ``broken`` set.
+    ``task_id_from`` says where a given ``task_id`` came from (``--task-id``,
+    the default, or ``$TEND_TASK_ID``).  Raises nothing: an infrastructure
+    failure is ``exit: 3`` with ``broken`` set.  Every call appends one line to
+    the gate log with its verdict, the ``ownership`` line, ``task_id_from`` and
+    whether it judged a change set (``changed_files``).
     """
     result: dict[str, Any] = {"exit": EXIT_OK, "problems": [], "broken": [], "documents": 0,
                               "by_rule": {}, "stats": [], "ownership": "", "task_id": task_id,
@@ -1712,7 +1727,7 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
         return result
     ctx = Context(cfg)
     problems = Problems()
-    how = "--task-id" if task_id else ""
+    how = (task_id_from or TASK_ID_FROM_FLAG) if task_id else ""
     try:
         if check_vendor:
             verify_vendor(cfg)
@@ -1780,8 +1795,13 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     result["task_id"] = task_id
     if result["exit"] == EXIT_OK and problems:
         result["exit"] = EXIT_REJECTED
+    result["task_id_from"] = how if task_id else None
     write_log(cfg, {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
                     "run_id": cfg.run_id, "mode": cfg.mode, "task_id": task_id,
+                    "task_id_from": result["task_id_from"],
+                    "changed_files": bool(changed_files),
+                    "ownership": result["ownership"] or None,
+                    "ownership_note": result.get("ownership_note"),
                     "ok": result["exit"] == EXIT_OK, "exit": result["exit"],
                     "documents": result["documents"], "by_rule": result["by_rule"],
                     "broken": result["broken"][:3],
@@ -1841,7 +1861,7 @@ def _main(argv: list[str] | None = None) -> int:
                     help="validate the documents this contribution changed and refuse any other "
                          "path (rule 7)")
     ap.add_argument("--base", default="main", help="the branch the change set is read against")
-    ap.add_argument("--task-id", default=os.environ.get("TEND_TASK_ID", ""),
+    ap.add_argument("--task-id", default=None,
                     help="the worker's own task id (default: $TEND_TASK_ID, else "
                          "orchestrator.sqlite, else the single-stem rule)")
     ap.add_argument("--allow-empty", action="store_true",
@@ -1872,10 +1892,16 @@ def _main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
         print("ownership: not checked (the gate could not run)")
         return EXIT_GATE_BROKEN
+    if args.task_id:
+        task_id, task_id_from = args.task_id, TASK_ID_FROM_FLAG
+    else:
+        task_id = os.environ.get("TEND_TASK_ID", "")
+        task_id_from = TASK_ID_FROM_ENV if task_id else None
     result = run_gate(cfg, root=pathlib.Path(args.root).resolve(),
                       findings=[pathlib.Path(f) for f in args.findings],
                       findings_dir=args.findings_dir, changed_files=args.changed_files,
-                      base=args.base, task_id=args.task_id, allow_empty=args.allow_empty)
+                      base=args.base, task_id=task_id, allow_empty=args.allow_empty,
+                      task_id_from=task_id_from)
     for broken in result["broken"]:
         print(f"FAIL: {broken} — the gate could not run: this is not a finding of yours",
               file=sys.stderr)

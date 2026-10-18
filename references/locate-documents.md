@@ -1016,8 +1016,11 @@ cf_agent_call: {outcome, role, task_id, slot, elapsed_s, timeout_s, exit,
 signal, stdout_bytes, cost: unknown}}`, and prose stdout is kept beside it as
 `.out`), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
 the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
-per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
-`by_rule`, `reasons`), and the per-user slot directory the bridge's 15-slot
+per gate call: `at`, `run_id`, `mode`, `task_id`, `task_id_from` (`--task-id`,
+`$TEND_TASK_ID`, `orchestrator.sqlite…`, or null with no id), `changed_files`
+(whether the call judged a change set), `ownership` (the call's ownership line,
+null without `--changed-files`), `ownership_note` (why no task id was found),
+`ok`, `exit`, `documents`, `by_rule`, `reasons`), and the per-user slot directory the bridge's 15-slot
 `flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
 `scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
 `~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
