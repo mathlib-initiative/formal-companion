@@ -2,7 +2,11 @@
 
 New code.  The bench reads four producers' files and imports none of their
 modules, because it was built beside them (references/locate-documents.md
-sections 7-10 are the contract):
+sections 7-10 are the contract), with one exception: which source of a page a
+run reads is the sourceset's own rule (``Manifest.preferred`` in
+``scripts/sources/sourceset.py``, section 7 "One source per page is planned"),
+and :meth:`Manifest.preferred` here delegates to it, so the bench can never
+resolve a page to another revision than the one a run plans:
 
 * a sourceset (section 7): ``manifest-<n>.jsonl`` -- a header line, then one
   canonical entry per source -- and a source directory's ``layer.txt``,
@@ -32,6 +36,9 @@ from cflib.jsonio import read_json
 from cflib.paths import WorkspacePaths
 from cflib.yamlio import read_yaml
 
+from sources.sourceset import Manifest as _SourcesetManifest
+from sources.sourceset import is_adopted
+
 from .layout import read_jsonl_rows
 
 
@@ -53,6 +60,33 @@ class Manifest:
     @property
     def pin(self) -> dict:
         return {"id": self.sourceset, "version": self.version, "manifest_sha256": self.sha256}
+
+    def preferred(self) -> dict[int, str]:
+        """``{pageid: source_id}``: the one source per page a run reads.
+
+        The sourceset's rule, not a copy of it: a page a consumer pinned is read
+        at its adopted revision (the highest adopted one when there are several),
+        any other page at its highest enumerated revision -- whether or not that
+        source is rendered yet.
+        """
+        paged = {sid: e for sid, e in self.entries.items()
+                 if e.get("pageid") is not None and e.get("revision") is not None}
+        return _SourcesetManifest(self.sourceset, self.version, self.path, self.sha256,
+                                  self.header, paged).preferred()
+
+    def page_entries(self) -> dict[int, list[dict]]:
+        """``{pageid: [entries]}``: every revision the manifest holds of each page."""
+        out: dict[int, list[dict]] = {}
+        for sid in sorted(self.entries):
+            entry = self.entries[sid]
+            if entry.get("pageid") is not None:
+                out.setdefault(int(entry["pageid"]), []).append(entry)
+        return out
+
+
+def adopted(entry: dict) -> bool:
+    """Did a consumer pin this source (references/locate-documents.md section 7)?"""
+    return is_adopted(entry)
 
 
 def load_manifest(paths: WorkspacePaths, sourceset: str, version: int | None = None) -> Manifest:

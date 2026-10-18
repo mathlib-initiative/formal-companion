@@ -4,9 +4,15 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.3 and 8.5
 (steps 1 to 3) in the shapes references/locate-bench.md sections 2 and 3 fix.
 
 * **The frame** is a list of articles (the live Tier A list), each resolved to
-  one rendered source of the pinned sourceset manifest.  An article the
-  manifest does not hold, or holds unrendered, is refused by name: a frame
-  that silently lost an article would bias every inclusion probability.
+  the one source of the pinned sourceset manifest a run reads: by page id, the
+  sourceset's own rule (references/locate-documents.md section 7) -- a page a
+  consumer pinned at its adopted revision, any other at its highest enumerated
+  one -- never the highest *rendered* revision, which is the newer enumerated
+  one as soon as both are rendered.  The article's QID and assessment are the
+  page's: when the resolved entry lacks one, the page's other entries supply
+  it, so an adopted revision recorded without them stays in its stratum.  An
+  article the manifest does not hold, or holds unrendered, is refused by name:
+  a frame that silently lost an article would bias every inclusion probability.
 * **The draws** are two simple random samples without replacement, each with
   its own seeded generator: ``uniform`` from the whole frame and ``curated``
   from the frame articles whose QID a curated list names.  They are drawn
@@ -35,6 +41,7 @@ from typing import Any, Iterable
 from cflib.errors import CfError
 from cflib.yamlio import load_yaml
 
+from . import inputs
 from .layout import overlap_words, word_spans
 
 _QID = re.compile(r"Q[1-9][0-9]*\Z")
@@ -120,13 +127,29 @@ def read_qids(path: Path) -> set[str]:
 # the frame
 # --------------------------------------------------------------------------
 
+def _page_fact(entry: dict, others: list[dict], key: str) -> tuple[Any, str | None]:
+    """``(value, the source id it was read from)`` of a page-level fact (QID, assessment).
+
+    The entry's own value when it has one; else the one value the page's other
+    entries agree on; else nothing (two disagreeing values are not guessed between).
+    """
+    own = entry.get(key)
+    if own:
+        return own, None
+    found = {json.dumps(e.get(key), sort_keys=True): e["source_id"]
+             for e in others if e is not entry and e.get(key)}
+    if len(found) == 1:
+        text, sid = next(iter(found.items()))
+        return json.loads(text), sid
+    return own, None
+
+
 def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
-    """Resolve every frame row to one rendered source of the pinned manifest."""
-    by_page: dict[int, list[dict]] = {}
-    for entry in manifest.entries.values():
-        if entry.get("pageid") is not None:
-            by_page.setdefault(int(entry["pageid"]), []).append(entry)
+    """Resolve every frame row to the source of the pinned manifest a run reads."""
+    preferred = manifest.preferred()
+    pages = manifest.page_entries()
     articles: dict[str, dict] = {}
+    seen_pages: dict[int, str] = {}
     missing, unrendered, duplicate = [], [], []
     for row in rows:
         if "source_id" in row:
@@ -134,32 +157,38 @@ def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
             if entry is None:
                 missing.append(row["source_id"])
                 continue
+            basis = "source_id"
         else:
-            candidates = sorted(by_page.get(row["pageid"], []),
-                                key=lambda e: int(e.get("revision") or 0))
-            rendered = [e for e in candidates if e.get("layer_sha256")]
-            if not candidates:
+            sid = preferred.get(row["pageid"])
+            if sid is None:
                 missing.append(f"pageid {row['pageid']}")
                 continue
-            if not rendered:
-                unrendered.append(candidates[-1]["source_id"])
-                continue
-            entry = rendered[-1]
+            entry = manifest.entries[sid]
+            basis = "adopted" if inputs.adopted(entry) else "enumerated"
         if not entry.get("layer_sha256"):
             unrendered.append(entry["source_id"])
             continue
         sid = entry["source_id"]
-        if sid in articles:
+        pageid = entry.get("pageid")
+        if sid in articles or (pageid is not None and int(pageid) in seen_pages):
             duplicate.append(sid)
             continue
-        qid = entry.get("wikidata") or None
+        others = pages.get(int(pageid), []) if pageid is not None else []
+        qid, qid_from = _page_fact(entry, others, "wikidata")
+        assessment, assessment_from = _page_fact(entry, others, "assessment")
+        qid = qid or None
         articles[sid] = {
-            "source_id": sid, "pageid": entry.get("pageid"), "revision": entry.get("revision"),
+            "source_id": sid, "pageid": pageid, "revision": entry.get("revision"),
             "title": entry.get("title"), "wikidata": qid,
-            "assessment": entry.get("assessment") or {},
+            "assessment": assessment or {},
             "layer_sha256": entry.get("layer_sha256"), "renderer": entry.get("renderer"),
+            "revision_basis": basis,
+            "page_facts_from": ({"wikidata": qid_from, "assessment": assessment_from}
+                                if qid_from or assessment_from else None),
             "curated": bool(qid and qid in curated),
         }
+        if pageid is not None:
+            seen_pages[int(pageid)] = sid
     if missing or unrendered:
         raise CfError(
             f"the frame names {len(missing)} article(s) the pinned manifest does not hold and "
@@ -169,7 +198,9 @@ def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
                  "enumerate, fetch and render them, or pin the manifest version that has them")
     ordered = [articles[s] for s in sorted(articles)]
     return {"articles": ordered, "N": len(ordered),
-            "N_curated": sum(1 for a in ordered if a["curated"]), "duplicates": sorted(duplicate)}
+            "N_curated": sum(1 for a in ordered if a["curated"]),
+            "N_adopted": sum(1 for a in ordered if a["revision_basis"] == "adopted"),
+            "duplicates": sorted(duplicate)}
 
 
 # --------------------------------------------------------------------------
