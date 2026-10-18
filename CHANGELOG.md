@@ -35,6 +35,37 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The renderer is **`web-html/3`** (`references/locate-documents.md` §7). The
+  layer, head text, reading copy and sections are `/2`'s character for
+  character, so no passage id moves. The paragraph-label rule no longer takes a
+  named concept or statement for a label ("property (T)", "Axiom A",
+  "Theorem (Widget lemma)." are `bold_definition` terms; `render.json` counts
+  what the rule still drops as `bold_labels_dropped`), and `render.json` records
+  every view's sha under `views`, which `cf sourceset status --verify` and the
+  planner check. `cf sourceset render` only completes a recorded rendering: a
+  missing view is restored, a differing one refused by name. A `/2` rendering
+  moves by `create --from` and `render`, as a `/1` one does. The label rule's
+  fingerprint is pinned to the renderer id.
+- The worker's `corpus_search.py` and L2's lexical retrieval rank the
+  declaration a query names as an identifier first (the name is the query; its
+  words are; its last components' are), then by `bm25`: on the field universe
+  the query `IsCompact` had put `IsCompact` about 452nd.
+- `cf plan-locate --preset locate-inventory` plans no page that is no concept
+  article (a redirect, disambiguation page, list or biography) unless named by
+  `--source` or `--include-flagged`, and a plain `cf sourceset fetch` reads a
+  null flag off the entry's assessment class (`websource.effective_flags`), so
+  a sourceset seeded from one enumerated before the flags existed no longer
+  fetches and plans its stubs.
+- `cf sourceset create --from` builds the new sourceset in a staging directory
+  and renames it into place, so an interrupted seeding is re-run as it was;
+  `cf sourceset adopt` resolves a pinned revision the sourceset holds without a
+  request; `cf bench build` refuses a drawn article of another renderer.
+- The locate gate reads `orchestrator.sqlite` immutably only where that read is
+  complete (no `-wal`) or the only one possible (an unwritable directory, said
+  on the line), and the single-stem ownership line says why no task id was found.
+- `cflib.vocab` defines the tools-database kinds (`TOOLS_DB_KINDS`) and the
+  bench tier orders (`BENCH_TIER_ORDER`, `BENCH_LABELLED_TIERS`,
+  `BENCH_CLAIM_TIERS`), which three modules had defined for themselves.
 - One relation order for a challenge's `downgrade`, `cflib.vocab.RELATION_STRENGTH`
   (`exactMatch` > `closeMatch` > `broadMatch` > `narrowMatch` = `hasPart` >
   `relatedMatch`, the order `references/locate-documents.md` §4 states). The
