@@ -10,6 +10,7 @@ section 7:
     cf sourceset enumerate-wikiproject wpm --project Mathematics --execute
     cf sourceset adopt wpm --from pins.jsonl --consumer wikilean
     cf sourceset fetch wpm --limit 200 --execute
+    cf sourceset fetch wpm --select pilot.txt --execute   # only the sources it names
     cf sourceset render wpm
     cf sourceset status wpm --verify
 
@@ -84,6 +85,12 @@ def register(subparsers) -> None:
 
     fetch = sub.add_parser("fetch", help="fetch each source's parse output once")
     fetch.add_argument("sourceset_id")
+    fetch.add_argument("--source", dest="sources", action="append", default=[],
+                       metavar="SOURCE_ID", help="fetch only this source (repeatable)")
+    fetch.add_argument("--select", default=None, metavar="FILE",
+                       help="fetch only the sources FILE names: a source id or a page id per "
+                            "line ('#' starts a comment), or a JSON list of them; a page id "
+                            "names the source a run plans for that page")
     fetch.add_argument("--limit", type=int, default=None, help="fetch at most N sources")
     fetch.add_argument("--checkpoint", type=int, default=DEFAULT_CHECKPOINT,
                        help=f"write a version every N fetched sources (default "
@@ -471,22 +478,76 @@ def _adopt(workspace, args) -> int:
 # ---------------------------------------------------------------------------
 # fetch
 
+def _selection(base, args) -> list[str] | None:
+    """The source ids ``--source`` and ``--select`` name, in their order; None for all.
+
+    A selection line is a source id, or a page id (all digits), which names the
+    source a run plans for that page (``Manifest.preferred()``).  Anything the
+    manifest does not hold is refused by name, before any request.
+    """
+    names: list[str] = list(getattr(args, "sources", None) or [])
+    select = getattr(args, "select", None)
+    if select:
+        path = Path(select).expanduser()
+        if not path.is_file():
+            raise CfError(f"no selection file at {path}")
+        text = path.read_text(encoding="utf-8")
+        try:
+            data = json.loads(text)
+        except ValueError:
+            data = None
+        if isinstance(data, list):
+            names.extend(str(x) for x in data)
+        elif data is not None:
+            raise CfError(f"{path}: a JSON selection is a list of source ids or page ids")
+        else:
+            for line in text.splitlines():
+                line = line.split("#", 1)[0].strip()
+                if line:
+                    names.append(line)
+    if not names and not select:
+        return None
+    preferred = base.preferred()
+    wanted: list[str] = []
+    unknown: list[str] = []
+    for name in names:
+        sid = preferred.get(int(name)) if name.isdigit() else name
+        if sid is None or sid not in base.entries:
+            unknown.append(name)
+        elif sid not in wanted:
+            wanted.append(sid)
+    if unknown:
+        raise CfError(f"sourceset {base.sourceset_id} version {base.version} holds no source "
+                      f"or page {', '.join(unknown[:10])}"
+                      + (f" (+{len(unknown) - 10} more)" if len(unknown) > 10 else ""),
+                      hint="a selection names source ids (<family>-<pageid>-<revision>) or "
+                           "page ids of this sourceset")
+    return wanted
+
+
 def _fetch(workspace, args) -> int:
     ss = Sourceset.open(workspace.paths, args.sourceset_id)
     base = ss.latest()
     fam = websource.family(base.family, workspace)
-    # a page a consumer pinned is read at its adopted revision: its enumerated
-    # revision is not fetched once the adopted bytes are in (the proposal's 2.1)
-    adopted_bytes = {e["pageid"] for e in base if is_adopted(e) and e.get("raw_sha256")}
-    todo = [e for e in base if not e.get("raw_sha256")]
-    pinned = [e for e in todo if e["origin"] == websource.ORIGIN_ENUMERATED
-              and e["pageid"] in adopted_bytes]
-    todo = [e for e in todo if e not in pinned]
+    selected = _selection(base, args)
+    if selected is not None:
+        # what was asked for by name is fetched, a consumer's pin or not
+        todo = [base.get(sid) for sid in selected if not base.get(sid).get("raw_sha256")]
+        pinned: list[dict] = []
+    else:
+        # a page a consumer pinned is read at its adopted revision: its enumerated
+        # revision is not fetched once the adopted bytes are in (the proposal's 2.1)
+        adopted_bytes = {e["pageid"] for e in base if is_adopted(e) and e.get("raw_sha256")}
+        todo = [e for e in base if not e.get("raw_sha256")]
+        pinned = [e for e in todo if e["origin"] == websource.ORIGIN_ENUMERATED
+                  and e["pageid"] in adopted_bytes]
+        todo = [e for e in todo if e not in pinned]
     if args.limit is not None:
         todo = todo[:max(0, args.limit)]
     transport = _transport(args, base.family, workspace)
     if transport is None:
-        log.info(f"dry run: {len(todo)} source(s) of {ss.id} have no bytes yet")
+        log.info(f"dry run: {len(todo)} source(s) of {ss.id} have no bytes yet"
+                 + (f" of the {len(selected)} selected" if selected is not None else ""))
         if todo:
             first = wikinet.request_url(fam.site, websource.parse_params(todo[0]["revision"]))
             log.info(f"  first request: {first}")
@@ -545,7 +606,8 @@ def _fetch(workspace, args) -> int:
     manifest = ss.write_version(manifest, entries.values())
     ss.refresh_state(command="fetch", details={
         "fetched": fetched, "reused_on_disk": reused, "failed": len(failed),
-        "pinned_by_a_consumer": len(pinned), "stopped": bool(stopped)})
+        "pinned_by_a_consumer": len(pinned), "stopped": bool(stopped),
+        **({"selected": len(selected)} if selected is not None else {})})
     log.info(f"fetched {fetched} source(s), reused {reused} already on disk, "
              f"{len(failed)} failed"
              + (f", {len(pinned)} left to their consumer's adopted revision" if pinned else ""))
