@@ -29,7 +29,7 @@ def read_json(path: str | Path, default: Any = None) -> Any:
 
 
 def _current_umask() -> int:
-    """The process umask (reading it means setting it; cf is single-threaded)."""
+    """The process umask (reading it means setting it, safe in a single-threaded process)."""
     mask = os.umask(0o022)
     os.umask(mask)
     return mask
