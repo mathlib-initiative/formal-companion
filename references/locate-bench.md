@@ -38,7 +38,7 @@ stay local too.
 
 ## 2. The frame and the draws
 
-`cf bench build <id> --sourceset S --frame <file> [--curated-qids <file>] [--seed N]` reads:
+`cf bench build <id> --sourceset S --frame <file> [--curated-qids <file>]… [--seed N]` reads:
 
 - the **frame** file: page ids or source ids, one per line (`#` comments), or a JSON list of
   them or of `{"pageid"}`/`{"source_id"}` objects. Each row resolves to one source of the
@@ -52,13 +52,31 @@ stay local too.
   the manifest does not hold, or holds unrendered, is **refused by name**, because a frame
   that quietly lost an article biases every inclusion probability; a second row for a page
   already in the frame is a duplicate;
-- the **curated QIDs**: a list, or any mapping keyed by QID (`$MATHLIB/docs/1000.yaml`).
+- the **curated lists** (`--curated-qids`, repeatable; `scripts/bench/curated.py`, which
+  `cf bench anchor` reads its lists with too): Mathlib's `$MATHLIB/docs/1000.yaml` (QID →
+  `{title, decl | decls}`; a key with one capital-letter suffix, `Q180345X` or `Q4724004A`,
+  names its base QID and keeps its own name), its `$MATHLIB/docs/100.yaml` (theorem number →
+  `{title, decl | decls, authors, links, note}`, no QID), or a plain list of QIDs (one per
+  line, or a JSON list). A 100.yaml entry resolves to QIDs, in order, through its own
+  `wikidata` field, a declaration it shares with a 1000.yaml entry given in the same call, or
+  its folded title equal to a 1000.yaml entry's; resolved or not, it also names the article
+  whose folded title is its own (NFKD without combining marks, curly quotes straightened,
+  dashes hyphens, case folded, a leading "the " dropped). Nothing is fetched: a title only
+  Wikipedia's redirects could resolve is the operator's to supply, as a QID in a plain list.
+  A mapping key that is neither a QID nor a number is refused; a plain-list value that is not
+  a QID is reported in the file's `rejected`, never read; the 100.yaml entries that name no
+  frame article are listed in `curated_lists.unmatched_100` and counted by the build, so a
+  list that matched nothing says so.
 
 `frame.json`: `{schema: cf-bench-frame/1, bench, sourceset: {id, version, manifest_sha256},
-frame_file_sha256, curated_file_sha256, articles: [{source_id, pageid, revision, title,
-wikidata, assessment, layer_sha256, renderer, revision_basis, page_facts_from, curated}], N,
-N_curated, N_adopted, duplicates}`. `revision_basis` is `adopted`, `enumerated` or `source_id`
-(the frame file named the source).
+frame_file_sha256, articles: [{source_id, pageid, revision, title, wikidata, assessment,
+layer_sha256, renderer, revision_basis, page_facts_from, curated, curated_via}], N, N_curated,
+N_adopted, duplicates, curated_lists: {files: [{name, sha256, kind, entries, qids, rejected,
+resolved, title_only}], qids, unmatched_100: [{list, key, title, qids}]}}`. `revision_basis` is
+`adopted`, `enumerated` or `source_id` (the frame file named the source); `curated_via` names
+the entries that make an article curated (`mathlib_1000 Q180345X`, `mathlib_100 #57`,
+`qid_list Q42`); a file's `kind` is `mathlib_1000`, `mathlib_100` or `qid_list`, and
+`resolved` (100.yaml only) counts its entries by how they got a QID.
 
 `draw.json`: two simple random samples without replacement, each from its own seeded
 generator (`random.Random("<seed>:uniform")`, `"<seed>:curated"`): `uniform` (n of the whole
@@ -104,9 +122,12 @@ gold, a build that would change the draw is refused (a new draw is a new bench i
 `cf bench anchor <id> --universe U --curated-1000 <file> [--curated-100 <file>] [--rename-table
 <file>] [--library L]` resolves, mechanically:
 
-- a `1000.yaml` entry (QID → `{title, decl | decls}`) matches the drawn articles with that QID;
-  a `100.yaml` entry (number → `{title, decl | decls}`, no QID) matches by case- and
-  space-folded title; an entry with no declaration is counted, not used;
+- the lists are read as §2 reads them: a `1000.yaml` entry (QID → `{title, decl | decls}`,
+  a suffixed key naming its base QID) matches the drawn articles with that QID; a `100.yaml`
+  entry (number → `{title, decl | decls}`, no QID) matches the drawn articles its resolved
+  QIDs name and the one whose folded title is its own, and its `evidence` says which
+  (`mathlib_100 57 (by title)`, `mathlib_100 7 (QID from a declaration shared with
+  1000.yaml)`); an entry with no declaration is counted, not used;
 - every drawn article's QID is looked up in `corpus.sqlite`'s tag table (`wikidata`) for the
   named libraries (default: the universe's library whose `brain_lib` is `Mathlib`);
 - each declaration is resolved in the exact table at the universe's commit, following the
