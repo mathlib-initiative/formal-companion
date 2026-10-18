@@ -35,6 +35,18 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The derived status follows the maintainer's decision D1 (2026-10-18): a theorem
+  passage's `exactMatch` or `closeMatch` to data — an equivalence or other
+  definition without the `statement` flag that states the theorem, such as the
+  Chinese remainder theorem as a `RingEquiv` — is `formalized` (it was
+  `partial`), and a located passage may carry a **coverage claim**, its `hasPart`
+  locations together stating every clause, which makes it `formalized` (or
+  `statement_only`) once a challenger confirms it. Every claim is challenged
+  whatever the passage's prominence (target `coverage`, `confirm` or `refute`),
+  the gate refuses a malformed one, and an exported record carries a standing
+  claim as `extensions[‹locate›].coverage`. `vocab.derive_status` takes the claim
+  as an optional fourth argument; `tests/data/locate/status-parity.json` is the
+  parity table a consumer's own derivation runs.
 - A record set's `set_id` and `sourceset.id` are tokens of the consumer's grammar
   (`cflib.vocab.RECORDSET_TOKEN`: letters, digits and `._:-`, at most 128): the
   export refuses any other before a file is written, and `cf sourceset create`
