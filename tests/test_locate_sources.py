@@ -16,6 +16,7 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import hashlib
 import io
 import json
 import os
@@ -36,6 +37,7 @@ if str(SCRIPTS) not in sys.path:
 
 import cf as cf_main  # noqa: E402
 from cflib import passages, registry, vocab  # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path before the format)
 from cflib.errors import CfError  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
 from gate import locate_text  # noqa: E402
@@ -113,22 +115,29 @@ class TestCanonicalBody(unittest.TestCase):
 
 class TestTheLayer(unittest.TestCase):
 
-    def test_it_is_text_content_with_ascii_whitespace_collapsed(self):
-        r = rh.render("<p>  a\t\n b\f\rc&nbsp;d &amp; e\x0bf </p><style>s { }</style>")
-        self.assertEqual(r.layer, "a b c d & e\x0bf s { }")
+    def test_it_is_text_content_with_white_space_collapsed(self):
+        r = rh.render("<p>  a\t\n b\f\rc&nbsp;d &amp; e\x0bf\u2009g\u202fh\u3000i </p>"
+                      "<style>s { }</style><script>var s = 1;</script>"
+                      "<template><p>t</p></template>")
+        self.assertEqual(r.layer, "a b c d & e f g h i")
+
+    def test_the_white_space_set_is_the_passage_normalisers(self):
+        from formal_companion_annotations import ids
+        self.assertEqual(rh.WHITE_SPACE, frozenset(ids._UNICODE_WHITE_SPACE))
+        self.assertEqual(len(rh.WHITE_SPACE), 25)
 
     def test_markup_inside_formulas_and_citations_is_in_it(self):
         r = rh.render(PAGE)
         self.assertIn("G{\\displaystyle G}", r.layer)
         self.assertIn("[1]", r.layer)
-        self.assertIn(".x{color:red}", r.layer)
+        self.assertNotIn(".x{color:red}", r.layer)       # style text is no part of it
         self.assertIn("[edit]", r.layer)
         self.assertIn("A fictional book.", r.layer)
 
     def test_the_shas_are_of_the_utf8(self):
         r = rh.render(PAGE)
         self.assertEqual(r.layer_sha256, rh.sha256_text(r.layer))
-        self.assertEqual(r.record()["renderer"], "web-html/1")
+        self.assertEqual(r.record()["renderer"], "web-html/2")
         self.assertEqual(rh.RENDERER, vocab.RENDERER_WEB_HTML)
 
 
@@ -363,6 +372,132 @@ class TestTheMilestoneRoundTrip(unittest.TestCase):
         self.assertRegex(f"In-text #{hexdigit}", r"^In-text #[0-9a-f]{8}$")
 
 
+#: a page in the shape MediaWiki's parse output really has (TemplateStyles
+#: blocks and their deduplicated links, a hatnote, an anchor template inside a
+#: bold term, a page script, a template element, NBSP, thin, narrow and
+#: ideographic spaces, a {{math}} formula, a MathML one, citation markers);
+#: every word of it is made up
+MW_PAGE = (
+    '<div class="mw-content-ltr mw-parser-output" lang="en" dir="ltr">'
+    '<style data-mw-deduplicate="TemplateStyles:r100">.mw-parser-output .hatnote'
+    '{font-style:italic}.mw-parser-output div.hatnote{padding-left:1.6em}</style>'
+    '<div role="note" class="hatnote navigation-not-searchable">For other uses, see '
+    '<a href="/wiki/Widget_(disambiguation)">Widget (disambiguation)</a>.</div>\n'
+    '<p class="mw-empty-elt">\n</p>\n'
+    '<p>In <a href="/wiki/W">widget theory</a>, a <b><style data-mw-deduplicate='
+    '"TemplateStyles:r200">.mw-parser-output .vanchor>:target~.vanchor-text'
+    '{background-color:#b1d2ff}</style><span class="vanchor"><span id="Widget_group">'
+    '</span><span class="vanchor-text">widget&#160;group</span></span></b> is a group '
+    '<span class="texhtml"><i>G</i>&#8201;=&#8201;<i>H</i></span> with a spanning&#8239;'
+    'gadget.<sup id="cite_ref-1" class="reference"><a href="#cite_note-1">&#91;1&#93;</a>'
+    '</sup>\n</p>\n'
+    '<script>(RLQ=window.RLQ||[]).push(function(){mw.config.set({"wgBackendResponseTime"'
+    ':12});});</script>\n'
+    '<link rel="mw-deduplicated-inline-style" href="mw-data:TemplateStyles:r100">'
+    '<template><p>A widget that is never shown.</p></template>\n'
+    '<h2 id="Statement">Statement</h2>\n'
+    f'<p>Every widget group {math("G")} of order&#12288;{math("n")} has a spanning gadget '
+    '&amp; a&nbsp;spine.</p>\n'
+    '<table class="infobox" style="width:22em"><tbody><tr><th>Field</th>'
+    '<td>Widget&#160;theory</td></tr></tbody></table>\n'
+    '<div class="reflist"><style data-mw-deduplicate="TemplateStyles:r300">'
+    '.mw-parser-output .reflist{margin-bottom:0.5em}</style><ol class="references">'
+    '<li id="cite_note-1">A made-up book.</li></ol></div></div>')
+
+#: what MW_PAGE's layer is, written out by hand from the Literature Links rule
+MW_PAGE_LAYER = (
+    "For other uses, see Widget (disambiguation). In widget theory, a widget group is a "
+    "group G = H with a spanning gadget.[1] Statement Every widget group G{\\displaystyle G}"
+    " of order n{\\displaystyle n} has a spanning gadget & a spine. FieldWidget theory "
+    "A made-up book.")
+
+
+def literature_links_layer(html: str) -> str:
+    """An independent statement of the Literature Links text layer, for the tests only.
+
+    A scan of the markup, sharing nothing with the renderer: comments and tags
+    are skipped, the content of ``script``, ``style`` and ``template`` too,
+    ``&...;`` references are decoded, and each run of ``White_Space`` becomes
+    one space, the ends stripped.
+    """
+    import html as htmlmod
+    from formal_companion_annotations import ids
+    white = set(ids._UNICODE_WHITE_SPACE)
+    out: list[str] = []
+    i, n = 0, len(html)
+    lower = html.lower()
+    while i < n:
+        if html.startswith("<!--", i):
+            close = html.find("-->", i + 4)
+            i = n if close < 0 else close + 3
+            continue
+        tag = re.match(r"<(/?)([A-Za-z][A-Za-z0-9:-]*)", html[i:i + 64])
+        if tag:
+            end = html.find(">", i)
+            end = n if end < 0 else end + 1
+            name = tag.group(2).lower()
+            if not tag.group(1) and name in ("script", "style", "template"):
+                close = lower.find("</" + name, end)
+                gt = html.find(">", close) if close >= 0 else -1
+                i = n if gt < 0 else gt + 1
+            else:
+                i = end
+            continue
+        if html[i] == "&":
+            semi = html.find(";", i, min(i + 16, n))
+            if semi > 0 and htmlmod.unescape(html[i:semi + 1]) != html[i:semi + 1]:
+                out.append(htmlmod.unescape(html[i:semi + 1]))
+                i = semi + 1
+                continue
+        out.append(html[i])
+        i += 1
+    text = "".join(" " if ch in white else ch for ch in "".join(out))
+    return " ".join(part for part in text.split(" ") if part)
+
+
+class TestTheLayerIsTheLiteratureLinksLayer(unittest.TestCase):
+    """S1: the layer is the consumer's text layer -- no style, script or template text,
+    every White_Space run one space -- on pages shaped like MediaWiki's real output."""
+
+    def test_a_real_shaped_page(self):
+        r = rh.render(rh.canonical_body(MW_PAGE.encode("utf-8")))
+        self.assertEqual(r.layer, MW_PAGE_LAYER)
+        self.assertEqual(r.layer, literature_links_layer(MW_PAGE))
+        for css in (".mw-parser-output", "font-style", "RLQ", "never shown", "\xa0",
+                    " ", " ", "　"):
+            self.assertNotIn(css, r.layer)
+
+    def test_every_page_the_suite_renders_agrees_with_the_independent_rule(self):
+        pages = {"PAGE": PAGE, "MW_PAGE": MW_PAGE,
+                 **{f"parse-{rev}": fixture_body(rev) for rev in (2002, 2003, 2004)},
+                 "inline style in a heading": '<h2 id="X">Case <style>.t{x:y}</style>'
+                                              '<span class="texhtml">n</span></h2><p>a</p>',
+                 "script between words": "<p>one<script>two()</script> three</p>",
+                 "spaces of every kind": "<p>a b c d e f g"
+                                         " h\x85i\x0bj</p>"}
+        for name, html in pages.items():
+            with self.subTest(page=name):
+                body = rh.canonical_body(html.encode("utf-8"))
+                self.assertEqual(rh.render(body).layer, literature_links_layer(body))
+
+    def test_a_bold_term_holding_a_style_is_the_term_and_its_head_has_no_css(self):
+        r = rh.render(rh.canonical_body(MW_PAGE.encode("utf-8")))
+        bold = next(f for f in r.finders if f["finder"] == "bold_definition")
+        self.assertEqual(bold["term"], "widget group")
+        hm = r.head_map()
+        head = locate_text.head_at(hm.head, hm.to_head(bold["start"]), 12)
+        self.assertEqual(head[:4], ["In", "widget", "theory,", "a"])
+        self.assertFalse(any("{" in w or "mw-parser" in w for w in head))
+
+    def test_the_reading_copy_maps_onto_the_new_layer(self):
+        r = rh.render(rh.canonical_body(MW_PAGE.encode("utf-8")))
+        for t0, t1, l0, l1, kind in r.segments:
+            if kind == rh.SEGMENT_TEXT:
+                self.assertEqual(r.text[t0:t1], r.layer[l0:l1])
+        self.assertNotIn(".mw-parser-output", r.text)
+        self.assertIn("a widget group is a group G = H with a spanning gadget.", r.text)
+
+
 @unittest.skipUnless(os.environ.get("CF_WIKILEAN_LAYER"),
                      "set CF_WIKILEAN_LAYER to a directory of <name>.body.html + "
                      "<name>.layer.txt pairs from $WIKILEAN's text_layer")
@@ -454,7 +589,8 @@ class TestTheRecordedTransport(unittest.TestCase):
     def test_page_infos(self):
         infos = wikinet.page_infos(self.t, SITE, [1003, 1001, 1002])
         self.assertEqual(infos[1001], {"revision": 2002, "title": "Widget lemma",
-                                       "wikidata": "Q99999001"})
+                                       "wikidata": "Q99999001", "redirect": False,
+                                       "disambiguation": False})
         self.assertIsNone(infos[1003]["wikidata"])
 
     def test_maxlag_does_not_key_a_recording(self):
@@ -580,8 +716,8 @@ class TestOneModuleTalksToWikipedia(unittest.TestCase):
         r"from\s+http\s+import\s+[^\n]*\bclient\b|^\s*(?:import|from)\s+(?:requests|httpx|urllib3)\b|"
         r"\bsocket\b|[\"']curl[\"']|shutil\.which\(\s*[\"']curl", re.M)
     #: anything that names Wikipedia or builds a request to a web-source family
-    WIKI = re.compile(r"wikipedia\.org|api\.php|\bapi_url\(|\brequest_url\(|\bwikinet\b|"
-                      r"\bwebsource\b|\.site\b")
+    WIKI = re.compile(r"wikipedia\.org|wikidata\.org|api\.php|\bapi_url\(|\brequest_url\(|"
+                      r"\bwikinet\b|\bwebsource\b|\.site\b")
 
     def test_no_other_module_fetches_from_wikipedia(self):
         offenders = []
@@ -638,24 +774,33 @@ class TestReviewFixesRenderer(unittest.TestCase):
     def test_01_blocks_and_finders_skip_dropped_text(self):
         css = ('<style data-mw-deduplicate="TemplateStyles:r1">.mw-parser-output .texhtml'
                '{font-family:"Nimbus Roman No9 L","Times New Roman",Times,serif}</style>')
-        glued = rh.render(f'<div><p>{css}<span class="texhtml"><i>G</i></span> is called a '
+        # web-html/2: style text is no part of the layer, so it glues nothing
+        styled = rh.render(f'<div><p>{css}<span class="texhtml"><i>G</i></span> is called a '
+                           f'<b>widget group</b> when it has a spanning gadget.</p></div>')
+        self.assertTrue(styled.layer.startswith("G is called"))
+        self.assertEqual({x["finder"] for x in styled.finders}, {"bold_definition", "lead"})
+        # a citation marker is in the layer but outside the kept text: glued, dropped
+        cite = '<sup class="reference"><a href="#c1">[1]</a></sup>'
+        glued = rh.render(f'<div><p>{cite}<span class="texhtml"><i>G</i></span> is called a '
                           f'<b>widget group</b> when it has a spanning gadget.</p></div>')
-        self.assertEqual(glued.finders, [])            # "...serif}G" is no word start
+        self.assertEqual(glued.finders, [])            # "[1]G" is no word start
         self.assertEqual(glued.counts["finders_dropped"], 2)
         (block,) = glued.paragraphs
         self.assertTrue(glued.layer[block["span"][0]:].startswith("G is called"))
-        spaced = rh.render(f'<p>{css} <i>G</i> is called a <b>widget group</b> when it has '
+        spaced = rh.render(f'<p>{cite} <i>G</i> is called a <b>widget group</b> when it has '
                            f'a spanning gadget.</p>')
         starts = {x["finder"]: x["start"] for x in spaced.finders}
         self.assertEqual(set(starts), {"bold_definition", "lead"})
         for start in starts.values():
             self.assertTrue(spaced.layer[start:].startswith("G is called"))
             self.assertIsNotNone(spaced.layer_to_text(start))
-        only_css = rh.render(f'<p>{css}</p>\n<p>A <b>widget</b> is a small gadget with five '
-                             f'parts.</p>')
+        only_cite = rh.render(f'<p>{cite}</p>\n<p>A <b>widget</b> is a small gadget with '
+                              f'five parts.</p>')
+        self.assertEqual(len(only_cite.paragraphs), 1)
+        lead = next(x for x in only_cite.finders if x["finder"] == "lead")
+        self.assertTrue(only_cite.layer[lead["start"]:].startswith("A widget"))
+        only_css = rh.render(f'<p>{css}</p>\n<p>A <b>widget</b> is a small gadget.</p>')
         self.assertEqual(len(only_css.paragraphs), 1)
-        lead = next(x for x in only_css.finders if x["finder"] == "lead")
-        self.assertTrue(only_css.layer[lead["start"]:].startswith("A widget"))
 
     def test_02_cells_get_one_separator_whatever_their_whitespace(self):
         self.assertEqual(rh.render("<table><tr>\n<td>a\n</td>\n<td>b\n</td></tr></table>").text,
@@ -717,7 +862,7 @@ class TestReviewFixesRenderer(unittest.TestCase):
                 self.assertEqual(rh.canonical_body(html.encode()), body)
         self.assertEqual(rh.render(rh.canonical_body(
             b"<style>.a::before{content:'<!--'}</style><p>The widget lemma.</p>")).layer,
-            ".a::before{content:'<!--'}The widget lemma.")
+            "The widget lemma.")
 
     def test_08_a_byte_order_mark_is_dropped(self):
         raw = b'\xef\xbb\xbf{"parse": {"revid": 2002, "text": "<p>Widget lemma text</p>"}}'
@@ -1041,7 +1186,7 @@ class TestTheSourcesetCommand(unittest.TestCase):
         self.assertEqual(code, 0, out)
         m = self.ss.latest()
         for e in m:
-            self.assertEqual(e["renderer"], "web-html/1")
+            self.assertEqual(e["renderer"], rh.RENDERER)
             self.assertEqual(self.ss.source_problems(e), [])
             self.assertTrue((self.ss.source_dir(e["source_id"]) / "finders.json").is_file())
         code, out = cf(self.root, "sourceset", "render", "wpm")
@@ -1148,7 +1293,7 @@ class TestTheSourcesetCommand(unittest.TestCase):
         self.assertIn("the parse of revision 2002", out)
         code, out = cf(self.root, "sourceset", "render", "wpm", "--source", "enwiki-1001-2011")
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.ss.latest().get("enwiki-1001-2011")["renderer"], "web-html/1")
+        self.assertEqual(self.ss.latest().get("enwiki-1001-2011")["renderer"], rh.RENDERER)
 
     def test_an_unknown_sourceset_is_refused_with_a_hint(self):
         code, out = cf(self.root, "sourceset", "status", "nope")
@@ -1397,6 +1542,860 @@ class TestReviewFixesSourcesets(unittest.TestCase):
         self.assertIsNotNone(m.get("enwiki-1002-2003")["raw_sha256"])
         self.assertEqual(m.preferred(), {1001: "enwiki-1001-2011", 1002: "enwiki-1002-2003",
                                          1003: "enwiki-1003-2004"})
+
+
+
+# ---------------------------------------------------------------------------
+# field fixes: defects found running the stage against real data (synthetic
+# reductions; the defect ids are in the names)
+# ---------------------------------------------------------------------------
+
+class _FieldCase(unittest.TestCase):
+
+    def setUp(self):
+        self.root = _workspace(self)
+        self.paths = WorkspacePaths(self.root)
+        code, out = cf(self.root, "sourceset", "create", "wpm")
+        self.assertEqual(code, 0, out)
+        self.ss = Sourceset.open(self.paths, "wpm")
+
+    def enumerate(self, *extra, fixtures: Path = FIXTURES) -> tuple[int, str]:
+        return cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project",
+                  "Mathematics", "--fixtures", str(fixtures), *extra)
+
+    def fetch(self, *extra, fixtures: Path = FIXTURES) -> tuple[int, str]:
+        return cf(self.root, "sourceset", "fetch", "wpm", "--fixtures", str(fixtures), *extra)
+
+
+class TestFieldS1TheRendererBumpPath(_FieldCase):
+
+    def test_s1_a_layer_of_the_older_renderer_is_re_rendered_in_a_seeded_sourceset(self):
+        self.enumerate()
+        self.fetch()
+        code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 0, out)
+        base = self.ss.latest()
+        older = self.ss.source_dir("enwiki-1001-2002")
+        # what the field held: a sourceset whose layers were recorded under web-html/1
+        code, out = cf(self.root, "sourceset", "create", "old")
+        self.assertEqual(code, 0, out)
+        old_ss = Sourceset.open(self.paths, "old")
+        rows = []
+        for e in base:
+            row = dict(e, renderer="web-html/1", layer_sha256="0" * 64)
+            src, dst = self.ss.source_dir(e["source_id"]), old_ss.source_dir(e["source_id"])
+            dst.mkdir(parents=True)
+            for name in ("source.raw.html", "body.html"):
+                shutil.copy(src / name, dst / name)
+            rows.append(row)
+        old_ss.write_version(old_ss.latest(), rows)
+        code, out = cf(self.root, "sourceset", "render", "old")
+        self.assertEqual(code, 1, out)
+        self.assertIn("rendered by an older renderer", out)
+        self.assertIn("--from old", out)
+        # the path: a new sourceset seeded with the old one's bytes, rendered anew
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "old")
+        self.assertEqual(code, 0, out)
+        new_ss = Sourceset.open(self.paths, "new")
+        seeded = new_ss.latest()
+        self.assertEqual(sorted(seeded.entries), sorted(e["source_id"] for e in base))
+        for e in seeded:
+            self.assertIsNone(e["layer_sha256"])
+            self.assertIsNone(e["renderer"])
+            self.assertEqual(e["html_sha256"], base.get(e["source_id"])["html_sha256"])
+            self.assertEqual(e["assessment"], base.get(e["source_id"])["assessment"])
+        code, out = cf(self.root, "sourceset", "render", "new")
+        self.assertEqual(code, 0, out)
+        for e in new_ss.latest():
+            self.assertEqual(e["renderer"], rh.RENDERER)
+            self.assertEqual(e["layer_sha256"], base.get(e["source_id"])["layer_sha256"])
+        self.assertEqual(old_ss.latest().get("enwiki-1001-2002")["renderer"], "web-html/1")
+        self.assertEqual(new_ss.read_state()["commands"]["create"]["from"]["id"], "old")
+        self.assertTrue(older.is_dir())
+
+    def test_s1_seeding_refuses_bytes_that_do_not_match_and_a_family_change(self):
+        self.enumerate("--limit", "1")
+        self.fetch()
+        (self.ss.source_dir("enwiki-1001-2002") / "body.html").write_text("tampered")
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm")
+        self.assertEqual(code, 2, out)
+        self.assertIn("do not match", out)
+        self.assertFalse(self.paths.sourceset_manifests("new"))
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm",
+                       "--family", "dewiki")
+        self.assertEqual(code, 2, out)
+
+
+def _tree(html: str):
+    """``(root, raw)`` of the renderer's tree, and a compact dump of it for assertions."""
+    builder = rh._TreeBuilder()
+    builder.feed(html)
+    root, raw = builder.finish()
+
+    def dump(node):
+        out = []
+        for child in node.children:
+            if isinstance(child, tuple):
+                out.append(raw[child[0]:child[1]])
+            else:
+                out.append((child.tag, child.ns, dump(child)))
+        return out
+    return dump(root)
+
+
+class TestFieldS14SelfClosingInForeignContent(unittest.TestCase):
+
+    def test_s14_a_mathml_or_svg_self_closing_tag_holds_nothing(self):
+        tree = _tree('<math alttext="a b"><mrow><mi>a</mi><mspace width="1em"/><mi>b</mi>'
+                     '</mrow></math>')
+        (_math, ns, (mrow,)), = tree
+        self.assertEqual(ns, "mathml")
+        self.assertEqual(mrow, ("mrow", "mathml", [("mi", "mathml", ["a"]),
+                                                    ("mspace", "mathml", []),
+                                                    ("mi", "mathml", ["b"])]))
+        svg = _tree('<svg><rect/><text>t</text></svg>')
+        self.assertEqual(svg, [("svg", "svg", [("rect", "svg", []), ("text", "svg", ["t"])])])
+
+    def test_s14_html_keeps_ignoring_the_flag_and_integration_points_are_html(self):
+        self.assertEqual(_tree("<p>x<span/>y</p>"), [("p", "html", ["x", ("span", "html",
+                                                                         ["y"])])])
+        tree = _tree('<svg><foreignObject><span/>z</foreignObject></svg>')
+        self.assertEqual(tree, [("svg", "svg", [("foreignobject", "svg",
+                                                  [("span", "html", ["z"])])])])
+        tree = _tree('<math><mtext><span/>w</mtext><mi><mglyph/>v</mi></math>')
+        self.assertEqual(tree, [("math", "mathml", [
+            ("mtext", "mathml", [("span", "html", ["w"])]),
+            ("mi", "mathml", [("mglyph", "mathml", []), "v"])])])
+        tree = _tree('<math><mrow><div/>u</mrow></math>')    # a breakout tag is HTML
+        self.assertEqual(tree, [("math", "mathml", [("mrow", "mathml",
+                                                      [("div", "html", ["u"])])])])
+
+    def test_s14_the_views_of_a_formula_with_an_mspace_are_unchanged(self):
+        r = rh.render('<p>Let <span class="mwe-math-element"><math alttext="{\\displaystyle '
+                      'a\\,b}"><semantics><mrow><mi>a</mi><mspace width="0.167em"/><mi>b</mi>'
+                      '</mrow><annotation encoding="application/x-tex">{\\displaystyle a\\,b}'
+                      '</annotation></semantics></math></span> be given.</p>')
+        self.assertEqual(r.layer, "Let ab{\\displaystyle a\\,b} be given.")
+        self.assertEqual(r.text, "Let $a\\,b$ be given.\n")
+        self.assertEqual([f["alttext"] for f in r.formulas], ["{\\displaystyle a\\,b}"])
+
+
+class TestFieldS13FormulasWrittenAsHtml(unittest.TestCase):
+
+    def test_s13_a_block_holding_only_a_texhtml_formula_is_math(self):
+        # a partition of an interval, indented, written with {{math}} (no TeX at all)
+        r = rh.render('<p>A partition of an interval is a finite sequence of numbers of '
+                      'the form</p>\n<dl><dd><span class="texhtml"><i>a</i> = <i>x</i><sub>0'
+                      '</sub> &lt; <i>x</i><sub>1</sub> &lt; ... &lt; <i>x</i><sub><i>n</i>'
+                      '</sub> = <i>b</i></span></dd></dl>\n<h2 id="R">Refinement</h2>\n'
+                      '<p>Given <span class="texhtml mvar" style="font-style:italic;">P</span>'
+                      ', a refinement adds points.</p>\n<p>History of the widget idea, told '
+                      'without any formula at all.</p>')
+        blocks = {r.layer[p["span"][0]:p["span"][0] + 12]: p for p in r.paragraphs}
+        dd = blocks["a = x0 < x1 "]
+        self.assertEqual((dd["block"], dd["formulas"], dd["texhtml"], dd["math"]),
+                         ("dd", 0, 1, True))
+        mvar = blocks["Given P, a r"]
+        self.assertEqual((mvar["texhtml"], mvar["math"]), (1, True))
+        prose = blocks["History of t"]
+        self.assertEqual((prose["texhtml"], prose["math"]), (0, False))
+        self.assertEqual(r.counts["texhtml"], 2)
+        self.assertEqual(r.formulas, [])               # no TeX: no formulas.json formula
+        self.assertNotIn("$", r.text)
+
+    def test_s13_nested_texhtml_counts_once_and_mathml_still_counts_as_formulas(self):
+        r = rh.render(f'<p>Both <span class="texhtml"><span class="texhtml">x</span> + 1</span>'
+                      f' and {math("y")} appear.</p>')
+        (p,) = r.paragraphs
+        self.assertEqual((p["formulas"], p["texhtml"], p["math"]), (1, 1, True))
+
+
+class TestFieldBoldLabelsAreNoDefinitions(unittest.TestCase):
+    """The check found bold_definition passages whose bold was only a label."""
+
+    def finder_terms(self, html: str) -> list:
+        r = rh.render('<p>The widget article opens with this lead paragraph here.</p>\n'
+                      '<h2 id="S">Section</h2>\n' + html)
+        return [f["term"] for f in r.finders if f["finder"] == "bold_definition"]
+
+    def test_a_label_only_bold_makes_no_passage(self):
+        for label in ("Proof", "Proof.", "Example.", "Definition:", "Example 2:", "Case 1:",
+                      "Proof of the lemma.", "Theorem (Widget lemma).", "Solution:",
+                      "Base case:", "Remark 3.1."):
+            with self.subTest(label=label):
+                self.assertEqual(self.finder_terms(
+                    f"<p><b>{label}</b> Split the widget along its spine.</p>"), [])
+
+    def test_a_symbol_bold_makes_no_passage(self):
+        for symbol in ("R", "M", "1'", "2'", "(i)", "v"):
+            with self.subTest(symbol=symbol):
+                self.assertEqual(self.finder_terms(
+                    f"<p>Let <b>{symbol}</b> be a widget ring.</p>"), [])
+
+    def test_the_first_bold_that_names_a_term_is_the_term(self):
+        self.assertEqual(self.finder_terms(
+            "<p><b>Definition:</b> A <b>widget group</b> is a group with a gadget.</p>"),
+            ["widget group"])
+        self.assertEqual(self.finder_terms(
+            "<p>A <b>solution</b> of a widget equation is a value that satisfies it.</p>"),
+            ["solution"])
+        self.assertEqual(self.finder_terms("<p>The <b>Pi</b> gadget.</p>"), ["Pi"])
+
+    def test_every_label_is_in_the_vocabulary_document(self):
+        text = (SKILL / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        for label in sorted(vocab.BOLD_LABELS | vocab.BOLD_LABELS_PUNCTUATED):
+            with self.subTest(label=label):
+                self.assertIn(f"`{label}`", text)
+
+
+#: the page every view of which is pinned to the renderer id: the real-shaped
+#: page, the suite's page, a fixture page, and one of each field case
+GOLDEN_EXTRA = (
+    '<h2 id="More">More</h2>\n'
+    '<p><b>Proof.</b> Split the widget; let <b>R</b> be its ring.</p>\n'
+    '<dl><dd><span class="texhtml"><i>a</i> = <i>x</i><sub>0</sub> &lt; <i>b</i></span></dd>'
+    '</dl>\n<p>Spaced <span class="mwe-math-element"><math alttext="{\\displaystyle a\\,b}">'
+    '<mrow><mi>a</mi><mspace width="0.167em"/><mi>b</mi></mrow></math></span> out.</p>\n')
+
+#: sha256 of every file write_rendering writes for the golden page, per renderer id
+GOLDEN_VIEWS = {
+    "web-html/2": {
+        "body.html": "adf883de75208f77f7c558b176b5c833cc2ed1d164ee81ed95111227eff5bb8f",
+        "finders.json": "dae197e64e3d8a4b9c9a384ef0dc46baf3182ff033e3da9899db771bdccdb7da",
+        "formulas.json": "8539aec3aeaafa945c013ed34c78008fd8fa805a2014c55292c0ce398eb7eb97",
+        "head.txt": "1838f6844084223bffbd0be45a176f327587984f1cd7372531901bda093df2fb",
+        "layer.txt": "9a95ca0666dcf41f40c93868ac1c407ce27bcdcd3ececeaee1dad8fdd3494909",
+        "layer_map.json": "214d1b6b84b9e0584a238f518ca34a29909150feea142a23be4a822c311461bb",
+        "paragraphs.json": "bc3b030c9c6396f3ac3156d2c3ab37ae740a1cfe748afae78450c1183dcb9ddf",
+        "render.json": "017ac93754ddca9b914dacc856d13124573e4fd558c9e374e9415dddc0c78dc1",
+        "sections.json": "b70c3527079235f0e5dbcd659cd57fcdc0575f8db837734270caa6f01d664f07",
+        "text.txt": "3e0a85699ad46f101f46a793a43edd7726846719d3caf8b36af8e88cfcbf63aa",
+    },
+}
+
+
+def golden_rendering():
+    return rh.render(rh.canonical_body(
+        (MW_PAGE + PAGE + fixture_body(2004) + GOLDEN_EXTRA).encode("utf-8")))
+
+
+class TestFieldL1EveryViewIsPinnedToTheRendererId(_FieldCase):
+    """L1: a view's format changed (cf-layer-map/1 to /2) under one renderer id."""
+
+    def test_l1_every_view_of_the_golden_page_is_the_renderer_ids(self):
+        self.assertIn(rh.RENDERER, GOLDEN_VIEWS,
+                      "a new renderer id: add its row of view shas to GOLDEN_VIEWS")
+        r = golden_rendering()
+        for name, content in sorted(r.files().items()):
+            with self.subTest(view=name):
+                self.assertEqual(
+                    hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                    GOLDEN_VIEWS[rh.RENDERER].get(name),
+                    f"{name} changed under {rh.RENDERER}: a change to any view, or to the "
+                    f"layout of its file, is a new renderer id -- bump render_html.RENDERER "
+                    f"and cflib.vocab.RENDERER_WEB_HTML and add a GOLDEN_VIEWS row")
+        self.assertEqual(set(r.files()), set(rh.RENDER_FILES))
+
+    def test_l1_a_map_another_renderer_wrote_is_refused(self):
+        out = _scratch(self)
+        rh.write_rendering(out, golden_rendering())
+        self.assertTrue(rh.LayerMap.read(out).segments)
+        path = out / "layer_map.json"
+        good = path.read_text(encoding="utf-8")
+        data = json.loads(good)
+        for renderer in ("web-html/1", None):
+            with self.subTest(renderer=renderer):
+                changed = dict(data, renderer=renderer) if renderer else \
+                    {k: v for k, v in data.items() if k != "renderer"}
+                path.write_text(json.dumps(changed), encoding="utf-8")
+                with self.assertRaisesRegex(rh.RenderError, "renderer"):
+                    rh.LayerMap.read(out)
+        path.write_text(good, encoding="utf-8")
+        record = json.loads((out / "render.json").read_text(encoding="utf-8"))
+        (out / "render.json").write_text(json.dumps(dict(record, renderer="web-html/1")),
+                                         encoding="utf-8")
+        with self.assertRaisesRegex(rh.RenderError, "render.json names renderer"):
+            rh.LayerMap.read(out)
+
+    def test_l1_status_verify_names_a_view_of_another_renderer(self):
+        self.enumerate("--limit", "1")
+        self.fetch()
+        cf(self.root, "sourceset", "render", "wpm")
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 0, out)
+        d = self.ss.source_dir("enwiki-1001-2002")
+        data = json.loads((d / "layer_map.json").read_text(encoding="utf-8"))
+        (d / "layer_map.json").write_text(json.dumps(dict(data, renderer="web-html/1")),
+                                          encoding="utf-8")
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 1, out)
+        self.assertIn("layer_map.json says renderer 'web-html/1'", out)
+
+
+class TestFieldS11ManifestDeltas(unittest.TestCase):
+    """S11: every version was a full copy -- ~150 copies of ten megabytes for one fetch."""
+
+    def setUp(self):
+        self.root = _workspace(self)
+        self.paths = WorkspacePaths(self.root)
+        self.ss = Sourceset.create(self.paths, "wpm", "enwiki")
+        self.base = self.ss.write_version(self.ss.latest(), [_entry(n) for n in range(1, 41)])
+
+    def test_s11_a_small_change_is_a_delta_that_reads_back_whole(self):
+        self.assertFalse(self.base.is_delta)              # 40 new of 40: a snapshot
+        filled = dict(self.base.get("enwiki-1003-2003"), raw_sha256="a" * 64)
+        m = self.ss.write_version(self.base, [*(e for e in self.base
+                                                if e["source_id"] != filled["source_id"]),
+                                               filled])
+        self.assertTrue(m.is_delta)
+        lines = m.path.read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        header = json.loads(lines[0])
+        self.assertEqual((header["schema"], header["sources"], header["changed"]),
+                         ("cf-sourceset-delta/1", 40, 1))
+        self.assertEqual(header["previous_sha256"], self.base.sha256)
+        again = self.ss.load(m.version)
+        self.assertEqual(len(again), 40)
+        self.assertEqual(again.get("enwiki-1003-2003")["raw_sha256"], "a" * 64)
+        self.assertEqual(again.sha256, websource_sha(m.path))
+        self.assertEqual(self.ss.pinned(m.version, m.sha256).entries, again.entries)
+        # the planner's and the bench's readers see the same version
+        from bench import inputs as bench_inputs
+        from locate import inputs as locate_inputs
+        for reader in (locate_inputs.load_manifest, bench_inputs.load_manifest):
+            with self.subTest(reader=reader.__module__):
+                read = reader(self.paths, "wpm", m.version)
+                self.assertEqual((read.sha256, read.entries), (m.sha256, again.entries))
+
+    def test_s11_a_whole_fetch_writes_tens_of_versions_not_tens_of_copies(self):
+        m = self.base
+        for n in range(1, 41):
+            sid = f"enwiki-{1000 + n}-{2000 + n}"
+            m = self.ss.write_version(m, [dict(e, raw_sha256="b" * 64) if e["source_id"] == sid
+                                          else e for e in m])
+        snapshot = self.paths.sourceset_manifest("wpm", 2).stat().st_size
+        total = sum(p.stat().st_size for _n, p in self.paths.sourceset_manifests("wpm"))
+        self.assertLess(total, 3 * snapshot)             # was 41 snapshots
+        self.assertTrue(all(e["raw_sha256"] == "b" * 64 for e in self.ss.latest()))
+
+    def test_s11_a_long_chain_ends_in_a_snapshot(self):
+        from sources import sourceset as sourceset_mod
+        with mock.patch.object(sourceset_mod, "MAX_DELTA_CHAIN", 2):
+            m = self.base
+            kinds = []
+            for n in range(1, 6):
+                sid = f"enwiki-{1000 + n}-{2000 + n}"
+                m = self.ss.write_version(m, [dict(e, raw_sha256="c" * 64)
+                                              if e["source_id"] == sid else e for e in m])
+                kinds.append(m.is_delta)
+            self.assertEqual(kinds, [True, True, False, True, True])
+            self.assertEqual(self.ss.load(m.version).chain, 2)
+
+    def test_s11_a_broken_chain_is_refused(self):
+        m = self.base
+        for n in (1, 2):
+            sid = f"enwiki-{1000 + n}-{2000 + n}"
+            m = self.ss.write_version(m, [dict(e, raw_sha256="d" * 64) if e["source_id"] == sid
+                                          else e for e in m])
+        snapshot = self.paths.sourceset_manifest("wpm", 2)
+        middle = self.paths.sourceset_manifest("wpm", 3)
+        text = middle.read_text()
+        # a delta that changes a recorded value is refused
+        lines = text.splitlines()
+        row = json.loads(lines[1])
+        changed_path = self.paths.sourceset_manifest("wpm", 4)
+        last = changed_path.read_text().splitlines()
+        bad = dict(json.loads(last[1]), source_id=row["source_id"], pageid=row["pageid"],
+                   revision=row["revision"], title=row["title"], raw_sha256="e" * 64)
+        changed_path.write_text(last[0] + "\n" + sourceset_canonical(bad) + "\n")
+        with self.assertRaisesRegex(SourcesetError, "never changes"):
+            self.ss.load(4)
+        # a rewritten snapshot breaks every delta after it
+        snapshot.write_text(snapshot.read_text().replace('"sources":40', '"sources":40 '))
+        with self.assertRaisesRegex(SourcesetError, "rewritten"):
+            self.ss.load(3)
+        middle.unlink()
+        with self.assertRaisesRegex(SourcesetError, "not on disk"):
+            self.ss.load(4)
+
+
+def sourceset_canonical(obj: dict) -> str:
+    from sources.sourceset import canonical_line
+    return canonical_line(obj)
+
+
+class TestFieldS9S10S12TheStateAndTheStatus(_FieldCase):
+
+    def adopt_older_revision(self):
+        pins = _scratch(self)
+        body = {"parse": {"revid": 1990, "text": "<p>The <b>widget lemma</b> as a consumer "
+                                                 "pinned it, at an older revision.</p>"}}
+        (pins / "b.json").write_text(json.dumps(body))
+        (pins / "pins.jsonl").write_text(json.dumps(
+            {"pageid": 1001, "revision": 1990, "bytes": "b.json",
+             "assessment": {"class": "B", "importance": "high"}}) + "\n")
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from",
+                       str(pins / "pins.jsonl"), "--consumer", "wikilean")
+        self.assertEqual(code, 0, out)
+
+    def test_s9_status_counts_pages_once_whatever_their_revisions(self):
+        self.enumerate()
+        self.adopt_older_revision()
+        counts = self.ss.read_state()["counts"]
+        self.assertEqual((counts["sources"], counts["pages"]), (4, 3))
+        self.assertEqual(sum(counts["by_class"].values()), 3)
+        self.assertEqual(sum(counts["by_importance"].values()), 3)
+        self.assertEqual(counts["by_importance"].get("high"), 1)
+        code, out = cf(self.root, "sourceset", "status", "wpm")
+        self.assertIn("pages by class", out)
+
+    def test_s10_the_history_keeps_every_run_and_a_plain_status_writes_nothing(self):
+        self.enumerate("--limit", "1")
+        self.fetch()
+        cf(self.root, "sourceset", "render", "wpm")
+        written = self.ss.read_state()
+        code, out = cf(self.root, "sourceset", "render", "wpm")      # a no-op re-run
+        self.assertEqual(code, 0, out)
+        state = self.ss.read_state()
+        runs = [(h["command"], h["wrote_version"]) for h in state["history"]]
+        self.assertEqual(runs, [("create", True), ("enumerate-wikiproject", True),
+                                ("fetch", True), ("render", True), ("render", False)])
+        rendered = [h for h in state["history"] if h["command"] == "render"]
+        self.assertEqual((rendered[0]["rendered"], rendered[1]["rendered"]), (1, 0))
+        self.assertEqual(rendered[0]["version"], written["manifest"]["version"])
+        before = self.paths.sourceset_state_json("wpm").read_bytes()
+        code, out = cf(self.root, "sourceset", "status", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.paths.sourceset_state_json("wpm").read_bytes(), before)
+        code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.ss.read_state()["history"][-1]["command"], "status")
+        with self.assertRaises(SourcesetError):
+            self.ss.record_state("history", {"x": 1})
+
+    def test_s10_the_history_is_bounded(self):
+        from sources import sourceset as sourceset_mod
+        with mock.patch.object(sourceset_mod, "MAX_HISTORY", 3):
+            for _ in range(5):
+                self.ss.refresh_state(command="probe")
+        state = self.ss.read_state()
+        self.assertEqual(len(state["history"]), 3)
+        self.assertEqual(state["history_dropped"], 3)      # create + 5 probes - 3 kept
+
+    def test_s12_cf_status_shows_the_sourcesets(self):
+        self.enumerate()
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(out):
+            code = cf_main.main(["--workspace", str(self.root), "status"])
+        self.assertEqual(code, 0, out.getvalue())
+        text = out.getvalue()
+        self.assertIn("sourceset", text)
+        self.assertIn("wpm", text)
+        self.assertIn("enumerate-wikiproject", text)
+        self.assertNotIn("next:  cf onboard", text)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cf_main.main(["--workspace", str(self.root), "status", "--json"])
+        (row,) = json.loads(out.getvalue())["sourcesets"]
+        self.assertEqual((row["id"], row["counts"]["sources"], row["counts"]["pages"]),
+                         ("wpm", 3, 3))
+        self.assertEqual(row["version"], row["latest_on_disk"])
+
+
+class TestFieldS2FetchASelection(_FieldCase):
+    """S2: a pilot of 80 articles meant fetching all 30k sources, or a script."""
+
+    def test_s2_only_the_selected_sources_are_fetched(self):
+        self.enumerate()
+        code, out = self.fetch("--source", "enwiki-1002-2003")
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertEqual({e["source_id"] for e in m if e["raw_sha256"]}, {"enwiki-1002-2003"})
+        self.assertEqual(self.ss.read_state()["commands"]["fetch"]["selected"], 1)
+        pick = _scratch(self) / "pick.txt"
+        pick.write_text("# the pilot\n1003   # a page id: the source a run plans\n"
+                        "enwiki-1002-2003\n\n")
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--select", str(pick))
+        self.assertEqual(code, 0, out)                       # the dry run counts what is left
+        self.assertIn("1 source(s) of wpm have no bytes yet of the 2 selected", out)
+        code, out = self.fetch("--select", str(pick))
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertEqual({e["source_id"] for e in m if e["raw_sha256"]},
+                         {"enwiki-1002-2003", "enwiki-1003-2004"})
+        self.assertIsNone(m.get("enwiki-1001-2002")["raw_sha256"])
+        as_json = _scratch(self) / "pick.json"
+        as_json.write_text(json.dumps(["enwiki-1001-2002"]))
+        code, out = self.fetch("--select", str(as_json))
+        self.assertEqual(code, 0, out)
+        self.assertIsNotNone(self.ss.latest().get("enwiki-1001-2002")["raw_sha256"])
+
+    def test_s2_a_selection_naming_nothing_held_is_refused_before_any_request(self):
+        self.enumerate()
+        pick = _scratch(self) / "pick.txt"
+        pick.write_text("enwiki-9999-1\n4242\n")
+        empty = _scratch(self)
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--select", str(pick),
+                       "--fixtures", str(empty))
+        self.assertEqual(code, 2, out)
+        self.assertIn("holds no source or page enwiki-9999-1, 4242", out)
+        self.assertEqual(self.ss.latest().version, 2)
+
+
+def _record(directory: Path, name: str, query: dict, answer: dict) -> None:
+    """One recorded API answer in FixtureTransport's format."""
+    (directory / f"{name}.json").write_text(json.dumps({"query": query, "json": answer}),
+                                            encoding="utf-8")
+
+
+def _fixtures_with(case, extra: dict[str, tuple[dict, dict]]) -> Path:
+    """The suite's recordings plus ``extra`` ``{name: (query, answer)}``."""
+    directory = _scratch(case)
+    for p in FIXTURES.glob("*.json"):
+        shutil.copy(p, directory / p.name)
+    for name, (query, answer) in extra.items():
+        _record(directory, name, query, answer)
+    return directory
+
+
+def _revids_query(*revisions: int) -> dict:
+    return {"action": "query", "revids": "|".join(str(r) for r in sorted(revisions)),
+            "prop": "revisions", "rvprop": "ids", "format": "json", "formatversion": "2"}
+
+
+class TestFieldS3S4AdoptWithoutBytes(_FieldCase):
+    """S3: a consumer pins title + revision and holds no parse bytes; S4: an adopted
+    revision lost its page's assessment and QID."""
+
+    def pins(self, rows) -> Path:
+        path = _scratch(self) / "pins.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return path
+
+    def test_s3_s4_a_pin_without_bytes_is_fetched_at_exactly_its_revision(self):
+        self.enumerate()
+        pins = self.pins([{"pageid": 1001, "revision": 1990, "title": "Widget lemma"}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--consumer", "wikilean")
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 without bytes", out)
+        e = self.ss.latest().get("enwiki-1001-1990")
+        self.assertEqual((e["origin"], e["raw_sha256"], e["adopted_from"]["consumer"]),
+                         ("adopted", None, "wikilean"))
+        # S4: the page's assessment and QID, which the pin did not carry
+        self.assertEqual((e["assessment"], e["wikidata"]),
+                         ({"class": "B", "importance": "high"}, "Q99999001"))
+        self.assertFalse(self.ss.source_dir("enwiki-1001-1990").exists())
+        self.assertEqual(self.ss.latest().preferred()[1001], "enwiki-1001-1990")
+        # the fetch fetches oldid 1990 and leaves the page's enumerated revision alone
+        answer = json.loads((FIXTURES / "parse-2002.json").read_text())["json"]
+        answer["parse"]["revid"] = 1990
+        fixtures = _fixtures_with(self, {"parse-1990": (websource.parse_params(1990), answer)})
+        code, out = self.fetch(fixtures=fixtures)
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertIsNotNone(m.get("enwiki-1001-1990")["raw_sha256"])
+        self.assertIsNone(m.get("enwiki-1001-2002")["raw_sha256"])
+        self.assertIn("left to their consumer's adopted revision", out)
+        self.assertEqual(self.ss.source_problems(m.get("enwiki-1001-1990")), [])
+        # adopting the same pins again adds nothing
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 already held", out)
+
+    def test_s3_a_title_pin_has_its_page_resolved_from_its_revision(self):
+        self.enumerate()
+        pins = self.pins([{"title": "Widget lemma (moved)", "revision": 1990},
+                          {"title": "Gadget theorem", "revision": 2003}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 2, out)                          # no --execute, no fixtures
+        self.assertIn("--execute", out)
+        answer = {"query": {"pages": [
+            {"pageid": 1001, "ns": 0, "title": "Widget lemma", "revisions": [{"revid": 1990}]},
+            {"pageid": 1002, "ns": 0, "title": "Gadget theorem",
+             "revisions": [{"revid": 2003}]}]}}
+        fixtures = _fixtures_with(self, {"revids": (_revids_query(1990, 2003), answer)})
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--fixtures", str(fixtures))
+        self.assertEqual(code, 0, out)
+        self.assertIn("its page 1001 is now 'Widget lemma'", out)
+        m = self.ss.latest()
+        moved = m.get("enwiki-1001-1990")
+        self.assertEqual((moved["title"], moved["wikidata"]), ("Widget lemma (moved)",
+                                                               "Q99999001"))
+        same = m.get("enwiki-1002-2003")                         # the enumerated revision
+        self.assertEqual((same["origin"], same["adopted_from"]["consumer"]),
+                         ("enumerated", "consumer"))
+        self.assertEqual(self.ss.read_state()["commands"]["adopt"]["resolved_by_revision"], 2)
+
+    def test_s3_a_revision_that_does_not_exist_is_refused(self):
+        self.enumerate()
+        pins = self.pins([{"title": "Widget lemma", "revision": 77}])
+        answer = {"query": {"badrevids": {"77": {"revid": 77, "missing": True}}}}
+        fixtures = _fixtures_with(self, {"revids": (_revids_query(77), answer)})
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--fixtures", str(fixtures))
+        self.assertEqual(code, 2, out)
+        self.assertIn("no revision of", out)
+        self.assertNotIn("enwiki-1001-77", self.ss.latest().entries)
+
+    def test_s3_a_page_outside_the_sourceset_can_be_left_out(self):
+        self.enumerate()
+        pins = self.pins([{"pageid": 4242, "revision": 9}, {"pageid": 1003, "revision": 2004}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--only-known-pages")
+        self.assertEqual(code, 0, out)
+        self.assertIn("skipped, no other source of its page here", out)
+        self.assertNotIn("enwiki-4242-9", self.ss.latest().entries)
+        self.assertTrue(self.ss.latest().get("enwiki-1003-2004").get("adopted_from"))
+
+    def test_s3_a_pin_names_its_page(self):
+        pins = self.pins([{"revision": 5}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 2, out)
+        self.assertIn("a pageid or a title", out)
+
+
+class TestFieldS4AnEnumerationFillsAnAdoptedRevision(_FieldCase):
+
+    def test_s4_a_revision_adopted_before_the_listing_takes_its_metadata_from_it(self):
+        pins = _scratch(self) / "pins.jsonl"
+        pins.write_text(json.dumps({"pageid": 1001, "revision": 1990}) + "\n")
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 0, out)
+        e = self.ss.latest().get("enwiki-1001-1990")
+        self.assertEqual((e["assessment"], e["wikidata"], e["title"]), (None, None, None))
+        code, out = self.enumerate()
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 adopted revision(s) took their page's", out)
+        e = self.ss.latest().get("enwiki-1001-1990")
+        self.assertEqual((e["assessment"], e["wikidata"], e["title"]),
+                         ({"class": "B", "importance": "high"}, "Q99999001", "Widget lemma"))
+        self.assertNotIn("enwiki-1001-2002", self.ss.latest().entries)
+
+
+def _listing_query(**cont) -> dict:
+    return {"action": "query", "list": "projectpages", "wppprojects": "Mathematics",
+            "wppassessments": "1", "wpplimit": "500", "format": "json", "formatversion": "2",
+            **cont}
+
+
+def _row(pageid, title, cls, importance=None, ns=0):
+    return {"pageid": pageid, "ns": ns, "title": title,
+            "assessment": {"class": cls, "importance": importance or "Low"}}
+
+
+#: a synthetic WikiProject whose listing holds every kind of page the field met
+FLAG_LISTING = [
+    (_listing_query(), {"continue": {"continue": "-||", "wppcontinue": "1103"},
+                        "query": {"projects": {"Mathematics": [
+                            _row(1101, "Widget group", "B", "High"),
+                            _row(1102, "Widget (disambiguation)", "Disambig", "NA"),
+                            _row(5101, "Talk:Widget group", "B", "High", ns=1),
+                            _row(5102, "Category:Widgets", "Category", "NA", ns=14),
+                            _row(5103, "Template:Widget", "Template", "NA", ns=10)]}}}),
+    (_listing_query(**{"continue": "-||", "wppcontinue": "1103"}),
+     {"query": {"projects": {"Mathematics": [
+         _row(1103, "List of widgets", "List", "Low"),
+         _row(1104, "Old widget name", "Redirect", "NA"),
+         _row(1105, "Ada Widgetson", "Start", "Low"),
+         _row(1106, "Widget theorem", "Start", "Mid")]}}}),
+]
+FLAG_IDS = "1101|1102|1103|1104|1105|1106"
+
+
+def _info_query(ids=FLAG_IDS, **cont) -> dict:
+    return {**wikinet.PAGE_INFO_PARAMS, "pageids": ids, **cont}
+
+
+#: the page infos, the second half of one page's answer in a continuation (S8)
+FLAG_INFOS = [
+    (_info_query(), {"continue": {"continue": "||", "rvcontinue": "1105|3105"},
+                     "query": {"pages": [
+                         {"pageid": 1101, "ns": 0, "title": "Widget group",
+                          "revisions": [{"revid": 3101}],
+                          "pageprops": {"wikibase_item": "Q99999101"}},
+                         {"pageid": 1102, "ns": 0, "title": "Widget (disambiguation)",
+                          "revisions": [{"revid": 3102}],
+                          "pageprops": {"disambiguation": ""}},
+                         {"pageid": 1103, "ns": 0, "title": "List of widgets",
+                          "revisions": [{"revid": 3103}]},
+                         {"pageid": 1104, "ns": 0, "title": "Old widget name",
+                          "redirect": True, "revisions": [{"revid": 3104}]},
+                         {"pageid": 1105, "ns": 0, "title": "Ada Widgetson",
+                          "pageprops": {"wikibase_item": "Q99999105"}},
+                         {"pageid": 1106, "ns": 0, "title": "Widget theorem", "redirect": True,
+                          "revisions": [{"revid": 3106}]}]}}),
+    (_info_query(**{"continue": "||", "rvcontinue": "1105|3105"}),
+     {"query": {"pages": [{"pageid": 1105, "ns": 0, "title": "Ada Widgetson",
+                           "revisions": [{"revid": 3105}]}]}}),
+]
+
+
+def _flag_fixtures(case, *, listing=True, infos=True, first_answer_only=False) -> Path:
+    directory = _scratch(case)
+    recorded = []
+    if listing:
+        recorded += FLAG_LISTING[:1] if first_answer_only else FLAG_LISTING
+    if infos:
+        recorded += FLAG_INFOS
+    for n, (query, answer) in enumerate(recorded):
+        _record(directory, f"r{n}", query, answer)
+    return directory
+
+
+class TestFieldS5S6S8FlagsAndCounts(_FieldCase):
+    """S5: redirects, disambiguation pages, lists and biographies went in unflagged;
+    S6: the listing's other rows were dropped uncounted; S8: page info ignored
+    ``continue``."""
+
+    def test_s5_s6_s8_an_enumeration_flags_counts_and_follows_continuations(self):
+        code, out = self.enumerate(fixtures=_flag_fixtures(self))
+        self.assertEqual(code, 0, out)
+        self.assertIn("3 row(s) of the listing are no article", out)
+        self.assertIn("by namespace: 1 1, 10 1, 14 1", out)
+        m = self.ss.latest()
+        flags = {e["pageid"]: e["flags"] for e in m}
+        self.assertEqual(sorted(flags), [1101, 1102, 1103, 1104, 1105, 1106])   # S8: 1105 too
+        self.assertEqual(m.get("enwiki-1105-3105")["wikidata"], "Q99999105")
+        self.assertEqual(flags[1101], {"redirect": False, "disambiguation": False,
+                                       "list": False, "biography": None})
+        self.assertTrue(flags[1102]["disambiguation"])            # pageprops and class
+        self.assertTrue(flags[1103]["list"])
+        self.assertTrue(flags[1104]["redirect"])                  # info and class
+        self.assertTrue(flags[1106]["redirect"])                  # info alone
+        self.assertEqual([p for p, f in flags.items() if not any(f.values())], [1101, 1105])
+        state = self.ss.read_state()["commands"]["enumerate-wikiproject"]
+        self.assertEqual(state["non_article_rows"],
+                         {"total": 3, "by_namespace": {"1": 1, "10": 1, "14": 1}})
+        self.assertEqual(state["flagged"], {"redirect": 2, "disambiguation": 1, "list": 1})
+        # a plain fetch leaves the redirect and disambiguation stubs out
+        code, out = cf(self.root, "sourceset", "fetch", "wpm")
+        self.assertIn("dry run: 3 source(s) of wpm have no bytes yet", out)
+        code, out = cf(self.root, "sourceset", "fetch", "wpm", "--include-flagged")
+        self.assertIn("dry run: 6 source(s)", out)
+
+    def test_s5_the_biography_step_asks_wikidata(self):
+        self.enumerate(fixtures=_flag_fixtures(self))
+        code, out = cf(self.root, "sourceset", "flag-biographies", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertIn("2 Wikidata item(s): 1 query(ies)", out)
+        query = ("SELECT ?item WHERE { VALUES ?item { wd:Q99999101 wd:Q99999105 } "
+                 "?item wdt:P31 wd:Q5 . }")
+        answers = _scratch(self)
+        _record(answers, "p31", {"query": query, "format": "json"},
+                {"results": {"bindings": [
+                    {"item": {"type": "uri",
+                              "value": "http://www.wikidata.org/entity/Q99999105"}}]}})
+        code, out = cf(self.root, "sourceset", "flag-biographies", "wpm", "--fixtures",
+                       str(answers))
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertIs(m.get("enwiki-1105-3105")["flags"]["biography"], True)
+        self.assertIs(m.get("enwiki-1101-3101")["flags"]["biography"], False)
+        self.assertIsNone(m.get("enwiki-1103-3103")["flags"]["biography"])   # no QID
+        code, out = cf(self.root, "sourceset", "flag-biographies", "wpm", "--fixtures",
+                       str(_scratch(self)))
+        self.assertEqual(code, 0, out)                             # nothing left to ask
+        # a determined flag never changes
+        e = dict(m.get("enwiki-1105-3105"))
+        e["flags"] = dict(e["flags"], biography=False)
+        with self.assertRaisesRegex(SourcesetError, "flag biography"):
+            self.ss.write_version(m, [e if x["source_id"] == e["source_id"] else x for x in m])
+
+    def test_s5_a_sourceset_enumerated_before_flags_takes_them_at_the_next_listing(self):
+        fam = websource.family("enwiki")
+        old = websource.entry(fam, 1104, 3104, title="Old widget name",
+                              assessment={"class": "Redirect", "importance": "na"})
+        self.ss.write_version(self.ss.latest(), [old])
+        code, out = self.enumerate(fixtures=_flag_fixtures(self))
+        self.assertEqual(code, 0, out)
+        e = self.ss.latest().get("enwiki-1104-3104")
+        self.assertTrue(e["flags"]["redirect"])
+        self.assertEqual(self.ss.read_state()["commands"]["enumerate-wikiproject"]
+                         ["flags_filled"], 1)
+
+    def test_s6_the_client_counts_what_it_skips(self):
+        t = wikinet.FixtureTransport(_flag_fixtures(self, infos=False))
+        skipped: dict = {}
+        pages = list(wikinet.project_pages(t, SITE, "Mathematics", skipped=skipped))
+        self.assertEqual(len(pages), 6)
+        self.assertEqual(skipped, {1: 1, 14: 1, 10: 1})
+
+    def test_s8_a_repeating_page_info_continuation_is_refused(self):
+        fake = _Fake(lambda p: {"continue": {"rvcontinue": "1"},
+                                "query": {"pages": [{"pageid": 1, "revisions": []}]}})
+        with self.assertRaisesRegex(wikinet.WikiError, "repeats"):
+            wikinet.page_infos(fake, SITE, [1])
+
+
+class TestFieldS7EnumerationCheckpoints(_FieldCase):
+    """S7: 666 requests and twelve minutes, all or nothing."""
+
+    def test_s7_a_failed_page_info_request_resumes_without_listing_again(self):
+        code, out = self.enumerate(fixtures=_flag_fixtures(self, infos=False))
+        self.assertEqual(code, 2, out)
+        self.assertIn("are kept in", out)
+        checkpoint = self.paths.sourceset_enumerate_checkpoint("wpm")
+        data = json.loads(checkpoint.read_text())
+        self.assertTrue(data["listing"]["done"])
+        self.assertEqual(len(data["listing"]["pages"]), 6)
+        self.assertEqual(self.ss.versions(), [1])                  # nothing half-written
+        # the listing is not recorded here: a request for it would be refused
+        code, out = self.enumerate(fixtures=_flag_fixtures(self, listing=False))
+        self.assertEqual(code, 0, out)
+        self.assertIn("resuming the enumeration", out)
+        self.assertEqual(len(self.ss.latest()), 6)
+        self.assertFalse(checkpoint.exists())
+        self.assertTrue(self.ss.read_state()["commands"]["enumerate-wikiproject"]["resumed"])
+
+    def test_s7_a_listing_cut_off_resumes_from_its_continuation(self):
+        code, out = self.enumerate(fixtures=_flag_fixtures(self, infos=False,
+                                                           first_answer_only=True))
+        self.assertEqual(code, 2, out)
+        data = json.loads(self.paths.sourceset_enumerate_checkpoint("wpm").read_text())
+        self.assertEqual(data["listing"]["continue"], {"continue": "-||", "wppcontinue": "1103"})
+        resume = _scratch(self)
+        for n, (query, answer) in enumerate(FLAG_LISTING[1:] + FLAG_INFOS):
+            _record(resume, f"r{n}", query, answer)
+        code, out = self.enumerate(fixtures=resume)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(len(self.ss.latest()), 6)
+        self.assertIn("3 row(s) of the listing are no article", out)
+
+    def test_s7_a_checkpoint_of_another_project_is_refused_until_restarted(self):
+        self.enumerate(fixtures=_flag_fixtures(self, infos=False))
+        code, out = cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project",
+                       "Physics", "--fixtures", str(_scratch(self)))
+        self.assertEqual(code, 2, out)
+        self.assertIn("not 'Physics'", out)
+        code, out = self.enumerate("--restart", fixtures=_flag_fixtures(self))
+        self.assertEqual(code, 0, out)
+        self.assertNotIn("resuming", out)
+        self.assertFalse(self.paths.sourceset_enumerate_checkpoint("wpm").exists())
+
+
+class TestFieldS5TheWikidataRequest(unittest.TestCase):
+
+    transport = TestCurlTransport.transport
+
+    def test_s5_the_query_service_gets_one_fixed_get_with_no_maxlag(self):
+        body = json.dumps({"results": {"bindings": [
+            {"item": {"value": "http://www.wikidata.org/entity/Q99999105"}}]}}).encode()
+        t, run, _s = self.transport([(0, "200", body)])
+        self.assertEqual(wikinet.wikidata_humans(t, ["Q99999105", "Q99999101"]), {"Q99999105"})
+        (argv,) = run.argvs
+        url = argv[-1]
+        self.assertTrue(url.startswith("https://query.wikidata.org/sparql?"), url)
+        self.assertNotIn("maxlag", url)
+        self.assertIn("wdt%3AP31+wd%3AQ5", url)
+        self.assertIn(wikinet.USER_AGENT, argv)
+
+    def test_s5_only_qids_are_asked_and_only_the_two_endpoints_exist(self):
+        with self.assertRaises(wikinet.WikiError):
+            wikinet.wikidata_humans(_Fake(lambda p: {}), ["Q1 } DELETE {"])
+        with self.assertRaises(wikinet.WikiError):
+            wikinet.request_url(SITE, {"a": "1"}, "/w/index.php")
 
 
 if __name__ == "__main__":

@@ -7,10 +7,16 @@ parsed with ``html.parser`` into a small tree, and every view is computed from
 that one tree in one pass, so they cannot disagree about which characters a
 passage covers.
 
-**The renderer is frozen as** ``web-html/1`` (``cflib.vocab.RENDERER_WEB_HTML``):
+**The renderer is frozen as** ``web-html/2`` (``cflib.vocab.RENDERER_WEB_HTML``):
 a source's ``layer_sha256`` is pinned by every run, gate and score document, so
-any change to the rule below that can move one character of any view is a new
-renderer id, never an edit of this one.  The rule, in full:
+any change to the rule below that can move one character of any view -- the
+layout of a view's file included -- is a new renderer id, never an edit of this
+one; ``tests/test_locate_sources.py`` pins every view of a synthetic page to the
+id.  ``web-html/1`` kept ``style`` and ``script`` text in the layer and
+collapsed ASCII whitespace only, so it was no port of the consumer's text layer
+(docs/proposals/wikipedia-locate.md section 2.1) and its layers matched none;
+references/locate-documents.md section 7 lists what ``/2`` changed.  The rule,
+in full:
 
 * **The canonical body** (:func:`canonical_body`): the bytes are decoded as
   UTF-8 with one leading byte-order mark dropped (the WHATWG *UTF-8 decode*); a
@@ -27,8 +33,14 @@ renderer id, never an edit of this one.  The rule, in full:
 * **The tree.**  Tags are lower-cased by the parser; character references are
   decoded except inside ``script`` and ``style``, whose content is raw text.
   The void elements (``area base br col embed hr img input link meta param
-  source track wbr``) never hold content; a self-closing flag on any other tag
-  is ignored, as HTML5 ignores it.  An end tag closes the nearest open element
+  source track wbr``) never hold content.  A self-closing flag is honoured on a
+  MathML or SVG element (``<mspace/>`` holds nothing) and ignored on an HTML one,
+  as the HTML5 tree builder does: an element is MathML or SVG when it is a
+  ``math`` or ``svg``, or its parent is one and it is no HTML integration point's
+  child (SVG ``foreignObject desc title``; a MathML ``annotation-xml`` whose
+  ``encoding`` is ``text/html`` or ``application/xhtml+xml``; a MathML ``mi mo mn
+  ms mtext``, except for an ``mglyph`` or ``malignmark``) and no HTML element
+  that breaks out of foreign content (``b``, ``div``, ``p``, ``span`` ... ).  An end tag closes the nearest open element
   of its name and everything opened inside it; one with no open element is
   ignored.  A ``p`` is closed by the start of a block (``address article aside
   blockquote center details dir div dl fieldset figcaption figure footer form
@@ -41,18 +53,20 @@ renderer id, never an edit of this one.  The rule, in full:
   not text, as in the HTML5 tree builder.  A body that nests elements more than
   :data:`MAX_DEPTH` deep is refused.
 * **The Literature Links text layer** (``layer.txt``) is the tree's DOM
-  ``textContent`` -- every text node in document order, ``style`` and ``script``
-  text, MathML token text, the TeX annotation and citation markers all included
-  -- after the WHATWG *strip and collapse ASCII whitespace*: each maximal run of
-  U+0009, U+000A, U+000C, U+000D and U+0020 becomes one U+0020, and the ends are
-  stripped.  No Unicode normalisation, so U+00A0 stays U+00A0.
+  ``textContent`` without the ``script``, ``style`` and ``template`` elements
+  -- every other text node in document order, MathML token text, the TeX
+  annotation and citation markers all included -- with each maximal run of
+  ``White_Space`` (:data:`WHITE_SPACE`, the 25 code points of the Unicode
+  property: U+00A0, U+2009, U+202F and U+3000 among them) made one U+0020 and
+  the ends stripped.  No space is added at element boundaries, and there is no
+  other Unicode normalisation.  This is the Literature Links rule for HTML, the
+  one the consumer's ``text_layer`` implements.
 * **An element's layer span** is half-open, from its first non-whitespace text
   character to just after its last; an element with no such character has no
   span.  Its **kept span** is the same over the text outside the dropped regions
   listed under the reading copy: a block or a finder passage is measured by its
-  kept span, so an inline TemplateStyles ``style`` at the start of a paragraph
-  is never the start of a passage, and a paragraph that holds only dropped text
-  is no block.
+  kept span, so a citation marker at the start of a paragraph is never the start
+  of a passage, and a paragraph that holds only dropped text is no block.
 * **Formulas** (``formulas.json``): every element whose class tokens include
   ``mwe-math-element``, and every ``math`` element outside one, is a formula; its
   span is its layer span and its alttext is the first descendant ``math``
@@ -67,7 +81,7 @@ renderer id, never an edit of this one.  The rule, in full:
 * **Sections** (``sections.json``): every ``h1``-``h6`` starts one, at the layer
   position of its first text; its title is its text outside the dropped regions
   listed under the reading copy (``.mw-editsection``, a ``sup.reference``, an
-  inline ``style`` ...), ASCII-whitespace-collapsed; its fragment is its own ``id``, else the ``id`` of a
+  inline ``style`` ...), ``White_Space``-collapsed; its fragment is its own ``id``, else the ``id`` of a
   ``.mw-headline`` inside it, else null; its path is the titles of the open
   headings of lower level, then its own.  The lead (path ``[]``, fragment null)
   comes first, and the spans tile the layer.
@@ -77,29 +91,38 @@ renderer id, never an edit of this one.  The rule, in full:
   ``mwe-math-element-block``, a ``div`` formula, or a ``math`` with
   ``display="block"``) that has a kept span and lies outside the dropped regions
   below.  Blocks may nest (an ``li`` holding a ``p`` is two entries).
-  ``formulas`` counts the formulas starting inside; ``math`` is true when there
-  is one, or when a deterministic finder's passage starts inside.
+  ``formulas`` counts the formulas starting inside and ``texhtml`` the formulas
+  written as HTML starting inside (each outermost element whose class tokens
+  include ``texhtml``: MediaWiki's ``{{math}}`` and ``{{mvar}}``, which are no
+  ``formulas.json`` formula because they carry no TeX); ``math`` is true when
+  there is one of either, or when a deterministic finder's passage starts
+  inside -- it is what gate rule 8's coverage floor reads.
 * **The deterministic finders** (``finders.json``, ``cflib.vocab.
   DETERMINISTIC_FINDERS``): ``theorem_box`` -- each theorem box, ``term`` its
   ``.theorem-name`` (or ``.math_theorem_name``) text, else its first ``b`` or
-  ``strong``; ``bold_definition`` -- each ``p`` with a ``b`` inside and no
-  ``table``, ``caption`` or heading around it, ``term`` the first ``b``'s text;
-  ``lead`` -- the first ``p`` of the lead section with at least
+  ``strong`` (a term is always kept text, ``White_Space``-collapsed);
+  ``bold_definition`` -- each ``p`` with a ``b`` inside that names a term and no
+  ``table``, ``caption`` or heading around it, ``term`` the first such ``b``'s
+  text: one with at least :data:`MIN_TERM_LETTERS` letters that is not only a
+  paragraph label (``cflib.vocab.is_bold_label``: "Proof.", "Example 2:",
+  "Definition:"), so a paragraph whose every bold is a label or a symbol makes
+  no passage; ``lead`` -- the first ``p`` of the lead section with at least
   :data:`LEAD_MIN_WORDS` words of kept text and no ``table`` around it.  A
   passage starts at its element's kept span start and must be a word start of
-  the head text
-  (``locate_text.check_start`` at ``HeadMap.to_head``); one that is not is
-  dropped and counted in ``finders_dropped``.
+  the head text (``locate_text.check_start`` at ``HeadMap.to_head``); one that
+  is not is dropped and counted in ``finders_dropped``.
 * **The reading copy** (``text.txt``) walks the same tree without the dropped
-  regions -- ``style``, ``script``, ``sup.reference``, ``ol.references``,
+  regions -- ``style``, ``script``, ``template``, ``sup.reference``, ``ol.references``,
   ``.reflist``, ``.mw-references-wrap``, ``.mw-editsection`` -- writing each
   formula as ``$<normalized alttext>$``, each heading as a line of ``#`` (one per
   level) and its title, ``- `` before a list item, `` | `` between table cells
   (one space each side, whatever whitespace the cells hold), a line break for
   ``br``, a blank line between blocks (inside a table cell a block -- a display
   formula too -- is only a space: a row is one line), and whitespace collapsed
-  within a block.  ``layer_map.json`` (``cf-layer-map/2``) maps it back: in each
-  segment ``[t0, t1, l0, l1, kind]``, ``text[t0:t1]`` is ``layer[l0:l1]``,
+  within a block (``White_Space``, as in the layer).  ``layer_map.json``
+  (``cf-layer-map/2``, naming the renderer that wrote it; :meth:`LayerMap.read`
+  refuses a map of any other renderer) maps it back: in each segment ``[t0, t1,
+  l0, l1, kind]``, ``text[t0:t1]`` is ``layer[l0:l1]``,
   character by character when ``kind`` is 0 (text) and only as a whole when it
   is 1 (a formula, whatever the two lengths are).  Characters the copy adds
   (heading marks, bullets, separators, breaks, an image-only formula) are in no
@@ -126,18 +149,31 @@ _SCRIPTS = Path(__file__).resolve().parents[1]
 if str(_SCRIPTS) not in sys.path:  # pragma: no cover - imported through cf.py normally
     sys.path.insert(0, str(_SCRIPTS))
 
+from cflib import vocab  # noqa: E402
 from gate import locate_text  # noqa: E402
 
-RENDERER = "web-html/1"
+RENDERER = "web-html/2"
 #: the lead finder skips a lead paragraph shorter than this (a stub's empty line)
 LEAD_MIN_WORDS = 5
+#: a bold run with fewer letters than this is a symbol (a bold R, a 1'), not a term
+MIN_TERM_LETTERS = 2
 
 #: the files a rendering writes into a source's directory, in the order written
 RENDER_FILES = ("body.html", "layer.txt", "formulas.json", "head.txt", "text.txt",
                 "layer_map.json", "sections.json", "paragraphs.json", "finders.json",
                 "render.json")
 
-_WS = "\t\n\f\r "
+#: the HTML tokenizer's whitespace (where a tag ends, a tag name stops)
+_HTML_WS = "\t\n\f\r "
+#: the 25 code points with the Unicode ``White_Space`` property: what the layer,
+#: the reading copy, titles and terms collapse (the Literature Links rule; it is
+#: the vendored passage normaliser's set, tests/test_locate_sources.py checks)
+WHITE_SPACE = frozenset(chr(code) for code in (
+    *range(0x09, 0x0E), 0x20, 0x85, 0xA0, 0x1680, *range(0x2000, 0x200B), 0x2028, 0x2029,
+    0x202F, 0x205F, 0x3000))
+_WS = WHITE_SPACE
+#: elements whose text is no part of the layer (the Literature Links rule)
+_SKIPPED = frozenset({"script", "style", "template"})
 _VOID = frozenset({"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
                    "meta", "param", "source", "track", "wbr", "keygen"})
 _CLOSES_P = frozenset({"address", "article", "aside", "blockquote", "center", "details",
@@ -196,7 +232,7 @@ def _tag_end(html: str, i: int) -> int:
             expecting_value = True
             j += 1
             continue
-        if ch in _WS:
+        if ch in _HTML_WS:
             j += 1
             continue
         if expecting_value and ch in "\"'":
@@ -331,10 +367,47 @@ def sha256_text(text: str) -> str:
 # the tree
 # --------------------------------------------------------------------------
 
-class _Node:
-    __slots__ = ("tag", "attrs", "classes", "children", "parent", "start", "end")
+#: an element's namespace, as far as the tree needs it (where a self-closing flag counts)
+_NS_HTML, _NS_MATHML, _NS_SVG = "html", "mathml", "svg"
+#: MathML's text integration points: a start tag inside one is HTML, but these two
+_MATHML_TEXT_POINTS = frozenset({"mi", "mo", "mn", "ms", "mtext"})
+_MATHML_TEXT_POINT_FOREIGN = frozenset({"mglyph", "malignmark"})
+#: SVG's HTML integration points (html.parser lower-cases ``foreignObject``)
+_SVG_HTML_POINTS = frozenset({"foreignobject", "desc", "title"})
+#: the HTML start tags that break out of foreign content (the HTML5 tree builder)
+_BREAKOUT = frozenset({"b", "big", "blockquote", "body", "br", "center", "code", "dd", "div",
+                       "dl", "dt", "em", "embed", "h1", "h2", "h3", "h4", "h5", "h6", "head",
+                       "hr", "i", "img", "li", "listing", "menu", "meta", "nobr", "ol", "p",
+                       "pre", "ruby", "s", "small", "span", "strong", "strike", "sub", "sup",
+                       "table", "tt", "u", "ul", "var"})
 
-    def __init__(self, tag: str, attrs: dict, parent: "_Node | None", start: int):
+
+def _namespace(tag: str, attrs: dict, parent: "_Node") -> str:
+    """The namespace a start tag of ``tag`` gets under ``parent`` (see the module docstring)."""
+    pns = parent.ns
+    if pns == _NS_MATHML:
+        if parent.tag in _MATHML_TEXT_POINTS and tag not in _MATHML_TEXT_POINT_FOREIGN:
+            pns = _NS_HTML
+        elif parent.tag == "annotation-xml":
+            encoding = parent.attrs.get("encoding", "").lower()
+            if tag == "svg":
+                return _NS_SVG
+            if encoding in ("text/html", "application/xhtml+xml"):
+                pns = _NS_HTML
+    elif pns == _NS_SVG and parent.tag in _SVG_HTML_POINTS:
+        pns = _NS_HTML
+    if pns == _NS_HTML:
+        return {"math": _NS_MATHML, "svg": _NS_SVG}.get(tag, _NS_HTML)
+    if tag in _BREAKOUT or (tag == "font" and set(attrs) & {"color", "face", "size"}):
+        return _NS_HTML
+    return pns
+
+
+class _Node:
+    __slots__ = ("tag", "attrs", "classes", "children", "parent", "start", "end", "ns")
+
+    def __init__(self, tag: str, attrs: dict, parent: "_Node | None", start: int,
+                 ns: str = _NS_HTML):
         self.tag = tag
         self.attrs = attrs
         self.classes = frozenset((attrs.get("class") or "").split())
@@ -342,6 +415,7 @@ class _Node:
         self.parent = parent
         self.start = start
         self.end = start
+        self.ns = ns
 
     def ancestors(self):
         node = self.parent
@@ -368,6 +442,9 @@ class _TreeBuilder(HTMLParser):
         self.root = _Node("#root", {}, None, 0)
         self.stack = [self.root]
         self.eat_lf = False
+        #: how many ``script``/``style``/``template`` elements are open: their text
+        #: is no part of the layer, so it never enters the raw text
+        self.skipping = 0
 
     # -- helpers -------------------------------------------------------
     def _close_to(self, index: int) -> None:
@@ -375,6 +452,8 @@ class _TreeBuilder(HTMLParser):
         while len(self.stack) > index:
             node = self.stack.pop()
             node.end = self.length
+            if node.tag in _SKIPPED:
+                self.skipping -= 1
 
     def _find(self, names, boundary) -> int:
         """Index of the nearest open element named in ``names`` above ``boundary``."""
@@ -417,14 +496,14 @@ class _TreeBuilder(HTMLParser):
                 self._close_to(i)
 
     # -- events --------------------------------------------------------
-    def handle_starttag(self, tag, attrs):
+    def handle_starttag(self, tag, attrs, *, self_closing: bool = False):
         self.eat_lf = False
         self._implied_closes(tag)
         parent = self.stack[-1]
-        node = _Node(tag, {k: (v if v is not None else "") for k, v in attrs},
-                     parent, self.length)
+        attrs = {k: (v if v is not None else "") for k, v in attrs}
+        node = _Node(tag, attrs, parent, self.length, _namespace(tag, attrs, parent))
         parent.children.append(node)
-        if tag in _VOID:
+        if tag in _VOID or (self_closing and node.ns != _NS_HTML):
             node.end = self.length
         else:
             if len(self.stack) > MAX_DEPTH:
@@ -432,10 +511,12 @@ class _TreeBuilder(HTMLParser):
                                   f"(at a {tag}); repair it before rendering")
             self.stack.append(node)
             self.eat_lf = tag in _EAT_LF
+            if tag in _SKIPPED:
+                self.skipping += 1
 
     def handle_startendtag(self, tag, attrs):
-        # HTML5 ignores the self-closing flag on a non-void element
-        self.handle_starttag(tag, attrs)
+        # HTML5 honours the self-closing flag in MathML and SVG, ignores it on HTML
+        self.handle_starttag(tag, attrs, self_closing=True)
 
     def handle_endtag(self, tag):
         self.eat_lf = False
@@ -462,7 +543,7 @@ class _TreeBuilder(HTMLParser):
                 if data.startswith(newline):
                     data = data[len(newline):]
                     break
-        if not data:
+        if not data or self.skipping:
             return
         start = self.length
         self.pieces.append(data)
@@ -575,7 +656,7 @@ def _kept_span(node: _Node, collapse: "_Collapse") -> tuple[int, int] | None:
 
 
 def _kept_text(node: _Node, raw: str) -> str:
-    return _ascii_collapse("".join(raw[a:b] for a, b in _texts(node, kept=True)))
+    return _collapse_ws("".join(raw[a:b] for a, b in _texts(node, kept=True)))
 
 
 def _is_formula_root(node: _Node, inside: bool) -> bool:
@@ -591,7 +672,7 @@ def _is_display(node: _Node) -> bool:
 
 def _dropped(node: _Node) -> bool:
     """Is this element a region the reading copy and the block list leave out?"""
-    if node.tag in ("style", "script"):
+    if node.tag in _SKIPPED:
         return True
     classes = node.classes
     if node.tag == "sup" and "reference" in classes:
@@ -605,8 +686,8 @@ def _is_theorem_box(node: _Node) -> bool:
     return bool(node.classes & _THEOREM_CLASSES)
 
 
-def _ascii_collapse(text: str) -> str:
-    """Strip and collapse ASCII whitespace only (the layer's rule, for titles and terms)."""
+def _collapse_ws(text: str) -> str:
+    """Strip and collapse ``White_Space`` (the layer's rule, for titles and terms)."""
     out: list[str] = []
     pending = False
     for ch in text:
@@ -662,7 +743,8 @@ class Rendering:
                 "text_sha256": self.text_sha256, "counts": dict(self.counts)}
 
     def layer_map(self) -> dict:
-        return {"schema": LAYER_MAP_SCHEMA, "segments": [list(s) for s in self.segments]}
+        return {"schema": LAYER_MAP_SCHEMA, "renderer": RENDERER,
+                "segments": [list(s) for s in self.segments]}
 
     def head_map(self) -> locate_text.HeadMap:
         return locate_text.HeadMap(self.layer, self.formulas)
@@ -810,10 +892,30 @@ class LayerMap:
 
     @classmethod
     def read(cls, directory: str | Path) -> "LayerMap":
-        path = Path(directory) / "layer_map.json"
+        """A source directory's map, refused unless THIS renderer wrote it and the views.
+
+        A map's segments are offsets into one renderer's ``text.txt`` and
+        ``layer.txt``; read against another renderer's views they point at the
+        wrong characters, so a map whose ``schema`` or ``renderer`` is not this
+        module's, or whose directory's ``render.json`` names another renderer, is
+        refused rather than read.
+        """
+        directory = Path(directory)
+        path = directory / "layer_map.json"
         data = json.loads(path.read_text(encoding="utf-8"))
+        hint = ("re-render the source under " + RENDERER + " (a recorded layer never changes: "
+                "seed a new sourceset with `cf sourceset create <new> --from <old>`)")
         if not isinstance(data, dict) or data.get("schema") != LAYER_MAP_SCHEMA:
-            raise RenderError(f"{path} is not a {LAYER_MAP_SCHEMA} layer map; re-render it")
+            raise RenderError(f"{path} is not a {LAYER_MAP_SCHEMA} layer map; {hint}")
+        if data.get("renderer") != RENDERER:
+            raise RenderError(f"{path} was written by renderer {data.get('renderer')!r}, and "
+                              f"this one is {RENDERER}; {hint}")
+        record = directory / "render.json"
+        if record.is_file():
+            written_by = json.loads(record.read_text(encoding="utf-8")).get("renderer")
+            if written_by != RENDERER:
+                raise RenderError(f"{directory}: render.json names renderer {written_by!r}, "
+                                  f"the layer map {RENDERER}; {hint}")
         return cls(data["segments"])
 
     def text_to_layer(self, offset: int) -> int | None:
@@ -862,6 +964,8 @@ class _Walker:
         self.headings: list[tuple[_Node, int]] = []
         self.blocks: list[tuple[_Node, str, tuple[int, int], bool]] = []
         self.boxes: list[tuple[_Node, tuple[int, int]]] = []
+        #: layer starts of the formulas written as HTML (``.texhtml``), outermost only
+        self.texhtml: list[int] = []
         self.paras: list[tuple[_Node, tuple[int, int], bool, bool]] = []  # node, span, in table, in heading
 
     def run(self) -> None:
@@ -891,6 +995,8 @@ class _Walker:
                  in_heading: bool, in_cell: bool) -> None:
         c = self.c
         tag = node.tag
+        if tag in _SKIPPED:
+            return          # no text, no formula, no heading, no block: nothing of it is read
         span = c.span(node.start, node.end)
         drop_here = dropped or _dropped(node)
         # formulas: always in the layer; the copy gets the TeX when not dropped
@@ -917,6 +1023,11 @@ class _Walker:
         heading = _HEADINGS.get(tag)
         if heading is not None and not in_formula:
             self.headings.append((node, heading))
+        if ("texhtml" in node.classes and not in_formula and not drop_here
+                and not any("texhtml" in a.classes for a in node.ancestors())):
+            kept_formula = _kept_span(node, c)
+            if kept_formula is not None:
+                self.texhtml.append(kept_formula[0])
         kept = (_kept_span(node, c)
                 if not drop_here and (tag in _BLOCK_TAGS or _is_theorem_box(node)) else None)
         if kept is not None:
@@ -984,8 +1095,24 @@ def _iter_kept(node: _Node):
 def _first_text(node: _Node, raw: str, predicate) -> str | None:
     for el in _iter_kept(node):
         if predicate(el):
-            text = _ascii_collapse("".join(raw[a:b] for a, b in _texts(el)))
+            text = _collapse_ws("".join(raw[a:b] for a, b in _texts(el, kept=True)))
             if text:
+                return text
+    return None
+
+
+def is_term(text: str) -> bool:
+    """Does a bold run's text name a term: enough letters, and not only a label?"""
+    return (sum(1 for ch in text if ch.isalpha()) >= MIN_TERM_LETTERS
+            and not vocab.is_bold_label(text))
+
+
+def _defined_term(node: _Node, raw: str) -> str | None:
+    """The kept text of the first ``b`` of a paragraph that names a term, or None."""
+    for el in _iter_kept(node):
+        if el.tag == "b":
+            text = _collapse_ws("".join(raw[a:b] for a, b in _texts(el, kept=True)))
+            if text and is_term(text):
                 return text
     return None
 
@@ -1060,7 +1187,7 @@ def render(body: str) -> Rendering:
     for node, span, in_table, in_heading in walker.paras:
         if in_table or in_heading:
             continue
-        term = _first_text(node, raw, lambda el: el.tag == "b")
+        term = _defined_term(node, raw)
         if term:
             propose("bold_definition", span, term)
     for node, span, in_table, _in_heading in walker.paras:
@@ -1080,19 +1207,26 @@ def render(body: str) -> Rendering:
 
     # blocks
     formula_starts = [f["span"][0] for f in formulas]
+    texhtml_starts = sorted(walker.texhtml)
+
+    def inside(starts: list[int], a: int, b: int) -> int:
+        return bisect_right(starts, b - 1) - bisect_right(starts, a - 1)
+
     paragraphs = []
     for node, kind, span, _in_table in walker.blocks:
         a, b = span
-        n = bisect_right(formula_starts, b - 1) - bisect_right(formula_starts, a - 1)
-        hit = bisect_right(finder_starts, b - 1) - bisect_right(finder_starts, a - 1)
+        n = inside(formula_starts, a, b)
+        html_n = inside(texhtml_starts, a, b)
+        hit = inside(finder_starts, a, b)
         paragraphs.append({"span": [a, b], "section": section_of(a), "block": kind,
-                           "formulas": n, "math": bool(n or hit)})
+                           "formulas": n, "texhtml": html_n, "math": bool(n or html_n or hit)})
     paragraphs.sort(key=lambda p: (p["span"][0], -p["span"][1], p["block"]))
 
     text, segments = walker.copy.finish()
     counts = {
         "layer_chars": len(layer), "text_chars": len(text), "formulas": len(formulas),
-        "formulas_without_text": walker.no_text_formulas, "sections": len(sections),
+        "formulas_without_text": walker.no_text_formulas, "texhtml": len(texhtml_starts),
+        "sections": len(sections),
         "paragraphs": len(paragraphs),
         "math_paragraphs": sum(1 for p in paragraphs if p["math"]),
         "finders": {name: sum(1 for r in finders if r["finder"] == name)

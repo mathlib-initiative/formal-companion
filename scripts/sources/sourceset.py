@@ -5,18 +5,31 @@ New code, implementing docs/proposals/wikipedia-locate.md section 2.1
 Twenty thousand sources fit neither ``workspace.yaml`` -- which every command
 validates -- nor a single rewritten file, so a sourceset is:
 
-* ``manifest-<n>.jsonl``: a header line, then one canonical JSON entry per source
-  sorted by ``source_id``.  A version is written once and never again; version
-  n+1 holds every source of version n with every non-null field unchanged
+* ``manifest-<n>.jsonl``: a header line, then canonical JSON entries sorted by
+  ``source_id``.  A version is written once and never again; version n+1 holds
+  every source of version n with every non-null field unchanged
   (:func:`append_only_problems`), names version n's sha as
   ``previous_sha256``, and is written only if no other writer got there first
   (:meth:`Sourceset.write_version`).  A run pins ``(id, version, sha256)``.
+  A version is a **snapshot** (``cf-sourceset/1``: every entry) or a **delta**
+  (``cf-sourceset-delta/1``: only the entries that are new or changed since
+  version n-1, its header still counting every source).  A full fetch writes a
+  version every checkpoint, and thirty thousand entries are ten megabytes, so
+  a version is a delta unless it changes half the sources or follows
+  :data:`MAX_DELTA_CHAIN` deltas; reading one replays the deltas onto the
+  snapshot before them, checking the ``previous_sha256`` chain and the
+  append-only rule at every step.  The pinned sha is the version file's own,
+  and through that chain it fixes every entry.
 * ``sources/<source-id>/``: the raw bytes, the canonical body and the rendered
   views of one source, validated lazily against the shas its entry records
   (:meth:`Sourceset.source_problems`) -- never all twenty thousand at load.
 * ``state.json``: the sourceset-level state file locate writes instead of
-  ``companions/<name>/state.json``: the latest version and its counts, plus a
-  section per command that wrote one (:meth:`Sourceset.record_state`).
+  ``companions/<name>/state.json``: the latest version and its counts -- the
+  page counts by class and importance are of PAGES, one assessment per page, not
+  of sources, since an adopted revision beside an enumerated one is one page --
+  the last run of each command (``commands``), every run in order
+  (``history``, the newest :data:`MAX_HISTORY`), plus a section per command that
+  wrote one (:meth:`Sourceset.record_state`).
 
 Nothing here touches the network (``sources.wikinet`` does) or renders
 (``sources.render_html`` does).
@@ -42,9 +55,16 @@ from cflib.paths import WorkspacePaths
 from . import websource
 
 SCHEMA = "cf-sourceset/1"
+DELTA_SCHEMA = "cf-sourceset-delta/1"
+#: a version is a snapshot after this many deltas in a row, so reading the
+#: newest replays at most this many files onto one snapshot
+MAX_DELTA_CHAIN = 64
 STATE_SCHEMA = "cf-sourceset-state/1"
 #: keys of state.json that are no section: the header, and what refresh_state owns
-_STATE_RESERVED = frozenset({"schema", "id", "family", "manifest", "counts", "updated_at"})
+_STATE_RESERVED = frozenset({"schema", "id", "family", "manifest", "counts", "updated_at",
+                             "commands", "history"})
+#: the run history keeps this many rows, newest last (older ones are counted)
+MAX_HISTORY = 1000
 #: a source directory's files whose shas an entry records
 SHA_FILES = {"raw_sha256": "source.raw.html", "html_sha256": "body.html",
              "layer_sha256": "layer.txt"}
@@ -93,6 +113,12 @@ class Manifest:
     sha256: str | None
     header: dict
     entries: dict[str, dict] = field(default_factory=dict)
+    #: how many deltas in a row end at this version (0: it is a snapshot)
+    chain: int = 0
+
+    @property
+    def is_delta(self) -> bool:
+        return self.header.get("schema") == DELTA_SCHEMA
 
     @property
     def family(self) -> str:
@@ -149,6 +175,15 @@ def append_only_problems(base: Manifest, entries: dict[str, dict]) -> list[str]:
             continue
         for key in sorted(set(old) | set(new)):
             was = old.get(key)
+            if key == "flags" and isinstance(was, dict) and isinstance(new.get(key), dict):
+                # each flag is a value of its own: a determined one never changes, an
+                # undetermined (null) one may be determined later
+                for flag, value in sorted(was.items()):
+                    if value is not None and new[key].get(flag) != value:
+                        out.append(f"{sid}: flag {flag} was {value!r} in version "
+                                   f"{base.version} and would become "
+                                   f"{new[key].get(flag)!r} (a recorded value never changes)")
+                continue
             if was is not None and new.get(key) != was:
                 out.append(f"{sid}: {key} was {was!r} in version {base.version} and would "
                            f"become {new.get(key)!r} (a recorded value never changes)")
@@ -219,12 +254,50 @@ class Sourceset:
         return self.load(versions[-1])
 
     def load(self, version: int) -> Manifest:
-        """Read and check one version: header, order, entries, and the chain to the one before."""
+        """Read and check one version: header, order, entries, and the chain to the one before.
+
+        A delta is replayed onto the version before it, back to the nearest
+        snapshot: every link's ``previous_sha256`` must be the sha of the file
+        before it, and every delta must follow its predecessor append-only.
+        """
         path = self.paths.sourceset_manifest(self.id, version)
         if not path.is_file():
             raise SourcesetError(f"sourceset {self.id!r} has no version {version}",
                                  hint=f"versions on disk: {self.versions()}")
-        raw = path.read_bytes()
+        # the files back to the nearest snapshot, newest first
+        chain: list[tuple[int, Path, bytes, dict, list[dict]]] = []
+        number = version
+        while True:
+            link_path = self.paths.sourceset_manifest(self.id, number)
+            if not link_path.is_file():
+                raise SourcesetError(f"sourceset {self.id!r} version {version} needs version "
+                                     f"{number}, which is not on disk",
+                                     hint="a delta version is read from the versions before "
+                                          "it; restore the missing file")
+            raw = link_path.read_bytes()
+            header, rows = self._parse(link_path, raw)
+            chain.append((number, link_path, raw, header, rows))
+            if header.get("schema") != DELTA_SCHEMA:
+                break
+            if number == 1:
+                raise SourcesetError(f"{link_path}: version 1 cannot be a delta")
+            number -= 1
+            if len(chain) > MAX_DELTA_CHAIN + 1:
+                raise SourcesetError(f"{path}: more than {MAX_DELTA_CHAIN} deltas in a row")
+        manifest = None
+        for number, link_path, raw, header, rows in reversed(chain):
+            manifest = self._build(number, link_path, raw, header, rows, manifest)
+        # the snapshot itself chains to the file before it (a rewritten version)
+        first = chain[-1][0]
+        if first > 1:
+            prev_path = self.paths.sourceset_manifest(self.id, first - 1)
+            if prev_path.is_file() and chain[-1][3].get("previous_sha256") != \
+                    sha256_file(prev_path):
+                raise SourcesetError(f"{chain[-1][1]}: previous_sha256 is not the sha of "
+                                     f"version {first - 1} (a version was rewritten)")
+        return manifest
+
+    def _parse(self, path: Path, raw: bytes) -> tuple[dict, list]:
         lines = split_lines(raw.decode("utf-8"))
         if not lines:
             raise SourcesetError(f"{path} is empty")
@@ -233,13 +306,19 @@ class Sourceset:
             rows = [json.loads(line) for line in lines[1:] if line.strip()]
         except ValueError as exc:
             raise SourcesetError(f"{path}: not JSON lines ({exc})") from None
+        return (header if isinstance(header, dict) else {"schema": None}), rows
+
+    def _build(self, version: int, path: Path, raw: bytes, header: dict, rows: list,
+               before: Manifest | None) -> Manifest:
+        """One version from its file, given the version before it when it is a delta."""
         problems: list[str] = []
-        if not isinstance(header, dict) or header.get("schema") != SCHEMA:
-            problems.append(f"line 1 is not a {SCHEMA} header")
+        delta = header.get("schema") == DELTA_SCHEMA
+        if header.get("schema") not in (SCHEMA, DELTA_SCHEMA):
+            problems.append(f"line 1 is not a {SCHEMA} or {DELTA_SCHEMA} header")
         elif header.get("id") != self.id or header.get("version") != version:
             problems.append(f"the header says sourceset {header.get('id')!r} version "
                             f"{header.get('version')!r}")
-        entries: dict[str, dict] = {}
+        lines: dict[str, dict] = {}
         previous = None
         for number, row in enumerate(rows, 2):
             for problem in websource.entry_problems(row):
@@ -250,23 +329,39 @@ class Sourceset:
             if previous is not None and sid <= previous:
                 problems.append(f"line {number}: {sid} is out of order or repeated")
             previous = sid
-            if isinstance(header, dict) and row.get("family") != header.get("family"):
+            if row.get("family") != header.get("family"):
                 problems.append(f"line {number}: family {row.get('family')!r} in a "
                                 f"{header.get('family')!r} sourceset")
-            entries[sid] = row
-        if isinstance(header, dict) and header.get("sources") != len(entries):
-            problems.append(f"the header counts {header.get('sources')!r} sources, the file "
-                            f"holds {len(entries)}")
+            lines[sid] = row
+        if delta:
+            assert before is not None
+            if header.get("previous_sha256") != before.sha256:
+                problems.append(f"previous_sha256 is not the sha of version {version - 1} "
+                                f"(a version was rewritten)")
+            if header.get("family") != before.family:
+                problems.append(f"family {header.get('family')!r} after a "
+                                f"{before.family!r} version")
+            # only the delta's lines can break the rule: check those, not every entry
+            touched = Manifest(self.id, before.version, None, None, {},
+                               {sid: before.entries[sid] for sid in lines
+                                if sid in before.entries})
+            problems.extend(append_only_problems(touched, lines))
+            unchanged = [sid for sid, row in lines.items() if before.entries.get(sid) == row]
+            if unchanged:
+                problems.append(f"{len(unchanged)} line(s) repeat an entry unchanged "
+                                f"({unchanged[0]}): a delta holds only what changed")
+            entries = {**before.entries, **lines}
+        else:
+            entries = lines
+        if header.get("sources") != len(entries):
+            problems.append(f"the header counts {header.get('sources')!r} sources, the "
+                            f"version holds {len(entries)}")
         if problems:
             raise SourcesetError(f"{path} is not a valid manifest: " + "; ".join(problems[:5])
                                  + (f" (+{len(problems) - 5} more)" if len(problems) > 5 else ""))
-        sha = hashlib.sha256(raw).hexdigest()
-        if version > 1:
-            prev_path = self.paths.sourceset_manifest(self.id, version - 1)
-            if prev_path.is_file() and header.get("previous_sha256") != sha256_file(prev_path):
-                raise SourcesetError(f"{path}: previous_sha256 is not the sha of version "
-                                     f"{version - 1} (a version was rewritten)")
-        return Manifest(self.id, version, path, sha, header, entries)
+        chain = (before.chain + 1) if delta else 0
+        return Manifest(self.id, version, path, hashlib.sha256(raw).hexdigest(), header,
+                        entries, chain)
 
     def pinned(self, version: int, manifest_sha256: str) -> Manifest:
         """The version a run pinned, refused when its bytes are not the pinned ones."""
@@ -310,10 +405,16 @@ class Sourceset:
         if new == base.entries:
             return base
         version = base.version + 1
-        header = {"schema": SCHEMA, "id": self.id, "version": version, "family": base.family,
+        changed = {sid: row for sid, row in new.items() if base.entries.get(sid) != row}
+        delta = 2 * len(changed) < len(new) and base.chain < MAX_DELTA_CHAIN and version > 1
+        header = {"schema": DELTA_SCHEMA if delta else SCHEMA, "id": self.id,
+                  "version": version, "family": base.family,
                   "previous_sha256": base.sha256, "created": now or state_mod.now(),
                   "sources": len(new)}
-        rows = [header] + [new[k] for k in sorted(new)]
+        if delta:
+            header["changed"] = len(changed)
+        body = changed if delta else new
+        rows = [header] + [body[k] for k in sorted(body)]
         text = "".join(canonical_line(x) + "\n" for x in rows)
         # read it back as load() will, BEFORE the version exists: once linked it is
         # permanent, and one unreadable version wedges every later command
@@ -330,12 +431,32 @@ class Sourceset:
     def source_dir(self, source_id: str) -> Path:
         return self.paths.sourceset_source_dir(self.id, source_id)
 
-    def source_problems(self, entry: dict) -> list[str]:
-        """What on disk disagrees with one entry's shas (checked only when asked)."""
+    def source_problems(self, entry: dict, *, views: bool = True) -> list[str]:
+        """What on disk disagrees with one entry's shas (checked only when asked).
+
+        With ``views`` the rendered views are checked too: ``layer.txt`` against
+        ``layer_sha256``, and ``render.json`` and ``layer_map.json`` against the
+        entry's renderer and layer, so a view another renderer wrote is caught.
+        """
         sid = entry.get("source_id")
         directory = self.source_dir(sid)
         out: list[str] = []
+        if views and entry.get("renderer"):
+            for name, keys in (("render.json", ("renderer", "layer_sha256")),
+                               ("layer_map.json", ("renderer",))):
+                try:
+                    data = json.loads((directory / name).read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    out.append(f"{sid}: {name} is missing or unreadable")
+                    continue
+                for key in keys:
+                    if not isinstance(data, dict) or data.get(key) != entry.get(key):
+                        got = data.get(key) if isinstance(data, dict) else None
+                        out.append(f"{sid}: {name} says {key} {got!r}, the manifest records "
+                                   f"{entry.get(key)!r}")
         for key, name in SHA_FILES.items():
+            if key == "layer_sha256" and not views:
+                continue
             want = entry.get(key)
             if want is None:
                 continue
@@ -351,7 +472,14 @@ class Sourceset:
 
     # -- state ---------------------------------------------------------
     def counts(self, manifest: Manifest) -> dict:
+        """The counts ``state.json`` carries: sources, and the pages they are revisions of.
+
+        ``by_class`` and ``by_importance`` count pages: each page once, by the
+        assessment of the source a run plans for it (``Manifest.preferred()``),
+        else of its highest revision that has one.
+        """
         entries = list(manifest)
+        assessments = page_assessments(manifest)
         return {
             "sources": len(entries),
             vocab.SOURCE_ORIGIN_ENUMERATED: sum(
@@ -359,13 +487,12 @@ class Sourceset:
             vocab.SOURCE_ORIGIN_ADOPTED: sum(1 for e in entries if is_adopted(e)),
             "fetched": sum(1 for e in entries if e.get("raw_sha256")),
             "rendered": sum(1 for e in entries if e.get("layer_sha256")),
-            "pages": len({e["pageid"] for e in entries}),
+            "pages": len(assessments),
             "by_class": dict(sorted(Counter(
-                str((e.get("assessment") or {}).get("class") or "none")
-                for e in entries).items())),
+                str((a or {}).get("class") or "none") for a in assessments.values()).items())),
             "by_importance": dict(sorted(Counter(
-                str((e.get("assessment") or {}).get("importance") or "none")
-                for e in entries).items())),
+                str((a or {}).get("importance") or "none")
+                for a in assessments.values()).items())),
         }
 
     def read_state(self) -> dict:
@@ -414,21 +541,55 @@ class Sourceset:
         return state
 
     def refresh_state(self, *, command: str, details: dict | None = None) -> dict:
-        """Write the latest version's pin and counts, and what ``command`` did."""
+        """Write the latest version's pin and counts, and what ``command`` did.
+
+        ``commands[command]`` is the last run of each command; ``history`` keeps
+        every run in order (the newest :data:`MAX_HISTORY`), so a no-op re-run
+        does not erase the record of the run that wrote a version.  Each row
+        says whether that run wrote one (``wrote_version``).
+        """
         manifest = self.latest()
         state = self.read_state()
         state.setdefault("schema", STATE_SCHEMA)
+        before = (state.get("manifest") or {}).get("version") \
+            if isinstance(state.get("manifest"), dict) else None
         state["id"] = self.id
         state["family"] = manifest.family
         state["manifest"] = {"version": manifest.version, "sha256": manifest.sha256}
         state["counts"] = self.counts(manifest)
+        now = state_mod.now()
+        row = {"at": now, "version": manifest.version,
+               "wrote_version": before != manifest.version, **(details or {})}
         commands = state.get("commands") if isinstance(state.get("commands"), dict) else {}
-        commands[command] = {"at": state_mod.now(), "version": manifest.version,
-                             **(details or {})}
+        commands[command] = row
         state["commands"] = commands
-        state["updated_at"] = state_mod.now()
+        history = state.get("history") if isinstance(state.get("history"), list) else []
+        history.append({"command": command, **row})
+        if len(history) > MAX_HISTORY:
+            state["history_dropped"] = int(state.get("history_dropped") or 0) + \
+                len(history) - MAX_HISTORY
+            history = history[-MAX_HISTORY:]
+        state["history"] = history
+        state["updated_at"] = now
         write_json(self.paths.sourceset_state_json(self.id), state, sort_keys=True)
         return state
+
+
+def page_assessments(manifest: Manifest) -> dict[int, dict | None]:
+    """``{pageid: assessment}``: one per page, the planned source's, else its newest one's."""
+    preferred = manifest.preferred()
+    by_page: dict[int, list[dict]] = {}
+    for entry in manifest.entries.values():
+        by_page.setdefault(entry["pageid"], []).append(entry)
+    out: dict[int, dict | None] = {}
+    for pageid, entries in by_page.items():
+        planned = manifest.entries[preferred[pageid]]
+        if planned.get("assessment"):
+            out[pageid] = planned["assessment"]
+            continue
+        rated = [e for e in entries if e.get("assessment")]
+        out[pageid] = max(rated, key=lambda e: e["revision"])["assessment"] if rated else None
+    return out
 
 
 def family_of(manifest: Manifest, workspace=None) -> registry_mod.SourceFamily:
