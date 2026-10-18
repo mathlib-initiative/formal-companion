@@ -620,6 +620,49 @@ class TestTheReceiptCountsItsFile(_Exported):
             self.assertEqual(len(sidecar["queries"]), len(set(sidecar["queries"])))
 
 
+class TestALocationTheIndexGivesNoPath(Campaign):
+    """R2-E: a lean end needs ``module``, ``path`` and ``line``; only ``end_line`` is optional.
+
+    The review's NullPath variant: ``Widget.card_dvd`` in a module ``Alpha.Extra``
+    whose path the index does not know (ingest admits such a module and counts it in
+    ``modules_without_path``).  The export wrote its hasPart record with no path,
+    refused nothing, and the consumer refused the whole set ("path must be a safe
+    relative .lean path").  It is refused per passage, by name, instead.
+    """
+
+    def setUp(self):
+        from unittest import mock
+
+        decls = {lid: list(rows) for lid, rows in F.DECLS.items()}
+        decls["alpha"] = [F._decl("Widget.card_dvd", "Alpha.Extra", None, 650, 660, "theorem",
+                                  "proved", "∀ g, g.Spans w → g.card ∣ w.order")
+                          if r["name"] == "Widget.card_dvd" else r for r in decls["alpha"]]
+        with mock.patch.object(F, "DECLS", decls):
+            super().setUp()
+        self.locate()
+        self.challenge()
+
+    def test_r2_the_passage_is_refused_by_name_and_the_rest_exported(self):
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "set-1")
+        self.assertEqual(code, 1, out + err)
+        report = read_json(self.paths.export_report_json("set-1"))
+        (refused,) = report["refused"]
+        self.assertEqual(refused["source_id"], F.W1)
+        self.assertIn("alpha:Widget.card_dvd has no path", refused["reason"])
+        recs = _records(self.paths.export_dir("set-1"))
+        self.assertTrue(recs)
+        for rec in recs:
+            for end in rec["object"]:
+                ext = (end.get("extensions") or {}).get(EXT)
+                if ext is None:
+                    continue                                   # an absence's minimal end
+                with self.subTest(record=rec["id"], end=end["location"]["declaration"]):
+                    self.assertTrue(end["location"]["module"])
+                    self.assertTrue(ext["path"].endswith(".lean"))
+                    self.assertGreaterEqual(ext["line"], 1)
+
+
 class TestRecordUnits(unittest.TestCase):
     """The record builder on the field case's shapes, without a campaign."""
 
@@ -666,6 +709,18 @@ class TestRecordUnits(unittest.TestCase):
                                         locations=[self.location(end_line=90)]),
             self.LAYER, self.universe())
         self.assertEqual(recs[0]["object"][0]["extensions"][EXT]["end_line"], 90)
+
+    def test_r2_a_lean_end_needs_module_path_and_line(self):
+        for bad in ({"path": None}, {"module": None}, {"line": None}, {"module": ""},
+                    {"path": "/abs/Alpha/W.lean"}, {"path": "Alpha/../W.lean"},
+                    {"path": "Alpha/W.olean"}, {"path": "Alpha//W.lean"}, {"line": 0},
+                    {"line": True}, {"line": "81"}):
+            passage = self.passage(outcome="located", status="formalized",
+                                   locations=[self.location(**bad)])
+            with self.subTest(bad=bad), self.assertRaises(records.RecordError) as caught:
+                records.passage_records(self.source(), passage, self.LAYER, self.universe())
+            self.assertIn("lib01:Widget.x has no", str(caught.exception))
+        self.assertIsNone(records.location_problem(self.location()))
 
     def test_x1_an_absence_at_48_libraries_is_a_few_kilobytes(self):
         """The field universe had 48 libraries; the absence was about 12.1 KB."""

@@ -15,9 +15,9 @@ Every input is a plain mapping:
   ``status``, ``challenge``, ``section``, ``prominence``) of
   references/locate-documents.md section 10;
 * ``location`` -- one of its locations, with ``proof_status`` joined from the
-  index, and ``module``, ``path``, ``line`` and, when the index has one,
-  ``end_line`` (a published index may record ``line`` only: the end then
-  carries no ``end_line``, never a guessed one);
+  index, and ``module``, ``path`` and ``line`` (required: :func:`location_problem`)
+  and, when the index has one, ``end_line`` (a published index may record
+  ``line`` only: the end then carries no ``end_line``, never a guessed one);
 * ``library`` -- the universe's library (``id``, ``repo``, ``commit``);
 * ``universe`` -- ``{id, sha256, libraries: [library, ...]}``.
 
@@ -257,6 +257,32 @@ def passage_problem(passage: Mapping[str, Any]) -> str | None:
     return None
 
 
+def location_problem(location: Mapping[str, Any]) -> str | None:
+    """Why a location's joined index row cannot be a record's lean end, or None.
+
+    A lean end names its declaration's ``module``, its ``path`` (a safe relative
+    ``.lean`` path from the repository root) and its ``line`` (>= 1) -- a consumer
+    links the source from them; only ``end_line`` is optional.  The index admits a
+    module with no path, so a location joined to one is refused here, by name, per
+    passage, rather than in the consumer, which refuses the whole set.
+    """
+    missing = []
+    if not isinstance(location.get("module"), str) or not location["module"].strip():
+        missing.append("module")
+    path = location.get("path")
+    parts = str(path).split("/") if isinstance(path, str) else []
+    if (not isinstance(path, str) or not path.endswith(".lean") or path.startswith("/")
+            or "\\" in path or any(part in ("", ".", "..") for part in parts)):
+        missing.append("path (a relative .lean path)")
+    line = location.get("line")
+    if isinstance(line, bool) or not isinstance(line, int) or line < 1:
+        missing.append("line")
+    if not missing:
+        return None
+    return (f"{location.get('library')}:{location.get('declaration')} has no "
+            f"{', '.join(missing)} in the index, and a lean end names its source by them")
+
+
 def passage_challenge(passage: Mapping[str, Any]) -> str:
     value = passage.get("challenge")
     if not value:
@@ -412,6 +438,9 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
             raise RecordError(f"{passage['item']}: the closeMatch {loc['library']}:"
                               f"{loc['declaration']} names no convention difference in its note")
         _free_text(str(passage["item"]), "a location's note", str(loc.get("note") or ""), layer)
+        why = location_problem(loc)
+        if why:
+            raise RecordError(f"{passage['item']}: {why}")
         records.append(location_record(source, passage, loc, libs[loc["library"]], universe,
                                        quote, span_sha256=span_sha))
     if outcome == "absent":
