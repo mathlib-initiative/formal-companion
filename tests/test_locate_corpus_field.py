@@ -252,6 +252,75 @@ class TestD2AutoformsCompleteIsMappedByKind(unittest.TestCase):
             self.assertIn("complete", str(caught.exception))
 
 
+DRIVER = SCRIPTS / "corpus" / "build_universe_host.sh"
+
+
+def driver_functions(*, start: str = "cenv() {", end: str = "py() {") -> str:
+    """The driver's own shell functions from ``start`` up to ``end``, to run alone."""
+    text = DRIVER.read_text(encoding="utf-8")
+    return text[text.index(start):text.index(end)]
+
+
+class TestD11TheDriversGitCarriesGitsafesPins(unittest.TestCase):
+    """D11: ``g()`` ran git on third-party checkouts without the gitsafe pins."""
+
+    def run_g(self, *, filters: tuple = (), version: str = "2.43.0", args=("status",)):
+        from cflib import gitsafe
+        root = _scratch(self)
+        home = root / "home"
+        bindir = home / ".elan" / "bin"
+        bindir.mkdir(parents=True)
+        log = root / "git.log"
+        checkout = root / "lib"
+        (checkout / ".git").mkdir(parents=True)
+        listing = "".join(f"{name}\n" for name in ("core.bare", *filters))
+        (bindir / "git").write_text(
+            "#!/bin/sh\n"
+            'for a in "$@"; do case "$a" in --version) echo "git version ' + version + '"; exit 0;; '
+            "config) printf '%s' '" + listing + "'; exit 0;; esac; done\n"
+            f'{{ printf "ARG %s\\n" "$@"; env | sort | sed "s/^/ENV /"; }} > "{log}"\n',
+            encoding="utf-8")
+        (bindir / "ionice").write_text('#!/bin/sh\nshift\nexec "$@"\n', encoding="utf-8")
+        for stub in ("git", "ionice"):
+            (bindir / stub).chmod(0o755)
+        script = ("USER_NAME=t\nNICE_LEVEL=10\n" + driver_functions()
+                  + f'\ng -C "{checkout}" ' + " ".join(args) + "\n")
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                              env={"HOME": str(home), "PATH": "/usr/bin:/bin"})
+        lines = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+        argv = [line[4:] for line in lines if line.startswith("ARG ")]
+        env = dict(line[4:].split("=", 1) for line in lines if line.startswith("ENV "))
+        return proc, argv, env, gitsafe
+
+    def test_the_fixed_pins_and_the_environment_are_gitsafes(self):
+        proc, argv, env, gitsafe = self.run_g()
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(argv[:len(gitsafe.SAFE_CONFIG)], list(gitsafe.SAFE_CONFIG))
+        for key, value in gitsafe.SAFE_ENV.items():
+            self.assertEqual(env.get(key), value, key)
+        self.assertEqual(argv[-3:], ["-C", argv[-2], "status"])
+
+    def test_every_content_filter_of_the_checkout_is_blanked_both_ways(self):
+        proc, argv, env, _gs = self.run_g(filters=("filter.x.clean", "filter.a=b.process"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("filter.x.clean=", argv)
+        self.assertNotIn("filter.a=b.process=", argv)       # -c cannot carry that one
+        self.assertEqual(env.get("GIT_CONFIG_COUNT"), "2")
+        keys = {env.get("GIT_CONFIG_KEY_0"), env.get("GIT_CONFIG_KEY_1")}
+        self.assertEqual(keys, {"filter.x.clean", "filter.a=b.process"})
+        self.assertEqual(env.get("GIT_CONFIG_VALUE_0"), "")
+
+    def test_an_unblankable_filter_on_an_old_git_stops_the_call(self):
+        proc, argv, _env, _gs = self.run_g(filters=("filter.a=b.smudge",), version="2.30.2",
+                                           args=("checkout", "--detach", ALPHA))
+        self.assertEqual(proc.returncode, 126)
+        self.assertIn("filter.a=b.smudge", proc.stderr)
+        self.assertEqual(argv, [], "git ran although the filter could not be blanked")
+
+    def test_the_published_index_is_hashed_without_filters(self):
+        self.assertIn('g hash-object --no-filters "$stage/$idx"', DRIVER.read_text(encoding="utf-8"))
+
+
 class TestD12AtomicWritesKeepTheModeAPlainWriteWould(unittest.TestCase):
     """D12: ``universe.yaml`` was 0600 (mkstemp's mode) beside 0644 indexes."""
 
