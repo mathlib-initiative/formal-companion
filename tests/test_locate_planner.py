@@ -67,6 +67,37 @@ def ws(root: Path, *argv: str) -> tuple[int, str, str]:
     return F.cf("--workspace", str(root), *argv)
 
 
+def allow_host(paths) -> None:
+    """Allowlist ``examplebox`` (remote root ``/srv/cf``) in the workspace."""
+    from cflib.yamlio import write_yaml
+    data = read_yaml(paths.workspace_yaml)
+    data["hosts"] = {"allowlist": ["examplebox"], "examplebox": {"remote_root": "/srv/cf"}}
+    write_yaml(paths.workspace_yaml, data)
+
+
+def ablate(source: Path, planted: Path, *modules: tuple[str, str]) -> set[str]:
+    """A copy of ``source`` without ``modules`` (``(library, module)``), the way ``cf bench
+    freeze --plant`` makes the P tier's database; returns the removed declarations."""
+    import sqlite3
+    shutil.copy2(source, planted)
+    conn = sqlite3.connect(str(planted))
+    removed: set[str] = set()
+    try:
+        for library, module in modules:
+            for decl_id, name in conn.execute(
+                    "SELECT id, name FROM decls WHERE library = ? AND module = ?",
+                    (library, module)).fetchall():
+                removed.add(name)
+                conn.execute("DELETE FROM tags WHERE decl_id = ?", (decl_id,))
+                conn.execute("DELETE FROM decls_fts WHERE rowid = ?", (decl_id,))
+            conn.execute("DELETE FROM decls WHERE library = ? AND module = ?", (library, module))
+        conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('planted', 'b0')")
+        conn.commit()
+    finally:
+        conn.close()
+    return removed
+
+
 class Campaign(unittest.TestCase):
     """A workspace with a rendered sourceset, a universe, candidates and inventory ``inv-1``."""
 
@@ -210,6 +241,55 @@ class TestCandidates(Campaign):
                             "--universe", F.U, "--tools-corpus-db", str(planted), "--blind")
         self.assertNotEqual(code, 0)
         self.assertIn("two different arms", out + err)
+
+    def test_a_planted_file_names_no_declaration_its_database_lacks(self):
+        """Review C-02: the P tier's file travels to its workers, so a hit the planted
+        database lacks -- curated, dropped or refused for its QID -- is withheld from every
+        field, and counted only on this machine; the joins and the reasons are the full
+        corpus.sqlite's, where the ablated declarations still exist."""
+        planted = self.root.parent / "planted.sqlite"
+        removed = ablate(self.paths.corpus_db(F.U), planted, ("alpha", "Alpha.Widget"),
+                         ("beta", "Beta.Widget"))
+        self.assertIn("Widget.exists_spanning_gadget", removed)
+        lists = self.root.parent / "lists"
+        lists.mkdir()
+        (lists / "1000.json").write_text(json.dumps({"Q99999001": {
+            "decls": ["Widget.exists_spanning_gadget", "Widget.no_such_thing"]}}))
+        (lists / "100.yaml").write_text(
+            "7:\n  title: Gadget theorem\n  wikidata: Q99999001\n  decl: Widget.card_dvd\n")
+        (lists / "meta.json").write_text(json.dumps({"libraries": {"alpha": [
+            {"wikidata": "Q99999001", "declarations": ["Widget.spanning_conj"]}]}}))
+        argv = ("locate", "candidates", "--sourceset", F.SS, "--universe", F.U,
+                "--curated-1000", str(lists / "1000.json"), "--curated-100",
+                str(lists / "100.yaml"), "--curated-library", "alpha",
+                "--library-metadata", str(lists / "meta.json"))
+        code, out, err = ws(self.root, *argv, "--tools-corpus-db", str(planted))
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("7 withheld", out + err)
+        kind = f"planted-{hashing.sha256_file(planted)[:16]}"
+        for sid in (F.W1, F.W2):
+            text = (self.paths.candidates_kind_dir(F.SS, F.U, kind) / f"{sid}.json").read_text()
+            doc = json.loads(text)
+            named = {h["declaration"] for field in ("curated", "dropped", "lexical")
+                     for h in doc[field]}
+            self.assertFalse(named & removed, f"{sid} names an ablated declaration")
+            for name in sorted(removed | {"Widget.no_such_thing"}):
+                self.assertNotRegex(text, rf"(?<![\w.]){re.escape(name)}(?![\w.])")
+        w2 = self.doc(F.W2, kind=kind)
+        self.assertEqual({(h["declaration"], h["via"]) for h in w2["curated"]},
+                         {("Beta.gadget_lattice_height", "wikidata_tag")})
+        st = read_json(self.paths.sourceset_state_json(F.SS))["candidates"][f"{F.U}/{kind}"]
+        self.assertEqual(st["withheld"], 7)
+        # the full arm's file names them all, each with a true reason
+        code, out, err = ws(self.root, *argv)
+        self.assertEqual(code, 0, out + err)
+        w1 = self.doc(F.W1)
+        self.assertIn(("Widget.exists_spanning_gadget", "mathlib_1000"),
+                      {(h["declaration"], h["via"]) for h in w1["curated"]})
+        self.assertEqual([(d["declaration"], d["reason"]) for d in w1["dropped"]],
+                         [("Widget.no_such_thing", "no such declaration at the universe's commit")])
+        self.assertEqual(read_json(self.paths.sourceset_state_json(F.SS))
+                         ["candidates"][F.U]["withheld"], 0)
 
     def test_a_database_built_for_another_state_of_the_universe_is_refused(self):
         """Seam #20: meta.universe_sha256 must be the universe's, with no escape."""
@@ -1291,6 +1371,69 @@ class TestPlanLocate(Campaign):
                 self.assertNotEqual(code, 0)
                 self.assertIn(needle, out + err)
 
+    def test_the_configuration_pins_do_not_name_the_run(self):
+        """Review M-01: two plans of one configuration that differ only in run id record
+        equal ``locate.config_shas`` -- the prompt templates and the staged gate and bin
+        files that are not the run's own -- while the rendered shas still differ."""
+        allow_host(self.paths)
+        runs = {"local": ("loc-a", "loc-b"), "host": ("loc-c", "loc-d")}
+        for side, run_ids in runs.items():
+            extra = ("--host", "examplebox", "--max-cost", "5") if side == "host" else ()
+            for run_id in run_ids:
+                F.plan_locate(self, self.root, *extra, run_id=run_id)
+            a, b = (read_yaml(self.paths.run_yaml(r)) for r in run_ids)
+            with self.subTest(side=side):
+                self.assertEqual(a["locate"]["config_shas"], b["locate"]["config_shas"])
+                self.assertNotEqual(a["locate"]["gate_files"], b["locate"]["gate_files"])
+                self.assertNotEqual(a["prompts"], b["prompts"])
+                rendered, config = a["locate"]["gate_files"], a["locate"]["config_shas"]
+                self.assertEqual(set(rendered) - set(config["gate_files"]),
+                                 {"gate/gate.json", "bin/worker-agent.sh", "bin/reviewer-agent.sh"})
+                self.assertEqual(config["gate_files"],
+                                 {k: v for k, v in rendered.items() if k in config["gate_files"]})
+        tdir = SKILL / "templates" / "prompts"
+        self.assertEqual(config["prompts"], {name: hashing.sha256_file(tdir / name) for name in (
+            "locate-reviewer-system.md.tmpl", "locate-reviewer.md.tmpl",
+            "locate-worker-system.md.tmpl", "locate.md.tmpl")})
+        self.assertIn("locate-inventory.md.tmpl",
+                      read_yaml(self.paths.run_yaml("inv-1"))["locate"]["config_shas"]["prompts"])
+        # every template a preset renders is one the pin hashes
+        from locate import prompts as lprompts
+        for name in lp.LOCATE_PRESETS:
+            preset = lp.get(name)
+            ctx = lprompts.build_context(preset, run_id="r", host=lplan.host_layout(
+                self.paths, host=lplan.LOCAL, run_id="r", sourceset_id=F.SS, universe_id=F.U,
+                tools_db=inputs.tools_database(self.paths, inputs.load_universe(
+                    self.paths, F.U)))["host"], universe=inputs.load_universe(self.paths, F.U),
+                per_task=4)
+            only = self.root.parent / f"templates-{name}"
+            only.mkdir()
+            for template in lprompts.template_files(preset).values():
+                shutil.copy2(tdir / template, only / template)
+            self.assertEqual(set(lprompts.render_prompts(preset, ctx, tdir=only)),
+                             set(lprompts.PROMPT_FILES))
+
+    def test_a_re_plan_keeps_the_campaign_stamp(self):
+        """Review OPS-05: a shard re-planned (with another cap, as `cf run`'s refusal tells
+        the operator to) keeps the stamp `cf campaign plan` gave it, so the export still
+        seals it under its campaign, never as ``run:<id>``."""
+        allow_host(self.paths)
+        F.plan_locate(self, self.root, "--host", "examplebox", "--max-cost", "20",
+                      run_id="loc-s")
+        code, out, err = ws(self.root, "campaign", "plan", "c1", "--shard", "loc-s",
+                            "--host", "examplebox")
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_yaml(self.paths.run_yaml("loc-s"))["locate"]["campaign"], "c1")
+        F.plan_locate(self, self.root, "--host", "examplebox", "--max-cost", "7",
+                      run_id="loc-s")
+        data = read_yaml(self.paths.run_yaml("loc-s"))
+        self.assertEqual((data["locate"]["campaign"], data["budget"]["max_cost"]), ("c1", 7.0))
+        self.assertEqual(export_mod.campaign_token(data, "loc-s", []), "c1")
+        F.plan_locate(self, self.root, "--host", "examplebox", run_id="loc-t")
+        data = read_yaml(self.paths.run_yaml("loc-t"))
+        self.assertNotIn("campaign", data["locate"])
+        self.assertEqual(export_mod.campaign_token(data, "loc-t", []), "run:loc-t")
+
 
 # --------------------------------------------------------------------------
 # outcomes and the tally
@@ -1516,6 +1659,43 @@ class TestChallenge(Campaign):
                          [("New.first", 1), ("New.second", 2), ("Old.related", 3)])
         many = [loc(f"New.n{i}", "exactMatch", i) for i in range(1, 6)]
         self.assertEqual(len(outcomes._overturned(many, old)), vocab.MAX_LOCATIONS_PER_PASSAGE)
+
+    def test_a_challenge_hunts_in_the_database_its_runs_searched(self):
+        """Review C-03: a challenge of a P run never silently searches the full database,
+        whose hunts would overturn absences with the very declarations the ablation
+        removed; nor is a full run challenged with a planted one."""
+        planted = self.root.parent / "planted.sqlite"
+        shutil.copy2(self.paths.corpus_db(F.U), planted)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--tools-corpus-db", str(planted))
+        self.assertEqual(code, 0, out + err)
+        self.locate("--tools-corpus-db", str(planted), run_id="loc-p")
+        base = ("plan-locate", "--preset", "locate-challenge", "--sourceset", F.SS,
+                "--universe", F.U, "--run-id", "chl-p")
+        code, out, err = ws(self.root, *base, "--challenge-of", "loc-p")
+        self.assertNotEqual(code, 0)
+        self.assertIn("run loc-p's workers searched the planted database", out + err)
+        self.assertIn(f"--tools-corpus-db {planted.resolve()}", out + err)
+        self.assertFalse(self.paths.run_dir("chl-p").exists())
+        other = self.root.parent / "other.sqlite"
+        ablate(planted, other, ("beta", "Beta.Gadget"))
+        code, out, err = ws(self.root, *base, "--challenge-of", "loc-p",
+                            "--tools-corpus-db", str(other))
+        self.assertNotEqual(code, 0)
+        self.assertIn(hashing.sha256_file(planted)[:12], out + err)
+        code, out, err = ws(self.root, *base, "--challenge-of", "loc-p",
+                            "--tools-corpus-db", str(planted))
+        self.assertEqual(code, 0, out + err)
+        self.assertEqual(read_json(self.paths.gate_json("chl-p"))["tools_corpus_db"]["sha256"],
+                         hashing.sha256_file(planted))
+        for extra in (("--challenge-of", "loc-1", "--tools-corpus-db", str(planted)),
+                      ("--challenge-of", "loc-1", "--challenge-of", "loc-p")):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                                "--sourceset", F.SS, "--universe", F.U, "--run-id", "chl-q",
+                                *extra)
+            self.assertNotEqual(code, 0, extra)
+            self.assertIn("database", out + err)
+            self.assertFalse(self.paths.run_dir("chl-q").exists())
 
     def test_a_challenge_of_another_arm_is_refused(self):
         """Seam #63: a blind challenge of an assisted locate run."""
@@ -1977,6 +2157,85 @@ class TestTheCuratedJoins(unittest.TestCase):
         F.write_universe(self.paths, decls=decls)
         docs = self.candidates()
         self.assertIn(("Beta.Widget.gadget_of_finite", "docstring_url"), self.vias(docs[F.W1]))
+
+    def test_the_article_urls_are_the_canonical_forms_of_its_exact_title(self):
+        """Review C-10: a '?', a quote mark, a '#' or a '%' in a title is part of the
+        page's name, and the docstring side decodes ``%3F`` back into it; a title
+        ending in '!' joins both the link MediaWiki writes (the '!' literal, which
+        the docstring side strips as punctuation) and its ``%21`` spelling."""
+        from corpus.ingest import wikipedia_urls
+        site = "https://en.wikipedia.org"
+        for title, written in (("What Is Mathematics?", "What_Is_Mathematics%3F"),
+                               ('"Hello, World!" program', "%22Hello,_World!%22_program"),
+                               ("C# (programming language)", "C%23_(programming_language)"),
+                               ("100% rule", "100%25_rule"),
+                               ("Lagrange's theorem (group theory)",
+                                "Lagrange's_theorem_(group_theory)"),
+                               ("Lagrange's theorem (group theory)",
+                                "Lagrange%27s_theorem_(group_theory)"),
+                               ("Erdős–Ko–Rado theorem", "Erd%C5%91s%E2%80%93Ko%E2%80%93Rado_theorem"),
+                               ("widget lemma", "Widget_lemma"),
+                               ("Widget lemma!", "Widget_lemma!"),
+                               ("Widget lemma!", "Widget_lemma%21"),
+                               ("Gadget, widget", "Gadget,_widget"),
+                               ("Widget lemma*", "Widget_lemma*"),
+                               ("Widget lemma*", "Widget_lemma%2A"),
+                               ("Widget.", "Widget.")):
+            with self.subTest(title=title, written=written):
+                (want,) = wikipedia_urls(f"See {site}/wiki/{written} for more.")
+                self.assertIn(want, cand_mod.article_urls(site, title))
+        self.assertEqual(cand_mod.article_urls(site, "What Is Mathematics?"),
+                         [f"{site}/wiki/What_Is_Mathematics?"])
+        self.assertEqual(cand_mod.article_urls(site, "Widget lemma!"),
+                         [f"{site}/wiki/Widget_lemma", f"{site}/wiki/Widget_lemma!"])
+        self.assertEqual(cand_mod.article_urls(site, ""), [])
+
+    def test_a_link_to_a_title_ending_in_a_bang_joins_in_either_spelling(self):
+        """Review C-10's trade-off, through the join itself: the docstring links MediaWiki
+        writes (``Widget_lemma!``) and its percent-encoded spelling both reach the
+        article's curated hits."""
+        entry = {"title": "Widget lemma!", "wikidata": ""}
+        site = "https://en.wikipedia.org"
+        rows = {f"{site}/wiki/Widget_lemma": [
+                    {"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+                     "value": f"{site}/wiki/Widget_lemma", "path": "Alpha/Widget.lean",
+                     "line": 1}],
+                f"{site}/wiki/Widget_lemma!": [
+                    {"library": "beta", "declaration": "Beta.Widget.gadget_of_finite",
+                     "value": f"{site}/wiki/Widget_lemma!", "path": "Beta/Widget.lean",
+                     "line": 2}]}
+        F.write_universe(self.paths)
+        universe = inputs.load_universe(self.paths, F.U)
+        conn = inputs.open_corpus(self.paths.corpus_db(F.U), universe)
+        self.addCleanup(conn.close)
+        curated, _dropped = cand_mod.curated_hits(entry, universe, conn, cand_mod.CuratedLists(),
+                                                  site=site, urls=rows)
+        joined = {(h["library"], h["declaration"]) for h in curated if h["via"] == "docstring_url"}
+        self.assertEqual(joined, {("alpha", "Widget.exists_spanning_gadget"),
+                                  ("beta", "Beta.Widget.gadget_of_finite")})
+
+    def test_a_title_with_a_question_mark_or_a_quote_joins_its_docstring_link(self):
+        """Review C-10, through the join itself: the docstring side stores
+        ``What_Is_Mathematics%3F`` as ``.../What_Is_Mathematics?`` (the reader decodes it),
+        and the article's own side used to read the raw ``?`` as a query and a ``"`` as
+        the end of its URL, so neither article joined."""
+        from corpus.ingest import wikipedia_urls
+        site = "https://en.wikipedia.org"
+        F.write_universe(self.paths)
+        universe = inputs.load_universe(self.paths, F.U)
+        conn = inputs.open_corpus(self.paths.corpus_db(F.U), universe)
+        self.addCleanup(conn.close)
+        for title, written in (("What Is Mathematics?", "What_Is_Mathematics%3F"),
+                               ('"Hello, World!" program', "%22Hello,_World!%22_program")):
+            with self.subTest(title=title):
+                (stored,) = wikipedia_urls(f"See {site}/wiki/{written} for more.")
+                rows = {stored: [{"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+                                  "value": stored, "path": "Alpha/Widget.lean", "line": 1}]}
+                curated, _dropped = cand_mod.curated_hits(
+                    {"title": title, "wikidata": ""}, universe, conn, cand_mod.CuratedLists(),
+                    site=site, urls=rows)
+                self.assertEqual({(h["library"], h["declaration"], h["via"]) for h in curated},
+                                 {("alpha", "Widget.exists_spanning_gadget", "docstring_url")})
 
     def test_a_repeated_source_is_one_and_a_partial_run_says_so(self):
         self.candidates("--source", F.W1, "--source", F.W1)

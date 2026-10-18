@@ -572,6 +572,10 @@ def locate_gate(run_dir: Path) -> tuple[dict, dict]:
     return out[0], out[1]
 
 
+#: how many of the sources a locate run expects on the host its warning names
+SOURCES_NAMED = 20
+
+
 def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], list[str]]:
     """What a locate run sends beyond the root: its sources, databases and L2.
 
@@ -582,9 +586,10 @@ def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], l
     -- and without them the gate on the host fails closed, which the warning
     says.  ``corpus.sqlite``, the tools database when it is another file
     (``tools_corpus_db``: the blind or planted copy the worker's search tools
-    read) and the candidates are metadata about public libraries and always
-    travel.  The frozen inventory does NOT: nothing on the host reads it, and its
-    passages already reach the workers and the gate in the task manifests.
+    read) and the candidates -- the blind arm's too, which its prompts name --
+    are metadata about public libraries and always travel.  The frozen
+    inventory does NOT: nothing on the host reads it, and its passages already
+    reach the workers and the gate in the task manifests.
     """
     remote, local = locate_gate(run_dir)
     entries: list[dict] = []
@@ -596,14 +601,24 @@ def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], l
     l_set = local.get("sourceset") or {}
     if include_texts:
         for sid in sorted(remote.get("sources") or {}):
-            entries.append(_entry(f"source-layer:{sid}", Path(l_set.get("sources_dir", "")) / sid,
-                                  f"{str(r_set.get('sources_dir', '')).rstrip('/')}/{sid}/",
-                                  flags=READONLY_CHMOD + ["--delete"],
-                                  note="a rendered web source: layer, formulas, paragraphs (quotes "
-                                       "are cut from it); leaves only with --include-source-text"))
+            entry = _entry(f"source-layer:{sid}", Path(l_set.get("sources_dir", "")) / sid,
+                           f"{str(r_set.get('sources_dir', '')).rstrip('/')}/{sid}/",
+                           flags=READONLY_CHMOD + ["--delete"],
+                           note="a rendered web source: layer, formulas, paragraphs (quotes "
+                                "are cut from it); leaves only with --include-source-text")
+            # its rsync creates <sources_dir>/<id>/ itself: the transfer's mkdir
+            # makes only <sources_dir>, one argument for any number of sources
+            entry["rsync_creates_dest"] = True
+            entries.append(entry)
     else:
+        expected = sorted(remote.get("sources") or {})
+        named = ", ".join(expected[:SOURCES_NAMED]) + (
+            f" and {len(expected) - SOURCES_NAMED} more" if len(expected) > SOURCES_NAMED else "")
         warnings.append("this locate run's sources were not included (--include-source-text): the "
-                        "gate on the host reads each document's layer and fails closed without it")
+                        "gate on the host reads each document's layer and fails closed without "
+                        f"it, so the host must already hold all {len(expected)} under "
+                        f"{r_set.get('sources_dir') or '(no sources_dir)'}, which the verify "
+                        f"stage checks: {named or '(none)'}")
     corpus_r = (remote.get("corpus_db") or {}).get("path")
     corpus_l = (local.get("corpus_db") or {}).get("path")
     if corpus_r and corpus_l:
@@ -620,20 +635,46 @@ def locate_entries(run_dir: Path, *, include_texts: bool) -> tuple[list[dict], l
                             "tools read; the gate still checks against corpus.sqlite")
         entry["sha256"] = tools_r.get("sha256")
         entries.append(entry)
-    if remote.get("candidates_dir") and local.get("candidates_dir") and not remote.get("blind"):
+    if remote.get("candidates_dir") and local.get("candidates_dir"):
         # THIS run's sources' candidates files only, never the directory: it is
-        # the sourceset's, shared by every run of it.  The blind arm reads none.
+        # the sourceset's, shared by every run of it.  The blind arm's files are
+        # sent too (review C-04): its prompts name them, and they hold the
+        # lexical hints the proposal's G1-blind arm keeps (no curated hit, no QID).
         files = [Path(local["candidates_dir"]) / f"{sid}.json"
                  for sid in sorted(remote.get("sources") or {})]
-        entry = _entry("candidates", files, str(remote["candidates_dir"]).rstrip("/") + "/",
-                       flags=READONLY_CHMOD,
-                       note="L2: the curated hits gate rule 4 reads itself, for this run's "
-                            "sources")
-        # the directory an earlier transfer left read-only: opened for the
-        # rsync's rename, and closed again after it
-        entry["lock_dir"] = True
+        dest = str(remote["candidates_dir"]).rstrip("/")
+        blind = bool(remote.get("blind"))
+        entry = _entry("candidates", files, dest + "/", flags=READONLY_CHMOD,
+                       note=("L2 of the G1-blind arm: the lexical hints the workers read, no "
+                             "curated hit" if blind else
+                             "L2: the curated hits gate rule 4 reads itself, for this run's "
+                             "sources"))
+        entry["lock_dirs"] = candidates_lock_dirs(dest, tools_r)
         entries.append(entry)
     return entries, warnings
+
+
+def candidates_lock_dirs(dest: str, tools_db: dict) -> list[str]:
+    """The host directories a candidates transfer opens and closes, outermost first.
+
+    ``candidates/<u>/`` holds the full database's files, and the G1-blind and
+    each planted database have their own directory inside it
+    (references/locate-documents.md section 5).  An earlier transfer leaves each
+    one read-only, so a kind directory's transfer opens -- and creates -- the
+    per-universe directory around it as well (review C-05), then closes both.
+    Which kind has its own directory is ``locate.inputs.candidates_subdir``'s
+    answer, the one the planner placed ``dest`` by, never a list of kinds here.
+    """
+    from locate import inputs as locate_inputs
+
+    dest = dest.rstrip("/")
+    tools_db = tools_db if isinstance(tools_db, dict) else {}
+    sub = (locate_inputs.candidates_subdir({"kind": tools_db.get("kind"),
+                                            "sha256": str(tools_db.get("sha256") or "")})
+           if tools_db.get("kind") else None)
+    if sub:
+        return [str(Path(dest).parent), dest]
+    return [dest]
 
 
 #: the keys of a manifest entry that belong in run.yaml's ``run.transfer`` record.
