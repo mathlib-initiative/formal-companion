@@ -416,6 +416,13 @@ def index_ok(entry: Entry, commit: str, out_dir: Path, roots_file: Path | None,
         return 1, f"{index_name} missing or not the size manifest.json records"
     if manifest.get("library") != entry.id:
         return 2, f"manifest.json is for library {manifest.get('library')!r}"
+    if entry.kind == "build" and entry.options["SRC_DIR"] not in ("", "."):
+        modules = (manifest.get("records") or {}).get("module")
+        if modules and manifest.get("modules_without_path") == modules:
+            # the driver once dropped SRC_DIR on its way to probe_host.sh (cenv is env -i),
+            # so such an index has no module path at all: never "finished", re-probe it
+            return 2, (f"indexed with no module path although SRC_DIR={entry.options['SRC_DIR']}: "
+                       f"the probe never saw the sources; re-probing")
     sidecar = out_dir / SIDECAR
     if sidecar.is_file():
         recorded = json.loads(sidecar.read_text(encoding="utf-8")).get("spec")

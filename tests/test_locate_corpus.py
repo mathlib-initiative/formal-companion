@@ -19,8 +19,10 @@ import io
 import json
 import os
 import re
+import shlex
 import shutil
 import sqlite3
+import time
 import subprocess
 import sys
 import tempfile
@@ -64,22 +66,69 @@ def decl(name: str, kind: str = "theorem", status: str = "proved", **kw) -> dict
     return record
 
 
+_UNSET = object()
+
+
 def write_probe(directory: Path, decls: list[dict], *, library: str = "alpha",
                 commit: str | None = ALPHA, toolchain: str = "4.34.0",
                 modules: tuple = (("Alpha.Widget", "Alpha/Widget.lean"),),
-                schema: str = "formal-companion-library-index/v0") -> Path:
+                schema: str = "formal-companion-library-index/v0",
+                header: dict | None = None, manifest: dict | None | object = _UNSET,
+                extra_lines: tuple = ()) -> Path:
+    """A probe output directory as probe_merge.py writes it: index.jsonl + manifest.json.
+
+    ``header`` and ``manifest`` override keys (a value of None deletes the key);
+    ``manifest=None`` writes no manifest at all.  The manifest's sha, byte count
+    and record counts are the index's own unless overridden.
+    """
     directory.mkdir(parents=True, exist_ok=True)
-    header = {"record": "header", "schema": schema, "library": library,
-              "toolchain": toolchain, "probe_revision": 1}
-    lines = [header] + [{"record": "module", "name": n, "path": p, "module_doc": None,
-                         "truncated": False} for n, p in modules] + decls
-    (directory / "index.jsonl").write_text("".join(json.dumps(r) + "\n" for r in lines),
-                                           encoding="utf-8")
-    manifest = {"library": library, "template_sha256": "0" * 64}
-    if commit:
-        manifest["commit"] = commit
-    (directory / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+    published = schema == "autoform-library-index/v0"
+    head = ({"record": "header", "schema": schema, "lean_toolchain": f"leanprover/lean4:v{toolchain}"}
+            if published else
+            {"record": "header", "schema": schema, "library": library, "toolchain": toolchain,
+             "probe_revision": 1, "commit": commit, "declaration_count": len(decls),
+             "module_count": len(modules)})
+    for key, value in (header or {}).items():
+        if value is None:
+            head.pop(key, None)
+        else:
+            head[key] = value
+    lines = [head] + [{"record": "module", "name": n, "path": p, "module_doc": None,
+                       "truncated": False} for n, p in modules] + decls
+    text = "".join(json.dumps(r) + "\n" for r in lines) + "".join(extra_lines)
+    index = directory / "index.jsonl"
+    index.write_text(text, encoding="utf-8")
+    if manifest is None:
+        return directory
+    body = {"library": library, "commit": commit, "toolchain": f"leanprover/lean4:v{toolchain}",
+            "index_sha256": hashlib.sha256(index.read_bytes()).hexdigest(),
+            "index_bytes": index.stat().st_size,
+            "records": {"header": 1, "module": len(modules), "declaration": len(decls)},
+            "dirty": False, "template_sha256": "0" * 64,
+            "modules_without_path": sum(1 for _n, p in modules if p is None)}
+    for key, value in ({} if manifest is _UNSET else manifest).items():
+        if value is None:
+            body.pop(key, None)
+        else:
+            body[key] = value
+    (directory / "manifest.json").write_text(json.dumps(body), encoding="utf-8")
     return directory
+
+
+def git_checkout(root: Path, files: dict[str, str]) -> tuple[Path, str]:
+    """A real git checkout holding ``files``, committed; returns (path, HEAD sha)."""
+    root.mkdir(parents=True)
+    env = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@x",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@x", "GIT_CONFIG_NOSYSTEM": "1"}
+    for rel, text in files.items():
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text(text, encoding="utf-8")
+    for argv in (["init", "-q", "-b", "main"], ["add", "-A"], ["commit", "-qm", "pin"]):
+        subprocess.run(["git", "-C", str(root), *argv], check=True, env=env,
+                       capture_output=True)
+    head = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], check=True, env=env,
+                          capture_output=True, text=True).stdout.strip()
+    return root, head
 
 
 def canary_records(*, hidden_sorry_seen: bool = True) -> list[dict]:
@@ -333,13 +382,22 @@ class TestIngest(unittest.TestCase):
         self.universe = make_universe(self.root, libs=("alpha", "beta"))
         self.out = self.root / "corpora" / "u1" / "index" / "alpha"
 
-    def run_ingest(self, records, checkout=None, **kw):
+    def run_ingest(self, records, checkout=None, accept_published=None, **kw):
+        shutil.rmtree(self.root / "probe", ignore_errors=True)
         source = write_probe(self.root / "probe", records, **kw)
-        return ingest.ingest(self.universe, "alpha", source, self.out, checkout=checkout)
+        return ingest.ingest(self.universe, "alpha", source, self.out, checkout=checkout,
+                             accept_published=accept_published)
 
     def decls(self) -> list[dict]:
         lines = (self.out / "decls.jsonl").read_text(encoding="utf-8").splitlines()
         return [json.loads(line) for line in lines]
+
+    def refused(self, records, needle: str = "", **kw):
+        with self.assertRaises(CfError) as caught:
+            self.run_ingest(records, **kw)
+        if needle:
+            self.assertIn(needle, str(caught.exception))
+        return caught.exception
 
     def test_the_normalised_index_and_its_manifest(self):
         manifest = self.run_ingest(alpha_records())
@@ -365,7 +423,7 @@ class TestIngest(unittest.TestCase):
             self.assertEqual(set(row), {"name", "module", "path", "line", "start_line",
                                         "end_line", "kind", "proof_status", "statement",
                                         "printable", "signature", "docstring", "axioms", "tags",
-                                        "deprecated", "probe_proof_status", "flags"})
+                                        "deprecated", "private", "probe_proof_status", "flags"})
 
     def test_an_unsorted_input_is_sorted_through_chunks(self):
         records = [decl(f"N.d{i:03d}") for i in (5, 3, 9, 1, 7, 2, 8, 0, 6, 4)]
@@ -375,12 +433,10 @@ class TestIngest(unittest.TestCase):
         # no chunk file is left behind
         self.assertEqual(sorted(p.name for p in self.out.parent.iterdir()), ["alpha"])
 
-    def test_a_repeated_name_is_refused_sorted_or_not(self):
+    def test_a_repeated_public_name_is_refused_sorted_or_not(self):
         for records in ([decl("A.x"), decl("A.x")], [decl("B.y"), decl("A.x"), decl("A.x")]):
             with self.subTest(records=[r["name"] for r in records]):
-                with self.assertRaises(CfError) as caught:
-                    self.run_ingest(records)
-                self.assertIn("two declarations named A.x", str(caught.exception))
+                self.refused(records, "two public declarations named A.x")
         self.assertFalse(self.out.exists())
 
     def test_the_wrong_library_commit_or_toolchain_is_refused(self):
@@ -393,68 +449,360 @@ class TestIngest(unittest.TestCase):
 
     def test_no_library_is_ingested_before_its_toolchain_canary_passed(self):
         self.universe.data["canaries"] = []
-        with self.assertRaises(CfError) as caught:
-            self.run_ingest(alpha_records())
-        self.assertIn("canary", str(caught.exception))
+        self.refused(alpha_records(), "canary")
         self.universe.record_canary(toolchain="4.34.0", passed=False, cases={},
                                     index_sha256="0" * 64, checked="t")
-        with self.assertRaises(CfError):
-            self.run_ingest(alpha_records())
+        self.refused(alpha_records(), "canary")
 
     def test_a_record_ingest_cannot_decide_is_refused_with_its_line(self):
+        error = self.refused([decl("A.x", proof_status="maybe")])
+        self.assertIn("line 3", str(error))
+        broken = self.root / "bad"
+        write_probe(broken, [decl("A.x")], extra_lines=("{not json\n",))
         with self.assertRaises(CfError) as caught:
-            self.run_ingest([decl("A.x", status="maybe")])
-        self.assertIn("line 3", str(caught.exception))
-        source = write_probe(self.root / "bad", [decl("A.x")])
-        with open(source / "index.jsonl", "a", encoding="utf-8") as handle:
-            handle.write("{not json\n")
-        with self.assertRaises(CfError):
-            ingest.ingest(self.universe, "alpha", source, self.out)
+            ingest.ingest(self.universe, "alpha", broken, self.out)
+        self.assertIn("not JSON", str(caught.exception))
 
-    def test_tags_come_from_the_span_in_the_checkout_and_the_docstring(self):
-        checkout = self.root / "checkout"
-        (checkout / "Alpha").mkdir(parents=True)
+
+class TestTheIndexMustBeThePinnedOneWhole(unittest.TestCase):
+    """Review #32, #37, #38: identity from the index itself, and every byte accounted for."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.universe = make_universe(self.root, libs=("alpha", "beta"))
+        self.out = self.root / "corpora" / "u1" / "index" / "alpha"
+
+    def ingest_dir(self, source):
+        return ingest.ingest(self.universe, "alpha", source, self.out)
+
+    def refused(self, needle, records=None, **kw):
+        source = write_probe(self.root / f"p{len(list(self.root.iterdir()))}",
+                             alpha_records() if records is None else records, **kw)
+        with self.assertRaises(CfError) as caught:
+            self.ingest_dir(source)
+        self.assertIn(needle, str(caught.exception))
+
+    def test_a_header_with_no_toolchain_is_refused(self):
+        self.refused("names no toolchain", header={"toolchain": None})
+
+    def test_the_header_and_the_manifest_may_not_disagree(self):
+        self.refused("disagree", header={"library": "beta"})            # manifest says alpha
+        self.refused("disagree", header={"commit": BETA})
+        self.refused("disagree", manifest={"commit": BETA})
+
+    def test_a_sibling_manifest_cannot_vouch_for_another_index(self):
+        # beta's re-probed index beside alpha's manifest: the header is read too
+        source = write_probe(self.root / "mixed", alpha_records(), library="beta", commit=BETA)
+        alpha_manifest = write_probe(self.root / "alpha", alpha_records())
+        shutil.copy2(alpha_manifest / "manifest.json", source / "manifest.json")
+        with self.assertRaises(CfError):
+            self.ingest_dir(source)
+
+    def test_an_index_cut_short_is_refused(self):
+        source = write_probe(self.root / "cut", alpha_records())
+        index = source / "index.jsonl"
+        lines = index.read_text(encoding="utf-8").splitlines(keepends=True)
+        index.write_text("".join(lines[:-1]), encoding="utf-8")        # at a line boundary
+        with self.assertRaises(CfError) as caught:
+            self.ingest_dir(source)
+        self.assertIn("sha256", str(caught.exception))
+
+    def test_the_record_counts_must_be_the_records_read(self):
+        self.refused("declaration_count", header={"declaration_count": 9})
+        self.refused("records.declaration", manifest={"records": {"header": 1, "module": 1,
+                                                                   "declaration": 9}})
+        self.refused("bytes", manifest={"index_bytes": 3})
+
+    def test_a_probe_index_needs_its_manifest_and_its_sha(self):
+        self.refused("no manifest.json", manifest=None)
+        self.refused("index_sha256", manifest={"index_sha256": None})
+
+    def test_a_dirty_or_unknown_checkout_is_refused(self):
+        self.refused("dirty", manifest={"dirty": True})
+        source = write_probe(self.root / "unknown", alpha_records())
+        manifest = json.loads((source / "manifest.json").read_text(encoding="utf-8"))
+        manifest["dirty"] = None
+        (source / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        with self.assertRaises(CfError) as caught:
+            self.ingest_dir(source)
+        self.assertIn("could not tell", str(caught.exception))
+
+    def test_an_index_with_no_module_path_is_refused(self):
+        """Review #46, the ingest side: a probe that never found the sources."""
+        self.refused("no module", modules=(("Alpha.Widget", None),))
+
+
+class TestTheProbesRecordMustAgreeWithItself(unittest.TestCase):
+    """Review #31: a record missing its closure or contradicting itself is refused."""
+
+    def check(self, **kw):
+        record = decl("A.x", **kw)
+        with self.assertRaises(CfError):
+            ingest.check_consistent(record)
+
+    def test_a_missing_or_bad_closure_is_refused(self):
+        for value in (_UNSET, None, "sorryAx", [1]):
+            record = decl("A.x", status="statement_only")
+            if value is _UNSET:
+                del record["nonstandard_axioms"]
+            else:
+                record["nonstandard_axioms"] = value
+            with self.subTest(value=value), self.assertRaises(CfError):
+                ingest.decide(record)
+
+    def test_contradictions_are_refused(self):
+        self.check(status="statement_only", nonstandard_axioms=[])
+        self.check(status="proved", nonstandard_axioms=["sorryAx"])
+        self.check(status="wanted")
+        self.check(status="proved", wrapper="W.ProofWanted")
+        self.check(kind="axiom", status="proved")
+        self.check(kind="theorem", status="axiom")
+        self.check(kind="theorem", status="definition")
+        self.check(kind="structure", status="proved")
+
+    def test_consistent_records_pass(self):
+        for record in (*canary_records(), *alpha_records()):
+            with self.subTest(name=record["name"]):
+                ingest.check_consistent(record)
+
+    def test_ingest_refuses_the_unsafe_move(self):
+        root = _scratch(self)
+        universe = make_universe(root)
+        source = write_probe(root / "p", [decl("A.x", status="statement_only")])
+        with self.assertRaises(CfError) as caught:
+            ingest.ingest(universe, "alpha", source, root / "out")
+        self.assertIn("contradicts itself", str(caught.exception))
+
+
+class TestPublishedIndexes(unittest.TestCase):
+    """Review #30, #39: no bypass of the identity checks, and acceptance only by name."""
+
+    PUBLISHED = [{"record": "declaration", "name": "P.a", "module": "Alpha.Widget",
+                  "kind": "theorem", "status": "sorry"},
+                 {"record": "declaration", "name": "P.b", "module": "Alpha.Widget",
+                  "kind": "def", "status": "definition", "signature": "Prop"}]
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.universe = make_universe(self.root, canary=False)
+        self.out = self.root / "corpora" / "u1" / "index" / "alpha"
+
+    def source(self, name="pub", records=None, **kw):
+        kw.setdefault("modules", (("Alpha.Widget", None),))
+        return write_probe(self.root / name, records or self.PUBLISHED,
+                           schema="autoform-library-index/v0", **kw)
+
+    def test_it_is_refused_unless_accepted_by_name(self):
+        with self.assertRaises(CfError) as caught:
+            ingest.ingest(self.universe, "alpha", self.source(), self.out)
+        self.assertIn("--accept-published", caught.exception.hint)
+        with self.assertRaises(CfError):
+            ingest.ingest(self.universe, "alpha", self.source("b"), self.out,
+                          accept_published="   ")
+
+    def test_the_identity_checks_apply_to_it(self):
+        for name, kw in (("lib", {"manifest": {"library": "someone-else"}}),
+                         ("nocommit", {"commit": None}),
+                         ("commit", {"commit": BETA}),
+                         ("toolchain", {"toolchain": "4.99.0"}),
+                         ("nomanifest", {"manifest": None})):
+            with self.subTest(case=name), self.assertRaises(CfError):
+                ingest.ingest(self.universe, "alpha", self.source(name, **kw), self.out,
+                              accept_published="the library's own CI publishes it")
+
+    def test_an_accepted_one_is_recorded_and_flagged(self):
+        manifest = ingest.ingest(self.universe, "alpha", self.source(), self.out,
+                                 accept_published="the library's own CI publishes it")
+        self.assertEqual(manifest["published"]["reason"], "the library's own CI publishes it")
+        row = self.universe.library("alpha")["published_index"]
+        self.assertEqual(row["reason"], "the library's own CI publishes it")
+        rows = {r["name"]: r for r in (json.loads(line) for line in
+                (self.out / "decls.jsonl").read_text(encoding="utf-8").splitlines())}
+        self.assertEqual(rows["P.a"]["proof_status"], "statement_only")
+        self.assertEqual(rows["P.a"]["flags"], ["published_status"])
+        self.assertTrue(rows["P.b"]["statement"])
+        self.universe.save()
+        self.assertIn("published_index", Universe.load(self.universe.path).library("alpha"))
+        # a probe index later replaces the acceptance
+        self.universe.record_canary(toolchain="4.34.0", passed=True, cases={},
+                                    index_sha256="0" * 64, checked="t")
+        ingest.ingest(self.universe, "alpha", write_probe(self.root / "probe", alpha_records()),
+                      self.out)
+        self.assertNotIn("published_index", self.universe.library("alpha"))
+
+    def test_an_unknown_status_word_is_refused(self):
+        bad = [{"record": "declaration", "name": "P.c", "module": "Alpha.Widget",
+                "kind": "theorem", "status": "mostly"}]
+        with self.assertRaises(CfError):
+            ingest.ingest(self.universe, "alpha", self.source(records=bad), self.out,
+                          accept_published="x")
+
+    def test_a_probe_index_cannot_carry_the_override(self):
+        with self.assertRaises(CfError):
+            ingest.ingest(self.universe, "alpha", write_probe(self.root / "p", alpha_records()),
+                          self.out, accept_published="x")
+
+
+class TestPrivateTwins(unittest.TestCase):
+    """Review #34: the probe names a private declaration by its user name."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.universe = make_universe(self.root)
+        self.out = self.root / "out"
+
+    def run_ingest(self, records):
+        modules = (("Alpha.A", "Alpha/A.lean"), ("Alpha.B", "Alpha/B.lean"))
+        return ingest.ingest(self.universe, "alpha",
+                             write_probe(self.root / "p", records, modules=modules), self.out)
+
+    def names(self):
+        return [json.loads(l)["name"] for l in
+                (self.out / "decls.jsonl").read_text(encoding="utf-8").splitlines()]
+
+    def test_private_twins_are_dropped_and_counted(self):
+        manifest = self.run_ingest([decl("Alpha.aux", module="Alpha.A", private=True),
+                                    decl("Alpha.aux", module="Alpha.B", private=True),
+                                    decl("Alpha.main", module="Alpha.A")])
+        self.assertEqual(self.names(), ["Alpha.main"])
+        self.assertEqual(manifest["private_collisions_dropped"],
+                         {"count": 2, "names": ["Alpha.aux"]})
+
+    def test_a_public_one_keeps_its_name(self):
+        manifest = self.run_ingest([decl("Alpha.aux", module="Alpha.A"),
+                                    decl("Alpha.aux", module="Alpha.B", private=True)])
+        self.assertEqual(self.names(), ["Alpha.aux"])
+        self.assertEqual(manifest["private_collisions_dropped"]["count"], 1)
+
+    def test_two_public_ones_are_still_refused(self):
+        with self.assertRaises(CfError):
+            self.run_ingest([decl("Alpha.aux", module="Alpha.A"),
+                             decl("Alpha.aux", module="Alpha.B")])
+
+
+class TestFieldsThatAreNotStrings(unittest.TestCase):
+    """Review #43: a bad path is a refusal naming its line, never a traceback."""
+
+    def test_bad_paths_are_refused_with_the_line(self):
+        root = _scratch(self)
+        universe = make_universe(root)
+        for i, bad in enumerate((5, ["a"], "A/W\u0000.lean")):
+            with self.subTest(path=bad):
+                source = write_probe(root / f"p{i}", [decl("A.x", path=bad)])
+                with self.assertRaises(CfError) as caught:
+                    ingest.ingest(universe, "alpha", source, root / "out")
+                self.assertIn("line 3", str(caught.exception))
+        source = write_probe(root / "m", [decl("A.x")], modules=((7, "Alpha/W.lean"),))
+        with self.assertRaises(CfError):
+            ingest.ingest(universe, "alpha", source, root / "out")
+
+
+class TestTagsFromACheckout(unittest.TestCase):
+    """Review #44 (the checkout must be the pin's, clean) and the span rule."""
+
+    def setUp(self):
+        self.root = _scratch(self)
         lines = [""] * 60
         lines[9] = "@[wikidata Q99999001, stacks 0ABC]"
         lines[10] = "theorem Widget.exists_spanning_gadget"
         lines[21] = "  -- @[kerodon 0XYZ] after the name line is not this declaration's"
         lines[29] = "@[kerodon 01AB]"            # the line before Widget.sorried's span
-        (checkout / "Alpha" / "Widget.lean").write_text("\n".join(lines), encoding="utf-8")
-        manifest = self.run_ingest(alpha_records(), checkout=checkout)
-        tags = {r["name"]: r["tags"] for r in self.decls()}
+        self.checkout, self.head = git_checkout(self.root / "checkout",
+                                                {"Alpha/Widget.lean": "\n".join(lines)})
+        self.universe = make_universe(self.root)
+        self.universe.library("alpha")["commit"] = self.head
+        self.out = self.root / "out"
+
+    def run_ingest(self, records=None, checkout=None):
+        source = write_probe(self.root / "p", records or alpha_records(), commit=self.head)
+        return ingest.ingest(self.universe, "alpha", source, self.out,
+                             checkout=checkout or self.checkout)
+
+    def test_tags_come_from_the_span_and_the_docstring(self):
+        manifest = self.run_ingest()
+        tags = {json.loads(l)["name"]: json.loads(l)["tags"] for l in
+                (self.out / "decls.jsonl").read_text(encoding="utf-8").splitlines()}
         self.assertEqual(tags["Widget.exists_spanning_gadget"], [
             {"tag": "stacks", "value": "0ABC"}, {"tag": "wikidata", "value": "Q99999001"},
             {"tag": "wikipedia", "value": "https://en.wikipedia.org/wiki/Widget_lemma"}])
         self.assertEqual(tags["Widget.sorried"], [])
         self.assertEqual(tags["Widget.Spans"], [])
         self.assertEqual(manifest["tags"], {"stacks": 1, "wikidata": 1, "wikipedia": 1})
-        self.assertTrue(manifest["tags_read_from_checkout"])
+
+    def test_a_checkout_at_another_commit_is_refused(self):
+        self.universe.library("alpha")["commit"] = "c" * 40
+        source = write_probe(self.root / "p", alpha_records(), commit="c" * 40)
+        with self.assertRaises(CfError) as caught:
+            ingest.ingest(self.universe, "alpha", source, self.out, checkout=self.checkout)
+        self.assertIn("not at the pinned", str(caught.exception))
+
+    def test_a_dirty_checkout_is_refused(self):
+        (self.checkout / "Alpha" / "Widget.lean").write_text("@[wikidata Q1]\n", encoding="utf-8")
+        with self.assertRaises(CfError) as caught:
+            self.run_ingest()
+        self.assertIn("modified", str(caught.exception))
+
+    def test_a_directory_that_is_not_a_checkout_is_refused(self):
+        plain = self.root / "plain"
+        plain.mkdir()
+        with self.assertRaises(CfError):
+            self.run_ingest(checkout=plain)
+
+    def test_head_is_read_from_files(self):
+        fake = self.root / "fake"
+        (fake / ".git" / "refs" / "heads").mkdir(parents=True)
+        (fake / ".git" / "HEAD").write_text("a" * 40 + "\n", encoding="utf-8")
+        self.assertEqual(ingest.checkout_head(fake), "a" * 40)
+        (fake / ".git" / "HEAD").write_text("ref: refs/heads/main\n", encoding="utf-8")
+        self.assertIsNone(ingest.checkout_head(fake))
+        (fake / ".git" / "packed-refs").write_text(f"# pack-refs\n{'b' * 40} refs/heads/main\n",
+                                                   encoding="utf-8")
+        self.assertEqual(ingest.checkout_head(fake), "b" * 40)
+        (fake / ".git" / "refs" / "heads" / "main").write_text("c" * 40, encoding="utf-8")
+        self.assertEqual(ingest.checkout_head(fake), "c" * 40)
+        (fake / ".git" / "HEAD").write_text("ref: refs/../../etc\n", encoding="utf-8")
+        self.assertIsNone(ingest.checkout_head(fake))
+        self.assertEqual(ingest.checkout_head(self.checkout), self.head)
 
     def test_a_path_that_leaves_the_checkout_is_not_read(self):
-        checkout = self.root / "checkout"
-        checkout.mkdir()
         outside = self.root / "Outside.lean"
         outside.write_text("@[wikidata Q1]\ntheorem x\n", encoding="utf-8")
-        (checkout / "Link.lean").symlink_to(outside)
-        records = [decl("A.x", path="../Outside.lean", line=2, start_line=1),
-                   decl("A.y", path="Link.lean", line=2, start_line=1)]
-        manifest = self.run_ingest(records, checkout=checkout)
-        self.assertEqual([r["tags"] for r in self.decls()], [[], []])
-        self.assertEqual(manifest["checkout_files_unreadable"], 2)
+        records = [decl("A.x", path="../Outside.lean", line=2, start_line=1)]
+        manifest = self.run_ingest(records)
+        self.assertEqual(json.loads((self.out / "decls.jsonl").read_text())["tags"], [])
+        self.assertEqual(manifest["checkout_files_unreadable"], 1)
 
-    def test_a_published_index_maps_its_words_and_refuses_others(self):
-        published = [{"record": "declaration", "name": "P.a", "module": "Alpha.Widget",
-                      "kind": "theorem", "status": "sorry"},
-                     {"record": "declaration", "name": "P.b", "module": "Alpha.Widget",
-                      "kind": "def", "status": "definition", "signature": "Prop"}]
-        self.run_ingest(published, schema="autoform-library-index/v0")
-        rows = {r["name"]: r for r in self.decls()}
-        self.assertEqual(rows["P.a"]["proof_status"], "statement_only")
-        self.assertEqual(rows["P.a"]["flags"], ["published_status"])
-        self.assertTrue(rows["P.b"]["statement"])
-        with self.assertRaises(CfError):
-            self.run_ingest([{"record": "declaration", "name": "P.c", "kind": "theorem",
-                              "status": "mostly"}], schema="autoform-library-index/v0")
+
+class TestWikipediaURLs(unittest.TestCase):
+    """Review #35: apostrophes, balanced parentheses, percent-encoding, one canonical form."""
+
+    def test_titles_and_their_canonical_form(self):
+        cases = {
+            "https://en.wikipedia.org/wiki/Wilson's_theorem": "Wilson's_theorem",
+            "see https://en.wikipedia.org/wiki/Lagrange's_theorem_(group_theory).":
+                "Lagrange's_theorem_(group_theory)",
+            "<https://en.wikipedia.org/wiki/Ring_(mathematics)>": "Ring_(mathematics)",
+            "[ring](https://en.wikipedia.org/wiki/Ring_(mathematics))": "Ring_(mathematics)",
+            "(https://en.wikipedia.org/wiki/Widget_lemma)": "Widget_lemma",
+            "https://en.wikipedia.org/wiki/Wilson%27s_theorem": "Wilson's_theorem",
+            "https://en.wikipedia.org/wiki/Sylow_theorems#Theorems": "Sylow_theorems",
+            "https://en.m.wikipedia.org/wiki/Sylow_theorems": "Sylow_theorems",
+            "https://en.wikipedia.org/wiki/widget_lemma": "Widget_lemma",
+            "'https://en.wikipedia.org/wiki/Widget_lemma'": "Widget_lemma",
+            "https://en.wikipedia.org/wiki/G%C3%B6del%27s_incompleteness_theorems,":
+                "Gödel's_incompleteness_theorems",
+            "https://en.wikipedia.org/wiki/Ring_(mathematics": "Ring",
+        }
+        for text, title in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(ingest.wikipedia_urls(text),
+                                 [f"https://en.wikipedia.org/wiki/{title}"])
+
+    def test_other_wikis_and_none(self):
+        self.assertEqual(ingest.wikipedia_urls("https://de.wikipedia.org/wiki/Satz_von_Sylow"),
+                         ["https://de.wikipedia.org/wiki/Satz_von_Sylow"])
+        self.assertEqual(ingest.wikipedia_urls("https://example.org/wiki/X and no link"), [])
+        self.assertEqual(ingest.wikipedia_urls("https://en.wikipedia.org/wiki/"), [])
 
 
 class TestTheCanary(unittest.TestCase):
@@ -738,10 +1086,13 @@ class TestTheCommand(unittest.TestCase):
         self.assertIn("axiom_dependent", self.cf("corpus", "show", "u1", "alpha",
                                                  "Widget.bigAxiomThm"))
 
+    def add_alpha(self, *extra):
+        self.cf("corpus", "add", "u1", "--library", "alpha", "--repo", "https://example.org/alpha",
+                "--commit", ALPHA, "--toolchain", TOOLCHAIN, "--roots", "Alpha", *extra)
+
     def test_probe_command_prints_the_pipeline_and_runs_nothing(self):
         self.cf("corpus", "init", "u1")
-        self.cf("corpus", "add", "u1", "--library", "alpha", "--repo", "https://example.org/alpha",
-                "--commit", ALPHA, "--toolchain", TOOLCHAIN, "--roots", "Alpha")
+        self.add_alpha()
         with mock.patch("subprocess.run") as ran, mock.patch("subprocess.Popen") as popen:
             out = self.cf("corpus", "probe-command", "u1", "--library", "alpha")
             canary = self.cf("corpus", "probe-command", "u1", "--canary", "--toolchain",
@@ -749,17 +1100,323 @@ class TestTheCommand(unittest.TestCase):
         ran.assert_not_called()
         popen.assert_not_called()
         for needle in ("MIN_FREE_GB=450", "65536", "build_universe_host.sh", "cf corpus ingest u1",
-                       ALPHA, 'rm -rf "$ATLAS_ROOT"/libs/alpha/.lake'):
+                       ALPHA):
             with self.subTest(needle=needle):
                 self.assertIn(needle, out)
         self.assertIn('cp -R templates/corpus/canary/. "$ATLAS_ROOT/canary/4.34.0"/', canary)
         self.assertIn("cf corpus ingest u1 --canary", canary)
+
+    def test_atlas_root_is_set_once_so_the_cleanup_never_names_root(self):
+        """Review #51: an unset ATLAS_ROOT made step 4 `rm -rf /libs/<id>/.lake`."""
+        self.cf("corpus", "init", "u1")
+        self.add_alpha()
+        out = self.cf("corpus", "probe-command", "u1", "--library", "alpha")
+        lines = out.splitlines()
+        export = next(i for i, l in enumerate(lines) if l.startswith("export ATLAS_ROOT="))
+        self.assertEqual(lines[export], 'export ATLAS_ROOT="${ATLAS_ROOT:-$HOME/atlas}"')
+        first_use = next(i for i, l in enumerate(lines)
+                         if "$ATLAS_ROOT" in l and not l.startswith("#") and i != export)
+        self.assertLess(export, first_use)
+        self.assertIn('[ -n "$ATLAS_ROOT" ] && rm -rf -- "$ATLAS_ROOT/libs/alpha/.lake"', out)
+        # and the line does what it says in a shell with ATLAS_ROOT unset
+        home = self.root / "home"
+        (home / "atlas" / "libs" / "alpha" / ".lake").mkdir(parents=True)
+        script = "\n".join([lines[export],
+                             next(l for l in lines if "rm -rf" in l)])
+        subprocess.run(["bash", "-c", script], check=True,
+                       env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(home)})
+        self.assertFalse((home / "atlas" / "libs" / "alpha" / ".lake").exists())
+        given = self.cf("corpus", "probe-command", "u1", "--library", "alpha",
+                        "--atlas-root", "/srv/atlas root")
+        self.assertIn("export ATLAS_ROOT='/srv/atlas root'", given)
+
+    def test_a_toolchain_that_needs_quoting_is_refused(self):
+        """Review #52: the toolchain reached a single-quoted sed expression raw."""
+        self.cf("corpus", "init", "u1")
+        evil = "leanprover/lean4:v4.34.0'; touch /tmp/PWNED; '"
+        with self.assertRaises(CfError):
+            cf_main.main(["corpus", "probe-command", "u1", "--canary", "--toolchain", evil,
+                          "--workspace", str(self.ws)])
+        with self.assertRaises(CfError):
+            cf_main.main(["corpus", "add", "u1", "--library", "alpha", "--repo",
+                          "https://example.org/alpha", "--commit", ALPHA, "--toolchain", evil,
+                          "--roots", "Alpha", "--workspace", str(self.ws)])
+        nightly = self.cf("corpus", "probe-command", "u1", "--canary", "--toolchain",
+                          "leanprover/lean4-nightly:nightly-2026-10-01")
+        self.assertIn('"$ATLAS_ROOT/canary/leanprover-lean4-nightly-nightly-2026-10-01"', nightly)
+        self.assertNotIn("'$ATLAS_ROOT", nightly)
+        sed = next(l for l in nightly.splitlines() if "sed -e" in l)
+        quoted = sed.split("sed -e ", 1)[1].split(' "$f"', 1)[0]
+        self.assertEqual(shlex.split(quoted), [
+            "s#@@TOOLCHAIN@@#leanprover/lean4-nightly:nightly-2026-10-01#;"
+            "s#@@MODULE_HEADER@@#module\\n\\npublic section#;s#@@MODULE_FOOTER@@#end#"])
+
+    def test_the_canary_build_runs_clean_and_niced(self):
+        """Review #54: a bare `lake build` in the operator's shell."""
+        self.cf("corpus", "init", "u1")
+        canary = self.cf("corpus", "probe-command", "u1", "--canary", "--toolchain", TOOLCHAIN)
+        build = next(l for l in canary.splitlines() if l.rstrip().endswith("lake build"))
+        self.assertTrue(build.startswith("env -i "), build)
+        self.assertIn("nice -n", build)
+        self.assertIn("ionice -c3", build)
+
+    def test_a_refused_add_leaves_the_conventions_alone(self):
+        """Review #40, #47: the copy came before the validation."""
+        self.cf("corpus", "init", "u1")
+        first = self.root / "first.md"
+        first.write_text("confirmed_by: the maintainer\n0 ∈ ℕ\n", encoding="utf-8")
+        self.add_alpha("--conventions", str(first))
+        dest = self.ws / "corpora" / "u1" / "conventions" / "alpha.md"
+        self.assertEqual(dest.read_text(encoding="utf-8"), first.read_text(encoding="utf-8"))
+        draft = self.root / "draft.md"
+        draft.write_text("a draft\n", encoding="utf-8")
+        with self.assertRaises(CfError):          # a new pin: refused
+            cf_main.main(["corpus", "add", "u1", "--library", "alpha", "--repo",
+                          "https://example.org/alpha", "--commit", "c" * 40, "--toolchain",
+                          TOOLCHAIN, "--roots", "Alpha", "--conventions", str(draft),
+                          "--workspace", str(self.ws)])
+        self.assertEqual(dest.read_text(encoding="utf-8"), first.read_text(encoding="utf-8"))
+        with self.assertRaises(CfError):          # a valid re-add may not overwrite either
+            cf_main.main(["corpus", "add", "u1", "--library", "alpha", "--repo",
+                          "https://example.org/alpha", "--commit", ALPHA, "--toolchain",
+                          TOOLCHAIN, "--roots", "Alpha", "--conventions", str(draft),
+                          "--workspace", str(self.ws)])
+        self.assertIn("confirmed", self.cf("corpus", "status", "u1"))
+        with self.assertRaises(CfError):          # nor does an add that fails on its roots
+            cf_main.main(["corpus", "add", "u1", "--library", "beta", "--repo",
+                          "https://example.org/beta", "--commit", BETA, "--toolchain", TOOLCHAIN,
+                          "--roots", "Beta Gamma", "--conventions", str(draft),
+                          "--workspace", str(self.ws)])
+        self.assertFalse((dest.parent / "beta.md").exists())
+
+    def test_ingest_accepts_a_published_index_only_by_name(self):
+        self.cf("corpus", "init", "u1")
+        self.add_alpha()
+        source = write_probe(self.root / "pub", TestPublishedIndexes.PUBLISHED,
+                             schema="autoform-library-index/v0",
+                             modules=(("Alpha.Widget", None),))
+        with self.assertRaises(CfError):
+            cf_main.main(["corpus", "ingest", "u1", "--library", "alpha", "--from", str(source),
+                          "--workspace", str(self.ws)])
+        out = self.cf("corpus", "ingest", "u1", "--library", "alpha", "--from", str(source),
+                      "--accept-published", "the library's CI publishes it")
+        self.assertIn("flagged published_status", out)
+        self.assertIn("accepted on trust", out)
+        self.assertNotIn("isProp failed", out)
 
     def test_add_without_its_pin_is_refused(self):
         self.cf("corpus", "init", "u1")
         with self.assertRaises(CfError):
             cf_main.main(["corpus", "add", "u1", "--library", "alpha",
                           "--workspace", str(self.ws)])
+
+
+class TestOneWordRule(unittest.TestCase):
+    """Review #36, #45: a name and a query are split by one rule, the one section 8 states."""
+
+    def test_names_and_queries_split_alike(self):
+        for name, words in (("Polynomial.natDegree", "polynomial nat degree"),
+                            ("orderOf", "order of"), ("IsCompact", "is compact"),
+                            ("T2Space", "t2 space"), ("IsPGroup.card_eq", "is pgroup card eq"),
+                            ("foo'", "foo"), ("Nat.Prime.two_le", "nat prime two le")):
+            with self.subTest(name=name):
+                self.assertEqual(corpus_search.name_words(name), words)
+                self.assertEqual(corpus_search.query_words(name), words.split())
+
+    def test_section_8_states_the_rule_the_code_runs(self):
+        documents = " ".join((SKILL / "references" / "locate-documents.md").read_text(
+            encoding="utf-8").split())
+        self.assertIn("a run of letters and digits", documents)
+        self.assertIn("a lower-case letter or a digit is followed by an upper-case one", documents)
+        self.assertIn("queries are split by the same rule", documents)
+
+    def test_a_camel_case_query_finds_the_name(self):
+        root = _scratch(self)
+        universe = make_universe(root)
+        udir = root / "corpora" / "u1"
+        ingest.ingest(universe, "alpha", write_probe(root / "p", [
+            decl("Polynomial.natDegree", "def", "definition", signature="ℕ"),
+            decl("Monoid.orderOf", "def", "definition", signature="ℕ")]),
+            udir / "index" / "alpha")
+        build_db.build(universe, udir, udir / "corpus.sqlite")
+        conn = query.open_db(udir / "corpus.sqlite")
+        self.addCleanup(conn.close)
+        self.assertEqual(query.search(conn, "natDegree")[0]["declaration"], "Polynomial.natDegree")
+        self.assertEqual(query.search(conn, "orderOf")[0]["declaration"], "Monoid.orderOf")
+
+    def test_a_pasted_paragraph_is_cheap(self):
+        """Review #42: deduplication was quadratic in the query length."""
+        text = " ".join(f"word{i}" for i in range(60000))
+        started = time.monotonic()
+        words = corpus_search.query_words(text)
+        self.assertLess(time.monotonic() - started, 1.0)
+        self.assertEqual(len(words), corpus_search.MAX_WORDS)
+
+
+class TestTheHostToolsRefuseBadBytes(unittest.TestCase):
+    """Review #41: a non-UTF-8 argument is exit 2, never a traceback with exit 1."""
+
+    def test_surrogates_are_bad_arguments(self):
+        root = _scratch(self)
+        universe = make_universe(root)
+        udir = root / "corpora" / "u1"
+        ingest.ingest(universe, "alpha", write_probe(root / "p", alpha_records()),
+                      udir / "index" / "alpha")
+        build_db.build(universe, udir, udir / "corpus.sqlite")
+        db = str(udir / "corpus.sqlite")
+        for name, argv in (("corpus_show.py", ["--db", db, "alpha", b"\xff\xfe"]),
+                           ("corpus_search.py", ["--db", db, "--library", b"\xff", "gadget"]),
+                           ("corpus_search.py", ["--db", db, b"gad\xffget"])):
+            with self.subTest(tool=name, argv=argv):
+                proc = subprocess.run([sys.executable, "-I", str(SCRIPTS / "corpus" / name),
+                                       *[a if isinstance(a, bytes) else a.encode() for a in argv]],
+                                      capture_output=True)
+                self.assertEqual(proc.returncode, 2, proc.stderr)
+                self.assertNotIn(b"Traceback", proc.stderr)
+
+
+class TestTheHostDrivers(unittest.TestCase):
+    """Review #46, #48, #49, #50 -- changes to the drivers as run."""
+
+    DRIVER = SCRIPTS / "corpus" / "build_universe_host.sh"
+
+    def test_src_dir_reaches_the_probe(self):
+        text = self.DRIVER.read_text(encoding="utf-8")
+        call = text[text.index('cenv SHARD_COUNT="$OPT_SHARD_COUNT"'):]
+        call = call[:call.index('bash "$probe_host"')]
+        self.assertIn('SRC_DIRS="$OPT_SRC_DIR"', call)
+        self.assertIn('--src-dirs "${SRC_DIRS:-.}"',
+                      (SCRIPTS / "corpus" / "probe_host.sh").read_text(encoding="utf-8"))
+
+    def test_index_ok_re_probes_an_index_the_old_driver_left_pathless(self):
+        root = _scratch(self)
+        tsv = root / "u1.tsv"
+        tsv.write_text(f"alpha\thttps://example.org/alpha\t{ALPHA}\tAlpha\tbuild\tSRC_DIR=src\n",
+                       encoding="utf-8")
+        entry = universe_host.get_entry(tsv, "alpha")
+        out = root / "index"
+        out.mkdir()
+        (out / "index.jsonl").write_text("{}\n", encoding="utf-8")
+        manifest = {"library": "alpha", "commit": ALPHA, "index_bytes": 3,
+                    "records": {"header": 1, "module": 4, "declaration": 9},
+                    "modules_without_path": 4, "roots": ["Alpha"], "module_prefixes": ["Alpha"]}
+        (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        rc, why = universe_host.index_ok(entry, ALPHA, out, None, None)
+        self.assertEqual(rc, 2, why)
+        self.assertIn("SRC_DIR", why)
+        manifest["modules_without_path"] = 0
+        (out / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        self.assertNotIn("SRC_DIR", universe_host.index_ok(entry, ALPHA, out, None, None)[1])
+
+    def run_avail(self, atlas: Path, home: Path, df_values: dict) -> str:
+        """The driver's own avail_gb, extracted and run against a fake df."""
+        text = self.DRIVER.read_text(encoding="utf-8")
+        body = text[text.index("avail_gb() {"):]
+        body = body[:body.index("\n}\n") + 3]
+        bindir = atlas.parent / "bin"
+        bindir.mkdir(exist_ok=True)
+        cases = "".join(f'    {path}) echo " {gib}G";;\n' for path, gib in df_values.items())
+        (bindir / "df").write_text("#!/bin/sh\necho ' Avail'\nfor a in \"$@\"; do\n"
+                                   "  case \"$a\" in\n    -*) ;;\n" + cases +
+                                   "    *) echo ' 9999G';;\n  esac\ndone\n", encoding="utf-8")
+        (bindir / "df").chmod(0o755)
+        env = {"PATH": f"{bindir}:/usr/bin:/bin", "ATLAS_ROOT": str(atlas), "HOME": str(home)}
+        return subprocess.run(["bash", "-c", body + "\navail_gb"], capture_output=True,
+                              text=True, env=env, check=True).stdout.strip()
+
+    def test_the_floor_is_the_fullest_filesystem_a_step_writes(self):
+        root = _scratch(self)
+        atlas, home = root / "atlas", root / "home"
+        atlas.mkdir()
+        home.mkdir()
+        self.assertEqual(self.run_avail(atlas, home, {str(atlas): 10, "/": 5000}), "10")
+        self.assertEqual(self.run_avail(atlas, home, {str(atlas): 800, str(home): 30}), "30")
+
+    def test_ensure_space_stops_when_df_cannot_say(self):
+        text = self.DRIVER.read_text(encoding="utf-8")
+        body = text[text.index("ensure_space() {"):]
+        body = body[:body.index("\n  }\n")]
+        self.assertIn("case $avail in ''|*[!0-9]*) stop", body)
+
+    def test_a_floor_that_is_not_a_number_is_refused_before_anything_runs(self):
+        root = _scratch(self)
+        tsv = root / "u1.tsv"
+        tsv.write_text(f"alpha\thttps://example.org/alpha\t{ALPHA}\tAlpha\tbuild\n",
+                       encoding="utf-8")
+        env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(root),
+               "ATLAS_ROOT": str(root / "atlas"), "MIN_FREE_GB": "450G"}
+        proc = subprocess.run(["bash", str(self.DRIVER), str(tsv)], capture_output=True,
+                              text=True, env=env)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("MIN_FREE_GB must be a whole number", proc.stderr)
+        self.assertFalse((root / "atlas").exists())
+
+    def test_the_merge_runs_no_content_filter_of_the_checkout(self):
+        """Review #49: `git status` in probe_merge compared content with the filters armed."""
+        root = _scratch(self)
+        repo, _head = git_checkout(root / "lib", {"a.lean": "theorem a : True := trivial\n"})
+        proof = repo / ".git" / "proof.txt"
+        script = repo / ".git" / "f.sh"
+        script.write_text(f"#!/bin/sh\necho ran > {proof}\ncat\n", encoding="utf-8")
+        script.chmod(0o755)
+        env = {**os.environ, "GIT_CONFIG_NOSYSTEM": "1"}
+        subprocess.run(["git", "-C", str(repo), "config", "filter.x.clean", str(script)],
+                       check=True, env=env)
+        (repo / ".git" / "info").mkdir(exist_ok=True)
+        (repo / ".git" / "info" / "attributes").write_text("*.lean filter=x\n", encoding="utf-8")
+        path = repo / "a.lean"
+        path.write_bytes(path.read_bytes())
+        stamp = os.stat(path).st_mtime + 5
+        os.utime(path, (stamp, stamp))
+        self.assertIs(probe_merge._dirty(repo), False)
+        self.assertFalse(proof.exists(), "probe_merge ran the checkout's clean filter")
+        bare = subprocess.run(["git", "-C", str(repo), "status", "--porcelain"],
+                              capture_output=True, text=True, env=env)
+        if not proof.exists():                               # pragma: no cover - git build
+            self.skipTest("this git does not run a clean filter on `status`")
+        self.assertEqual(bare.returncode, 0)
+
+    def test_the_inlined_filter_blanks_are_gitsafes(self):
+        names = ["filter.x.clean", "filter.a=b.process", "filter.lfs.smudge"]
+        self.assertEqual(probe_merge._filter_pin_args(names), gitsafe.filter_pin_args(names))
+        have = {"GIT_CONFIG_COUNT": "3"}
+        self.assertEqual(probe_merge._filter_pairs(names, have),
+                         gitsafe._filter_pairs(names, have))
+
+
+class TestRootsAreTheDriversGlobs(unittest.TestCase):
+    """Review #53: roots the host driver refuses are refused at `cf corpus add`."""
+
+    def test_universe_and_driver_accept_the_same_roots(self):
+        from corpus.universe import ROOT_GLOB
+
+        for root in ("Alpha", "Alpha.+", "Alpha.*", "Mathlib.Tactic", "Foo'", "Beta Gamma",
+                     "Alpha.", "", "Alpha.+.x", "1Alpha", "Al-pha"):
+            with self.subTest(root=root):
+                self.assertEqual(bool(ROOT_GLOB.match(root)),
+                                 bool(universe_host._GLOB.fullmatch(root)))
+
+    def test_add_refuses_one(self):
+        universe = make_universe(_scratch(self))
+        with self.assertRaises(CfError):
+            universe.add_library(library_id="beta", repo="https://example.org/beta", commit=BETA,
+                                 toolchain=TOOLCHAIN, roots=["Beta Gamma"])
+
+
+class TestTheProofWantedScanIsMarkedUnbuilt(unittest.TestCase):
+    """Review #33: section 2.4's source scan does not exist, and says so where it is read."""
+
+    def test_the_manifest_and_section_8_say_it(self):
+        root = _scratch(self)
+        universe = make_universe(root)
+        manifest = ingest.ingest(universe, "alpha", write_probe(root / "p", alpha_records()),
+                                 root / "out")
+        self.assertEqual(manifest["proof_wanted_scan"], "not implemented")
+        self.assertIn("TODO", ingest.__doc__)
+        documents = " ".join((SKILL / "references" / "locate-documents.md").read_text(
+            encoding="utf-8").split())
+        self.assertIn("source scan for a `proof_wanted` that adds no constant is not "
+                      "implemented", documents)
 
 
 if __name__ == "__main__":

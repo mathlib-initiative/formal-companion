@@ -14,7 +14,8 @@ reads nothing but the database.  The declaration's proof status is not shown:
 it is joined from the index at export and never written by a worker.
 
 Exit status: 0 shown, 1 no such declaration in that library (an answer, not a
-failure), 2 bad arguments, 3 the database could not be read.
+failure), 2 bad arguments (one that is not valid UTF-8 included), 3 the database
+could not be read.  Never a traceback.
 """
 from __future__ import annotations
 
@@ -25,8 +26,8 @@ _HERE = str(Path(__file__).resolve().parent)
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 
-from corpus_search import (EXIT_BROKEN, EXIT_OK, CorpusError, _Parser, connect,  # noqa: E402
-                           emit, show)
+from corpus_search import (EXIT_BROKEN, EXIT_OK, CorpusError, _Parser, check_text,  # noqa: E402
+                           connect, emit, show)
 
 EXIT_NOT_FOUND = 1
 
@@ -37,6 +38,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("library", help="the library's universe id")
     ap.add_argument("declaration", help="the declaration's full Lean name")
     args = ap.parse_args(argv)
+    check_text(ap, [args.db, args.library, args.declaration])
     try:
         conn = connect(args.db)
         try:

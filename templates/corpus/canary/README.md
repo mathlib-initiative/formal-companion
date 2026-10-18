@@ -22,3 +22,9 @@ must be `statement_only`). `cf corpus probe-command <universe> --canary
 --toolchain <toolchain>` prints the commands. These sources have not been built
 in the skill's own test suite, which has no Lean; the tests check what ingest
 decides from a probe's records of them.
+
+The canary cannot catch everything §2.4 asks for: its `wantedTheorem` uses a
+stand-in wrapper the probe always sees, while a real `proof_wanted` that adds no
+constant needs the source scan of rule 1, which is not implemented — so such a
+result is absent from every index whatever the canary says
+(`references/locate-documents.md` §8).
