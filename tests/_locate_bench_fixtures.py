@@ -46,6 +46,10 @@ TOOLCHAIN = "leanprover/lean4:v4.0.0"
 #: what a planner records for a run's own checkout and staged gate files (D6)
 RUN_COMMIT = "c" * 40
 GATE_FILES = {"verify_locate.py": "d" * 64, "locate_text.py": "e" * 64}
+#: run.yaml locate.config_shas: the configuration without the bytes a plan renders per
+#: run, equal for every run of one configuration (references/locate-documents.md section 9)
+CONFIG_SHAS = {"prompts": {"locate.md.tmpl": "a" * 64, "locate-worker-system.md.tmpl": "b" * 64},
+               "gate_files": dict(GATE_FILES)}
 
 
 def canonical(obj) -> str:
@@ -286,8 +290,15 @@ class World:
                    subject_only: bool = False, prompts: dict | None = None,
                    corpus_db_sha: str | None = None, universe_sha: str | None = None,
                    tools: dict | None = None, skill_commit: str | None = RUN_COMMIT,
-                   challenge_of: list[str] | None = None) -> None:
-        """``runs/<rid>/run.yaml`` and ``gate.json``: what plan-locate and cf run record."""
+                   challenge_of: list[str] | None = None,
+                   config_shas: dict | None = CONFIG_SHAS) -> None:
+        """``runs/<rid>/run.yaml`` and ``gate.json``: what plan-locate and cf run record.
+
+        The rendered shas (``prompts``, ``locate.gate_files``) carry the run id, as a
+        plan's do (its gate.json and prompts name the run's paths); ``config_shas``
+        is the configuration's, the same for every run unless a test says otherwise,
+        and ``None`` records none (a plan from before they were recorded).
+        """
         locate = {"mode": mode, "arm": arm, "inventory_run": inventory_run,
                   "sourceset": {"id": SOURCESET, "version": self.manifest.version,
                                 "manifest_sha256": self.manifest_sha},
@@ -296,13 +307,17 @@ class World:
                                "tools_corpus_db": tools or {
                                    "kind": "full", "sha256": corpus_db_sha or self.corpus_sha}},
                   "source_ids": sorted(source_ids or []), "subject_only": subject_only,
-                  "gate_files": dict(GATE_FILES)}
+                  "gate_files": {**GATE_FILES,
+                                 "gate/gate.json": sha256_bytes(f"gate.json of {rid}".encode())}}
+        if config_shas is not None:
+            locate["config_shas"] = json.loads(json.dumps(config_shas))
         if skill_commit is not None:
             locate["skill_commit"] = skill_commit
         if challenge_of is not None:
             locate["challenged_runs"] = list(challenge_of)
+        rendered = {"worker.md": sha256_bytes(f"worker prompt of {rid}".encode())}
         self.write(f"runs/{rid}/run.yaml", dump_yaml({
-            "run_id": rid, "preset": mode, "prompts": prompts or {"worker.md": "e" * 64},
+            "run_id": rid, "preset": mode, "prompts": prompts or rendered,
             "versions": {"agent_cli": "2.0.0", "tend": "0.9", "agentbox": "1.1"},
             "locate": locate}))
         self.write(f"runs/{rid}/gate.json", json.dumps({"schema": "cf-gate-locate/1", "mode": mode}))
@@ -336,17 +351,19 @@ class World:
             models: dict | None = None, prompts: dict | None = None,
             renderer_layer: dict | None = None, subject_only: bool = False,
             challenge_runs: list[str] = (), inventory_usd: float = 12.0,
-            locate_usd: float = 12.0, skill_commit: str | None = RUN_COMMIT) -> None:
+            locate_usd: float = 12.0, skill_commit: str | None = RUN_COMMIT,
+            config_shas: dict | None = CONFIG_SHAS) -> None:
         """An inventory run and a locate run whose outcome rows are ``outcomes``."""
         sids = planned if planned is not None else sorted(passages)
         loc_sids = locate_sources if locate_sources is not None else sorted(passages)
         self.run_record(inventory_run, "locate-inventory", arm=inventory_arm or arm,
                         source_ids=sids, prompts=prompts, corpus_db_sha=corpus_db_sha,
-                        universe_sha=universe_sha, skill_commit=skill_commit)
+                        universe_sha=universe_sha, skill_commit=skill_commit,
+                        config_shas=config_shas)
         self.run_record(run_id, "locate", arm=arm, inventory_run=inventory_run,
                         source_ids=loc_sids, subject_only=subject_only, prompts=prompts,
                         corpus_db_sha=corpus_db_sha, universe_sha=universe_sha, tools=tools,
-                        skill_commit=skill_commit)
+                        skill_commit=skill_commit, config_shas=config_shas)
         for rid, usd in ((inventory_run, inventory_usd), (run_id, locate_usd)):
             self.receipt(rid, complete=complete, gated=gated, cost=cost, models=models, usd=usd)
         self.task_manifest(inventory_run, "t-inv", "locate-inventory", sids)
@@ -376,14 +393,56 @@ class World:
                 "layer_sha256": self.articles[sid]["entry"]["layer_sha256"], "passages": rows})
         self.write(f"reports/locate-outcomes.{run_id}.jsonl",
                    "".join(canonical(r) + "\n" for r in (outcomes or [])))
+        self.tally(run_id, inventory_run, list(challenge_runs))
+
+    def tally(self, run_id: str, inventory_run: str, challenge_runs: list[str]) -> None:
+        """``reports/locate-tally.<run>.json`` as ``cf tally --locate`` writes it.
+
+        Its ``gates`` hold each read run's receipt summary with the receipt's sha
+        (``locate.outcomes``), so a run harvested after the tally reads as stale; a
+        challenge whose plan required nothing has no receipt (``required: 0``).
+        """
+        gates = {}
+        for rid, role in ((run_id, "locate"), (inventory_run, "locate-inventory"),
+                          *((c, "locate-challenge") for c in challenge_runs)):
+            receipt = self.paths.receipt_json(rid)
+            if receipt.is_file():
+                got = json.loads(receipt.read_text(encoding="utf-8"))
+                gates[rid] = {"role": role, "receipt": True, "complete": bool(got.get("complete")),
+                              "gate_ok": bool((got.get("gate") or {}).get("ok")),
+                              "harvested_at": got.get("harvested_at"),
+                              "receipt_sha256": sha256_bytes(receipt.read_bytes())}
+            else:
+                gates[rid] = {"role": role, "receipt": None, "complete": None, "gate_ok": None}
+            if role == "locate-challenge" and self.paths.challenge_plan_json(rid).is_file():
+                plan = json.loads(self.paths.challenge_plan_json(rid).read_text(encoding="utf-8"))
+                gates[rid]["required"] = sum(1 for r in plan["records"]
+                                             if r["run_id"] == run_id and r["planned"] == "required")
         self.write(f"reports/locate-tally.{run_id}.json", json.dumps(
-            {"run_id": run_id, "challenge_runs": list(challenge_runs)}))
+            {"run_id": run_id, "challenge_runs": list(challenge_runs), "gates": gates}))
 
     def challenge_run(self, rid: str, *, of: str, arm: str = "assisted", gated: bool = True,
-                      usd: float = 3.0, sids: list[str] = ()) -> None:
-        """A harvested challenge run of locate run ``of``."""
-        self.run_record(rid, "locate-challenge", arm=arm, source_ids=list(sids), challenge_of=[of])
-        self.receipt(rid, gated=gated, usd=usd)
+                      usd: float = 3.0, sids: list[str] = (), required: int = 1,
+                      tools: dict | None = None) -> None:
+        """A challenge run of locate run ``of``: planned, harvested, and ``of`` tallied again.
+
+        Its ``challenge-plan.json`` requires ``required`` records of ``of`` (and
+        marks one more ``not_required``); with none required it is planned with no
+        task and never harvested, as ``cf plan-locate`` leaves such a challenge.
+        """
+        self.run_record(rid, "locate-challenge", arm=arm, source_ids=list(sids),
+                        challenge_of=[of], tools=tools)
+        records = [{"key": f"{rid}-k{n}", "target": "location", "run_id": of,
+                    "planned": "required" if n < required else "not_required"}
+                   for n in range(required + 1)]
+        self.write(f"runs/{rid}/challenge-plan.json", json.dumps(
+            {"schema": "cf-locate-challenge-plan/1", "run_id": rid, "challenged_runs": [of],
+             "seed": 0, "sample_rate": 0.2, "records": records}))
+        if required:
+            self.receipt(rid, gated=gated, usd=usd)
+        tally = json.loads(self.paths.locate_tally_json(of).read_text(encoding="utf-8"))
+        inventory_run = next(r for r, g in tally["gates"].items() if g["role"] == "locate-inventory")
+        self.tally(of, inventory_run, sorted(set(tally["challenge_runs"]) | {rid}))
 
     def host(self, rid: str, *, gate_lines: list[dict] | None = None,
              canary: dict | None = None) -> None:

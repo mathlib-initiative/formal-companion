@@ -151,9 +151,17 @@ def _documents(paths: WorkspacePaths, run_id: str, *, require_gate: bool
     gate = {"receipt": False, "complete": None, "gate_ok": None}
     got = inputs.receipt(run_dir)
     if got is not None:
+        # the receipt's bytes, so a reader of the outcomes (cf bench score) can tell
+        # outcomes built from this harvest from outcomes of an earlier one
         gate = {"receipt": True, "complete": bool(got.get("complete")),
                 "gate_ok": bool((got.get("gate") or {}).get("ok")) if got.get("gate") else None,
-                "harvested_at": got.get("harvested_at")}
+                "harvested_at": got.get("harvested_at"),
+                "receipt_sha256": hashing.sha256_file(paths.receipt_json(run_id))}
+        skipped = (got.get("gate") or {}).get("skipped")
+        if isinstance(skipped, dict):
+            # an inventory's skips, counted at harvest: what gate rule 8's coverage
+            # floor let go unkept (references/locate-documents.md section 2)
+            gate["skipped"] = skipped
     if require_gate:
         inputs.require_gated(run_dir, run_id, "run")
     return inputs.harvested_documents(run_dir), gate
@@ -478,7 +486,9 @@ def build(paths: WorkspacePaths, run_id: str, *, challenge_runs: Iterable[str] =
     Returns ``{"run": run.yaml, "mode", "rows", "outcomes", "counts", "problems",
     "gate", "gates", "challenge_runs"}``; ``outcomes`` is empty for an inventory
     run, and ``gates`` is the receipt summary of every run read (``{run_id: {role,
-    receipt, complete, gate_ok}}``).
+    receipt, complete, gate_ok, harvested_at, receipt_sha256}}``, the sha of the
+    ``RECEIPT.json`` read, and an inventory's ``skipped`` when its receipt's gate
+    block counted what its skips removed).
     """
     run = run_yaml(paths, run_id)
     loc_block = run["locate"]

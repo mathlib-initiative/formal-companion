@@ -38,6 +38,9 @@ ABLATION_SCHEMA = "cf-bench-ablation/1"
 LABEL_ARGS_SCHEMA = "cf-locate-label-args-v1"
 LABEL_RESULT_SCHEMA = "cf-locate-label-v1"
 
+#: a pin a run's records do not hold (a score names it, never guesses one)
+UNRECORDED = "unrecorded"
+
 #: the tier files under gold/, by tier
 LABEL_FILES = {"G1": "g1.jsonl", "G3": "g3.jsonl", "GX": "gx.jsonl", "G4": "g4.jsonl"}
 

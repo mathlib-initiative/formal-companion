@@ -249,6 +249,10 @@ class WorkspacePaths:
     def gate_json(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "gate.json"
 
+    def challenge_plan_json(self, run_id: str) -> Path:
+        """A locate challenge run's record plan (references/locate-documents.md section 9)."""
+        return self.run_dir(run_id) / "challenge-plan.json"
+
     def run_host_dir(self, run_id: str) -> Path:
         """What `cf harvest` brings home from the run host besides the findings:
         the gate log, the usage export and the canary scan

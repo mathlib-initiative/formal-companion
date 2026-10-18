@@ -21,6 +21,7 @@ except ImportError:  # pragma: no cover
 import contextlib
 import io
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -150,6 +151,14 @@ def eval_run(world: fx.World, run_id="loc1", inventory_run="inv1", *, formalize_
                                    run_id=run_id, inventory_run=inventory_run, k=1))
     world.run(run_id, inventory_run=inventory_run, passages=passages, outcomes=outs, **kw)
     return ev
+
+
+def host_scan(world: fx.World, scanned: int, hits=(), bench: str = "b1") -> dict:
+    """A host canary scan (``scripts/run/canary_scan.py``) for the bench's own canaries file."""
+    from run import canary_scan
+
+    canaries = canary_scan.read_canaries(layout_of(world, bench).host_canaries)
+    return {**canary_scan.scan(canaries, []), "scanned": scanned, "hits": sorted(hits)}
 
 
 def score(world: fx.World, run_id="loc1", *extra) -> dict:
@@ -854,10 +863,18 @@ class TestTheBootstrap(unittest.TestCase):
         self.assertTrue(draws and all(d == 0 for d in draws))
 
 
-def gate_line(run_id: str, task_id: str, problems=None, *, exit_code: int | None = None) -> dict:
-    """A gate log line as ``verify_locate.run_gate`` writes it, from the gate's own ``Problems``."""
+def gate_line(run_id: str, task_id: str, problems=None, *, exit_code: int | None = None,
+              changed_files: bool = True, task_id_from: str | None = None) -> dict:
+    """A gate log line as ``verify_locate.run_gate`` writes it, from the gate's own ``Problems``.
+
+    ``changed_files`` is True for tend's call over a change set (validation, or
+    pre-merge), False for an agent's own ``--findings`` check; ``task_id_from`` is
+    the gate's own spelling, null when the line names no task.
+    """
     reasons = problems.lines() if problems is not None else []
     return {"at": "2026-10-18T00:00:00Z", "run_id": run_id, "mode": "locate", "task_id": task_id,
+            "task_id_from": (task_id_from or "$TEND_TASK_ID") if task_id else None,
+            "changed_files": changed_files,
             "ok": not reasons and exit_code in (None, 0),
             "exit": exit_code if exit_code is not None else (1 if reasons else 0),
             "documents": 1, "by_rule": problems.by_rule() if problems is not None else {},
@@ -913,7 +930,9 @@ class TestGateRejections(unittest.TestCase):
                                                         "bbbbbbbbbbbb (a phantom declaration)"),
                      (6, f"{DOC}: {ITEM}", "ranks [1, 1] are not distinct"))),
                  gate_line("loc1", "t3", exit_code=3),           # the gate could not run
-                 gate_line("loc1", "", real_problems((1, DOC, "passages is a list"))),  # a re-gate
+                 # an agent's own --findings check of its task's document: no attempt
+                 gate_line("loc1", "t1", real_problems((1, DOC, "passages is a list")),
+                           changed_files=False, task_id_from="--task-id"),
                  gate_line("inv1", "t9", real_problems((8, DOC, "the lead passage at [0, 84] was "
                                                                 "dropped with no skip covering its span")))]
         found = m.gate_rejections(lines, ["loc1"])
@@ -1405,10 +1424,13 @@ class TestScore(unittest.TestCase):
         doc["cost"].update(basis="envelopes", usd=0.0, envelope_count=1, unpriced_calls=1,
                            unpriced_seconds=2700.0, message_count=0)
         path.write_text(json.dumps(doc))
+        # the receipt as harvested before the tally read it (M-02: the score holds the two to it)
+        self.world.tally("loc4", "inv4", [])
         with self.assertRaises(CfError) as ctx:
             score(self.world, "loc4")
         self.assertIn("run loc4's receipt cost.usd ($0.00) is a lower bound", str(ctx.exception))
         self.assertIn("1 agent call(s) left no priced envelope", str(ctx.exception))
+        self.assertIn("re-run cf tally --locate", ctx.exception.hint or "")
         costs = self.world.write("inputs/costs4.json", json.dumps({s: 2.0 for s in self.eval}))
         scored = score(self.world, "loc4", "--no-canary-check", "--article-costs", costs)
         self.assertEqual(scored["cost"]["value"], 2.0)
@@ -1436,7 +1458,8 @@ class TestScore(unittest.TestCase):
         with self.assertRaises(CfError) as ctx:
             score(self.world, "loc1", "--transcripts", transcripts)
         self.assertIn("canary", str(ctx.exception))
-        report = self.world.write("inputs/scan.json", json.dumps({"scanned": 3, "hits": ["x.jsonl"]}))
+        report = self.world.write("inputs/scan.json",
+                                  json.dumps(host_scan(self.world, 3, ["x.jsonl"])))
         with self.assertRaises(CfError):
             score(self.world, "loc1", "--canary-report", report)
         with self.assertRaises(CfError) as ctx:
@@ -1472,8 +1495,9 @@ class TestScore(unittest.TestCase):
         cf(self.world, "bench", "score", "b1", "--run", "loc-all", "--split", "dev", "--bootstrap", 50,
            "--no-canary-check")
         names = sorted(p.name for p in layout_of(self.world).scores_dir.glob("*.json"))
-        self.assertIn(f"eval-{doc['measurement_id'][:16]}.json", names)
-        self.assertIn(f"dev-{doc['measurement_id'][:16]}.json", names)
+        self.assertIn(f"{doc['score_id']}.json", names)
+        self.assertTrue(doc["score_id"].startswith(f"eval-{doc['measurement_id'][:16]}-"))
+        self.assertTrue(any(n.startswith(f"dev-{doc['measurement_id'][:16]}-") for n in names))
 
     def test_edited_gold_is_refused(self):
         g1 = layout_of(self.world).label_file("G1")
@@ -1529,7 +1553,7 @@ class TestScore(unittest.TestCase):
         rejections = doc["gate_rejections"]["loc1"]
         self.assertEqual(rejections["by_reason"]["rule_3:phantom_declaration"]["attempts"], 1)
         self.assertEqual(doc["gate_rejections"]["inv1"]["attempts"], 0)
-        audit = layout_of(self.world).audit_jsonl(score_mod.score_name("eval", doc["measurement_id"]))
+        audit = layout_of(self.world).audit_jsonl(doc["score_id"])
         self.assertTrue(audit.is_file())
 
 
@@ -1585,7 +1609,8 @@ class TestX6APreRegisteredSubsetScore(unittest.TestCase):
                                                  "of_split": len(self.eval)})
         self.assertEqual(doc["coverage"]["articles"], len(self.keep))
         names = [p.name for p in layout_of(self.world).scores_dir.glob("*.json")]
-        self.assertEqual(names, [f"eval-subset-{doc['measurement_id'][:16]}.json"])
+        self.assertEqual(names, [f"{doc['score_id']}.json"])
+        self.assertTrue(doc["score_id"].startswith(f"eval-subset-{doc['measurement_id'][:16]}-"))
 
     def test_x6_the_subset_is_in_the_measurement_id(self):
         eval_run(self.world)                           # loc1 covers the whole split
@@ -1639,7 +1664,8 @@ def score_doc(fnf_cells, *, models=("m1",), renderer=("web-html/1",), split="eva
     clusters = sorted(fnf_cells)
     mid = mid or gold_mod.sha_of([fnf_cells, cost, models])
     if seen_no:
-        strata = {"seen:no": {"fnf_rate": {"den": float(len(clusters)), "by_cluster": fnf_cells}},
+        strata = {"seen:no": {"fnf_rate": {"den": float(len(clusters)), "n": len(clusters),
+                                           "by_cluster": fnf_cells}},
                   **(strata or {})}
     per_cluster = {"G3": {"fnf_rate": fnf_cells,
                           "overclaim_rate": overclaim or {c: [0.0, 1.0] for c in clusters}},
@@ -1654,7 +1680,11 @@ def score_doc(fnf_cells, *, models=("m1",), renderer=("web-html/1",), split="eva
             "pins": {"observed_models": {mm: 1 for mm in models}, "renderer": list(renderer),
                      "universe_sha256": "u", "tools_corpus_db": {"kind": tools, "sha256": "t"},
                      "challenge_runs": list(challenge_runs),
-                     "receipts": {f"loc-{mid[:8]}": mid[:8] * 8}, **(pins or {})},
+                     "receipts": {f"loc-{mid[:8]}": mid[:8] * 8},
+                     # the configuration pins (run.yaml locate.config_shas), one per run
+                     "gate_files": {f"loc-{mid[:8]}": "9" * 64},
+                     "prompts": {f"loc-{mid[:8]}": dict(fx.CONFIG_SHAS["prompts"])},
+                     **(pins or {})},
             "canary_check": {"ran": canary},
             "gold_manifest": {"version": 1, "sha256": gold},
             "coverage": {"articles": articles, "total_positives": positives,
@@ -1717,8 +1747,8 @@ class TestCompare(unittest.TestCase):
         self.assertIn("safety", self.compare(base, cand, aa)["failed"])
         dear = self.write("c2", score_doc(self.better_cells, cost=1.5))
         self.assertIn("cost", self.compare(base, dear, aa)["failed"])
-        good = {"den": 40, "by_cluster": {c: [0.0, 1.0] for c in self.base_cells}}
-        bad = {"den": 40, "by_cluster": {c: [1.0, 1.0] for c in self.base_cells}}
+        good = {"den": 40, "n": 40, "by_cluster": {c: [0.0, 1.0] for c in self.base_cells}}
+        bad = {"den": 40, "n": 40, "by_cluster": {c: [1.0, 1.0] for c in self.base_cells}}
         b = self.write("b3", score_doc(self.base_cells, strata={"importance:high": {"fnf_rate": good}}))
         c = self.write("c3", score_doc(self.better_cells, strata={"importance:high": {"fnf_rate": bad}}))
         a = self.write("a3", score_doc(self.base_cells, mid="r3",
@@ -2070,13 +2100,13 @@ class TestTheRunSeams(unittest.TestCase):
     def test_the_harvested_host_files_are_the_defaults_item_68(self):
         lines = [gate_line("loc1", "t-loc", real_problems(
                      (5, f"{DOC}: {ITEM}", "an absence lists 1 distinct query; at least 2"))),
-                 gate_line("loc1", "t-loc"), gate_line("loc1", "")]
-        self.world.host("loc1", gate_lines=lines, canary={"scanned": 4, "hits": []})
+                 gate_line("loc1", "t-loc"), gate_line("loc1", "", changed_files=False)]
+        self.world.host("loc1", gate_lines=lines, canary=host_scan(self.world, 4))
         with self.assertRaises(CfError) as ctx:
             cf(self.world, "bench", "score", "b1", "--run", "loc1", "--split", "eval",
                "--bootstrap", 20)
         self.assertIn("inv1", str(ctx.exception))          # one run's scan is not every run's
-        self.world.host("inv1", canary={"scanned": 2, "hits": []})
+        self.world.host("inv1", canary=host_scan(self.world, 2))
         doc = self.score("loc1", "--bootstrap", 20)
         self.assertEqual(doc["canary_check"]["basis"], "host reports")
         self.assertEqual(doc["canary_check"]["scanned"], 6)
@@ -2084,7 +2114,7 @@ class TestTheRunSeams(unittest.TestCase):
         self.assertEqual((found["attempts"], found["rejected"], found["dropped_lines"]), (2, 1, 1))
         self.assertEqual(set(found["by_reason"]), {"rule_5:absence_receipt"})
         self.assertIsNone(doc["gate_rejections"]["inv1"])
-        self.world.host("inv1", canary={"scanned": 2, "hits": ["s1.jsonl"]})
+        self.world.host("inv1", canary=host_scan(self.world, 2, ["s1.jsonl"]))
         with self.assertRaises(CfError) as ctx:
             self.score("loc1", "--bootstrap", 20)
         self.assertIn("canary", str(ctx.exception))
@@ -2633,8 +2663,8 @@ class TestReviewCompare(unittest.TestCase):
         self.assertNotIn("cost", self.compare(base, free)["failed"])
 
     def test_strata_of_every_metric_and_the_unseen_stratum_are_held_review_114(self):
-        good = {"den": 40, "by_cluster": {c: [0.0, 1.0] for c in self.base_cells}}
-        bad = {"den": 40, "by_cluster": {c: [1.0, 1.0] for c in self.base_cells}}
+        good = {"den": 40, "n": 40, "by_cluster": {c: [0.0, 1.0] for c in self.base_cells}}
+        bad = {"den": 40, "n": 40, "by_cluster": {c: [1.0, 1.0] for c in self.base_cells}}
         recall = {c: [1.0 if i % 2 else 0.0, 1.0] for i, c in enumerate(sorted(self.base_cells))}
         better = {c: [1.0, 1.0] for c in self.base_cells}
 
@@ -2642,7 +2672,8 @@ class TestReviewCompare(unittest.TestCase):
             d = score_doc(self.base_cells, mid=mid,
                           strata={"importance:high": {"fnf_rate": fnf_stratum}})
             d["per_cluster"]["G3"]["recall_at_3"] = recall_cells
-            d["strata"]["G3"]["seen:no"]["recall_at_3"] = {"den": 40, "by_cluster": recall_cells}
+            d["strata"]["G3"]["seen:no"]["recall_at_3"] = {"den": 40, "n": 40,
+                                                           "by_cluster": recall_cells}
             return d
 
         base = self.write("b", doc(recall, good, "b"))
@@ -2677,6 +2708,369 @@ class TestReviewCompare(unittest.TestCase):
         for alpha in (1.0, 0.5, 0.0, -1.0):
             with self.subTest(alpha=alpha), self.assertRaises(CfError):
                 self.compare(base, cand, alpha=alpha)
+
+
+# ---------------------------------------------------------------------------
+# fix round 3: the four-lens review's findings (finding id in each test's name)
+# ---------------------------------------------------------------------------
+
+def sha256_of(path: Path) -> str:
+    import hashlib
+
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+class TestRound3Score(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.template = frozen_at(cls.tmp / "template")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        root = scratch(self) / "ws"
+        shutil.copytree(self.template.root, root)
+        self.world = clone_world(self.template, root)
+        self.eval = eval_run(self.world)
+        self.lay = layout_of(self.world)
+
+    def planted_run(self, run_id: str, inventory_run: str) -> None:
+        ablation = json.loads(self.lay.ablation_json.read_text())
+        removed = ablation["removed"][0].split(":", 1)[1]
+        passages = {sid: [fx.passage(self.world, index_of(sid), 0, f"In-text #{index_of(sid):08x}")]
+                    for sid in self.eval}
+        outs = [fx.outcome(self.world, index_of(sid), f"In-text #{index_of(sid):08x}",
+                           status="formalized", outcome_="located", run_id=run_id,
+                           inventory_run=inventory_run, k=0,
+                           locations=[("mathlib", removed, "exactMatch")]) for sid in self.eval]
+        self.world.run(run_id, inventory_run=inventory_run, passages=passages, outcomes=outs,
+                       tools=self.planted_tools())
+
+    def planted_tools(self) -> dict:
+        return {"kind": "planted",
+                "sha256": json.loads(self.lay.ablation_json.read_text())["corpus_sha256"]}
+
+    def test_an_aa_replicate_is_its_configuration_not_its_rendered_bytes_m01(self):
+        eval_run(self.world, run_id="loc2", inventory_run="inv2")
+        one, two = score(self.world, "loc1"), score(self.world, "loc2")
+        # the rendered prompts and staged gate.json name each run; the configuration does not
+        self.assertNotEqual({gold_mod.sha_of(v) for v in one["pins"]["rendered_prompts"].values()},
+                            {gold_mod.sha_of(v) for v in two["pins"]["rendered_prompts"].values()})
+        self.assertNotEqual(set(one["pins"]["rendered_gate_files"].values()),
+                            set(two["pins"]["rendered_gate_files"].values()))
+        self.assertEqual(one["pins"]["gate_files"]["loc1"], gold_mod.sha_of(fx.CONFIG_SHAS["gate_files"]))
+        compare_mod.check_replicate(one, two)
+        paths = [self.lay.score_json(d["score_id"]) for d in (one, two)]
+        entry = compare_mod.compare(self.lay, paths[0], paths[1], claim="G3.fnf_rate",
+                                    aa_path=paths[1], replicates=1000, seed=1)
+        self.assertEqual(entry["conditions"]["aa"]["replicate"], two["measurement_id"])
+        # another configuration is refused, by the pin that differs
+        other = {**fx.CONFIG_SHAS, "prompts": {"locate.md.tmpl": "f" * 64}}
+        eval_run(self.world, run_id="loc3", inventory_run="inv3", config_shas=other)
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.check_replicate(one, score(self.world, "loc3"))
+        self.assertIn("prompts differ", str(ctx.exception))
+        # a plan that recorded no configuration cannot be an A/A replicate, nor have one
+        eval_run(self.world, run_id="loc4", inventory_run="inv4", config_shas=None)
+        old = score(self.world, "loc4")
+        self.assertEqual(set(old["pins"]["gate_files"].values()), {"unrecorded"})
+        for base, rep in ((one, old), (old, one)):
+            with self.subTest(base=base["run"]), self.assertRaises(CfError) as ctx:
+                compare_mod.check_replicate(base, rep)
+            self.assertIn("locate.config_shas", str(ctx.exception))
+            self.assertIn("re-plan", ctx.exception.hint or "")
+
+    def test_outcomes_tallied_before_the_last_harvest_are_refused_m02(self):
+        first = score(self.world)
+        receipt = self.world.paths.receipt_json("loc1")
+        self.assertEqual(first["pins"]["receipts"]["loc1"], sha256_of(receipt))
+        # a re-harvest after the tally: the outcome rows describe the earlier documents
+        doc = json.loads(receipt.read_text())
+        receipt.write_text(json.dumps(dict(doc, harvested_at="2026-10-19T00:00:00Z")))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world)
+        self.assertIn("not built from the receipts on disk: loc1", str(ctx.exception))
+        self.assertIn("cf tally --locate --run loc1", ctx.exception.hint or "")
+        self.world.tally("loc1", "inv1", [])
+        self.assertEqual(score(self.world)["pins"]["receipts"]["loc1"], sha256_of(receipt))
+        # a tally from before the receipt shas were recorded is no evidence either way
+        tally = self.world.paths.locate_tally_json("loc1")
+        old = json.loads(tally.read_text())
+        for gate in old["gates"].values():
+            gate.pop("receipt_sha256", None)
+        tally.write_text(json.dumps(old))
+        with self.assertRaises(CfError) as ctx:
+            score(self.world)
+        self.assertIn("no receipt sha recorded", str(ctx.exception))
+        # the producer: cf tally --locate records each read run's receipt sha
+        cf(self.world, "tally", "--locate", "--run", "loc1")
+        real = json.loads(tally.read_text())
+        shas = {rid: sha256_of(self.world.paths.receipt_json(rid)) for rid in ("inv1", "loc1")}
+        self.assertEqual({rid: real["gates"][rid]["receipt_sha256"] for rid in shas}, shas)
+        score_mod.check_tally(real, "loc1", shas)
+        with self.assertRaises(CfError):
+            score_mod.check_tally(real, "loc1", {**shas, "inv1": "0" * 64})
+
+    def test_the_tally_carries_and_says_what_an_inventorys_skips_removed_g08(self):
+        """G-08's tally side: harvest counts what the skips left unkept (the receipt's
+        ``gate.skipped``), and the tally of the inventory, or of a locate run of it,
+        carries it in its gates and prints it."""
+        sid = self.eval[0]
+        skipped = {"skips": 2, "chars": 840, "math_paragraphs": 3, "finder_passages": 1,
+                   "by_source": {sid: {"skips": 2, "chars": 840, "math_paragraphs": 3,
+                                       "finder_passages": 1}}}
+        receipt = self.world.paths.receipt_json("inv1")
+        doc = json.loads(receipt.read_text())
+        doc["gate"] = {**doc["gate"], "skipped": skipped}
+        receipt.write_text(json.dumps(doc))
+        said = (f"locate-inventory run inv1: 2 skip(s) cover 840 character(s), 3 math "
+                f"paragraph(s) and 1 finder passage(s) that no passage keeps")
+        out = cf(self.world, "tally", "--locate", "--run", "loc1")
+        tally = json.loads(self.world.paths.locate_tally_json("loc1").read_text())
+        self.assertEqual(tally["gates"]["inv1"]["skipped"], skipped)
+        self.assertNotIn("skipped", tally["gates"]["loc1"])        # a locate receipt counts none
+        self.assertIn(said, out)
+        self.assertIn(f"  {sid}: 2 skip(s), 840 character(s), 3 math paragraph(s), "
+                      f"1 finder passage(s)", out)
+        self.assertIn(said, cf(self.world, "tally", "--locate", "--run", "inv1"))
+        # a receipt whose skips removed nothing, or that counted none, says nothing
+        doc["gate"]["skipped"] = {**skipped, "skips": 0, "by_source": {}}
+        receipt.write_text(json.dumps(doc))
+        self.assertNotIn("skip(s) cover", cf(self.world, "tally", "--locate", "--run", "loc1"))
+
+    def test_a_challenge_that_required_nothing_is_scored_without_a_receipt_c06(self):
+        self.world.challenge_run("chl-0", of="loc1", required=0)
+        self.assertFalse(self.world.paths.receipt_json("chl-0").is_file())
+        doc = score(self.world)
+        self.assertEqual(doc["runs"]["challenge"], ["chl-0"])
+        self.assertNotIn("chl-0", doc["pins"]["receipts"])
+        self.assertEqual(doc["pins"]["challenge_plans"],
+                         {"chl-0": sha256_of(self.world.paths.challenge_plan_json("chl-0"))})
+        self.assertEqual(doc["cost"]["by_stage"]["challenge"], 0.0)
+        self.assertNotIn("chl-0", doc["cost"]["runs"])
+        # a challenge that required a record still needs its gated harvest
+        self.world.challenge_run("chl-1", of="loc1", required=1)
+        self.world.paths.receipt_json("chl-1").unlink()
+        self.world.tally("loc1", "inv1", ["chl-0", "chl-1"])
+        with self.assertRaises(CfError) as ctx:
+            score(self.world)
+        self.assertIn("chl-1", str(ctx.exception))
+        self.assertIn("no RECEIPT.json", str(ctx.exception))
+
+    def test_a_planted_score_refuses_a_challenge_of_another_database_c03(self):
+        self.planted_run("locp", "invp")
+        self.world.challenge_run("chl-full", of="locp")
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "locp")
+        self.assertIn("chl-full", str(ctx.exception))
+        self.assertIn("--tools-corpus-db", ctx.exception.hint or "")
+        self.planted_run("locq", "invq")
+        self.world.challenge_run("chl-planted", of="locq", tools=self.planted_tools())
+        self.assertEqual(score(self.world, "locq")["runs"]["challenge"], ["chl-planted"])
+
+    def test_the_planted_tier_is_stratified_by_seen_as_every_tier_is_m03(self):
+        self.planted_run("locp", "invp")
+        doc = score(self.world, "locp")
+        seen = set(manifest_of(self.world).get("seen") or [])
+        keys = set(doc["strata"]["P"])
+        self.assertTrue({"seen:no", "seen:yes"} & keys, keys)
+        g1 = [json.loads(l) for l in self.lay.label_file("G1").read_text().splitlines()]
+        p_ids = {r["gold_id"] for r in g1 if r["source_id"] in self.eval}
+        if p_ids - seen:
+            self.assertIn("seen:no", keys)
+            path = self.lay.score_json(doc["score_id"])
+            entry = compare_mod.compare(self.lay, path, path, claim="P.memory_rate",
+                                        replicates=1000, seed=1)
+            self.assertNotIn("why", entry["conditions"]["claim_unseen"])
+
+    def test_strata_count_their_units_beside_the_weighted_denominator_m04(self):
+        doc = score(self.world)
+        cells = [cell for group in doc["strata"]["G3"].values() for name, cell in group.items()
+                 if name == "inventory_recall"]
+        self.assertTrue(cells)
+        for cell in cells:
+            self.assertIsInstance(cell["n"], int)
+            self.assertLess(cell["n"], cell["den"])        # every span weighs 1/(pi_span*pi) > 1
+
+    def test_a_canary_scan_names_its_canaries_and_the_score_wants_its_own_m06(self):
+        from run import canary_scan
+
+        canaries = self.lay.host_canaries
+        transcript = scratch(self) / "t.jsonl"
+        transcript.write_text('{"text": "nothing"}\n')
+        out = scratch(self) / "canary.json"
+        self.assertEqual(canary_scan.main(["--canaries", str(canaries), "--out", str(out),
+                                           str(transcript)]), 0)
+        report = json.loads(out.read_text())
+        canary = canaries.read_text().strip()
+        self.assertEqual(report["canary_sha256"], [sha256_of_text(canary)])
+        self.assertTrue(score(self.world, "loc1", "--canary-report", out)["canary_check"]["ran"])
+        for doc, needle in (({**report, "canary_sha256": [sha256_of_text("cf-bench-canary-other")]},
+                             "looked for 1 other canary"),
+                            ({k: v for k, v in report.items() if k != "canary_sha256"},
+                             "names none of the canaries")):
+            path = self.world.write("inputs/scan.json", json.dumps(doc))
+            with self.subTest(needle=needle), self.assertRaises(CfError) as ctx:
+                score(self.world, "loc1", "--canary-report", path)
+            self.assertIn(needle, str(ctx.exception))
+            self.assertIn("host/canaries.txt", ctx.exception.hint or "")
+        # the harvested host reports are held to the same
+        self.world.host("loc1", canary={**report, "canary_sha256": []})
+        self.world.host("inv1", canary=report)
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc1", "--bootstrap", 20)
+        self.assertIn("runs/loc1/host/canary.json", str(ctx.exception))
+
+    def test_the_two_canary_shas_are_the_two_the_docs_name(self):
+        """A host scan's ``canary_sha256`` hashes the raw line; the manifest's, its JSON spelling.
+
+        references/locate-bench.md sections 7 and 8 say so, because the two share a
+        name: a reader matching a host report against the manifest must hash the line.
+        """
+        from cflib import hashing
+        from run import canary_scan
+
+        canary = self.lay.host_canaries.read_text(encoding="utf-8").strip()
+        manifest = manifest_of(self.world)
+        self.assertEqual(manifest["canary_sha256"], hashing.sha256_json(canary))
+        self.assertEqual(canary_scan.canary_sha256(canary), sha256_of_text(canary))
+        self.assertNotEqual(manifest["canary_sha256"], canary_scan.canary_sha256(canary))
+        text = " ".join((SKILL / "references" / "locate-bench.md").read_text(encoding="utf-8")
+                        .split())
+        self.assertIn("It is **not** the sha a host canary scan lists", text)
+        self.assertIn("Those shas are of the raw bytes, not the gold manifest's `canary_sha256`",
+                      text)
+
+    def test_the_audit_file_is_named_by_the_score_id_wherever_the_doc_names_it(self):
+        doc = score(self.world)
+        self.assertEqual(doc["audit"]["file"], f"audits/{doc['score_id']}.jsonl")
+        self.assertTrue(self.lay.audit_jsonl(doc["score_id"]).is_file())
+        text = (SKILL / "references" / "locate-bench.md").read_text(encoding="utf-8")
+        named = set(re.findall(r"audits/(<[^`\s]*?>(?:-<[^`\s]*?>)*)\.jsonl", text))
+        self.assertEqual(named, {"<score_id>", "<split>-<id16>-<s8>"})
+
+    def test_re_scoring_another_way_writes_another_document_m07_m05(self):
+        spread = score(self.world)
+        costs = self.world.write("inputs/costs.json", json.dumps({s: 500.0 for s in self.eval}))
+        priced = score(self.world, "loc1", "--no-canary-check", "--article-costs", costs)
+        self.assertEqual(spread["measurement_id"], priced["measurement_id"])
+        self.assertNotEqual(spread["score_id"], priced["score_id"])
+        self.assertNotEqual(spread["scoring"]["digest"], priced["scoring"]["digest"])
+        self.assertEqual(priced["scoring"]["inputs"]["article_costs_sha256"], sha256_of(costs))
+        kept = json.loads(self.lay.score_json(spread["score_id"]).read_text())
+        self.assertEqual(kept["cost"]["basis"], spread["cost"]["basis"])
+        self.assertEqual(score(self.world)["score_id"], spread["score_id"])     # the same way, the same file
+        # M-05: the two cost bases are no comparison of cost
+        entry = compare_mod.compare(self.lay, self.lay.score_json(spread["score_id"]),
+                                    self.lay.score_json(priced["score_id"]), claim="G3.fnf_rate",
+                                    replicates=1000, seed=1)
+        self.assertEqual(entry["conditions"]["cost"]["why"],
+                         "the two scores price articles on different bases")
+        self.assertIn("cost", entry["failed"])
+        self.assertEqual((entry["baseline_score"], entry["candidate_score"]),
+                         (spread["score_id"], priced["score_id"]))
+
+
+def sha256_of_text(text: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+class TestRound3Compare(unittest.TestCase):
+
+    def setUp(self):
+        self.world = fx.World(scratch(self) / "ws", articles=1)
+        self.lay = layout_of(self.world)
+        self.lay.root.mkdir(parents=True)
+        n = 40
+        self.base_cells = {f"c{i:02d}": [1.0 if i % 2 else 0.0, 1.0] for i in range(n)}
+        self.better_cells = {f"c{i:02d}": [1.0 if i % 8 == 1 else 0.0, 1.0] for i in range(n)}
+
+    def write(self, name, doc) -> Path:
+        path = self.lay.root / f"{name}.json"
+        path.write_text(json.dumps(doc))
+        return path
+
+    def test_the_strata_rule_counts_spans_not_their_weights_m04(self):
+        # two spans of weight 93 each: a denominator of 186, a stratum of n = 2
+        def low(second):
+            return {"importance:low": {"inventory_recall": {
+                "den": 186.0, "n": 2, "by_cluster": {"c00": [93.0, 93.0], "c01": [second, 93.0]}}}}
+
+        base = self.write("b", score_doc(self.base_cells, strata=low(93.0)))
+        cand = self.write("c", score_doc(self.better_cells, strata=low(0.0)))
+        entry = compare_mod.compare(self.lay, base, cand, claim="G3.fnf_rate", replicates=1000,
+                                    seed=1)
+        self.assertNotIn("importance:low.inventory_recall", entry["conditions"]["strata"]["checked"])
+        self.assertNotIn("strata", entry["failed"])
+        # a stratum that counts nothing is refused, never read as small
+        doc = score_doc(self.better_cells, strata=low(0.0), mid="nocount")
+        del doc["strata"]["G3"]["importance:low"]["inventory_recall"]["n"]
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.compare(self.lay, base, self.write("x", doc), claim="G3.fnf_rate",
+                                replicates=1000, seed=1)
+        self.assertIn("counts no units", str(ctx.exception))
+
+    def test_two_cost_bases_fail_the_cost_condition_m05(self):
+        spread = score_doc(self.base_cells, cost=3.0, locate_cost=3.0)
+        spread["cost"]["basis"] = "each run's receipt spread over the sources it covered"
+        priced = score_doc(self.better_cells, cost=3.0, locate_cost=3.0)
+        entry = compare_mod.compare(self.lay, self.write("s", spread), self.write("p", priced),
+                                    claim="G3.fnf_rate", replicates=1000, seed=1)
+        self.assertFalse(entry["conditions"]["cost"]["ok"])
+        self.assertEqual(entry["conditions"]["cost"]["why"],
+                         "the two scores price articles on different bases")
+
+    def test_a_change_set_line_is_an_attempt_whatever_task_it_names_c07(self):
+        """C-07 on the trunk's gate log: the reader keys on ``changed_files``, never on ``task_id``.
+
+        tend's validation call with no task id (the single-stem rule: ``task_id``
+        empty, ``task_id_from`` null) is a worker's attempt and was dropped as "the
+        harvest's own re-gate", which logs nothing; an agent's own ``--findings``
+        check names its task with ``--task-id`` and was counted as one (G-07).
+        """
+        rejected = real_problems((7, "findings/t3/enwiki-1001-2002.json",
+                                  "is task 't3''s document, not 't4''s"))
+        lines = [gate_line("loc1", "t1"),
+                 gate_line("loc1", "t2", task_id_from="orchestrator.sqlite"),
+                 gate_line("loc1", "", rejected),                    # the single-stem rule
+                 gate_line("loc1", "t1", rejected, changed_files=False,
+                           task_id_from="--task-id"),                # an agent's --findings check
+                 gate_line("loc1", "", changed_files=False),          # a findings-directory check
+                 {k: v for k, v in gate_line("loc1", "t5").items()   # a gate older than the field
+                  if k != "changed_files"},
+                 gate_line("inv1", "")]                               # another run's
+        found = m.gate_rejections(lines, ["loc1"])
+        self.assertEqual((found["attempts"], found["rejected"], found["dropped_lines"]), (3, 1, 4))
+        self.assertEqual(found["by_rule"]["7"], {"attempts": 1, "rate": 1 / 3})
+
+    def test_the_change_set_flag_is_the_gates_own_log_field_c07(self):
+        """``changed_files`` is the key ``verify_locate.run_gate`` writes on every line."""
+        source = (SCRIPTS / "gate" / "verify_locate.py").read_text(encoding="utf-8")
+        self.assertRegex(source, r'"changed_files":\s*bool\(changed_files\)')
+        text = " ".join((SKILL / "references" / "locate-bench.md").read_text(encoding="utf-8")
+                        .split())
+        self.assertNotIn("the harvest's own re-gate) or another `run_id` is dropped", text)
+        self.assertIn("An attempt is a line of that run with `changed_files: true`", text)
+
+
+class TestRound3Metrics(unittest.TestCase):
+
+    def test_an_unanchored_g1_miss_of_an_unreached_article_is_unresolved_m08(self):
+        gold = [gold_passage("e0", "s", None, tier="G1", level="article", accept={("mathlib", "W.a")})]
+        for state, cause, code in (("unresolved", "unresolved", "E-UNRESOLVED"),
+                                   ("gate_failed", "gate_failed", "E-UNRESOLVED"),
+                                   ("ran", "article_level", "E-RETRIEVAL-MISS")):
+            with self.subTest(state=state):
+                got = m.evaluate_tier("G1", gold, [], layers={"s": LAYER}, cluster_of={"s": "c1"},
+                                      article_state={"s": state}, assessment={})
+                self.assertEqual([(x["cause"], x["code"]) for x in got.misses], [(cause, code)])
+                self.assertEqual(got.ratios["article_fnf_rate"].num, 1.0)
 
 
 def frozen_at(root: Path) -> fx.World:
