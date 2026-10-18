@@ -326,8 +326,8 @@ def _build(ws, args) -> int:
         spans.extend(chosen)
     write_json(layout.spans_json, {"schema": SPANS_SCHEMA, "bench": args.bench_id,
                                    "per_article": args.spans_per_article, "spans": spans,
-                                   "drawn_from": "paragraphs.json blocks with at least four words, "
-                                                 "sectioned by sections.json; no run"},
+                                   "drawn_from": "the outermost paragraphs.json blocks with at least "
+                                                 "four words, sectioned by sections.json; no run"},
                sort_keys=True)
     clusters = _recluster(paths, layout, bench)
     counts = {s: sum(1 for v in clusters["articles"].values() if v == s) for s in ("dev", "eval", "test")}

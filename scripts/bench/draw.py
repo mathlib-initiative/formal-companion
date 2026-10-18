@@ -40,6 +40,11 @@ New code, implementing docs/proposals/wikipedia-locate.md sections 8.3 and 8.5
 * **The G3 span sample** draws, per article, ``k`` blocks of ``paragraphs.json``
   uniformly (each block holds at least four words, so it can join), each
   carrying the section path ``sections.json`` gives it.  It reads no run.
+  Blocks nest (references/locate-documents.md section 7: an ``li`` holding a
+  ``p`` is two entries, and a displayed formula inside a paragraph is a block
+  of its own), so the units are the *outermost* blocks: disjoint, covering
+  every block's text, a contained block counted once inside its container.
+  Two blocks that overlap without nesting are refused by name.
 """
 from __future__ import annotations
 
@@ -369,8 +374,29 @@ def _section_of(sections: list[dict], start: int) -> tuple[list, str | None]:
     return [], None
 
 
+def _outermost(blocks: list[dict]) -> list[dict]:
+    """The blocks no other block contains, in layer order; refuses two that only overlap.
+
+    Two blocks with one span are one unit, the first ``paragraphs.json`` lists.
+    """
+    order = sorted(range(len(blocks)), key=lambda i: (blocks[i]["span"][0], -blocks[i]["span"][1], i))
+    out: list[dict] = []
+    for i in order:
+        a, b = blocks[i]["span"]
+        if out:
+            c, d = out[-1]["span"]
+            if b <= d:
+                continue                       # inside the current outermost block
+            if a < d:
+                raise CfError(f"paragraphs.json blocks [{c}, {d}] and [{a}, {b}] overlap without "
+                              f"nesting; the renderer's blocks are a tree, so this source's "
+                              f"paragraphs.json is not its renderer's")
+        out.append(blocks[i])
+    return out
+
+
 def span_frame(layer: str, paragraphs: list[dict], sections: list[dict]) -> list[dict]:
-    """The blocks a span may be drawn from: inside the layer, at least four words."""
+    """The blocks a span may be drawn from: the outermost ones inside the layer, of four words."""
     out = []
     for block in paragraphs or []:
         a, b = (int(x) for x in block.get("span") or (0, 0))
@@ -382,7 +408,7 @@ def span_frame(layer: str, paragraphs: list[dict], sections: list[dict]) -> list
         out.append({"span": [a, b], "section": block.get("section") or path,
                     "fragment": fragment, "block": block.get("block"),
                     "math": bool(block.get("math"))})
-    return out
+    return _outermost(out)
 
 
 def span_id(source_id: str, span: list[int]) -> str:

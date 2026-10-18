@@ -127,7 +127,10 @@ alone; the shares hold in expectation, and `cf bench build` prints what it got.
 
 **The G3 span sample** (`spans.json`, `cf-bench-spans/1`) draws `--spans-per-article` (8)
 blocks of each drawn article's `paragraphs.json` uniformly with `random.Random("<seed>:spans:<source
-id>")`, among the blocks inside the layer that hold at least four words (so a span can join);
+id>")`, among the blocks inside the layer that hold at least four words (so a span can join)
+and that no other such block contains: blocks nest (an `li` holding a `p`, a displayed formula
+inside a paragraph), so the units are the outermost blocks, disjoint and covering every block's
+text, two blocks with one span are one unit, and two that overlap without nesting are refused;
 each carries its section path from `paragraphs.json` (or `sections.json`), its fragment,
 `pi_span = k/M` and the article's `pi`. Its id is `g3-` + 12 hex of sha256 over `source id \n
 start \n end`. It reads no run.
