@@ -419,6 +419,18 @@ RENDERER_WEB_HTML = "web-html/2"
 SOURCE_ORIGIN_ENUMERATED = "enumerated"
 SOURCE_ORIGIN_ADOPTED = "adopted"
 SOURCE_ORIGINS = frozenset({SOURCE_ORIGIN_ENUMERATED, SOURCE_ORIGIN_ADOPTED})
+#: What a sourceset entry's ``flags`` say of its page, each true, false, or null
+#: for not determined (references/locate-documents.md section 7): ``redirect``
+#: and ``disambiguation`` (the page info and the assessment class), ``list``
+#: (the class, or a "List of" title), all set at enumeration, and
+#: ``biography`` (Wikidata P31 = Q5), set by the optional ``flag-biographies``.
+#: A page with any of them true is no concept article.
+PAGE_FLAG_REDIRECT = "redirect"
+PAGE_FLAG_DISAMBIGUATION = "disambiguation"
+PAGE_FLAG_LIST = "list"
+PAGE_FLAG_BIOGRAPHY = "biography"
+PAGE_FLAGS = frozenset({PAGE_FLAG_REDIRECT, PAGE_FLAG_DISAMBIGUATION, PAGE_FLAG_LIST,
+                        PAGE_FLAG_BIOGRAPHY})
 #: What one formal_math passage of a locate document ends with (section 2.6), and
 #: the finding kind each one is tallied under.
 OUTCOME_LOCATED = "located"

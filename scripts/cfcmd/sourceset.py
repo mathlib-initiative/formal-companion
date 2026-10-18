@@ -11,6 +11,7 @@ section 7:
     cf sourceset adopt wpm --from pins.jsonl --consumer wikilean [--execute]
     cf sourceset fetch wpm --limit 200 --execute
     cf sourceset fetch wpm --select pilot.txt --execute   # only the sources it names
+    cf sourceset flag-biographies wpm --execute          # optional: Wikidata P31 = Q5
     cf sourceset render wpm
     cf sourceset status wpm --verify
 
@@ -28,7 +29,8 @@ import os
 import tempfile
 from pathlib import Path
 
-from cflib import log
+from cflib import log, vocab
+from cflib import state as state_mod
 from cflib.errors import CfError
 from cflib.jsonio import iter_jsonl, write_json
 from cflib.workspace import from_args
@@ -73,6 +75,9 @@ def register(subparsers) -> None:
     enum.add_argument("--include-adopted", action="store_true",
                       help="also add the latest revision of a page a consumer pinned (by "
                            "default such a page keeps only its adopted revision)")
+    enum.add_argument("--restart", action="store_true",
+                      help="discard the checkpoint an interrupted enumeration left and list "
+                           "the project again")
     _network_arguments(enum)
 
     adopt = sub.add_parser("adopt", help="adopt a consumer's pinned revisions (and their bytes)")
@@ -98,10 +103,18 @@ def register(subparsers) -> None:
                             "line ('#' starts a comment), or a JSON list of them; a page id "
                             "names the source a run plans for that page")
     fetch.add_argument("--limit", type=int, default=None, help="fetch at most N sources")
+    fetch.add_argument("--include-flagged", action="store_true",
+                       help="also fetch the revisions of pages flagged redirect or "
+                            "disambiguation (left out by default: they are no article)")
     fetch.add_argument("--checkpoint", type=int, default=DEFAULT_CHECKPOINT,
                        help=f"write a version every N fetched sources (default "
                             f"{DEFAULT_CHECKPOINT})")
     _network_arguments(fetch)
+
+    bio = sub.add_parser("flag-biographies",
+                         help="set each page's biography flag from Wikidata (P31 = Q5)")
+    bio.add_argument("sourceset_id")
+    _network_arguments(bio)
 
     render = sub.add_parser("render", help="render fetched sources into the layer and its views")
     render.add_argument("sourceset_id")
@@ -126,11 +139,13 @@ def run(args) -> int:
     command = getattr(args, "sourceset_command", None)
     if not command:
         raise CfError("cf sourceset needs a subcommand",
-                      hint="create | enumerate-wikiproject | adopt | fetch | render | status")
+                      hint="create | enumerate-wikiproject | adopt | fetch | flag-biographies "
+                           "| render | status")
     workspace = from_args(args)
     return {
         "create": _create, "enumerate-wikiproject": _enumerate, "adopt": _adopt,
-        "fetch": _fetch, "render": _render, "status": _status,
+        "fetch": _fetch, "flag-biographies": _flag_biographies, "render": _render,
+        "status": _status,
     }[command](workspace, args)
 
 
@@ -278,6 +293,96 @@ def _create_from(workspace, args) -> int:
 # ---------------------------------------------------------------------------
 # enumerate-wikiproject
 
+#: an enumeration writes its checkpoint after this many answers
+ENUMERATE_CHECKPOINT_EVERY = 20
+CHECKPOINT_SCHEMA = "cf-sourceset-enumerate-checkpoint/1"
+
+
+class _Checkpoint:
+    """What an enumeration has been answered so far, so a re-run resumes, never repeats.
+
+    The listing (every article row, the rows of other namespaces counted, and
+    the continuation to resume from) and the page infos answered so far live in
+    ``enumerate.checkpoint.json`` beside the manifests, written every
+    :data:`ENUMERATE_CHECKPOINT_EVERY` answers and when a request fails, and
+    deleted once the version is written.  Only the network's answers are in it;
+    the manifest is written once, at the end, from them.
+    """
+
+    def __init__(self, ss: Sourceset, project: str, *, restart: bool):
+        self.path = ss.paths.sourceset_enumerate_checkpoint(ss.id)
+        self.resumed = False
+        data = None
+        if self.path.is_file() and not restart:
+            try:
+                data = json.loads(self.path.read_text(encoding="utf-8"))
+            except ValueError:
+                raise CfError(f"{self.path} is not readable JSON",
+                              hint="pass --restart to discard it and list the project again")
+            if not isinstance(data, dict) or data.get("schema") != CHECKPOINT_SCHEMA:
+                raise CfError(f"{self.path} is no enumeration checkpoint",
+                              hint="pass --restart to discard it")
+            if data.get("project") != project:
+                raise CfError(f"{self.path} is an interrupted enumeration of WikiProject "
+                              f"{data.get('project')!r}, not {project!r}",
+                              hint=f"finish it (--project {data.get('project')}) or pass "
+                                   f"--restart to discard it")
+            self.resumed = True
+        self.data = data or {"schema": CHECKPOINT_SCHEMA, "sourceset": ss.id,
+                             "project": project, "started_at": state_mod.now(),
+                             "listing": {"done": False, "continue": None, "pages": [],
+                                         "skipped": {}},
+                             "infos": {}, "answers": 0}
+        self.unsaved = 0
+
+    def answered(self) -> None:
+        self.data["answers"] = int(self.data.get("answers") or 0) + 1
+        self.unsaved += 1
+        if self.unsaved >= ENUMERATE_CHECKPOINT_EVERY:
+            self.save()
+
+    def save(self) -> None:
+        write_json(self.path, self.data, sort_keys=True)
+        self.unsaved = 0
+
+    def done(self) -> None:
+        try:
+            self.path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _listing(transport, fam, project: str, cp: _Checkpoint) -> tuple[list[dict], dict]:
+    """Every article row of the project and the other rows by namespace, resumable."""
+    listing = cp.data["listing"]
+    if not listing["done"]:
+        for articles, skipped, nxt in wikinet.project_page_batches(
+                transport, fam.site, project, cont=listing.get("continue")):
+            listing["pages"].extend(articles)
+            for ns, n in skipped.items():
+                listing["skipped"][str(ns)] = int(listing["skipped"].get(str(ns), 0)) + n
+            listing["continue"] = nxt
+            listing["done"] = nxt is None
+            cp.answered()
+    pages = {int(p["pageid"]): p for p in listing["pages"]}
+    return [pages[k] for k in sorted(pages)], {int(k): int(v)
+                                               for k, v in listing["skipped"].items()}
+
+
+def _infos(transport, fam, pageids: list[int], cp: _Checkpoint) -> dict[int, dict]:
+    """The page infos of ``pageids``, asking only for the ones no earlier run was answered."""
+    known = cp.data["infos"]
+    asked = set(cp.data.get("asked") or [])
+    todo = [p for p in pageids if str(p) not in known and p not in asked]
+    for batch, infos in wikinet.page_info_batches(transport, fam.site, todo):
+        for pageid, info in infos.items():
+            known[str(pageid)] = info
+        asked.update(batch)
+        cp.data["asked"] = sorted(asked)
+        cp.answered()
+    return {p: known[str(p)] for p in pageids if str(p) in known}
+
+
 def _enumerate(workspace, args) -> int:
     ss = Sourceset.open(workspace.paths, args.sourceset_id)
     base = ss.latest()
@@ -288,59 +393,90 @@ def _enumerate(workspace, args) -> int:
             "action": "query", "list": "projectpages", "wppprojects": args.project,
             "wppassessments": "1", "wpplimit": "500", "format": "json", "formatversion": "2"})
         log.info(f"dry run: would list WikiProject {args.project} on {fam.site}, then ask "
-                 f"each page's latest revision and Wikidata item in batches of "
-                 f"{wikinet.INFO_BATCH}. First request:")
+                 f"each page's latest revision, Wikidata item and redirect and "
+                 f"disambiguation status in batches of {wikinet.INFO_BATCH}. First request:")
         log.info(f"  {first}")
         log.info("pass --execute to make the requests, or --fixtures <dir> to replay "
                  "recorded ones")
         return 0
+    cp = _Checkpoint(ss, args.project, restart=args.restart)
+    if cp.resumed:
+        log.info(f"resuming the enumeration started at {cp.data.get('started_at')} "
+                 f"({cp.data.get('answers')} answer(s) already in {cp.path.name}; "
+                 f"--restart discards them)")
     classes = {c.lower() for c in args.classes}
     importances = {i.lower() for i in args.importance}
-    pages = []
-    for page in wikinet.project_pages(transport, fam.site, args.project):
-        assessment = page["assessment"]
-        if classes and str(assessment.get("class") or "").lower() not in classes:
-            continue
-        if importances and str(assessment.get("importance") or "").lower() not in importances:
-            continue
-        pages.append(page)
-    pages.sort(key=lambda p: p["pageid"])
-    # a page a consumer pinned keeps the revision it pinned (the proposal's
-    # section 2.1): its latest revision is added only when asked for
-    pinned = set() if args.include_adopted else base.adopted_pages()
-    kept_pinned = [p["pageid"] for p in pages if p["pageid"] in pinned]
-    adopted_listed = [p for p in pages if p["pageid"] in base.adopted_pages()]
-    pages = [p for p in pages if p["pageid"] not in pinned]
-    if args.limit is not None:
-        pages = pages[:max(0, args.limit)]
-    # a pinned page is asked about too: its adopted entries take the page's
-    # assessment and QID when they have none (S4)
-    infos = wikinet.page_infos(transport, fam.site,
-                               [p["pageid"] for p in pages + adopted_listed])
+    try:
+        listed, non_articles = _listing(transport, fam, args.project, cp)
+        pages = []
+        for page in listed:
+            assessment = page["assessment"]
+            if classes and str(assessment.get("class") or "").lower() not in classes:
+                continue
+            if importances and str(assessment.get("importance") or "").lower() \
+                    not in importances:
+                continue
+            pages.append(page)
+        # a page a consumer pinned keeps the revision it pinned (the proposal's
+        # section 2.1): its latest revision is added only when asked for
+        pinned = set() if args.include_adopted else base.adopted_pages()
+        kept_pinned = [p["pageid"] for p in pages if p["pageid"] in pinned]
+        present = {e["pageid"] for e in base}
+        pinned_listed = [p for p in pages if p["pageid"] in base.adopted_pages()]
+        pages = [p for p in pages if p["pageid"] not in pinned]
+        if args.limit is not None:
+            pages = pages[:max(0, args.limit)]
+        # every listed page already present is asked about too: its entries take the
+        # flags and (an adopted one) the assessment and QID they do not have yet
+        known_listed = [p for p in pinned_listed + [q for q in pages if q["pageid"] in present]]
+        infos = _infos(transport, fam, sorted({p["pageid"] for p in pages + known_listed}), cp)
+    except (wikinet.WikiError, CfError) as exc:
+        cp.save()
+        raise CfError(f"{exc} -- the enumeration stopped; {cp.data.get('answers')} answer(s) "
+                      f"are kept in {cp.path}",
+                      hint="re-run the same command to resume from them (nothing is asked "
+                           "twice), or pass --restart to start over") from None
     entries = {e["source_id"]: e for e in base}
     by_page: dict[int, list[int]] = {}
     for e in base:
         by_page.setdefault(e["pageid"], []).append(e["revision"])
-    filled = 0
-    for page in adopted_listed:
-        info = infos.get(page["pageid"]) or {}
+    filled, flags_filled = 0, 0
+
+    def flags_of(page: dict, info: dict) -> dict:
+        return websource.page_flags(title=info.get("title") or page.get("title"),
+                                    assessment=page["assessment"],
+                                    redirect=info.get("redirect", False),
+                                    disambiguation=info.get("disambiguation", False))
+
+    for page in {p["pageid"]: p for p in known_listed}.values():
+        info = infos.get(page["pageid"])
+        if info is None:
+            continue
         assessment = page["assessment"] if any(page["assessment"].values()) else None
         meta = {"title": info.get("title") or page.get("title"),
                 "wikidata": info.get("wikidata"), "assessment": assessment}
+        flags = flags_of(page, info)
         for sid in [fam.source_id(page["pageid"], r) for r in by_page[page["pageid"]]]:
             entry = entries[sid]
-            if not is_adopted(entry):
-                continue
-            missing_meta = {k: v for k, v in meta.items() if v and entry.get(k) is None}
-            if missing_meta:
-                entries[sid] = {**entry, **missing_meta}
-                filled += 1
+            update: dict = {}
+            if is_adopted(entry):
+                update = {k: v for k, v in meta.items() if v and entry.get(k) is None}
+                filled += bool(update)
+            merged = websource.merged_flags(entry.get("flags"), flags)
+            if merged != entry.get("flags"):
+                update["flags"] = merged
+                flags_filled += 1
+            if update:
+                entries[sid] = {**entry, **update}
     added, skipped, newer, missing = 0, 0, [], []
+    flagged = {name: 0 for name in ("redirect", "disambiguation", "list")}
     for page in pages:
         info = infos.get(page["pageid"])
         if info is None:
             missing.append(page["pageid"])
             continue
+        for name in flagged:
+            flagged[name] += bool(flags_of(page, info)[name])
         sid = fam.source_id(page["pageid"], info["revision"])
         if sid in entries:
             skipped += 1
@@ -351,21 +487,35 @@ def _enumerate(workspace, args) -> int:
         entries[sid] = websource.entry(
             fam, page["pageid"], info["revision"], title=info.get("title") or page.get("title"),
             wikidata=info.get("wikidata"), assessment=page["assessment"],
-            origin=websource.ORIGIN_ENUMERATED)
+            origin=websource.ORIGIN_ENUMERATED, flags=flags_of(page, info))
         added += 1
     manifest = ss.write_version(base, entries.values())
+    cp.done()
+    skipped_rows = sum(non_articles.values())
     ss.refresh_state(command="enumerate-wikiproject", details={
         "project": args.project, "listed": len(pages), "added": added, "skipped": skipped,
         "new_revisions": len(newer), "missing": len(missing),
-        "pinned_by_a_consumer": len(kept_pinned), "adopted_metadata_filled": filled})
+        "pinned_by_a_consumer": len(kept_pinned), "adopted_metadata_filled": filled,
+        "flags_filled": flags_filled, "flagged": flagged,
+        "non_article_rows": {"total": skipped_rows,
+                             "by_namespace": {str(k): v for k, v in sorted(non_articles.items())}},
+        "resumed": cp.resumed, "answers": cp.data.get("answers")})
     log.info(f"WikiProject {args.project}: {len(pages)} page(s) listed, {added} added, "
              f"{skipped} already present at their latest revision")
+    if skipped_rows:
+        log.info(f"  {skipped_rows} row(s) of the listing are no article and were skipped, "
+                 f"by namespace: " + ", ".join(f"{ns} {n}" for ns, n in
+                                               sorted(non_articles.items())))
+    if any(flagged.values()):
+        log.info("  flagged: " + ", ".join(f"{n} {name}" for name, n in flagged.items() if n)
+                 + " (they are no concept article; `fetch` leaves the redirects and "
+                   "disambiguation pages out)")
     if kept_pinned:
         log.info(f"  {len(kept_pinned)} page(s) pinned by a consumer keep their adopted "
                  f"revision (--include-adopted adds their latest one too)")
     if filled:
         log.info(f"  {filled} adopted revision(s) took their page's assessment, QID or title")
-    for line in newer:
+    for line in newer[:50]:
         log.info(f"  new revision of a present page, kept beside it: {line}")
     if missing:
         log.warn(f"{len(missing)} page(s) had no revision in the page-info answer: "
@@ -612,6 +762,44 @@ def _adopt(workspace, args) -> int:
 # ---------------------------------------------------------------------------
 # fetch
 
+def _flag_biographies(workspace, args) -> int:
+    """``flag-biographies``: each page's ``biography`` flag, from Wikidata (P31 = Q5).
+
+    The optional step after an enumeration: every entry whose biography flag is
+    undetermined and whose page has a QID is asked about, one SPARQL query per
+    ``wikinet.SPARQL_BATCH`` items to the Wikidata Query Service, and the flag
+    is set true or false; an entry with no QID stays undetermined.
+    """
+    ss = Sourceset.open(workspace.paths, args.sourceset_id)
+    base = ss.latest()
+    todo = [e for e in base if (e.get("flags") or {}).get(vocab.PAGE_FLAG_BIOGRAPHY) is None
+            and e.get("wikidata")]
+    qids = sorted({e["wikidata"] for e in todo}, key=lambda q: (len(q), q))
+    transport = _transport(args, base.family, workspace)
+    if transport is None:
+        log.info(f"dry run: {len(todo)} source(s) of {ss.id} have no biography flag yet, "
+                 f"over {len(qids)} Wikidata item(s): "
+                 f"{-(-len(qids) // wikinet.SPARQL_BATCH)} query(ies) to "
+                 f"{wikinet.WIKIDATA_SPARQL}{wikinet.SPARQL_PATH}")
+        log.info("pass --execute to ask them, or --fixtures <dir> to replay recorded answers")
+        return 0
+    humans = wikinet.wikidata_humans(transport, qids)
+    entries = {e["source_id"]: dict(e) for e in base}
+    for e in todo:
+        flags = websource.merged_flags(e.get("flags"),
+                                       {vocab.PAGE_FLAG_BIOGRAPHY: e["wikidata"] in humans})
+        entries[e["source_id"]] = {**entries[e["source_id"]], "flags": flags}
+    manifest = ss.write_version(base, entries.values())
+    pages = {e["pageid"] for e in todo if e["wikidata"] in humans}
+    ss.refresh_state(command="flag-biographies", details={
+        "asked": len(qids), "humans": len(humans), "sources": len(todo),
+        "biography_pages": len(pages)})
+    log.ok(f"{len(pages)} page(s) of {ss.id} are biographies ({len(humans)} of {len(qids)} "
+           f"item(s) asked are humans); version {manifest.version} "
+           f"(sha {manifest.sha256[:12]})")
+    return 0
+
+
 def _selection(base, args) -> list[str] | None:
     """The source ids ``--source`` and ``--select`` name, in their order; None for all.
 
@@ -668,6 +856,7 @@ def _fetch(workspace, args) -> int:
         # what was asked for by name is fetched, a consumer's pin or not
         todo = [base.get(sid) for sid in selected if not base.get(sid).get("raw_sha256")]
         pinned: list[dict] = []
+        no_article: list[dict] = []
     else:
         # a page a consumer pinned is read at its adopted revision (the proposal's
         # 2.1): its other revisions are not fetched -- the adopted one is, if its
@@ -676,6 +865,12 @@ def _fetch(workspace, args) -> int:
         todo = [e for e in base if not e.get("raw_sha256")]
         pinned = [e for e in todo if not is_adopted(e) and e["pageid"] in adopted_pages]
         todo = [e for e in todo if e not in pinned]
+        # a redirect or a disambiguation page is no article: its stub is not fetched
+        no_article = []
+        if not args.include_flagged:
+            no_article = [e for e in todo if (e.get("flags") or {}).get("redirect")
+                          or (e.get("flags") or {}).get("disambiguation")]
+            todo = [e for e in todo if e not in no_article]
     if args.limit is not None:
         todo = todo[:max(0, args.limit)]
     transport = _transport(args, base.family, workspace)
@@ -743,10 +938,13 @@ def _fetch(workspace, args) -> int:
     ss.refresh_state(command="fetch", details={
         "fetched": fetched, "reused_on_disk": reused, "failed": len(failed),
         "pinned_by_a_consumer": len(pinned), "stopped": bool(stopped),
+        "no_article_left_out": len(no_article),
         **({"selected": len(selected)} if selected is not None else {})})
     log.info(f"fetched {fetched} source(s), reused {reused} already on disk, "
              f"{len(failed)} failed"
-             + (f", {len(pinned)} left to their consumer's adopted revision" if pinned else ""))
+             + (f", {len(pinned)} left to their consumer's adopted revision" if pinned else "")
+             + (f", {len(no_article)} redirect or disambiguation page(s) left out "
+                f"(--include-flagged fetches them)" if no_article else ""))
     for line in failed[:20]:
         log.warn(f"  {line}")
     log.ok(f"sourceset {ss.id}: version {manifest.version} (sha {manifest.sha256[:12]})")

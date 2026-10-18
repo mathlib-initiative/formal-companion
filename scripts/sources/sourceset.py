@@ -175,6 +175,15 @@ def append_only_problems(base: Manifest, entries: dict[str, dict]) -> list[str]:
             continue
         for key in sorted(set(old) | set(new)):
             was = old.get(key)
+            if key == "flags" and isinstance(was, dict) and isinstance(new.get(key), dict):
+                # each flag is a value of its own: a determined one never changes, an
+                # undetermined (null) one may be determined later
+                for flag, value in sorted(was.items()):
+                    if value is not None and new[key].get(flag) != value:
+                        out.append(f"{sid}: flag {flag} was {value!r} in version "
+                                   f"{base.version} and would become "
+                                   f"{new[key].get(flag)!r} (a recorded value never changes)")
+                continue
             if was is not None and new.get(key) != was:
                 out.append(f"{sid}: {key} was {was!r} in version {base.version} and would "
                            f"become {new.get(key)!r} (a recorded value never changes)")

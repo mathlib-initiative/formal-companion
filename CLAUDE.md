@@ -102,7 +102,10 @@ Those two lines move together or not at all.
   `cf sourceset fetch --execute`, `cf sourceset enumerate-wikiproject --execute`
   or `cf sourceset adopt --execute` (which only asks the page of a pinned
   revision that names no page id) (`--fixtures <dir>` replays recorded responses
-  instead). A test refuses any other module that fetches from Wikipedia.
+  instead). The same module, under `cf sourceset flag-biographies --execute`
+  only, asks the Wikidata Query Service one fixed SPARQL shape (which items are
+  instances of human). A test refuses any other module that fetches from
+  Wikipedia or Wikidata.
 - Every module starts with a docstring saying **what** it was ported from — the
   v1 campaign script, cell or workflow, named for what it did — or saying it is
   new code, and pointing at the section it implements:
