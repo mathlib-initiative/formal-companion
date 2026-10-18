@@ -490,9 +490,11 @@ contribution, whatever `task_id` it names (an empty one, `task_id_from` null, is
 rule's call, and an attempt like any other). tend's pre-merge command makes the same call over
 its merge batch and its line does not say so, so it is counted too. The gate logs every call
 (references/locate-documents.md §9), so `dropped_lines` holds the rest: an agent's own check
-(`--findings`, or a findings directory: `changed_files: false`, whatever task id it names), a
-line from a gate older than the field, and a line of another `run_id`. The harvest's re-gate of
-the landed corpus writes no line. A call that exited 3 (the gate could not run) is `broken`,
+(a worker's or reviewer's `--findings` or findings-directory check, and the bridge's
+observable-state fallback, which passes `--findings`: `changed_files: false`, whatever task id
+it names), a line from a gate older than the field, and a line of another `run_id`. The
+harvest's re-gate of the landed corpus writes no line (`gate_corpus` gives it no log
+directory). A call that exited 3 (the gate could not run) is `broken`,
 never a rejection. A
 rule is the line's `by_rule` key, else the reason's `[rule N]` prefix; `by_reason` classes are
 `rule_<N>` plus, when the message says which, `:<sub-class>` (`phantom_declaration`,
@@ -547,8 +549,9 @@ article of the split, or that read another rendering than the bench pins; a `for
 passage of a covered article with no outcome row; an inventory document naming no layer or
 renderer, or another renderer than the bench's; a cost that is not a finite non-negative number;
 a `--pin` contradicting a recorded version; a planted run that is not this bench's frozen
-ablation, or off eval, or whose challenge searched another database, or a run that searched the
-planted database but records another kind; the test split without `--checkpoint`; no canary
+ablation, or off eval, or whose challenge searched another database (a challenge whose plan
+required nothing ran no hunter and is not asked), or a run that searched the planted database but
+records another kind; the test split without `--checkpoint`; no canary
 check at all, one that read nothing, or a host scan that did not look for this bench's canary;
 and any transcript (or host scan) holding the canary, which fails the run (§8.4).
 
@@ -614,8 +617,9 @@ and `conditions.aa.replicate_score` the replicate's);
 `differences` names the pins that differ without making the scores incomparable (universe,
 corpus database, sourceset manifest, tool versions, the runs' commits, gate files and prompts),
 notes when both scores still owe challenge verdicts, and says when the baseline's measurement
-is one an earlier entry already used: an unchanged baseline arm is reused, never re-run (§9,
-step 6).
+is one an earlier entry already used on the same split (a `measurement_id` names the runs, not
+the split, so a dev and an eval score of one run are two baselines): an unchanged baseline arm is
+reused, never re-run (§9, step 6).
 
 ## 10. What the bench reads
 

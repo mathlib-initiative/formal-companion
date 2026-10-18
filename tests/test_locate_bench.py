@@ -2088,6 +2088,12 @@ class TestTheRunSeams(unittest.TestCase):
         doc = self.score()
         self.assertEqual(doc["pins"]["skill_commit"], {"inv1": fx.RUN_COMMIT, "loc1": fx.RUN_COMMIT})
         self.assertEqual(doc["pins"]["gate_files"]["loc1"], gold_mod.sha_of(fx.GATE_FILES))
+        # D6: what each run staged, its own gate.json included, is pinned as its plan recorded it
+        for rid in ("inv1", "loc1"):
+            staged = yamlio.read_yaml(WorkspacePaths(self.world.root).run_yaml(rid))["locate"]
+            self.assertEqual(doc["pins"]["rendered_gate_files"][rid],
+                             gold_mod.sha_of(staged["gate_files"]))
+            self.assertIn("gate/gate.json", staged["gate_files"])
         self.assertEqual(len(doc["scorer"]["sha256"]), 64)
         with mock.patch.object(score_mod, "scorer", return_value={"sha256": "0" * 64, "files": 1}):
             again = self.score()
@@ -2871,6 +2877,12 @@ class TestRound3Score(unittest.TestCase):
         self.planted_run("locq", "invq")
         self.world.challenge_run("chl-planted", of="locq", tools=self.planted_tools())
         self.assertEqual(score(self.world, "locq")["runs"]["challenge"], ["chl-planted"])
+        # a challenge whose plan required nothing ran no hunter, whichever database it names
+        self.planted_run("locr", "invr")
+        self.world.challenge_run("chl-none", of="locr", required=0)
+        doc = score(self.world, "locr")
+        self.assertEqual(doc["runs"]["challenge"], ["chl-none"])
+        self.assertIn("chl-none", doc["pins"]["challenge_plans"])
 
     def test_the_planted_tier_is_stratified_by_seen_as_every_tier_is_m03(self):
         self.planted_run("locp", "invp")
@@ -3057,6 +3069,25 @@ class TestRound3Compare(unittest.TestCase):
                         .split())
         self.assertNotIn("the harvest's own re-gate) or another `run_id` is dropped", text)
         self.assertIn("An attempt is a line of that run with `changed_files: true`", text)
+
+    def test_a_baseline_is_reused_on_its_own_split_only_m07(self):
+        """A ``measurement_id`` names the runs, not the split: one run's dev and eval
+        scores share it, and are two baselines, never one reused."""
+        reused = "baseline reused: an earlier entry compared this same baseline measurement"
+        dev = score_doc(self.base_cells, split="dev")
+        ev = score_doc(self.base_cells, split="eval")
+        self.assertEqual(dev["measurement_id"], ev["measurement_id"])
+        on_dev = compare_mod.compare(self.lay, self.write("bd", dev),
+                                     self.write("cd", score_doc(self.better_cells, split="dev")),
+                                     claim="G3.fnf_rate", replicates=1000, seed=1)
+        self.assertNotIn(reused, on_dev["differences"])
+        base, cand = self.write("be", ev), self.write("ce", score_doc(self.better_cells))
+        first = compare_mod.compare(self.lay, base, cand, claim="G3.fnf_rate", replicates=1000,
+                                    seed=1)
+        self.assertNotIn(reused, first["differences"])
+        again = compare_mod.compare(self.lay, base, cand, claim="G3.fnf_rate", replicates=1000,
+                                    seed=1)
+        self.assertIn(reused, again["differences"])
 
 
 class TestRound3Metrics(unittest.TestCase):

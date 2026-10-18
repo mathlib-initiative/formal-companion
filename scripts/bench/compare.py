@@ -457,7 +457,10 @@ def compare(layout: BenchLayout, base_path: Path, cand_path: Path, *, claim: str
         replicates_pin = (_check_replication(layout, replication, claim, history)
                           if replication is not None else None)
         spent = sum(1 for e in history if e.get("claimed") and not e.get("replication"))
-        if any(e.get("baseline") == base["measurement_id"] for e in history):
+        # a measurement_id names the runs, not the split they were scored on: the dev and
+        # the eval score of one run are two baselines
+        if any(e.get("baseline") == base["measurement_id"] and e.get("split") == base.get("split")
+               for e in history):
             differences.append("baseline reused: an earlier entry compared this same baseline "
                                "measurement")
         alpha_j = float(alpha) if replicates_pin else float(alpha) * (0.5 ** (spent + 1))
