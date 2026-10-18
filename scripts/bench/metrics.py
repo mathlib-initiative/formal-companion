@@ -543,10 +543,13 @@ def gate_rejections(lines: list[dict], run_ids: Iterable[str] | None = None) -> 
     line does not say so, so a contribution judged again before its merge is
     counted again.  The gate logs every call it is asked to make
     (references/locate-documents.md section 9), so the rest are dropped: an
-    agent's own check of its documents (``--findings``, or a findings directory:
+    agent's own check of its documents (a worker's or a reviewer's ``--findings``
+    or findings-directory check, and the bridge's observable-state fallback in
+    ``scripts/run/normalize_result.py``, which passes ``--findings``:
     ``changed_files: false``, with or without a task id), a line of a gate older
     than the field, and a line of another run.  The harvest's re-gate over the
-    landed corpus writes no line at all.  A call that exited 3 (the gate could
+    landed corpus writes no line at all (``scripts/harvest/gate_corpus.py`` gives
+    it no log directory).  A call that exited 3 (the gate could
     not run) is an infrastructure failure, counted apart and never as a
     rejection.  A rule is counted from the line's ``by_rule`` when it carries
     one, else from its reasons' ``[rule N]`` prefixes.

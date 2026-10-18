@@ -23,10 +23,11 @@ that did not plan, or read another rendering of, an article of the split; a
 ``formal_math`` passage of the split the locate run has no outcome row for (it
 was never planned: a ``--source`` or shard run is scored on the articles it
 covers, never as gate failures of the rest); a planted run whose tools database
-is not this bench's ablation, whose challenge searched another, or scored off
-eval; the test split without ``--checkpoint``; a host canary scan that did not
-look for this bench's canary; and a transcript that holds the bench's canary,
-which fails the run outright (section 8.4).
+is not this bench's ablation, whose challenge searched another (one that
+required nothing ran no hunter), or scored off eval; the test split without
+``--checkpoint``; a host canary scan that did not look for this bench's canary;
+and a transcript that holds the bench's canary, which fails the run outright
+(section 8.4).
 
 **A pre-registered subset** (``subset``): a run that covers only some articles
 of the split -- a smoke run, a pilot -- is scored on exactly the articles named,
@@ -789,9 +790,10 @@ def score(paths, layout: BenchLayout, bench: dict, *, run_id: str, split: str,
         if split != "eval":
             raise CfError("a planted run is scored on eval, the split its ablation removed")
         # the challenge's hunters overturn absences into the rows P counts: a hunter that
-        # searched the full database finds the removed declarations legitimately
-        other = sorted(rid for rid in runs["challenge"]
-                       if tools_db(_locate_block(yamls[rid]).get("universe") or {})
+        # searched the full database finds the removed declarations legitimately. A
+        # challenge whose plan required nothing ran no hunter, whatever it would have searched
+        other = sorted(rid for rid in runs["challenge"] if rid not in unharvested
+                       and tools_db(_locate_block(yamls[rid]).get("universe") or {})
                        != {"kind": TOOLS_PLANTED, "sha256": str(p_tier.get("corpus_sha256"))})
         if other:
             raise CfError(f"run {run_id} searched this bench's planted database, but its "
