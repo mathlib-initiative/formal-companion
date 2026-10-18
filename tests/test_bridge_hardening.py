@@ -216,6 +216,20 @@ class TestTheBridge(BridgeCase):
         argv = (self.tmp / "argv").read_text().splitlines()
         self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read,Glob,Grep,Bash(git:*)")
 
+    def test_the_reviewer_may_run_the_gate_and_nothing_wider(self):
+        """P1: the reviewer prompt renders the gate command; claude -p denies an unlisted one."""
+        self.agentbox(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
+        gate = "python3 /srv/cf/r-gate/verify_locate.py --gate-config /srv/cf/r-gate/gate.json"
+        extra = "Bash(python3 /srv/cf/r-gate/corpus_search.py:*)"
+        self.bridge("reviewer", CF_GATE_CMD=gate, CF_EXTRA_TOOLS=extra)
+        argv = (self.tmp / "argv").read_text().splitlines()
+        self.assertEqual(argv[argv.index("--allowedTools") + 1],
+                         "Read,Glob,Grep,Bash(git:*),Bash(python3 /srv/cf/r-gate/verify_locate.py:*)")
+        # an explicit list still wins, as for the worker
+        self.bridge("reviewer", CF_GATE_CMD=gate, CF_REVIEWER_TOOLS="Read")
+        argv = (self.tmp / "argv").read_text().splitlines()
+        self.assertEqual(argv[argv.index("--allowedTools") + 1], "Read")
+
     def test_a_missing_helper_is_refused_before_any_call(self):
         bindir = self.tmp / "staged-bin"
         bindir.mkdir()

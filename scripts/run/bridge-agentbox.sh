@@ -24,7 +24,11 @@
 #                          tells the worker to run the gate before it commits, and an
 #                          allowlist that denied that would cost a rework turn per
 #                          task. Nothing wider: python3 in general is NOT allowlisted.)
-#   CF_REVIEWER_TOOLS      reviewer allowlist         (default: Read,Glob,Grep,Bash(git:*))
+#   CF_REVIEWER_TOOLS      reviewer allowlist         (default: Read,Glob,Grep,Bash(git:*)
+#                          plus the same CF_GATE_CMD entry: both reviewer prompts tell
+#                          the reviewer to run the gate, and claude -p denies an
+#                          unlisted Bash command, so without it a reviewer either
+#                          approved unchecked or rejected sound work it could not check.)
 #   CF_CODEX_SANDBOX       codex --sandbox mode       (default: workspace-write)
 #   CF_ALLOW_SANDBOX_BYPASS=1  run with approvals and the sandbox OFF. An explicit
 #                          opt-in, NOT the default: the run host holds the companion
@@ -139,16 +143,24 @@ fi
 # turn it did not need. It is the gate script by absolute path, not Bash(python3:*)
 # -- the whole point of the out-of-tree gate is that the worker cannot substitute
 # its own.
+#
+# The REVIEWER's default permits the same gate entry: both reviewer prompts render
+# the gate command and tell the reviewer to check its output (a locate reviewer's
+# "the gate passes" is one of its four checks), and the gate only reads.  Without
+# it `claude -p` denies the call, and the reviewer either approves without the
+# check or requests changes because it cannot run it (field defect P1).
+#
+# CF_GATE_CMD is what the generated wrapper actually stages (CF_GATE_DIR is not),
+# so the allowlist entry is derived from it: the program, without its --flags --
+# exactly the prefix of every gate invocation the prompts render.
+GATE_TOOL=""
+case "${CF_GATE_CMD:-}" in
+  "" | *,*) ;;    # unset, or a path an --allowedTools list cannot carry anyway
+  *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;
+esac
 if [ "$ROLE" = reviewer ]; then
-  TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-Read,Glob,Grep,Bash(git:*)}}"
+  TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-Read,Glob,Grep,Bash(git:*)$GATE_TOOL}}"
 else
-  # CF_GATE_CMD is what the generated wrapper actually stages (CF_GATE_DIR is not),
-  # so the allowlist entry is derived from it: the program, without its --flags.
-  GATE_TOOL=""
-  case "${CF_GATE_CMD:-}" in
-    "" | *,*) ;;    # unset, or a path an --allowedTools list cannot carry anyway
-    *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;
-  esac
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)$GATE_TOOL}}"
   # A locate worker's host tools (corpus_search.py, corpus_show.py), by absolute path.
   [ -n "${CF_EXTRA_TOOLS:-}" ] && TOOLS="$TOOLS,$CF_EXTRA_TOOLS"
