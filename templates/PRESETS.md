@@ -278,7 +278,7 @@ Two items in the item table are worth keeping in mind when reading a converted c
 Not runs of a companion: `cf plan-locate` plans them from a sourceset and a universe, and
 `cf plan-run` refuses their names (`scripts/locate/presets.py`; `docs/proposals/wikipedia-locate.md`
 §3). They render tend roots on the same bridge, gate directory and harvest, with the locate gate
-(*verify_locate.py*, built by the gate package) in the validation commands and the locate prompts
+(`scripts/gate/verify_locate.py`) in the validation commands and the locate prompts
 (`templates/prompts/locate-*.md.tmpl`).
 
 | preset | stage | task | kinds | workers / reviewers |

@@ -9,9 +9,11 @@ convention.
 The locate block at the end is new code too, for the inverse question --
 where is a source formalized, in any library -- and implements the vocabulary
 of docs/proposals/wikipedia-locate.md sections 2.2, 2.4, 2.6, 2.7, 5 and 10
-(documented in references/vocabulary.md section 1.11).  Only the vocabulary,
-:func:`derive_status` and :func:`decide_proof_status` are built; the stages
-that use them are not.
+(documented in references/vocabulary.md section 1.11), with
+:func:`derive_status` and :func:`decide_proof_status`.  The locate stages --
+scripts/sources, scripts/corpus, scripts/locate, scripts/gate/verify_locate.py
+and scripts/bench -- import their values from here; the copies a host-side
+script must inline are pinned to these by tests.
 """
 from __future__ import annotations
 
@@ -86,7 +88,7 @@ SINGLE_SOURCE = "single-source"
 ATTACK_VAC = "attack:vac"
 ATTACK_HUNT = "attack:hunt"
 #: the three locate presets (L3a inventory, L3b locate, L5 challenge); planned
-#: by the locate planner, which is not implemented
+#: by `cf plan-locate` (scripts/locate/plan.py)
 LOCATE_INVENTORY = "locate-inventory"
 LOCATE = "locate"
 LOCATE_CHALLENGE = "locate-challenge"
