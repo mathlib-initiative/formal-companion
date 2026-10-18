@@ -1399,8 +1399,13 @@ _PATH_COLUMN = re.compile(r"(?:^|_)(?:worktree(?:_path|_dir)?|path|cwd|directory
 _TASK_COLUMN = re.compile(r"task(?:_?id)?$", re.I)
 
 
-def _open_orchestrator(db_path: pathlib.Path) -> sqlite3.Connection:
-    """A read-only connection to tend's LIVE database that sees its committed writes.
+#: what the ownership line adds when orchestrator.sqlite could only be read immutably
+#: while a ``-wal`` lay beside it
+IMMUTABLE_NOTE = "read immutably: rows in its -wal may be missing"
+
+
+def _open_orchestrator(db_path: pathlib.Path) -> tuple[sqlite3.Connection, str]:
+    """``(connection, note)``: a read-only connection to tend's LIVE database.
 
     tend keeps ``orchestrator.sqlite`` in WAL mode, and a row it has committed
     sits in ``-wal`` until a checkpoint copies it into the main file.  An
@@ -1408,21 +1413,33 @@ def _open_orchestrator(db_path: pathlib.Path) -> sqlite3.Connection:
     tend had created since the last checkpoint -- on a live run, nearly all of
     them, and the gate fell back to the single-stem rule (field defect G1).
     ``mode=ro`` reads the WAL through the shared-memory index, takes no write
-    lock and never blocks the writer.  ``immutable=1`` stays only as the
-    fallback for a database nobody is writing whose directory this user cannot
-    write (no ``-shm`` can be made there), where it is also correct.
+    lock and never blocks the writer.
+
+    ``immutable=1`` is the fallback only where it is complete or the only read
+    there is: when no ``-wal`` lies beside the database (the main file holds
+    every committed row), or when its directory cannot be written (no ``-shm``
+    can be made there, so ``mode=ro`` cannot read the WAL at all) -- and then,
+    with a ``-wal`` present, ``note`` is :data:`IMMUTABLE_NOTE`, which the
+    ownership line carries.  Any other failure of the ``mode=ro`` read (a
+    busy timeout, a damaged file) is raised: an immutable read there would
+    silently miss the very rows G1 was about.
     """
     try:
         con = sqlite3.connect(ro_uri(db_path, immutable=False), uri=True, timeout=5.0)
-    except sqlite3.Error:
-        con = None
+    except sqlite3.Error as exc:
+        con, error = None, exc
     if con is not None:
         try:
             con.execute("SELECT count(*) FROM sqlite_master").fetchone()
-            return con
-        except sqlite3.Error:
+            return con, ""
+        except sqlite3.Error as exc:
             con.close()
-    return sqlite3.connect(ro_uri(db_path), uri=True)
+            error = exc
+    wal = db_path.with_name(db_path.name + "-wal").exists()
+    if wal and os.access(db_path.parent, os.W_OK):
+        raise sqlite3.Error(f"it did not open read-only ({error}), and an immutable read "
+                            f"would miss the rows in its -wal")
+    return sqlite3.connect(ro_uri(db_path), uri=True), (IMMUTABLE_NOTE if wal else "")
 
 
 def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path) -> tuple[str, str]:
@@ -1449,7 +1466,7 @@ def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path)
     suffix = "/" + worktree.resolve().name
     found: set[str] = set()
     try:
-        con = _open_orchestrator(db_path)
+        con, note = _open_orchestrator(db_path)
     except sqlite3.Error as exc:
         return "", f"orchestrator.sqlite will not open ({exc})"
     try:
@@ -1477,11 +1494,12 @@ def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path)
         return "", f"orchestrator.sqlite could not be read ({exc})"
     finally:
         con.close()
+    read = f"orchestrator.sqlite ({note})" if note else "orchestrator.sqlite"
     if len(found) == 1:
-        return found.pop(), "orchestrator.sqlite"
+        return found.pop(), read
     if found:
-        return "", f"orchestrator.sqlite names {len(found)} tasks for this worktree"
-    return "", "orchestrator.sqlite names no task for this worktree"
+        return "", f"{read} names {len(found)} tasks for this worktree"
+    return "", f"{read} names no task for this worktree"
 
 
 def _classify(path: str) -> tuple[str, str, str] | None:
@@ -1588,13 +1606,21 @@ def _lacking_documents(ctx: Context, task_id: str, have: set[str],
 
 
 def ownership_line(task_id: str, how: str) -> str:
-    if task_id and how == "orchestrator.sqlite":
+    """The gate's last line: which rule judged the change set, and why when it is the weak one.
+
+    ``how`` is where the task id came from (``--task-id``, ``orchestrator.sqlite``,
+    which may carry :data:`IMMUTABLE_NOTE`), or, with no task id, why the
+    lookup found none -- said on the line, never dropped.
+    """
+    if task_id and how.startswith("orchestrator.sqlite"):
+        note = how[len("orchestrator.sqlite"):].strip().strip("()")
         return (f"ownership checked against task {task_id} (task id recovered from "
-                f"orchestrator.sqlite: an assumed schema, verify on the host)")
+                f"orchestrator.sqlite: an assumed schema, verify on the host"
+                + (f"; {note}" if note else "") + ")")
     if task_id:
         return f"ownership checked against task {task_id}"
     return ("ownership: single-stem rule (no task id); pass --task-id or export TEND_TASK_ID "
-            "for the full check")
+            "for the full check" + (f" ({how})" if how else ""))
 
 
 # --------------------------------------------------------------------------- #

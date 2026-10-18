@@ -810,6 +810,78 @@ class TestOwnership(GateTestCase):
         con.close()
         proc = self.cli()
         self.assertIn("single-stem rule", proc.stdout.splitlines()[-1])
+        # and the line says why the lookup found no task, instead of dropping it
+        self.assertIn("(orchestrator.sqlite names 2 tasks for this worktree)",
+                      proc.stdout.splitlines()[-1])
+
+    def live_writer(self) -> Path:
+        """tend's shape: WAL, the writer's connection open, the rows only in ``-wal``."""
+        db = self.fx.root / "orchestrator.sqlite"
+        writer = sqlite3.connect(db, isolation_level=None)
+        self.addCleanup(writer.close)
+        writer.execute("PRAGMA journal_mode = WAL")
+        writer.execute("PRAGMA wal_autocheckpoint = 0")
+        writer.execute("CREATE TABLE worktrees (worktree_id TEXT, task_id TEXT, path TEXT)")
+        writer.execute("INSERT INTO worktrees VALUES ('w-1', ?, ?)", (TASK, str(self.wt)))
+        self.assertTrue(Path(f"{db}-wal").is_file())
+        return db
+
+    def failing_live_read(self):
+        """``sqlite3.connect`` as the gate sees it when the ``mode=ro`` read fails (a busy
+        timeout, say); an ``immutable=1`` open still works."""
+        real = sqlite3.connect
+
+        def connect(database, *a, **kw):
+            if str(database).endswith("?mode=ro"):
+                raise sqlite3.OperationalError("database is locked")
+            return real(database, *a, **kw)
+        return mock.patch.object(vl.sqlite3, "connect", connect)
+
+    def test_g1_a_failed_live_read_is_never_silently_an_immutable_one(self):
+        """The fallback read the main file alone on ANY failure of the ``mode=ro`` read --
+        on a live WAL database, exactly the G1 failure, with no word of it."""
+        self.contribute()
+        db = self.live_writer()
+        with self.failing_live_read():
+            task, how = vl.task_from_orchestrator(db, self.wt)
+        self.assertEqual(task, "")
+        self.assertIn("will not open", how)
+        self.assertIn("would miss the rows in its -wal", how)
+        self.assertIn("ownership: single-stem rule (no task id)",
+                      vl.ownership_line(task, how))
+        self.assertIn("would miss the rows in its -wal", vl.ownership_line(task, how))
+
+    def test_g1_an_unwritable_directory_is_read_immutably_and_says_so(self):
+        self.contribute()
+        db = self.live_writer()
+        real_access = os.access
+        unwritable = mock.patch.object(vl.os, "access", lambda path, mode: False if (
+            Path(path) == db.parent and mode == os.W_OK) else real_access(path, mode))
+        with self.failing_live_read(), unwritable:
+            task, how = vl.task_from_orchestrator(db, self.wt)
+        self.assertEqual(task, "")                      # the row is in -wal, unread
+        self.assertIn(vl.IMMUTABLE_NOTE, how)
+        self.assertIn(vl.IMMUTABLE_NOTE, vl.ownership_line(task, how))
+        # with the rows checkpointed into the main file, the same read finds the task
+        con = sqlite3.connect(db)
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        con.close()
+        with self.failing_live_read(), unwritable:
+            task, how = vl.task_from_orchestrator(db, self.wt)
+        self.assertEqual(task, TASK)
+        self.assertIn("verify on the host; " + vl.IMMUTABLE_NOTE, vl.ownership_line(task, how))
+
+    def test_g1_with_no_wal_the_immutable_read_is_complete(self):
+        self.contribute()
+        db = self.fx.root / "orchestrator.sqlite"
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE worktrees (worktree_id TEXT, task_id TEXT, path TEXT)")
+        con.execute("INSERT INTO worktrees VALUES ('w-1', ?, ?)", (TASK, str(self.wt)))
+        con.commit()
+        con.close()
+        self.assertFalse(Path(f"{db}-wal").exists())
+        with self.failing_live_read():
+            self.assertEqual(vl.task_from_orchestrator(db, self.wt), (TASK, "orchestrator.sqlite"))
 
     def test_the_cli_exit_codes_and_the_log(self):
         self.contribute()
