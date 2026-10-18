@@ -360,8 +360,8 @@ A location:
 - `section` (the passage's heading path) and `prominence` ride on every record
   of the passage, so a reader can single out the subject passage.
 - A `closeMatch` always names its convention difference in `note`, one a
-  challenge downgraded to `closeMatch` too (the challenger's note, else its
-  witness's first sentence).
+  challenge downgraded to `closeMatch` too (the challenger's note, else the
+  first sentence of its witness that quotes the source within the quote cap).
 - `proof_status` is joined from the index at export, never written by a worker.
 - `location_key` = sha256(source_id, clean(item), library, commit,
   declaration) — run-free, for idempotent upserts by consumers. The run-scoped

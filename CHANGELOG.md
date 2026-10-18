@@ -77,7 +77,10 @@ release has something to say.
   consumer refuses any other seal key);
   `universe.json` lists its libraries (each with `roots` and `display_name`)
   under `universe_sha256` with `frozen`; every record carries its passage's
-  `section` and `prominence`; a `closeMatch` a challenge produced keeps a note;
+  `section` and `prominence`; a `closeMatch` a challenge produced keeps a note
+  (the challenger's, else the first sentence of its witness that quotes the
+  article within the quote cap: the re-export of the second smoke had refused
+  FTC #19a718e1, whose witness opened by quoting 19 words of the article);
   an absence's lean ends are `{type, uri, version}` only; and no per-source
   byte budget applies unless `--byte-budget` asks for one (it had refused 4 of
   10 sources of the second smoke at 256 KiB).
