@@ -35,6 +35,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- `corpus_search.py --library L` (and `cf corpus search --library`, L2's
+  lexical retrieval) reads the FTS5 index first and filters the library on the
+  rows it found: SQLite 3.43's planner had walked every row of the library
+  through `decls`' index and re-run the match per row, about 90 s a search on
+  the field universe against 0.05 s unfiltered. No schema change; existing
+  databases are read as they are.
 - The renderer is **`web-html/3`** (`references/locate-documents.md` §7). The
   layer, head text, reading copy and sections are `/2`'s character for
   character, so no passage id moves. The paragraph-label rule no longer takes a

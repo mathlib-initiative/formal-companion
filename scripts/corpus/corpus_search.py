@@ -206,10 +206,19 @@ def connect(db: str | Path) -> sqlite3.Connection:
     return conn
 
 
+#: Every search reads the full-text index FIRST and joins each match to ``decls`` by
+#: rowid.  ``CROSS JOIN`` is SQLite's documented way to fix that order, and the
+#: library filter is written ``+d.library`` so no index can serve it: left to
+#: itself, the planner of some SQLite versions (3.43, and any build that has
+#: statistics making ``library = ?`` look selective) walked every row of the
+#: library through ``decls``' index and re-ran the FTS5 match per row -- about
+#: 90 s a search on a real universe, against 0.05 s unfiltered (field defect S1).
 _ROW_SQL = ("SELECT d.id, d.library, d.name, d.module, d.path, d.line, d.end_line, d.kind, "
             "d.signature, bm25(decls_fts, ?, ?, ?) AS rank "
-            "FROM decls_fts JOIN decls d ON d.id = decls_fts.rowid "
+            "FROM decls_fts CROSS JOIN decls d ON d.id = decls_fts.rowid "
             "WHERE decls_fts MATCH ?")
+#: the library filter, applied to the rows the index found (see :data:`_ROW_SQL`)
+_LIBRARY_SQL = " AND +d.library = ?"
 
 
 def _rows(conn: sqlite3.Connection, sql: str, params: list) -> list:
@@ -233,7 +242,7 @@ def _identifier_rows(conn: sqlite3.Connection, text: str, library: str | None) -
     sql = _ROW_SQL + (" AND (decls_fts.name_words = ? OR decls_fts.name_words LIKE ?)")
     params: list = [*WEIGHTS, "name_words : " + fts_match([joined]), joined, "% " + joined]
     if library:
-        sql += " AND d.library = ?"
+        sql += _LIBRARY_SQL
         params.append(library)
     ranked = []
     for row in _rows(conn, sql, params):
@@ -261,7 +270,7 @@ def search(conn: sqlite3.Connection, text: str, *, library: str | None = None,
     sql = _ROW_SQL
     params: list = [*WEIGHTS, fts_match(words, all_words=all_words)]
     if library:
-        sql += " AND d.library = ?"
+        sql += _LIBRARY_SQL
         params.append(library)
     sql += " ORDER BY rank, d.library, d.name LIMIT ?"
     params.append(limit + len(first))
