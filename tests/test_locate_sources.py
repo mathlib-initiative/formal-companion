@@ -1831,3 +1831,95 @@ class TestFieldL1EveryViewIsPinnedToTheRendererId(_FieldCase):
         code, out = cf(self.root, "sourceset", "status", "wpm", "--verify")
         self.assertEqual(code, 1, out)
         self.assertIn("layer_map.json says renderer 'web-html/1'", out)
+
+
+class TestFieldS11ManifestDeltas(unittest.TestCase):
+    """S11: every version was a full copy -- ~150 copies of ten megabytes for one fetch."""
+
+    def setUp(self):
+        self.root = _workspace(self)
+        self.paths = WorkspacePaths(self.root)
+        self.ss = Sourceset.create(self.paths, "wpm", "enwiki")
+        self.base = self.ss.write_version(self.ss.latest(), [_entry(n) for n in range(1, 41)])
+
+    def test_s11_a_small_change_is_a_delta_that_reads_back_whole(self):
+        self.assertFalse(self.base.is_delta)              # 40 new of 40: a snapshot
+        filled = dict(self.base.get("enwiki-1003-2003"), raw_sha256="a" * 64)
+        m = self.ss.write_version(self.base, [*(e for e in self.base
+                                                if e["source_id"] != filled["source_id"]),
+                                               filled])
+        self.assertTrue(m.is_delta)
+        lines = m.path.read_text().splitlines()
+        self.assertEqual(len(lines), 2)
+        header = json.loads(lines[0])
+        self.assertEqual((header["schema"], header["sources"], header["changed"]),
+                         ("cf-sourceset-delta/1", 40, 1))
+        self.assertEqual(header["previous_sha256"], self.base.sha256)
+        again = self.ss.load(m.version)
+        self.assertEqual(len(again), 40)
+        self.assertEqual(again.get("enwiki-1003-2003")["raw_sha256"], "a" * 64)
+        self.assertEqual(again.sha256, websource_sha(m.path))
+        self.assertEqual(self.ss.pinned(m.version, m.sha256).entries, again.entries)
+        # the planner's and the bench's readers see the same version
+        from bench import inputs as bench_inputs
+        from locate import inputs as locate_inputs
+        for reader in (locate_inputs.load_manifest, bench_inputs.load_manifest):
+            with self.subTest(reader=reader.__module__):
+                read = reader(self.paths, "wpm", m.version)
+                self.assertEqual((read.sha256, read.entries), (m.sha256, again.entries))
+
+    def test_s11_a_whole_fetch_writes_tens_of_versions_not_tens_of_copies(self):
+        m = self.base
+        for n in range(1, 41):
+            sid = f"enwiki-{1000 + n}-{2000 + n}"
+            m = self.ss.write_version(m, [dict(e, raw_sha256="b" * 64) if e["source_id"] == sid
+                                          else e for e in m])
+        snapshot = self.paths.sourceset_manifest("wpm", 2).stat().st_size
+        total = sum(p.stat().st_size for _n, p in self.paths.sourceset_manifests("wpm"))
+        self.assertLess(total, 3 * snapshot)             # was 41 snapshots
+        self.assertTrue(all(e["raw_sha256"] == "b" * 64 for e in self.ss.latest()))
+
+    def test_s11_a_long_chain_ends_in_a_snapshot(self):
+        from sources import sourceset as sourceset_mod
+        with mock.patch.object(sourceset_mod, "MAX_DELTA_CHAIN", 2):
+            m = self.base
+            kinds = []
+            for n in range(1, 6):
+                sid = f"enwiki-{1000 + n}-{2000 + n}"
+                m = self.ss.write_version(m, [dict(e, raw_sha256="c" * 64)
+                                              if e["source_id"] == sid else e for e in m])
+                kinds.append(m.is_delta)
+            self.assertEqual(kinds, [True, True, False, True, True])
+            self.assertEqual(self.ss.load(m.version).chain, 2)
+
+    def test_s11_a_broken_chain_is_refused(self):
+        m = self.base
+        for n in (1, 2):
+            sid = f"enwiki-{1000 + n}-{2000 + n}"
+            m = self.ss.write_version(m, [dict(e, raw_sha256="d" * 64) if e["source_id"] == sid
+                                          else e for e in m])
+        snapshot = self.paths.sourceset_manifest("wpm", 2)
+        middle = self.paths.sourceset_manifest("wpm", 3)
+        text = middle.read_text()
+        # a delta that changes a recorded value is refused
+        lines = text.splitlines()
+        row = json.loads(lines[1])
+        changed_path = self.paths.sourceset_manifest("wpm", 4)
+        last = changed_path.read_text().splitlines()
+        bad = dict(json.loads(last[1]), source_id=row["source_id"], pageid=row["pageid"],
+                   revision=row["revision"], title=row["title"], raw_sha256="e" * 64)
+        changed_path.write_text(last[0] + "\n" + sourceset_canonical(bad) + "\n")
+        with self.assertRaisesRegex(SourcesetError, "never changes"):
+            self.ss.load(4)
+        # a rewritten snapshot breaks every delta after it
+        snapshot.write_text(snapshot.read_text().replace('"sources":40', '"sources":40 '))
+        with self.assertRaisesRegex(SourcesetError, "rewritten"):
+            self.ss.load(3)
+        middle.unlink()
+        with self.assertRaisesRegex(SourcesetError, "not on disk"):
+            self.ss.load(4)
+
+
+def sourceset_canonical(obj: dict) -> str:
+    from sources.sourceset import canonical_line
+    return canonical_line(obj)

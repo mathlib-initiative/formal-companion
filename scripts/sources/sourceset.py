@@ -5,12 +5,21 @@ New code, implementing docs/proposals/wikipedia-locate.md section 2.1
 Twenty thousand sources fit neither ``workspace.yaml`` -- which every command
 validates -- nor a single rewritten file, so a sourceset is:
 
-* ``manifest-<n>.jsonl``: a header line, then one canonical JSON entry per source
-  sorted by ``source_id``.  A version is written once and never again; version
-  n+1 holds every source of version n with every non-null field unchanged
+* ``manifest-<n>.jsonl``: a header line, then canonical JSON entries sorted by
+  ``source_id``.  A version is written once and never again; version n+1 holds
+  every source of version n with every non-null field unchanged
   (:func:`append_only_problems`), names version n's sha as
   ``previous_sha256``, and is written only if no other writer got there first
   (:meth:`Sourceset.write_version`).  A run pins ``(id, version, sha256)``.
+  A version is a **snapshot** (``cf-sourceset/1``: every entry) or a **delta**
+  (``cf-sourceset-delta/1``: only the entries that are new or changed since
+  version n-1, its header still counting every source).  A full fetch writes a
+  version every checkpoint, and thirty thousand entries are ten megabytes, so
+  a version is a delta unless it changes half the sources or follows
+  :data:`MAX_DELTA_CHAIN` deltas; reading one replays the deltas onto the
+  snapshot before them, checking the ``previous_sha256`` chain and the
+  append-only rule at every step.  The pinned sha is the version file's own,
+  and through that chain it fixes every entry.
 * ``sources/<source-id>/``: the raw bytes, the canonical body and the rendered
   views of one source, validated lazily against the shas its entry records
   (:meth:`Sourceset.source_problems`) -- never all twenty thousand at load.
@@ -42,6 +51,10 @@ from cflib.paths import WorkspacePaths
 from . import websource
 
 SCHEMA = "cf-sourceset/1"
+DELTA_SCHEMA = "cf-sourceset-delta/1"
+#: a version is a snapshot after this many deltas in a row, so reading the
+#: newest replays at most this many files onto one snapshot
+MAX_DELTA_CHAIN = 64
 STATE_SCHEMA = "cf-sourceset-state/1"
 #: keys of state.json that are no section: the header, and what refresh_state owns
 _STATE_RESERVED = frozenset({"schema", "id", "family", "manifest", "counts", "updated_at"})
@@ -93,6 +106,12 @@ class Manifest:
     sha256: str | None
     header: dict
     entries: dict[str, dict] = field(default_factory=dict)
+    #: how many deltas in a row end at this version (0: it is a snapshot)
+    chain: int = 0
+
+    @property
+    def is_delta(self) -> bool:
+        return self.header.get("schema") == DELTA_SCHEMA
 
     @property
     def family(self) -> str:
@@ -219,12 +238,50 @@ class Sourceset:
         return self.load(versions[-1])
 
     def load(self, version: int) -> Manifest:
-        """Read and check one version: header, order, entries, and the chain to the one before."""
+        """Read and check one version: header, order, entries, and the chain to the one before.
+
+        A delta is replayed onto the version before it, back to the nearest
+        snapshot: every link's ``previous_sha256`` must be the sha of the file
+        before it, and every delta must follow its predecessor append-only.
+        """
         path = self.paths.sourceset_manifest(self.id, version)
         if not path.is_file():
             raise SourcesetError(f"sourceset {self.id!r} has no version {version}",
                                  hint=f"versions on disk: {self.versions()}")
-        raw = path.read_bytes()
+        # the files back to the nearest snapshot, newest first
+        chain: list[tuple[int, Path, bytes, dict, list[dict]]] = []
+        number = version
+        while True:
+            link_path = self.paths.sourceset_manifest(self.id, number)
+            if not link_path.is_file():
+                raise SourcesetError(f"sourceset {self.id!r} version {version} needs version "
+                                     f"{number}, which is not on disk",
+                                     hint="a delta version is read from the versions before "
+                                          "it; restore the missing file")
+            raw = link_path.read_bytes()
+            header, rows = self._parse(link_path, raw)
+            chain.append((number, link_path, raw, header, rows))
+            if header.get("schema") != DELTA_SCHEMA:
+                break
+            if number == 1:
+                raise SourcesetError(f"{link_path}: version 1 cannot be a delta")
+            number -= 1
+            if len(chain) > MAX_DELTA_CHAIN + 1:
+                raise SourcesetError(f"{path}: more than {MAX_DELTA_CHAIN} deltas in a row")
+        manifest = None
+        for number, link_path, raw, header, rows in reversed(chain):
+            manifest = self._build(number, link_path, raw, header, rows, manifest)
+        # the snapshot itself chains to the file before it (a rewritten version)
+        first = chain[-1][0]
+        if first > 1:
+            prev_path = self.paths.sourceset_manifest(self.id, first - 1)
+            if prev_path.is_file() and chain[-1][3].get("previous_sha256") != \
+                    sha256_file(prev_path):
+                raise SourcesetError(f"{chain[-1][1]}: previous_sha256 is not the sha of "
+                                     f"version {first - 1} (a version was rewritten)")
+        return manifest
+
+    def _parse(self, path: Path, raw: bytes) -> tuple[dict, list]:
         lines = split_lines(raw.decode("utf-8"))
         if not lines:
             raise SourcesetError(f"{path} is empty")
@@ -233,13 +290,19 @@ class Sourceset:
             rows = [json.loads(line) for line in lines[1:] if line.strip()]
         except ValueError as exc:
             raise SourcesetError(f"{path}: not JSON lines ({exc})") from None
+        return (header if isinstance(header, dict) else {"schema": None}), rows
+
+    def _build(self, version: int, path: Path, raw: bytes, header: dict, rows: list,
+               before: Manifest | None) -> Manifest:
+        """One version from its file, given the version before it when it is a delta."""
         problems: list[str] = []
-        if not isinstance(header, dict) or header.get("schema") != SCHEMA:
-            problems.append(f"line 1 is not a {SCHEMA} header")
+        delta = header.get("schema") == DELTA_SCHEMA
+        if header.get("schema") not in (SCHEMA, DELTA_SCHEMA):
+            problems.append(f"line 1 is not a {SCHEMA} or {DELTA_SCHEMA} header")
         elif header.get("id") != self.id or header.get("version") != version:
             problems.append(f"the header says sourceset {header.get('id')!r} version "
                             f"{header.get('version')!r}")
-        entries: dict[str, dict] = {}
+        lines: dict[str, dict] = {}
         previous = None
         for number, row in enumerate(rows, 2):
             for problem in websource.entry_problems(row):
@@ -250,23 +313,39 @@ class Sourceset:
             if previous is not None and sid <= previous:
                 problems.append(f"line {number}: {sid} is out of order or repeated")
             previous = sid
-            if isinstance(header, dict) and row.get("family") != header.get("family"):
+            if row.get("family") != header.get("family"):
                 problems.append(f"line {number}: family {row.get('family')!r} in a "
                                 f"{header.get('family')!r} sourceset")
-            entries[sid] = row
-        if isinstance(header, dict) and header.get("sources") != len(entries):
-            problems.append(f"the header counts {header.get('sources')!r} sources, the file "
-                            f"holds {len(entries)}")
+            lines[sid] = row
+        if delta:
+            assert before is not None
+            if header.get("previous_sha256") != before.sha256:
+                problems.append(f"previous_sha256 is not the sha of version {version - 1} "
+                                f"(a version was rewritten)")
+            if header.get("family") != before.family:
+                problems.append(f"family {header.get('family')!r} after a "
+                                f"{before.family!r} version")
+            # only the delta's lines can break the rule: check those, not every entry
+            touched = Manifest(self.id, before.version, None, None, {},
+                               {sid: before.entries[sid] for sid in lines
+                                if sid in before.entries})
+            problems.extend(append_only_problems(touched, lines))
+            unchanged = [sid for sid, row in lines.items() if before.entries.get(sid) == row]
+            if unchanged:
+                problems.append(f"{len(unchanged)} line(s) repeat an entry unchanged "
+                                f"({unchanged[0]}): a delta holds only what changed")
+            entries = {**before.entries, **lines}
+        else:
+            entries = lines
+        if header.get("sources") != len(entries):
+            problems.append(f"the header counts {header.get('sources')!r} sources, the "
+                            f"version holds {len(entries)}")
         if problems:
             raise SourcesetError(f"{path} is not a valid manifest: " + "; ".join(problems[:5])
                                  + (f" (+{len(problems) - 5} more)" if len(problems) > 5 else ""))
-        sha = hashlib.sha256(raw).hexdigest()
-        if version > 1:
-            prev_path = self.paths.sourceset_manifest(self.id, version - 1)
-            if prev_path.is_file() and header.get("previous_sha256") != sha256_file(prev_path):
-                raise SourcesetError(f"{path}: previous_sha256 is not the sha of version "
-                                     f"{version - 1} (a version was rewritten)")
-        return Manifest(self.id, version, path, sha, header, entries)
+        chain = (before.chain + 1) if delta else 0
+        return Manifest(self.id, version, path, hashlib.sha256(raw).hexdigest(), header,
+                        entries, chain)
 
     def pinned(self, version: int, manifest_sha256: str) -> Manifest:
         """The version a run pinned, refused when its bytes are not the pinned ones."""
@@ -310,10 +389,16 @@ class Sourceset:
         if new == base.entries:
             return base
         version = base.version + 1
-        header = {"schema": SCHEMA, "id": self.id, "version": version, "family": base.family,
+        changed = {sid: row for sid, row in new.items() if base.entries.get(sid) != row}
+        delta = 2 * len(changed) < len(new) and base.chain < MAX_DELTA_CHAIN and version > 1
+        header = {"schema": DELTA_SCHEMA if delta else SCHEMA, "id": self.id,
+                  "version": version, "family": base.family,
                   "previous_sha256": base.sha256, "created": now or state_mod.now(),
                   "sources": len(new)}
-        rows = [header] + [new[k] for k in sorted(new)]
+        if delta:
+            header["changed"] = len(changed)
+        body = changed if delta else new
+        rows = [header] + [body[k] for k in sorted(body)]
         text = "".join(canonical_line(x) + "\n" for x in rows)
         # read it back as load() will, BEFORE the version exists: once linked it is
         # permanent, and one unreadable version wedges every later command

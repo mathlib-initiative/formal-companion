@@ -6,7 +6,9 @@ sections 7-10 are the contract):
 
 * a sourceset (section 7): ``manifest-<n>.jsonl`` -- a header line, then one
   canonical entry per source -- and a source directory's ``layer.txt``,
-  ``sections.json``, ``paragraphs.json`` and ``finders.json``;
+  ``sections.json``, ``paragraphs.json`` and ``finders.json``; a version written
+  as a delta (``cf-sourceset-delta/1``) is replayed by the sourceset's own
+  reader, ``sources.sourceset.Sourceset.load``, the one import from a producer;
 * a universe (section 8): ``universe.yaml`` and ``corpus.sqlite``, opened
   ``mode=ro&immutable=1`` as everywhere else;
 * a harvested locate run (sections 9 and 10): ``runs/<run>/run.yaml``, the task
@@ -77,6 +79,11 @@ def load_manifest(paths: WorkspacePaths, sourceset: str, version: int | None = N
         rows = [json.loads(line) for line in lines[1:]]
     except json.JSONDecodeError as exc:
         raise CfError(f"{path}: not JSON lines ({exc.msg})") from exc
+    if isinstance(header, dict) and header.get("schema") == "cf-sourceset-delta/1":
+        from sources.sourceset import Sourceset
+        full = Sourceset(paths, sourceset).load(int(version))
+        return Manifest(sourceset, int(version), path, full.sha256, full.header,
+                        {sid: full.entries[sid] for sid in sorted(full.entries)})
     if not isinstance(header, dict) or header.get("schema") != "cf-sourceset/1":
         raise CfError(f"{path}: the first line is not a cf-sourceset/1 header")
     entries: dict[str, dict] = {}
