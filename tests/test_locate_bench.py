@@ -1425,9 +1425,14 @@ class TestTheCuratedJoinIsL2s(unittest.TestCase):
         l2 = set()
         for entry in (world.articles[s]["entry"] for s in sorted(world.articles)):
             qid, key = entry["wikidata"], candidates.normalise_title(entry["title"])
-            l2 |= {(entry["source_id"], "mathlib_1000", n) for n in lists.by_qid_1000.get(qid, [])}
-            for _number, names in lists.by_title_100.get(qid, []) + lists.by_title_100.get(key, []):
+            # (key, names) per entry: a suffixed key (Q…A) joins its base QID
+            l2 |= {(entry["source_id"], "mathlib_1000", n)
+                   for _key, names in lists.by_qid_1000.get(qid, []) for n in names}
+            for _number, names in lists.by_qid_100.get(qid, []):
                 l2 |= {(entry["source_id"], "mathlib_100", n) for n in names}
+            for _number, names, own in lists.by_title_100.get(key, []):
+                if not (own and qid and own != qid):     # a title join naming another QID is refused
+                    l2 |= {(entry["source_id"], "mathlib_100", n) for n in names}
         conn = inputs.open_checked(world.paths, world.universe())
         try:
             resolved = gold_mod.resolve_g1(
