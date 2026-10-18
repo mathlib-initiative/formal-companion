@@ -20,6 +20,11 @@ instead of running the agent CLI themselves:
   ``CF_AGENT_TIMEOUT`` (``45m``; ``s``/``m``/``h`` or seconds); expiry kills the
   group and exits 124.  An expiry is an infrastructure failure, never a
   verdict: the bridge exits non-zero and tend retries the same worktree.
+* **Signals are forwarded.**  The agent runs in its own session, so a TERM,
+  INT or HUP sent to the bridge's process group (tend stopping, a Ctrl-C, a
+  hang-up) would otherwise leave it running with no timeout and its slot
+  free: each is passed to the agent's group, which is then stopped as on a
+  timeout, before the slot is let go; the call exits 128 + the signal.
 * **409 and empty envelopes** exit 75 (EX_TEMPFAIL) for the same reason.
 * **The envelope is kept.**  The agent's stdout -- Claude's JSON envelope, with
   its usage and ``total_cost_usd`` -- is copied to
@@ -29,7 +34,8 @@ instead of running the agent CLI themselves:
 
 Standard library only: it runs on the run host, where cflib is not installed.
 Exit status: the agent's own on a completed call (the bridge normalises it),
-124 on a timeout, 75 on an empty or 409 envelope, 64 on a usage error.
+124 on a timeout, 75 on an empty or 409 envelope, 128 + N when signal N
+stopped it, 64 on a usage error.
 """
 from __future__ import annotations
 
@@ -54,6 +60,8 @@ DEFAULT_TIMEOUT = "45m"
 POLL_SECONDS = 5.0
 #: seconds between the TERM and the KILL of a timed-out process group
 KILL_GRACE = 30.0
+#: what a caller's stop arrives as; each is forwarded to the agent's group
+FORWARDED_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 _CONFLICT = re.compile(r"(?:\b(?:HTTP|status|API Error|error)\W{0,4}409\b|\b409\W{0,3}"
                        r"(?:conflict|too many))", re.I)
 
@@ -139,6 +147,48 @@ def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str
         return None
 
 
+class _Signalled(Exception):
+    def __init__(self, signum: int):
+        super().__init__(signum)
+        self.signum = signum
+
+
+def stop_group(proc: subprocess.Popen) -> None:
+    """TERM the agent's process group, then KILL it after :data:`KILL_GRACE`."""
+    for sig, grace in ((signal.SIGTERM, KILL_GRACE), (signal.SIGKILL, None)):
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=grace)
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+
+def _forward_signals(proc: subprocess.Popen) -> dict:
+    """Pass TERM/INT/HUP on to the agent's group; the first one also ends the wait."""
+    caught: list[int] = []
+
+    def forward(signum, _frame):
+        try:
+            os.killpg(proc.pid, signum)
+        except OSError:
+            pass
+        if not caught:
+            caught.append(signum)
+            raise _Signalled(signum)
+
+    previous = {}
+    for sig in FORWARDED_SIGNALS:
+        try:
+            previous[sig] = signal.signal(sig, forward)
+        except (ValueError, OSError):      # not the main thread: nothing to forward from
+            pass
+    return previous
+
+
 def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
         usage_dir: Path | None, task_id: str, slots: int, timeout: float,
         poll: float = POLL_SECONDS) -> int:
@@ -156,28 +206,32 @@ def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
     # This call's stderr on its own, so a 409 an EARLIER call logged to the shared
     # err file cannot make this one read as a conflict; appended there afterwards.
     err_tmp = raw_path.with_name(raw_path.name + ".stderr")
+    signalled = 0
+    previous: dict = {}
     try:
         with open(raw_path, "wb") as out, open(err_tmp, "wb") as err_fh:
             proc = subprocess.Popen(argv, stdin=subprocess.DEVNULL, stdout=out, stderr=err_fh,
                                     start_new_session=True, close_fds=True)
+            previous = _forward_signals(proc)
             try:
                 code = proc.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
-                for sig, grace in ((signal.SIGTERM, KILL_GRACE), (signal.SIGKILL, None)):
-                    try:
-                        os.killpg(proc.pid, sig)
-                    except OSError:
-                        pass
-                    try:
-                        proc.wait(timeout=grace)
-                        break
-                    except subprocess.TimeoutExpired:
-                        continue
+                stop_group(proc)
                 code = None
+            except _Signalled as exc:
+                # the agent's group got the signal; make sure it is gone before
+                # the slot is let go, or a 16th session could start beside it
+                stop_group(proc)
+                code, signalled = None, exc.signum
     except OSError as exc:
         log(f"agent_call: could not run {argv[0]!r}: {exc}")
         return EXIT_TEMPFAIL
     finally:
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler)
+            except (ValueError, OSError):
+                pass
         os.close(fd)
     stderr_bytes = err_tmp.read_bytes() if err_tmp.exists() else b""
     try:
@@ -198,6 +252,11 @@ def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
     kept = keep_envelope(usage_dir, raw, task_id=task_id, role=role)
     seconds = time.time() - started
     where = f" (kept at {kept})" if kept else ""
+    if signalled:
+        log(f"agent_call: role={role} task={task_id or '-'} slot={number} STOPPED by signal "
+            f"{signalled} after {seconds:.0f}s; the agent's process group was stopped with it"
+            f"{where}")
+        return 128 + signalled
     if code is None:
         log(f"agent_call: role={role} task={task_id or '-'} slot={number} TIMED OUT after "
             f"{seconds:.0f}s: an infrastructure failure, not a verdict{where}")
