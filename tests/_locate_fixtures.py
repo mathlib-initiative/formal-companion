@@ -1,12 +1,20 @@
-"""Synthetic locate inputs, built by the formats of references/locate-documents.md.
+"""Synthetic locate inputs, built by the owners' own producers.
 
-New code, for the planner's tests (tests/test_locate_planner.py and its
-siblings).  The sourceset, the rendered web sources, the universe and
-``corpus.sqlite`` are other packages' artifacts; these tests build them from
-the documented format (sections 7 and 8) so the planner is tested against the
-format and nothing else.  Every page, library and declaration is made up: the
-article "Widget lemma" (page 1001, revision 2002, Q99999001), "Gadget theorem"
-(page 1003, revision 2004, Q99999002) and the libraries ``alpha`` and ``beta``.
+New code, for the planner's tests (tests/test_locate_planner.py).  The
+sourceset, the rendered web sources, the universe and ``corpus.sqlite`` are
+other packages' artifacts, so these fixtures make them the way those packages
+do (references/locate-documents.md sections 7 and 8): a sourceset through
+``sources.sourceset.Sourceset`` with entries from ``sources.websource.entry``,
+each source's views from ``sources.render_html.render_directory`` over a real
+HTML body, and a universe through ``corpus.universe.Universe`` whose
+``decls.jsonl`` indexes are pinned with ``set_index`` and built into
+``corpus.sqlite`` (and the G1-blind ``corpus.blind.sqlite``) by
+``corpus.build_db.build``.  The inventory passages are what a worker following
+the prompt writes -- a quote that starts each passage, one passage per finder
+start -- placed by ``scripts/locate/passage_ids.py``.  Every page, library and
+declaration is made up: the article "Widget lemma" (page 1001, revision 2002,
+Q99999001), "Gadget theorem" (page 1003, revision 2004, Q99999002) and the
+libraries ``alpha`` and ``beta``.
 """
 from __future__ import annotations
 
@@ -15,9 +23,9 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import hashlib
 import io
 import json
-import sqlite3
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
@@ -28,9 +36,13 @@ if str(SCRIPTS) not in sys.path:
     sys.path.insert(0, str(SCRIPTS))
 
 import cf as cf_main  # noqa: E402
-from cflib import hashing, items  # noqa: E402
+from cflib import hashing  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
-from gate import locate_text  # noqa: E402
+from corpus import build_db  # noqa: E402
+from corpus.universe import Universe  # noqa: E402
+from locate import inputs, passage_ids  # noqa: E402
+from sources import render_html, websource  # noqa: E402
+from sources.sourceset import Sourceset  # noqa: E402
 
 ALPHA = "a" * 40
 BETA = "b" * 40
@@ -38,100 +50,59 @@ SS = "wpm"
 U = "u1"
 W1 = "enwiki-1001-2002"
 W2 = "enwiki-1003-2004"
-W3 = "enwiki-1005-2006"          # enumerated, never rendered
+W3 = "enwiki-1005-2006"          # enumerated, never fetched or rendered
+TOOLCHAIN = "leanprover/lean4:v4.34.0"
 
-#: one article as paragraphs; a paragraph is (section path, block, pieces); a
-#: piece is text or ("math", tex) or ("bold", text)
+
+def math(tex: str) -> str:
+    """An inline formula the way MediaWiki's MathML output wraps one."""
+    alt = "{\\displaystyle " + tex + "}"
+    return (f'<span class="mwe-math-element"><span class="mwe-math-mathml-inline">'
+            f'<math alttext="{alt}"><semantics><mrow><mi>{tex}</mi></mrow>'
+            f'<annotation encoding="application/x-tex">{alt}</annotation></semantics></math>'
+            f'</span></span>')
+
+
+#: each article: its metadata and a real body.  Widget lemma's lead paragraph is
+#: the lead AND a bold definition (two finders at one start), its theorem box's
+#: first paragraph opens on a bold that only labels it ("Theorem.", which proposes
+#: no bold definition), and a bold term outside the lead ("spanning") is not one
+#: of its terms.
 ARTICLES = {
     W1: {
         "title": "Widget lemma", "pageid": 1001, "revision": 2002, "wikidata": "Q99999001",
         "assessment": {"class": "B", "importance": "high"},
-        "blocks": [
-            ([], "p", ["In widget theory, the ", ("bold", "widget lemma"),
-                       " states that every finite widget has a spanning gadget, and it is "
-                       "a central result of the subject that every course on widgets covers."]),
-            (["Statement"], "h2", ["Statement"]),
-            (["Statement"], "theorem", ["Theorem. Let ", ("math", "G"), " be a finite widget of "
-                                        "order ", ("math", "n"), ". Then ", ("math", "G"),
-                                        " has a spanning gadget whose size divides ",
-                                        ("math", "n"), " and no smaller gadget spans it."]),
-            (["Statement"], "p", ["A gadget is called ", ("bold", "spanning"), " when it meets "
-                                  "every sprocket of the widget, and any two spanning gadgets "
-                                  "are conjugate under the widget group action on sprockets."]),
-            (["History"], "h2", ["History"]),
-            (["History"], "p", ["The lemma was first stated by a committee of widget theorists "
-                                "in a widely circulated letter that nobody has since found."]),
-        ],
+        "html": (
+            '<div class="mw-parser-output">'
+            "<p>In widget theory, the <b>widget lemma</b> states that every finite widget has "
+            "a spanning gadget, and it is a central result of the subject that every course on "
+            "widgets covers.</p>\n"
+            '<h2 id="Statement">Statement</h2>\n'
+            '<div class="math_theorem"><p><b>Theorem.</b> Let ' + math("G") + " be a finite "
+            "widget of order " + math("n") + ". Then " + math("G") + " has a spanning gadget "
+            "whose size divides " + math("n") + " and no smaller gadget spans it.</p></div>\n"
+            "<p>A gadget is called <b>spanning</b> when it meets every sprocket of the widget, "
+            "and any two spanning gadgets are conjugate under the widget group action on "
+            "sprockets.</p>\n"
+            '<h2 id="History">History</h2>\n'
+            "<p>The lemma was first stated by a committee of widget theorists in a widely "
+            "circulated letter that nobody has since found.</p>"
+            "</div>"),
     },
     W2: {
         "title": "Gadget theorem", "pageid": 1003, "revision": 2004, "wikidata": "Q99999002",
         "assessment": {"class": "C", "importance": "mid"},
-        "blocks": [
-            ([], "p", ["The ", ("bold", "gadget theorem"), " says that the gadgets of a finite "
-                       "widget form a lattice under inclusion whose height is bounded by the "
-                       "order of the widget itself."]),
-            (["Proof"], "h2", ["Proof"]),
-            (["Proof"], "p", ["The proof inducts on the order ", ("math", "n"), " and uses the "
-                              "widget lemma at every step of the induction on the lattice."]),
-        ],
+        "html": (
+            '<div class="mw-parser-output">'
+            "<p>The <b>gadget lattice theorem</b> says that the gadgets of a finite widget form "
+            "a lattice under inclusion whose height is bounded by the order of the widget "
+            "itself.</p>\n"
+            '<h2 id="Proof">Proof</h2>\n'
+            "<p>The proof inducts on the order " + math("n") + " and uses the widget lemma at "
+            "every step of the induction on the lattice.</p>"
+            "</div>"),
     },
 }
-
-
-def render_article(article: dict) -> dict:
-    """Layer, formulas, head, finders, paragraphs and sections of one synthetic article."""
-    layer = ""
-    formulas: list[dict] = []
-    paragraphs: list[dict] = []
-    finders: list[dict] = []
-    headings: list[tuple[int, list[str], str]] = []
-    first_paragraph = True
-    for path, block, pieces in article["blocks"]:
-        if layer:
-            layer += " "
-        start = len(layer)
-        count = 0
-        terms: list[str] = []
-        for piece in pieces:
-            if isinstance(piece, tuple) and piece[0] == "math":
-                alttext = "{\\displaystyle " + piece[1] + "}"
-                text = piece[1] + alttext
-                formulas.append({"span": [len(layer), len(layer) + len(text)],
-                                 "alttext": alttext})
-                layer += text
-                count += 1
-            elif isinstance(piece, tuple) and piece[0] == "bold":
-                terms.append(piece[1])
-                layer += piece[1]
-            else:
-                layer += piece
-        end = len(layer)
-        if block == "h2":
-            headings.append((start, list(path), pieces[0]))
-            continue
-        hits = []
-        if block == "theorem":
-            hits.append({"finder": "theorem_box", "term": ""})
-        if terms and block == "p":
-            hits.append({"finder": "bold_definition", "term": terms[0]})
-        if first_paragraph and block == "p":
-            hits.append({"finder": "lead", "term": ""})
-            first_paragraph = False
-        for hit in hits:
-            finders.append({"finder": hit["finder"], "start": start, "span": [start, end],
-                            "section": list(path), "term": hit["term"]})
-        paragraphs.append({"span": [start, end], "section": list(path),
-                           "block": "div" if block == "theorem" else block,
-                           "formulas": count, "math": bool(count or hits)})
-    sections = []
-    bounds = [0] + [h[0] for h in headings] + [len(layer)]
-    sections.append({"path": [], "fragment": None, "level": 1, "span": [0, bounds[1]]})
-    for i, (start, path, title) in enumerate(headings):
-        sections.append({"path": path, "fragment": title, "level": 2,
-                         "span": [start, bounds[i + 2]]})
-    head = locate_text.HeadMap(layer, formulas).head
-    return {"layer": layer, "formulas": formulas, "head": head, "finders": finders,
-            "paragraphs": paragraphs, "sections": sections}
 
 
 def cf(*argv: str) -> tuple[int, str, str]:
@@ -150,174 +121,200 @@ def make_workspace(root: Path) -> WorkspacePaths:
     return WorkspacePaths(root)
 
 
-def canonical(obj) -> str:
-    return json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+# --------------------------------------------------------------------------
+# the sourceset (section 7), through sources.sourceset and sources.render_html
+# --------------------------------------------------------------------------
 
+def write_sourceset(paths: WorkspacePaths, *, sources=(W1, W2), unrendered=(W3,)) -> Path:
+    """Sourceset ``wpm``: version 1 empty (``Sourceset.create``), version 2 its sources.
 
-def write_sourceset(paths: WorkspacePaths, *, sources=(W1, W2), unrendered=(W3,),
-                    version: int = 1) -> Path:
-    """A rendered sourceset ``wpm`` at ``version``; returns the manifest path."""
+    Each rendered source is what ``cf sourceset fetch`` and ``render`` leave: the
+    raw response bytes, the canonical body, every view ``render_directory``
+    writes and a ``source.json``; the unrendered one is an enumerated entry with
+    no bytes yet.  Returns the newest manifest's path.
+    """
+    ss = Sourceset.create(paths, SS, "enwiki")
+    fam = websource.family("enwiki")
     entries = []
     for sid in sources:
         art = ARTICLES[sid]
-        rendered = render_article(art)
-        d = paths.sourceset_source_dir(SS, sid)
-        d.mkdir(parents=True, exist_ok=True)
-        body = "<div>" + rendered["layer"] + "</div>"
-        (d / "body.html").write_text(body, encoding="utf-8")
-        (d / "source.raw.html").write_text(body, encoding="utf-8")
-        (d / "layer.txt").write_text(rendered["layer"], encoding="utf-8")
-        (d / "head.txt").write_text(rendered["head"], encoding="utf-8")
-        (d / "text.txt").write_text(rendered["layer"], encoding="utf-8")
-        for name in ("formulas", "finders", "paragraphs", "sections"):
-            (d / f"{name}.json").write_text(json.dumps(rendered[name]), encoding="utf-8")
-        entry = {"source_id": sid, "family": "enwiki", "pageid": art["pageid"],
-                 "revision": art["revision"], "title": art["title"],
-                 "wikidata": art["wikidata"], "assessment": art["assessment"],
-                 "origin": "enumerated", "licence_class": "open_share_alike",
-                 "fetch": {"api": "action=parse", "params_sha256": "c" * 64},
-                 "raw_sha256": hashing.sha256_file(d / "source.raw.html"),
-                 "html_sha256": hashing.sha256_file(d / "body.html"),
-                 "layer_sha256": hashing.sha256_file(d / "layer.txt"),
-                 "renderer": "web-html/1"}
-        (d / "source.json").write_text(json.dumps(entry), encoding="utf-8")
+        entry = websource.entry(fam, art["pageid"], art["revision"], title=art["title"],
+                                wikidata=art["wikidata"], assessment=art["assessment"])
+        directory = ss.source_dir(sid)
+        raw = art["html"].encode("utf-8")
+        render_html.write_bytes(directory / "source.raw.html", raw)
+        body = render_html.canonical_body(raw)
+        render_html.write_bytes(directory / "body.html", body.encode("utf-8"))
+        rendering = render_html.render_directory(directory)
+        entry.update(fetch=websource.fetch_block(), raw_sha256=hashlib.sha256(raw).hexdigest(),
+                     html_sha256=render_html.sha256_text(body),
+                     layer_sha256=rendering.layer_sha256, renderer=render_html.RENDERER)
+        (directory / "source.json").write_text(json.dumps(entry, sort_keys=True),
+                                               encoding="utf-8")
         entries.append(entry)
     for sid in unrendered:
-        family, pageid, revision = sid.split("-")
-        entries.append({"source_id": sid, "family": family, "pageid": int(pageid),
-                        "revision": int(revision), "title": "Sprocket",
-                        "wikidata": "Q99999003", "assessment": {"class": "Stub",
-                                                                "importance": "low"},
-                        "origin": "enumerated", "licence_class": "open_share_alike",
-                        "fetch": None, "raw_sha256": None, "html_sha256": None,
-                        "layer_sha256": None, "renderer": None})
-    entries.sort(key=lambda e: e["source_id"])
-    header = {"schema": "cf-sourceset/1", "id": SS, "version": version, "family": "enwiki",
-              "previous_sha256": None, "created": "2026-10-17T12:00:00Z",
-              "sources": len(entries)}
-    path = paths.sourceset_manifest(SS, version)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text("\n".join(canonical(r) for r in [header, *entries]) + "\n",
-                    encoding="utf-8")
-    return path
+        _family, pageid, revision = sid.split("-")
+        entries.append(websource.entry(fam, int(pageid), int(revision), title="Sprocket",
+                                       wikidata="Q99999003",
+                                       assessment={"class": "Stub", "importance": "low"}))
+    return ss.write_version(ss.latest(), entries).path
 
 
-DECLS = [
-    # library, name, module, path, line, end_line, kind, proof_status, statement, signature,
-    # docstring, tags
-    ("alpha", "Widget.exists_spanning_gadget", "Alpha.Widget", "Alpha/Widget.lean", 612, 640,
-     "theorem", "proved", False, "∀ (w : Widget), w.Finite → ∃ g, g.Spans w",
-     "Every finite widget has a spanning gadget.", [("wikidata", "Q99999001")]),
-    ("alpha", "Widget.Spanning", "Alpha.Widget", "Alpha/Widget.lean", 20, 30, "def",
-     "definition", False, "Widget → Gadget → Prop", "A gadget spans a widget.", []),
-    ("alpha", "Widget.spanning_conj", "Alpha.Widget", "Alpha/Widget.lean", 700, 720, "theorem",
-     "statement_only", False, "∀ g h, g.Spans w → h.Spans w → Conj g h",
-     "Spanning gadgets are conjugate.", []),
-    ("alpha", "Widget.card_dvd", "Alpha.Widget", "Alpha/Widget.lean", 650, 660, "theorem",
-     "proved", False, "∀ g, g.Spans w → g.card ∣ w.order", "", []),
-    ("beta", "Beta.Widget.gadget_of_finite", "Beta.Widget", "Beta/Widget.lean", 40, 52,
-     "theorem", "proved", False, "∀ (w : Widget), Finite w → Gadget w",
-     "See https://en.wikipedia.org/wiki/Widget_lemma for the statement.",
-     [("wikipedia", "https://en.wikipedia.org/wiki/Widget_lemma")]),
-    ("beta", "Beta.GadgetLattice", "Beta.Gadget", "Beta/Gadget.lean", 10, 18, "def",
-     "definition", True, "Widget → Prop", "The gadget lattice conjecture.", []),
-    ("beta", "Beta.gadget_lattice_height", "Beta.Gadget", "Beta/Gadget.lean", 30, 44, "theorem",
-     "proved", False, "∀ w, (gadgets w).height ≤ w.order", "Gadget theorem height bound.",
-     [("wikidata", "Q99999002")]),
-]
+def manifest_entries(paths: WorkspacePaths) -> dict:
+    return dict(inputs.manifest(paths, SS).entries)
 
-CORPUS_DDL = """
-CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-CREATE TABLE libraries (id TEXT PRIMARY KEY, repo TEXT NOT NULL, commit_sha TEXT NOT NULL,
-  toolchain TEXT, brain_lib TEXT, index_sha256 TEXT NOT NULL, declarations INTEGER NOT NULL);
-CREATE TABLE decls (id INTEGER PRIMARY KEY, library TEXT NOT NULL, commit_sha TEXT NOT NULL,
-  name TEXT NOT NULL, module TEXT, path TEXT, line INTEGER, end_line INTEGER, kind TEXT,
-  proof_status TEXT NOT NULL, statement INTEGER NOT NULL DEFAULT 0,
-  printable INTEGER NOT NULL DEFAULT 1, signature TEXT, docstring TEXT,
-  UNIQUE (library, commit_sha, name));
-CREATE VIRTUAL TABLE decls_fts USING fts5(name_words, signature, docstring,
-  tokenize = 'unicode61');
-CREATE TABLE tags (decl_id INTEGER NOT NULL, tag TEXT NOT NULL, value TEXT NOT NULL);
-CREATE INDEX tags_by_value ON tags (tag, value);
-"""
+
+# --------------------------------------------------------------------------
+# the universe and its databases (section 8), through corpus.universe / build_db
+# --------------------------------------------------------------------------
+
+def _decl(name, module, path, line, end_line, kind, status, signature, docstring="",
+          statement=False, wikidata=None) -> dict:
+    """One ``decls.jsonl`` record in the shape ``corpus.ingest`` writes."""
+    from corpus.ingest import wikipedia_urls
+
+    tags = [{"tag": "wikidata", "value": wikidata}] if wikidata else []
+    tags += [{"tag": "wikipedia", "value": url} for url in wikipedia_urls(docstring or "")]
+    return {"name": name, "module": module, "path": path, "line": line,
+            "start_line": line, "end_line": end_line, "kind": kind, "proof_status": status,
+            "statement": statement, "printable": True, "signature": signature,
+            "docstring": docstring or None, "axioms": [], "deprecated": None,
+            "private": False, "probe_proof_status": status, "flags": [],
+            "tags": sorted(tags, key=lambda t: (t["tag"], t["value"]))}
+
+
+DECLS = {
+    "alpha": [
+        _decl("Widget.exists_spanning_gadget", "Alpha.Widget", "Alpha/Widget.lean", 612, 640,
+              "theorem", "proved", "∀ (w : Widget), w.Finite → ∃ g, g.Spans w",
+              "Every finite widget has a spanning gadget.", wikidata="Q99999001"),
+        _decl("Widget.Spanning", "Alpha.Widget", "Alpha/Widget.lean", 20, 30, "def",
+              "definition", "Widget → Gadget → Prop", "A gadget spans a widget."),
+        _decl("Widget.spanning_conj", "Alpha.Widget", "Alpha/Widget.lean", 700, 720, "theorem",
+              "statement_only", "∀ g h, g.Spans w → h.Spans w → Conj g h",
+              "Spanning gadgets are conjugate."),
+        _decl("Widget.card_dvd", "Alpha.Widget", "Alpha/Widget.lean", 650, 660, "theorem",
+              "proved", "∀ g, g.Spans w → g.card ∣ w.order"),
+    ],
+    "beta": [
+        _decl("Beta.Widget.gadget_of_finite", "Beta.Widget", "Beta/Widget.lean", 40, 52,
+              "theorem", "proved", "∀ (w : Widget), Finite w → Gadget w",
+              "See https://en.wikipedia.org/wiki/Widget_lemma for the statement."),
+        _decl("Beta.GadgetLattice", "Beta.Gadget", "Beta/Gadget.lean", 10, 18, "def",
+              "definition", "Widget → Prop", "The gadget lattice conjecture.", statement=True),
+        _decl("Beta.gadget_lattice_height", "Beta.Gadget", "Beta/Gadget.lean", 30, 44,
+              "theorem", "proved", "∀ w, (gadgets w).height ≤ w.order",
+              "Gadget theorem height bound.", wikidata="Q99999002"),
+    ],
+}
 
 LIBRARIES = {
     "alpha": {"repo": "https://example.org/alpha", "commit": ALPHA, "brain_lib": "Alpha",
-              "toolchain": "leanprover/lean4:v4.0.0", "roots": ["Alpha"],
-              "licence": {"spdx": "Apache-2.0"}},
+              "roots": ["Alpha"], "licence": "Apache-2.0"},
     "beta": {"repo": "https://example.org/beta", "commit": BETA, "brain_lib": "Beta",
-             "toolchain": "leanprover/lean4:v4.0.0", "roots": ["Beta"],
-             "licence": {"spdx": "MIT"}},
+             "roots": ["Beta"], "licence": "MIT"},
 }
 
 
-def write_universe(paths: WorkspacePaths, *, decls=DECLS) -> Path:
-    """Universe ``u1`` (alpha, beta) with its universe.yaml and corpus.sqlite."""
-    from locate.inputs import name_words, universe_sha256
-    from cflib.yamlio import write_yaml
+def write_universe(paths: WorkspacePaths, *, decls=None, blind: bool = True) -> Path:
+    """Universe ``u1`` (alpha, beta; gamma excluded), its indexes and its databases.
 
-    libs = []
+    The indexes are synthetic ``decls.jsonl`` files pinned with ``set_index``;
+    ``corpus.build_db.build`` writes ``corpus.sqlite`` (and, with ``blind``,
+    ``corpus.blind.sqlite``) and records them in ``universe.yaml``.
+    """
+    decls = DECLS if decls is None else decls
+    path = paths.universe_yaml(U)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    universe = Universe.create(path, U, "2026-10-17")
     for lid, lib in LIBRARIES.items():
-        count = sum(1 for d in decls if d[0] == lid)
-        libs.append({"id": lid, **lib, "index": {"path": f"index/{lid}/",
-                                                 "sha256": hashing.sha256_text(lid),
-                                                 "declarations": count}})
-    data = {"id": U, "frozen": "2026-10-17", "libraries": libs,
-            "excluded": [{"id": "gamma", "reason": "did not build"}],
-            "universe_sha256": universe_sha256(libs)}
-    paths.universe_dir(U).mkdir(parents=True, exist_ok=True)
-    write_yaml(paths.universe_yaml(U), data)
-    db = paths.corpus_db(U)
-    if db.exists():
-        db.unlink()
-    conn = sqlite3.connect(db)
-    conn.execute("PRAGMA journal_mode=DELETE")
-    conn.executescript(CORPUS_DDL)
-    conn.executemany("INSERT INTO meta VALUES (?, ?)",
-                     [("schema", "cf-corpus/1"), ("universe", U),
-                      ("universe_sha256", data["universe_sha256"]), ("built", "2026-10-17")])
-    for lib in libs:
-        conn.execute("INSERT INTO libraries VALUES (?, ?, ?, ?, ?, ?, ?)",
-                     (lib["id"], lib["repo"], lib["commit"], lib["toolchain"],
-                      lib["brain_lib"], lib["index"]["sha256"], lib["index"]["declarations"]))
-    for i, (lid, name, module, path, line, end, kind, status, statement, sig, doc,
-            tags) in enumerate(decls, 1):
-        conn.execute("INSERT INTO decls VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                     (i, lid, LIBRARIES[lid]["commit"], name, module, path, line, end, kind,
-                      status, int(statement), 1, sig, doc))
-        conn.execute("INSERT INTO decls_fts (rowid, name_words, signature, docstring) "
-                     "VALUES (?, ?, ?, ?)", (i, name_words(name), sig, doc))
-        for tag, value in tags:
-            conn.execute("INSERT INTO tags VALUES (?, ?, ?)", (i, tag, value))
-    conn.commit()
-    conn.close()
-    return db
+        universe.add_library(library_id=lid, repo=lib["repo"], commit=lib["commit"],
+                             toolchain=TOOLCHAIN, roots=lib["roots"], brain_lib=lib["brain_lib"],
+                             licence=lib["licence"])
+    universe.exclude("gamma", "did not build")
+    universe.record_canary(toolchain=TOOLCHAIN, passed=True, cases={}, index_sha256="0" * 64,
+                           checked="2026-10-17T00:00:00Z")
+    udir = paths.universe_dir(U)
+    for lid in LIBRARIES:
+        rows = sorted(decls.get(lid, []), key=lambda r: r["name"])
+        index = udir / "index" / lid / "decls.jsonl"
+        index.parent.mkdir(parents=True, exist_ok=True)
+        index.write_text("".join(json.dumps(r, sort_keys=True, separators=(",", ":"),
+                                            ensure_ascii=False) + "\n" for r in rows),
+                         encoding="utf-8")
+        universe.set_index(lid, path=f"index/{lid}/", sha256=hashing.sha256_file(index),
+                           declarations=len(rows))
+    build_db.build(universe, udir, paths.corpus_db(U), force=True)
+    if blind:
+        build_db.build(universe, udir, paths.corpus_db_blind(U), force=True, blind=True)
+    universe.save()
+    return paths.corpus_db(U)
 
 
-def passage_rows(sid: str) -> list[dict]:
-    """The inventory passages of one synthetic article: every paragraph a passage."""
-    rendered = render_article(ARTICLES[sid])
-    hm = locate_text.HeadMap(rendered["layer"], rendered["formulas"])
-    starts = [p["span"][0] for p in rendered["paragraphs"]]
-    ids = locate_text.assign_ids(hm.head, [hm.to_head(s) for s in starts])
-    out = []
-    for para, (_start, hexd, words) in zip(rendered["paragraphs"], ids):
-        a, b = para["span"]
-        exact = rendered["layer"][a:b][:80]
-        out.append({"item": items.passage_item(hexd), "head_words": words, "span": [a, b],
-                    "quote": {"exact": exact, "prefix": rendered["layer"][max(0, a - 10):a],
-                              "suffix": ""},
-                    "section": para["section"], "fragment": None,
-                    "passage_kind": "theorem" if para["block"] == "div" else "definition",
-                    "prominence": "central", "scope": "formal_math",
-                    "statement": "informal restatement", "concept": None,
-                    "finder": "model"})
-    return out
+def universe_pin(paths: WorkspacePaths) -> dict:
+    u = inputs.load_universe(paths, U)
+    return {"id": u.id, "sha256": u.sha256}
+
+
+# --------------------------------------------------------------------------
+# documents, the way the prompts say to write them
+# --------------------------------------------------------------------------
+
+def header(mode: str, run_id: str, task_id: str, sid: str, entry: dict, *, universe=None) -> dict:
+    doc = {"schema": "cf-locate/1", "mode": mode, "run_id": run_id, "task_id": task_id,
+           "source_id": sid, "source_sha": entry["html_sha256"],
+           "layer_sha256": entry["layer_sha256"], "renderer": entry["renderer"]}
+    if universe is not None:
+        doc.update(universe=universe["id"], universe_sha256=universe["sha256"])
+    return doc
+
+
+#: (passage_kind, prominence, scope) per finder start / paragraph start, in layer order
+INVENTORY_LABELS = {
+    W1: [("definition", "subject", "formal_math"), ("theorem", "central", "formal_math"),
+         ("definition", "supporting", "formal_math"), ("other", "supporting", "expository")],
+    W2: [("theorem", "subject", "formal_math"), ("other", "supporting", "formal_math")],
+}
+
+
+def passage_rows(paths: WorkspacePaths, sid: str) -> list[dict]:
+    """One passage per paragraph START of the rendered source, placed by passage_ids.
+
+    Two blocks (a theorem box and its first paragraph) or two finders (the lead
+    and a bold definition) at one start are one passage, its ``finder`` one of
+    that start's finders (``model`` where none starts); each passage's quote is
+    the first words of the layer at its start.
+    """
+    view = inputs.source_view(paths, SS, sid)
+    layer, formulas = view.layer_and_formulas()
+    paragraphs = view.paragraphs()
+    sections = {tuple(s["path"]): s.get("fragment") for s in view.sections()}
+    finders: dict[int, list[str]] = {}
+    for f in view.finders():
+        finders.setdefault(int(f["start"]), []).append(f["finder"])
+    rows, seen = [], set()
+    for para in paragraphs:
+        start = int(para["span"][0])
+        if start in seen:
+            continue
+        seen.add(start)
+        exact = " ".join(layer[start:].split(" ")[:5])
+        rows.append({"item": "", "head_words": 0, "span": None,
+                     "quote": {"exact": exact, "prefix": "", "suffix": ""},
+                     "section": list(para["section"]),
+                     "fragment": sections.get(tuple(para["section"])),
+                     "passage_kind": "other", "prominence": "supporting",
+                     "scope": "formal_math", "statement": "informal restatement",
+                     "concept": None, "finder": sorted(finders.get(start, ["model"]))[0]})
+    doc = {"passages": rows}
+    problems = passage_ids.place(doc, layer, formulas, paragraphs)
+    assert not problems, problems
+    return doc["passages"]
 
 
 def write_harvest(paths: WorkspacePaths, run_id: str, docs: dict[str, dict], *,
                   complete=True, gate_ok=True) -> Path:
-    """``corpus/<run>/findings/<task>/<source>.json`` plus a RECEIPT.json."""
+    """``corpus/<run>/<task-id>/<source-id>.json`` (the harvested layout) and a RECEIPT.json."""
     root = paths.corpus_run_dir(run_id)
     for rel, doc in docs.items():
         path = root / rel
@@ -329,53 +326,19 @@ def write_harvest(paths: WorkspacePaths, run_id: str, docs: dict[str, dict], *,
     return root
 
 
-# --------------------------------------------------------------------------
-# a whole synthetic campaign, stage by stage
-# --------------------------------------------------------------------------
-
-def header(mode: str, run_id: str, task_id: str, sid: str, entry: dict, *, universe=None) -> dict:
-    doc = {"schema": "cf-locate/1", "mode": mode, "run_id": run_id, "task_id": task_id,
-           "source_id": sid, "source_sha": entry["html_sha256"],
-           "layer_sha256": entry["layer_sha256"], "renderer": "web-html/1"}
-    if universe is not None:
-        doc.update(universe=universe["id"], universe_sha256=universe["sha256"])
-    return doc
-
-
-#: prominence/scope/kind per paragraph index of each article
-INVENTORY_LABELS = {
-    W1: [("definition", "subject", "formal_math"), ("theorem", "central", "formal_math"),
-         ("definition", "supporting", "formal_math"), ("other", "supporting", "expository")],
-    W2: [("theorem", "subject", "formal_math"), ("other", "supporting", "formal_math")],
-}
-
-
-def inventory_documents(entries: dict, run_id: str = "inv-1") -> dict[str, dict]:
+def inventory_documents(paths: WorkspacePaths, run_id: str = "inv-1") -> dict[str, dict]:
+    entries = manifest_entries(paths)
     docs = {}
     for sid, labels in INVENTORY_LABELS.items():
-        rows = passage_rows(sid)
+        rows = passage_rows(paths, sid)
+        assert len(rows) == len(labels), (sid, len(rows))
         for row, (kind, prominence, scope) in zip(rows, labels):
             row.update(passage_kind=kind, prominence=prominence, scope=scope)
         tid = f"inv-{sid}"
         doc = header("locate-inventory", run_id, tid, sid, entries[sid])
         doc.update(passages=rows, skips=[], notes="")
-        docs[f"findings/{tid}/{sid}.json"] = doc
+        docs[f"{tid}/{sid}.json"] = doc
     return docs
-
-
-def manifest_entries(paths: WorkspacePaths) -> dict:
-    out = {}
-    path = paths.sourceset_manifest(SS, 1)
-    for line in path.read_text(encoding="utf-8").splitlines()[1:]:
-        row = json.loads(line)
-        out[row["source_id"]] = row
-    return out
-
-
-def universe_pin(paths: WorkspacePaths) -> dict:
-    from locate import inputs
-    u = inputs.load_universe(paths, U)
-    return {"id": u.id, "sha256": u.sha256}
 
 
 def locate_documents(paths: WorkspacePaths, run_id: str = "loc-1") -> dict[str, dict]:
@@ -389,18 +352,26 @@ def locate_documents(paths: WorkspacePaths, run_id: str = "loc-1") -> dict[str, 
         for d in manifest["documents"]:
             sid = d["source_id"]
             doc = header("locate", run_id, tid, sid, entries[sid], universe=uni)
-            doc["passages"] = [LOCATE_ANSWERS[sid][i](p["item"])
-                               for i, p in enumerate(_ordered(sid, d["passages"]))]
-            docs[f"findings/{tid}/{sid}.json"] = doc
+            order = [p["item"] for p in frozen_formal_math(paths, sid)]
+            doc["passages"] = [LOCATE_ANSWERS[sid][order.index(p["item"])](p["item"])
+                               for p in d["passages"]]
+            docs[f"{tid}/{sid}.json"] = doc
     return docs
 
 
-def _ordered(sid, passages):
-    return passages
+def frozen_formal_math(paths: WorkspacePaths, sid: str) -> list[dict]:
+    """The inventory's formal_math passages of one source, in layer order."""
+    rows = passage_rows(paths, sid)
+    return [r for r, (_k, _p, scope) in zip(rows, INVENTORY_LABELS[sid])
+            if scope == "formal_math"]
 
 
 def _receipt(*queries, candidates=()):
     return {"queries": list(queries), "candidates": list(candidates)}
+
+
+def _cand(lib, decl, verdict="accepted", reason=""):
+    return {"library": lib, "declaration": decl, "verdict": verdict, "reason": reason}
 
 
 def _loc(lib, decl, relation="exactMatch", rank=1, note=""):
@@ -408,12 +379,16 @@ def _loc(lib, decl, relation="exactMatch", rank=1, note=""):
             "confidence": "high", "note": note, "witness": "states it"}
 
 
+#: per source, the answer for each formal_math passage in layer order
 LOCATE_ANSWERS = {
     W1: [
         lambda item: {"item": item, "outcome": "located",
                       "locations": [_loc("alpha", "Widget.exists_spanning_gadget"),
                                     _loc("beta", "Beta.Widget.gadget_of_finite", "broadMatch", 2)],
-                      "receipt": _receipt("widget lemma", "spanning gadget exists")},
+                      "receipt": _receipt("widget lemma", "spanning gadget exists",
+                                          candidates=[
+                                              _cand("alpha", "Widget.exists_spanning_gadget"),
+                                              _cand("beta", "Beta.Widget.gadget_of_finite")])},
         lambda item: {"item": item, "outcome": "located",
                       "locations": [_loc("alpha", "Widget.card_dvd", "hasPart")],
                       "receipt": _receipt("gadget size divides order")},
@@ -442,7 +417,7 @@ def campaign(case, root: Path) -> WorkspacePaths:
     code, out, err = cf("--workspace", str(root), "plan-locate", "--preset", "locate-inventory",
                         "--sourceset", SS, "--universe", U, "--run-id", "inv-1")
     case.assertEqual(code, 0, out + err)
-    write_harvest(paths, "inv-1", inventory_documents(manifest_entries(paths)))
+    write_harvest(paths, "inv-1", inventory_documents(paths))
     return paths
 
 
@@ -466,7 +441,7 @@ def challenge_documents(paths: WorkspacePaths, run_id: str = "chl-1", *,
             sid = d["source_id"]
             doc = header("locate-challenge", run_id, tid, sid, entries[sid], universe=uni)
             doc["verdicts"] = [(verdict or default_verdict)(rec) for rec in d["records"]]
-            docs[f"findings/{tid}/{sid}.json"] = doc
+            docs[f"{tid}/{sid}.json"] = doc
     return docs
 
 

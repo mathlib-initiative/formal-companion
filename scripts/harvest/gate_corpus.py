@@ -24,7 +24,7 @@ if str(_SCRIPTS) not in sys.path:  # pragma: no cover - import side effect
 
 from gate import verify_findings as vf  # noqa: E402
 
-from harvest._compat import CfError, NON_FINDING_FILES  # noqa: E402
+from harvest._compat import CfError, finding_name, iter_finding_files  # noqa: E402
 
 #: A harvested corpus keeps its findings directly in ``corpus/<run-id>/``, not in
 #: a ``findings/`` subdirectory the way a worker's worktree does.
@@ -57,21 +57,25 @@ def gate_corpus(dest: str | Path, gate_config: str | Path,
     books, problems = vf.load_sources(cfg)
     decl_index = vf._load_decl_index(cfg.decl_index) if cfg.decl_index else None
 
-    files = [f for f in sorted((dest / cfg.findings_dir).glob("*.json"))
-             if f.name not in NON_FINDING_FILES and not f.name.startswith(".")]
+    # The receipt's own listing (recursive, harvest/files.py), so every file the
+    # receipt and the tally count is a file this gate validated; a top-level
+    # glob left a nested file counted and never read.
+    base = dest / cfg.findings_dir
+    files = iter_finding_files(base)
     partial: list[str] = []
     notes: list[str] = []
     for f in files:
+        rel = finding_name(f, base)
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except Exception as exc:  # noqa: BLE001 - any parse failure is a gate failure
-            problems.append(f"{f.name}: not valid JSON ({exc})")
+            problems.append(f"{rel}: not valid JSON ({exc})")
             continue
-        problems.extend(vf.validate_doc(doc, f.name, cfg, books, decl_index))
+        problems.extend(vf.validate_doc(doc, rel, cfg, books, decl_index))
         book = vf._book_for(books, vf.doc_source_id(doc, cfg))
-        partial.extend(vf.partial_quotes(doc, f.name, book, max_chars=cfg.max_quote_chars,
+        partial.extend(vf.partial_quotes(doc, rel, book, max_chars=cfg.max_quote_chars,
                                          max_pages=cfg.max_match_pages))
-        notes.extend(vf.binding_notes(doc, f.name, cfg, book))
+        notes.extend(vf.binding_notes(doc, rel, cfg, book))
     if not files:
         problems.append(f"{dest}: the gate found no findings to validate (an empty corpus is "
                         f"not a clean one)")
@@ -112,9 +116,21 @@ def gate_locate_corpus(dest: str | Path, gate_config: str | Path) -> dict:
         return {"ok": False, "config": str(cfg_path), "preset": "locate", "sources": [],
                 "files": 0, "problems": [f"the gate could not run: {exc}"], "partial_quotes": [],
                 "binding_notes": [], "unbound_quotes": 0, "broken": [str(exc)]}
+    # A whole-corpus re-gate is not a worker's attempt: its line in the gate log
+    # (task_id "", every document) would sit beside the workers' own and be
+    # read as one by the bench and the watchdog.  The host's log comes home
+    # separately, to runs/<run>/host/gate.jsonl.
+    cfg.log_dir = None
     result = vl.run_gate(cfg, root=Path(dest), findings_dir=CORPUS_FINDINGS_DIR)
     problems = [f"the gate could not run: {b}" for b in result["broken"]] + result["problems"]
-    return {"ok": result["exit"] == vl.EXIT_OK, "config": str(cfg_path), "preset": cfg.preset,
+    # Backstop: every file the receipt counts is one the gate read, or named.
+    read = {name for _path, name, _task in vl._documents_in(Path(dest) / CORPUS_FINDINGS_DIR)}
+    unread = [name for name in (finding_name(p, dest) for p in iter_finding_files(dest))
+              if name not in read and not any(name in line for line in problems)]
+    problems += [f"{name}: not a <task-id>/<source-id>.json document; the gate did not "
+                 f"validate it" for name in unread]
+    return {"ok": result["exit"] == vl.EXIT_OK and not unread, "config": str(cfg_path),
+            "preset": cfg.preset,
             "mode": cfg.mode, "sources": sorted(cfg.sources), "files": result["documents"],
             "problems": problems, "by_rule": result["by_rule"], "broken": result["broken"],
             "partial_quotes": [], "binding_notes": [], "unbound_quotes": 0}

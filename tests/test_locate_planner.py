@@ -2,14 +2,15 @@
 
 New code, for docs/proposals/wikipedia-locate.md sections 2.6, 2.7, 3, 5, 6,
 7 and 11.1 in the formats of references/locate-documents.md.  The sourceset,
-the universe and ``corpus.sqlite`` are built synthetically by the documented
-format (tests/_locate_fixtures.py); every page, library and declaration is
-made up.  What is pinned: L2's curated joins and their refusals, the three
-presets and the plan's bounds and determinism, the gate.json, task-manifest
-and run.yaml shapes of section 9, the wrapper variables, the prompts, the
-finding rows of section 10 and their ids, the challenge rules and the seeded
-sample, the derived status after challenge, the passage-id tool, the record
-builder's caps and shapes against the vendored checker, and the sealed set.
+the universe and ``corpus.sqlite`` are made by their owners' own producers
+(tests/_locate_fixtures.py); every page, library and declaration is made up.
+What is pinned: L2's curated joins and their refusals, the three presets and
+the plan's bounds and determinism, the two databases a run names, the
+gate.json, task-manifest and run.yaml shapes of section 9, the staged gate
+directory and ``bin/``, the wrapper variables, the prompts, the finding rows
+of section 10 and their ids, the challenge rules and the seeded sample, the
+derived status after challenge, the passage-id tool, the record builder's caps
+and shapes against the vendored checker, and the sealed set.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
+from unittest import mock
 
 HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
@@ -44,7 +46,8 @@ from cflib.jsonio import read_json  # noqa: E402
 from cflib.yamlio import read_yaml  # noqa: E402
 from locate import (candidates as cand_mod, challenge_plan, export as export_mod,  # noqa: E402
                     inputs, outcomes, passage_ids, plan as lplan, presets as lp, records)
-from plan import presets as presets_mod  # noqa: E402
+from locate import tend_root as ltr  # noqa: E402
+from plan import make_tend_root as mtr, presets as presets_mod  # noqa: E402
 
 
 def scratch(case: unittest.TestCase) -> Path:
@@ -90,8 +93,10 @@ class Campaign(unittest.TestCase):
 
 class TestCandidates(Campaign):
 
-    def doc(self, sid=F.W1):
-        return read_json(self.paths.candidates_json(F.SS, F.U, sid))
+    def doc(self, sid=F.W1, kind=None):
+        if kind is None:
+            return read_json(self.paths.candidates_json(F.SS, F.U, sid))
+        return read_json(self.paths.candidates_kind_dir(F.SS, F.U, kind) / f"{sid}.json")
 
     def test_the_curated_joins_and_the_lexical_hits(self):
         doc = self.doc()
@@ -100,12 +105,32 @@ class TestCandidates(Campaign):
         curated = {(h["library"], h["declaration"], h["via"]) for h in doc["curated"]}
         self.assertEqual(curated, {("alpha", "Widget.exists_spanning_gadget", "wikidata_tag"),
                                    ("beta", "Beta.Widget.gadget_of_finite", "docstring_url")})
-        self.assertIn("spanning", doc["terms"])           # the lead's bold term
         lexical = {(h["library"], h["declaration"]) for h in doc["lexical"]}
         self.assertFalse(lexical & {(l, d) for l, d, _ in curated}, "a curated hit repeated")
-        self.assertTrue(all(h["matched"] in ("title", "alias", "bold_term")
-                            for h in doc["lexical"]))
+        self.assertTrue(all(h["matched"] in ("title", "bold_term") for h in doc["lexical"]))
         self.assertTrue(all(h["via"] in vocab.CANDIDATE_VIA for h in doc["curated"]))
+        self.assertEqual(doc["corpus_db"], {"kind": "full", "sha256": hashing.sha256_file(
+            self.paths.corpus_db(F.U))})
+
+    def test_the_terms_are_the_title_and_the_leads_bold_terms(self):
+        """Seam #4, #5: no alias field exists, and a bold word outside the lead (a
+        theorem box's label, a term defined in passing) is not what the article is about."""
+        w1 = self.doc()
+        self.assertEqual(w1["terms"], ["Widget lemma"])     # the lead's bold term is the title
+        self.assertNotIn("spanning", w1["terms"])
+        self.assertNotIn("Theorem.", w1["terms"])
+        self.assertEqual(self.doc(F.W2)["terms"], ["Gadget theorem", "gadget lattice theorem"])
+
+    def test_the_lexical_hits_are_the_host_tools_own_search(self):
+        """Seam #13, #81: one definition of the word search, ``corpus.query.search``."""
+        from corpus import query
+        conn = query.open_db(self.paths.corpus_db(F.U))
+        self.addCleanup(conn.close)
+        doc = self.doc(F.W2)
+        found = {(r["library"], r["declaration"]) for term in doc["terms"]
+                 for r in query.search(conn, term, limit=50)}
+        self.assertTrue(doc["lexical"])
+        self.assertLessEqual({(h["library"], h["declaration"]) for h in doc["lexical"]}, found)
 
     def test_the_curated_lists_are_joined_and_a_phantom_is_dropped_by_name(self):
         lists = self.root.parent / "lists"
@@ -137,10 +162,68 @@ class TestCandidates(Campaign):
         code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
                             "--universe", F.U, "--blind")
         self.assertEqual(code, 0, out + err)
-        doc = self.doc()
+        doc = self.doc(kind="blind")
         self.assertTrue(doc["blind"])
-        self.assertEqual(doc["curated"], [])
+        self.assertEqual((doc["curated"], doc["dropped"], doc["article_qid"]), ([], [], None))
         self.assertTrue(doc["lexical"])
+        self.assertEqual(doc["corpus_db"]["kind"], "blind")
+        self.assertEqual(doc["corpus_db"]["sha256"],
+                         hashing.sha256_file(self.paths.corpus_db_blind(F.U)))
+        # review #38: the arms keep apart -- the assisted file is untouched
+        self.assertFalse(self.doc()["blind"])
+        self.assertTrue(self.doc()["curated"])
+        # review #37: no join shaped the blind list; it is the plain lexical retrieval
+        from corpus import query
+        conn = query.open_db(self.paths.corpus_db_blind(F.U))
+        self.addCleanup(conn.close)
+        terms = [(t, "title" if i == 0 else "bold_term") for i, t in enumerate(doc["terms"])]
+        plain = cand_mod.lexical_hits(terms, inputs.load_universe(self.paths, F.U), conn,
+                                      limit=cand_mod.DEFAULT_LIMIT, exclude=set())
+        self.assertEqual(doc["lexical"], plain)
+        self.assertIn(("alpha", "Widget.exists_spanning_gadget"),
+                      {(h["library"], h["declaration"]) for h in doc["lexical"]})
+
+    def test_the_blind_arm_needs_the_blind_database(self):
+        """D2: --blind reads corpus.blind.sqlite, and refuses when it was never built."""
+        self.paths.corpus_db_blind(F.U).unlink()
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--blind")
+        self.assertNotEqual(code, 0)
+        self.assertIn(f"cf corpus build-db {F.U} --blind", out + err)
+
+    def test_a_planted_database_is_searched_and_must_be_a_full_build(self):
+        """D2 (P tier): --tools-corpus-db names the planted file; a blind one is refused."""
+        planted = self.root.parent / "planted.sqlite"
+        shutil.copy2(self.paths.corpus_db(F.U), planted)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--tools-corpus-db", str(planted))
+        self.assertEqual(code, 0, out + err)
+        sha = hashing.sha256_file(planted)
+        self.assertEqual(self.doc(kind=f"planted-{sha[:16]}")["corpus_db"],
+                         {"kind": "planted", "sha256": sha})
+        shutil.copy2(self.paths.corpus_db_blind(F.U), planted)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--tools-corpus-db", str(planted))
+        self.assertNotEqual(code, 0)
+        self.assertIn("G1-blind", out + err)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--tools-corpus-db", str(planted), "--blind")
+        self.assertNotEqual(code, 0)
+        self.assertIn("two different arms", out + err)
+
+    def test_a_database_built_for_another_state_of_the_universe_is_refused(self):
+        """Seam #20: meta.universe_sha256 must be the universe's, with no escape."""
+        from corpus.universe import Universe
+        u = Universe.load(self.paths.universe_yaml(F.U))
+        index = self.paths.universe_dir(F.U) / "index" / "alpha" / "decls.jsonl"
+        index.write_text(index.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        u.set_index("alpha", path="index/alpha/", sha256=hashing.sha256_file(index),
+                    declarations=len(F.DECLS["alpha"]))
+        u.save()
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U)
+        self.assertNotEqual(code, 0)
+        self.assertIn("another state of universe", out + err)
 
     def test_an_unrendered_named_source_is_refused(self):
         code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
@@ -148,17 +231,13 @@ class TestCandidates(Campaign):
         self.assertNotEqual(code, 0)
         self.assertIn("not rendered", out + err)
 
-    def test_the_state_file_records_the_run(self):
+    def test_the_state_file_records_the_run_through_its_one_writer(self):
         st = read_json(self.paths.sourceset_state_json(F.SS))
+        self.assertEqual((st["schema"], st["id"]), ("cf-sourceset-state/1", F.SS))
         self.assertEqual(st["candidates"][F.U]["sources"], 2)
         self.assertEqual(st["candidates"][F.U]["skipped_unrendered"], 1)
-
-    def test_name_words_and_the_query(self):
-        self.assertEqual(inputs.name_words("Widget.exists_spanning_gadget"),
-                         "widget exists spanning gadget")
-        self.assertEqual(inputs.name_words("Beta.GadgetLattice"), "beta gadget lattice")
-        self.assertEqual(inputs.fts_query('a "b" a'), '"a" "b"')
-        self.assertEqual(inputs.fts_query("x y", any_word=True), '"x" OR "y"')
+        self.assertEqual(st["candidates"][F.U]["corpus_db"]["kind"], "full")
+        self.assertIn("counts", st)                 # the sourceset's own section survives
 
 
 # --------------------------------------------------------------------------
@@ -183,17 +262,41 @@ class TestPresetsAndReaders(unittest.TestCase):
         for mode in vocab.LOCATE_MODES:
             self.assertNotIn(mode, presets_mod.RUNNABLE)
 
-    def test_a_manifest_with_a_bad_header_or_order_is_refused(self):
+    def test_the_manifest_is_the_owners_and_refused_as_the_owner_refuses(self):
+        """Seam #1, #82: ``Sourceset``'s validation, not a private reader's."""
         root = scratch(self)
         paths = F.make_workspace(root)
         path = F.write_sourceset(paths)
+        manifest = inputs.manifest(paths, F.SS)
+        self.assertEqual((manifest.sourceset_id, manifest.version), (F.SS, 2))
+        self.assertEqual(inputs.manifest(paths, F.SS, 1).entries, {})
+        self.assertEqual(inputs.pinned_manifest(paths, manifest.pin()).sha256, manifest.sha256)
+        self.assertEqual(sorted(s for s, e in manifest.entries.items() if inputs.rendered(e)),
+                         [F.W1, F.W2])
         lines = path.read_text().splitlines()
         path.write_text("\n".join([lines[0], lines[2], lines[1], *lines[3:]]) + "\n")
         with self.assertRaises(CfError):
-            inputs.load_manifest(paths, F.SS)
+            inputs.manifest(paths, F.SS)
         path.write_text("\n".join(lines[1:]) + "\n")
         with self.assertRaises(CfError):
-            inputs.load_manifest(paths, F.SS)
+            inputs.manifest(paths, F.SS)
+
+    def test_a_missing_view_is_refused_not_read_as_empty(self):
+        """Seam #2: a source with no finders.json is not a source with no finders."""
+        root = scratch(self)
+        paths = F.make_workspace(root)
+        F.write_sourceset(paths)
+        view = inputs.source_view(paths, F.SS, F.W1)
+        self.assertTrue(view.finders())
+        directory = paths.sourceset_source_dir(F.SS, F.W1)
+        (directory / "finders.json").unlink()
+        with self.assertRaises(CfError) as caught:
+            view.finders()
+        self.assertIn(f"cf sourceset render {F.SS} --source {F.W1}", caught.exception.hint)
+        self.assertTrue(view.paragraphs())
+        (directory / "formulas.json").unlink()
+        with self.assertRaises(CfError):
+            view.layer()
 
     def test_a_universe_whose_sha_is_not_its_libraries_is_refused(self):
         root = scratch(self)
@@ -204,6 +307,18 @@ class TestPresetsAndReaders(unittest.TestCase):
         with self.assertRaises(CfError) as caught:
             inputs.load_universe(paths, F.U)
         self.assertIn("universe_sha256", str(caught.exception))
+
+    def test_the_universe_is_the_owners(self):
+        """Seam #18: ``corpus.universe.Universe.load`` behind the planner's view."""
+        root = scratch(self)
+        paths = F.make_workspace(root)
+        F.write_universe(paths)
+        u = inputs.load_universe(paths, F.U)
+        self.assertEqual(u.sha256, u.owner.sha256())
+        self.assertEqual(sorted(u.libraries), ["alpha", "beta"])
+        self.assertEqual(u.commit("beta"), F.BETA)
+        self.assertEqual([x["id"] for x in u.excluded], ["gamma"])
+        self.assertIsNone(u.mathlib_library())
 
 
 # --------------------------------------------------------------------------
@@ -231,31 +346,111 @@ class TestPlanInventory(Campaign):
         self.assertIn(f"findings/inv-{F.W1}/{F.W1}.json", text)
         self.assertIn("priority: high", text)          # importance: high
 
+    def test_one_passage_per_finder_start_is_what_is_counted(self):
+        """Seam #0: the rows stay one per (finder, start); the worker writes one per start."""
+        manifest = read_json(self.paths.tend_root("inv-1") / "gate" / "tasks" / f"inv-{F.W1}.json")
+        finders = manifest["documents"][0]["finders"]
+        # the lead is also a bold definition (two rows, one start); the theorem box's
+        # bold "Theorem." only labels its paragraph, so it proposes no bold_definition
+        # (web-html/2: cflib.vocab.is_bold_label) and the box start is one row
+        self.assertEqual(len(finders), 4)
+        self.assertEqual(len({f["start"] for f in finders}), 3)
+        by_start: dict[int, set] = {}
+        for f in finders:
+            by_start.setdefault(f["start"], set()).add(f["finder"])
+        self.assertIn({"lead", "bold_definition"}, by_start.values())
+        self.assertIn({"theorem_box"}, by_start.values())
+        text = (self.paths.tasks_dir("inv-1") / f"inv-{F.W1}.yaml").read_text()
+        self.assertIn("(3 finder passage(s))", text)
+        block = read_yaml(self.paths.run_yaml("inv-1"))["locate"]
+        self.assertEqual(block["passages"], 3 + 1)
+        worker = (self.paths.prompts_dir("inv-1") / "worker.md").read_text()
+        self.assertIn("write ONE passage per start", worker)
+        self.assertNotIn("Keep every one of them as a passage", worker)
+
+    def test_a_source_whose_files_moved_is_refused_at_plan_time(self):
+        """Seam #2: the files on disk must be the ones the entry pins."""
+        body = self.paths.sourceset_source_dir(F.SS, F.W1) / "body.html"
+        body.write_bytes(body.read_bytes() + b" ")
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("body.html has sha", out + err)
+        self.assertIn(f"cf sourceset render {F.SS} --source {F.W1}", out + err)
+
+    def test_a_missing_candidates_file_is_refused(self):
+        """Seam #32: the gate's curated-hit rule cannot run without one."""
+        self.paths.candidates_json(F.SS, F.U, F.W2).unlink()
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn(F.W2, out + err)
+        self.assertIn(f"cf locate candidates --sourceset {F.SS} --universe {F.U}", out + err)
+
+    def test_one_source_per_page_the_preferred_one(self):
+        """``Manifest.preferred()``: an adopted revision of a page is planned instead."""
+        from sources import websource
+        from sources.sourceset import Sourceset
+        ss = Sourceset.open(self.paths, F.SS)
+        base = ss.latest()
+        adopted = websource.entry(websource.family("enwiki"), 1001, 2003, title="Widget lemma",
+                                  origin="adopted")
+        ss.write_version(base, [*base, adopted])
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-p")
+        self.assertEqual(code, 0, out + err)
+        block = read_yaml(self.paths.run_yaml("inv-p"))["locate"]
+        self.assertEqual(block["source_ids"], [F.W2])
+        self.assertEqual(block["skipped"], {"enwiki-1001-2003": "not rendered",
+                                            F.W3: "not rendered"})
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-q",
+                            "--source", F.W1)
+        self.assertNotEqual(code, 0)
+        self.assertIn("page 1001 plans enwiki-1001-2003", out + err)
+
     def test_gate_json_is_the_section_9_shape(self):
         gate = self.gate()
         self.assertEqual(set(gate), {
-            "schema", "mode", "preset", "run_id", "kinds", "universe", "corpus_db", "sourceset",
-            "sources", "candidates_dir", "blind", "inventory", "challenged_runs", "findings_dir",
-            "tasks_dir", "log_dir", "orchestrator_db", "max_locations", "min_absence_queries",
-            "vendor"})
+            "schema", "mode", "preset", "run_id", "kinds", "universe", "corpus_db",
+            "tools_corpus_db", "sourceset", "sources", "candidates_dir", "blind", "inventory",
+            "challenged_runs", "findings_dir", "tasks_dir", "log_dir", "orchestrator_db",
+            "max_locations", "min_absence_queries", "vendor"})
         self.assertEqual(gate["schema"], "cf-gate-locate/1")
         self.assertEqual(gate["kinds"], ["PASSAGE", "UNRESOLVED"])
         self.assertEqual(sorted(gate["sources"]), [F.W1, F.W2])
         self.assertEqual(gate["universe"]["libraries"]["alpha"]["commit"], F.ALPHA)
-        self.assertEqual(gate["corpus_db"]["sha256"],
-                         hashing.sha256_file(self.paths.corpus_db(F.U)))
-        manifest = inputs.load_manifest(self.paths, F.SS)
+        db_sha = hashing.sha256_file(self.paths.corpus_db(F.U))
+        self.assertEqual(gate["corpus_db"], {"path": str(self.paths.corpus_db(F.U)),
+                                             "sha256": db_sha})
+        self.assertEqual(gate["tools_corpus_db"], {"path": str(self.paths.corpus_db(F.U)),
+                                                   "sha256": db_sha, "kind": "full"})
+        manifest = inputs.manifest(self.paths, F.SS)
         self.assertEqual(gate["sourceset"]["manifest_sha256"], manifest.sha256)
         self.assertEqual(set(gate["vendor"]), {"literature_links", "formal_companion_annotations"})
         self.assertIsNone(gate["inventory"])
 
-    def test_the_tend_root_stages_the_locate_gate_directory(self):
+    def test_the_local_gate_logs_apart_from_the_workers(self):
+        """Seam #68 (D3): a gate run on this machine never writes into the workers' log."""
+        self.assertEqual(self.gate()["log_dir"], str(self.paths.tend_root("inv-1") / "gate-log"))
+        self.assertEqual(self.gate(local=True)["log_dir"],
+                         str(self.paths.run_dir("inv-1") / "gate-local-log"))
+
+    def test_the_tend_root_stages_the_whole_locate_gate_directory(self):
+        """Seam #9, #10, #22, #27, #39, #71 (D1): the gate, the findings gate it imports,
+        both corpus tools, the records, the text rule, the vendored packages."""
         gate_dir = self.paths.tend_root("inv-1") / "gate"
-        for name in ("gate.json", "locate_text.py", "passage_ids.py", "locate_records.py",
-                     "vendor/literature_links/companion.py",
+        for name in ("gate.json", "verify_locate.py", "verify_findings.py", "locate_text.py",
+                     "passage_ids.py", "locate_records.py", "corpus_search.py",
+                     "corpus_show.py", "vendor/literature_links/companion.py",
                      "vendor/formal_companion_annotations/ids.py",
-                     "vendor/literature_links.manifest.json"):
+                     "vendor/literature_links.manifest.json",
+                     "vendor/formal_companion_annotations.manifest.json",
+                     f"tasks/inv-{F.W1}.json"):
             self.assertTrue((gate_dir / name).is_file(), name)
+        self.assertEqual(
+            (gate_dir / "verify_findings.py").read_bytes(),
+            (SCRIPTS / "gate" / "verify_findings.py").read_bytes())
         self.assertFalse(list(gate_dir.rglob("__pycache__")))
         # the gate imports verify_findings' change-set reader (field defect P2)
         self.assertTrue((gate_dir / "verify_findings.py").is_file())
@@ -263,13 +458,45 @@ class TestPlanInventory(Campaign):
         self.assertIn(f"{gate_dir}/verify_locate.py, --gate-config", cfg)
         self.assertIn("--changed-files", cfg)
 
+    def test_the_staged_gate_and_tools_run_from_outside_the_checkout(self):
+        """Seam #71: the staged directory imports nothing from this checkout."""
+        gate_dir = self.paths.tend_root("inv-1") / "gate"
+        elsewhere = self.root.parent / "elsewhere"
+        elsewhere.mkdir()
+        for script in ("verify_locate.py", "corpus_search.py", "corpus_show.py",
+                       "passage_ids.py"):
+            proc = subprocess.run([sys.executable, "-I", str(gate_dir / script), "--help"],
+                                  cwd=elsewhere, capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, f"{script}: {proc.stderr}")
+
+    def test_bin_holds_the_bridge_and_every_helper(self):
+        """Seam #28 (D1): the bridge exits 78 without agent_call.py and attempt_cap.py."""
+        bindir = self.paths.tend_root("inv-1") / "bin"
+        for name in ("bridge-agentbox.sh", "normalize_result.py", "extract_final_json.py",
+                     "agent_call.py", "attempt_cap.py", "watchdog.py"):
+            self.assertTrue((bindir / name).is_file(), name)
+            self.assertEqual((bindir / name).read_bytes(),
+                             (SCRIPTS / "run" / name).read_bytes(), name)
+
+    def test_a_gate_file_this_checkout_lacks_is_a_planning_error(self):
+        """D1: a missing required file is refused, never a root that fails on the host."""
+        absent = "/".join(("scripts", "gate", "no_such_gate_file.py"))   # not a citation
+        rows = (*ltr.GATE_FILES, (absent, "no_such_gate_file.py"))
+        with mock.patch.object(ltr, "GATE_FILES", rows):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                                "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("gate file missing", out + err)
+        self.assertIn("no_such_gate_file.py", out + err)
+
     def test_the_wrappers_export_the_locate_variables(self):
         bindir = self.paths.tend_root("inv-1") / "bin"
         worker = (bindir / "worker-agent.sh").read_text()
         reviewer = (bindir / "reviewer-agent.sh").read_text()
         gate_dir = self.paths.tend_root("inv-1") / "gate"
-        self.assertIn(f'CF_EXTRA_TOOLS="Bash(python3 {gate_dir}/corpus_search.py:*),'
-                      f'Bash(python3 {gate_dir}/corpus_show.py:*),'
+        db = self.paths.corpus_db(F.U)
+        self.assertIn(f'CF_EXTRA_TOOLS="Bash(python3 {gate_dir}/corpus_search.py --db {db}:*),'
+                      f'Bash(python3 {gate_dir}/corpus_show.py --db {db}:*),'
                       f'Bash(python3 {gate_dir}/passage_ids.py:*)"', worker)
         self.assertNotIn("CF_EXTRA_TOOLS", reviewer)
         for text in (worker, reviewer):
@@ -282,15 +509,46 @@ class TestPlanInventory(Campaign):
         doc = read_yaml(self.paths.run_yaml("inv-1"))
         block = doc["locate"]
         self.assertEqual(block["mode"], "locate-inventory")
-        self.assertEqual(block["sourceset"]["version"], 1)
-        self.assertEqual(block["universe"]["corpus_db_sha256"],
-                         hashing.sha256_file(self.paths.corpus_db(F.U)))
+        self.assertEqual(block["sourceset"]["version"], 2)
+        db_sha = hashing.sha256_file(self.paths.corpus_db(F.U))
+        self.assertEqual(block["universe"]["corpus_db_sha256"], db_sha)
+        self.assertEqual(block["universe"]["tools_corpus_db"], {"kind": "full", "sha256": db_sha})
+        self.assertEqual(block["arm"], "assisted")
+        self.assertNotIn("campaign", block)                # the campaign plan stamps it
         self.assertEqual(block["skipped"], {F.W3: "not rendered"})
         self.assertEqual(doc["tasks"]["count"], 2)
         self.assertEqual(doc["repos"], [])
         self.assertIn("worker.md", doc["prompts"])
         st = read_json(self.paths.sourceset_state_json(F.SS))
         self.assertEqual(st["runs"]["inv-1"]["tasks"], 2)
+        self.assertEqual(st["runs"]["inv-1"]["arm"], "assisted")
+
+    def test_run_yaml_pins_the_skill_commit_and_every_staged_file(self):
+        """Seam #62 (D6): what ran is pinned by the planner, not guessed by the scorer."""
+        block = read_yaml(self.paths.run_yaml("inv-1"))["locate"]
+        self.assertEqual(block["skill_commit"], export_mod.skill_commit())
+        root = self.paths.tend_root("inv-1")
+        staged = sorted(p.relative_to(root).as_posix() for top in ("gate", "bin")
+                        for p in (root / top).rglob("*")
+                        if p.is_file() and "/tasks/" not in p.relative_to(root).as_posix())
+        self.assertEqual(sorted(block["gate_files"]), staged)
+        for name in ("gate/verify_locate.py", "gate/verify_findings.py", "bin/agent_call.py",
+                     "bin/watchdog.py", "gate/vendor/literature_links.manifest.json"):
+            self.assertEqual(block["gate_files"][name], hashing.sha256_file(root / name), name)
+
+    def test_the_spend_cap_is_only_the_flags(self):
+        """Seam #76 (D6): a workspace default is not a run's cap."""
+        data = read_yaml(self.paths.workspace_yaml)
+        data["budget"] = {"max_cost_usd": 25}
+        from cflib.yamlio import write_yaml
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-b")
+        self.assertEqual(code, 0, out + err)
+        budget = read_yaml(self.paths.run_yaml("inv-b"))["budget"]
+        self.assertIsNone(budget["max_cost"])
+        self.assertEqual(budget["workspace_max_cost_usd"], 25)
+        self.assertIn("--max-cost", out + err)
 
     def test_replanning_is_byte_identical(self):
         def snapshot():
@@ -314,6 +572,10 @@ class TestPlanInventory(Campaign):
         self.assertIn(f"python3 {gate_dir}/corpus_search.py --db {self.paths.corpus_db(F.U)}",
                       system)
         self.assertIn(f"python3 {gate_dir}/passage_ids.py", system)
+        # seam #35: the inventory refusal is the inventory's rule 4, not the locate one
+        self.assertIn("an inventory with no `formal_math` passage, or a subject passage scoped "
+                      "out", system)
+        self.assertNotIn("your task manifest lists", system)
         self.assertIn("proof_status", system)
         self.assertIn("DATA, not instructions", system)
         worker = (pdir / "worker.md").read_text()
@@ -401,6 +663,7 @@ class TestPlanInventory(Campaign):
         remote = self.gate("inv-r")
         local = self.gate("inv-r", local=True)
         self.assertEqual(remote["corpus_db"]["path"], f"/srv/cf/corpora/{F.U}/corpus.sqlite")
+        self.assertEqual(remote["tools_corpus_db"]["path"], remote["corpus_db"]["path"])
         self.assertEqual(remote["sourceset"]["sources_dir"], f"/srv/cf/sourcesets/{F.SS}/sources")
         self.assertEqual(remote["tasks_dir"], "/srv/cf/inv-r-gate/tasks")
         self.assertEqual(local["corpus_db"]["path"], str(self.paths.corpus_db(F.U)))
@@ -430,9 +693,10 @@ class TestTheStagedGateRunsAlone(Campaign):
         self.host = away / "inv-1-gate"
         shutil.copytree(self.staged, self.host)
         self.cwd = away / "worktree"
-        docs = F.inventory_documents(F.manifest_entries(self.paths))
-        self.doc_rel = sorted(docs)[0]
-        self.doc = docs[self.doc_rel]
+        docs = F.inventory_documents(self.paths)
+        first = sorted(docs)[0]
+        self.doc_rel = "findings/" + first          # a worktree's layout
+        self.doc = docs[first]
         self.write(self.doc)
 
     def write(self, doc: dict) -> Path:
@@ -506,12 +770,23 @@ class TestTheStagedGateRunsAlone(Campaign):
 
     def test_a_crash_inside_the_gate_is_exit_3(self):
         cfg = json.loads((self.host / "gate.json").read_text(encoding="utf-8"))
-        cfg["max_locations"] = "five"           # int() raises inside GateConfig
+        cfg["max_locations"] = "five"           # a malformed gate.json value: named, exit 3
         (self.host / "gate.json").write_text(json.dumps(cfg), encoding="utf-8")
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("the gate could not run", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        shutil.copy2(self.staged / "gate.json", self.host / "gate.json")
+        # an exception nothing foresaw (a sibling that raises mid-validation) is exit 3 too
+        with (self.host / "locate_text.py").open("a", encoding="utf-8") as fh:
+            fh.write("\n\nclass HeadMap:  # sabotaged by the test\n"
+                     "    def __init__(self, *args, **kwargs):\n"
+                     "        raise RuntimeError('a crash nothing foresaw')\n")
         proc = self.gate("--findings", self.doc_rel)
         self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
         self.assertIn("the gate itself failed", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
+        self.assertNotIn("VALIDATION FAILED", proc.stderr)
 
     def test_the_prompts_read_the_exit_codes_the_gate_writes(self):
         """The worker-prompt half of P2: exit 1 is a verdict, exit 3 is blocked, in every prompt."""
@@ -567,9 +842,9 @@ class TestTheStagedGateRunsAlone(Campaign):
     def test_a_checkout_without_a_gate_file_refuses_to_plan(self):
         from locate import tend_root as ltr
 
+        absent = "/".join(("scripts", "gate", "nope.py"))          # not a citation
         with unittest.mock.patch.object(ltr, "GATE_FILES",
-                                        ltr.GATE_FILES + ((("scripts", "gate", "nope.py"),
-                                                           "nope.py"),)):
+                                        ltr.GATE_FILES + ((absent, "nope.py"),)):
             with self.assertRaises(CfError) as caught:
                 ltr.stage(layout_host={}, layout_local={}, preset=lp.get("locate-inventory"),
                           run_id="x", gate_config={}, prompts={}, tasks=[], model=None,
@@ -686,7 +961,184 @@ class TestTheStagedRootDrivesTheBridge(Campaign):
         worker = self.tools("worker")
         self.assertIn(f"Bash(python3 {self.gate_dir}/verify_locate.py:*)", worker)
         self.assertIn(f"Bash(python3 {self.gate_dir}/passage_ids.py:*)", worker)
-        self.assertIn(f"Bash(python3 {self.gate_dir}/corpus_search.py:*)", worker)
+        db = self.paths.corpus_db(F.U)
+        self.assertIn(f"Bash(python3 {self.gate_dir}/corpus_search.py --db {db}:*)", worker)
+
+
+class TestTheStagedGateAcceptsWhatThePromptAsksFor(Campaign):
+    """Seam #8: an inventory document written the way the prompt says, its ids filled
+    by the staged passage-id tool, passes the staged gate -- every input made by its
+    owner, every script run from the tend root's gate directory."""
+
+    def test_passage_ids_then_verify_locate(self):
+        gate_dir = self.paths.tend_root("inv-1") / "gate"
+        worktree = self.root.parent / "worktree"
+        task = f"inv-{F.W1}"
+        doc = F.inventory_documents(self.paths)[f"{task}/{F.W1}.json"]
+        for passage in doc["passages"]:
+            passage.update(item="", head_words=0, span=None)
+        path = worktree / "findings" / task / f"{F.W1}.json"
+        path.parent.mkdir(parents=True)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        source = self.paths.sourceset_source_dir(F.SS, F.W1)
+        env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+        proc = subprocess.run([sys.executable, "-I", str(gate_dir / "passage_ids.py"),
+                               "--source-dir", str(source), "--document", str(path), "--write"],
+                              cwd=worktree, capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        filled = json.loads(path.read_text(encoding="utf-8"))
+        self.assertTrue(all(p["item"].startswith("In-text #") for p in filled["passages"]))
+        proc = subprocess.run([sys.executable, "-I", str(gate_dir / "verify_locate.py"),
+                               "--gate-config", str(gate_dir / "gate.json"), "--root",
+                               str(worktree), "--findings", f"findings/{task}/{F.W1}.json",
+                               "--task-id", task],
+                              cwd=worktree, capture_output=True, text=True, env=env)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("OK: 1 locate document(s)", proc.stdout)
+
+
+class TestTheToolsDatabase(Campaign):
+    """D2: the workers search the TOOLS database; the gate checks against the full one."""
+
+    def plan(self, *extra, run_id="inv-t"):
+        return ws(self.root, "plan-locate", "--preset", "locate-inventory", "--sourceset",
+                  F.SS, "--universe", F.U, "--run-id", run_id, *extra)
+
+    def candidates(self, *extra):
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, *extra)
+        self.assertEqual(code, 0, out + err)
+
+    def test_the_blind_arm_searches_the_blind_database(self):
+        code, out, err = self.plan("--blind")
+        self.assertNotEqual(code, 0)                         # the candidates are the full arm's
+        self.assertIn("blind", out + err)
+        self.candidates("--blind")
+        code, out, err = self.plan("--blind")
+        self.assertEqual(code, 0, out + err)
+        gate = read_json(self.paths.gate_json("inv-t"))
+        blind = self.paths.corpus_db_blind(F.U)
+        self.assertEqual(gate["tools_corpus_db"], {"path": str(blind), "kind": "blind",
+                                                   "sha256": hashing.sha256_file(blind)})
+        self.assertEqual(gate["corpus_db"]["path"], str(self.paths.corpus_db(F.U)))
+        self.assertTrue(gate["blind"])
+        gate_dir = self.paths.tend_root("inv-t") / "gate"
+        worker = (self.paths.tend_root("inv-t") / "bin" / "worker-agent.sh").read_text()
+        self.assertIn(f"Bash(python3 {gate_dir}/corpus_search.py --db {blind}:*)", worker)
+        system = (self.paths.prompts_dir("inv-t") / "worker-system.md").read_text()
+        self.assertIn(f"corpus_search.py --db {blind}", system)
+        block = read_yaml(self.paths.run_yaml("inv-t"))["locate"]
+        self.assertEqual((block["arm"], block["universe"]["tools_corpus_db"]["kind"]),
+                         ("blind", "blind"))
+
+    def test_the_blind_arm_refuses_a_missing_blind_database(self):
+        self.paths.corpus_db_blind(F.U).unlink()
+        code, out, err = self.plan("--blind")
+        self.assertNotEqual(code, 0)
+        self.assertIn(f"cf corpus build-db {F.U} --blind", out + err)
+
+    def test_a_planted_database_for_the_p_tier(self):
+        """Seam #15, #78: the planted file is the tools database only, by content address."""
+        planted = self.root.parent / "planted.sqlite"
+        shutil.copy2(self.paths.corpus_db(F.U), planted)
+        code, out, err = self.plan("--tools-corpus-db", str(planted))
+        self.assertNotEqual(code, 0)                        # the candidates came from the full one
+        self.assertIn("planted", out + err)
+        self.candidates("--tools-corpus-db", str(planted))
+        data = read_yaml(self.paths.workspace_yaml)
+        data["hosts"] = {"allowlist": ["examplebox"], "examplebox": {"remote_root": "/srv/cf"}}
+        from cflib.yamlio import write_yaml
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out, err = self.plan("--tools-corpus-db", str(planted), "--host", "examplebox",
+                                   "--max-cost", "5")
+        self.assertEqual(code, 0, out + err)
+        sha = hashing.sha256_file(planted)
+        remote = read_json(self.paths.gate_json("inv-t"))
+        local = read_json(self.paths.run_dir("inv-t") / "gate.local.json")
+        self.assertEqual(remote["tools_corpus_db"],
+                         {"path": f"/srv/cf/corpora/{F.U}/planted-{sha[:16]}.sqlite",
+                          "sha256": sha, "kind": "planted"})
+        self.assertEqual(local["tools_corpus_db"]["path"], str(planted.resolve()))
+        self.assertEqual(remote["corpus_db"]["path"], f"/srv/cf/corpora/{F.U}/corpus.sqlite")
+        block = read_yaml(self.paths.run_yaml("inv-t"))["locate"]
+        self.assertEqual(block["universe"]["tools_corpus_db"], {"kind": "planted", "sha256": sha})
+        code, out, err = self.plan("--tools-corpus-db", str(planted), "--blind")
+        self.assertNotEqual(code, 0)
+        self.assertIn("two different arms", out + err)
+
+    def test_a_stale_database_is_refused_and_a_rebuilt_one_is_the_same_run(self):
+        """Seam #11, #20 (D2): identity is the universe sha, never the file's bytes."""
+        from corpus import build_db
+        from corpus.universe import Universe
+        u = Universe.load(self.paths.universe_yaml(F.U))
+        build_db.build(u, self.paths.universe_dir(F.U), self.paths.corpus_db(F.U), force=True)
+        u.save()
+        code, out, err = self.plan()
+        self.assertEqual(code, 0, out + err)                 # rebuilt, same universe: accepted
+        index = self.paths.universe_dir(F.U) / "index" / "beta" / "decls.jsonl"
+        index.write_text(index.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+        u = Universe.load(self.paths.universe_yaml(F.U))
+        u.set_index("beta", path="index/beta/", sha256=hashing.sha256_file(index),
+                    declarations=len(F.DECLS["beta"]))
+        u.save()
+        code, out, err = self.plan(run_id="inv-u")
+        self.assertNotEqual(code, 0)
+        self.assertIn("another state of universe", out + err)
+
+
+class TestTheHostLayout(unittest.TestCase):
+
+    def test_no_checkouts_and_no_inventory_directory_on_the_host(self):
+        """Seam #21, #38, #77, #80: nothing creates either, so nothing names them."""
+        paths = F.make_workspace(scratch(self))
+        db = {"path": str(paths.corpus_db(F.U)), "sha256": "1" * 64, "kind": "full"}
+        layouts = lplan.host_layout(paths, host="examplebox", run_id="r1", sourceset_id=F.SS,
+                                    universe_id=F.U, tools_db=db, remote_root="/srv/cf")
+        for side in ("host", "local"):
+            self.assertEqual(layouts[side]["checkouts_dir"], "")
+            self.assertNotIn("inventory_dir", layouts[side])
+        preset = lp.get(vocab.LOCATE_CHALLENGE)
+        from locate import prompts as lprompts
+        F.write_universe(paths)
+        ctx = lprompts.build_context(preset, run_id="r1", host=layouts["host"],
+                                     universe=inputs.load_universe(paths, F.U), per_task=8)
+        worker = lprompts.render_prompts(preset, ctx)["worker.md"]
+        self.assertNotIn("checkouts", worker)
+        self.assertIn("**overturn** it: a scope with the locations of the passage it hid, a "
+                      "prominence with the right `prominence`", worker)       # seam #33
+        self.assertNotIn("downgraded", worker)
+
+
+class TestEveryRootStagesTheBridgeHelpers(unittest.TestCase):
+    """Seam #28 (D1): a faithfulness root too -- the bridges call the helpers on every run."""
+
+    def plan(self, root: Path) -> mtr.TendRootPlan:
+        return mtr.TendRootPlan(local=root / "tend-root", tend_root="/srv/r1-tend",
+                                entrypoint="/srv/r1", gate_dir="/srv/r1-gate",
+                                prompts_dir="/srv/r1-tend/prompts")
+
+    def test_a_faithfulness_root(self):
+        root = scratch(self)
+        mtr.make_tend_root(self.plan(root), presets_mod.get("attack-hunt"), run_id="r1",
+                           gate_config={"sources": {}})
+        bindir = root / "tend-root" / "bin"
+        for name in mtr.BIN_HELPERS:
+            self.assertTrue((bindir / name).is_file(), name)
+        self.assertFalse((bindir / "watchdog.py").exists())
+
+    def test_a_missing_helper_or_gate_file_is_an_error(self):
+        root = scratch(self)
+        bridges = root / "bridges"
+        bridges.mkdir(parents=True)
+        shutil.copy2(SCRIPTS / "run" / "bridge-agentbox.sh", bridges / "bridge-agentbox.sh")
+        with self.assertRaises(CfError) as caught:
+            mtr.make_tend_root(self.plan(root), presets_mod.get("attack-hunt"), run_id="r1",
+                               gate_config={"sources": {}}, bridges_src=bridges)
+        self.assertIn("bridge helper missing", str(caught.exception))
+        with self.assertRaises(CfError) as caught:
+            mtr.make_tend_root(self.plan(root), presets_mod.get("attack-hunt"), run_id="r1",
+                               gate_config={"sources": {}}, gate_src=root / "nowhere")
+        self.assertIn("gate file missing", str(caught.exception))
 
 
 class TestPlanLocate(Campaign):
@@ -696,13 +1148,68 @@ class TestPlanLocate(Campaign):
         manifests = {p.stem: read_json(p) for p in
                      (self.paths.tend_root("loc-1") / "gate" / "tasks").glob("*.json")}
         self.assertEqual(sorted(manifests), [f"loc-{F.W1}-1", f"loc-{F.W2}-1"])
-        w1 = manifests[f"loc-{F.W1}-1"]["documents"][0]["passages"]
+        (w1_doc,) = manifests[f"loc-{F.W1}-1"]["documents"]
+        self.assertEqual(set(w1_doc), {"source_id", "source_sha", "layer_sha256", "renderer",
+                                       "passages", "curated"})
+        w1 = w1_doc["passages"]
         self.assertEqual(len(w1), 3)                     # the expository paragraph is out
         self.assertEqual([p["span"][0] for p in w1], sorted(p["span"][0] for p in w1))
-        self.assertEqual(set(w1[0]), {"item", "span", "head_words", "prominence", "passage_kind"})
+        self.assertEqual(set(w1[0]), {"item", "span", "head_words", "prominence", "passage_kind",
+                                      "text_span", "section", "quote"})
         gate = read_json(self.paths.gate_json("loc-1"))
-        self.assertEqual(gate["inventory"]["run_id"], "inv-1")
+        self.assertEqual(gate["inventory"], {"run_id": "inv-1"})      # seam #80: no dir
         self.assertEqual(gate["kinds"], ["ABSENCE", "LOCATION", "UNRESOLVED"])
+        self.assertNotIn("inventory", read_yaml(self.paths.run_yaml("loc-1"))["remote"])
+
+    def curated(self, sid):
+        return [{"library": h["library"], "declaration": h["declaration"]}
+                for h in read_json(self.paths.candidates_json(F.SS, F.U, sid))["curated"]]
+
+    def test_a_sources_curated_hits_go_to_exactly_one_of_its_tasks(self):
+        """Seam #29 (D7): the task holding the subject passage, every other task []."""
+        F.plan_locate(self, self.root, "--per-task", "2", run_id="loc-2")
+        docs = {p.stem: read_json(p)["documents"][0] for p in
+                (self.paths.tend_root("loc-2") / "gate" / "tasks").glob("*.json")}
+        self.assertTrue(self.curated(F.W1))
+        self.assertEqual(docs[f"loc-{F.W1}-1"]["curated"], self.curated(F.W1))
+        self.assertEqual(docs[f"loc-{F.W1}-2"]["curated"], [])
+        self.assertTrue(any(p["prominence"] == "subject"
+                            for p in docs[f"loc-{F.W1}-1"]["passages"]))
+        self.assertEqual(docs[f"loc-{F.W2}-1"]["curated"], self.curated(F.W2))
+        worker = (self.paths.prompts_dir("loc-2") / "worker.md").read_text()
+        self.assertIn("Every curated candidate your manifest lists", worker)
+        self.assertIn("whose relation is not `relatedMatch`", worker)                 # seam #34
+        self.assertIn("its receipt still lists each curated candidate it concerns", worker)
+
+    def test_the_curated_hits_go_to_the_subjects_chunk_else_the_first(self):
+        subject, other = {"prominence": "subject"}, {"prominence": "central"}
+        self.assertEqual(lplan._curated_chunk([[other], [other, subject]]), 1)
+        self.assertEqual(lplan._curated_chunk([[other], [other]]), 0)
+
+    def test_the_subject_only_tier_carries_each_sources_curated_hits(self):
+        F.plan_locate(self, self.root, "--subject-only", run_id="loc-s")
+        (manifest,) = [read_json(p) for p in
+                       (self.paths.tend_root("loc-s") / "gate" / "tasks").glob("*.json")]
+        self.assertEqual({d["source_id"]: d["curated"] for d in manifest["documents"]},
+                         {F.W1: self.curated(F.W1), F.W2: self.curated(F.W2)})
+
+    def test_a_plan_of_another_arm_than_its_inventory_is_refused(self):
+        """Seam #63 (D6): a blind locate run over an assisted inventory is half one arm."""
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--blind")
+        self.assertEqual(code, 0, out + err)
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate", "--sourceset", F.SS,
+                            "--universe", F.U, "--inventory-run", "inv-1", "--blind")
+        self.assertNotEqual(code, 0)
+        self.assertIn("assisted arm and this plan is the blind arm", out + err)
+
+    def test_a_missing_candidates_file_is_refused(self):
+        """Seam #32: in a locate plan too."""
+        self.paths.candidates_json(F.SS, F.U, F.W1).unlink()
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate", "--sourceset", F.SS,
+                            "--universe", F.U, "--inventory-run", "inv-1", "--run-id", "loc-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn(F.W1, out + err)
 
     def test_per_task_bounds_the_passages(self):
         self.locate("--per-task", "2", run_id="loc-2")
@@ -723,8 +1230,7 @@ class TestPlanLocate(Campaign):
                             for d in manifest["documents"]))
 
     def test_an_ungated_inventory_is_not_frozen(self):
-        F.write_harvest(self.paths, "inv-1", F.inventory_documents(F.manifest_entries(self.paths)),
-                        gate_ok=None)
+        F.write_harvest(self.paths, "inv-1", F.inventory_documents(self.paths), gate_ok=None)
         code, out, err = ws(self.root, "plan-locate", "--preset", "locate", "--sourceset", F.SS,
                             "--universe", F.U, "--inventory-run", "inv-1")
         self.assertNotEqual(code, 0)
@@ -808,6 +1314,34 @@ class TestOutcomes(Campaign):
         missing = [r for r in built["outcomes"] if r["missing"]]
         self.assertEqual(len(missing), 2)
         self.assertTrue(all(r["status"] is None and r["outcome"] is None for r in missing))
+
+    def test_a_document_in_the_wrong_place_is_named_by_the_harvested_layout(self):
+        """Seam #46 (D4): harvested documents are <task-id>/<source-id>.json."""
+        docs = F.locate_documents(self.paths)
+        key = next(k for k in docs if F.W1 in k)
+        docs[key.replace(f"{F.W1}.json", "other.json")] = docs.pop(key)
+        shutil.rmtree(self.paths.corpus_run_dir("loc-1"))
+        F.write_harvest(self.paths, "loc-1", docs)
+        with self.assertRaises(CfError) as caught:
+            outcomes.build(self.paths, "loc-1")
+        self.assertIn(f"lives at <task-id>/{F.W1}.json", str(caught.exception))
+        self.assertNotIn("findings/", str(caught.exception))
+
+    def test_a_rebuilt_database_still_joins_the_run(self):
+        """Seam #11: a rebuild of an unchanged universe has other bytes and is the same."""
+        from corpus import build_db
+        from corpus.universe import Universe
+        before = hashing.sha256_file(self.paths.corpus_db(F.U))
+        u = Universe.load(self.paths.universe_yaml(F.U))
+        with mock.patch("cflib.state.now", return_value="2030-01-01T00:00:00Z"):
+            build_db.build(u, self.paths.universe_dir(F.U), self.paths.corpus_db(F.U),
+                           force=True)
+        u.save()
+        self.assertNotEqual(hashing.sha256_file(self.paths.corpus_db(F.U)), before)
+        built = outcomes.build(self.paths, "loc-1")
+        lead = next(r for r in built["outcomes"] if r["prominence"] == "subject"
+                    and r["source_id"] == F.W1)
+        self.assertEqual([l["proof_status"] for l in lead["locations"]], ["proved", "proved"])
 
     def test_a_written_proof_status_is_ignored_and_named(self):
         docs = F.locate_documents(self.paths)
@@ -903,6 +1437,50 @@ class TestChallenge(Campaign):
         self.assertEqual((theorem["locations"][0]["relation"], theorem["status"]),
                          ("relatedMatch", None))
 
+    def test_a_prominence_changes_only_by_an_overturn(self):
+        """Seam #33: section 4's prominence verdict is uphold or overturn."""
+        def verdict(action):
+            def judge(rec):
+                v = F.default_verdict(rec)
+                if rec["target"] == "prominence":
+                    v.update(action=action, prominence="central")
+                return v
+            return judge
+        self.challenge(verdict=verdict("overturn"))
+        plan = self.plan()
+        (item,) = [r["item"] for r in plan["records"]
+                   if r["target"] == "prominence" and r["planned"] == "required"]
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        self.assertEqual(next(r for r in built["outcomes"] if r["item"] == item)["prominence"],
+                         "central")
+        shutil.rmtree(self.paths.corpus_run_dir("chl-1"))
+        F.write_harvest(self.paths, "chl-1",
+                        F.challenge_documents(self.paths, verdict=verdict("downgrade")))
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        self.assertEqual(next(r for r in built["outcomes"] if r["item"] == item)["prominence"],
+                         "supporting")
+
+    def test_an_overturn_ranks_the_challengers_locations_first(self):
+        """Seam #65: rank 1 is never the relatedMatch location an absence sat beside."""
+        def loc(name, relation, rank):
+            return {"library": "alpha", "declaration": name, "relation": relation,
+                    "rank": rank, "location_key": name}
+        old = [loc("Old.related", "relatedMatch", 1), loc("Old.exact", "exactMatch", 2)]
+        new = [loc("New.second", "broadMatch", 2), loc("New.first", "exactMatch", 1)]
+        merged = outcomes._overturned(new, old)
+        self.assertEqual([(l["declaration"], l["rank"]) for l in merged],
+                         [("New.first", 1), ("New.second", 2), ("Old.related", 3)])
+        many = [loc(f"New.n{i}", "exactMatch", i) for i in range(1, 6)]
+        self.assertEqual(len(outcomes._overturned(many, old)), vocab.MAX_LOCATIONS_PER_PASSAGE)
+
+    def test_a_challenge_of_another_arm_is_refused(self):
+        """Seam #63: a blind challenge of an assisted locate run."""
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                            "--sourceset", F.SS, "--universe", F.U, "--challenge-of", "loc-1",
+                            "--run-id", "chl-b", "--blind")
+        self.assertNotEqual(code, 0)
+        self.assertIn("assisted arm", out + err)
+
     def test_a_required_record_nobody_judged_is_owed(self):
         def verdict(rec):
             return F.default_verdict(rec)
@@ -924,7 +1502,7 @@ class TestChallenge(Campaign):
 class TestPassageIds(Campaign):
 
     def test_it_fills_the_ids_the_head_rule_gives(self):
-        docs = F.inventory_documents(F.manifest_entries(self.paths))
+        docs = F.inventory_documents(self.paths)
         doc = next(d for k, d in docs.items() if F.W1 in k)
         expected = [(p["item"], p["span"], p["head_words"]) for p in doc["passages"]]
         for p in doc["passages"]:
@@ -951,6 +1529,19 @@ class TestPassageIds(Campaign):
         problems = passage_ids.place(doc, layer, formulas, [])
         self.assertEqual(len(problems), 2, problems)
         self.assertIn("times on the layer", problems[0])
+
+    def test_it_refuses_a_source_with_no_paragraphs(self):
+        """Seam #2: a missing paragraphs.json would end every passage at its quote."""
+        source = self.root.parent / "copy"
+        shutil.copytree(self.paths.sourceset_source_dir(F.SS, F.W1), source)
+        (source / "paragraphs.json").unlink()
+        path = self.root.parent / "doc.json"
+        path.write_text(json.dumps({"passages": [{"quote": {"exact": "In widget theory"}}]}))
+        proc = subprocess.run([sys.executable, str(SCRIPTS / "locate" / "passage_ids.py"),
+                               "--source-dir", str(source), "--document", str(path)],
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("paragraphs.json", proc.stderr)
 
 
 # --------------------------------------------------------------------------
@@ -1034,6 +1625,27 @@ class TestRecords(unittest.TestCase):
             records.passage_records(self.source(), row, self.LAYER, self.universe())
         self.assertIn("hard rule 5", str(caught.exception))
 
+    def test_the_host_side_constants_are_the_vocabularys(self):
+        """Seam #84: records.py runs host-side with no cflib; its copies are pinned here."""
+        self.assertEqual(
+            (records.QUOTE_WORDS, records.CONTEXT_CHARS, records.EXTENSION,
+             records.MAX_LOCATIONS, records.NO_MATCH, records.NOT_FORMALIZED),
+            (vocab.EXPORT_QUOTE_WORDS, vocab.EXPORT_CONTEXT_CHARS, vocab.LOCATE_EXTENSION,
+             vocab.MAX_LOCATIONS_PER_PASSAGE, vocab.NO_MATCH, vocab.STATUS_NOT_FORMALIZED))
+        from gate import verify_locate
+        self.assertEqual(lplan.GATE_SCHEMA, verify_locate.GATE_SCHEMA)
+        self.assertEqual(lplan.GATE_SCRIPT, "verify_locate.py")
+
+    def test_the_planner_reads_the_shared_values(self):
+        """Seam #85: one definition of the root bound, the cap and the challenge rules."""
+        self.assertFalse(hasattr(lp, "MAX_TASKS_PER_ROOT"))
+        self.assertEqual((challenge_plan.REFUTE, challenge_plan.HUNT, challenge_plan.SAMPLE,
+                          challenge_plan.NONE),
+                         (vocab.CHALLENGE_RULE_REFUTE, vocab.CHALLENGE_RULE_HUNT,
+                          vocab.CHALLENGE_RULE_SAMPLE, vocab.CHALLENGE_RULE_NONE))
+        env = ltr.wrapper_env(lp.get(vocab.LOCATE), "/g", "/db")
+        self.assertEqual(env["worker"]["CF_ATTEMPT_CAP"], str(vocab.LOCATE_ATTEMPT_CAP))
+
     def test_the_module_needs_no_cflib(self):
         text = (SCRIPTS / "locate" / "records.py").read_text()
         self.assertNotRegex(text, r"(?m)^\s*(from|import) cflib")
@@ -1064,7 +1676,7 @@ class TestExport(Campaign):
         self.assertEqual(seal["schema"], "cf-locate-recordset/1")
         self.assertEqual(seal["universe"], F.universe_pin(self.paths))
         self.assertEqual(seal["sourceset"]["manifest_sha256"],
-                         inputs.load_manifest(self.paths, F.SS).sha256)
+                         inputs.manifest(self.paths, F.SS).sha256)
         self.assertEqual(sorted(seal["files"]), ["records/enwiki-1001-2002.jsonl",
                                                  "records/enwiki-1003-2004.jsonl",
                                                  "sources.jsonl", "universe.json"])
@@ -1084,6 +1696,15 @@ class TestExport(Campaign):
         self.assertNotIn("proof_status", json.dumps([r["subject"] for r in recs]))
         sources = [json.loads(l) for l in (out_dir / "sources.jsonl").read_text().splitlines()]
         self.assertEqual([s["source_id"] for s in sources], [F.W1, F.W2])
+        # seam #6: the citation is the sources stage's
+        from sources import websource
+        fam = websource.family("enwiki")
+        cite = recs[0]["subject"][0]["citation"]
+        self.assertIn(websource.revision_url(fam, 1001, 2002), json.dumps(cite))
+        # seam #25: the universe file carries what the universe defines, nothing else
+        uni = read_json(out_dir / "universe.json")
+        self.assertTrue(all("display_name" not in lib for lib in uni["libraries"].values()))
+        self.assertEqual(uni["libraries"]["alpha"]["licence"], {"spdx": "Apache-2.0"})
 
     def test_an_absence_record_and_its_receipt(self):
         def uphold(rec):
@@ -1110,11 +1731,37 @@ class TestExport(Campaign):
         out_dir = self.paths.export_dir("set-1")
         first = {p.relative_to(out_dir).as_posix(): p.read_bytes()
                  for p in sorted(out_dir.rglob("*")) if p.is_file()}
+        # a file the previous seal named and this set does not carry is removed
+        seal = read_json(out_dir / "SEAL.json")
         (out_dir / "records" / "stale.jsonl").write_text("{}\n")
+        seal["files"]["records/stale.jsonl"] = hashing.sha256_text("{}\n")
+        (out_dir / "SEAL.json").write_text(records.canonical(seal) + "\n")
         self.assertEqual(self.export()[0], 0)
         second = {p.relative_to(out_dir).as_posix(): p.read_bytes()
                   for p in sorted(out_dir.rglob("*")) if p.is_file()}
         self.assertEqual(first, second)
+
+    def test_the_target_is_guarded(self):
+        """Review #31, #35: never the checkout, never a directory that is not a set, and
+        nothing but what the previous seal named is ever removed."""
+        code, out, err = self.export("--out", str(SKILL / "exports-here"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("inside the skill repo", out + err)
+        self.assertFalse((SKILL / "exports-here").exists())
+        other = self.root.parent / "other"
+        (other / "records").mkdir(parents=True)
+        (other / "records" / "notes.txt").write_text("mine")
+        code, out, err = self.export("--out", str(other))
+        self.assertNotEqual(code, 0)
+        self.assertIn("holds no cf-locate-recordset/1 seal", out + err)
+        self.assertEqual((other / "records" / "notes.txt").read_text(), "mine")
+        self.assertEqual(self.export()[0], 0)
+        out_dir = self.paths.export_dir("set-1")
+        (out_dir / "records" / "notes.txt").write_text("mine")
+        code, out, err = self.export()
+        self.assertNotEqual(code, 0)
+        self.assertIn("its seal does not name: records/notes.txt", out + err)
+        self.assertEqual((out_dir / "records" / "notes.txt").read_text(), "mine")
 
     def test_a_passage_whose_challenge_is_owed_is_refused_by_name(self):
         docs = F.challenge_documents(self.paths, "chl-1")
@@ -1148,7 +1795,490 @@ class TestExport(Campaign):
         code, out, err = self.export()
         self.assertEqual(code, 1)
         report = read_json(self.paths.export_report_json("set-1"))
-        self.assertIn("layer.txt is not the layer", report["refused"][0]["reason"])
+        self.assertIn("layer.txt has sha", report["refused"][0]["reason"])
+
+    def test_a_source_whose_licence_does_not_allow_it_is_refused(self):
+        """Seam #72: the licence class is the registry's, open, and named with its SPDX id."""
+        from cflib import registry as registry_mod
+        real = registry_mod.Registry.licence_class
+        with mock.patch.object(registry_mod.Registry, "licence_class",
+                               lambda self, sid: "closed" if sid == F.W1 else real(self, sid)):
+            code, out, err = self.export()
+        self.assertEqual(code, 1, out + err)
+        report = read_json(self.paths.export_report_json("set-1"))
+        (refusal,) = report["refused"]
+        self.assertEqual(refusal["source_id"], F.W1)
+        self.assertIn("the registry gives 'closed'", refusal["reason"])
+        self.assertFalse((self.paths.export_dir("set-1") / "records" / f"{F.W1}.jsonl").exists())
+
+    def test_the_licence_rule(self):
+        from types import SimpleNamespace
+        fam = SimpleNamespace(id="testwiki", spdx="CC-BY-4.0")
+        def reg(cls):
+            return SimpleNamespace(licence_class=lambda sid: cls)
+        entry = {"source_id": "testwiki-1-2", "licence_class": "closed"}
+        self.assertIn("only", export_mod.licence_problem(entry, fam, reg("closed")))
+        entry["licence_class"] = "open_attribution"
+        self.assertIsNone(export_mod.licence_problem(entry, fam, reg("open_attribution")))
+        self.assertIn("no SPDX id", export_mod.licence_problem(
+            entry, SimpleNamespace(id="testwiki", spdx=""), reg("open_attribution")))
+        entry["licence_class"] = "public_domain"
+        self.assertIsNone(export_mod.licence_problem(
+            entry, SimpleNamespace(id="testwiki", spdx=""), reg("public_domain")))
+        self.assertIn("the manifest records", export_mod.licence_problem(
+            entry, fam, reg("open_attribution")))
+
+    def test_a_closed_overlay_family_is_refused(self):
+        """Seam #72: a family the workspace adds with a closed licence never exports."""
+        from cflib import registry as registry_mod
+        from cflib.workspace import Workspace
+        from sources import websource
+        (self.root / "registry.yaml").write_text(
+            "families:\n"
+            "  closedwiki:\n"
+            "    title: Closed Wiki\n"
+            "    site: https://closed.example.org\n"
+            "    container_title: Closed Wiki\n"
+            "    licence_class: closed\n"
+            "    licence: {spdx: LicenseRef-closed, note: all rights reserved, "
+            "redistribute: false}\n"
+            "    attribution: '\"{title}\", Closed Wiki, {url}, {licence}'\n"
+            "    revision_url: \"https://closed.example.org/?oldid={revision}\"\n",
+            encoding="utf-8")
+        workspace = Workspace.load(self.root)
+        fam = websource.family("closedwiki", workspace)
+        entry = websource.entry(fam, 7, 8, title="Widget")
+        why = export_mod.licence_problem(entry, fam, registry_mod.Registry.load(workspace))
+        self.assertIn("licence class 'closed'", why)
+
+
+class TestTheCuratedJoins(unittest.TestCase):
+    """Review #39, #40, #42, #45, #46, #47: what joins, and on what key."""
+
+    def setUp(self):
+        self.root = scratch(self)
+        self.paths = F.make_workspace(self.root)
+        F.write_sourceset(self.paths)
+        self.lists = self.root.parent / "lists"
+        self.lists.mkdir()
+
+    def candidates(self, *extra):
+        if not self.paths.universe_yaml(F.U).exists():
+            F.write_universe(self.paths)
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--curated-library", "alpha", *extra)
+        self.assertEqual(code, 0, out + err)
+        return {sid: read_json(self.paths.candidates_json(F.SS, F.U, sid)) for sid in (F.W1, F.W2)
+                if self.paths.candidates_json(F.SS, F.U, sid).is_file()}
+
+    def vias(self, doc):
+        return {(h["declaration"], h["via"]) for h in doc["curated"]}
+
+    def test_a_suffixed_1000_key_is_a_further_theorem_of_its_qid(self):
+        (self.lists / "1000.json").write_text(json.dumps({
+            "Q99999001": {"title": "Widget lemma", "decl": "Widget.card_dvd"},
+            "Q99999001X": {"title": "Widget lemma (II)", "decl": "Widget.Spanning"},
+            "Q99999002A": {"title": "Gadget theorem", "decl": "Widget.spanning_conj"}}))
+        docs = self.candidates("--curated-1000", str(self.lists / "1000.json"))
+        self.assertLessEqual({("Widget.card_dvd", "mathlib_1000"),
+                              ("Widget.Spanning", "mathlib_1000")}, self.vias(docs[F.W1]))
+        self.assertIn(("Widget.spanning_conj", "mathlib_1000"), self.vias(docs[F.W2]))
+        self.assertTrue(any(h["evidence"] == "1000.yaml Q99999001X" for h in docs[F.W1]["curated"]))
+        (self.lists / "bad.json").write_text(json.dumps({"Widget": {"decl": "x"}}))
+        code, out, err = ws(self.root, "locate", "candidates", "--sourceset", F.SS,
+                            "--universe", F.U, "--curated-library", "alpha",
+                            "--curated-1000", str(self.lists / "bad.json"))
+        self.assertNotEqual(code, 0)
+        self.assertIn("is not a QID", out + err)
+
+    def test_a_title_join_keys_on_the_title_only_and_never_on_another_qid(self):
+        (self.lists / "100.yaml").write_text(
+            "1:\n  title: spanning\n  decl: Widget.Spanning\n"
+            "2:\n  title: gadget lattice theorem\n  decl: Widget.card_dvd\n"
+            "3:\n  title: The Widget Lemma\n  decl: Widget.spanning_conj\n  wikidata: Q99999002\n")
+        (self.lists / "meta.json").write_text(json.dumps({"libraries": {"alpha": [
+            {"title": "Widget lemma", "wikidata": "Q99999002",
+             "declarations": ["Widget.card_dvd"]}]}}))
+        docs = self.candidates("--curated-100", str(self.lists / "100.yaml"),
+                               "--library-metadata", str(self.lists / "meta.json"))
+        w1 = docs[F.W1]
+        self.assertNotIn(("Widget.Spanning", "mathlib_100"), self.vias(w1))   # a body bold term
+        self.assertNotIn(("Widget.card_dvd", "mathlib_100"), self.vias(docs[F.W2]))  # lead bold
+        self.assertNotIn(("Widget.spanning_conj", "mathlib_100"), self.vias(w1))
+        self.assertNotIn(("Widget.card_dvd", "library_metadata"), self.vias(w1))
+        reasons = {(d["declaration"], d["via"]): d["reason"] for d in w1["dropped"]}
+        self.assertEqual(reasons[("Widget.spanning_conj", "mathlib_100")],
+                         "the entry names another QID (Q99999002)")
+        self.assertEqual(reasons[("Widget.card_dvd", "library_metadata")],
+                         "the entry names another QID (Q99999002)")
+        # its own QID still joins it, by QID
+        self.assertIn(("Widget.spanning_conj", "mathlib_100"), self.vias(docs[F.W2]))
+
+    def test_curly_apostrophes_and_dashes_fold(self):
+        self.assertEqual(cand_mod.normalise_title("Ptolemy’s Theorem"),
+                         cand_mod.normalise_title("Ptolemy's theorem"))
+        self.assertEqual(cand_mod.normalise_title("Cauchy–Schwarz inequality"),
+                         cand_mod.normalise_title("Cauchy-Schwarz_inequality"))
+
+    def test_a_mobile_url_in_a_docstring_joins(self):
+        decls = json.loads(json.dumps(F.DECLS))
+        mobile = F._decl("Beta.Widget.gadget_of_finite", "Beta.Widget", "Beta/Widget.lean", 40,
+                         52, "theorem", "proved", "∀ (w : Widget), Finite w → Gadget w",
+                         "See https://en.m.wikipedia.org/wiki/Widget_lemma.")
+        decls["beta"] = [mobile if d["name"] == mobile["name"] else d for d in decls["beta"]]
+        F.write_universe(self.paths, decls=decls)
+        docs = self.candidates()
+        self.assertIn(("Beta.Widget.gadget_of_finite", "docstring_url"), self.vias(docs[F.W1]))
+
+    def test_a_repeated_source_is_one_and_a_partial_run_says_so(self):
+        self.candidates("--source", F.W1, "--source", F.W1)
+        row = read_json(self.paths.sourceset_state_json(F.SS))["candidates"][F.U]
+        self.assertEqual((row["sources"], row["written"], row["partial"]), (1, [F.W1], True))
+
+
+class TestTheReviewOfThePlan(Campaign):
+    """Review #1, #2, #3, #9, #10, #11, #12, #15: the plan's own refusals and records."""
+
+    def test_a_wholly_scoped_out_source_is_kept_and_skipped(self):
+        docs = F.inventory_documents(self.paths)
+        for p in docs[f"inv-{F.W2}/{F.W2}.json"]["passages"]:
+            p["scope"] = "expository"
+        shutil.rmtree(self.paths.corpus_run_dir("inv-1"))
+        F.write_harvest(self.paths, "inv-1", docs)
+        F.plan_locate(self, self.root)
+        block = read_yaml(self.paths.run_yaml("loc-1"))["locate"]
+        self.assertIn(F.W2, block["source_ids"])
+        self.assertEqual(block["skipped"][F.W2], "no formal_math passage in the inventory")
+        F.write_harvest(self.paths, "loc-1", F.locate_documents(self.paths, "loc-1"))
+        built = outcomes.build(self.paths, "loc-1")
+        self.assertEqual(len([r for r in built["outcomes"] if r["source_id"] == F.W2]), 2)
+        records = challenge_plan.classify(built["outcomes"], run_id="loc-1")
+        self.assertTrue(any(r["target"] == "scope" and r["source_id"] == F.W2 for r in records))
+
+    def test_a_refused_re_plan_writes_nothing(self):
+        gate = self.paths.gate_json("inv-1").read_bytes()
+        local = (self.paths.run_dir("inv-1") / "gate.local.json").read_bytes()
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-1",
+                            "--source", F.W1)
+        self.assertNotEqual(code, 0)
+        self.assertIn("stale task file", out + err)
+        self.assertEqual(self.paths.gate_json("inv-1").read_bytes(), gate)
+        self.assertEqual((self.paths.run_dir("inv-1") / "gate.local.json").read_bytes(), local)
+
+    def test_a_run_id_of_a_run_read_or_of_another_preset_is_refused(self):
+        for argv, needle in ((("--inventory-run", "inv-1", "--run-id", "inv-1"),
+                              "names a run this plan reads"),
+                             (("--inventory-run", "inv-1", "--run-id", "inv-1x"), None)):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate", "--sourceset",
+                                F.SS, "--universe", F.U, *argv)
+            if needle:
+                self.assertNotEqual(code, 0)
+                self.assertIn(needle, out + err)
+            else:
+                self.assertEqual(code, 0, out + err)
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-1x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("planned as 'locate'", out + err)
+
+    def test_an_assisted_plan_refuses_a_blind_candidates_file(self):
+        path = self.paths.candidates_json(F.SS, F.U, F.W1)
+        doc = read_json(path)
+        doc.update(blind=True, curated=[])
+        path.write_text(json.dumps(doc))
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                            "--sourceset", F.SS, "--universe", F.U, "--run-id", "inv-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("is the blind arm's", out + err)
+
+    def test_mode_and_bound_flags(self):
+        for argv, needle in ((("--preset", "locate-challenge", "--challenge-of", "inv-1",
+                               "--source", F.W1), "does not narrow a challenge"),
+                             (("--preset", "locate-inventory", "--max-open-tasks", "0"),
+                              "at least 1")):
+            with self.subTest(argv=argv):
+                code, out, err = ws(self.root, "plan-locate", *argv, "--sourceset", F.SS,
+                                    "--universe", F.U)
+                self.assertNotEqual(code, 0)
+                self.assertIn(needle, out + err)
+        hint = None
+        try:
+            lplan.check_root_size([lplan.TaskSpec(id=f"t{i}", mode="locate-challenge", title="",
+                                                  priority="", summary="", documents=[])
+                                   for i in range(501)], vocab.LOCATE_CHALLENGE)
+        except CfError as exc:
+            hint = exc.hint
+        self.assertIn("--challenge-of", hint)
+        self.assertNotIn("--source", hint)
+
+    def test_a_locate_task_says_where_to_read_each_passage(self):
+        F.plan_locate(self, self.root)
+        manifest = read_json(self.paths.tend_root("loc-1") / "gate" / "tasks"
+                             / f"loc-{F.W1}-1.json")
+        text = (self.paths.sourceset_source_dir(F.SS, F.W1) / "text.txt").read_text()
+        layer = (self.paths.sourceset_source_dir(F.SS, F.W1) / "layer.txt").read_text()
+        self.assertNotEqual(text, layer)
+        theorem = manifest["documents"][0]["passages"][1]
+        a, b = theorem["text_span"]
+        self.assertTrue(text[a:b].startswith("Theorem. Let $G$ be a finite widget"), text[a:b])
+        self.assertTrue(text[a:b].endswith("no smaller gadget spans it."), text[a:b])
+        self.assertEqual(theorem["section"], ["Statement"])
+        self.assertTrue(theorem["quote"]["exact"].startswith("Theorem. Let"))
+        planned = read_json(self.paths.run_dir("loc-1") / "planned.json")
+        self.assertEqual(planned["schema"], "cf-locate-planned/1")
+        self.assertIn(manifest, planned["tasks"])
+
+    def test_the_sample_count_is_exact(self):
+        records = [{"rule": "sample", "stratum": "s", "key": f"k{i}"} for i in range(100)]
+        challenge_plan.draw(records, seed=0, sample_rate=0.07)
+        self.assertEqual(sum(r["planned"] == "required" for r in records), 7)
+
+    def test_a_challenge_that_requires_nothing_is_still_planned(self):
+        """Review #15: its plan gives every record its value, and needs no harvest."""
+        F.plan_locate(self, self.root)
+        F.write_harvest(self.paths, "loc-1", F.locate_documents(self.paths, "loc-1"))
+        real = lplan.challenge_build
+
+        def none_required(*a, **k):
+            built = real(*a, **k)
+            for rec in built["records"]:
+                rec["planned"] = "not_required"
+            built["batches"] = []
+            return built
+        with mock.patch.object(lplan, "challenge_build", none_required):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                                "--sourceset", F.SS, "--universe", F.U, "--challenge-of",
+                                "loc-1", "--run-id", "chl-0")
+        self.assertEqual(code, 0, out + err)
+        self.assertIn("no challenge task to run", out + err)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-0"])
+        located = [r for r in built["outcomes"] if r["outcome"] == "located"]
+        self.assertTrue(located)
+        self.assertTrue(all(r["challenge"] == "not_required" for r in located))
+
+
+class TestTheReviewOfTheOutcomes(Campaign):
+    """Review #7, #16-#20, #22-#28, #30, #33, #36: outcomes refuse what is not theirs."""
+
+    def setUp(self):
+        super().setUp()
+        F.plan_locate(self, self.root)
+        self.docs = F.locate_documents(self.paths, "loc-1")
+        F.write_harvest(self.paths, "loc-1", self.docs)
+
+    def reharvest(self, run_id, docs):
+        shutil.rmtree(self.paths.corpus_run_dir(run_id))
+        F.write_harvest(self.paths, run_id, docs)
+
+    def challenge(self, verdict=None, run_id="chl-1", of="loc-1"):
+        code, out, err = ws(self.root, "plan-locate", "--preset", "locate-challenge",
+                            "--sourceset", F.SS, "--universe", F.U, "--challenge-of", of,
+                            "--run-id", run_id)
+        self.assertEqual(code, 0, out + err)
+        docs = F.challenge_documents(self.paths, run_id, verdict=verdict)
+        F.write_harvest(self.paths, run_id, docs)
+        return docs
+
+    def row(self, built, sid, kind):
+        return next(r for r in built["outcomes"] if r["source_id"] == sid
+                    and r["passage_kind"] == kind)
+
+    def w1(self):
+        return self.docs[f"loc-{F.W1}-1/{F.W1}.json"]
+
+    def test_a_challenge_of_another_locate_run_is_refused(self):
+        self.challenge()
+        F.plan_locate(self, self.root, run_id="loc-2")
+        F.write_harvest(self.paths, "loc-2", F.locate_documents(self.paths, "loc-2"))
+        with self.assertRaises(CfError) as caught:
+            outcomes.build(self.paths, "loc-2", challenge_runs=["chl-1"])
+        self.assertIn("challenged loc-1, not loc-2", str(caught.exception))
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-2",
+                            "--challenge-run", "chl-1", "--set-id", "s2")
+        self.assertNotEqual(code, 0)
+
+    def test_refuting_every_location_judges_the_passage(self):
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "location" and rec["declaration"] == "Widget.card_dvd":
+                v.update(action="refute")
+            return v
+        self.challenge(verdict)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        theorem = self.row(built, F.W1, "theorem")
+        self.assertEqual((theorem["locations"], theorem["challenge"], theorem["status"]),
+                         ([], "downgraded", None))
+        self.assertEqual(built["counts"]["unresolved"], 2)     # review #28
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "s1")
+        self.assertEqual(code, 0, out + err)
+
+    def test_a_verdict_on_a_record_not_required_is_ignored_and_named(self):
+        plan_docs = self.challenge()
+        plan = read_json(self.paths.run_dir("chl-1") / "challenge-plan.json")
+        (spare,) = [r for r in plan["records"] if r["target"] == "prominence"
+                    and r["planned"] == "sampled_out"][:1]
+        doc = next(d for d in plan_docs.values() if d["source_id"] == spare["source_id"])
+        doc["verdicts"].append({"item": spare["item"], "target": "prominence",
+                                "action": "overturn", "prominence": "subject",
+                                "witness": "unplanned"})
+        self.reharvest("chl-1", plan_docs)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        self.assertTrue(any("was planned sampled_out" in p for p in built["problems"]))
+        row = next(r for r in built["outcomes"] if r["item"] == spare["item"])
+        self.assertEqual(row["prominence"], spare["prominence"])
+        self.assertEqual(built["gates"]["chl-1"]["role"], "locate-challenge")
+        self.assertEqual(built["gates"]["inv-1"]["role"], "locate-inventory")
+
+    def test_a_downgrade_names_a_weaker_relation(self):
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "location" and rec["declaration"] == "Widget.card_dvd":
+                v.update(action="downgrade", relation="exactMatch")
+            return v
+        self.challenge(verdict)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        theorem = self.row(built, F.W1, "theorem")
+        self.assertEqual(theorem["locations"][0]["relation"], "hasPart")
+        self.assertIsNone(theorem["challenge"])
+        self.assertIn("is not weaker", theorem["problem"])
+
+    def test_a_scope_overturned_with_no_location_is_refused_by_the_export(self):
+        def verdict(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "scope":
+                v.update(action="overturn", locations=[])
+            return v
+        self.challenge(verdict)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        history = next(r for r in built["outcomes"] if r["passage_kind"] == "other"
+                       and r["source_id"] == F.W1)
+        self.assertEqual((history["scope"], history["outcome"]), ("formal_math", None))
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "s1")
+        self.assertEqual(code, 1, out + err)
+        report = read_json(self.paths.export_report_json("s1"))
+        self.assertTrue(any("scope overturned" in r["reason"] for r in report["refused"]))
+
+    def test_a_record_changed_since_the_plan_is_owed_again(self):
+        self.challenge()
+        self.w1()["passages"][1]["locations"][0]["relation"] = "narrowMatch"
+        self.reharvest("loc-1", self.docs)
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        theorem = self.row(built, F.W1, "theorem")
+        self.assertIsNone(theorem["challenge"])
+        self.assertIn("it is owed again", theorem["problem"])
+
+    def test_a_declaration_listed_twice_keeps_its_best_rank(self):
+        lead = self.w1()["passages"][0]
+        lead["locations"].append(F._loc("alpha", "Widget.exists_spanning_gadget", rank=3))
+        self.reharvest("loc-1", self.docs)
+        built = outcomes.build(self.paths, "loc-1")
+        row = next(r for r in built["outcomes"] if r["item"] == lead["item"])
+        self.assertEqual([(l["declaration"], l["rank"]) for l in row["locations"]],
+                         [("Widget.exists_spanning_gadget", 1),
+                          ("Beta.Widget.gadget_of_finite", 2)])
+        self.assertTrue(any("listed twice" in p for p in built["problems"]))
+        challenge_plan.plan(self.paths, ["loc-1"], seed=0, sample_rate=0.2)
+
+    def test_a_document_off_the_pinned_rendering_is_refused_per_row(self):
+        """Review #24: stamp the source, and refuse a mismatch."""
+        w2 = self.docs[f"loc-{F.W2}-1/{F.W2}.json"]
+        w2["source_sha"] = "0" * 64
+        self.reharvest("loc-1", self.docs)
+        built = outcomes.build(self.paths, "loc-1")
+        rows = [r for r in built["outcomes"] if r["source_id"] == F.W2]
+        self.assertTrue(all("not the rendering the run pinned" in r["problem"] for r in rows))
+        located = self.row(built, F.W1, "theorem")
+        self.assertEqual(located["source_sha"], self.w1()["source_sha"])
+        self.assertTrue(all(r["source_sha"] for r in built["rows"]))
+
+    def test_a_phantom_declaration_refuses_its_passage(self):
+        """Review #36."""
+        self.w1()["passages"][1]["locations"].append(_phantom())
+        self.reharvest("loc-1", self.docs)
+        self.challenge()
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "s1")
+        self.assertEqual(code, 1, out + err)
+        report = read_json(self.paths.export_report_json("s1"))
+        self.assertTrue(any("Widget.no_such_thing" in r["reason"] for r in report["refused"]))
+
+    def test_unresolved_passages(self):
+        """Review #26, #27: no status, and the worker named."""
+        unresolved = self.docs[f"loc-{F.W2}-1/{F.W2}.json"]["passages"][1]
+        built = outcomes.build(self.paths, "loc-1")
+        row = next(r for r in built["outcomes"] if r["item"] == unresolved["item"])
+        self.assertEqual((row["status"], row["unresolved_by"]), (None, "worker"))
+        unresolved["locations"] = [F._loc("beta", "Beta.GadgetLattice")]
+        self.reharvest("loc-1", self.docs)
+        built = outcomes.build(self.paths, "loc-1")
+        row = next(r for r in built["outcomes"] if r["item"] == unresolved["item"])
+        self.assertIsNone(row["status"])
+        self.assertIn("an unresolved passage has no locations", row["problem"])
+
+    def test_a_passage_answered_by_another_task_is_ignored(self):
+        """Review #25."""
+        F.plan_locate(self, self.root, "--per-task", "2", run_id="loc-2")
+        docs = F.locate_documents(self.paths, "loc-2")
+        first, second = docs[f"loc-{F.W1}-1/{F.W1}.json"], docs[f"loc-{F.W1}-2/{F.W1}.json"]
+        first["passages"].append(dict(second["passages"][0]))
+        F.write_harvest(self.paths, "loc-2", docs)
+        built = outcomes.build(self.paths, "loc-2")
+        self.assertTrue(any(f"belongs to task loc-{F.W1}-2" in p for p in built["problems"]))
+        self.assertEqual(sum(r["kind"] == "LOCATION" and r["item"] == second["passages"][0]["item"]
+                             for r in built["rows"]), 2)   # Widget.Spanning + spanning_conj, once
+
+    def test_the_planned_passages_are_not_guessed(self):
+        """Review #23: no manifests, or an unharvested inventory, is a refusal."""
+        (self.paths.run_dir("loc-1") / "planned.json").unlink()
+        shutil.rmtree(self.paths.tend_root("loc-1") / "gate" / "tasks")
+        with self.assertRaises(CfError) as caught:
+            outcomes.build(self.paths, "loc-1")
+        self.assertIn("task manifests hold 0", str(caught.exception))
+        with self.assertRaises(CfError) as caught:
+            outcomes.inventory(self.paths, "inv-nope", require_gate=False)
+        self.assertIn("RECEIPT.json", str(caught.exception))
+
+    def test_a_receipt_keeps_its_documented_keys_and_no_source_text(self):
+        """Review #32, #34."""
+        def uphold(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "absence":
+                v = {"item": rec["item"], "target": "absence", "action": "uphold",
+                     "witness": "searched"}
+            return v
+        w2 = self.docs[f"loc-{F.W2}-1/{F.W2}.json"]
+        w2["passages"][0]["receipt"]["candidates"] = [
+            {"library": "beta", "declaration": "Beta.GadgetLattice", "verdict": "rejected",
+             "reason": "a conjecture", "secret": "dropped"}]
+        self.reharvest("loc-1", self.docs)
+        self.challenge(uphold)
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "s1")
+        self.assertEqual(code, 0, out + err)
+        out_dir = self.paths.export_dir("s1")
+        seal = read_json(out_dir / "SEAL.json")
+        (receipt,) = list((out_dir / "receipts").glob("*.json"))
+        digest = hashing.sha256_file(receipt)
+        self.assertEqual(receipt.stem, digest)
+        self.assertEqual(seal["files"][f"receipts/{digest}.json"], digest)
+        self.assertEqual(set(read_json(receipt)["candidates"][0]),
+                         {"library", "declaration", "verdict", "reason"})
+        layer = (self.paths.sourceset_source_dir(F.SS, F.W2) / "layer.txt").read_text()
+        w2["passages"][0]["receipt"]["queries"].append(" ".join(layer.split()[:14]))
+        self.reharvest("loc-1", self.docs)
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "s1")
+        self.assertEqual(code, 1, out + err)
+        report = read_json(self.paths.export_report_json("s1"))
+        self.assertTrue(any("past the 12-word quote cap" in r["reason"]
+                            for r in report["refused"]))
+
+
+def _phantom() -> dict:
+    return F._loc("alpha", "Widget.no_such_thing", "relatedMatch", 2)
 
 
 class TestTheDocumentsNameWhatIsBuilt(unittest.TestCase):

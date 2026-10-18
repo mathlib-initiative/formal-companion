@@ -28,7 +28,8 @@ Model-free and standard library only: it decides from numbers, runs on the
 host where cflib is not installed, and its one action is ``tend-control
 drain --root`` (finish what is in flight, start nothing).  Every check is
 appended to ``<root>/watchdog.jsonl`` and the latest is ``<root>/watchdog.json``,
-which the sequencer reads to stop the campaign after a drain.
+which the sequencer reads after the shard: a drain, a reason to drain that no
+drain acted on, or a record it cannot read stops the campaign.
 """
 from __future__ import annotations
 
@@ -121,7 +122,7 @@ def decide(*, dollars: float, max_cost: float, calls: int, failed: int, merged: 
     reasons = []
     if max_cost > 0 and dollars >= max_cost:
         reasons.append(f"spend ${dollars:.2f} reached the shard's cap ${max_cost:.2f}")
-    if p90_gate is not None and calls >= min_calls:
+    if p90_gate is not None and calls > 0 and calls >= min_calls:
         rate = failed / calls
         if rate > multiple * p90_gate:
             reasons.append(f"gate-failure rate {rate:.3f} over {calls} calls is above "
@@ -200,6 +201,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.max_cost <= 0:
         print("watchdog: --max-cost must be positive (a locate shard needs a recorded cap)",
               file=sys.stderr)
+        return 64
+    if args.min_gate_calls < 1 or args.min_tasks < 1:
+        print("watchdog: --min-gate-calls and --min-tasks must be at least 1", file=sys.stderr)
         return 64
     stop = Path(args.root) / "watchdog.stop"
     while True:

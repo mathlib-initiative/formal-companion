@@ -249,6 +249,13 @@ class WorkspacePaths:
     def gate_json(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "gate.json"
 
+    def run_host_dir(self, run_id: str) -> Path:
+        """What `cf harvest` brings home from the run host besides the findings:
+        the gate log, the usage export and the canary scan
+        (references/locate-documents.md section 10).  Not under corpus/<run>/,
+        whose tree is the receipt's manifest."""
+        return self.run_dir(run_id) / "host"
+
     def tasks_dir(self, run_id: str) -> Path:
         return self.run_dir(run_id) / "tasks"
 
@@ -351,6 +358,12 @@ class WorkspacePaths:
     def candidates_json(self, sourceset_id: str, universe_id: str, source_id: str) -> Path:
         return (self.candidates_dir(sourceset_id, universe_id)
                 / f"{_safe_id(source_id, 'source_id')}.json")
+
+    def candidates_kind_dir(self, sourceset_id: str, universe_id: str, kind: str) -> Path:
+        """L2 retrieved from another TOOLS database than the full one (``blind``,
+        ``planted-<sha16>``): a directory of its own under the full one's, so one arm
+        never overwrites another's files (references/locate-documents.md section 5)."""
+        return self.candidates_dir(sourceset_id, universe_id) / _safe_id(kind, "candidates kind")
 
     @property
     def corpora_dir(self) -> Path:

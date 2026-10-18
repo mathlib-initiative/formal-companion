@@ -11,7 +11,8 @@ which refuses their names and says which command plans them.
 What differs between the three is data: the run mode (``cflib.vocab``'s locate
 modes, whose kinds are the gate's), the task bound, the concurrency (worker
 plus reviewer sessions stay under the bridge's 15 slots, proposal section 6),
-and the prompt the worker reads.
+and the prompt the worker reads.  The root bound every preset shares is
+``cflib.vocab.MAX_TASKS_PER_ROOT`` (proposal section 6, Roots).
 """
 from __future__ import annotations
 
@@ -21,11 +22,6 @@ from cflib import vocab
 from cflib.errors import CfError
 
 from plan.presets import Preset
-
-#: at most this many tasks in one tend root; a larger plan is campaign shards
-#: (proposal section 6, Roots; references/locate-documents.md section 11)
-MAX_TASKS_PER_ROOT = 500
-
 
 @dataclass(frozen=True)
 class LocateShape:

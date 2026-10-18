@@ -490,6 +490,10 @@ def _source_facts(workspace) -> list[dict]:
 
 
 def _run_facts(workspace) -> list[dict]:
+    # the receipt's own listing: recursive (a locate corpus is
+    # <task-id>/<source-id>.json) and without RECEIPT.json or gate.local.json
+    from harvest.files import iter_finding_files
+
     paths = workspace.paths
     out = []
     for run_id in paths.list_runs():
@@ -497,14 +501,13 @@ def _run_facts(workspace) -> list[dict]:
         receipt = paths.receipt_json(run_id)
         out.append({
             "run_id": run_id,
-            "corpus_files": len(list(corpus.glob("*.json"))) - (1 if receipt.exists() else 0)
-                            if corpus.is_dir() else 0,
+            "corpus_files": len(iter_finding_files(corpus)),
             "receipt": receipt.exists(),
         })
     for corpus in sorted(paths.corpus_dir.glob("*")) if paths.corpus_dir.is_dir() else []:
         if corpus.is_dir() and corpus.name not in {r["run_id"] for r in out}:
             out.append({"run_id": corpus.name,
-                        "corpus_files": len(list(corpus.glob("*.json"))),
+                        "corpus_files": len(iter_finding_files(corpus)),
                         "receipt": (corpus / "RECEIPT.json").exists(),
                         "planned": False})
     return out
