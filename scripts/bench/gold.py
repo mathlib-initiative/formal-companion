@@ -42,16 +42,19 @@ from cflib.jsonio import read_json, write_json
 from cflib.paths import skill_root
 from cflib.yamlio import load_yaml
 
+from corpus import query
+from locate.candidates import normalise_title
+
 from . import inputs
 from .layout import (ABLATION_SCHEMA, CALIBRATION_SCHEMA, G1_RESOLVED_SCHEMA, GOLD_SCHEMA,
-                     LABEL_ARGS_SCHEMA, LABEL_FILES, LABEL_RESULT_SCHEMA, SPEND_SCHEMA,
-                     BenchLayout, canonical, now, read_jsonl_rows, sha_of,
-                     write_canonical_jsonl)
+                     LABEL_ARGS_SCHEMA, LABEL_FILES, LABEL_RESULT_SCHEMA, MIN_OVERLAP_WORDS,
+                     SPEND_SCHEMA, BenchLayout, canonical, curated_qid, now, overlap_words,
+                     read_jsonl_rows, sha_of, write_canonical_jsonl)
 
 #: the labeler, frozen by its file's sha (its prompts are inline in it)
 LABELER_WORKFLOW = "workflows/locate-label.workflow.js"
 #: bumped whenever the labeler's contract (args or result shape) changes
-LABELER_VERSION = "locate-label/1"
+LABELER_VERSION = "locate-label/2"
 #: G4: at most this many maintainer spot checks per release (section 8.1)
 G4_MAX_NEGATIVES = 30
 G4_MAX_POSITIVES = 20
@@ -62,7 +65,6 @@ MAX_EXCERPT_CHARS = 4000
 #: the relations that make a gold declaration count towards ``formalized``
 COUNTING = frozenset(vocab.LOCATE_RELATIONS - {vocab.RELATED_MATCH})
 
-_QID = re.compile(r"Q[1-9][0-9]*\Z")
 
 
 def new_canary() -> str:
@@ -81,6 +83,13 @@ def workflow_sha256() -> str:
     return inputs.sha256_file(path)
 
 
+def labeler_commit() -> str:
+    """The checkout the labeler's args are emitted from (``locate.export.skill_commit``)."""
+    from locate.export import skill_commit
+
+    return skill_commit() or "unrecorded"
+
+
 # --------------------------------------------------------------------------
 # curated lists and the rename table
 # --------------------------------------------------------------------------
@@ -91,27 +100,35 @@ def _yaml_or_json(path: Path) -> Any:
 
 
 def _decls_of(entry: dict) -> list[str]:
+    """An entry's declaration names, under the keys L2's reader takes (``locate.candidates``)."""
     out = []
-    if isinstance(entry.get("decl"), str):
-        out.append(entry["decl"])
-    for name in entry.get("decls") or []:
-        if isinstance(name, str):
-            out.append(name)
-    return [n.strip() for n in out if n and n.strip()]
+    for key in ("decl", "declaration"):
+        if isinstance(entry.get(key), str):
+            out.append(entry[key])
+    for key in ("decls", "declarations"):
+        for name in entry.get(key) or []:
+            if isinstance(name, str):
+                out.append(name)
+    return list(dict.fromkeys(n.strip() for n in out if n and n.strip()))
 
 
 def read_curated_1000(path: Path) -> list[dict]:
-    """Mathlib's ``$MATHLIB/docs/1000.yaml`` shape: QID -> ``{title, decl | decls, ...}``."""
+    """Mathlib's ``$MATHLIB/docs/1000.yaml`` shape: QID -> ``{title, decl | decls, ...}``.
+
+    A key may carry one letter (``Q4724004A``, ``Q180345X``) when one Wikidata item
+    covers several theorems: the entry joins on the base QID and keeps its key.
+    """
     data = _yaml_or_json(path)
     if not isinstance(data, dict):
         raise CfError(f"{path} is not a mapping keyed by Wikidata QID")
     out = []
     for key in sorted(data, key=str):
         entry = data[key] if isinstance(data[key], dict) else {}
-        qid = str(key).strip()
-        if not _QID.match(qid):
-            raise CfError(f"{path}: key {key!r} is not a Wikidata QID")
-        out.append({"key": qid, "qid": qid, "title": entry.get("title"),
+        qid = curated_qid(key)
+        if qid is None:
+            raise CfError(f"{path}: key {key!r} is not a Wikidata QID (Q<digits>, or with one "
+                          f"letter for one of several theorems of an item)")
+        out.append({"key": str(key).strip(), "qid": qid, "title": entry.get("title"),
                     "declarations": _decls_of(entry)})
     return out
 
@@ -124,8 +141,8 @@ def read_curated_100(path: Path) -> list[dict]:
     out = []
     for key in sorted(data, key=lambda k: (len(str(k)), str(k))):
         entry = data[key] if isinstance(data[key], dict) else {}
-        out.append({"key": str(key), "qid": None, "title": entry.get("title"),
-                    "declarations": _decls_of(entry)})
+        out.append({"key": str(key), "qid": curated_qid(entry.get("wikidata")),
+                    "title": entry.get("title"), "declarations": _decls_of(entry)})
     return out
 
 
@@ -155,46 +172,57 @@ def read_rename_table(path: Path | None) -> dict[str, str]:
 
 
 def normalized_title(title: str | None) -> str:
-    return " ".join(str(title or "").casefold().split())
+    """The title key both L2 (``cf locate candidates``) and G1 join a 100.yaml entry on."""
+    return normalise_title(str(title or ""))
 
 
 # --------------------------------------------------------------------------
 # to_additive twins
 # --------------------------------------------------------------------------
 
-#: whole-word substitutions ``to_additive`` makes, both ways; a twin is kept only
-#: when it exists at the pin, so a wrong guess costs nothing
-_TOKEN_TWINS = (("mul", "add"), ("one", "zero"), ("prod", "sum"), ("inv", "neg"),
-                ("div", "sub"), ("pow", "nsmul"), ("zpow", "zsmul"), ("smul", "vadd"))
-_CAMEL_TWINS = (("Mul", "Add"), ("One", "Zero"), ("Prod", "Sum"), ("Inv", "Neg"),
-                ("Div", "Sub"), ("Monoid", "AddMonoid"), ("Group", "AddGroup"),
-                ("Semigroup", "AddSemigroup"), ("Submonoid", "AddSubmonoid"),
-                ("Subgroup", "AddSubgroup"))
+#: the name tokens ``to_additive`` translates, multiplicative -> additive: whole
+#: ``.``/``_``-separated tokens, and CamelCase tokens -- a structure name exactly, else a
+#: leading word (``MulAction`` -> ``AddAction``); the namespace ``Prod`` (a type) is not one
+_TOKEN_TWINS = {"mul": "add", "one": "zero", "prod": "sum", "inv": "neg", "div": "sub",
+                "pow": "nsmul", "zpow": "zsmul", "smul": "vadd"}
+_STRUCTURE_TWINS = {"Monoid": "AddMonoid", "Group": "AddGroup", "Semigroup": "AddSemigroup",
+                    "CommMonoid": "AddCommMonoid", "CommGroup": "AddCommGroup",
+                    "Submonoid": "AddSubmonoid", "Subgroup": "AddSubgroup"}
+_CAMEL_TWINS = {"Mul": "Add", "One": "Zero", "Inv": "Neg", "Div": "Sub"}
 _SPLIT = re.compile(r"([._])")
 
 
+def _token_kind(token: str) -> tuple[str | None, str]:
+    """``("mul" | "add" | None, the token in the other kind)``."""
+    for table in (_TOKEN_TWINS, _STRUCTURE_TWINS):
+        for mul, add in table.items():
+            if token == mul:
+                return "mul", add
+            if token == add:
+                return "add", mul
+    for mul, add in _CAMEL_TWINS.items():
+        for kind, mine, other in (("mul", mul, add), ("add", add, mul)):
+            rest = token[len(mine):]
+            if token.startswith(mine) and rest[:1].isupper():
+                return kind, other + rest
+    return None, token
+
+
 def twins(name: str) -> list[str]:
-    """Names ``to_additive`` would give ``name`` or take it from: one substitution at a time."""
+    """The name ``to_additive`` gives ``name``, or takes it from: the whole image, one direction.
+
+    Every multiplicative token is translated at once (``mul_one`` -> ``add_zero``,
+    never ``add_one`` or ``mul_zero``), and a name that mixes the two kinds
+    (``mul_zero``) is no ``to_additive`` source or target and has no twin.  A
+    twin is kept by the caller only when it exists at the pin.
+    """
     parts = _SPLIT.split(name)
-    found: set[str] = set()
-    for i, part in enumerate(parts):
-        if part in (".", "_"):
-            continue
-        swaps: set[str] = set()
-        for a, b in _TOKEN_TWINS:
-            if part == a:
-                swaps.add(b)
-            elif part == b:
-                swaps.add(a)
-        for a, b in _CAMEL_TWINS:
-            for x, y in ((a, b), (b, a)):
-                if part.startswith(x):
-                    swaps.add(y + part[len(x):])
-        for swapped in swaps:
-            if swapped != part:
-                found.add("".join(parts[:i] + [swapped] + parts[i + 1:]))
-    found.discard(name)
-    return sorted(found)
+    kinds = [_token_kind(part) if part not in (".", "_") else (None, part) for part in parts]
+    found = {kind for kind, _ in kinds if kind}
+    if len(found) != 1:
+        return []
+    image = "".join(other if kind else part for part, (kind, other) in zip(parts, kinds))
+    return [image] if image != name else []
 
 
 # --------------------------------------------------------------------------
@@ -207,7 +235,7 @@ def _resolve(conn: sqlite3.Connection, library: str, commit: str, name: str,
     chain = [name]
     current = name
     for _ in range(MAX_RENAME_HOPS + 1):
-        if inputs.decl(conn, library, commit, current):
+        if query.exists(conn, library, commit, current):
             return current, chain
         nxt = renames.get(current)
         if not nxt or nxt in chain:
@@ -235,10 +263,13 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
             if not row["declarations"]:
                 no_declarations[via] = no_declarations.get(via, 0) + 1
                 continue
-            if row.get("qid"):
-                matched = by_qid.get(row["qid"], [])
-            else:
-                matched = by_title.get(normalized_title(row.get("title")), [])
+            # L2's join (locate.candidates.curated_hits): a 1000.yaml entry by its QID; a
+            # 100.yaml entry by the QID it carries AND by the shared title key -- over the
+            # article's title only, where L2 also reads aliases and bold terms
+            matched = list(by_qid.get(row["qid"], [])) if row.get("qid") else []
+            if via == "mathlib_100":
+                matched += [a for a in by_title.get(normalized_title(row.get("title")), [])
+                            if a not in matched]
             if not matched:
                 unmatched[via] = unmatched.get(via, 0) + 1
                 continue
@@ -255,20 +286,18 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
         for hit in inputs.tagged(conn, "wikidata", qid, libraries):
             claims.append({"source_id": article["source_id"], "qid": qid,
                            "title": article.get("title"), "via": "wikidata_tag",
-                           "key": f"{hit['library']}:{hit['name']}",
-                           "declarations": [(hit["library"], hit["name"])],
-                           "evidence": f"@[wikidata {qid}] on {hit['library']}:{hit['name']}"})
-    commits = {library: commit}
+                           "key": f"{hit['library']}:{hit['declaration']}",
+                           "declarations": [(hit["library"], hit["declaration"])],
+                           "evidence": f"@[wikidata {qid}] at {hit['path']}:{hit['line']}"})
+    commits = {row["id"]: row["commit_sha"] for row in query.libraries(conn)}
+    commits.setdefault(library, commit)
     resolved: list[dict] = []
     dropped_entries: list[dict] = []
     for claim in claims:
         accept: dict[tuple[str, str], str] = {}
         dropped: list[dict] = []
         for lib, name in claim["declarations"]:
-            lib_commit = commits.get(lib)
-            if lib_commit is None:
-                found = conn.execute("SELECT commit_sha FROM libraries WHERE id = ?", (lib,)).fetchone()
-                lib_commit = commits[lib] = found[0] if found else ""
+            lib_commit = commits.get(lib, "")
             at, chain = _resolve(conn, lib, lib_commit, name, renames)
             if at is None:
                 dropped.append({"library": lib, "declaration": name,
@@ -276,8 +305,25 @@ def resolve_g1(articles: list[dict], conn: sqlite3.Connection, *, library: str, 
                                 + (f" (rename chain {' -> '.join(chain)})" if len(chain) > 1 else "")})
                 continue
             accept.setdefault((lib, at), "curated" if at == name else "renamed")
-            for twin in twins(at):
-                if (lib, twin) not in accept and inputs.decl(conn, lib, lib_commit, twin):
+            names = [at]
+            # the rename table widens even when the old name survives at the pin (a
+            # deprecated alias): a correct worker cites the new name
+            nxt, seen = renames.get(at), {at}
+            while nxt and nxt not in seen and len(seen) <= MAX_RENAME_HOPS:
+                seen.add(nxt)
+                if query.exists(conn, lib, lib_commit, nxt):
+                    accept.setdefault((lib, nxt), "renamed")
+                    names.append(nxt)
+                nxt = renames.get(nxt)
+            # and so does the index's own rename of a deprecated alias (corpus deprecated_to)
+            for known in list(names):
+                new_name = (inputs.declaration(conn, lib, lib_commit, known) or {}).get("deprecated_to")
+                if new_name and query.exists(conn, lib, lib_commit, new_name):
+                    accept.setdefault((lib, new_name), "renamed")
+                    if new_name not in names:
+                        names.append(new_name)
+            for twin in sorted({t for n in names for t in twins(n)}):
+                if (lib, twin) not in accept and query.exists(conn, lib, lib_commit, twin):
                     accept[(lib, twin)] = "to_additive"
         entry = {"source_id": claim["source_id"], "qid": claim["qid"], "title": claim["title"],
                  "via": [claim["via"]], "evidence": [claim["evidence"]],
@@ -382,10 +428,12 @@ def read_labels(layout: BenchLayout, tier: str, *, required: bool = True) -> lis
 # the labeler: emit
 # --------------------------------------------------------------------------
 
-def _source_block(paths, sourceset: str, article: dict) -> dict:
+def _source_block(paths, sourceset: str, article: dict, *, tag_blind: bool = False) -> dict:
+    """What the labeler is told of a source; tag-blind (calibrate), never its Wikidata QID."""
     sdir = inputs.source_dir(paths, sourceset, article["source_id"])
     return {"source_id": article["source_id"], "title": article.get("title"),
-            "qid": article.get("wikidata"), "revision": article.get("revision"),
+            "qid": None if tag_blind else article.get("wikidata"),
+            "revision": article.get("revision"),
             "text": str(sdir / "text.txt"), "layer": str(sdir / "layer.txt")}
 
 
@@ -395,7 +443,7 @@ def _excerpt(layer: str, span: list[int]) -> str:
 
 
 def emit_args(mode: str, *, paths, layout: BenchLayout, bench: dict, articles: dict[str, dict],
-              universe: dict, conn: sqlite3.Connection | None, checkouts: dict[str, str],
+              universe, conn: sqlite3.Connection | None, checkouts: dict[str, str],
               tools: dict, model: str, hunters: int, gx_articles: list[str] | None = None) -> dict:
     """The labeler's args for one mode.  Reads the bench, the sourceset and the universe only."""
     vocab.check(mode, vocab.BENCH_LABEL_MODES, "labeler mode")
@@ -411,7 +459,8 @@ def emit_args(mode: str, *, paths, layout: BenchLayout, bench: dict, articles: d
             for entry in entries:
                 accept = []
                 for a in entry["accept"]:
-                    row = inputs.decl(conn, a["library"], a["commit"], a["declaration"]) if conn else None
+                    row = (inputs.declaration(conn, a["library"], a["commit"], a["declaration"])
+                           if conn else None)
                     accept.append({"library": a["library"], "declaration": a["declaration"],
                                    "signature": (row or {}).get("signature"),
                                    "path": (row or {}).get("path"), "line": (row or {}).get("line")})
@@ -456,13 +505,17 @@ def emit_args(mode: str, *, paths, layout: BenchLayout, bench: dict, articles: d
             used.add(sid)
     args = {
         "schema": LABEL_ARGS_SCHEMA, "mode": mode, "bench": layout.bench_id,
-        "labeler": {"version": LABELER_VERSION, "workflow_sha256": workflow_sha256()},
+        "labeler": {"version": LABELER_VERSION, "workflow_sha256": workflow_sha256(),
+                    "skill_commit": labeler_commit()},
         "universe": {"id": bench["universe"]["id"], "sha256": bench["universe"]["sha256"],
                      "libraries": [{"id": lib, "repo": entry.get("repo"), "commit": entry["commit"],
                                     "checkout": checkouts.get(lib)}
                                    for lib, entry in sorted(libs.items())]},
+        # never a run record: what the labeler is given is the bench, the sources and the
+        # universe (section 8.1, G3 is blind)
         "tools": tools, "model": model, "hunters": hunters,
-        "sources": [_source_block(paths, sourceset, articles[s]) for s in sorted(used)],
+        "sources": [_source_block(paths, sourceset, articles[s], tag_blind=mode == "calibrate")
+                    for s in sorted(used)],
         "tasks": tasks,
     }
     args["digest"] = sha_of({k: v for k, v in args.items() if k != "digest"})
@@ -493,9 +546,20 @@ def check_result(result: Any, args: dict) -> None:
                       hint="the labeler is frozen by its sha: re-emit the args and re-run it")
     if not isinstance(result.get("labels"), list):
         raise CfError("the result has no labels list")
+    ids = [str(l.get("task_id")) for l in result["labels"] if isinstance(l, dict)]
+    twice = sorted({i for i in ids if ids.count(i) > 1})
+    if twice:
+        raise CfError(f"the result labels {len(twice)} task(s) more than once: " + ", ".join(twice[:5]),
+                      hint="one label per task: re-run the labeler on these tasks")
 
 
 def _anchor_quote(layer: str, quote: Any) -> tuple[list[int] | None, str]:
+    """The gold span a quote anchors: matched exactly once, holding at least four whole words.
+
+    A span of fewer whole layer words than the join's floor could never join any
+    run passage, so it would score as a certain inventory miss; it is refused here
+    instead (G1 then scores at article level, GX records the refusal, G4 stops).
+    """
     from gate import locate_text
 
     if not isinstance(quote, dict) or not str(quote.get("exact") or "").strip():
@@ -504,7 +568,12 @@ def _anchor_quote(layer: str, quote: Any) -> tuple[list[int] | None, str]:
                                   quote.get("suffix") or "")
     if len(hits) != 1:
         return None, f"the quote matches the layer {len(hits)} times, not exactly once"
-    return [hits[0], hits[0] + len(quote["exact"])], ""
+    span = [hits[0], hits[0] + len(quote["exact"])]
+    words = overlap_words(layer, tuple(span), tuple(span))
+    if words < MIN_OVERLAP_WORDS:
+        return None, (f"the quote holds {words} whole layer word(s), fewer than the join's "
+                      f"{MIN_OVERLAP_WORDS}: it could never join a run passage")
+    return span, ""
 
 
 def _gold_status(passage_kind: str, declarations: list[dict]) -> tuple[str | None, bool]:
@@ -529,7 +598,7 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
         if relation not in vocab.LOCATE_RELATIONS:
             dropped.append({**d, "reason": f"relation {relation!r} is not a locate relation"})
             continue
-        row = inputs.decl(conn, lib, libs[lib]["commit"], name)
+        row = inputs.declaration(conn, lib, libs[lib]["commit"], name)
         if not row:
             dropped.append({**d, "reason": "not in the universe at its commit (re-checked at the pin)"})
             continue
@@ -539,21 +608,41 @@ def _recheck(conn: sqlite3.Connection, libs: dict[str, dict], declarations: list
     return kept, dropped
 
 
-def _merged(layout: BenchLayout, tier: str, rows: list[dict], *, keep: set[str]) -> list[dict]:
+def provenance(args: dict) -> dict:
+    """What every transcribed row carries of the labeler that made it (section 6, frozen)."""
+    labeler = args.get("labeler") or {}
+    return {"labeler_sha256": labeler.get("workflow_sha256"), "args_digest": args.get("digest"),
+            "labeler_commit": labeler.get("skill_commit")}
+
+
+def _keep_earlier(old: list[dict], fresh: set[str], keep: set[str], sha: str | None,
+                  what: str) -> list[dict]:
+    """The earlier rows a partial transcription keeps -- all from this same labeler."""
+    kept = [r for r in old if r["gold_id"] not in fresh and r["gold_id"] in keep]
+    others = sorted({str(r.get("labeler_sha256")) for r in kept} - {str(sha)})
+    if others:
+        raise CfError(f"{what}: {len(kept)} earlier row(s) this result does not answer came from "
+                      f"another labeler ({', '.join(o[:12] for o in others)}…)",
+                      hint="one tier, one labeler: re-run the labeler on every task of the mode "
+                           "(re-emit, then transcribe a full result)")
+    return kept
+
+
+def _merged(layout: BenchLayout, tier: str, rows: list[dict], *, keep: set[str],
+            sha: str | None) -> list[dict]:
     """This transcription's rows over the tier's earlier ones, by gold id.
 
     A resumed or partial labeler run answers some tasks; the rows it does not
-    answer keep their earlier labels, as long as their task still exists.
+    answer keep their earlier labels, as long as their task still exists and
+    they came from the same labeler.
     """
-    fresh = {r["gold_id"] for r in rows}
     old = [{k: v for k, v in r.items() if k not in ("canary", "tier")}
-           for r in read_labels(layout, tier, required=False)
-           if r["gold_id"] not in fresh and r["gold_id"] in keep]
-    return old + rows
+           for r in read_labels(layout, tier, required=False)]
+    return _keep_earlier(old, {r["gold_id"] for r in rows}, keep, sha, f"{tier} labels") + rows
 
 
 def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: dict,
-               articles: dict[str, dict], universe: dict, conn: sqlite3.Connection,
+               articles: dict[str, dict], universe, conn: sqlite3.Connection,
                signed_by: str | None = None, after_freeze: bool = False) -> dict:
     """Turn a checked labeler result into label rows; returns a summary."""
     check_result(result, args)
@@ -576,15 +665,18 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
         return layers[sid]
 
     canary = bench["canary"]
+    stamp = provenance(args)
+    sha = stamp["labeler_sha256"]
     summary: dict[str, Any] = {"mode": mode, "labels": len(by_task), "unlabeled": unlabeled}
     if mode == "anchor":
         entries = {e["entry_id"]: e for e in read_json(layout.g1_resolved).get("entries") or []}
         rows = []
-        for task_id in sorted(tasks):
+        # an unanswered task stays unlabelled: it writes no row, and keeps any earlier one
+        for task_id in sorted(by_task):
             entry = entries.get(task_id)
             if entry is None:
                 raise CfError(f"{task_id} is no longer a resolved G1 entry; re-emit the args")
-            label = by_task.get(task_id) or {}
+            label = by_task[task_id]
             span, why = _anchor_quote(layer_of(entry["source_id"]), label.get("quote"))
             relation = label.get("relation")
             if relation not in vocab.LOCATE_RELATIONS:
@@ -593,7 +685,7 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                 else vocab.PASSAGE_OTHER
             declarations = []
             for a in entry["accept"]:
-                row = inputs.decl(conn, a["library"], a["commit"], a["declaration"])
+                row = inputs.declaration(conn, a["library"], a["commit"], a["declaration"])
                 if row and relation:
                     declarations.append({"library": a["library"], "declaration": a["declaration"],
                                          "commit": a["commit"], "relation": relation,
@@ -608,13 +700,13 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                          "scope": vocab.SCOPE_FORMAL_MATH, "declarations": declarations,
                          "accept": [{"library": a["library"], "declaration": a["declaration"]}
                                     for a in entry["accept"]],
-                         "evidence": label.get("evidence") or ""})
-        write_labels(layout, "G1", _merged(layout, "G1", rows, keep=set(entries)), canary,
+                         "evidence": label.get("evidence") or "", **stamp})
+        write_labels(layout, "G1", _merged(layout, "G1", rows, keep=set(entries), sha=sha), canary,
                      after_freeze=after_freeze)
         summary.update(anchored=sum(1 for r in rows if r["level"] == "passage"),
                        article_level=sum(1 for r in rows if r["level"] == "article"))
     elif mode in ("label", "calibrate"):
-        rows, found = [], 0
+        rows = []
         g1 = {r["gold_id"]: r for r in read_labels(layout, "G1", required=False)}
         spans_by_id = {s["span_id"]: s for s in read_json(layout.spans_json).get("spans") or []}
         for task_id in sorted(by_task):
@@ -628,12 +720,17 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                 else vocab.PASSAGE_OTHER
             kept, dropped = _recheck(conn, libs, label.get("declarations") or [])
             if mode == "calibrate":
+                # h measures what the tag-blind HUNTERS found: a declaration counts only
+                # when a hunter returned it and the labeler kept it at the pin
                 accept = {(a["library"], a["declaration"]) for a in g1[task_id]["accept"]}
-                hit = any((d["library"], d["declaration"]) in accept for d in kept)
-                found += hit
+                hunted = {str(f) for h in label.get("hunters") or [] if isinstance(h, dict)
+                          for f in h.get("found") or []}
+                hit = any((d["library"], d["declaration"]) in accept
+                          and f"{d['library']}:{d['declaration']}" in hunted for d in kept)
                 rows.append({"gold_id": task_id, "found": hit,
                              "declarations": [{"library": d["library"], "declaration": d["declaration"]}
-                                              for d in kept]})
+                                              for d in kept],
+                             "hunters": label.get("hunters") or [], **stamp})
                 continue
             status, related = (_gold_status(kind, kept) if scope == vocab.SCOPE_FORMAL_MATH
                                else (None, False))
@@ -644,18 +741,27 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                          "dropped": dropped, "pi_span": span_row.get("pi_span"),
                          "pi_article": span_row.get("pi_article"),
                          "evidence": label.get("evidence") or "",
-                         "hunters": label.get("hunters") or []})
+                         "hunters": label.get("hunters") or [], **stamp})
         if mode == "calibrate":
-            total = len(rows)
+            anchored = {gid for gid, r in g1.items() if r.get("level") == "passage"}
+            earlier = (read_json(layout.calibration_json).get("rows") or []
+                       if layout.calibration_json.is_file() else [])
+            merged = _keep_earlier(earlier, {r["gold_id"] for r in rows}, anchored, sha,
+                                   "calibration") + rows
+            unanswered = sorted(anchored - {r["gold_id"] for r in merged})
+            found = sum(1 for r in merged if r["found"])
+            total = len(anchored)
             doc = {"schema": CALIBRATION_SCHEMA, "bench": layout.bench_id, "found": found,
-                   "total": total, "h": (found / total) if total else None,
-                   "tag_blind": True, "rows": sorted(rows, key=lambda r: r["gold_id"]),
+                   "total": total, "answered": len(merged), "unanswered": unanswered,
+                   # h is over EVERY anchored G1 passage, so a partial run reports none
+                   "h": (found / total) if total and not unanswered else None,
+                   "tag_blind": True, "rows": sorted(merged, key=lambda r: r["gold_id"]),
                    "labeler": args["labeler"], "at": now()}
             write_json(layout.calibration_json, doc, sort_keys=True)
-            summary.update(found=found, total=total, h=doc["h"])
+            summary.update(found=found, total=total, h=doc["h"], unanswered=unanswered)
         else:
-            write_labels(layout, "G3", _merged(layout, "G3", rows, keep=set(spans_by_id)), canary,
-                         after_freeze=after_freeze)
+            write_labels(layout, "G3", _merged(layout, "G3", rows, keep=set(spans_by_id), sha=sha),
+                         canary, after_freeze=after_freeze)
             summary.update(formal_math=sum(1 for r in rows if r["scope"] == vocab.SCOPE_FORMAL_MATH),
                            formalized=sum(1 for r in rows if r["status"] == vocab.STATUS_FORMALIZED))
     else:  # inventory
@@ -665,6 +771,12 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
         rows, refused = [], []
         for task_id in sorted(by_task):
             sid = tasks[task_id]["source_id"]
+            enumerators = set(by_task[task_id].get("enumerators") or [])
+            if not {"A", "B"} <= enumerators:
+                raise CfError(f"the GX inventory of {sid} lists enumerators "
+                              f"{sorted(enumerators) or 'none'}, not both A and B",
+                              hint="a GX inventory is two independent enumerations: re-run the "
+                                   "labeler on that article")
             for number, passage in enumerate(by_task[task_id].get("passages") or []):
                 span, why = _anchor_quote(layer_of(sid), (passage or {}).get("quote"))
                 if span is None:
@@ -677,20 +789,24 @@ def transcribe(result: dict, args: dict, *, paths, layout: BenchLayout, bench: d
                              if passage.get("passage_kind") in vocab.PASSAGE_KINDS else vocab.PASSAGE_OTHER,
                              "scope": passage.get("scope") if passage.get("scope") in vocab.SCOPES else None,
                              "from": sorted(set(passage.get("from") or [])),
-                             "signed_by": signed_by})
+                             "signed_by": signed_by, **stamp})
         seen: dict[str, dict] = {}
         for row in rows:
             seen.setdefault(row["gold_id"], row)
         relabelled = {tasks[t]["source_id"] for t in by_task}
         kept = [r for r in read_labels(layout, "GX", required=False)
                 if r["source_id"] not in relabelled]
+        others = sorted({str(r.get("labeler_sha256")) for r in kept} - {str(sha)})
+        if others:
+            raise CfError(f"GX labels: {len(kept)} earlier row(s) came from another labeler",
+                          hint="one tier, one labeler: re-run the inventory on every GX article")
         write_labels(layout, "GX", kept + list(seen.values()), canary, after_freeze=after_freeze)
         summary.update(passages=len(seen), refused=refused, articles=len(by_task))
     return summary
 
 
 def import_g4(rows: list[dict], *, paths, layout: BenchLayout, bench: dict,
-              articles: dict[str, dict], universe: dict, conn: sqlite3.Connection,
+              articles: dict[str, dict], universe, conn: sqlite3.Connection,
               after_freeze: bool = False) -> dict:
     """The maintainer's spot checks: at most 30 negatives and 20 positives (section 8.1)."""
     libs = inputs.libraries(universe)
@@ -745,13 +861,31 @@ def record_spend(layout: BenchLayout, mode: str, labels: int, cost: dict | None)
 # P: the module-ablated index
 # --------------------------------------------------------------------------
 
-def plant(layout: BenchLayout, source_db: Path, eval_g1: list[dict]) -> dict:
-    """A copy of ``corpus.sqlite`` without the modules of the eval G1 declarations."""
+def plant(layout: BenchLayout, paths, universe, eval_g1: list[dict], into: Path) -> dict:
+    """A copy of ``corpus.sqlite`` without the modules of the eval G1 declarations, in ``into``.
+
+    ``into`` is a staging directory: ``cf bench freeze`` moves it to
+    ``gold/planted/`` only once the manifest that records it is written, so a
+    refused freeze leaves the frozen planted tier as it was.
+
+    The source is the universe's full database, checked against the universe
+    first (``inputs.open_checked``); the copy keeps its ``meta`` -- so it passes
+    ``corpus.query.check_universe`` for the same universe, which is what
+    ``cf plan-locate`` checks of a tools database -- plus ``meta.planted``.  It
+    is the TOOLS database of a P run (references/locate-documents.md section 9):
+    the workers search it, while the gate and the outcomes check the full one,
+    where a removed declaration still exists, so a citation of one from memory
+    lands in the outcomes as a location and scores ``E-MEMORY``.
+    """
     targets = {(a["library"], a["declaration"]) for row in eval_g1 for a in row.get("accept") or []}
     if not targets:
         raise CfError("no eval G1 declaration to ablate", hint="anchor G1 and freeze the splits first")
-    layout.planted_dir.mkdir(parents=True, exist_ok=True)
-    staged = layout.planted_db.with_name(layout.planted_db.name + ".tmp")
+    source_db = paths.corpus_db(universe.id)
+    inputs.open_checked(paths, universe, source_db).close()
+    into = Path(into)
+    into.mkdir(parents=True, exist_ok=True)
+    planted_db = into / layout.planted_db.name
+    staged = planted_db.with_name(planted_db.name + ".tmp")
     shutil.copyfile(source_db, staged)
     conn = sqlite3.connect(str(staged))
     try:
@@ -780,12 +914,18 @@ def plant(layout: BenchLayout, source_db: Path, eval_g1: list[dict]) -> dict:
         conn.execute("PRAGMA journal_mode=DELETE")
     finally:
         conn.close()
-    staged.replace(layout.planted_db)
+    staged.replace(planted_db)
+    check = query.open_db(planted_db)
+    try:
+        query.check_universe(check, universe)
+    finally:
+        check.close()
     doc = {"schema": ABLATION_SCHEMA, "bench": layout.bench_id,
+           "universe": inputs.universe_pin(universe),
            "modules": [{"library": lib, "module": m} for lib, m in sorted(modules)],
            "removed": sorted(removed), "source_db_sha256": inputs.sha256_file(source_db),
-           "corpus_sha256": inputs.sha256_file(layout.planted_db)}
-    write_json(layout.ablation_json, doc, sort_keys=True)
+           "corpus_sha256": inputs.sha256_file(planted_db)}
+    write_json(into / layout.ablation_json.name, doc, sort_keys=True)
     return doc
 
 
@@ -848,8 +988,29 @@ def latest_manifest(layout: BenchLayout, version: int | None = None) -> tuple[in
     return number, doc
 
 
-def verify_frozen(layout: BenchLayout, manifest: dict) -> None:
-    """Refuse when any frozen file differs from the manifest: gold is never edited."""
+def verify_planted(layout: BenchLayout, planted: dict | None) -> None:
+    """Refuse when the planted tier's files are not the ones a manifest froze."""
+    if not planted:
+        return
+    for path, key in ((layout.ablation_json, "ablation_sha256"), (layout.planted_db, "corpus_sha256")):
+        got = inputs.sha256_file(path) if path.is_file() else None
+        if got != planted.get(key):
+            raise CfError(f"the planted tier changed after freeze ({path.name})",
+                          hint="a gold change is its own change: cf bench freeze --plant "
+                               "--supersede writes a new manifest with a new sha")
+
+
+def verify_frozen(layout: BenchLayout, manifest: dict, *, canary: str | None = None) -> None:
+    """Refuse when any frozen file differs from the manifest: gold is never edited.
+
+    Every label file, the frame, draw, spans and clusters, the planted tier's
+    ``ablation.json`` and database, and -- given the bench's canary -- the canary
+    the manifest hashed.
+    """
+    verify_planted(layout, (manifest.get("tiers") or {}).get("P"))
+    if canary is not None and manifest.get("canary_sha256") != sha_of(canary):
+        raise CfError("the bench's canary is not the one its gold manifest hashed",
+                      hint="bench.yaml's canary is part of the frozen gold; restore it")
     for tier, info in sorted((manifest.get("tiers") or {}).items()):
         if not info or tier == "P" or not info.get("file"):
             continue

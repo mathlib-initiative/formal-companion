@@ -212,6 +212,22 @@ def word_spans(text: str, start: int = 0, end: int | None = None) -> list[tuple[
     return [(start + m.start(), start + m.end()) for m in _WORD.finditer(text[start:end])]
 
 
+#: a curated list key: a Wikidata QID, or the 1000+ project's QID with one letter
+#: (``Q4724004A``, ``Q180345X``) for several theorems of one Wikidata item
+CURATED_KEY = re.compile(r"(Q[1-9][0-9]*)([A-Z])?\Z")
+
+
+def curated_qid(key) -> str | None:
+    """The Wikidata QID a curated key names (its letter dropped), or None for anything else."""
+    found = CURATED_KEY.match(str(key or "").strip())
+    return found.group(1) if found else None
+
+
+#: the join's floor: the whole layer words two spans must share (section 8.2), and so
+#: the fewest a gold span may hold -- a shorter one could never join any run passage
+MIN_OVERLAP_WORDS = 4
+
+
 def overlap_words(layer: str, one: tuple[int, int], two: tuple[int, int]) -> int:
     """How many layer words lie wholly inside both spans.
 
