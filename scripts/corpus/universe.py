@@ -9,6 +9,8 @@ shape references/locate-documents.md section 8 fixes.  One file per universe,
   names as ``library``, ``brain_lib``, ``repo``, ``commit``, ``toolchain``,
   ``roots``, ``licence``, ``conventions`` and, once ingested, ``index: {path,
   sha256, declarations}``;
+* ``published_index`` on a library row -- the recorded acceptance of an index
+  the library publishes itself, which the probe and its canary never checked;
 * ``excluded`` -- ``{id, reason}`` for a library that failed to build or probe,
   so an absence honestly names the smaller universe;
 * ``canaries`` -- one row per toolchain whose acceptance canary was ingested
@@ -36,6 +38,14 @@ COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 _DATE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _REPO = re.compile(r"https://[A-Za-z0-9.-]+/[A-Za-z0-9._/-]+\Z")
+#: an elan toolchain spelling (``leanprover/lean4:v4.34.0``,
+#: ``leanprover/lean4-nightly:nightly-2026-10-01``) or a bare version: nothing that
+#: needs quoting in the shell lines ``cf corpus probe-command`` prints
+TOOLCHAIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*(?::[A-Za-z0-9][A-Za-z0-9._+-]*)?\Z")
+#: a root module glob, exactly as the host driver's universe list accepts one
+#: (``universe_host._GLOB``: a module name, optionally ``.+`` or ``.*``)
+_MODULE = r"[A-Za-z_][A-Za-z0-9_'!?]*(?:\.[A-Za-z_][A-Za-z0-9_'!?]*)*"
+ROOT_GLOB = re.compile(rf"{_MODULE}(?:\.\+|\.\*)?\Z")
 _TOOLCHAIN_PREFIX = "leanprover/lean4:"
 
 #: the order the keys of one library row are written in
@@ -227,12 +237,24 @@ class Universe:
         self.clear_corpus_db()
         return row
 
-    def set_index(self, library_id: str, *, path: str, sha256: str, declarations: int) -> None:
+    def set_index(self, library_id: str, *, path: str, sha256: str, declarations: int,
+                  published: dict | None = None) -> None:
+        """Pin a library's normalised index.
+
+        ``published`` is the recorded acceptance of an index the library
+        publishes itself (``{schema, reason, accepted}``): the probe did not
+        produce it, so its canary says nothing about it, and the row says who
+        took it on trust and why.  A probe index clears any earlier one.
+        """
         lib = self.library(library_id)
         new = {"path": path, "sha256": sha256, "declarations": int(declarations)}
         if lib.get("index") != new:
             lib["index"] = new
             self.clear_corpus_db()
+        if published:
+            lib["published_index"] = dict(published)
+        else:
+            lib.pop("published_index", None)
 
     def record_canary(self, *, toolchain: str, passed: bool, cases: dict, index_sha256: str,
                       checked: str) -> dict:
@@ -319,9 +341,15 @@ def _library_problems(lib: dict) -> list[str]:
         problems.append(f"repo {lib.get('repo')!r} is not an https repository URL")
     if not COMMIT.match(str(lib.get("commit") or "")):
         problems.append(f"commit {lib.get('commit')!r} is not 40 lowercase hex digits")
-    if not str(lib.get("toolchain") or "").strip():
-        problems.append("no toolchain")
+    if not TOOLCHAIN.match(str(lib.get("toolchain") or "")):
+        problems.append(f"toolchain {lib.get('toolchain')!r} is not an elan toolchain such as "
+                        f"leanprover/lean4:v4.34.0")
     roots = lib.get("roots")
-    if not isinstance(roots, list) or not roots or not all(isinstance(r, str) and r for r in roots):
+    if not isinstance(roots, list) or not roots:
         problems.append("roots must be a non-empty list of module names")
+    else:
+        bad = [r for r in roots if not isinstance(r, str) or not ROOT_GLOB.match(r)]
+        if bad:
+            problems.append(f"roots {bad!r} are not Lake module globs (a module name, "
+                            f"optionally .+ or .*), which the host driver refuses")
     return problems

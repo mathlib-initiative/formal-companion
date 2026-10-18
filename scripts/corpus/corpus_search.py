@@ -15,18 +15,24 @@ the same functions, so there is one definition of how a declaration is found.
 **What it reads.**  The database only, opened ``mode=ro&immutable=1``: no
 journal, no lock, no write, whatever the file's permissions say.
 
-**How it matches.**  The query is split into words (letters and digits; every
-other character, FTS5's operators and quotes included, is a separator), each
-word is quoted, and the words are OR-ed: a declaration matching more words
-ranks higher (``bm25`` with the name weighted over the signature over the
-docstring).  No query string can reach FTS5's own syntax, so ``NEAR``, a column
-filter or an unbalanced quote is just a word.
+**How it matches.**  A declaration's name and a query are split into words by
+ONE rule, :func:`words` (references/locate-documents.md section 8): a word is a
+run of letters and digits, every other character -- ``.``, ``_``, FTS5's
+operators and quotes included -- separates, and a run is split again where a
+lower-case letter or a digit is followed by an upper-case one; words are
+lower-cased.  So ``natDegree``, ``nat_degree`` and ``Nat.degree`` all query
+``nat degree``, which is how ``Polynomial.natDegree`` is indexed.  Each query
+word is quoted and the words are OR-ed: a declaration matching more words ranks
+higher (``bm25`` with the name weighted over the signature over the docstring).
+No query string can reach FTS5's own syntax, so ``NEAR``, a column filter or an
+unbalanced quote is just a word.
 
 **Output.**  One JSON object per line: ``library``, ``declaration``, ``module``,
 ``path``, ``line``, ``end_line``, ``kind``, ``signature``, ``score``.  No line at
-all when nothing matched.  Exit status: 0 searched, 2 bad arguments, 3 the
-database could not be read or is not a ``cf-corpus/1`` database -- a problem
-of the host, never of the query.
+all when nothing matched.  Exit status: 0 searched, 2 bad arguments (an argument
+that is not valid UTF-8 included), 3 the database could not be read or is not a
+``cf-corpus/1`` database -- a problem of the host, never of the query.  Never a
+traceback.
 """
 from __future__ import annotations
 
@@ -49,36 +55,58 @@ MAX_WORDS = 32
 #: bm25 column weights: name_words, signature, docstring
 WEIGHTS = (10.0, 2.0, 1.0)
 
-_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_WORD = re.compile(r"[^\W_]+")
+#: a run of letters and digits (``_`` is a word character to ``\w``, not here)
+_RUN = re.compile(r"[^\W_]+")
 
 
 class CorpusError(RuntimeError):
     """The database cannot be read as a corpus; the message says why."""
 
 
+def _split_run(run: str):
+    """One letter-and-digit run, split where a lower-case letter or digit meets an upper-case one."""
+    start = 0
+    for i in range(1, len(run)):
+        if run[i].isupper() and (run[i - 1].islower() or run[i - 1].isdigit()):
+            yield run[start:i]
+            start = i
+    yield run[start:]
+
+
+def iter_words(text: str):
+    """The words of ``text`` by the one rule, lower-cased, in order (a generator)."""
+    for match in _RUN.finditer(str(text or "")):
+        for piece in _split_run(match.group(0)):
+            if piece:
+                yield piece.lower()
+
+
 def name_words(name: str) -> str:
     """``Widget.exists_spanning_gadget`` -> ``widget exists spanning gadget``.
 
-    The name split at ``.``, ``_`` and a lower-to-upper case change (a digit
-    counts as lower), lowercased and joined by single spaces: the column FTS5
-    indexes a declaration's name under (references/locate-documents.md section 8).
+    The column FTS5 indexes a declaration's name under (references/locate-documents.md
+    section 8): :func:`iter_words` of the name joined by single spaces, so
+    ``Polynomial.natDegree`` is ``polynomial nat degree`` and ``T2Space`` is
+    ``t2 space``.
     """
-    parts: list[str] = []
-    for segment in re.split(r"[._]", str(name or "")):
-        for piece in _CAMEL.split(segment):
-            if piece:
-                parts.append(piece.lower())
-    return " ".join(parts)
+    return " ".join(iter_words(name))
 
 
 def query_words(text: str) -> list[str]:
-    """The words of a query, lowercased, in order, without repeats, at most MAX_WORDS."""
+    """A query's words by the same rule, without repeats, the first MAX_WORDS of them.
+
+    Linear in the query: it stops reading once it has MAX_WORDS distinct words,
+    so a pasted paragraph costs no more than its first few lines.
+    """
     out: list[str] = []
-    for word in _WORD.findall(str(text or "").lower()):
-        if word not in out:
+    seen: set[str] = set()
+    for word in iter_words(text):
+        if word not in seen:
+            seen.add(word)
             out.append(word)
-    return out[:MAX_WORDS]
+            if len(out) >= MAX_WORDS:
+                break
+    return out
 
 
 def fts_match(words: list[str]) -> str:
@@ -123,7 +151,7 @@ def search(conn: sqlite3.Connection, text: str, *, library: str | None = None,
     params.append(limit)
     try:
         rows = conn.execute(sql, params).fetchall()
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, UnicodeError, ValueError) as exc:
         raise CorpusError(f"the search failed ({exc})") from None
     return [{"library": r["library"], "declaration": r["name"], "module": r["module"],
              "path": r["path"], "line": r["line"], "end_line": r["end_line"],
@@ -141,12 +169,28 @@ def show(conn: sqlite3.Connection, library: str, name: str) -> dict | None:
             return None
         tags = conn.execute("SELECT tag, value FROM tags WHERE decl_id = ? ORDER BY tag, value",
                             (row["id"],)).fetchall()
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, UnicodeError, ValueError) as exc:
         raise CorpusError(f"the lookup failed ({exc})") from None
     return {"library": row["library"], "declaration": row["name"], "module": row["module"],
             "path": row["path"], "line": row["line"], "end_line": row["end_line"],
             "kind": row["kind"], "signature": row["signature"], "docstring": row["docstring"],
             "tags": [{"tag": t["tag"], "value": t["value"]} for t in tags]}
+
+
+def check_text(ap: "argparse.ArgumentParser", values) -> None:
+    """Refuse (exit 2) an argument that is not valid UTF-8.
+
+    A byte that does not decode arrives as a lone surrogate, which sqlite3 cannot
+    bind; it is a bad argument, and saying so is better than a traceback.
+    """
+    for value in values:
+        if value is None:
+            continue
+        try:
+            str(value).encode("utf-8")
+        except UnicodeEncodeError:
+            ap.error(f"argument {str(value).encode('utf-8', 'backslashreplace').decode()!r} "
+                     "is not valid UTF-8")
 
 
 def emit(record: dict) -> None:
@@ -170,6 +214,7 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
     if args.limit < 1:
         ap.error("--limit must be positive")
+    check_text(ap, [args.db, args.library, *args.words])
     try:
         conn = connect(args.db)
         try:

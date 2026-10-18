@@ -371,7 +371,10 @@ corpora/<universe>/corpus.sqlite                  derived, rebuildable
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
 a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,
 `toolchain`, `roots`, `licence`, `conventions` and, once ingested, `index: {path,
-sha256, declarations}`; `excluded` lists `{id, reason}`; `canaries` lists, per
+sha256, declarations}` — and `published_index: {schema, reason, accepted}` when that
+index is one the library publishes itself, accepted by name with `cf corpus ingest
+--accept-published <reason>` because neither the probe nor its canary checked it;
+`excluded` lists `{id, reason}`; `canaries` lists, per
 toolchain, the acceptance canary's result (`{toolchain, lean_version, passed,
 checked, index_sha256, cases}`) — no library on a toolchain without a passed
 canary is ingested; `corpus_db` is `{path, sha256, built, declarations,
@@ -389,11 +392,24 @@ with `\n` — so a re-probe that changes one index changes the universe.
  "kind": "theorem", "proof_status": "proved", "statement": false, "printable": true,
  "signature": "∀ (w : Widget), ∃ g, g.Spans w", "docstring": "…",
  "axioms": [], "tags": [{"tag": "wikidata", "value": "Q99999001"}],
- "deprecated": null, "probe_proof_status": "proved", "flags": []}
+ "deprecated": null, "private": false, "probe_proof_status": "proved", "flags": []}
 ```
 
+**Ingest refuses an index that is not the pinned one, whole**
+(`scripts/corpus/ingest.py`): the library, commit and toolchain are read from the
+index's own header and its `manifest.json`, which must both name the pin and may
+not disagree; the manifest's `index_sha256` and `index_bytes` must be the bytes
+read and the header's `declaration_count` and the manifest's `records` the
+records read; a probed checkout recorded `dirty` (or not known to be clean), a
+probe index on a toolchain without a passed canary, a record without its
+`nonstandard_axioms` or whose own status contradicts its fields, and an index in
+which no module has a source path (a probe that never saw the sources) are
+refused. Two private declarations sharing a user name — the probe names a private
+declaration by its user name — are dropped and counted (`private_collisions_dropped`);
+two public ones are refused.
+
 `proof_status` is `cflib.vocab.decide_proof_status` over the probe's wrapper,
-its axiom closure and its type — re-decided at ingest (`scripts/corpus/ingest.py`),
+its axiom closure and its type — re-decided at ingest,
 never copied from a probe, whose own answer is kept as `probe_proof_status`
 because the probe as run decides in another order (an axiom by its kind first,
 no `axiom_dependent`, an `isProp` failure falling through to `proved`). `axioms`
@@ -403,10 +419,19 @@ status would turn on an `isProp` the probe could not compute is the conservative
 `statement_only` with `is_prop_unknown` in `flags`; a published index's status
 word, taken without a closure, carries `published_status`. `statement` is set on
 a `Prop`-valued definition — derived, while the probe emits no such field, from
-a `def`/`abbrev`/`opaque` whose printed type's final codomain is `Prop`. `tags`
-use `cflib.vocab.TAG_KINDS`: attributes in the source span from `start_line` to
-`line` (read from a checkout given to the ingest) and Wikipedia URLs in the
-docstring. `manifest.json` (`schema: cf-library-index/1`) carries the library,
+a `def`/`abbrev`/`opaque` whose printed type's final codomain is `Prop`. The
+source scan for a `proof_wanted` that adds no constant is not implemented (the
+proposal's §2.4, rule 1): such a result is not in the index, and every manifest
+says `proof_wanted_scan: "not implemented"`. `tags` use `cflib.vocab.TAG_KINDS`:
+attributes in the source span from `start_line` to `line`, read from a checkout
+given to the ingest — which must be at the pinned commit (its HEAD read from its
+files) and clean — and Wikipedia URLs in the docstring. A Wikipedia tag's value is
+one canonical page URL, `https://<lang>.wikipedia.org/wiki/<title>`: the mobile
+host folded, the title percent-decoded, spaces and runs of underscores one
+underscore, its first letter upper-case, no fragment or query; an apostrophe
+and a balanced pair of parentheses are part of the title, an unmatched `)` and
+trailing sentence punctuation are not. A consumer joining on an article URL
+puts it in the same form first. `manifest.json` (`schema: cf-library-index/1`) carries the library,
 commit, toolchain, declaration count, `sha256` of `decls.jsonl`, the counts by
 proof status and kind, the flagged and tag counts, and the probe output's shas.
 
@@ -429,9 +454,15 @@ CREATE TABLE tags (decl_id INTEGER NOT NULL, tag TEXT NOT NULL, value TEXT NOT N
 CREATE INDEX tags_by_value ON tags (tag, value);
 ```
 
-`name_words` is the name split at `.`, `_` and lower-to-upper case changes,
-lowercased and joined by spaces, so `Widget.exists_spanning_gadget` is found by
-`spanning gadget`. A declaration present in two libraries is two rows.
+`name_words` is the name's words joined by spaces, by one rule: a word is a run
+of letters and digits (every other character, `.` and `_` included, separates),
+a run is split again where a lower-case letter or a digit is followed by an
+upper-case one, and words are lower-cased — `Widget.exists_spanning_gadget` is
+`widget exists spanning gadget`, `Polynomial.natDegree` `polynomial nat degree`,
+`T2Space` `t2 space`. Search queries are split by the same rule
+(`scripts/corpus/corpus_search.py` `iter_words`), so `natDegree`, `nat_degree`
+and `nat degree` are one query. A declaration present in two libraries is two
+rows.
 
 **The host tools** (`scripts/corpus/corpus_search.py` and
 `scripts/corpus/corpus_show.py`) are standard-library scripts copied into the
@@ -446,11 +477,12 @@ python3 <gate>/corpus_show.py --db <corpus.sqlite> <library> <declaration>
 Both print JSON lines (`library`, `declaration`, `module`, `path`, `line`,
 `end_line`, `kind`, `signature`; `corpus_search.py` adds its `score`,
 `corpus_show.py` adds `docstring` and `tags`, and neither shows a proof status),
-read nothing but the database and write nothing. The query is split into words,
-each quoted and the words OR-ed, so nothing a worker types reaches FTS5's own
-syntax; results are ranked by `bm25` with the name weighted over the signature
+read nothing but the database and write nothing. The query is split into words
+by the rule above (at most 32), each quoted and the words OR-ed, so nothing a
+worker types reaches FTS5's own syntax; results are ranked by `bm25` with the name weighted over the signature
 over the docstring. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
-(bad arguments), 3 (the database could not be read — a host problem). The
+(bad arguments, one that is not valid UTF-8 included), 3 (the database could not
+be read — a host problem); never a traceback. The
 workspace side reads the same database through `scripts/corpus/query.py`.
 
 ## 9. A locate run on disk
