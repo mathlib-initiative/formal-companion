@@ -125,6 +125,56 @@ class TestTheParityTable(unittest.TestCase):
             with self.subTest(question=question):
                 self.assertIn(f"**{question}**", VOCABULARY_MD)
 
+    def test_round_three_resolved_the_questions(self):
+        """The reading the table carries is the one vocabulary.md section 1.11 records."""
+        reading = self.doc["reading"]
+        self.assertEqual((reading["round"], reading["resolves"]), (3, ["Q1", "Q2", "Q3"]))
+        self.assertEqual({c["question"] for c in self.doc["cases"] if c.get("question")},
+                         {"Q1", "Q2", "Q3"})
+        self.assertIn("**Parity, round 3**", VOCABULARY_MD)
+        # the cases round 2 expected otherwise, each named in its rule
+        changed = {c["id"]: c["expected"] for c in self.doc["cases"]
+                   if "round 2 expected" in c["rule"] and not c.get("refused")}
+        self.assertEqual(changed, {"C08": "formalized", "C09": "statement_only",
+                                   "D04": "statement_only", "D07": "statement_only",
+                                   "D08": "statement_only", "E03": "formalized",
+                                   "E04": "formalized"})
+
+    def test_the_parts_a_confirmed_claim_confirms(self):
+        """Round 3: each case's locations through the outcomes' coverage verdict."""
+        cases = [c for c in self.doc["cases"] if "expected_challenges" in c]
+        self.assertTrue(cases)
+        self.assertIn("sampled_out", {l.get("challenge") for c in cases for l in c["locations"]})
+        for case in cases:
+            with self.subTest(case=case["id"], rule=case["rule"]):
+                self.assertEqual(exported_challenges(case), case["expected_challenges"])
+
+
+def exported_challenges(case: dict) -> dict:
+    """``{location_key: challenge}`` once a parity case's claim verdict is applied.
+
+    The claim is planned with its parts, as the challenge planner plans every
+    claim, and its verdict is ``confirm`` for a ``survived`` claim and ``refute``
+    for a ``downgraded`` one (a refute removes the claim).
+    """
+    sid, item = "s", "In-text #0a1b2c3d"
+    claim = case["coverage"]
+    row = {"source_id": sid, "item": item, "refuted": [], "runs": {"challenge": None},
+           "locations": [dict(l, library="alpha", declaration=l["location_key"], rank=rank)
+                         for rank, l in enumerate(case["locations"], 1)],
+           "coverage": {"complete": True, "parts": list(claim["parts"]),
+                        "note": "the parts state every clause", "challenge": None}}
+    key = outcomes.record_key(vocab.COVERAGE_TARGET, sid, item)
+    planned = {key: {"planned": vocab.CHALLENGE_REQUIRED, "parts": list(claim["parts"]),
+                     "challenge_run": "chl"}}
+    action = {vocab.CHALLENGE_SURVIVED: "confirm",
+              vocab.CHALLENGE_DOWNGRADED: "refute"}[claim["challenge"]]
+    verdicts = {key: {"action": action, "witness": "checked", "challenge_run": "chl"}}
+    problems: list[str] = []
+    outcomes._apply_coverage(row, planned, verdicts, problems)
+    assert not problems, problems
+    return {l["location_key"]: l.get("challenge") for l in row["locations"]}
+
 
 class TestTheCoverageArgument(unittest.TestCase):
 
@@ -210,6 +260,33 @@ class TestTheCoverageArgument(unittest.TestCase):
         bare = {"relation": "exactMatch", "proof_status": "proved"}
         self.assertEqual(vocab.derive_status("theorem", [bare, dict(bare)], False),
                          "formalized")
+
+    def test_a_survived_claim_is_one_more_exact_match(self):
+        """Round 3: the claim acts as one exactMatch location -- a proved theorem (theorem
+        row) or a definition (definition row) when every part is finished, a statement_only
+        declaration otherwise -- for every passage kind and every pair of parts."""
+        parts = [(vocab.PROOF_PROVED, False), (vocab.PROOF_DEFINITION, False),
+                 (vocab.PROOF_DEFINITION, True), (vocab.PROOF_STATEMENT_ONLY, False),
+                 (vocab.PROOF_STATEMENT_ONLY, True), (vocab.PROOF_WANTED, False),
+                 (vocab.PROOF_AXIOM_DEPENDENT, True)]
+        finished = {(vocab.PROOF_PROVED, False), (vocab.PROOF_DEFINITION, False)}
+        for kind in sorted(vocab.PASSAGE_KINDS):
+            for first in parts:
+                for second in parts:
+                    locations = [loc("a", "hasPart", *first), loc("b", "hasPart", *second)]
+                    if {first, second} <= finished:
+                        stands_for = (vocab.PROOF_DEFINITION
+                                      if kind in vocab.DEFINITION_PASSAGE_KINDS
+                                      else vocab.PROOF_PROVED)
+                    else:
+                        stands_for = vocab.PROOF_STATEMENT_ONLY
+                    with self.subTest(kind=kind, parts=(first, second)):
+                        self.assertEqual(
+                            vocab.derive_status(kind, locations, False, claim("ab")),
+                            vocab.derive_status(kind, locations + [loc("c", "exactMatch",
+                                                                       stands_for)], False))
+                        self.assertIn(vocab.derive_status(kind, locations, False, claim("ab")),
+                                      {"formalized", "statement_only"})
 
     def test_the_constants(self):
         self.assertEqual(vocab.COVERAGE_TARGET, "coverage")
@@ -471,6 +548,106 @@ class TestAStatementOnlyPart(_Covered):
     def test_it_gives_statement_only(self):
         self.challenge()
         self.assertEqual(self.row()["status"], "statement_only")
+
+
+class TestAConfirmedClaimConfirmsItsParts(Campaign):
+    """Round 3: a supporting definition passage whose parts the sample left out.
+
+    Widget lemma's spanning definition (a ``supporting`` passage) is stated by two
+    ``hasPart`` parts -- the definition and a proved lemma -- with a claim.  At
+    sample rate 0 neither part is drawn (``sampled_out``) and only the claim is
+    required.
+    """
+
+    PARTS = ("Widget.Spanning", "Widget.card_dvd")
+
+    def setUp(self):
+        super().setUp()
+        F.plan_locate(self, self.root)
+        docs = F.locate_documents(self.paths, "loc-1")
+        self.item = F.frozen_formal_math(self.paths, F.W1)[2]["item"]
+        for doc in docs.values():
+            if doc["source_id"] == F.W1:
+                (passage,) = [p for p in doc["passages"] if p["item"] == self.item]
+                passage["locations"] = [F._loc("alpha", decl, "hasPart", rank)
+                                        for rank, decl in enumerate(self.PARTS, 1)]
+                passage["coverage"] = {"complete": True, "parts": [1, 2],
+                                       "note": "the predicate and its bound give it"}
+        F.write_harvest(self.paths, "loc-1", docs)
+
+    def row(self) -> dict:
+        built = outcomes.build(self.paths, "loc-1", challenge_runs=["chl-1"])
+        return next(r for r in built["outcomes"] if r["item"] == self.item)
+
+    def test_the_parts_are_sampled_out_and_the_claim_required(self):
+        self.challenge("--sample-rate", "0")
+        plan = read_json(self.paths.run_dir("chl-1") / "challenge-plan.json")
+        planned = {(r["target"], r.get("declaration")): r["planned"] for r in plan["records"]
+                   if r["item"] == self.item and r["target"] in ("location", "coverage")}
+        self.assertEqual(planned, {("location", "Widget.Spanning"): "sampled_out",
+                                   ("location", "Widget.card_dvd"): "sampled_out",
+                                   ("coverage", None): "required"})
+
+    def test_confirmed_its_parts_are_survived_on_every_record(self):
+        self.challenge("--sample-rate", "0")
+        row = self.row()
+        self.assertEqual(row["coverage"]["challenge"], "survived")
+        self.assertEqual({l["declaration"]: l["challenge"] for l in row["locations"]},
+                         {decl: "survived" for decl in self.PARTS})
+        self.assertEqual((row["status"], row["challenge"]), ("formalized", "survived"))
+        code, out, err = ws(self.root, "export", "literature-links", "--run", "loc-1",
+                            "--challenge-run", "chl-1", "--set-id", "set-1")
+        self.assertEqual(code, 0, out + err)
+        recs = [r for r in _records(self.paths.export_dir("set-1"))
+                if r["extensions"][EXT]["item"] == self.item]
+        self.assertEqual(len(recs), 2)
+        for rec in recs:
+            self.assertEqual(rec["extensions"][EXT]["challenge"], "survived")
+            self.assertEqual(rec["extensions"][EXT]["coverage"]["challenge"], "survived")
+            self.assertEqual(rec["status"], "formalized")
+
+    def test_refuted_its_parts_stay_sampled_out(self):
+        def refute(rec):
+            v = F.default_verdict(rec)
+            if rec["target"] == "coverage":
+                v.update(action="refute", witness="neither part states the bound")
+            return v
+        self.challenge("--sample-rate", "0", verdict=refute)
+        row = self.row()
+        self.assertIsNone(row["coverage"])
+        self.assertEqual({l["challenge"] for l in row["locations"]}, {"sampled_out"})
+        self.assertEqual(row["status"], "partial")
+
+
+class TestConfirmParts(unittest.TestCase):
+    """``outcomes.confirm_parts``: only a record no verdict judged changes."""
+
+    def test_unjudged_parts_survive_and_judged_ones_keep_their_verdict(self):
+        parts = [{"challenge": value} for value in ("not_required", "sampled_out", "survived",
+                                                     None, "challenge_pending")]
+        outcomes.confirm_parts(parts)
+        self.assertEqual([p["challenge"] for p in parts],
+                         ["survived", "survived", "survived", None, "challenge_pending"])
+
+    def test_a_lapsed_claim_confirms_nothing(self):
+        case = {"locations": [loc("a", "hasPart", "proved"), loc("b", "relatedMatch", "proved")],
+                "coverage": claim("ab")}
+        for l in case["locations"]:
+            l["challenge"] = "sampled_out"
+        sid, item = "s", "In-text #0a1b2c3d"
+        row = {"source_id": sid, "item": item, "refuted": [], "runs": {"challenge": None},
+               "locations": [dict(l, library="alpha", declaration=l["location_key"], rank=r)
+                             for r, l in enumerate(case["locations"], 1)],
+               "coverage": {"complete": True, "parts": ["a", "b"], "note": "n",
+                            "challenge": None}}
+        key = outcomes.record_key(vocab.COVERAGE_TARGET, sid, item)
+        problems: list[str] = []
+        outcomes._apply_coverage(row, {key: {"planned": "required", "parts": ["a", "b"],
+                                             "challenge_run": "chl"}},
+                                 {key: {"action": "confirm", "challenge_run": "chl"}}, problems)
+        self.assertTrue(row["coverage_lapsed"])
+        self.assertIn("no longer holds", problems[0])
+        self.assertEqual({l["challenge"] for l in row["locations"]}, {"sampled_out"})
 
 
 class TestTheClaimReader(unittest.TestCase):

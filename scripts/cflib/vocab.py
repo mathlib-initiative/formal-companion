@@ -524,8 +524,10 @@ CHALLENGE_ACTIONS = CHALLENGE_KEEP | CHALLENGE_CHANGE
 #: ``MIN_COVERAGE_PARTS`` parts, every one a ``hasPart`` location of the passage.
 #: Every claim is challenged whatever the passage's prominence -- refuted by
 #: default, ``confirm`` or ``refute`` (``COVERAGE_ACTIONS``) -- because it upgrades
-#: a status; a refute removes the claim and leaves its parts ``hasPart``.  Only a
-#: claim whose challenge is ``survived`` counts in :func:`derive_status`.
+#: a status; a refute removes the claim and leaves its parts ``hasPart``, and a
+#: confirm confirms its parts too (each one no other verdict judged is
+#: ``survived``).  Only a claim whose challenge is ``survived`` counts in
+#: :func:`derive_status`, as one more ``exactMatch`` location.
 MIN_COVERAGE_PARTS = 2
 COVERAGE_ACTIONS = frozenset({"confirm", "refute"})
 #: the keys of a coverage claim as a record carries it (``extensions[locate].coverage``,
@@ -738,12 +740,14 @@ _UNFINISHED = frozenset({PROOF_WANTED, PROOF_STATEMENT_ONLY, PROOF_AXIOM_DEPENDE
 _STATEMENT_PROOF_STATUSES = frozenset({PROOF_DEFINITION}) | _UNFINISHED
 #: the relations that say a declaration states the passage itself
 _STATES = frozenset({EXACT_MATCH, CLOSE_MATCH})
-#: a survived coverage claim's parts, by the row that judges them (decision D1):
-#: a theorem row is formalized when every part is ``proved`` and statement_only
-#: when every part is proved or bears the statement unproved; a definition row is
-#: formalized when every part is a ``definition`` or ``proved``
-_COVERAGE_THEOREM_PARTS = frozenset({PROOF_PROVED}) | _UNFINISHED
-_COVERAGE_DEFINITION_PARTS = frozenset({PROOF_DEFINITION, PROOF_PROVED})
+#: what a survived coverage claim acts as (decision D1, read in parity round 3):
+#: ONE more exactMatch location, finished when every part is (``proved``, or data:
+#: a ``definition`` without the statement flag) -- a proved declaration to the
+#: theorem row and a definition to the definition row, so formalized on either --
+#: and otherwise a statement_only one, statement_only on both rows.  Each pair is
+#: the ``(proof_status, statement)`` the row reads, theorem row first.
+_COVERAGE_FINISHED = ((PROOF_PROVED, False), (PROOF_DEFINITION, False))
+_COVERAGE_UNFINISHED = ((PROOF_STATEMENT_ONLY, False), (PROOF_STATEMENT_ONLY, False))
 
 
 def _theorem_row(relation: str, proof_status: str, statement: bool) -> str:
@@ -842,29 +846,47 @@ def _coverage_parts(coverage, by_key: dict) -> list[tuple[str, bool]]:
     return out
 
 
-def _coverage_status(passage_kind: str, parts: list[tuple[str, bool]]) -> str | None:
-    """What a SURVIVED coverage claim gives a passage, or None when it upgrades nothing.
+def _part_finished(proof_status: str, statement: bool) -> bool:
+    """A coverage part that leaves its clause finished: ``proved``, or data.
 
-    The maintainer's decision D1 (references/vocabulary.md section 1.11): the
-    theorem row -- theorem and conjecture passages, and an example's or an
-    ``other`` passage's -- is ``formalized`` when every part is ``proved``, and
-    ``statement_only`` when every part is proved or states its clause unproved
-    (``statement_only``, ``wanted``, ``axiom_dependent``) and one does; the
-    definition row of a definition, construction or notation passage is
-    ``formalized`` when every part is a ``definition`` or ``proved``.  Anything
-    else -- a data part of a theorem passage, an unfinished part of a definition
-    passage -- upgrades nothing.
+    Data is a ``definition`` without the ``statement`` flag (decision D1's
+    second half: data that states a theorem formalizes it).  Unfinished is
+    everything else: ``statement_only``, ``wanted``, ``axiom_dependent``, and a
+    ``Prop``-valued definition, which states its clause and proves nothing.
     """
-    statuses = {status for status, _statement in parts}
+    return proof_status == PROOF_PROVED or (proof_status == PROOF_DEFINITION and not statement)
+
+
+def _coverage_location(parts: list[tuple[str, bool]]) -> tuple[tuple[str, bool], ...]:
+    """The one ``exactMatch`` location a SURVIVED coverage claim acts as.
+
+    The maintainer's decision D1 as parity round 3 reads it (references/
+    vocabulary.md section 1.11, questions Q1-Q3 resolved): the claim is
+    finished when every part is (:func:`_part_finished`) -- then it is a
+    ``proved`` declaration to the theorem row and a ``definition`` to the
+    definition row, so it formalizes the passage on either -- and otherwise it
+    is a ``statement_only`` one, which gives ``statement_only`` on both rows.
+    Returns the ``(proof_status, statement)`` each row reads, theorem row first.
+    """
+    if all(_part_finished(status, statement) for status, statement in parts):
+        return _COVERAGE_FINISHED
+    return _COVERAGE_UNFINISHED
+
+
+def _location_status(passage_kind: str, relation: str, theorem_reads: tuple[str, bool],
+                     definition_reads: tuple[str, bool]) -> str:
+    """One location's status: its passage kind's row, or the better of both rows.
+
+    ``theorem_reads`` and ``definition_reads`` are the ``(proof_status,
+    statement)`` each row reads -- the declaration's own, or what a survived
+    coverage claim acts as (:func:`_coverage_location`).
+    """
     rows = []
     if passage_kind in THEOREM_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
-        if statuses == {PROOF_PROVED}:
-            rows.append(STATUS_FORMALIZED)
-        elif statuses <= _COVERAGE_THEOREM_PARTS:
-            rows.append(STATUS_STATEMENT_ONLY)
-    if passage_kind in DEFINITION_PASSAGE_KINDS and statuses <= _COVERAGE_DEFINITION_PARTS:
-        rows.append(STATUS_FORMALIZED)
-    return min(rows, key=_STATUS_RANK.__getitem__) if rows else None
+        rows.append(_theorem_row(relation, *theorem_reads))
+    if passage_kind in DEFINITION_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
+        rows.append(_definition_row(relation, definition_reads[0]))
+    return min(rows, key=_STATUS_RANK.__getitem__)
 
 
 def derive_status(passage_kind: str, locations: Iterable, absent: bool,
@@ -890,14 +912,14 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
       ``exactMatch`` or ``closeMatch`` to DATA (a ``definition`` without the
       ``statement`` flag: an equivalence, an isomorphism, a structure-valued
       construction that states the theorem); a definition passage with an
-      ``exactMatch`` or ``closeMatch`` to a ``definition``; and either, with a
-      coverage claim whose challenge is ``survived``, when every part is
-      ``proved`` (a theorem passage) or every part is a ``definition`` or
-      ``proved`` (a definition passage);
+      ``exactMatch`` or ``closeMatch`` to a ``definition``; and any passage
+      with a coverage claim whose challenge is ``survived`` and whose every part
+      is finished -- ``proved``, or data;
     * ``statement_only`` -- the best such location is ``statement_only``,
       ``wanted`` or ``axiom_dependent``, or is a ``Prop``-valued definition
-      stating a theorem passage; or a theorem passage's survived coverage claim
-      whose parts are each proved or unproved, and not all proved;
+      stating a theorem passage; or any passage's survived coverage claim with
+      an unfinished part (``statement_only``, ``wanted``, ``axiom_dependent``,
+      or a ``Prop``-valued definition);
     * ``partial`` -- only ``hasPart`` or ``narrowMatch``, or ``broadMatch`` to a
       definition, with no coverage claim that upgrades them;
     * ``not_formalized`` -- a checked absence, possibly beside ``relatedMatch``
@@ -905,10 +927,17 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     * ``None`` -- unresolved: no location that counts and no absence.  It is
       never ``not_formalized``.
 
+    A survived claim is ONE more ``exactMatch`` location, judged by the
+    passage's row (both rows for an example or ``other`` passage, the better
+    winning) like any other: a ``proved`` declaration to the theorem row and a
+    ``definition`` to the definition row when every part is finished, a
+    ``statement_only`` declaration otherwise (:func:`_coverage_location`; the
+    maintainer's decision D1 as parity round 3 reads it).
+
     The best status over all the evidence wins.  ``relatedMatch`` never counts
     towards a status, and a coverage claim that is not ``survived`` (pending,
     not required, sampled out, or downgraded; an owed claim is not passed and a
-    refute removes the claim) upgrades nothing.  The cases neither table names
+    refute removes the claim) adds nothing.  The cases neither table names
     are decided here, each conservatively (references/vocabulary.md section
     1.11): a definition passage matched exactly to a proved theorem is
     ``partial``; an example or ``other`` passage takes the better of the two
@@ -960,12 +989,8 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
             by_key[key] = location
         if relation == RELATED_MATCH:
             continue
-        rows = []
-        if passage_kind in THEOREM_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
-            rows.append(_theorem_row(relation, proof_status, statement))
-        if passage_kind in DEFINITION_PASSAGE_KINDS | EITHER_PASSAGE_KINDS:
-            rows.append(_definition_row(relation, proof_status))
-        status = min(rows, key=_STATUS_RANK.__getitem__)
+        status = _location_status(passage_kind, relation, (proof_status, statement),
+                                  (proof_status, statement))
         counted.append(relation)
         if best is None or _STATUS_RANK[status] < _STATUS_RANK[best]:
             best = status
@@ -976,9 +1001,8 @@ def derive_status(passage_kind: str, locations: Iterable, absent: bool,
     if coverage is not None:
         parts = _coverage_parts(coverage, by_key)
         if _field(coverage, "challenge") == CHALLENGE_SURVIVED:
-            status = _coverage_status(passage_kind, parts)
-            if status is not None and (best is None
-                                       or _STATUS_RANK[status] < _STATUS_RANK[best]):
+            status = _location_status(passage_kind, EXACT_MATCH, *_coverage_location(parts))
+            if best is None or _STATUS_RANK[status] < _STATUS_RANK[best]:
                 best = status
     if best is not None:
         return best

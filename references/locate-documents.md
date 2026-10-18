@@ -226,8 +226,11 @@ A locate task carries at most eight passages of one frozen inventory.
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
   `uphold`, `overturn` (naming the new `prominence`); `coverage` — `confirm`
-  (the claim `survived`) or `refute` (the claim is removed and its parts stay
-  `hasPart` locations; the passage's challenge is `downgraded`). A coverage
+  (the claim `survived`, and with it each part whose own record no verdict
+  judged: a `not_required` or `sampled_out` part is `survived`, a judged one
+  keeps its verdict) or `refute` (the claim is removed and its parts stay
+  `hasPart` locations with the values they had; the passage's challenge is
+  `downgraded`). A coverage
   verdict names its record by `item` alone, like every passage-level one.
 - Every coverage claim is a record of the challenge, whatever the passage's
   prominence, refuted by default: it upgrades a status. Its record in the task
