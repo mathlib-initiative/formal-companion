@@ -46,6 +46,11 @@ release has something to say.
   carried `licence: null`, which the consumer refuses), and a re-add with
   `--licence` now records a missing licence (it exited 0 and changed nothing); a
   re-add naming another licence or `brain_lib` than recorded is refused.
+- A library's `repo` follows the record set consumer's repository grammar (a
+  dotted host, one to four path segments of `[A-Za-z0-9_.~-]`, no `.`, `..`, empty
+  segment or trailing slash), refused at `cf corpus add` and when a universe is
+  loaded: `https://example.org/beta/` had been pinned, exported and refused whole
+  by the consumer, and a pinned repo cannot be changed by a re-add.
 - `cf plan-locate` refuses a `--run-id` or `--challenge-of` id the export's run
   token cannot spell (`cflib.vocab.RUN_TOKEN_ID`: letters, digits and `._-`, at
   most 64), and `cf campaign plan` a campaign id over 128 characters: a run

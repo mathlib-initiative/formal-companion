@@ -335,7 +335,7 @@ one value: the sha256 of the receipt file's exact bytes.
 `universe.json` is the universe as proposal §2.3 writes it: `id`,
 `universe_sha256`, `frozen` (the `YYYY-MM-DD` it was frozen; the export refuses a
 universe without one), `libraries` — a **list** sorted by id, each `{"id",
-"brain_lib", "repo", "commit"` (40 hex)`, "toolchain", "roots": [...], "licence"`
+"brain_lib", "repo"` (§8's repository grammar)`, "commit"` (40 hex)`, "toolchain", "roots": [...], "licence"`
 (`{"spdx"}`, never null: the export refuses a universe with a library that records
 no licence, naming it and the `cf corpus add … --licence <SPDX id>` that records
 it)`, "display_name"}`, where `display_name` is the library's
@@ -634,7 +634,11 @@ drivers' indexes is made, ingested, built and searched.
 
 `universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
-a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,
+a document names as `library`), `brain_lib`, `repo` (an https repository URL a
+record set's consumer can link: a dotted host and one to four path segments of
+letters, digits and `._~-`, at most 100 each, none of them `.` or `..`, so no
+empty segment and no trailing slash — `corpus.universe.REPO`, refused at `cf corpus
+add` and on load; the repo is outside `universe_sha256`), a 40-hex `commit`,
 `toolchain`, `roots`, `licence` (`{spdx}`: an SPDX id or expression; null while a
 library pinned without `--licence` has none, and a re-add with `--licence` records
 it, since the licence is outside `universe_sha256`; a re-add naming another
