@@ -39,7 +39,8 @@ What it refuses, passage by passage, naming each one in the export report
 * a record the vendored ``literature_links.check`` rejects;
 * a passage whose capped quote is not unique on the layer;
 * a passage the record set cannot describe: no section heading path or no
-  prominence, or a ``closeMatch`` with no note;
+  prominence, a ``closeMatch`` with no note, or a location whose index row gives
+  no module, path or line (``records.location_problem``);
 * a whole source whose records pass the per-source byte budget, when one is
   given;
 * a whole source whose licence does not allow it: its manifest entry's

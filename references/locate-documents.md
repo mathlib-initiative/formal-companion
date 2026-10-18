@@ -358,10 +358,14 @@ What every record carries beyond §2.7's example:
   `central`, `supporting`), after the challenge (a prominence overturn moves
   it), so a consumer can single out the subject passage without a passage
   table. A passage the outcomes give neither is refused.
-- A location's lean end carries `library`, `path`, `line` and `end_line` in its
-  extension **when the index has them**: a library's own published index may
-  record `line` only, and its ends then carry no `end_line` (never a null or a
-  guessed one). A consumer treats `end_line` as optional and renders `line N`.
+- A location's lean end names its declaration's `module` (in `location`) and
+  carries `library`, `path` (the repository-relative `.lean` file) and `line`
+  (>= 1) in its extension, **always**: a location whose index row lacks any of
+  them (the index admits a module with no path) is refused, by name, per
+  passage. Only `end_line` is optional, carried **when the index has one**: a
+  library's own published index may record `line` only, and its ends then carry
+  no `end_line` (never a null or a guessed one). A consumer treats `end_line` as
+  optional and renders `line N`.
 - A `closeMatch` always carries a non-empty `note`, a downgraded one too: a
   challenge downgrade to `closeMatch` takes the verdict's `note`, else the first
   sentence of its witness the quote cap admits (§4); a `closeMatch` with no note
@@ -384,7 +388,7 @@ its record), a `formal_math` passage with no outcome, a record the checker
 rejects, a quote no context can make unique, a receipt query or reason or a
 location note carrying more than `EXPORT_QUOTE_WORDS` words of the source
 verbatim, a passage with no section or prominence or a `closeMatch` with no
-note, and a whole source whose records and receipts pass `--byte-budget` or
+note, a location the index gives no module, path or line, and a whole source whose records and receipts pass `--byte-budget` or
 whose licence does not allow it. No budget applies unless one is given (the
 default is 0, off): a consumer with a cap — an import into a store with a
 per-row limit — passes its own, and the seal records it. A source's manifest
