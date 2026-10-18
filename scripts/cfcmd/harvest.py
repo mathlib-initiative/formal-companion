@@ -103,7 +103,7 @@ def run(args) -> int:
         log.warn(f"UNPRICED model(s) {', '.join(cost['unpriced'])}: their tokens are in the "
                  f"receipt and priced nowhere, so {pricing.format_usd(cost['usd'])} is a lower "
                  f"bound. Add them to workspace.yaml budget.prices and re-run the harvest.")
-    if receipt["missing"] or receipt["sha_mismatched"]:
+    if receipt["missing"] or receipt["sha_mismatched"] or receipt.get("sha_unverified"):
         log.warn("harvest INCOMPLETE: the corpus is not the whole corpus, so every number "
                  "derived from it is a lower bound. Re-run the missing tasks, then `cf harvest` again.")
     if not ((receipt.get("gate") or {"ok": True}).get("ok", True)):

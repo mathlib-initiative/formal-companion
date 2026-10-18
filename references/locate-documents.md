@@ -48,7 +48,10 @@ Every locate document starts with:
 
 `universe` and `universe_sha256` are required in `locate` and
 `locate-challenge` documents and absent from `locate-inventory` ones. One
-document covers one source; it lives at `findings/<task-id>/<source-id>.json`.
+document covers one source; it lives at `findings/<task-id>/<source-id>.json`
+(a file whose name is not its `source_id` is refused, rule 1), and a task that
+writes documents writes one for every source its task manifest names (rule 1),
+each a regular file (a symlink is refused).
 `schema` is `cflib.vocab.LOCATE_DOCUMENT_SCHEMA`; `renderer` is the source's
 (`web-html/1` for the first corpus).
 
@@ -101,8 +104,10 @@ third genuine reviewer rejection (proposal §6), never by a worker.
   `paragraphs.json` entry with `math: true` — overlaps a passage span or a
   `skips` span (the coverage floor).
 - With L2 curated hits for the article (§5; gate rule 4, off in the blind arm),
-  the inventory keeps at least one `formal_math` passage and no `subject`
-  passage is scoped `expository` or `non_math`.
+  the inventory keeps a passage of prominence `subject` scoped `formal_math`
+  (the hits are for the article's own subject, so relabelling it `central`
+  does not turn the rule off) and no `subject` passage is scoped `expository`
+  or `non_math`.
 
 ## 3. Locate document (`mode: locate`)
 
@@ -136,11 +141,17 @@ A locate task carries at most eight passages of one frozen inventory.
 - The document's passages are exactly the task's (the task manifest, §9), each
   once.
 - `relation` ∈ the six locate relations; `rank` 1..5, distinct; `confidence` ∈
-  {`high`, `medium`, `low`}.
+  {`high`, `medium`, `low`}. One location per declaration: a `(library,
+  declaration)` pair appears at most once among a passage's locations (rule 6),
+  since both would carry one `location_key`.
 - `closeMatch` requires a non-empty `note` naming the convention difference.
-- Every curated candidate handed to the task (§5) must appear in `candidates`,
-  accepted or rejected with a reason, or be located; the gate reads the
-  candidates file itself (rule 4). "Handed to the task" is the task manifest
+- Every curated candidate handed to the task (§5) is located — by a location
+  whose relation counts — or rejected with a reason in a `candidates` entry;
+  the gate reads the candidates file itself (rule 4). A `relatedMatch`
+  location does not discharge a curated hit: "relevant but states something
+  else" is the worker's reason, written as a rejection beside it. An
+  `accepted` candidate is one of its passage's locations with a relation that
+  counts; accepted and not located is refused (rule 1). "Handed to the task" is the task manifest
   document's `curated: [{library, declaration}]` list intersected with the
   candidates file (a manifest cannot add a hit): the planner gives each of a
   source's curated hits to exactly one of its tasks. A manifest without the key
@@ -175,13 +186,17 @@ A locate task carries at most eight passages of one frozen inventory.
   changes a relation, `refute` removes a location, `overturn` replaces an
   absence or unresolved outcome (or a scope) with the given locations — all
   three give `challenge: downgraded` on the affected records.
-- The actions a target admits: `location` — `confirm`, `downgrade` (naming the
-  weaker `relation`), `refute`; `absence` and `unresolved` — `uphold`,
+- The actions a target admits: `location` — `confirm`, `downgrade` (naming a
+  `relation` weaker than the record's own, in the order `exactMatch` >
+  `closeMatch` > `broadMatch` > `narrowMatch` = `hasPart` > `relatedMatch`;
+  the task manifest's record carries that relation), `refute`; `absence` and `unresolved` — `uphold`,
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
   `uphold`, `overturn` (naming the new `prominence`).
 - A challenge task's records are its task manifest's, and each gets exactly one
   verdict (rule 1); overturn locations are checked like a locate document's.
+  A verdict names its record by string `item` (and string `location_key` for a
+  location).
 - A record of the run not named by any challenge task is `not_required` or
   `sampled_out`, as the challenge plan said.
 
@@ -623,8 +638,17 @@ like a faithfulness run:
   rule judged the change set: `--task-id`/`TEND_TASK_ID`, the task id recovered
   from `orchestrator.sqlite` (whose schema is assumed, not known: any table
   with a worktree-path-like and a task-id-like column, one task id or none), or
-  the single-stem rule. Documents are parsed strictly: a duplicate key or a
-  `NaN` is a refusal.
+  the single-stem rule. Documents are parsed strictly: a duplicate key, a
+  `NaN`/`Infinity` or a number that overflows to one, a lone surrogate, or
+  nesting deeper than 64 levels is a rule 1 refusal, and so is a value of the
+  wrong type where a word or an id belongs; a document is read only from a
+  regular file, at most `max_document_bytes` of it (a symlink, device or fifo
+  is refused under rule 1, and a change-set path that is not a regular file in
+  the worktree under rule 7). Over a directory (a harvested corpus), JSON
+  anywhere but `<task-id>/<source-id>.json` is a rule 7 refusal, never skipped.
+  A `gate.json` value of the wrong shape (a non-positive integer, `kinds` that
+  is not a list of strings, a path that is not a string), and a `formulas.json`
+  or `paragraphs.json` that is not a list of entries, is exit 3.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256}, inventory_run, challenged_runs, arm, per_task,
@@ -679,7 +703,11 @@ refusals from stderr.
 Harvest copies the host's `findings/` tree into `corpus/<run-id>/`, so a document
 lands at `corpus/<run-id>/<task-id>/<source-id>.json` and the receipt's listing,
 manifest and missing set are keyed by `<task-id>/<source-id>.json` (the listing
-is `find -print0`, the checksums `shasum` over it). The landed corpus is gated
+is `find -type f -print0`, the checksums `shasum` over it; a symlink is not
+listed, not landed (the rsync runs `--no-links`) and not counted, and with
+`--verify-sha` a landed file the source gave no checksum for is named in
+`sha_unverified` and makes the receipt incomplete). Every file the receipt
+counts is one the re-gate validated or names. The landed corpus is gated
 again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
 `locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
 `unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
