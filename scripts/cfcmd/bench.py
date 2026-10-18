@@ -261,8 +261,9 @@ def _print_curated(lists: dict) -> None:
 def _unrendered_step(sourceset: str, listed: Path) -> str:
     """The named step that makes the drawn articles benchable: fetch and render exactly them."""
     return (f"fetch and render exactly the sources listed in {listed} -- cf sourceset fetch "
-            f"{sourceset}, then cf sourceset render {sourceset} --source <id> for each -- and "
-            f"build again: the draw depends on the frame and the seed alone, so it does not change")
+            f"{sourceset} --select {listed} --execute, then cf sourceset render {sourceset} "
+            f"--source <id> for each -- and build again: the draw depends on the frame and the "
+            f"seed alone, so it does not change")
 
 
 def _build(ws, args) -> int:

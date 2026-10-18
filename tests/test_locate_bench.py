@@ -413,6 +413,22 @@ class TestAPartlyRenderedSourceset(unittest.TestCase):
         for written in (lay.frame_json, lay.draw_json, lay.bench_yaml):
             self.assertFalse(written.exists(), written)
 
+    def test_the_unrendered_list_is_a_selection_the_fetch_takes(self):
+        # the named step fetches exactly the listed sources (`cf sourceset fetch --select`),
+        # never the whole sourceset: the list must be one the fetch's selection reader takes
+        from cfcmd import sourceset as sourceset_cmd
+        from sources.sourceset import Sourceset
+        gone = sorted(self.drawn)[0]
+        self.unrender(gone)
+        with self.assertRaises(CfError) as ctx:
+            self.build()
+        lay = layout_of(self.world)
+        # the workspace root is resolved (on macOS /var/folders is /private/var/folders)
+        self.assertIn(f"--select {lay.unrendered_list.resolve()} --execute", ctx.exception.hint)
+        base = Sourceset.open(WorkspacePaths(self.world.root), fx.SOURCESET).latest()
+        args = mock.Mock(sources=[], select=str(lay.unrendered_list))
+        self.assertEqual(sourceset_cmd._selection(base, args), [gone])
+
     def test_or_excluded_with_its_inclusion_probabilities(self):
         gone = sorted(self.drawn)[0]
         self.unrender(gone)
