@@ -2384,6 +2384,56 @@ class TestFieldS7EnumerationCheckpoints(_FieldCase):
         self.assertFalse(self.paths.sourceset_enumerate_checkpoint("wpm").exists())
 
 
+class TestFieldS5NullFlagsAreReadOffTheAssessment(_FieldCase):
+    """S5, as the integrate migration left it: ``create --from`` a sourceset enumerated
+    before the flags existed carries ``flags: null`` on every entry, and a plain fetch
+    kept only an entry whose flag said redirect or disambiguation -- so it fetched every
+    stub its assessment class (Redirect, Disambig) already named."""
+
+    def seed(self) -> Sourceset:
+        code, out = cf(self.root, "sourceset", "create", "old")
+        self.assertEqual(code, 0, out)
+        old = Sourceset.open(self.paths, "old")
+        fam = websource.family("enwiki")
+        rows = [websource.entry(fam, 1000 + n, 2000 + n, title=title,
+                                assessment={"class": cls, "importance": "NA"})
+                for n, (title, cls) in enumerate((
+                    ("Widget group", "B"), ("Old widget name", "Redirect"),
+                    ("Widget (disambiguation)", "Disambig"), ("List of widgets", "List"),
+                    ("Gadget theorem", "Start")), 1)]
+        self.assertTrue(all("flags" not in r for r in rows))
+        old.write_version(old.latest(), rows)
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "old")
+        self.assertEqual(code, 0, out)
+        new = Sourceset.open(self.paths, "new")
+        self.assertTrue(all(not e.get("flags") for e in new.latest()))
+        return new
+
+    def test_a_plain_fetch_leaves_out_what_the_class_names(self):
+        self.seed()
+        code, out = cf(self.root, "sourceset", "fetch", "new")
+        self.assertEqual(code, 0, out)
+        self.assertIn("dry run: 3 source(s) of new have no bytes yet", out)
+        self.assertIn("2 redirect or disambiguation page(s) left out", out)
+        self.assertIn("carry no page flags", out)
+        self.assertIn("enumerate-wikiproject new", out)
+        code, out = cf(self.root, "sourceset", "fetch", "new", "--include-flagged")
+        self.assertIn("dry run: 5 source(s)", out)
+
+    def test_the_effective_flags(self):
+        entries = {e["title"]: e for e in self.seed().latest()}
+        self.assertFalse(websource.no_article(entries["Widget group"]))
+        self.assertTrue(websource.no_article(entries["Old widget name"]))
+        self.assertTrue(websource.no_article(entries["Widget (disambiguation)"]))
+        self.assertFalse(websource.no_article(entries["List of widgets"]))   # a list is fetched
+        self.assertFalse(websource.concept_page(entries["List of widgets"]))  # and not planned
+        self.assertTrue(websource.concept_page(entries["Gadget theorem"]))
+        # a flag the entry determined is kept as recorded, whatever its class says
+        recorded = dict(entries["Old widget name"], flags={"redirect": False})
+        self.assertFalse(websource.effective_flags(recorded)["redirect"])
+        self.assertIsNone(websource.effective_flags(entries["Gadget theorem"])["biography"])
+
+
 class TestFieldS5TheWikidataRequest(unittest.TestCase):
 
     transport = TestCurlTransport.transport

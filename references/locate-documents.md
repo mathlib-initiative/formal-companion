@@ -401,8 +401,18 @@ spaces, UTF-8):
   Disambig, List or FL; a "List of" title), on every entry of a listed page
   that lacks them; the optional `cf sourceset flag-biographies` sets `biography`
   from Wikidata (P31 = Q5) for every entry with a QID. A page with a flag true
-  is no concept article (`websource.concept_page`), and a plain `fetch` leaves
-  the redirects and disambiguation pages out (`--include-flagged` fetches them).
+  is no concept article (`websource.concept_page`): a plain `fetch` leaves the
+  redirects and disambiguation pages out (`--include-flagged` fetches them),
+  and `cf plan-locate --preset locate-inventory` plans no such page unless
+  `--source` names it or `--include-flagged` is given (each one left out is
+  named in `run.yaml` `locate.skipped`, and a plan warns of the planned pages
+  with no `biography` flag yet). Both read the **effective** flags
+  (`websource.effective_flags`): a flag the entry did not determine — every
+  flag of an entry enumerated before the flags existed, or seeded by `create
+  --from` from such a sourceset, is null — is read off the entry's own
+  assessment class and title by the enumeration's rule, so a Redirect or
+  Disambig class is no article even before `enumerate-wikiproject --execute`
+  fills the flags from the page info (a fetch of unflagged entries says so).
   Each flag is append-only on its own: a determined flag never changes, an
   undetermined one may be set later.
 - **The enumeration** records, in `state.json`, the listing's rows of other
