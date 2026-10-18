@@ -113,22 +113,29 @@ class TestCanonicalBody(unittest.TestCase):
 
 class TestTheLayer(unittest.TestCase):
 
-    def test_it_is_text_content_with_ascii_whitespace_collapsed(self):
-        r = rh.render("<p>  a\t\n b\f\rc&nbsp;d &amp; e\x0bf </p><style>s { }</style>")
-        self.assertEqual(r.layer, "a b c d & e\x0bf s { }")
+    def test_it_is_text_content_with_white_space_collapsed(self):
+        r = rh.render("<p>  a\t\n b\f\rc&nbsp;d &amp; e\x0bf\u2009g\u202fh\u3000i </p>"
+                      "<style>s { }</style><script>var s = 1;</script>"
+                      "<template><p>t</p></template>")
+        self.assertEqual(r.layer, "a b c d & e f g h i")
+
+    def test_the_white_space_set_is_the_passage_normalisers(self):
+        from formal_companion_annotations import ids
+        self.assertEqual(rh.WHITE_SPACE, frozenset(ids._UNICODE_WHITE_SPACE))
+        self.assertEqual(len(rh.WHITE_SPACE), 25)
 
     def test_markup_inside_formulas_and_citations_is_in_it(self):
         r = rh.render(PAGE)
         self.assertIn("G{\\displaystyle G}", r.layer)
         self.assertIn("[1]", r.layer)
-        self.assertIn(".x{color:red}", r.layer)
+        self.assertNotIn(".x{color:red}", r.layer)       # style text is no part of it
         self.assertIn("[edit]", r.layer)
         self.assertIn("A fictional book.", r.layer)
 
     def test_the_shas_are_of_the_utf8(self):
         r = rh.render(PAGE)
         self.assertEqual(r.layer_sha256, rh.sha256_text(r.layer))
-        self.assertEqual(r.record()["renderer"], "web-html/1")
+        self.assertEqual(r.record()["renderer"], "web-html/2")
         self.assertEqual(rh.RENDERER, vocab.RENDERER_WEB_HTML)
 
 
@@ -361,6 +368,132 @@ class TestTheMilestoneRoundTrip(unittest.TestCase):
         again = rh.render(body)
         self.assertEqual(again.head, r.head)
         self.assertRegex(f"In-text #{hexdigit}", r"^In-text #[0-9a-f]{8}$")
+
+
+#: a page in the shape MediaWiki's parse output really has (TemplateStyles
+#: blocks and their deduplicated links, a hatnote, an anchor template inside a
+#: bold term, a page script, a template element, NBSP, thin, narrow and
+#: ideographic spaces, a {{math}} formula, a MathML one, citation markers);
+#: every word of it is made up
+MW_PAGE = (
+    '<div class="mw-content-ltr mw-parser-output" lang="en" dir="ltr">'
+    '<style data-mw-deduplicate="TemplateStyles:r100">.mw-parser-output .hatnote'
+    '{font-style:italic}.mw-parser-output div.hatnote{padding-left:1.6em}</style>'
+    '<div role="note" class="hatnote navigation-not-searchable">For other uses, see '
+    '<a href="/wiki/Widget_(disambiguation)">Widget (disambiguation)</a>.</div>\n'
+    '<p class="mw-empty-elt">\n</p>\n'
+    '<p>In <a href="/wiki/W">widget theory</a>, a <b><style data-mw-deduplicate='
+    '"TemplateStyles:r200">.mw-parser-output .vanchor>:target~.vanchor-text'
+    '{background-color:#b1d2ff}</style><span class="vanchor"><span id="Widget_group">'
+    '</span><span class="vanchor-text">widget&#160;group</span></span></b> is a group '
+    '<span class="texhtml"><i>G</i>&#8201;=&#8201;<i>H</i></span> with a spanning&#8239;'
+    'gadget.<sup id="cite_ref-1" class="reference"><a href="#cite_note-1">&#91;1&#93;</a>'
+    '</sup>\n</p>\n'
+    '<script>(RLQ=window.RLQ||[]).push(function(){mw.config.set({"wgBackendResponseTime"'
+    ':12});});</script>\n'
+    '<link rel="mw-deduplicated-inline-style" href="mw-data:TemplateStyles:r100">'
+    '<template><p>A widget that is never shown.</p></template>\n'
+    '<h2 id="Statement">Statement</h2>\n'
+    f'<p>Every widget group {math("G")} of order&#12288;{math("n")} has a spanning gadget '
+    '&amp; a&nbsp;spine.</p>\n'
+    '<table class="infobox" style="width:22em"><tbody><tr><th>Field</th>'
+    '<td>Widget&#160;theory</td></tr></tbody></table>\n'
+    '<div class="reflist"><style data-mw-deduplicate="TemplateStyles:r300">'
+    '.mw-parser-output .reflist{margin-bottom:0.5em}</style><ol class="references">'
+    '<li id="cite_note-1">A made-up book.</li></ol></div></div>')
+
+#: what MW_PAGE's layer is, written out by hand from the Literature Links rule
+MW_PAGE_LAYER = (
+    "For other uses, see Widget (disambiguation). In widget theory, a widget group is a "
+    "group G = H with a spanning gadget.[1] Statement Every widget group G{\\displaystyle G}"
+    " of order n{\\displaystyle n} has a spanning gadget & a spine. FieldWidget theory "
+    "A made-up book.")
+
+
+def literature_links_layer(html: str) -> str:
+    """An independent statement of the Literature Links text layer, for the tests only.
+
+    A scan of the markup, sharing nothing with the renderer: comments and tags
+    are skipped, the content of ``script``, ``style`` and ``template`` too,
+    ``&...;`` references are decoded, and each run of ``White_Space`` becomes
+    one space, the ends stripped.
+    """
+    import html as htmlmod
+    from formal_companion_annotations import ids
+    white = set(ids._UNICODE_WHITE_SPACE)
+    out: list[str] = []
+    i, n = 0, len(html)
+    lower = html.lower()
+    while i < n:
+        if html.startswith("<!--", i):
+            close = html.find("-->", i + 4)
+            i = n if close < 0 else close + 3
+            continue
+        tag = re.match(r"<(/?)([A-Za-z][A-Za-z0-9:-]*)", html[i:i + 64])
+        if tag:
+            end = html.find(">", i)
+            end = n if end < 0 else end + 1
+            name = tag.group(2).lower()
+            if not tag.group(1) and name in ("script", "style", "template"):
+                close = lower.find("</" + name, end)
+                gt = html.find(">", close) if close >= 0 else -1
+                i = n if gt < 0 else gt + 1
+            else:
+                i = end
+            continue
+        if html[i] == "&":
+            semi = html.find(";", i, min(i + 16, n))
+            if semi > 0 and htmlmod.unescape(html[i:semi + 1]) != html[i:semi + 1]:
+                out.append(htmlmod.unescape(html[i:semi + 1]))
+                i = semi + 1
+                continue
+        out.append(html[i])
+        i += 1
+    text = "".join(" " if ch in white else ch for ch in "".join(out))
+    return " ".join(part for part in text.split(" ") if part)
+
+
+class TestTheLayerIsTheLiteratureLinksLayer(unittest.TestCase):
+    """S1: the layer is the consumer's text layer -- no style, script or template text,
+    every White_Space run one space -- on pages shaped like MediaWiki's real output."""
+
+    def test_a_real_shaped_page(self):
+        r = rh.render(rh.canonical_body(MW_PAGE.encode("utf-8")))
+        self.assertEqual(r.layer, MW_PAGE_LAYER)
+        self.assertEqual(r.layer, literature_links_layer(MW_PAGE))
+        for css in (".mw-parser-output", "font-style", "RLQ", "never shown", "\xa0",
+                    " ", " ", "　"):
+            self.assertNotIn(css, r.layer)
+
+    def test_every_page_the_suite_renders_agrees_with_the_independent_rule(self):
+        pages = {"PAGE": PAGE, "MW_PAGE": MW_PAGE,
+                 **{f"parse-{rev}": fixture_body(rev) for rev in (2002, 2003, 2004)},
+                 "inline style in a heading": '<h2 id="X">Case <style>.t{x:y}</style>'
+                                              '<span class="texhtml">n</span></h2><p>a</p>',
+                 "script between words": "<p>one<script>two()</script> three</p>",
+                 "spaces of every kind": "<p>a b c d e f g"
+                                         " h\x85i\x0bj</p>"}
+        for name, html in pages.items():
+            with self.subTest(page=name):
+                body = rh.canonical_body(html.encode("utf-8"))
+                self.assertEqual(rh.render(body).layer, literature_links_layer(body))
+
+    def test_a_bold_term_holding_a_style_is_the_term_and_its_head_has_no_css(self):
+        r = rh.render(rh.canonical_body(MW_PAGE.encode("utf-8")))
+        bold = next(f for f in r.finders if f["finder"] == "bold_definition")
+        self.assertEqual(bold["term"], "widget group")
+        hm = r.head_map()
+        head = locate_text.head_at(hm.head, hm.to_head(bold["start"]), 12)
+        self.assertEqual(head[:4], ["In", "widget", "theory,", "a"])
+        self.assertFalse(any("{" in w or "mw-parser" in w for w in head))
+
+    def test_the_reading_copy_maps_onto_the_new_layer(self):
+        r = rh.render(rh.canonical_body(MW_PAGE.encode("utf-8")))
+        for t0, t1, l0, l1, kind in r.segments:
+            if kind == rh.SEGMENT_TEXT:
+                self.assertEqual(r.text[t0:t1], r.layer[l0:l1])
+        self.assertNotIn(".mw-parser-output", r.text)
+        self.assertIn("a widget group is a group G = H with a spanning gadget.", r.text)
 
 
 @unittest.skipUnless(os.environ.get("CF_WIKILEAN_LAYER"),
@@ -638,24 +771,33 @@ class TestReviewFixesRenderer(unittest.TestCase):
     def test_01_blocks_and_finders_skip_dropped_text(self):
         css = ('<style data-mw-deduplicate="TemplateStyles:r1">.mw-parser-output .texhtml'
                '{font-family:"Nimbus Roman No9 L","Times New Roman",Times,serif}</style>')
-        glued = rh.render(f'<div><p>{css}<span class="texhtml"><i>G</i></span> is called a '
+        # web-html/2: style text is no part of the layer, so it glues nothing
+        styled = rh.render(f'<div><p>{css}<span class="texhtml"><i>G</i></span> is called a '
+                           f'<b>widget group</b> when it has a spanning gadget.</p></div>')
+        self.assertTrue(styled.layer.startswith("G is called"))
+        self.assertEqual({x["finder"] for x in styled.finders}, {"bold_definition", "lead"})
+        # a citation marker is in the layer but outside the kept text: glued, dropped
+        cite = '<sup class="reference"><a href="#c1">[1]</a></sup>'
+        glued = rh.render(f'<div><p>{cite}<span class="texhtml"><i>G</i></span> is called a '
                           f'<b>widget group</b> when it has a spanning gadget.</p></div>')
-        self.assertEqual(glued.finders, [])            # "...serif}G" is no word start
+        self.assertEqual(glued.finders, [])            # "[1]G" is no word start
         self.assertEqual(glued.counts["finders_dropped"], 2)
         (block,) = glued.paragraphs
         self.assertTrue(glued.layer[block["span"][0]:].startswith("G is called"))
-        spaced = rh.render(f'<p>{css} <i>G</i> is called a <b>widget group</b> when it has '
+        spaced = rh.render(f'<p>{cite} <i>G</i> is called a <b>widget group</b> when it has '
                            f'a spanning gadget.</p>')
         starts = {x["finder"]: x["start"] for x in spaced.finders}
         self.assertEqual(set(starts), {"bold_definition", "lead"})
         for start in starts.values():
             self.assertTrue(spaced.layer[start:].startswith("G is called"))
             self.assertIsNotNone(spaced.layer_to_text(start))
-        only_css = rh.render(f'<p>{css}</p>\n<p>A <b>widget</b> is a small gadget with five '
-                             f'parts.</p>')
+        only_cite = rh.render(f'<p>{cite}</p>\n<p>A <b>widget</b> is a small gadget with '
+                              f'five parts.</p>')
+        self.assertEqual(len(only_cite.paragraphs), 1)
+        lead = next(x for x in only_cite.finders if x["finder"] == "lead")
+        self.assertTrue(only_cite.layer[lead["start"]:].startswith("A widget"))
+        only_css = rh.render(f'<p>{css}</p>\n<p>A <b>widget</b> is a small gadget.</p>')
         self.assertEqual(len(only_css.paragraphs), 1)
-        lead = next(x for x in only_css.finders if x["finder"] == "lead")
-        self.assertTrue(only_css.layer[lead["start"]:].startswith("A widget"))
 
     def test_02_cells_get_one_separator_whatever_their_whitespace(self):
         self.assertEqual(rh.render("<table><tr>\n<td>a\n</td>\n<td>b\n</td></tr></table>").text,
@@ -717,7 +859,7 @@ class TestReviewFixesRenderer(unittest.TestCase):
                 self.assertEqual(rh.canonical_body(html.encode()), body)
         self.assertEqual(rh.render(rh.canonical_body(
             b"<style>.a::before{content:'<!--'}</style><p>The widget lemma.</p>")).layer,
-            ".a::before{content:'<!--'}The widget lemma.")
+            "The widget lemma.")
 
     def test_08_a_byte_order_mark_is_dropped(self):
         raw = b'\xef\xbb\xbf{"parse": {"revid": 2002, "text": "<p>Widget lemma text</p>"}}'
@@ -1041,7 +1183,7 @@ class TestTheSourcesetCommand(unittest.TestCase):
         self.assertEqual(code, 0, out)
         m = self.ss.latest()
         for e in m:
-            self.assertEqual(e["renderer"], "web-html/1")
+            self.assertEqual(e["renderer"], rh.RENDERER)
             self.assertEqual(self.ss.source_problems(e), [])
             self.assertTrue((self.ss.source_dir(e["source_id"]) / "finders.json").is_file())
         code, out = cf(self.root, "sourceset", "render", "wpm")
@@ -1148,7 +1290,7 @@ class TestTheSourcesetCommand(unittest.TestCase):
         self.assertIn("the parse of revision 2002", out)
         code, out = cf(self.root, "sourceset", "render", "wpm", "--source", "enwiki-1001-2011")
         self.assertEqual(code, 0, out)
-        self.assertEqual(self.ss.latest().get("enwiki-1001-2011")["renderer"], "web-html/1")
+        self.assertEqual(self.ss.latest().get("enwiki-1001-2011")["renderer"], rh.RENDERER)
 
     def test_an_unknown_sourceset_is_refused_with_a_hint(self):
         code, out = cf(self.root, "sourceset", "status", "nope")
@@ -1401,3 +1543,84 @@ class TestReviewFixesSourcesets(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# field fixes: defects found running the stage against real data (synthetic
+# reductions; the defect ids are in the names)
+# ---------------------------------------------------------------------------
+
+class _FieldCase(unittest.TestCase):
+
+    def setUp(self):
+        self.root = _workspace(self)
+        self.paths = WorkspacePaths(self.root)
+        code, out = cf(self.root, "sourceset", "create", "wpm")
+        self.assertEqual(code, 0, out)
+        self.ss = Sourceset.open(self.paths, "wpm")
+
+    def enumerate(self, *extra, fixtures: Path = FIXTURES) -> tuple[int, str]:
+        return cf(self.root, "sourceset", "enumerate-wikiproject", "wpm", "--project",
+                  "Mathematics", "--fixtures", str(fixtures), *extra)
+
+    def fetch(self, *extra, fixtures: Path = FIXTURES) -> tuple[int, str]:
+        return cf(self.root, "sourceset", "fetch", "wpm", "--fixtures", str(fixtures), *extra)
+
+
+class TestFieldS1TheRendererBumpPath(_FieldCase):
+
+    def test_s1_a_layer_of_the_older_renderer_is_re_rendered_in_a_seeded_sourceset(self):
+        self.enumerate()
+        self.fetch()
+        code, out = cf(self.root, "sourceset", "render", "wpm")
+        self.assertEqual(code, 0, out)
+        base = self.ss.latest()
+        older = self.ss.source_dir("enwiki-1001-2002")
+        # what the field held: a sourceset whose layers were recorded under web-html/1
+        code, out = cf(self.root, "sourceset", "create", "old")
+        self.assertEqual(code, 0, out)
+        old_ss = Sourceset.open(self.paths, "old")
+        rows = []
+        for e in base:
+            row = dict(e, renderer="web-html/1", layer_sha256="0" * 64)
+            src, dst = self.ss.source_dir(e["source_id"]), old_ss.source_dir(e["source_id"])
+            dst.mkdir(parents=True)
+            for name in ("source.raw.html", "body.html"):
+                shutil.copy(src / name, dst / name)
+            rows.append(row)
+        old_ss.write_version(old_ss.latest(), rows)
+        code, out = cf(self.root, "sourceset", "render", "old")
+        self.assertEqual(code, 1, out)
+        self.assertIn("rendered by an older renderer", out)
+        self.assertIn("--from old", out)
+        # the path: a new sourceset seeded with the old one's bytes, rendered anew
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "old")
+        self.assertEqual(code, 0, out)
+        new_ss = Sourceset.open(self.paths, "new")
+        seeded = new_ss.latest()
+        self.assertEqual(sorted(seeded.entries), sorted(e["source_id"] for e in base))
+        for e in seeded:
+            self.assertIsNone(e["layer_sha256"])
+            self.assertIsNone(e["renderer"])
+            self.assertEqual(e["html_sha256"], base.get(e["source_id"])["html_sha256"])
+            self.assertEqual(e["assessment"], base.get(e["source_id"])["assessment"])
+        code, out = cf(self.root, "sourceset", "render", "new")
+        self.assertEqual(code, 0, out)
+        for e in new_ss.latest():
+            self.assertEqual(e["renderer"], rh.RENDERER)
+            self.assertEqual(e["layer_sha256"], base.get(e["source_id"])["layer_sha256"])
+        self.assertEqual(old_ss.latest().get("enwiki-1001-2002")["renderer"], "web-html/1")
+        self.assertEqual(new_ss.read_state()["commands"]["create"]["from"]["id"], "old")
+        self.assertTrue(older.is_dir())
+
+    def test_s1_seeding_refuses_bytes_that_do_not_match_and_a_family_change(self):
+        self.enumerate("--limit", "1")
+        self.fetch()
+        (self.ss.source_dir("enwiki-1001-2002") / "body.html").write_text("tampered")
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm")
+        self.assertEqual(code, 2, out)
+        self.assertIn("do not match", out)
+        self.assertFalse(self.paths.sourceset_manifests("new"))
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm",
+                       "--family", "dewiki")
+        self.assertEqual(code, 2, out)

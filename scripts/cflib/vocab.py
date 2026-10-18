@@ -405,8 +405,11 @@ WEAK_RELATIONS = frozenset({RELATED_MATCH, NARROW_MATCH, HAS_PART})
 #: the ``schema`` of every inventory, locate and challenge document
 LOCATE_DOCUMENT_SCHEMA = "cf-locate/1"
 #: the renderer of every web source of the first corpus (section 2.1); a source's
-#: ``renderer`` field, and a pin of every run, gate and score document
-RENDERER_WEB_HTML = "web-html/1"
+#: ``renderer`` field, and a pin of every run, gate and score document.
+#: ``web-html/1`` kept style and script text in the layer and collapsed ASCII
+#: whitespace only; ``web-html/2`` is the Literature Links rule
+#: (scripts/sources/render_html.py states it in full)
+RENDERER_WEB_HTML = "web-html/2"
 #: Where a sourceset entry came from (references/locate-documents.md section 7):
 #: ``enumerated`` -- the PageAssessments listing, at the page's latest revision;
 #: ``adopted`` -- a consumer's pinned revision and bytes, recorded in

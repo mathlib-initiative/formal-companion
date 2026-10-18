@@ -6,6 +6,7 @@ once, render) over the sourceset layout of references/locate-documents.md
 section 7:
 
     cf sourceset create wpm --family enwiki
+    cf sourceset create wpm2 --from wpm          # the same sources and bytes, no layers
     cf sourceset enumerate-wikiproject wpm --project Mathematics --execute
     cf sourceset adopt wpm --from pins.jsonl --consumer wikilean
     cf sourceset fetch wpm --limit 200 --execute
@@ -49,8 +50,15 @@ def register(subparsers) -> None:
 
     create = sub.add_parser("create", help="a new sourceset: manifest-1 with no sources")
     create.add_argument("sourceset_id")
-    create.add_argument("--family", default="enwiki",
-                        help="the web-source family in the registry (default: enwiki)")
+    create.add_argument("--family", default=None,
+                        help="the web-source family in the registry (default: enwiki, or the "
+                             "family of --from)")
+    create.add_argument("--from", dest="seed", default=None, metavar="SOURCESET",
+                        help="seed it with every source of another sourceset -- identity, "
+                             "metadata and bytes, but no layer -- so `render` renders them "
+                             "under the current renderer (a recorded layer never changes)")
+    create.add_argument("--from-version", dest="seed_version", type=int, default=None,
+                        metavar="N", help="seed from version N of --from (default: its latest)")
 
     enum = sub.add_parser("enumerate-wikiproject",
                           help="add a WikiProject's articles at their latest revisions")
@@ -180,10 +188,78 @@ def _sha(data: bytes) -> str:
 # create
 
 def _create(workspace, args) -> int:
-    ss = Sourceset.create(workspace.paths, args.sourceset_id, args.family, workspace=workspace)
+    if getattr(args, "seed", None):
+        return _create_from(workspace, args)
+    family = args.family or "enwiki"
+    ss = Sourceset.create(workspace.paths, args.sourceset_id, family, workspace=workspace)
     manifest = ss.latest()
-    log.ok(f"created sourceset {ss.id} ({args.family}): {manifest.path} "
+    log.ok(f"created sourceset {ss.id} ({family}): {manifest.path} "
            f"(sha {manifest.sha256[:12]})")
+    return 0
+
+
+def _link_or_copy(src: Path, dst: Path) -> None:
+    """``dst`` made to hold ``src``'s bytes: a hard link where the filesystem allows one."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    try:
+        os.link(src, dst)
+    except OSError:
+        render_html.write_bytes(dst, src.read_bytes())
+
+
+def _create_from(workspace, args) -> int:
+    """``create --from``: a new sourceset holding another one's sources with no layers.
+
+    The way from one renderer to the next (references/locate-documents.md
+    section 7): a recorded ``layer_sha256`` never changes, so a source rendered
+    under an older renderer is re-rendered in a NEW sourceset, which keeps every
+    identity, metadata field and recorded byte sha of the old one and starts
+    with no layer.  The old sourceset is only read, so a run that pinned it still
+    verifies.  Every recorded raw and body sha is checked against its file before
+    anything is written; a mismatch refuses the whole seeding.
+    """
+    paths = workspace.paths
+    old = Sourceset.open(paths, args.seed)
+    base = old.load(args.seed_version) if args.seed_version else old.latest()
+    if args.family and args.family != base.family:
+        raise CfError(f"sourceset {old.id} is of family {base.family}, not {args.family}",
+                      hint="drop --family: a seeded sourceset keeps its seed's family")
+    if args.sourceset_id == old.id:
+        raise CfError("a sourceset cannot be seeded from itself")
+    problems: list[str] = []
+    for e in base:
+        problems.extend(p for p in old.source_problems(e)
+                        if "layer.txt" not in p)       # the layer is not carried over
+    if problems:
+        raise CfError(f"sourceset {old.id} version {base.version}: {len(problems)} recorded "
+                      f"byte sha(s) do not match their files; nothing was created: "
+                      + "; ".join(problems[:5]),
+                      hint=f"`cf sourceset status {old.id} --verify` lists them")
+    ss = Sourceset.create(paths, args.sourceset_id, base.family, workspace=workspace)
+    entries = []
+    with_bytes = 0
+    for e in base:
+        entry = dict(e)
+        entry["layer_sha256"] = None
+        entry["renderer"] = None
+        src, dst = old.source_dir(e["source_id"]), ss.source_dir(e["source_id"])
+        if e.get("raw_sha256"):
+            _link_or_copy(src / "source.raw.html", dst / "source.raw.html")
+        if e.get("html_sha256"):
+            _link_or_copy(src / "body.html", dst / "body.html")
+            with_bytes += 1
+        if e.get("raw_sha256") or e.get("html_sha256"):
+            write_json(dst / "source.json", entry, sort_keys=True)
+        entries.append(entry)
+    manifest = ss.write_version(ss.latest(), entries)
+    ss.refresh_state(command="create", details={
+        "from": base.pin(), "sources": len(entries), "with_bytes": with_bytes})
+    log.ok(f"created sourceset {ss.id} ({base.family}) from {old.id} version {base.version}: "
+           f"{len(entries)} source(s), {with_bytes} with their bytes, none rendered; version "
+           f"{manifest.version} (sha {manifest.sha256[:12]})")
+    log.info(f"next: cf sourceset render {ss.id}")
     return 0
 
 
@@ -497,6 +573,7 @@ def _render(workspace, args) -> int:
         raise CfError(f"sourceset {ss.id} has no source {', '.join(unknown)}")
     entries = {e["source_id"]: dict(e) for e in base}
     rendered, unchanged, refused, waiting = 0, 0, [], 0
+    older_renderer = 0
     for e in base:
         sid = e["source_id"]
         if wanted and sid not in wanted:
@@ -527,6 +604,8 @@ def _render(workspace, args) -> int:
             refused.append(f"{sid}: the layer would become {rendering.layer_sha256[:12]}... "
                            f"under {render_html.RENDERER}, the manifest records "
                            f"{e['layer_sha256'][:12]}... under {e.get('renderer')}")
+            if e.get("renderer") != render_html.RENDERER:
+                older_renderer += 1
             continue
         render_html.write_rendering(directory, rendering)
         entry = dict(e)
@@ -543,6 +622,11 @@ def _render(workspace, args) -> int:
              f"bytes, {len(refused)} refused")
     for line in refused[:20]:
         log.warn(f"  {line}")
+    if older_renderer:
+        log.warn(f"{older_renderer} source(s) were rendered by an older renderer, and a "
+                 f"recorded layer never changes: render them in a new sourceset seeded from "
+                 f"this one's bytes -- cf sourceset create <new id> --from {ss.id}, then "
+                 f"cf sourceset render <new id>")
     log.ok(f"sourceset {ss.id}: version {manifest.version} (sha {manifest.sha256[:12]})")
     return 1 if refused else 0
 

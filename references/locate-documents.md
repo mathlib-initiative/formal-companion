@@ -42,7 +42,7 @@ Every locate document starts with:
  "mode": "locate-inventory",
  "run_id": "r-…", "task_id": "t-…",
  "source_id": "enwiki-1001-2002",
- "source_sha": "<html_sha256>", "layer_sha256": "<hex>", "renderer": "web-html/1",
+ "source_sha": "<html_sha256>", "layer_sha256": "<hex>", "renderer": "web-html/2",
  "universe": "u1", "universe_sha256": "<hex>"}
 ```
 
@@ -50,7 +50,7 @@ Every locate document starts with:
 `locate-challenge` documents and absent from `locate-inventory` ones. One
 document covers one source; it lives at `findings/<task-id>/<source-id>.json`.
 `schema` is `cflib.vocab.LOCATE_DOCUMENT_SCHEMA`; `renderer` is the source's
-(`web-html/1` for the first corpus).
+(`web-html/2` for the first corpus).
 
 A task that could not be finished writes one document per source with a
 document-level `"unresolved": {"reason": "…", "by": "worker" | "attempt_cap"}`:
@@ -291,7 +291,7 @@ spaces, UTF-8):
  "origin": "enumerated", "licence_class": "open_share_alike",
  "fetch": {"api": "action=parse", "params_sha256": "<hex>"},
  "raw_sha256": "<hex>", "html_sha256": "<hex>", "layer_sha256": "<hex>",
- "renderer": "web-html/1"}
+ "renderer": "web-html/2"}
 ```
 
 - `origin` is `enumerated` (from the PageAssessments listing) or `adopted` (a
@@ -335,7 +335,7 @@ lone surrogate, or nesting elements more than 256 deep, is refused.
 
 **One source's directory.** `cf sourceset fetch` and `cf sourceset adopt` write
 `source.raw.html`, `body.html` and `source.json`; the renderer,
-`scripts/sources/render_html.py` (`web-html/1`, whose module docstring states the
+`scripts/sources/render_html.py` (`web-html/2`, whose module docstring states the
 rule in full and freezes it), writes `body.html` again and every file after it
 when `cf sourceset render` runs:
 
@@ -344,15 +344,15 @@ when `cf sourceset render` runs:
 | `source.raw.html` | the bytes as fetched or adopted (`raw_sha256`) |
 | `source.json` | the manifest entry, as the source's own record |
 | `body.html` | the canonical body (`html_sha256`) |
-| `layer.txt` | the **Literature Links text layer** (`layer_sha256`): the body's DOM `textContent` — every text node in document order, `style` and `script` text, MathML token text, TeX annotations and citation markers included; the one newline right after a `pre`, `listing` or `textarea` start tag is not text, as the HTML5 tree builder drops it — then the WHATWG *strip and collapse ASCII whitespace* (each run of U+0009, U+000A, U+000C, U+000D, U+0020 to one space, ends stripped); no Unicode normalisation. The only view quotes are cut from and gated against |
+| `layer.txt` | the **Literature Links text layer** (`layer_sha256`): the body's DOM `textContent` without the `script`, `style` and `template` elements — every other text node in document order, MathML token text, TeX annotations and citation markers included; the one newline right after a `pre`, `listing` or `textarea` start tag is not text, as the HTML5 tree builder drops it — with each run of `White_Space` (the 25 code points of the Unicode property, U+00A0 and U+2009 among them) made one space and the ends stripped; no space is added at element boundaries and there is no other normalisation. It is the rule the consumer's own text layer implements (proposal §2.1), and the only view quotes are cut from and gated against |
 | `formulas.json` | `[{"span": [a, b], "alttext": "{\\displaystyle G}"}]`: each formula's half-open layer span (the whole `.mwe-math-element`, else the `math` element), sorted and disjoint; the alttext is `math@alttext`, else the `x-tex` annotation, else the fallback image's `alt`. A formula with no text in the layer (an image only) has no span and no entry, `render.json` counts it as `formulas_without_text`, and the reading copy still writes it as `$<normalized alttext>$`, in no segment |
 | `head.txt` | the head text: `layer.txt` with each formula span replaced by `⟦normalized alttext⟧`. Derived; the definition is `scripts/gate/locate_text.py`'s `HeadMap`, which also maps offsets both ways |
-| `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references (`sup.reference`), reference lists (`ol.references`, `.reflist`, `.mw-references-wrap`), edit links, style and script dropped, headings as `#`-prefixed lines (one `#` per level), `- ` before a list item, ` \| ` between table cells (one space each side), a blank line between blocks (inside a table cell a block, a display formula included, is only a space: a row is one line); it ends with one newline |
+| `text.txt` | the **reading copy** for models: math as `$<normalized alttext>$`, references (`sup.reference`), reference lists (`ol.references`, `.reflist`, `.mw-references-wrap`), edit links, style, script and template dropped, headings as `#`-prefixed lines (one `#` per level), `- ` before a list item, ` \| ` between table cells (one space each side), a blank line between blocks (inside a table cell a block, a display formula included, is only a space: a row is one line); it ends with one newline |
 | `layer_map.json` | `{"schema": "cf-layer-map/2", "segments": [[t0, t1, l0, l1, kind], …]}`, sorted: `text.txt[t0:t1]` is `layer.txt[l0:l1]`, character by character when `kind` is `0` (text) and only as a whole when it is `1` (a formula: only `t0` and `l0` correspond, whatever the two lengths are). A character the copy adds — a heading's `#`s, a bullet, a separator, a line break, an image-only formula — is in no segment and has no layer offset |
 | `sections.json` | `[{"path": ["Theorems"], "fragment": "Theorems", "level": 2, "span": [l0, l1]}]`, the lead first with `path: []`, `fragment: null` and `level: 0`; a heading's title is its text outside the reading copy's dropped regions (an edit link, a reference marker, an inline `style`), its fragment its `id`, else its `.mw-headline`'s; spans tile the layer |
 | `paragraphs.json` | `[{"span": [l0, l1], "section": ["Theorems"], "block": "p", "formulas": 2, "math": true}]`: every block (`p`, `li`, `dd`, `dt`, `blockquote`, a theorem box, a displayed formula) that holds text outside the reading copy's dropped regions, its span measured over that kept text alone (an inline TemplateStyles `style` opening a paragraph is outside its span; a paragraph holding only such text is no block), outside the reference lists; blocks may nest (an `li` holding a `p` is two entries). `math` is true when the block holds a formula or a deterministic finder hit, and those are the paragraphs gate rule 8's coverage floor reads |
 | `finders.json` | `[{"finder": "theorem_box", "start": l0, "span": [l0, l1], "section": […], "term": "…"}]`: the deterministic finders' passages (`cflib.vocab.DETERMINISTIC_FINDERS`), sorted by start, each spanning its element's kept text (as for blocks) and starting at the first character of a word of the head text; a finder hit whose kept text is glued to the word before it (a `style` with no space after it, say) is dropped and counted in `render.json`'s `finders_dropped` |
-| `render.json` | `{"renderer": "web-html/1", "html_sha256", "layer_sha256", "head_sha256", "text_sha256", "counts": {…}}` |
+| `render.json` | `{"renderer": "web-html/2", "html_sha256", "layer_sha256", "head_sha256", "text_sha256", "counts": {…}}` |
 
 The `web-html/1` rule was corrected once, before any rendering under it was
 pinned anywhere, after an adversarial review of the renderer. The corrections:
@@ -361,7 +361,18 @@ a byte-order mark dropped, the newline after `pre`/`listing`/`textarea` (this
 one moves `layer.txt`), blocks and finder passages measured over kept text, an
 image-only formula written into the reading copy, one space each side of a cell
 separator, a display formula inside a cell kept on its row, and `layer_map.json`
-moved to `cf-layer-map/2`. Any later change is a new renderer id.
+moved to `cf-layer-map/2`.
+
+**`web-html/2`** replaced it after the first real pages were rendered: under
+`/1` not one layer equalled the consumer's text layer, because `/1` kept
+`style` and `script` text (a fifth of a real page's layer was TemplateStyles
+CSS, and a passage could open on it) and collapsed only ASCII whitespace. `/2`
+is the Literature Links rule above. A `/1` rendering cannot be re-rendered in
+place (a recorded `layer_sha256` never changes): `cf sourceset create <new>
+--from <old>` seeds a new sourceset with the old one's identities and bytes and
+no layers, and `cf sourceset render <new>` renders it under the current id. Any
+change to any view, the layout of a view's file included, is a new renderer
+id: `tests/test_locate_sources.py` pins every view of a synthetic page to it.
 
 Offsets are code-point offsets. A passage's `span` is a layer span; its id is
 computed on the head text at `HeadMap.to_head(span[0])` (§2 of the proposal,
@@ -535,7 +546,7 @@ like a faithfulness run:
   ```json
   {"task_id": "t-…", "mode": "locate", "run_id": "r-…",
    "documents": [{"source_id": "enwiki-1001-2002", "source_sha": "<hex>",
-                  "layer_sha256": "<hex>", "renderer": "web-html/1",
+                  "layer_sha256": "<hex>", "renderer": "web-html/2",
                   "passages": [{"item": "In-text #3fa91c07", "span": [10234, 10612],
                                 "head_words": 12, "prominence": "central",
                                 "passage_kind": "theorem"}]}]}
@@ -571,7 +582,7 @@ like a faithfulness run:
    "sourceset": {"id": "wpm", "version": 3, "manifest_sha256": "<hex>",
                  "sources_dir": "<host path>/sources"},
    "sources": {"enwiki-1001-2002": {"html_sha256": "<hex>", "layer_sha256": "<hex>",
-                                    "renderer": "web-html/1"}},
+                                    "renderer": "web-html/2"}},
    "candidates_dir": "<host path>/candidates/u1", "blind": false,
    "inventory": {"run_id": "r-…", "dir": "<host path>/inventory"},
    "tasks_dir": "<gate dir>/tasks", "log_dir": "<tend root>/gate-log",
