@@ -1365,3 +1365,86 @@ class TestRuleFourIsPerTask(GateTestCase):
 
     def test_without_the_key_the_task_owes_every_hit_of_the_file(self):
         self.assertRule(self.run_with(None), 4)
+
+
+#: fourteen consecutive words of the layer: past the export's twelve-word quote cap
+VERBATIM = " ".join(LEAD.split()[:14])
+
+
+class TestRuleOneAppliesTheExportsFreeTextCap(GateTestCase):
+    """A note, a query or a reason the export would refuse as verbatim source text
+    is refused at the gate, by the export's own code, while the worker can fix it."""
+
+    TASK = "t-loc-0001"
+
+    def setUp(self):
+        self.fx = Fixture(self, "locate")
+        self.fx.manifest(self.TASK, locate_manifest_doc(self.fx))
+
+    def run_body(self, body):
+        return self.fx.run(self.fx.document(self.TASK, body))
+
+    def test_a_location_note(self):
+        body = locate_body()
+        body["passages"][0]["locations"][0]["note"] = VERBATIM
+        self.assertRule(self.run_body(body), 1, "a location's note carries 13+ words of the "
+                                                "source verbatim")
+        body["passages"][0]["locations"][0]["note"] = " ".join(LEAD.split()[:12])
+        self.assertOk(self.run_body(body))
+
+    def test_an_absences_query_and_a_candidates_reason(self):
+        body = locate_body()
+        body["passages"][1]["receipt"]["queries"][0] = VERBATIM
+        self.assertRule(self.run_body(body), 1, "a receipt query carries")
+        body = locate_body()
+        body["passages"][1]["receipt"]["candidates"] = [
+            {"library": "alpha", "declaration": "Widget.Spanning", "verdict": "rejected",
+             "reason": f"it says {VERBATIM} and no more"}]
+        self.assertRule(self.run_body(body), 1, "a candidate's reason carries")
+
+    def test_only_what_the_export_writes(self):
+        """A located passage's receipt is not exported, so the cap is the export's, no wider."""
+        body = locate_body()
+        body["passages"][0]["receipt"]["queries"].append(VERBATIM)
+        self.assertOk(self.run_body(body))
+
+    def test_a_challenge_overturns_note(self):
+        fx = Fixture(self, "locate-challenge")
+        doc = locate_manifest_doc(fx)
+        doc.pop("passages")
+        doc["records"] = [{"item": LEAD_ITEM, "target": "absence", "span": LEAD_SPAN,
+                           "passage_kind": "theorem"}]
+        fx.manifest("t-chl-0001", doc)
+        body = {"verdicts": [{"item": LEAD_ITEM, "target": "absence", "action": "overturn",
+                              "locations": [location(lib="beta",
+                                                     decl="Beta.Widget.gadget_of_finite",
+                                                     note=VERBATIM)],
+                              "witness": "found with a type search"}]}
+        self.assertRule(fx.run(fx.document("t-chl-0001", body)), 1, "verbatim")
+
+    def test_the_export_and_the_gate_refuse_the_same_passage(self):
+        """One definition: the gate calls the export's check_note and receipt_document."""
+        body = locate_body()
+        body["passages"][0]["locations"][0]["note"] = VERBATIM
+        calls = []
+        real = vl.lr.check_note
+
+        def spy(*args):
+            calls.append(args[1])
+            return real(*args)
+
+        with mock.patch.object(vl.lr, "check_note", side_effect=spy):
+            self.assertRule(self.run_body(body), 1, "verbatim")
+        self.assertIn(VERBATIM, calls)
+        layer = LAYER
+        passage = {"item": THM_ITEM, "span": THEOREM_SPAN, "outcome": "located",
+                   "challenge": "survived", "passage_kind": "theorem",
+                   "section": ["Theorems"], "prominence": "central",
+                   "locations": [{"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+                                  "relation": "exactMatch", "rank": 1, "proof_status": "proved",
+                                  "location_key": "0" * 64, "challenge": "survived",
+                                  "note": VERBATIM}]}
+        universe = vl._preview_universe(self.fx.gate_cfg())
+        with self.assertRaisesRegex(vl.lr.RecordError, "a location's note carries"):
+            vl.lr.passage_records(vl._preview_source(self.fx.gate_cfg(), SID), passage, layer,
+                                  universe)
