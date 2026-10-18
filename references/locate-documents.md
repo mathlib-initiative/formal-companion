@@ -288,8 +288,8 @@ word first and any word only to fill up — queried; `matched` (`title` or
 a term names as an identifier first (§8, the host tools), then by `score`. A bold term is a term only when it has at least three
 letters, is not only a paragraph label (`cflib.vocab.is_bold_label`: "Proof.",
 "Example:") and is not only stop words (`candidates.is_lexical_term`); a bold
-"R" or "1'" is never queried. `corpus_db` is the database the file was retrieved
-from (§9's tools database): `full`, `blind` or `planted`, with its sha. Only
+"R" or "1'" is never queried. `corpus_db` is the database the lexical hits were
+retrieved from (§9's tools database): `full`, `blind` or `planted`, with its sha. Only
 `curated` hits bind gate rule 4. In the G1-blind arm (proposal §8.1) the file is
 retrieved from `corpus.blind.sqlite`, no curated join is computed (`curated`
 and `dropped` are empty, `article_qid` is null, nothing filters the lexical
@@ -311,9 +311,20 @@ on the article's TITLE only (a bold term may be another article's subject),
 with apostrophe and dash look-alikes folded, and an entry that names another
 QID than the article's is dropped with the reason `the entry names another QID
 (<qid>)` rather than joined. A docstring URL joins on the canonical page URL
-`corpus.ingest.wikipedia_urls` writes, so a mobile link joins too.
+`corpus.ingest.wikipedia_urls` writes, so a mobile link joins too; the article's
+side is the same reader over both ways its URL is written: the exact title,
+percent-encoded and decoded back, so a title with a `?`, a `#` or a quote mark
+meets the docstring's `%3F`, `%23` or `%22`, and MediaWiki's own page URL, which
+leaves `!`, `*`, `,`, `;` and `:` literal, so a title ending in one meets a
+link copied from the page, whose last mark the reader strips as punctuation.
 `--blind` reads `corpus.blind.sqlite` and `--tools-corpus-db <file>` a planted
-database; the sourceset's `state.json` records each run under
+database. The curated joins and their checks are always the full
+`corpus.sqlite`'s, so a `dropped` reason is true of the universe; a planted file
+then withholds every hit its own database lacks — from `curated`, `dropped` and
+the QID refusals alike, by name and without a trace in the file — because the
+file reaches the P run's workers and a removed declaration is what the P tier
+measures citations of from memory. Only their count is reported, on the console
+and as `withheld` in the sourceset's `state.json`, which records each run under
 `candidates.<universe>` (or `candidates.<universe>/<kind dir>`), with `partial`
 and `written` when `--source` narrowed it:
 
@@ -1064,15 +1075,29 @@ like a faithfulness run:
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256, tools_corpus_db: {kind, sha256}}, inventory_run,
-  challenged_runs, arm, skill_commit, gate_files, per_task, subject_only, seed,
-  sample_rate, documents, passages, source_ids, skipped}`. `arm` is `blind` with
-  `--blind`, else `assisted`, and a locate plan whose inventory run, or a
-  challenge plan whose challenged runs, are of another arm is refused;
+  challenged_runs, arm, skill_commit, gate_files, config_shas, per_task,
+  subject_only, seed, sample_rate, documents, passages, source_ids, skipped}`.
+  `arm` is `blind` with `--blind`, else `assisted`, and a locate plan whose
+  inventory run, or a challenge plan whose challenged runs, are of another arm
+  is refused; so is a challenge plan whose tools database is not the one its
+  challenged runs' workers searched (their `tools_corpus_db`: the same kind,
+  and for a planted one the same sha), named with the `--tools-corpus-db` or
+  `--blind` that settles it, since a challenge of a P run that hunted in the
+  full database would overturn absences with the declarations the ablation
+  removed;
   `skill_commit` is the planning checkout's HEAD; `gate_files` is `{path under
   the tend root: sha256}` of every file staged into `gate/` and `bin/` (the task
-  manifests aside). The planner never writes `locate.campaign` (`cf campaign
-  plan` stamps it). `passages` counts what the tasks owe: an inventory task's
-  distinct finder starts, a locate task's passages, a challenge task's records;
+  manifests aside). `config_shas` is the configuration behind those bytes, free
+  of the run's own id and paths: `{prompts: {<templates/prompts/ file the plan
+  rendered>: sha256 of its bytes}, gate_files: {<path as in gate_files>:
+  sha256}}`, whose `gate_files` leaves out `gate/gate.json`, the task manifests,
+  the `bin/*-agent.sh` wrappers and any staged file whose bytes name one of the
+  run's paths, so two plans of one configuration that differ only in run id
+  record equal `config_shas` — what the bench's A/A check compares, while the
+  rendered shas (`gate_files` and the top-level `prompts`) stay recorded pins.
+  The planner never stamps `locate.campaign` (`cf campaign plan` does), and a
+  re-plan of a stamped shard carries its stamp forward. `passages` counts what
+  the tasks owe: an inventory task's distinct finder starts, a locate task's passages, a challenge task's records;
   a source the inventory covered with every passage scoped out is planned as
   `skipped` and still in `source_ids`. `remote` names the host directories of
   the sourceset's sources, the universe and the candidates
@@ -1093,14 +1118,26 @@ like a faithfulness run:
   refuses a `--max-cost` that differs from a recorded `budget.max_cost`, and
   records a given one there when none is, since the campaign, the sequencer and
   the watchdog read that key. It sends the run's source layers (only with
-  `--include-source-text`, and then `run.sources_transferred` names them),
-  `corpus.sqlite`, the tools database when gate.json's `tools_corpus_db` names
-  another file, and this run's sources' candidates files (never the
-  sourceset's whole directory, and none in the blind arm); the verify stage
-  checks each database against its pinned sha256 once. The frozen inventory is not sent: nothing on
-  the host reads it, and its passages reach the workers and the gate in the task
-  manifests. The preflight prints `tend-version:`, `agentbox-version:` and
-  `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
+  `--include-source-text`, and then `run.sources_transferred` names them;
+  without it the plan names the sources it expects to find on the host
+  already), `corpus.sqlite`, the tools database when gate.json's
+  `tools_corpus_db` names another file, and this run's sources' candidates
+  files from its own kind directory (never the sourceset's whole directory; in
+  the blind arm the blind ones, which its prompts name and which hold only
+  lexical hints). Each candidates directory is left read-only, and a kind
+  directory's transfer opens, creates if need be and closes again the
+  per-universe directory around it, so the arms go to one host in any order.
+  The verify stage checks each database against its pinned sha256 once, and
+  every source layer the run reads against gate.json's `layer_sha256`, read
+  from the host's own gate.json once that file is shown to be the staged one
+  (each failure named, as `sha256sum -c` names it), so a run whose layers were
+  neither sent nor already there stops at verify instead of failing every gate
+  call. No command sent to the host grows with the number of sources: the
+  transfer creates the sources directory, and each layer's rsync its own. The
+  frozen inventory is not sent: nothing on the host reads it, and its passages
+  reach the workers and the gate in the task manifests. The preflight checks
+  tend against `hosts.<host>.tend_version` when one is recorded, and prints
+  `tend-version:`, `agentbox-version:` and `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
   when a probe finds none), and an executed preflight records them at the top
   level as `versions: {tend, agentbox, agent_cli}`. `cf campaign plan` adds
   `campaign: <id>` to a shard's `locate` block (§11).

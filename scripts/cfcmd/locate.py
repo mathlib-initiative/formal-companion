@@ -12,7 +12,9 @@ writes ``sourcesets/<id>/candidates/<universe>/<source-id>.json`` for every
 rendered source (references/locate-documents.md section 5), retrieved from the
 run's TOOLS database (section 9): the full ``corpus.sqlite``; the G1-blind
 ``corpus.blind.sqlite`` under ``--blind``, into ``<universe>/blind/``; or a
-planted one under ``--tools-corpus-db``, into ``<universe>/planted-<sha16>/``.  The curated lists
+planted one under ``--tools-corpus-db``, into ``<universe>/planted-<sha16>/``, which
+names no curated hit the planted database lacks (only their count is printed and
+recorded in the sourceset's ``state.json``).  The curated lists
 are the operator's files -- Mathlib's own ``$MATHLIB/docs/1000.yaml`` and
 ``$MATHLIB/docs/100.yaml`` at the universe's commit -- read as data; nothing is fetched.
 """
@@ -80,13 +82,16 @@ def run(args) -> int:
         "partial": bool(args.sources), "written": result["written"],
         "sources": len(result["written"]), "curated": result["curated"],
         "lexical": result["lexical"], "dropped": result["dropped"],
+        "withheld": result["withheld"],
         "skipped_unrendered": len(result["skipped_unrendered"])})
     log.info(f"candidates: {len(result['written'])} source(s) of {args.sourceset} "
              f"v{result['sourceset']['version']} against {args.universe} "
              f"({result['corpus_db']['kind']} database)"
              f"{' (BLIND arm: no curated hits)' if args.blind else ''}: "
              f"{result['curated']} curated, {result['lexical']} lexical, "
-             f"{result['dropped']} curated name(s) dropped (not in the universe)")
+             f"{result['dropped']} curated name(s) dropped (not in the universe)"
+             + (f", {result['withheld']} withheld (not in the planted database; named in "
+                f"no file a worker reads)" if kind == vocab.TOOLS_DB_PLANTED else ""))
     if result["skipped_unrendered"]:
         log.warn(f"{len(result['skipped_unrendered'])} source(s) are not rendered and have no "
                  "candidates file yet")
