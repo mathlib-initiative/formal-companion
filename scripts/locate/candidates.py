@@ -19,10 +19,12 @@ apart because only one of them binds gate rule 4:
   universe's commit; one that is not there, and an entry refused for its QID,
   is dropped and NAMED in ``dropped``, never kept as a phantom the gate would
   later refuse a worker for not locating.
-* **lexical** -- the host tool's own ranked word search (``corpus.query.
-  search``: every word first, any word only to fill up) over the article's
-  terms: its title and the lead's bold terms (``finders.json``'s
-  ``bold_definition`` hits in the lead section).  A hint, never an obligation.
+* **lexical** -- the host tool's own ranked search (``corpus.query.search``:
+  every word first, any word only to fill up) over the article's terms: its
+  title and the lead's bold terms (``finders.json``'s ``bold_definition`` hits
+  in the lead section), ordered as the search orders one query -- a
+  declaration a term names as an identifier first, then by score
+  (:func:`lexical_hits`).  A hint, never an obligation.
   A bold term is queried only when it is one (:func:`is_lexical_term`): at
   least :data:`MIN_TERM_LETTERS` letters, not only a paragraph label
   (``cflib.vocab.is_bold_label``: "Proof.", "Example:"), and not only stop
@@ -338,8 +340,17 @@ def source_terms(entry: dict, view: inputs.SourceView) -> list[tuple[str, str]]:
 def lexical_hits(terms: list[tuple[str, str]], universe: inputs.Universe,
                  conn: sqlite3.Connection, *, limit: int, exclude: set[tuple[str, str]]
                  ) -> list[dict]:
-    """The host tool's search over every term: all words first, any word only to fill up."""
+    """The host tool's search over every term: all words first, any word only to fill up.
+
+    Ordered as the search orders one query: a declaration a term names as an
+    identifier first (``corpus.query.identifier_tier``: ``CompactSpace`` for the
+    title "Compact space"), tier by tier, then by score -- so the declaration
+    an article is named for is never ranked under the lemmas that repeat its
+    words (field defect D9).  A declaration found by several terms keeps its
+    best (tier, score).
+    """
     best: dict[tuple[str, str], dict] = {}
+    order: dict[tuple[str, str], tuple] = {}
     for all_words in (True, False):
         for term, matched in terms:
             for row in query.search(conn, term, limit=limit, all_words=all_words):
@@ -347,13 +358,15 @@ def lexical_hits(terms: list[tuple[str, str]], universe: inputs.Universe,
                 if key in exclude or row["library"] not in universe.libraries:
                     continue
                 score = float(row["score"]) if all_words else round(float(row["score"]) / 2, 4)
-                if key not in best or score > best[key]["score"]:
+                tier = query.identifier_key(row["declaration"], term)[:2]
+                if key not in best or (tier, -score) < order[key]:
                     best[key] = {"library": row["library"], "declaration": row["declaration"],
                                  "score": score, "matched": matched}
+                    order[key] = (tier, -score)
         if len(best) >= limit:
             break
-    ranked = sorted(best.values(), key=lambda h: (-h["score"], h["library"], h["declaration"]))
-    return ranked[:limit]
+    ranked = sorted(best, key=lambda k: (order[k], k))
+    return [best[k] for k in ranked[:limit]]
 
 
 def build(entry: dict, view: inputs.SourceView, universe: inputs.Universe,

@@ -27,8 +27,26 @@ higher (``bm25`` with the name weighted over the signature over the docstring).
 No query string can reach FTS5's own syntax, so ``NEAR``, a column filter or an
 unbalanced quote is just a word.
 
-**Output.**  One JSON object per line: ``library``, ``declaration``, ``module``,
-``path``, ``line``, ``end_line``, ``kind``, ``signature``, ``score``.  No line at
+**An identifier ranks first** (:func:`identifier_tier`).  ``bm25`` rewards a
+name that REPEATS the query's words, so on a real library the declaration a
+query names was beaten by hundreds of its own lemmas (``IsCompact`` ranked
+about 452nd for ``IsCompact``, under ``isCompact_iff_isCompact_univ`` and
+``IsCompact.isSigmaCompact``: field defect D9).  So the declarations whose name
+matches the query as an identifier come before every word match, in three
+tiers, each ranked by ``bm25`` within: the name IS the query
+(:data:`TIER_NAME`); the name is the query's identifier in another spelling,
+its words being exactly the query's words (:data:`TIER_IDENTIFIER`:
+``is_compact`` finds ``IsCompact``, ``compact space`` finds ``CompactSpace``);
+the name's last components are, at a ``.`` (:data:`TIER_COMPONENTS`: ``Prime``
+finds ``Nat.Prime``, ``nat degree`` finds ``Polynomial.natDegree``); within a
+tier the name with fewer words comes first (:func:`identifier_key`).  They are
+found through the index -- the query's words as one phrase of the name column
+-- never by a scan of the table.
+
+**Output.**  One JSON object per line, best first: ``library``, ``declaration``,
+``module``, ``path``, ``line``, ``end_line``, ``kind``, ``signature``, ``score``
+(``-bm25`` of the match that found the row: the name phrase for an identifier,
+the query's words otherwise, so it orders a tier, never two tiers).  No line at
 all when nothing matched.  Exit status: 0 searched, 2 bad arguments (an argument
 that is not valid UTF-8 included), 3 the database could not be read or is not a
 ``cf-corpus/1`` database -- a problem of the host, never of the query.  Never a
@@ -54,6 +72,12 @@ MAX_LIMIT = 200
 MAX_WORDS = 32
 #: bm25 column weights: name_words, signature, docstring
 WEIGHTS = (10.0, 2.0, 1.0)
+#: the identifier tiers (:func:`identifier_tier`), best first; a word match is
+#: :data:`TIER_WORDS`, after all three
+TIER_NAME = 0
+TIER_IDENTIFIER = 1
+TIER_COMPONENTS = 2
+TIER_WORDS = 3
 
 #: a run of letters and digits (``_`` is a word character to ``\w``, not here)
 _RUN = re.compile(r"[^\W_]+")
@@ -115,6 +139,55 @@ def fts_match(words: list[str], *, all_words: bool = False) -> str:
                                                    for w in words)
 
 
+def identifier_words(text: str) -> list[str]:
+    """The query's words in order, repeats kept: the identifier it spells; [] if it is none.
+
+    A query of more than :data:`MAX_WORDS` words is a paragraph, not an identifier.
+    """
+    words: list[str] = []
+    for word in iter_words(str(text or "").strip()):
+        words.append(word)
+        if len(words) > MAX_WORDS:
+            return []
+    return words
+
+
+def identifier_tier(name: str, text: str) -> int | None:
+    """How a declaration's ``name`` matches the query ``text`` as an identifier, or None.
+
+    :data:`TIER_NAME` when the name is the query; :data:`TIER_IDENTIFIER` when
+    the name's words (:func:`iter_words`) are exactly the query's, in order;
+    :data:`TIER_COMPONENTS` when the words of the name's last components, cut at
+    a ``.``, are.  The one definition: :func:`search` ranks by it, and L2
+    (``scripts/locate/candidates.py``) orders its lexical hits by it.
+    """
+    words = identifier_words(text)
+    if not words:
+        return None
+    if name == str(text).strip():
+        return TIER_NAME
+    if list(iter_words(name)) == words:
+        return TIER_IDENTIFIER
+    parts = str(name).split(".")
+    for k in range(1, len(parts)):
+        if list(iter_words(".".join(parts[k:]))) == words:
+            return TIER_COMPONENTS
+    return None
+
+
+def identifier_key(name: str, text: str, rank: float = 0.0) -> tuple:
+    """The sort key of a row for ``text``: its tier, then the fewer words, then ``bm25``.
+
+    Within a tier the name with fewer words is the closer one (``Nat.Prime``
+    before ``Nat.IsSocialistPrime.prime`` for ``Prime``); a word match is
+    :data:`TIER_WORDS`.  ``rank`` is the row's ``bm25`` (lower is better).
+    """
+    tier = identifier_tier(name, text)
+    if tier is None:
+        return (TIER_WORDS, 0, rank)
+    return (tier, sum(1 for _ in iter_words(name)), rank)
+
+
 def connect(db: str | Path) -> sqlite3.Connection:
     """Open ``db`` read-only and immutable; refuse a file that is not a corpus."""
     path = Path(db).expanduser()
@@ -133,35 +206,71 @@ def connect(db: str | Path) -> sqlite3.Connection:
     return conn
 
 
+_ROW_SQL = ("SELECT d.id, d.library, d.name, d.module, d.path, d.line, d.end_line, d.kind, "
+            "d.signature, bm25(decls_fts, ?, ?, ?) AS rank "
+            "FROM decls_fts JOIN decls d ON d.id = decls_fts.rowid "
+            "WHERE decls_fts MATCH ?")
+
+
+def _rows(conn: sqlite3.Connection, sql: str, params: list) -> list:
+    try:
+        return conn.execute(sql, params).fetchall()
+    except (sqlite3.Error, UnicodeError, ValueError) as exc:
+        raise CorpusError(f"the search failed ({exc})") from None
+
+
+def _identifier_rows(conn: sqlite3.Connection, text: str, library: str | None) -> list:
+    """The rows whose name matches ``text`` as an identifier, best first (tier, then bm25).
+
+    Found through the index: the query's words as ONE phrase of the name column,
+    kept when the name's words end with the phrase -- a superset of the three
+    tiers -- and then sorted out by :func:`identifier_tier` itself.
+    """
+    words = identifier_words(text)
+    if not words:
+        return []
+    joined = " ".join(words)
+    sql = _ROW_SQL + (" AND (decls_fts.name_words = ? OR decls_fts.name_words LIKE ?)")
+    params: list = [*WEIGHTS, "name_words : " + fts_match([joined]), joined, "% " + joined]
+    if library:
+        sql += " AND d.library = ?"
+        params.append(library)
+    ranked = []
+    for row in _rows(conn, sql, params):
+        tier = identifier_tier(row["name"], text)
+        if tier is not None:
+            ranked.append((identifier_key(row["name"], text, float(row["rank"])), row))
+    ranked.sort(key=lambda t: (t[0], t[1]["library"], t[1]["name"]))
+    return [row for _key, row in ranked]
+
+
 def search(conn: sqlite3.Connection, text: str, *, library: str | None = None,
            limit: int = DEFAULT_LIMIT, all_words: bool = False) -> list[dict]:
     """The best ``limit`` declarations for ``text``, best first.
 
-    ``all_words`` keeps only declarations matching every word (AND) instead of
-    any of them (OR, the default); the ranking is the same either way.
+    The identifier tiers first (:func:`identifier_tier`, each by ``bm25``), then
+    the word matches by ``bm25``, no declaration twice.  ``all_words`` keeps
+    only declarations matching every word (AND) instead of any of them (OR, the
+    default); an identifier match holds every word, so it is kept either way.
     """
     words = query_words(text)
     if not words:
         return []
     limit = max(1, min(int(limit), MAX_LIMIT))
-    sql = ("SELECT d.library, d.name, d.module, d.path, d.line, d.end_line, d.kind, "
-           "d.signature, bm25(decls_fts, ?, ?, ?) AS rank "
-           "FROM decls_fts JOIN decls d ON d.id = decls_fts.rowid "
-           "WHERE decls_fts MATCH ?")
+    first = _identifier_rows(conn, text, library)[:limit]
+    sql = _ROW_SQL
     params: list = [*WEIGHTS, fts_match(words, all_words=all_words)]
     if library:
         sql += " AND d.library = ?"
         params.append(library)
     sql += " ORDER BY rank, d.library, d.name LIMIT ?"
-    params.append(limit)
-    try:
-        rows = conn.execute(sql, params).fetchall()
-    except (sqlite3.Error, UnicodeError, ValueError) as exc:
-        raise CorpusError(f"the search failed ({exc})") from None
+    params.append(limit + len(first))
+    seen = {r["id"] for r in first}
+    rows = first + [r for r in _rows(conn, sql, params) if r["id"] not in seen]
     return [{"library": r["library"], "declaration": r["name"], "module": r["module"],
              "path": r["path"], "line": r["line"], "end_line": r["end_line"],
              "kind": r["kind"], "signature": r["signature"],
-             "score": round(-float(r["rank"]), 4)} for r in rows]
+             "score": round(-float(r["rank"]), 4)} for r in rows[:limit]]
 
 
 def show(conn: sqlite3.Connection, library: str, name: str) -> dict | None:

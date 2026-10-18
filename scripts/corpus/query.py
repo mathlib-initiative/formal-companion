@@ -19,7 +19,8 @@ The read surface:
 * :func:`exists` -- the exact-table check on ``(library, commit, name)``;
 * :func:`declaration` -- every column of one declaration (``proof_status``,
   ``statement``, ``deprecated_to`` ...) with its tags;
-* :func:`search` -- the host tool's ranked word search, any word or all words;
+* :func:`search` -- the host tool's ranked search, any word or all words, the
+  declarations a query names as an identifier first (:func:`identifier_tier`);
 * :func:`show` -- what ``corpus_show.py`` prints;
 * :func:`tagged` and :func:`tags_of_kind` -- the tag joins, each row with the
   declaration's path, line and the tag's value.
@@ -37,6 +38,9 @@ from . import corpus_search as _core
 #: re-exported: the FTS5 ``name_words`` column's definition
 name_words = _core.name_words
 query_words = _core.query_words
+#: re-exported: how a name matches a query as an identifier, and the search's order
+identifier_tier = _core.identifier_tier
+identifier_key = _core.identifier_key
 SCHEMA = _core.SCHEMA
 
 
@@ -128,11 +132,13 @@ def declaration(conn: sqlite3.Connection, library: str, name: str, *,
 
 def search(conn: sqlite3.Connection, words: str | Iterable[str], *, library: str | None = None,
            limit: int = _core.DEFAULT_LIMIT, all_words: bool = False) -> list[dict]:
-    """The host tool's ranked word search: words split by the one rule, quoted, bm25-ranked.
+    """The host tool's ranked search: words split by the one rule, quoted, bm25-ranked.
 
-    Any word matches by default (OR); ``all_words`` keeps only declarations
-    matching every word (AND).  Rows: ``library, declaration, module, path,
-    line, end_line, kind, signature, score``.
+    The declarations whose name matches the query as an identifier come first,
+    tier by tier (``corpus_search.identifier_tier``); then any word matches by
+    default (OR), and ``all_words`` keeps only declarations matching every word
+    (AND).  Rows: ``library, declaration, module, path, line, end_line, kind,
+    signature, score``.
     """
     text = words if isinstance(words, str) else " ".join(words)
     try:

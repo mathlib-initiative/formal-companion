@@ -231,7 +231,8 @@ another's files):
 terms (`bold_definition` finders whose `section` is the lead's `[]`), which
 lexical retrieval — the host tool's own search, `corpus.query.search`, every
 word first and any word only to fill up — queried; `matched` (`title` or
-`bold_term`) names which. A bold term is a term only when it has at least three
+`bold_term`) names which. `lexical` is in the search's own order: a declaration
+a term names as an identifier first (§8, the host tools), then by `score`. A bold term is a term only when it has at least three
 letters, is not only a paragraph label (`cflib.vocab.is_bold_label`: "Proof.",
 "Example:") and is not only stop words (`candidates.is_lexical_term`); a bold
 "R" or "1'" is never queried. `corpus_db` is the database the file was retrieved
@@ -677,7 +678,15 @@ Both print JSON lines (`library`, `declaration`, `module`, `path`, `line`,
 read nothing but the database and write nothing. The query is split into words
 by the rule above (at most 32), each quoted and the words OR-ed, so nothing a
 worker types reaches FTS5's own syntax; results are ranked by `bm25` with the name weighted over the signature
-over the docstring. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
+over the docstring — after the declarations whose name matches the query as an
+identifier (`corpus_search.identifier_tier`), which come first in three tiers:
+the name is the query; the name's words are exactly the query's (`is_compact` and
+`IsCompact`, `compact space` and `CompactSpace`); the words of the name's last
+components, cut at a `.`, are (`Prime` and `Nat.Prime`). Within a tier the name
+with fewer words comes first, then `bm25`; `score` is `-bm25` of the match that
+found the row (the name phrase for an identifier), so it orders rows within a
+tier. `bm25` alone rewards a name that repeats the query's words, which on a
+real library put an identifier hundreds of rows under its own lemmas. Exit status: 0, 1 (`corpus_show.py`: no such declaration), 2
 (bad arguments, one that is not valid UTF-8 included), 3 (the database could not
 be read — a host problem); never a traceback.
 
