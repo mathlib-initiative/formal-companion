@@ -11,7 +11,10 @@ three files the bench and ``cf campaign status`` read stayed on the host:
   ``<campaign dir>/usage-<run-id>.jsonl``, the only usage record left once it
   has pruned that shard's transcripts;
 * for a campaign shard, the sequencer's canary scan
-  ``<campaign dir>/canary-<run-id>.json``.
+  ``<campaign dir>/canary-<run-id>.json``;
+* the bridge's kept agent envelopes, ``<tend root>/usage/*.json`` (one per
+  agent call, scripts/run/agent_call.py), a directory: what prices a run
+  that has no transcripts and no usage export (``cost.fleet.envelope_cost_block``).
 
 They land in ``runs/<run>/host/`` (``WorkspacePaths.run_host_dir``), never under
 ``corpus/<run>/``, whose tree is the receipt's manifest.
@@ -49,6 +52,25 @@ from cflib.yamlio import read_yaml
 GATE_LOG = "gate.jsonl"
 USAGE = "usage.jsonl"
 CANARY = "canary.json"
+#: a directory: the agent envelopes ``agent_call.py`` kept in the tend root's ``usage/``
+ENVELOPES = "envelopes"
+
+
+def host_tend_root(data: dict, log_dir: str = "") -> str:
+    """The run's tend root on the host, from ``run.yaml``, else the gate log's parent; '' if neither.
+
+    ``cf plan-locate`` records ``host.remote_root`` and ``remote.tend_root``
+    (relative to it); the host ``gate.json``'s ``log_dir`` is ``<tend root>/gate-log``.
+    """
+    host = data.get("host") if isinstance(data.get("host"), dict) else {}
+    remote = data.get("remote") if isinstance(data.get("remote"), dict) else {}
+    root, tend = str(host.get("remote_root") or "").rstrip("/"), str(remote.get("tend_root") or "")
+    if root and tend:
+        return tend.rstrip("/") if tend.startswith("/") else f"{root}/{tend.strip('/')}"
+    log_dir = log_dir.rstrip("/")
+    if log_dir.endswith("/gate-log"):
+        return log_dir[: -len("/gate-log")]
+    return ""
 
 
 def campaign_shard(workspace, run_id: str, data: dict) -> tuple[str, str] | None:
@@ -96,6 +118,10 @@ def remote_files(workspace, run_id: str, data: dict) -> list[dict]:
                     "campaign": campaign_id, "expected": False})
         out.append({"name": CANARY, "remote": f"{host_dir}/canary-{run_id}.json",
                     "campaign": campaign_id, "expected": False})
+    tend_root = host_tend_root(data, log_dir)
+    if tend_root:
+        out.append({"name": ENVELOPES, "remote": f"{tend_root}/usage", "dir": True,
+                    "expected": False})
     return out
 
 
@@ -103,26 +129,43 @@ def commands(ssh_host: str, files: Sequence[dict], local_dir: Path) -> list[dict
     """The two steps each file takes (ask the host, then copy), for the dry run to print."""
     out = []
     for f in files:
+        directory = bool(f.get("dir"))
         for title, argv in ((f"host artifact {f['name']}: is it there",
-                             exists_argv(ssh_host, f["remote"])),
+                             exists_argv(ssh_host, f["remote"], directory=directory)),
                             (f"host artifact {f['name']}",
-                             rsync_argv(ssh_host, f["remote"], Path(local_dir) / f["name"]))):
+                             rsync_argv(ssh_host, f["remote"], Path(local_dir) / f["name"],
+                                        directory=directory))):
             out.append({"title": title, "argv": argv,
                         "shell": " ".join(shlex.quote(a) for a in argv)})
     return out
 
 
-def exists_argv(ssh_host: str, remote: str) -> list[str]:
-    """``ssh <host> test -f <remote>``: exit 0 the file is there, 1 it is not."""
-    return ["ssh", ssh_host, f"test -f {shlex.quote(remote)}"]
+def exists_argv(ssh_host: str, remote: str, *, directory: bool = False) -> list[str]:
+    """``ssh <host> test -f|-d <remote>``: exit 0 it is there, 1 it is not."""
+    return ["ssh", ssh_host, f"test {'-d' if directory else '-f'} {shlex.quote(remote)}"]
 
 
-def rsync_argv(ssh_host: str, remote: str, local: Path) -> list[str]:
-    """A plain copy of one file the host was asked about first (:func:`exists_argv`).
+def rsync_argv(ssh_host: str, remote: str, local: Path, *, directory: bool = False) -> list[str]:
+    """A plain copy of what the host was asked about first (:func:`exists_argv`).
 
     No ``--ignore-missing-args``: rsync 2.6.9, the one macOS ships, rejects it.
+    A directory (the envelopes) brings its ``*.json`` files and nothing else.
     """
+    if directory:
+        return ["rsync", "-a", "--no-links", "--prune-empty-dirs", "--include=*.json",
+                "--include=*/", "--exclude=*", f"{ssh_host}:{remote.rstrip('/')}/",
+                str(local) + "/"]
     return ["rsync", "-a", f"{ssh_host}:{remote}", str(local)]
+
+
+def _dir_digest(directory: Path) -> tuple[str, int, int]:
+    """``(sha256 over the sorted 'path<TAB>sha256' lines, files, bytes)`` of a fetched directory."""
+    lines, count, size = [], 0, 0
+    for path in sorted(p for p in directory.rglob("*") if p.is_file()):
+        lines.append(f"{path.relative_to(directory).as_posix()}\t{hashing.sha256_file(path)}")
+        count += 1
+        size += path.stat().st_size
+    return hashing.sha256_text("\n".join(lines)), count, size
 
 
 def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
@@ -143,7 +186,9 @@ def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
                    "expected": bool(f.get("expected"))}
             row.update({k: f[k] for k in ("campaign",) if k in f})
             target = incoming / f["name"]
-            asked = runner(exists_argv(ssh_host, f["remote"]), text=True, capture_output=True)
+            directory = bool(f.get("dir"))
+            asked = runner(exists_argv(ssh_host, f["remote"], directory=directory), text=True,
+                           capture_output=True)
             proc = None
             if asked.returncode == 1:
                 row["reason"] = "absent on the host"
@@ -151,13 +196,23 @@ def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
                 row["reason"] = (f"could not ask the host whether it is there (ssh exited "
                                  f"{asked.returncode}: {(asked.stderr or '').strip()[:300]})")
             else:
-                proc = runner(rsync_argv(ssh_host, f["remote"], target), text=True,
-                              capture_output=True)
+                if directory:
+                    target.mkdir(parents=True, exist_ok=True)
+                proc = runner(rsync_argv(ssh_host, f["remote"], target, directory=directory),
+                              text=True, capture_output=True)
             if proc is None:
                 pass
             elif proc.returncode != 0:
                 row["reason"] = (f"rsync exited {proc.returncode}: "
                                  f"{(proc.stderr or '').strip()[:300]}")
+            elif directory:
+                final = local_dir / f["name"]
+                if final.is_dir() and not final.is_symlink():
+                    shutil.rmtree(final)
+                shutil.move(str(target), str(final))
+                digest, count, size = _dir_digest(final)
+                row.update(fetched=True, path=str(final), sha256=digest, files=count,
+                           bytes=size)
             elif not target.is_file():
                 row["reason"] = "the host has it, and rsync reported success with no file"
             else:
@@ -165,7 +220,7 @@ def fetch(ssh_host: str, files: Sequence[dict], local_dir: Path,
                 shutil.move(str(target), str(final))
                 row.update(fetched=True, path=str(final), sha256=hashing.sha256_file(final),
                            bytes=final.stat().st_size)
-            if not row["fetched"] and (local_dir / f["name"]).is_file():
+            if not row["fetched"] and (local_dir / f["name"]).exists():
                 row["kept_previous"] = str(local_dir / f["name"])
             out[f["name"]] = row
     finally:
@@ -188,7 +243,8 @@ def describe(block: dict) -> list[str]:
     lines = []
     for name, row in sorted((block or {}).items()):
         if row.get("fetched"):
-            lines.append(f"  host: {name} <- {row['remote']} ({row.get('bytes', 0)} bytes)")
+            files = f"{row['files']} file(s), " if "files" in row else ""
+            lines.append(f"  host: {name} <- {row['remote']} ({files}{row.get('bytes', 0)} bytes)")
         else:
             kept = " (the previous copy is kept)" if row.get("kept_previous") else ""
             label = "MISSING (expected; the harvest is INCOMPLETE)" if row.get("expected") \

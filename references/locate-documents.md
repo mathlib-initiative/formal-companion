@@ -1072,6 +1072,7 @@ rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
 | `gate.jsonl` | `<log_dir>/gate.jsonl`, `log_dir` being the host `gate.json`'s (the tend root's `gate-log/`) |
 | `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<run-id>.jsonl` (§11) |
 | `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11) |
+| `envelopes/` | the tend root's `usage/` `*.json`: the bridge's kept envelope of each agent call, and the record of each call that left none (§9) |
 
 A shard is a run whose `run.yaml` carries `locate.campaign` and which that
 campaign's `campaign.yaml` lists; the campaign directory is the rendered
@@ -1087,9 +1088,20 @@ fetched: false, reason, kept_previous?}}` (a shard's rows also carry
 home. `gate.jsonl` is expected — every merged task ran the gate, which logs
 each call — so a harvest without it is **INCOMPLETE** and exits 1, a previous
 harvest's copy notwithstanding; `usage.jsonl` and `canary.json` are not, and
-one the host lacks is `absent on the host`, never a failed harvest. With no
-`--transcripts`, a landed `usage.jsonl` is what the receipt's `cost` block
-prices. The harvest then merges `runs.<run-id>` of the sourceset's
+one the host lacks is `absent on the host`, never a failed harvest
+(`envelopes/` is a directory: `test -d`, then its `*.json` files only, its row
+carrying `files` and the sha256 over its sorted `path<TAB>sha256` lines). The
+receipt's `cost` block is priced from the first of: `--transcripts`, a landed
+`usage.jsonl`, the landed `envelopes/`. From envelopes (`basis: envelopes`,
+`cost.fleet.envelope_cost_block`) the dollars are the envelopes' own
+`total_cost_usd`, the tokens are read per model from `modelUsage` (else `usage`
+under the envelope's `model`, else the run's), and the block carries
+`envelope_count`, `messages_by_model`, `usd_by_model`, `usd_from_price_table`
+(the same tokens priced with `budget.prices`, a cross-check) and
+`unpriced_calls`/`unpriced_seconds` (records of calls that left no priced
+envelope, which make `usd` a lower bound). `cf tally --locate` prints every
+read run's cost line — its source and envelope count — and records it under
+`cost` in the tally report. The harvest then merges `runs.<run-id>` of the sourceset's
 `state.json` through `Sourceset.record_state` — `{status: harvested,
 harvested_at, complete, gate_ok, locate: <the receipt's locate block>}` over the
 row `cf plan-locate` wrote, whose fields stay. The faithfulness `cf tally`
