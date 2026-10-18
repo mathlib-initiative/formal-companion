@@ -540,6 +540,27 @@ class TestSpanSample(unittest.TestCase):
         self.assertTrue(a[0]["span_id"].startswith("g3-"))
         self.assertEqual(len(draw_mod.sample_spans("s1", frame, 8, 3, 0.5)), 2)
 
+    def test_nested_blocks_are_one_unit_the_outermost(self):
+        # the field case, reduced: a displayed formula inside a paragraph, an item of a
+        # nested list, a theorem box around its paragraph -- all blocks of their own
+        layer = ("one two three four five six seven. "                    # p [0, 34] holds
+                 "alpha beta gamma delta epsilon zeta eta theta iota. "   # p [35, 86] holds math
+                 "w x y z v u t s.")                                       # li [87, 103]
+        paragraphs = [{"span": [0, 34], "block": "theorem_box"}, {"span": [0, 34], "block": "p"},
+                      {"span": [35, 86], "block": "p", "math": True},
+                      {"span": [52, 70], "block": "math", "math": True},
+                      {"span": [87, 103], "block": "li"}, {"span": [91, 103], "block": "li"}]
+        frame = draw_mod.span_frame(layer, paragraphs, [])
+        self.assertEqual([(f["span"], f["block"]) for f in frame],
+                         [([0, 34], "theorem_box"), ([35, 86], "p"), ([87, 103], "li")])
+        spans = draw_mod.sample_spans("s1", frame, 8, 3, 1.0)
+        self.assertEqual(len(spans), 3)
+        draw_mod.check_spans_disjoint(layer, spans)
+        self.assertTrue(all(s["pi_span"] == 1.0 for s in spans))
+        with self.assertRaises(CfError) as ctx:
+            draw_mod.span_frame(layer, paragraphs + [{"span": [60, 100], "block": "dd"}], [])
+        self.assertIn("overlap without nesting", str(ctx.exception))
+
     def test_the_build_samples_spans_and_writes_a_label_free_host_manifest(self):
         world = built(self)
         lay = layout_of(world)
