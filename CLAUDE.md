@@ -99,9 +99,10 @@ Those two lines move together or not at all.
   fetcher of `docs/proposals/wikipedia-locate.md` §2.1 — `scripts/sources/wikinet.py`,
   the one module that may reach Wikipedia: curl, the raw bytes kept, one fixed
   parameter set, each revision fetched once, and only under an explicit
-  `cf sourceset fetch --execute` or `cf sourceset enumerate-wikiproject --execute`
-  (`--fixtures <dir>` replays recorded responses instead). A test refuses any
-  other module that fetches from Wikipedia.
+  `cf sourceset fetch --execute`, `cf sourceset enumerate-wikiproject --execute`
+  or `cf sourceset adopt --execute` (which only asks the page of a pinned
+  revision that names no page id) (`--fixtures <dir>` replays recorded responses
+  instead). A test refuses any other module that fetches from Wikipedia.
 - Every module starts with a docstring saying **what** it was ported from — the
   v1 campaign script, cell or workflow, named for what it did — or saying it is
   new code, and pointing at the section it implements:

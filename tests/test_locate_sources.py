@@ -2040,5 +2040,137 @@ class TestFieldS2FetchASelection(_FieldCase):
         self.assertEqual(self.ss.latest().version, 2)
 
 
+def _record(directory: Path, name: str, query: dict, answer: dict) -> None:
+    """One recorded API answer in FixtureTransport's format."""
+    (directory / f"{name}.json").write_text(json.dumps({"query": query, "json": answer}),
+                                            encoding="utf-8")
+
+
+def _fixtures_with(case, extra: dict[str, tuple[dict, dict]]) -> Path:
+    """The suite's recordings plus ``extra`` ``{name: (query, answer)}``."""
+    directory = _scratch(case)
+    for p in FIXTURES.glob("*.json"):
+        shutil.copy(p, directory / p.name)
+    for name, (query, answer) in extra.items():
+        _record(directory, name, query, answer)
+    return directory
+
+
+def _revids_query(*revisions: int) -> dict:
+    return {"action": "query", "revids": "|".join(str(r) for r in sorted(revisions)),
+            "prop": "revisions", "rvprop": "ids", "format": "json", "formatversion": "2"}
+
+
+class TestFieldS3S4AdoptWithoutBytes(_FieldCase):
+    """S3: a consumer pins title + revision and holds no parse bytes; S4: an adopted
+    revision lost its page's assessment and QID."""
+
+    def pins(self, rows) -> Path:
+        path = _scratch(self) / "pins.jsonl"
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+        return path
+
+    def test_s3_s4_a_pin_without_bytes_is_fetched_at_exactly_its_revision(self):
+        self.enumerate()
+        pins = self.pins([{"pageid": 1001, "revision": 1990, "title": "Widget lemma"}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--consumer", "wikilean")
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 without bytes", out)
+        e = self.ss.latest().get("enwiki-1001-1990")
+        self.assertEqual((e["origin"], e["raw_sha256"], e["adopted_from"]["consumer"]),
+                         ("adopted", None, "wikilean"))
+        # S4: the page's assessment and QID, which the pin did not carry
+        self.assertEqual((e["assessment"], e["wikidata"]),
+                         ({"class": "B", "importance": "high"}, "Q99999001"))
+        self.assertFalse(self.ss.source_dir("enwiki-1001-1990").exists())
+        self.assertEqual(self.ss.latest().preferred()[1001], "enwiki-1001-1990")
+        # the fetch fetches oldid 1990 and leaves the page's enumerated revision alone
+        answer = json.loads((FIXTURES / "parse-2002.json").read_text())["json"]
+        answer["parse"]["revid"] = 1990
+        fixtures = _fixtures_with(self, {"parse-1990": (websource.parse_params(1990), answer)})
+        code, out = self.fetch(fixtures=fixtures)
+        self.assertEqual(code, 0, out)
+        m = self.ss.latest()
+        self.assertIsNotNone(m.get("enwiki-1001-1990")["raw_sha256"])
+        self.assertIsNone(m.get("enwiki-1001-2002")["raw_sha256"])
+        self.assertIn("left to their consumer's adopted revision", out)
+        self.assertEqual(self.ss.source_problems(m.get("enwiki-1001-1990")), [])
+        # adopting the same pins again adds nothing
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 already held", out)
+
+    def test_s3_a_title_pin_has_its_page_resolved_from_its_revision(self):
+        self.enumerate()
+        pins = self.pins([{"title": "Widget lemma (moved)", "revision": 1990},
+                          {"title": "Gadget theorem", "revision": 2003}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 2, out)                          # no --execute, no fixtures
+        self.assertIn("--execute", out)
+        answer = {"query": {"pages": [
+            {"pageid": 1001, "ns": 0, "title": "Widget lemma", "revisions": [{"revid": 1990}]},
+            {"pageid": 1002, "ns": 0, "title": "Gadget theorem",
+             "revisions": [{"revid": 2003}]}]}}
+        fixtures = _fixtures_with(self, {"revids": (_revids_query(1990, 2003), answer)})
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--fixtures", str(fixtures))
+        self.assertEqual(code, 0, out)
+        self.assertIn("its page 1001 is now 'Widget lemma'", out)
+        m = self.ss.latest()
+        moved = m.get("enwiki-1001-1990")
+        self.assertEqual((moved["title"], moved["wikidata"]), ("Widget lemma (moved)",
+                                                               "Q99999001"))
+        same = m.get("enwiki-1002-2003")                         # the enumerated revision
+        self.assertEqual((same["origin"], same["adopted_from"]["consumer"]),
+                         ("enumerated", "consumer"))
+        self.assertEqual(self.ss.read_state()["commands"]["adopt"]["resolved_by_revision"], 2)
+
+    def test_s3_a_revision_that_does_not_exist_is_refused(self):
+        self.enumerate()
+        pins = self.pins([{"title": "Widget lemma", "revision": 77}])
+        answer = {"query": {"badrevids": {"77": {"revid": 77, "missing": True}}}}
+        fixtures = _fixtures_with(self, {"revids": (_revids_query(77), answer)})
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--fixtures", str(fixtures))
+        self.assertEqual(code, 2, out)
+        self.assertIn("no revision of", out)
+        self.assertNotIn("enwiki-1001-77", self.ss.latest().entries)
+
+    def test_s3_a_page_outside_the_sourceset_can_be_left_out(self):
+        self.enumerate()
+        pins = self.pins([{"pageid": 4242, "revision": 9}, {"pageid": 1003, "revision": 2004}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins),
+                       "--only-known-pages")
+        self.assertEqual(code, 0, out)
+        self.assertIn("skipped, no other source of its page here", out)
+        self.assertNotIn("enwiki-4242-9", self.ss.latest().entries)
+        self.assertTrue(self.ss.latest().get("enwiki-1003-2004").get("adopted_from"))
+
+    def test_s3_a_pin_names_its_page(self):
+        pins = self.pins([{"revision": 5}])
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 2, out)
+        self.assertIn("a pageid or a title", out)
+
+
+class TestFieldS4AnEnumerationFillsAnAdoptedRevision(_FieldCase):
+
+    def test_s4_a_revision_adopted_before_the_listing_takes_its_metadata_from_it(self):
+        pins = _scratch(self) / "pins.jsonl"
+        pins.write_text(json.dumps({"pageid": 1001, "revision": 1990}) + "\n")
+        code, out = cf(self.root, "sourceset", "adopt", "wpm", "--from", str(pins))
+        self.assertEqual(code, 0, out)
+        e = self.ss.latest().get("enwiki-1001-1990")
+        self.assertEqual((e["assessment"], e["wikidata"], e["title"]), (None, None, None))
+        code, out = self.enumerate()
+        self.assertEqual(code, 0, out)
+        self.assertIn("1 adopted revision(s) took their page's", out)
+        e = self.ss.latest().get("enwiki-1001-1990")
+        self.assertEqual((e["assessment"], e["wikidata"], e["title"]),
+                         ({"class": "B", "importance": "high"}, "Q99999001", "Widget lemma"))
+        self.assertNotIn("enwiki-1001-2002", self.ss.latest().entries)
+
+
 if __name__ == "__main__":
     unittest.main()

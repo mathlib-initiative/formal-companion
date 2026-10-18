@@ -17,7 +17,7 @@ under an explicit ``--execute``:
   and offline runs.  A request with no recording is refused by name, so a test
   that grew a request says which one.
 
-Three requests are made, each with a fixed parameter set:
+Four requests are made, each with a fixed parameter set:
 
 * :func:`fetch_parse` -- one revision's ``action=parse`` output with the
   parameters of ``sources.websource.PARSE_PARAMS``; the bytes are the source's
@@ -26,7 +26,10 @@ Three requests are made, each with a fixed parameter set:
   (``list=projectpages``, ``wppassessments=1``, followed through its
   continuation): page id, title, class and importance, articles only;
 * :func:`page_infos` -- each page's latest revision id and its own Wikidata item
-  (``pageprops`` ``wikibase_item``), fifty pages a request.
+  (``pageprops`` ``wikibase_item``), fifty pages a request;
+* :func:`revision_pages` -- the page each of a consumer's pinned revisions
+  belongs to (``revids``, fifty a request), for a pin that names its revision
+  and only a title (titles move; the revision does not).
 
 No other module under scripts/ may fetch from Wikipedia;
 tests/test_locate_sources.py enforces that.
@@ -336,6 +339,48 @@ def project_pages(transport: Transport, site: str, project: str, *,
         token = canonical_query(cont)
         if token in seen:
             raise WikiError(f"projectpages {project}: the continuation repeats ({token})")
+        seen.add(token)
+
+
+def revision_pages(transport: Transport, site: str, revisions: Iterable[int]
+                   ) -> tuple[dict[int, dict], set[int]]:
+    """``({revision: {"pageid", "title", "ns"}}, bad)``: the page of each revision.
+
+    ``bad`` holds the revisions the API reports as no revision (``badrevids``) or
+    did not answer for; the caller refuses them by name.
+    """
+    revs = sorted({int(r) for r in revisions})
+    out: dict[int, dict] = {}
+    for at in range(0, len(revs), INFO_BATCH):
+        batch = revs[at:at + INFO_BATCH]
+        params = {"action": "query", "revids": "|".join(str(r) for r in batch),
+                  "prop": "revisions", "rvprop": "ids", "format": "json", "formatversion": "2"}
+        for data in _continued(transport, site, params, f"the pages of {len(batch)} revision(s)"):
+            for page in (data.get("query") or {}).get("pages") or []:
+                if not isinstance(page, dict) or "pageid" not in page:
+                    continue
+                for rev in page.get("revisions") or []:
+                    if isinstance(rev, dict) and rev.get("revid") is not None:
+                        out[int(rev["revid"])] = {"pageid": int(page["pageid"]),
+                                                  "title": page.get("title"),
+                                                  "ns": page.get("ns")}
+    return out, {r for r in revs if r not in out}
+
+
+def _continued(transport: Transport, site: str, params: dict, what: str) -> Iterator[dict]:
+    """Every answer to one query, following its ``continue`` until there is none."""
+    cont: dict[str, str] = {}
+    seen: set[str] = set()
+    while True:
+        data = _json(transport.get(site, {**params, **cont}), what)
+        yield data
+        nxt = data.get("continue")
+        if not isinstance(nxt, dict) or not nxt:
+            return
+        cont = {str(k): str(v) for k, v in nxt.items()}
+        token = canonical_query(cont)
+        if token in seen:
+            raise WikiError(f"{what}: the continuation repeats ({token})")
         seen.add(token)
 
 

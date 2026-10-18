@@ -302,10 +302,18 @@ spaces, UTF-8):
 ```
 
 - `origin` is `enumerated` (from the PageAssessments listing) or `adopted` (a
-  consumer's pin and bytes, proposal §11.1, recorded in `adopted_from`), the
-  values of `cflib.vocab.SOURCE_ORIGINS`. A consumer's bytes adopted into an
-  enumerated entry of the same revision keep its `origin` and add
-  `adopted_from: {consumer, pins_sha256}`.
+  consumer's pin, with its bytes when it holds them, proposal §11.1, recorded in
+  `adopted_from`), the values of `cflib.vocab.SOURCE_ORIGINS`. A consumer's pin
+  of an enumerated entry's own revision keeps its `origin` and adds
+  `adopted_from: {consumer, pins_sha256}`. A pin is `{revision, pageid | title,
+  bytes?, wikidata?, assessment?}`: one without bytes is adopted with null shas
+  and fetched at exactly that revision by `cf sourceset fetch`; one with a title
+  and no page id has its page resolved from its revision (`action=query&revids=`,
+  under `--execute`), never from the title, which moves. A new adopted revision
+  takes the `assessment`, `wikidata` and `title` its pin does not carry from its
+  page's other sources (an enumerated one first), and an enumeration fills them
+  on an adopted entry whose page it lists, so a pinned page stays in every frame
+  its page is in.
 - **One source per page is planned** (`Manifest.preferred()` in
   `scripts/sources/sourceset.py`): a page with an adopted source (either kind
   above) plans it, the highest such revision when there are several, because the
