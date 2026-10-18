@@ -112,6 +112,11 @@ def gate_locate_corpus(dest: str | Path, gate_config: str | Path) -> dict:
         return {"ok": False, "config": str(cfg_path), "preset": "locate", "sources": [],
                 "files": 0, "problems": [f"the gate could not run: {exc}"], "partial_quotes": [],
                 "binding_notes": [], "unbound_quotes": 0, "broken": [str(exc)]}
+    # A whole-corpus re-gate is not a worker's attempt: its line in the gate log
+    # (task_id "", every document) would sit beside the workers' own and be
+    # read as one by the bench and the watchdog.  The host's log comes home
+    # separately, to runs/<run>/host/gate.jsonl.
+    cfg.log_dir = None
     result = vl.run_gate(cfg, root=Path(dest), findings_dir=CORPUS_FINDINGS_DIR)
     problems = [f"the gate could not run: {b}" for b in result["broken"]] + result["problems"]
     return {"ok": result["exit"] == vl.EXIT_OK, "config": str(cfg_path), "preset": cfg.preset,

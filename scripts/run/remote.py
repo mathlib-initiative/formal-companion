@@ -323,7 +323,8 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     add("monitor", "progress and spend",
         _ssh(host, f"{tend} tend-control status --root {shlex.quote(tend_root)}"), safe=True)
     add("monitor", "merged findings so far",
-        _ssh(host, f"ls -1 {shlex.quote(entrypoint + '/findings')} | wc -l"), safe=True)
+        _ssh(host, f"find {shlex.quote(entrypoint + '/findings')} -type f -name '*.json' "
+                   f"| wc -l"), safe=True)
     # AFTER: the same digests, so an agent that chmod'ed a companion copy and
     # edited it is caught before the findings that cite it are harvested.
     for entry in entries:
