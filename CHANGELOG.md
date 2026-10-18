@@ -35,6 +35,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- `agent_call.py` keeps a record in `usage/` for a call that left no envelope
+  (a timeout, a signal, an empty or non-JSON stdout: `total_cost_usd: null`,
+  its elapsed time), and the spend watchdog estimates each at the root's
+  highest dollars-per-second (or `--unpriced-usd-per-hour`), so a timed-out
+  call is no longer spend it never saw. `spend_usd` is the floor plus that
+  estimate; `spend_floor_usd` is the priced floor alone.
 - After a challenge, a passage's locations are ranked 1..n again (a refute had
   left ranks `[1, 3]`), and the locations an absence overturn adds carry
   `challenge: survived`, not `downgraded`.

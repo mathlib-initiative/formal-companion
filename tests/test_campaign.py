@@ -66,7 +66,8 @@ def envelope(directory: Path, name: str, usd: float) -> None:
     (directory / name).write_text(json.dumps({"subtype": "success", "total_cost_usd": usd}))
 
 
-class TestTheWatchdog(unittest.TestCase):
+class _WatchdogRoot(unittest.TestCase):
+    """A tend root with a fake ``tend-control`` that records each drain."""
 
     def setUp(self):
         self.tmp = scratch(self)
@@ -85,6 +86,9 @@ class TestTheWatchdog(unittest.TestCase):
                               capture_output=True, text=True,
                               env=clean_env(PATH=f"{self.bin}:{os.environ['PATH']}"))
         return proc.returncode, json.loads(proc.stdout.strip().splitlines()[-1])
+
+
+class TestTheWatchdog(_WatchdogRoot):
 
     def test_the_rules(self):
         args = dict(max_cost=10, calls=0, failed=0, merged=None, p90_cost=None, p90_gate=None,
@@ -161,6 +165,50 @@ class TestTheWatchdog(unittest.TestCase):
     def test_the_inlined_git_pins_are_gitsafes(self):
         self.assertEqual(watchdog._GIT_SAFE_CONFIG, gitsafe.SAFE_CONFIG)
         self.assertEqual(watchdog._GIT_SAFE_ENV, gitsafe.SAFE_ENV)
+
+
+class TestT1TheWatchdogCountsCallsThatLeftNoEnvelope(_WatchdogRoot):
+    """Field defect T1: a call that timed out left no priced envelope, so the watchdog's
+    floor never saw its spend.  agent_call now keeps a record of such a call
+    (``total_cost_usd: null``, its elapsed time), and the watchdog estimates it."""
+
+    def timed_out(self, name: str, seconds: float) -> None:
+        from run import agent_call
+
+        record = agent_call.call_record(outcome="timeout", role="worker", task_id="t-9",
+                                        slot=1, seconds=seconds, timeout=2700.0, code=124)
+        (self.root / "usage").mkdir(parents=True, exist_ok=True)
+        (self.root / "usage" / name).write_text(json.dumps(record))
+
+    def test_t1_a_timed_out_call_is_estimated_at_the_roots_highest_rate(self):
+        usage = self.root / "usage"
+        usage.mkdir(parents=True)
+        (usage / "t-1.worker.a.1.json").write_text(json.dumps(
+            {"subtype": "success", "total_cost_usd": 3.0, "duration_ms": 1_000_000}))
+        (usage / "t-2.worker.b.2.json").write_text(json.dumps(
+            {"subtype": "success", "total_cost_usd": 1.0, "duration_ms": 1_000_000}))
+        self.timed_out("t-9.worker.c.3.json", 2700.0)
+        got = watchdog.ledger(usage)
+        self.assertEqual((got["dollars"], got["unpriced_calls"], got["unpriced_seconds"]),
+                         (4.0, 1, 2700.0))
+        self.assertAlmostEqual(got["estimated_unpriced_usd"], 8.1)    # 2700 s x $0.003/s
+        code, record = self.run_wd()
+        # the floor alone ($4) is under the $10 cap; with the timed-out call it is not
+        self.assertEqual(code, 2)
+        self.assertTrue(record["drained"])
+        self.assertEqual((record["spend_floor_usd"], record["unpriced_calls"]), (4.0, 1))
+        self.assertAlmostEqual(record["spend_usd"], 12.1)
+        self.assertIn("reached the shard's cap", record["reasons"][0])
+
+    def test_t1_before_any_priced_envelope_the_fallback_rate_or_no_estimate(self):
+        self.timed_out("t-9.worker.c.3.json", 1800.0)
+        code, record = self.run_wd("--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(record["unpriced_calls"], 1)
+        self.assertIsNone(record["estimated_unpriced_usd"])
+        code, record = self.run_wd("--dry-run", "--unpriced-usd-per-hour", "30")
+        self.assertAlmostEqual(record["estimated_unpriced_usd"], 15.0)
+        self.assertIn("reached the shard's cap", record["reasons"][0])
 
 
 class WorkspaceCase(unittest.TestCase):

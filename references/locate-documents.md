@@ -1009,7 +1009,12 @@ like a faithfulness run:
 
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
 JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
-a cost cross-check), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
+a cost cross-check; a call that left none — a timeout, a signal, an empty or
+non-JSON stdout — leaves a record of its own under that name, `{type: result,
+subtype: error_<outcome>, is_error: true, total_cost_usd: null, duration_ms,
+cf_agent_call: {outcome, role, task_id, slot, elapsed_s, timeout_s, exit,
+signal, stdout_bytes, cost: unknown}}`, and prose stdout is kept beside it as
+`.out`), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
 the count of genuine reviewer rejections), `gate-log/gate.jsonl` (one JSON line
 per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
 `by_rule`, `reasons`), and the per-user slot directory the bridge's 15-slot
@@ -1220,7 +1225,11 @@ is keyed by run id (`shard-<run-id>.done`, `.started`, `.before`, `usage-<run-id
 shard's last watchdog record shows a drain, or a reason to drain that no drain
 acted on (a failed `tend-control drain`, or a cap crossed after the last
 periodic check), or cannot be read, and when a canary was found. The watchdog (model-free, stdlib) drains the root with
-`tend-control drain` when the spend summed from `usage/` reaches the shard's cap,
+`tend-control drain` when the spend from `usage/` reaches the shard's cap — the
+priced envelopes' `total_cost_usd` plus, for each call that left no priced
+envelope, its elapsed seconds times the root's highest dollars-per-second
+(`--unpriced-usd-per-hour` before any priced envelope has a duration; the
+record says `estimated_unpriced_usd: null` when neither exists) —
 or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
 the cost per merged task (over at least `min_tasks`) passes `multiple` times the
 pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is

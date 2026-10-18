@@ -15,14 +15,24 @@ shard's ``tend run``; ``cf run`` ships it in the root's ``bin/``.
 What it reads, all of it outside every worktree:
 
 * **spend** -- the sum of ``total_cost_usd`` over the agents' JSON envelopes
-  the bridges keep in ``<root>/usage/`` (scripts/run/agent_call.py).  It is a
-  floor, not the bill: a call whose envelope carries no cost adds nothing, and
-  the transcripts priced by ``scripts/cost`` at harvest stay the primary
-  figure;
+  the bridges keep in ``<root>/usage/`` (scripts/run/agent_call.py), plus an
+  ESTIMATE for each call that ended with no priced envelope (a timeout, a
+  signal, an empty stdout: ``agent_call`` keeps a record of it with
+  ``total_cost_usd: null`` and its elapsed time): the call's seconds times the
+  highest dollars-per-second any priced envelope of the root shows, or
+  ``--unpriced-usd-per-hour`` before one exists (:func:`ledger`).  A 45-minute
+  call that timed out used to add nothing at all (field defect T1).  It is
+  still not the bill: the transcripts priced by ``scripts/cost`` at harvest
+  stay the primary figure;
 * **the gate-failure rate** -- the fraction of calls in
   ``<root>/gate-log/gate.jsonl`` that did not pass;
 * **merged tasks** -- the task directories under ``findings/`` on the
   entrypoint's merge target (``git ls-tree``, with the boundary pinned).
+
+Every record carries ``spend_usd`` (the priced floor plus the estimate, what
+the rules judge), ``spend_floor_usd``, ``unpriced_calls``, ``unpriced_seconds``,
+``estimated_unpriced_usd`` (null when there was nothing to estimate with) and
+``estimate_usd_per_second``.
 
 Model-free and standard library only: it decides from numbers, runs on the
 host where cflib is not installed, and its one action is ``tend-control
@@ -63,22 +73,67 @@ MIN_TASKS = 5
 MIN_GATE_CALLS = 20
 
 
-def spend(usage_dir: Path) -> tuple[float, int]:
-    """``(dollars, envelopes)`` over every kept JSON envelope."""
-    total, count = 0.0, 0
+def _number(value) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return float(value)
+    return None
+
+
+def ledger(usage_dir: Path, *, fallback_usd_per_hour: float | None = None) -> dict:
+    """What ``usage/`` says was spent: the priced floor and the estimate of the rest.
+
+    ``{dollars, envelopes, unpriced_calls, unpriced_seconds, usd_per_second,
+    estimated_unpriced_usd}``.  An envelope with a ``total_cost_usd`` is priced;
+    one whose ``total_cost_usd`` is null and that records an elapsed time
+    (``agent_call``'s record of a call that left no envelope) is an unpriced
+    call, estimated at the highest dollars-per-second of the priced envelopes
+    that carry a ``duration_ms`` -- or ``fallback_usd_per_hour`` before any
+    does; ``estimated_unpriced_usd`` is None when neither exists.
+    """
+    out = {"dollars": 0.0, "envelopes": 0, "unpriced_calls": 0, "unpriced_seconds": 0.0,
+           "usd_per_second": None, "estimated_unpriced_usd": 0.0}
     if not usage_dir.is_dir():
-        return 0.0, 0
-    for path in sorted(usage_dir.glob("*.json")):
+        return out
+    rate = None
+    for path in sorted(usage_dir.rglob("*.json")):
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
-        if isinstance(data, dict):
-            count += 1
-            value = data.get("total_cost_usd")
-            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
-                total += float(value)
-    return round(total, 6), count
+        if not isinstance(data, dict):
+            continue
+        out["envelopes"] += 1
+        cost = _number(data.get("total_cost_usd"))
+        millis = _number(data.get("duration_ms"))
+        if cost is not None:
+            if cost > 0:
+                out["dollars"] += cost
+                if millis and millis > 0:
+                    here = cost / (millis / 1000.0)
+                    rate = here if rate is None else max(rate, here)
+            continue
+        call = data.get("cf_agent_call") if isinstance(data.get("cf_agent_call"), dict) else {}
+        seconds = _number(call.get("elapsed_s"))
+        if seconds is None and millis is not None:
+            seconds = millis / 1000.0
+        if seconds is not None:
+            out["unpriced_calls"] += 1
+            out["unpriced_seconds"] += max(0.0, seconds)
+    if rate is None and fallback_usd_per_hour is not None:
+        rate = float(fallback_usd_per_hour) / 3600.0
+    out["usd_per_second"] = round(rate, 9) if rate is not None else None
+    if out["unpriced_calls"]:
+        out["estimated_unpriced_usd"] = (round(out["unpriced_seconds"] * rate, 6)
+                                         if rate is not None else None)
+    out["dollars"] = round(out["dollars"], 6)
+    out["unpriced_seconds"] = round(out["unpriced_seconds"], 1)
+    return out
+
+
+def spend(usage_dir: Path) -> tuple[float, int]:
+    """``(dollars, envelopes)``: the priced floor over every kept JSON envelope."""
+    got = ledger(usage_dir)
+    return got["dollars"], got["envelopes"]
 
 
 def gate_calls(log_path: Path) -> tuple[int, int]:
@@ -137,10 +192,14 @@ def decide(*, dollars: float, max_cost: float, calls: int, failed: int, merged: 
 
 def check(args) -> dict:
     root = Path(args.root)
-    dollars, envelopes = spend(root / "usage")
+    spent = ledger(root / "usage", fallback_usd_per_hour=args.unpriced_usd_per_hour)
+    dollars, envelopes = spent["dollars"], spent["envelopes"]
+    estimate = spent["estimated_unpriced_usd"]
     calls, failed = gate_calls(root / "gate-log" / "gate.jsonl")
     merged = merged_tasks(Path(args.entrypoint) if args.entrypoint else None, args.branch)
-    reasons = decide(dollars=dollars, max_cost=args.max_cost, calls=calls, failed=failed,
+    # the rules judge the floor plus the estimate of what the unpriced calls cost
+    total = round(dollars + (estimate or 0.0), 6)
+    reasons = decide(dollars=total, max_cost=args.max_cost, calls=calls, failed=failed,
                      merged=merged, p90_cost=args.p90_cost_per_task,
                      p90_gate=args.p90_gate_failure_rate, multiple=args.multiple,
                      min_tasks=args.min_tasks, min_calls=args.min_gate_calls)
@@ -150,7 +209,12 @@ def check(args) -> dict:
     except (OSError, ValueError):
         previous = {}
     record = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "root": str(root),
-              "spend_usd": dollars, "envelopes": envelopes, "max_cost": args.max_cost,
+              "spend_usd": total, "spend_floor_usd": dollars,
+              "unpriced_calls": spent["unpriced_calls"],
+              "unpriced_seconds": spent["unpriced_seconds"],
+              "estimated_unpriced_usd": estimate,
+              "estimate_usd_per_second": spent["usd_per_second"],
+              "envelopes": envelopes, "max_cost": args.max_cost,
               "gate_calls": calls, "gate_failed": failed, "merged_tasks": merged,
               "reasons": reasons, "drained": bool(previous.get("drained")), "action": None}
     if reasons and not record["drained"]:
@@ -190,6 +254,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--p90-cost-per-task", type=float, default=None)
     ap.add_argument("--p90-gate-failure-rate", type=float, default=None)
     ap.add_argument("--multiple", type=float, default=2.0)
+    ap.add_argument("--unpriced-usd-per-hour", type=float, default=None,
+                    help="what an hour of a call that left no priced envelope is estimated at "
+                         "before any priced envelope with a duration exists (default: none, "
+                         "and such calls are recorded as unestimated)")
     ap.add_argument("--min-tasks", type=int, default=MIN_TASKS)
     ap.add_argument("--min-gate-calls", type=int, default=MIN_GATE_CALLS)
     ap.add_argument("--tend", default=os.environ.get("CF_TEND_CMD", ""),

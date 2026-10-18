@@ -31,6 +31,15 @@ instead of running the agent CLI themselves:
   ``<usage-dir>/<task-id>.<role>.<UTC stamp>.<pid>.json`` (``.out`` when it is
   not JSON), outside the worktree, where the spend watchdog and the cost
   cross-check read it.  The bridges used to delete it.
+* **A call that left no envelope still leaves a record.**  A timeout, a
+  signal, an empty stdout or one that is not a JSON object writes, under the
+  same name with ``.json``, a synthetic envelope saying what is known
+  (:func:`call_record`: ``subtype: error_<outcome>``, ``total_cost_usd: null``,
+  ``duration_ms``, and ``cf_agent_call: {outcome, role, task_id, slot,
+  elapsed_s, timeout_s, exit, signal, stdout_bytes, cost: "unknown"}``), so the
+  spend watchdog counts the call and estimates its unknown spend instead of
+  missing it (field defect T1: a 45-minute call that timed out was spend no
+  envelope recorded).
 
 Standard library only: it runs on the run host, where cflib is not installed.
 Exit status: the agent's own on a completed call (the bridge normalises it),
@@ -125,15 +134,25 @@ def is_conflict(raw: str, stderr: str) -> bool:
     return bool(_CONFLICT.search(raw[-4000:]) or _CONFLICT.search(stderr[-4000:]))
 
 
-def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str) -> Path | None:
+def is_envelope(raw: bytes) -> bool:
+    """Is the agent's stdout a JSON object (an envelope, priced or not)?"""
+    try:
+        return isinstance(json.loads(raw.decode("utf-8")), dict)
+    except (UnicodeDecodeError, ValueError):
+        return False
+
+
+def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str,
+                  suffix: str | None = None) -> Path | None:
     """Copy the envelope outside the worktree; a failure to keep it never fails the call."""
     if usage_dir is None:
         return None
-    try:
-        json.loads(raw.decode("utf-8"))
-        suffix = "json"
-    except (UnicodeDecodeError, ValueError):
-        suffix = "out"
+    if suffix is None:
+        try:
+            json.loads(raw.decode("utf-8"))
+            suffix = "json"
+        except (UnicodeDecodeError, ValueError):
+            suffix = "out"
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     safe_task = re.sub(r"[^A-Za-z0-9._-]", "_", task_id or "no-task")[:120]
     try:
@@ -145,6 +164,25 @@ def keep_envelope(usage_dir: Path | None, raw: bytes, *, task_id: str, role: str
         return path
     except OSError:
         return None
+
+
+def call_record(*, outcome: str, role: str, task_id: str, slot: int, seconds: float,
+                timeout: float, code: int | None, signum: int = 0, stdout_bytes: int = 0) -> dict:
+    """The synthetic envelope of a call that left none: what is known, the cost unknown.
+
+    Shaped like the agent CLI's own result envelope (``type``, ``subtype``,
+    ``is_error``, ``total_cost_usd``, ``duration_ms``) so every reader of
+    ``usage/`` reads it, with ``total_cost_usd: null`` -- never a guessed 0 --
+    and the call's facts under ``cf_agent_call``.
+    """
+    return {"type": "result", "subtype": f"error_{outcome}", "is_error": True,
+            "total_cost_usd": None, "duration_ms": int(round(seconds * 1000)),
+            "usage": None, "session_id": None,
+            "cf_agent_call": {"outcome": outcome, "role": role, "task_id": task_id or None,
+                              "slot": slot, "elapsed_s": round(seconds, 1),
+                              "timeout_s": round(timeout, 1), "exit": code,
+                              "signal": signum or None, "stdout_bytes": stdout_bytes,
+                              "cost": "unknown"}}
 
 
 class _Signalled(Exception):
@@ -249,8 +287,19 @@ def run(argv: list[str], *, role: str, raw_path: Path, err_path: Path | None,
         except OSError:
             pass
     raw = raw_path.read_bytes() if raw_path.exists() else b""
-    kept = keep_envelope(usage_dir, raw, task_id=task_id, role=role)
     seconds = time.time() - started
+    kept = keep_envelope(usage_dir, raw, task_id=task_id, role=role) if raw else None
+    if not is_envelope(raw):
+        outcome = ("signal" if signalled else "timeout" if code is None
+                   else "empty" if not raw.strip() else "not_json")
+        record = call_record(outcome=outcome, role=role, task_id=task_id, slot=number,
+                             seconds=seconds, timeout=timeout,
+                             code=(128 + signalled if signalled else
+                                   EXIT_TIMEOUT if code is None else int(code)),
+                             signum=signalled, stdout_bytes=len(raw))
+        noted = keep_envelope(usage_dir, (json.dumps(record, sort_keys=True) + "\n").encode(),
+                              task_id=task_id, role=role, suffix="json")
+        kept = noted or kept
     where = f" (kept at {kept})" if kept else ""
     if signalled:
         log(f"agent_call: role={role} task={task_id or '-'} slot={number} STOPPED by signal "
