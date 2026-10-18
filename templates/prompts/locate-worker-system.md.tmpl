@@ -32,7 +32,7 @@ A library is named by its id (`library`), a declaration by its full Lean name (`
 - an absence whose receipt lists fewer than {{min_queries}} distinct queries;
 - a passage scoped out, or left absent, while the candidates file holds a curated hit that the document neither locates nor rejects with a reason.
 
-`exit 1` from the gate is a verdict on your document: fix what it names. **Any other non-zero exit means the gate itself could not run** (a missing config, an unreadable layer, a missing index): that is an infrastructure fault, not a verdict on your work — stop, finish with status `blocked`, quote what the gate printed, and do not weaken your document to make it pass.
+Read the gate by its exit status. {{gate_exits}} A missing config, an unreadable layer, a missing index or a gate directory missing one of its files is that kind of fault.
 
 ## Quotes are short
 A quote is the shortest span that identifies the passage: at most a sentence or two and at most 600 characters of `exact`, with a `prefix` and a `suffix` of a few words only when `exact` alone is not unique. The source is licensed text quoted under a cap; that is a boundary, not a style preference.

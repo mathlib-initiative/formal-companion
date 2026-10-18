@@ -67,6 +67,12 @@ def register(subparsers) -> None:
                    help="locate-challenge: the fraction of each stratum re-judged (default 0.2)")
     p.add_argument("--max-open-tasks", type=int, default=None,
                    help="chain depends_on so tend holds at most N open tasks (waves)")
+    p.add_argument("--workers", type=int, default=None,
+                   help="concurrent worker agents (default: workspace.yaml "
+                        "defaults.max_concurrent_workers, else the preset's)")
+    p.add_argument("--reviewers", type=int, default=None,
+                   help="concurrent reviewer agents (default: workspace.yaml "
+                        "defaults.max_concurrent_reviewers, else the preset's)")
     p.add_argument("--run-id", default=None, help="default: <preset>-<YYYY-MM-DD>")
     p.add_argument("--host", default=lplan.LOCAL,
                    help="run host; must be in workspace.yaml hosts.allowlist")
@@ -159,6 +165,8 @@ def run(args) -> int:
                         "curated-hit rule reads them")
 
     model, model_source = models_mod.resolve(requested=args.model, preset=preset, workspace=ws)
+    limits = lp.concurrency(preset, ws, workers=args.workers, reviewers=args.reviewers)
+    warnings.extend(limits["warnings"])
     rd = paths.run_dir(run_id)
     gate_remote = lplan.gate_config(
         preset_mode=preset.mode, preset_name=preset.name, run_id=run_id,
@@ -190,7 +198,9 @@ def run(args) -> int:
         agent=agent, allow_sandbox_bypass=bool(args.allow_sandbox_bypass),
         context={"sourceset_pin": f"{manifest.sourceset} v{manifest.version} "
                                   f"{manifest.sha256[:12]}",
-                 "universe_pin": f"{universe.id} {universe.sha256[:12]}"})
+                 "universe_pin": f"{universe.id} {universe.sha256[:12]}",
+                 # config.yaml's max_concurrent_* are the run's limits, not the preset's
+                 "max_workers": limits["workers"], "max_reviewers": limits["reviewers"]})
     warnings.extend(built_root["warnings"])
     if args.max_cost is None and ws.budget.get("max_cost_usd") is None:
         warnings.append("no spend cap is recorded: a locate run is not sent to a host without "
@@ -235,7 +245,8 @@ def run(args) -> int:
                   "max_open": args.max_open_tasks,
                   "max_per_root": lp.MAX_TASKS_PER_ROOT},
         "prompts": {name: sha256_text(text) for name, text in sorted(prompts.items())},
-        "concurrency": {"workers": preset.max_workers, "reviewers": preset.max_reviewers},
+        "concurrency": {"workers": limits["workers"], "reviewers": limits["reviewers"],
+                        "source": limits["source"]},
         "budget": {"currency": "USD",
                    "max_cost": args.max_cost if args.max_cost is not None
                    else ws.budget.get("max_cost_usd"),
@@ -273,6 +284,8 @@ def run(args) -> int:
     print(f"  universe : {universe.id} ({universe.sha256[:12]}), corpus.sqlite {db_sha[:12]}")
     print(f"  gate     : {layouts['host']['gate_command']}")
     print(f"  model    : {model or '(bridge default)'} (from {model_source})")
+    print(f"  limits   : {limits['workers']} workers ({limits['source']['workers']}), "
+          f"{limits['reviewers']} reviewers ({limits['source']['reviewers']})")
     if skipped:
         print(f"  skipped  : {len(skipped)} source(s) — listed in run.yaml locate.skipped")
     if not consent and args.host != lplan.LOCAL:

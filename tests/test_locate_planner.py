@@ -19,12 +19,14 @@ except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
 import json
+import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -46,7 +48,14 @@ from plan import presets as presets_mod  # noqa: E402
 
 
 def scratch(case: unittest.TestCase) -> Path:
-    path = Path(tempfile.mkdtemp())
+    """A fresh workspace path, resolved.
+
+    ``cflib.workspace`` resolves the workspace root, so every path the planner
+    writes is a resolved one.  On macOS ``tempfile`` hands out ``/var/folders/…``,
+    a symlink to ``/private/var/folders/…``, and a test that built its expected
+    paths from the unresolved name compared two spellings of one directory.
+    """
+    path = Path(tempfile.mkdtemp()).resolve()
     case.addCleanup(shutil.rmtree, path, ignore_errors=True)
     return path / "ws"
 
@@ -248,7 +257,8 @@ class TestPlanInventory(Campaign):
                      "vendor/literature_links.manifest.json"):
             self.assertTrue((gate_dir / name).is_file(), name)
         self.assertFalse(list(gate_dir.rglob("__pycache__")))
-        self.assertFalse((gate_dir / "verify_findings.py").exists())
+        # the gate imports verify_findings' change-set reader (field defect P2)
+        self.assertTrue((gate_dir / "verify_findings.py").is_file())
         cfg = (self.paths.tend_root("inv-1") / "config.yaml").read_text()
         self.assertIn(f"{gate_dir}/verify_locate.py, --gate-config", cfg)
         self.assertIn("--changed-files", cfg)
@@ -321,6 +331,64 @@ class TestPlanInventory(Campaign):
         self.assertIn("campaign shards", caught.exception.hint)
         lplan.check_root_size(tasks[:500])
 
+    def test_the_concurrency_is_the_workspaces_then_the_presets(self):
+        """P3: the workspace asked for 6/4 and run.yaml and config.yaml said the preset's 8/4."""
+        from cflib.yamlio import write_yaml
+
+        def plan(run_id, *extra):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                                "--sourceset", F.SS, "--universe", F.U, "--run-id", run_id,
+                                *extra)
+            return code, out + err
+
+        def limits(run_id):
+            doc = read_yaml(self.paths.run_yaml(run_id))
+            cfg = (self.paths.tend_root(run_id) / "config.yaml").read_text()
+            got = re.findall(r"^max_concurrent_(worker|reviewer)_agents: (\d+)$", cfg, re.M)
+            return doc["concurrency"], dict(got)
+
+        data = read_yaml(self.paths.workspace_yaml)
+        data.setdefault("defaults", {}).update(max_concurrent_workers=6,
+                                               max_concurrent_reviewers=4)
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-c")
+        self.assertEqual(code, 0, out)
+        block, cfg = limits("inv-c")
+        self.assertEqual((block["workers"], block["reviewers"]), (6, 4))
+        self.assertEqual(block["source"]["workers"], "workspace.defaults.max_concurrent_workers")
+        self.assertEqual(cfg, {"worker": "6", "reviewer": "4"})
+        self.assertIn("6 workers", (self.paths.tend_root("inv-c") / "README.md").read_text())
+        # a flag wins
+        code, out = plan("inv-f", "--workers", "2", "--reviewers", "1")
+        self.assertEqual(code, 0, out)
+        block, cfg = limits("inv-f")
+        self.assertEqual((block["workers"], block["reviewers"], block["source"]["workers"]),
+                         (2, 1, "--workers"))
+        self.assertEqual(cfg, {"worker": "2", "reviewer": "1"})
+        # and the preset only when the workspace says nothing
+        for key in ("max_concurrent_workers", "max_concurrent_reviewers"):
+            data["defaults"].pop(key)
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-p")
+        self.assertEqual(code, 0, out)
+        preset = lp.get("locate-inventory")
+        block, cfg = limits("inv-p")
+        self.assertEqual((block["workers"], block["reviewers"]),
+                         (preset.max_workers, preset.max_reviewers))
+        self.assertEqual(block["source"]["reviewers"], "preset.locate-inventory")
+        # a limit that is not a whole number is refused; one over the cap is said
+        data["defaults"]["max_concurrent_workers"] = "lots"
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("max_concurrent_workers", out)
+        data["defaults"]["max_concurrent_workers"] = 12
+        data["defaults"]["max_concurrent_sessions"] = 16
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-o", "--reviewers", "6")
+        self.assertEqual(code, 0, out)
+        self.assertIn("over the account cap of 16", out)
+
     def test_a_remote_host_gets_host_paths_and_the_local_gate_keeps_local_ones(self):
         data = read_yaml(self.paths.workspace_yaml)
         data["hosts"] = {"allowlist": ["examplebox"], "examplebox": {"remote_root": "/srv/cf"}}
@@ -339,6 +407,286 @@ class TestPlanInventory(Campaign):
         doc = read_yaml(self.paths.run_yaml("inv-r"))
         self.assertEqual(doc["budget"]["max_cost"], 50.0)
         self.assertFalse(doc["consent"]["given"])
+
+
+class TestTheStagedGateRunsAlone(Campaign):
+    """P2: the gate directory plan-locate stages is the whole of what runs on the host.
+
+    The field case: ``runs/<run>/tend-root/gate/`` had no ``verify_findings.py``,
+    which the gate imports, so every call died with ``ModuleNotFoundError`` and
+    Python's exit 1 -- the code the worker reads as "your document is wrong".
+    The tests that ran the gate ran it from ``scripts/gate/``, where the missing
+    module sat beside it.  Here the staged directory is copied to a fresh place
+    outside this checkout (a stand-in for ``<remote_root>/<run>-gate``) and run
+    with ``python3 -I``, a bare environment and a scratch working directory.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.staged = self.paths.tend_root("inv-1") / "gate"
+        away = Path(tempfile.mkdtemp(prefix="cf-host-")).resolve()
+        self.addCleanup(shutil.rmtree, away, ignore_errors=True)
+        self.assertFalse(str(away).startswith(str(SKILL)))
+        self.host = away / "inv-1-gate"
+        shutil.copytree(self.staged, self.host)
+        self.cwd = away / "worktree"
+        docs = F.inventory_documents(F.manifest_entries(self.paths))
+        self.doc_rel = sorted(docs)[0]
+        self.doc = docs[self.doc_rel]
+        self.write(self.doc)
+
+    def write(self, doc: dict) -> Path:
+        path = self.cwd / self.doc_rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(doc), encoding="utf-8")
+        return path
+
+    def isolated(self, script: str, *argv: str) -> subprocess.CompletedProcess:
+        return subprocess.run([sys.executable, "-I", str(self.host / script), *argv],
+                              capture_output=True, text=True, cwd=str(self.cwd),
+                              env={"PATH": "/usr/bin:/bin", "HOME": str(self.cwd)}, timeout=120)
+
+    def gate(self, *argv: str) -> subprocess.CompletedProcess:
+        return self.isolated("verify_locate.py", "--gate-config", str(self.host / "gate.json"),
+                             *argv)
+
+    def test_every_import_resolves_inside_the_directory(self):
+        import ast
+
+        from gate import verify_locate as vl
+
+        local = {p.stem for p in self.host.glob("*.py")}
+        self.assertLessEqual({m[:-3] for m in vl.GATE_MODULES}, local)
+        vendored = {p.name for p in (self.host / "vendor").iterdir() if p.is_dir()}
+        self.assertEqual(vendored, {"literature_links", "formal_companion_annotations"})
+        for path in sorted(self.host.rglob("*.py")):
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+                if isinstance(node, ast.Import):
+                    names = [a.name for a in node.names]
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    names = [node.module or ""]
+                else:
+                    continue
+                for name in names:
+                    top = name.split(".")[0]
+                    with self.subTest(file=path.name, module=name):
+                        self.assertTrue(top in sys.stdlib_module_names or top in local
+                                        or top in vendored, f"{path.name} imports {name}")
+                        self.assertNotEqual(top, "cflib")
+
+    def test_the_gate_runs_with_python_dash_I_and_nothing_else(self):
+        proc = self.gate("--self-check")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("OK: gate self-check", proc.stdout)
+        self.assertIn(str(self.host / "vendor"), proc.stdout)      # its own copy, not ours
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        self.assertIn("OK: 1 locate document(s) validated", proc.stdout)
+        bad = json.loads(json.dumps(self.doc))
+        bad["passages"][0]["quote"]["exact"] = "a sentence this layer never held"
+        self.write(bad)
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("VALIDATION FAILED", proc.stderr)
+
+    def test_a_directory_missing_a_module_is_broken_not_a_verdict(self):
+        for module in ("verify_findings.py", "locate_text.py"):
+            with self.subTest(module=module):
+                shutil.copy2(self.staged / module, self.host / module)
+                (self.host / module).unlink()
+                for argv in (("--findings", self.doc_rel), ("--self-check",)):
+                    proc = self.gate(*argv)
+                    self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+                    self.assertIn("the gate could not run", proc.stderr)
+                    self.assertNotIn("Traceback", proc.stderr)
+                    self.assertNotIn("VALIDATION FAILED", proc.stderr)
+                    self.assertEqual(proc.stdout.splitlines()[-1],
+                                     "ownership: not checked (the gate could not run)")
+                shutil.copy2(self.staged / module, self.host / module)
+
+    def test_a_crash_inside_the_gate_is_exit_3(self):
+        cfg = json.loads((self.host / "gate.json").read_text(encoding="utf-8"))
+        cfg["max_locations"] = "five"           # int() raises inside GateConfig
+        (self.host / "gate.json").write_text(json.dumps(cfg), encoding="utf-8")
+        proc = self.gate("--findings", self.doc_rel)
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("the gate itself failed", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_the_prompts_read_the_exit_codes_the_gate_writes(self):
+        """The worker-prompt half of P2: exit 1 is a verdict, exit 3 is blocked, in every prompt."""
+        from gate import verify_locate as vl
+        from locate import prompts as lprompts
+
+        self.assertEqual((lprompts.GATE_EXIT_REJECTED, lprompts.GATE_EXIT_BROKEN),
+                         (vl.EXIT_REJECTED, vl.EXIT_GATE_BROKEN))
+        bad = json.loads(json.dumps(self.doc))
+        bad["passages"][0]["quote"]["exact"] = "a sentence this layer never held"
+        self.write(bad)
+        rejected = self.gate("--findings", self.doc_rel)
+        self.assertEqual(rejected.returncode, lprompts.GATE_EXIT_REJECTED)
+        self.assertIn(lprompts.GATE_REJECTED_MARK, rejected.stderr)
+        (self.host / "verify_findings.py").unlink()
+        broken = self.gate("--findings", self.doc_rel)
+        self.assertEqual(broken.returncode, lprompts.GATE_EXIT_BROKEN)
+        self.assertIn(lprompts.GATE_BROKEN_MARK, broken.stderr)
+        self.assertNotIn(lprompts.GATE_REJECTED_MARK, broken.stderr)
+        self.locate()
+        self.challenge()
+        for run_id, mode in (("inv-1", "locate-inventory"), ("loc-1", "locate"),
+                             ("chl-1", "locate-challenge")):
+            pdir = self.paths.prompts_dir(run_id)
+            for name, role in (("worker-system.md", "worker"), ("worker.md", "worker"),
+                               ("reviewer-system.md", "reviewer")):
+                with self.subTest(mode=mode, prompt=name):
+                    text = (pdir / name).read_text(encoding="utf-8")
+                    self.assertIn(lprompts.gate_exits(role), text)
+                    self.assertNotIn("Any other non-zero exit", text)
+        worker = lprompts.gate_exits("worker")
+        self.assertIn(f"**exit {vl.EXIT_GATE_BROKEN}**", worker)
+        self.assertIn("`blocked`", worker)
+        self.assertIn("not grounds for rejecting the worker", lprompts.gate_exits("reviewer"))
+
+    def test_the_self_check_names_what_is_missing(self):
+        shutil.rmtree(self.host / "vendor" / "literature_links")
+        proc = self.gate("--self-check")
+        self.assertEqual(proc.returncode, 3, proc.stdout + proc.stderr)
+        self.assertIn("literature_links", proc.stderr)
+
+    def test_the_workers_tools_run_from_it_too(self):
+        for script in ("passage_ids.py", "corpus_search.py", "corpus_show.py"):
+            with self.subTest(script=script):
+                proc = self.isolated(script, "--help")
+                self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        proc = subprocess.run([sys.executable, "-I", "-c",
+                               "import sys; sys.path.insert(0, sys.argv[1]); import locate_records",
+                               str(self.host)], capture_output=True, text=True,
+                              cwd=str(self.cwd), env={"PATH": "/usr/bin:/bin"}, timeout=120)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+    def test_a_checkout_without_a_gate_file_refuses_to_plan(self):
+        from locate import tend_root as ltr
+
+        with unittest.mock.patch.object(ltr, "GATE_FILES",
+                                        ltr.GATE_FILES + ((("scripts", "gate", "nope.py"),
+                                                           "nope.py"),)):
+            with self.assertRaises(CfError) as caught:
+                ltr.stage(layout_host={}, layout_local={}, preset=lp.get("locate-inventory"),
+                          run_id="x", gate_config={}, prompts={}, tasks=[], model=None,
+                          agent=None, allow_sandbox_bypass=False, context={})
+        self.assertIn("nope.py", str(caught.exception))
+
+    def test_cf_runs_verify_stage_runs_the_self_check_isolated(self):
+        from run import remote
+
+        host = {"name": "examplebox", "ssh": "examplebox", "remote_root": "/srv/cf",
+                "tend_cmd": "uv run"}
+        names = {"entrypoint": "inv-1", "tend_root": "inv-1-tend", "gate": "inv-1-gate"}
+        steps = remote.plan_commands(host=host, run_id="inv-1", run={}, entries=[], names=names,
+                                     budget={}, concurrency={"workers": 1, "reviewers": 1},
+                                     locate={})
+        verify = [s["argv"][-1] for s in steps if s["stage"] == "verify"]
+        self.assertIn("python3 -I /srv/cf/inv-1-gate/verify_locate.py --gate-config "
+                      "/srv/cf/inv-1-gate/gate.json --self-check", verify)
+        self.assertFalse([c for c in verify if c.startswith("test -f")])
+
+
+class TestTheStagedRootDrivesTheBridge(Campaign):
+    """The planned root's own wrappers, run through its own bin/, with a fake agentbox.
+
+    P1: the locate reviewer's prompt renders the gate command and makes "the
+    gate passes" a check, but the bridge allowlisted only Read, Glob, Grep and
+    git for a reviewer, so the agent CLI would deny the call.  And the smoke
+    plan found ``agent_call.py``, ``attempt_cap.py`` and ``watchdog.py`` absent
+    from the staged bin/ (only cf run's transfer fallback shipped them), so a
+    root used as planned had a bridge that exits 78 before any call.
+    """
+
+    SUCCESS = {"type": "result", "subtype": "success", "is_error": False,
+               "result": "done", "total_cost_usd": 0.1}
+
+    def setUp(self):
+        super().setUp()
+        self.troot = self.paths.tend_root("inv-1")
+        self.gate_dir = self.troot / "gate"
+        tmp = Path(tempfile.mkdtemp(prefix="cf-bridge-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        self.tmp = tmp
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        self.argv_file = tmp / "argv"
+        agentbox = fakebin / "agentbox"
+        agentbox.write_text("#!/bin/sh\n"
+                            f'for a in "$@"; do printf \'%s\\n\' "$a"; done > "{self.argv_file}"\n'
+                            f"printf '%s' '{json.dumps(self.SUCCESS)}'\n", encoding="utf-8")
+        agentbox.chmod(0o755)
+        self.worktree = tmp / "worktree"
+        self.worktree.mkdir()
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith(("CF_", "TEND_", "GIT_CONFIG_"))}
+        self.env.update(PATH=f"{fakebin}:{self.env['PATH']}", USER="examplebox",
+                        CF_SLOT_DIR=str(tmp / "slots"), TEND_TASK_ID=f"inv-{F.W1}")
+
+    def launch(self, role: str) -> list[str]:
+        if self.argv_file.exists():
+            self.argv_file.unlink()
+        proc = subprocess.run(["bash", str(self.troot / "bin" / f"{role}-agent.sh")],
+                              capture_output=True, text=True, cwd=str(self.worktree),
+                              env=self.env, timeout=120)
+        self.assertTrue(self.argv_file.exists(),
+                        f"the staged {role} bridge never reached the agent: {proc.stderr}")
+        return self.argv_file.read_text(encoding="utf-8").splitlines()
+
+    def tools(self, role: str) -> list[str]:
+        argv = self.launch(role)
+        return argv[argv.index("--allowedTools") + 1].split(",")
+
+    def test_every_bridge_helper_is_staged_beside_the_bridge(self):
+        from plan.make_tend_root import BRIDGE_HELPERS
+        from run import manifest
+
+        self.assertEqual(set(BRIDGE_HELPERS),
+                         {n for n in manifest.BRIDGE_FILES if n.endswith(".py")})
+        for helper in BRIDGE_HELPERS:
+            with self.subTest(helper=helper):
+                staged = self.troot / "bin" / helper
+                self.assertEqual(staged.read_bytes(),
+                                 (SCRIPTS / "run" / helper).read_bytes())
+        def transfer():
+            entries, _ = manifest.build_manifest(
+                workspace_dir=self.root, skill_dir=SKILL, run_id="inv-1",
+                run=read_yaml(self.paths.run_yaml("inv-1")),
+                host={"name": "examplebox", "ssh": "examplebox", "remote_root": "/srv/cf"})
+            return {e["name"]: e for e in entries}
+
+        self.assertNotIn("bridge-helpers", transfer())
+        # a root planned before a helper existed still gets that helper, and only it
+        (self.troot / "bin" / "attempt_cap.py").unlink()
+        fallback = transfer()["bridge-helpers"]
+        self.assertEqual([Path(s).name for s in fallback["srcs"]], ["attempt_cap.py"])
+
+    def test_the_reviewer_may_run_the_gate_its_prompt_renders(self):
+        program = f"python3 {self.gate_dir}/verify_locate.py"
+        entry = f"Bash({program}:*)"
+        reviewer = self.tools("reviewer")
+        self.assertIn(entry, reviewer)
+        self.assertEqual(reviewer[:4], ["Read", "Glob", "Grep", "Bash(git:*)"])
+        self.assertFalse([t for t in reviewer if t in ("Edit", "Write", "Bash(python3:*)")])
+        self.assertFalse([t for t in reviewer if "corpus_" in t or "passage_ids" in t])
+        # every gate invocation either reviewer prompt renders is under that entry
+        pdir = self.paths.prompts_dir("inv-1")
+        for name in ("reviewer.md", "reviewer-system.md"):
+            text = (pdir / name).read_text(encoding="utf-8")
+            for line in text.splitlines():
+                if "verify_locate.py" in line and line.lstrip().startswith("python3"):
+                    self.assertTrue(line.strip().startswith(program + " "), (name, line))
+        self.assertIn(program + " --gate-config", (pdir / "reviewer.md").read_text())
+
+    def test_the_worker_keeps_the_gate_and_its_tools(self):
+        worker = self.tools("worker")
+        self.assertIn(f"Bash(python3 {self.gate_dir}/verify_locate.py:*)", worker)
+        self.assertIn(f"Bash(python3 {self.gate_dir}/passage_ids.py:*)", worker)
+        self.assertIn(f"Bash(python3 {self.gate_dir}/corpus_search.py:*)", worker)
 
 
 class TestPlanLocate(Campaign):

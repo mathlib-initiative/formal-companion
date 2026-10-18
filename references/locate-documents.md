@@ -594,17 +594,28 @@ like a faithfulness run:
   needs no `cflib`), the two host tools of §8, and `vendor/` with both vendored
   packages and their manifests, whose shas the gate verifies at start.
 
+  The directory is self-contained: every module these files import is the
+  standard library or another file of the directory, so the gate runs as
+  `python3 -I <gate>/verify_locate.py` with nothing else on the path, and a
+  checkout missing one of them refuses to plan.
+
   The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
   <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
-  validation and pre-merge commands, `--findings <file>` for one document, or
-  `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus. It
+  validation and pre-merge commands, `--findings <file>` for one document,
+  `--root <corpus>/<run-id> --findings-dir .` over a harvested corpus, or
+  `--self-check`, which validates nothing and exits 0 or 3 (its modules, the
+  vendored pins, the task manifests, the sources and `corpus.sqlite`) and is
+  what `cf run`'s verify stage runs on the host, under `python3 -I`. It
   validates only the documents the change set touched (or names), loads only
   the sources, candidates files and task manifests those documents name, exits
   0 / 1 (rejected) / 3 (could not run) like `verify_findings.py`, prefixes each
   refusal with its rule (`[rule 2] …`), and its last line says which ownership
   rule judged the change set: `--task-id`/`TEND_TASK_ID`, the task id recovered
   from `orchestrator.sqlite` (whose schema is assumed, not known: any table
-  with a worktree-path-like and a task-id-like column, one task id or none), or
+  with a worktree-path-like and a task-id-like column, one task id or none; a
+  recorded path counts when it resolves to the worktree's directory; the
+  database is opened `mode=ro`, never `immutable=1`, because tend writes it in
+  WAL mode and a live run's rows sit in the WAL until a checkpoint), or
   the single-stem rule. Documents are parsed strictly: a duplicate key or a
   `NaN` is a refusal.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
@@ -631,7 +642,12 @@ per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
 (the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the allowlist entries for the two
 host tools — and in an inventory run the passage-id tool — worker role only) and
 `CF_FINDINGS_GLOB` (`findings/$TEND_TASK_ID/*.json` for the nested layout), all
-exported by the generated wrappers in `bin/`. A timeout exits 124 and
+exported by the generated wrappers in `bin/`; the planner stages every helper
+the bridge runs (`agent_call.py`, `attempt_cap.py`, `normalize_result.py`,
+`extract_final_json.py`, `watchdog.py`) beside it in `bin/`. Both roles'
+default allowlists carry the gate program, `Bash(python3 <gate>/verify_locate.py:*)`,
+derived from `CF_GATE_CMD`: the prefix of every gate invocation both prompts
+render, since both tell their agent to run it. A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
 same worktree; only a `request_changes` from a call that completed counts as a
 rejection.

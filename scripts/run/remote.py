@@ -271,9 +271,23 @@ def plan_commands(*, host: dict, run_id: str, run: dict, entries: list[dict],
     add("verify", "orchestrator config",
         _ssh(host, f"{tend} tend validate-config --root {shlex.quote(tend_root)}"), safe=True)
     gate_script = "verify_locate.py" if locate is not None else "verify_findings.py"
-    add("verify", "gate runs out of tree against one staged finding (fails closed)",
-        _ssh(host, f"test -f {shlex.quote(root + '/' + names['gate'] + '/' + gate_script)} "
-                   f"&& echo 'gate present (out of tree)'"), safe=True)
+    gate_dir = f"{root}/{names['gate']}"
+    if locate is not None:
+        # Not just present: the locate gate must RUN from its own directory, with
+        # nothing else on the path (-I).  A gate directory staged without one of
+        # its modules passed a `test -f` and then failed every worker's first
+        # validation (field defect P2); --self-check imports everything, checks
+        # the vendored pins, the task manifests, the sources and corpus.sqlite,
+        # and exits 3 on anything missing, before any agent starts.
+        add("verify", "the locate gate runs out of tree from its own directory (python3 -I "
+                      "--self-check: modules, vendored pins, manifests, sources, corpus)",
+            _ssh(host, f"python3 -I {shlex.quote(gate_dir + '/' + gate_script)} --gate-config "
+                       f"{shlex.quote(gate_dir + '/gate.json')} --self-check"),
+            safe=True, record_output=True)
+    else:
+        add("verify", "gate runs out of tree against one staged finding (fails closed)",
+            _ssh(host, f"test -f {shlex.quote(gate_dir + '/' + gate_script)} "
+                       f"&& echo 'gate present (out of tree)'"), safe=True)
     corpus = (locate or {}).get("corpus_db") or {}
     if corpus.get("path") and corpus.get("sha256"):
         # Verified ONCE, here, not on every gate call: hashing a universe's

@@ -33,7 +33,9 @@ write: put a spec in your own `workspace.yaml` as `hosts.<host>.tend_version` (f
 `">=0.4,<0.6"`), and `cf run`'s preflight compares it against `tend --version` on the host and
 refuses the run on a mismatch. With no spec recorded, preflight only prints the version and
 continues — which is how a config-schema change becomes a run that validates locally and fails on
-the host with no diagnosis.
+the host with no diagnosis. Every tend command runs as `cd <tend_dir> && uv run …`, with
+`tend_dir` from `hosts.<host>.tend_dir` (default `$HOME/tend`, whatever `remote_root` is); set
+`hosts.<host>.tend_cmd` instead to replace the whole prefix.
 
 **Without them**, the supported path is the local Workflow fleet (§8) for anything under ~100
 items, plus every mechanical stage — `pair`, `detect-proxies`, the anchor check, `import-corpus`,

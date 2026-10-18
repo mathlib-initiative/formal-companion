@@ -54,6 +54,9 @@ hosts:
   allowlist: []
   agentbox_profile: null
   remote_root: null
+  # tend runs on the host as `cd <tend_dir> && uv run`, where tend_dir is
+  # hosts.<host>.tend_dir, else hosts.tend_dir, else $HOME/tend -- never under
+  # remote_root. hosts.<host>.tend_cmd replaces the whole prefix.
 
 models:
   # Never Fable for subagents: Fable-default fleets lost agents to the session
