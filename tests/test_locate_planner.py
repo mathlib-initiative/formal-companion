@@ -331,6 +331,64 @@ class TestPlanInventory(Campaign):
         self.assertIn("campaign shards", caught.exception.hint)
         lplan.check_root_size(tasks[:500])
 
+    def test_the_concurrency_is_the_workspaces_then_the_presets(self):
+        """P3: the workspace asked for 6/4 and run.yaml and config.yaml said the preset's 8/4."""
+        from cflib.yamlio import write_yaml
+
+        def plan(run_id, *extra):
+            code, out, err = ws(self.root, "plan-locate", "--preset", "locate-inventory",
+                                "--sourceset", F.SS, "--universe", F.U, "--run-id", run_id,
+                                *extra)
+            return code, out + err
+
+        def limits(run_id):
+            doc = read_yaml(self.paths.run_yaml(run_id))
+            cfg = (self.paths.tend_root(run_id) / "config.yaml").read_text()
+            got = re.findall(r"^max_concurrent_(worker|reviewer)_agents: (\d+)$", cfg, re.M)
+            return doc["concurrency"], dict(got)
+
+        data = read_yaml(self.paths.workspace_yaml)
+        data.setdefault("defaults", {}).update(max_concurrent_workers=6,
+                                               max_concurrent_reviewers=4)
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-c")
+        self.assertEqual(code, 0, out)
+        block, cfg = limits("inv-c")
+        self.assertEqual((block["workers"], block["reviewers"]), (6, 4))
+        self.assertEqual(block["source"]["workers"], "workspace.defaults.max_concurrent_workers")
+        self.assertEqual(cfg, {"worker": "6", "reviewer": "4"})
+        self.assertIn("6 workers", (self.paths.tend_root("inv-c") / "README.md").read_text())
+        # a flag wins
+        code, out = plan("inv-f", "--workers", "2", "--reviewers", "1")
+        self.assertEqual(code, 0, out)
+        block, cfg = limits("inv-f")
+        self.assertEqual((block["workers"], block["reviewers"], block["source"]["workers"]),
+                         (2, 1, "--workers"))
+        self.assertEqual(cfg, {"worker": "2", "reviewer": "1"})
+        # and the preset only when the workspace says nothing
+        for key in ("max_concurrent_workers", "max_concurrent_reviewers"):
+            data["defaults"].pop(key)
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-p")
+        self.assertEqual(code, 0, out)
+        preset = lp.get("locate-inventory")
+        block, cfg = limits("inv-p")
+        self.assertEqual((block["workers"], block["reviewers"]),
+                         (preset.max_workers, preset.max_reviewers))
+        self.assertEqual(block["source"]["reviewers"], "preset.locate-inventory")
+        # a limit that is not a whole number is refused; one over the cap is said
+        data["defaults"]["max_concurrent_workers"] = "lots"
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-x")
+        self.assertNotEqual(code, 0)
+        self.assertIn("max_concurrent_workers", out)
+        data["defaults"]["max_concurrent_workers"] = 12
+        data["defaults"]["max_concurrent_sessions"] = 16
+        write_yaml(self.paths.workspace_yaml, data)
+        code, out = plan("inv-o", "--reviewers", "6")
+        self.assertEqual(code, 0, out)
+        self.assertIn("over the account cap of 16", out)
+
     def test_a_remote_host_gets_host_paths_and_the_local_gate_keeps_local_ones(self):
         data = read_yaml(self.paths.workspace_yaml)
         data["hosts"] = {"allowlist": ["examplebox"], "examplebox": {"remote_root": "/srv/cf"}}
