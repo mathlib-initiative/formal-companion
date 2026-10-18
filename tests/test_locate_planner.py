@@ -46,7 +46,14 @@ from plan import presets as presets_mod  # noqa: E402
 
 
 def scratch(case: unittest.TestCase) -> Path:
-    path = Path(tempfile.mkdtemp())
+    """A fresh workspace path, resolved.
+
+    ``cflib.workspace`` resolves the workspace root, so every path the planner
+    writes is a resolved one.  On macOS ``tempfile`` hands out ``/var/folders/…``,
+    a symlink to ``/private/var/folders/…``, and a test that built its expected
+    paths from the unresolved name compared two spellings of one directory.
+    """
+    path = Path(tempfile.mkdtemp()).resolve()
     case.addCleanup(shutil.rmtree, path, ignore_errors=True)
     return path / "ws"
 
