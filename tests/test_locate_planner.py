@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -496,6 +497,104 @@ class TestTheStagedGateRunsAlone(Campaign):
         self.assertIn("python3 -I /srv/cf/inv-1-gate/verify_locate.py --gate-config "
                       "/srv/cf/inv-1-gate/gate.json --self-check", verify)
         self.assertFalse([c for c in verify if c.startswith("test -f")])
+
+
+class TestTheStagedRootDrivesTheBridge(Campaign):
+    """The planned root's own wrappers, run through its own bin/, with a fake agentbox.
+
+    P1: the locate reviewer's prompt renders the gate command and makes "the
+    gate passes" a check, but the bridge allowlisted only Read, Glob, Grep and
+    git for a reviewer, so ``claude -p`` would deny the call.  And the smoke
+    plan found ``agent_call.py``, ``attempt_cap.py`` and ``watchdog.py`` absent
+    from the staged bin/ (only cf run's transfer fallback shipped them), so a
+    root used as planned had a bridge that exits 78 before any call.
+    """
+
+    SUCCESS = {"type": "result", "subtype": "success", "is_error": False,
+               "result": "done", "total_cost_usd": 0.1}
+
+    def setUp(self):
+        super().setUp()
+        self.troot = self.paths.tend_root("inv-1")
+        self.gate_dir = self.troot / "gate"
+        tmp = Path(tempfile.mkdtemp(prefix="cf-bridge-")).resolve()
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        self.tmp = tmp
+        fakebin = tmp / "fakebin"
+        fakebin.mkdir()
+        self.argv_file = tmp / "argv"
+        agentbox = fakebin / "agentbox"
+        agentbox.write_text("#!/bin/sh\n"
+                            f'for a in "$@"; do printf \'%s\\n\' "$a"; done > "{self.argv_file}"\n'
+                            f"printf '%s' '{json.dumps(self.SUCCESS)}'\n", encoding="utf-8")
+        agentbox.chmod(0o755)
+        self.worktree = tmp / "worktree"
+        self.worktree.mkdir()
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith(("CF_", "TEND_", "GIT_CONFIG_"))}
+        self.env.update(PATH=f"{fakebin}:{self.env['PATH']}", USER="examplebox",
+                        CF_SLOT_DIR=str(tmp / "slots"), TEND_TASK_ID=f"inv-{F.W1}")
+
+    def launch(self, role: str) -> list[str]:
+        if self.argv_file.exists():
+            self.argv_file.unlink()
+        proc = subprocess.run(["bash", str(self.troot / "bin" / f"{role}-agent.sh")],
+                              capture_output=True, text=True, cwd=str(self.worktree),
+                              env=self.env, timeout=120)
+        self.assertTrue(self.argv_file.exists(),
+                        f"the staged {role} bridge never reached the agent: {proc.stderr}")
+        return self.argv_file.read_text(encoding="utf-8").splitlines()
+
+    def tools(self, role: str) -> list[str]:
+        argv = self.launch(role)
+        return argv[argv.index("--allowedTools") + 1].split(",")
+
+    def test_every_bridge_helper_is_staged_beside_the_bridge(self):
+        from plan.make_tend_root import BRIDGE_HELPERS
+        from run import manifest
+
+        self.assertEqual(set(BRIDGE_HELPERS),
+                         {n for n in manifest.BRIDGE_FILES if n.endswith(".py")})
+        for helper in BRIDGE_HELPERS:
+            with self.subTest(helper=helper):
+                staged = self.troot / "bin" / helper
+                self.assertEqual(staged.read_bytes(),
+                                 (SCRIPTS / "run" / helper).read_bytes())
+        def transfer():
+            entries, _ = manifest.build_manifest(
+                workspace_dir=self.root, skill_dir=SKILL, run_id="inv-1",
+                run=read_yaml(self.paths.run_yaml("inv-1")),
+                host={"name": "examplebox", "ssh": "examplebox", "remote_root": "/srv/cf"})
+            return {e["name"]: e for e in entries}
+
+        self.assertNotIn("bridge-helpers", transfer())
+        # a root planned before a helper existed still gets that helper, and only it
+        (self.troot / "bin" / "attempt_cap.py").unlink()
+        fallback = transfer()["bridge-helpers"]
+        self.assertEqual([Path(s).name for s in fallback["srcs"]], ["attempt_cap.py"])
+
+    def test_the_reviewer_may_run_the_gate_its_prompt_renders(self):
+        program = f"python3 {self.gate_dir}/verify_locate.py"
+        entry = f"Bash({program}:*)"
+        reviewer = self.tools("reviewer")
+        self.assertIn(entry, reviewer)
+        self.assertEqual(reviewer[:4], ["Read", "Glob", "Grep", "Bash(git:*)"])
+        self.assertFalse([t for t in reviewer if t in ("Edit", "Write", "Bash(python3:*)")])
+        self.assertFalse([t for t in reviewer if "corpus_" in t or "passage_ids" in t])
+        # every gate invocation either reviewer prompt renders is under that entry
+        pdir = self.paths.prompts_dir("inv-1")
+        for name in ("reviewer.md", "reviewer-system.md"):
+            text = (pdir / name).read_text(encoding="utf-8")
+            for line in text.splitlines():
+                if "verify_locate.py" in line and line.lstrip().startswith("python3"):
+                    self.assertTrue(line.strip().startswith(program + " "), (name, line))
+        self.assertIn(program + " --gate-config", (pdir / "reviewer.md").read_text())
+
+    def test_the_worker_keeps_the_gate_and_its_tools(self):
+        worker = self.tools("worker")
+        self.assertIn(f"Bash(python3 {self.gate_dir}/verify_locate.py:*)", worker)
+        self.assertIn(f"Bash(python3 {self.gate_dir}/passage_ids.py:*)", worker)
+        self.assertIn(f"Bash(python3 {self.gate_dir}/corpus_search.py:*)", worker)
 
 
 class TestPlanLocate(Campaign):

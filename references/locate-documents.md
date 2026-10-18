@@ -642,7 +642,12 @@ per gate call: `at`, `run_id`, `mode`, `task_id`, `ok`, `exit`, `documents`,
 (the `gate/tasks` directory), `CF_EXTRA_TOOLS` (the allowlist entries for the two
 host tools — and in an inventory run the passage-id tool — worker role only) and
 `CF_FINDINGS_GLOB` (`findings/$TEND_TASK_ID/*.json` for the nested layout), all
-exported by the generated wrappers in `bin/`. A timeout exits 124 and
+exported by the generated wrappers in `bin/`; the planner stages every helper
+the bridge runs (`agent_call.py`, `attempt_cap.py`, `normalize_result.py`,
+`extract_final_json.py`, `watchdog.py`) beside it in `bin/`. Both roles'
+default allowlists carry the gate program, `Bash(python3 <gate>/verify_locate.py:*)`,
+derived from `CF_GATE_CMD`: the prefix of every gate invocation both prompts
+render, since both tell their agent to run it. A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
 same worktree; only a `request_changes` from a call that completed counts as a
 rejection.

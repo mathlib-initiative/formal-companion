@@ -425,9 +425,13 @@ def build_manifest(*, workspace_dir: Path, skill_dir: Path, run_id: str, run: di
     else:
         # A plan that staged a bridge may predate a helper the bridge now calls
         # (agent_call.py takes the session slot and the timeout): ship what bin/
-        # lacks, so a staged bridge never runs without its own hardening.
+        # lacks, so a staged bridge never runs without its own hardening.  Only
+        # helpers: the bridges this run's wrappers do not exec are not missing.
+        # (`cf plan-run` / `cf plan-locate` now stage every helper themselves, so
+        # a freshly planned root needs no entry here.)
         missing_helpers = [skill_dir / "scripts" / "run" / n for n in BRIDGE_FILES
-                           if not (tend_root / "bin" / n).exists()
+                           if not n.startswith("bridge-")
+                           and not (tend_root / "bin" / n).exists()
                            and (skill_dir / "scripts" / "run" / n).exists()]
         if missing_helpers:
             entries.append(_entry("bridge-helpers", missing_helpers,
