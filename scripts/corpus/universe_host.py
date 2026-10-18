@@ -26,8 +26,25 @@ glob's base is a plain module name; the modules it expands to are named after
 their files as Lake names them, a component that is no identifier written
 escaped (`Mod/1.lean` is `Mod.«1»`, a directory `0805.3777` the component
 `«0805.3777»`), and a file no module name can express stops the expansion.
-`kind` is `build` (clone, fetch caches, build, probe) or `published-index`
-(clone, copy the index the library publishes, write a manifest). `options` are
+`kind` is one of four:
+
+* `build` -- clone, fetch caches, build, probe;
+* `published-index` -- clone, copy the index the library publishes, write a manifest;
+* `core` -- Lean core (`Init`, `Std`) of the toolchain a built workspace uses:
+  probed inside that workspace, pinned at the toolchain's `Lean.githash` (which
+  the ref must resolve to), its paths those of the lean4 repository
+  (`src/Init/...`), read from the toolchain's own `src/lean`;
+* `package-in-workspace` -- a Lake package in a built workspace's `.lake/packages`
+  (Batteries in Mathlib's): probed there, pinned at the workspace's
+  lake-manifest rev (which the ref must resolve to, the package's checkout must
+  be at, and whose URL must be the line's), its paths relative to the package's
+  own repository.
+
+The last two name the workspace with `WORKSPACE=<id>`, a built checkout under
+`libs/` (a `build` line of this list that comes earlier, or one built before);
+`package-in-workspace` names the package with `PACKAGE=<lake package name>`
+(docs/proposals/wikipedia-locate.md section 2.3: core packages are libraries of
+their own, pinned from Mathlib's toolchain and lake manifest). `options` are
 `KEY=VALUE` pairs separated by `;`; the keys are `OPTION_DEFAULTS` below.
 
 Subcommands (all print to stdout; failures go to stderr with exit status 2)::
@@ -36,6 +53,8 @@ Subcommands (all print to stdout; failures go to stderr with exit status 2)::
     entry      --universe F --id ID             shell assignments for one library (the driver evals them)
     expand-roots --checkout D --roots SPEC [--src-dir S] --out F --prefixes-out F
     family     --checkout D                     mathlib | self | none: how the package relates to Mathlib
+    package-pin --checkout D --package P --url U  "<rev>\t<subDir>" of a package the workspace's manifest pins
+    check-oleans --olean-dir D --roots-file F   every root module has its .olean (the workspace built it)
     find-donor --checkout D --donors F          a registered checkout holding identical Mathlib-family packages
     add-donor  --checkout D --donors F --label L
     index-ok   --universe F --id ID --commit C --out-dir D [--roots-file F --prefixes-file F]
@@ -73,7 +92,9 @@ else:  # pragma: no cover - the host's `python3 -I universe_host.py`
 #: Packages that come with Mathlib at a given Mathlib commit and dominate a workspace's disk.
 FAMILY = ("mathlib", "batteries", "aesop", "Qq", "proofwidgets", "plausible",
           "LeanSearchClient", "importGraph", "Cli")
-KINDS = ("build", "published-index")
+KINDS = ("build", "published-index", "core", "package-in-workspace")
+#: the kinds probed inside another library's built workspace, at their own commit
+WORKSPACE_KINDS = ("core", "package-in-workspace")
 #: Every option a universe line may set, with the value used when it does not.
 OPTION_DEFAULTS = {
     "SHARD_COUNT": "8",           # probe shards
@@ -86,7 +107,11 @@ OPTION_DEFAULTS = {
     "BUILD_TIMEOUT": "14400",     # seconds for `lake build`
     "PROBE_TIMEOUT": "7200",      # seconds for probe_host.sh
     "LINK_FAMILY": "1",           # 0: never hard-link Mathlib-family packages into this library
+    "WORKSPACE": "",              # core, package-in-workspace: the built checkout libs/<id> probed in
+    "PACKAGE": "",                # package-in-workspace: the package's name in its lake-manifest
 }
+#: a Lake package name, as `.lake/packages/<name>` spells its directory
+_PACKAGE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,99}")
 _ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}")
 _SHA = re.compile(r"[0-9a-f]{40}")
 _REF = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._/-]{0,199}")
@@ -177,6 +202,20 @@ class Entry:
             path = self.options.get(key, key)
             if path and (path.startswith("/") or ".." in path.split("/")):
                 raise UniverseError(f"{where}: {path!r} must be a relative path inside the checkout")
+        workspace, package = self.options["WORKSPACE"], self.options["PACKAGE"]
+        if self.kind in WORKSPACE_KINDS:
+            if not _ID.fullmatch(workspace) or workspace == self.id:
+                raise UniverseError(f"{where}: kind {self.kind} needs WORKSPACE=<id>, the built "
+                                    f"checkout libs/<id> it is probed in (another library's id)")
+            if self.kind == "package-in-workspace" and not (
+                    _PACKAGE.fullmatch(package) and package not in (".", "..")):
+                raise UniverseError(f"{where}: kind package-in-workspace needs PACKAGE=<the "
+                                    f"package's name in the workspace's lake-manifest.json>")
+            if self.kind == "core" and package:
+                raise UniverseError(f"{where}: kind core takes no PACKAGE")
+        elif workspace or package:
+            raise UniverseError(f"{where}: WORKSPACE and PACKAGE are for the kinds "
+                                f"{', '.join(WORKSPACE_KINDS)}, not {self.kind}")
 
     @property
     def bases(self) -> list[str]:
@@ -195,6 +234,10 @@ class Entry:
                 "module_prefixes": self.options["MODULE_PREFIXES"]}
         if self.kind == "published-index":
             spec["index_file"] = self.options["INDEX_FILE"]
+        if self.kind in WORKSPACE_KINDS:
+            spec["workspace"] = self.options["WORKSPACE"]
+            if self.kind == "package-in-workspace":
+                spec["package"] = self.options["PACKAGE"]
         return spec
 
 
@@ -207,6 +250,15 @@ def load_universe(path: Path) -> list[Entry]:
         entry = Entry(line_no, line.split("\t"))
         if entry.id in seen:
             raise UniverseError(f"line {line_no}: library id {entry.id} appears twice")
+        later = [e for e in entries if e.kind in WORKSPACE_KINDS and e.options["WORKSPACE"] == entry.id]
+        if later:
+            raise UniverseError(f"line {line_no}: {entry.id} is the workspace of {later[0].id}, "
+                                f"which comes before it; list a workspace before what is probed in it")
+        if entry.kind in WORKSPACE_KINDS:
+            named = next((e for e in entries if e.id == entry.options["WORKSPACE"]), None)
+            if named is not None and named.kind != "build":
+                raise UniverseError(f"line {line_no}: WORKSPACE {named.id} is a {named.kind} "
+                                    f"library; a workspace is a built one")
         seen.add(entry.id)
         entries.append(entry)
     if not entries:
@@ -417,6 +469,47 @@ def add_donor(checkout: Path, donors: Path, label: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# libraries probed inside a workspace (core, package-in-workspace)
+# ---------------------------------------------------------------------------
+
+def package_pin(checkout: Path, package: str, url: str) -> tuple[str, str]:
+    """``(rev, subDir)`` of the git package ``package`` the workspace's lake-manifest pins.
+
+    Refused: no such package, more than one, one that is not a git package, a
+    rev that is not 40 hex, a URL that is not the universe line's (the workspace
+    would be indexing another repository under this library's name), and a
+    ``subDir`` that leaves the package.
+    """
+    rows = [p for p in read_manifest(checkout).get("packages", []) if p.get("name") == package]
+    if len(rows) != 1:
+        raise UniverseError(f"{checkout}/lake-manifest.json pins {len(rows)} packages named "
+                            f"{package!r}, not one")
+    row = rows[0]
+    if row.get("type") != "git":
+        raise UniverseError(f"the workspace's {package} is a {row.get('type')!r} package, not git")
+    rev = str(row.get("rev") or "")
+    if not _SHA.fullmatch(rev):
+        raise UniverseError(f"the workspace pins {package} at {rev!r}, not a 40-hex commit")
+    if norm_url(str(row.get("url") or "")) != norm_url(url):
+        raise UniverseError(f"the workspace takes {package} from {row.get('url')!r}, the universe "
+                            f"line names {url!r}")
+    subdir = str(row.get("subDir") or "").strip("/")
+    if subdir and (subdir.startswith("/") or ".." in subdir.split("/")):
+        raise UniverseError(f"the workspace's {package} has subDir {subdir!r}, outside the package")
+    return rev, subdir
+
+
+def missing_oleans(olean_dir: Path, modules: list[str]) -> list[str]:
+    """The root modules with no ``.olean`` under ``olean_dir``: ones the workspace never built."""
+    missing = []
+    for module in modules:
+        rel = _names.module_file(module)[:-len(".lean")] + ".olean"
+        if not (olean_dir / rel).is_file():
+            missing.append(module)
+    return missing
+
+
+# ---------------------------------------------------------------------------
 # finished indexes
 # ---------------------------------------------------------------------------
 
@@ -432,7 +525,7 @@ def index_ok(entry: Entry, commit: str, out_dir: Path, roots_file: Path | None,
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         return 1, f"manifest.json unreadable ({error})"
-    index_name = "index.jsonl" if entry.kind == "build" else entry.options["INDEX_FILE"]
+    index_name = entry.options["INDEX_FILE"] if entry.kind == "published-index" else "index.jsonl"
     index = out_dir / index_name
     if not index.is_file() or index.stat().st_size != manifest.get("index_bytes"):
         return 1, f"{index_name} missing or not the size manifest.json records"
@@ -616,6 +709,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--src-dir", default="."); p.add_argument("--out", required=True, type=Path)
     p.add_argument("--prefixes-out", required=True, type=Path)
     p = sub.add_parser("family"); p.add_argument("--checkout", required=True, type=Path)
+    p = sub.add_parser("package-pin"); p.add_argument("--checkout", required=True, type=Path)
+    p.add_argument("--package", required=True); p.add_argument("--url", required=True)
+    p = sub.add_parser("check-oleans"); p.add_argument("--olean-dir", required=True, type=Path)
+    p.add_argument("--roots-file", required=True, type=Path)
     for name in ("find-donor", "add-donor"):
         p = sub.add_parser(name)
         p.add_argument("--checkout", required=True, type=Path)
@@ -655,6 +752,16 @@ def main(argv: list[str] | None = None) -> int:
             print(f"{len(modules)} modules, prefixes {','.join(prefixes)}")
         elif args.command == "family":
             print(relation_to_mathlib(args.checkout))
+        elif args.command == "package-pin":
+            rev, subdir = package_pin(args.checkout, args.package, args.url)
+            print(f"{rev}\t{subdir}")
+        elif args.command == "check-oleans":
+            roots = [l for l in args.roots_file.read_text(encoding="utf-8").splitlines() if l]
+            missing = missing_oleans(args.olean_dir, roots)
+            if missing:
+                raise UniverseError(f"{len(missing)} of {len(roots)} root modules have no .olean "
+                                    f"under {args.olean_dir}: {missing[:5]}")
+            print(f"{len(roots)} root modules built")
         elif args.command == "find-donor":
             donor, names = find_donor(args.checkout, args.donors)
             print(donor)
@@ -683,7 +790,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "summary":
             sys.stdout.write(summary(load_universe(args.universe), args.state_dir))
         return 0
-    except (UniverseError, OSError, json.JSONDecodeError, KeyError) as error:
+    except (UniverseError, _names.ProbeError, OSError, json.JSONDecodeError, KeyError) as error:
         print(f"universe_host: {error}", file=sys.stderr)
         return 2
 

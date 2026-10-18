@@ -391,6 +391,196 @@ class TestD11TheDriversGitCarriesGitsafesPins(unittest.TestCase):
         self.assertIn('g hash-object --no-filters "$stage/$idx"', DRIVER.read_text(encoding="utf-8"))
 
 
+def modern_bash() -> str | None:
+    """A bash that runs the drivers (``mapfile``, ``wait -n -p``: 5.1 or later), or None."""
+    for candidate in (shutil.which("bash"), "/bin/bash", "/usr/bin/bash", "/opt/homebrew/bin/bash",
+                      "/usr/local/bin/bash"):
+        if not candidate or not os.path.exists(candidate):
+            continue
+        got = subprocess.run([candidate, "-c", "echo ${BASH_VERSINFO[0]} ${BASH_VERSINFO[1]}"],
+                             capture_output=True, text=True)
+        try:
+            major, minor = (int(x) for x in got.stdout.split())
+        except ValueError:
+            continue
+        if (major, minor) >= (5, 1):
+            return candidate
+    return None
+
+
+GITHASH = "c" * 40
+
+
+class TestD5LibrariesProbedInsideAWorkspace(unittest.TestCase):
+    """D5: the drivers knew only build and published-index; Init/Std or Batteries probed in
+    Mathlib's workspace got Mathlib's commit and paths null or relative to the wrong tree."""
+
+    def setUp(self):
+        self.bash = modern_bash()
+        if self.bash is None:
+            self.skipTest("the host drivers need bash 5.1 or later")
+        self.root = _scratch(self)
+        self.home = self.root / "home"
+        self.bin = self.home / ".elan" / "bin"
+        self.bin.mkdir(parents=True)
+        self.atlas = self.root / "atlas"
+        self.ws, _ = git_checkout(self.atlas / "libs" / "ws", {"Ws.lean": "", ".gitignore": ".lake/\n"})
+        (self.ws / "lean-toolchain").write_text("leanprover/lean4:v4.34.0\n", encoding="utf-8")
+        (self.ws / ".lake" / "build").mkdir(parents=True)
+        tc = self.home / ".elan" / "toolchains" / "fake"
+        write_tree(tc, {"src/lean/Init.lean": "", "src/lean/Init/Core.lean": "",
+                        "lib/lean/Init.olean": "", "lib/lean/Init/Core.olean": ""})
+        self.stub("lean", f'[ "$1" = --githash ] && echo {GITHASH}', where=tc / "bin")
+        self.stub("elan", f'[ "$1 $2" = "which lean" ] && echo "{tc}/bin/lean"')
+        self.stub("lake", '[ "$1 $2" = "env true" ] && exit 0\n'
+                          '[ "$1 $2" = "env lean" ] && exec cp "$HOME/shard.jsonl" "$PROBE_OUTPUT"\n'
+                          "exit 9")
+        self.stub("ionice", 'shift; exec "$@"')
+        self.stub("flock", "exit 0")
+        self.stub("timeout", 'while [ "${1#-}" != "$1" ]; do shift; done; shift; exec "$@"')
+        self.stub("df", 'echo " Avail"; for a in "$@"; do case "$a" in -*) ;; *) echo " 9999G";; esac; done')
+        # the clean PATH the drivers set starts here: the Linux host's own bash is 5.x
+        for tool, target in (("python3", sys.executable), ("git", shutil.which("git")),
+                             ("bash", self.bash)):
+            (self.bin / tool).symlink_to(target)
+
+    def stub(self, name: str, body: str, where: Path | None = None) -> None:
+        where = where or self.bin
+        where.mkdir(parents=True, exist_ok=True)
+        (where / name).write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        (where / name).chmod(0o755)
+
+    def shard(self, *, library: str, roots, prefixes, modules, decls, githash=GITHASH):
+        shard_files(self.root / "fixture", roots=roots, prefixes=prefixes, modules=modules,
+                    decls=decls)
+        lines = (self.root / "fixture" / "shard-0.jsonl").read_text(encoding="utf-8").splitlines()
+        header = json.loads(lines[0])
+        header.update({"library": library, "lean_githash": githash})
+        (self.home / "shard.jsonl").write_text("\n".join([json.dumps(header)] + lines[1:]) + "\n",
+                                               encoding="utf-8")
+
+    def drive(self, line: str, lib_id: str) -> subprocess.CompletedProcess:
+        tsv = self.root / "u1.tsv"
+        tsv.write_text(line + "\n", encoding="utf-8")
+        env = {"HOME": str(self.home), "USER": "t", "ATLAS_ROOT": str(self.atlas),
+               "MIN_FREE_GB": "1", "PATH": f"{self.bin}:/usr/bin:/bin"}
+        return subprocess.run([self.bash, str(DRIVER), str(tsv), lib_id], capture_output=True,
+                              text=True, env=env, timeout=120)
+
+    def index(self, lib_id: str, commit: str) -> tuple[dict, list[dict]]:
+        out = self.atlas / "index" / f"{lib_id}@{commit[:12]}"
+        manifest = json.loads((out / "manifest.json").read_text(encoding="utf-8"))
+        records = [json.loads(l) for l in (out / "index.jsonl").read_text(encoding="utf-8").splitlines()]
+        return manifest, records
+
+    def log_of(self, lib_id: str) -> str:
+        path = self.atlas / "logs" / "u1" / f"{lib_id}.log"
+        return path.read_text(encoding="utf-8") if path.exists() else ""
+
+    def test_core_is_pinned_at_the_toolchains_githash_with_lean4_paths(self):
+        self.shard(library="lean-core", roots=["Init", "Init.Core"], prefixes=["Init"],
+                   modules=[("Init", None), ("Init.Core", None)],
+                   decls=[{"name": "Nat.add_comm'", "module": "Init.Core"}])
+        proc = self.drive(f"lean-core\thttps://example.org/lean4\t{GITHASH}\tInit.*\tcore\t"
+                          "WORKSPACE=ws;SHARD_COUNT=1", "lean-core")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr + self.log_of("lean-core"))
+        manifest, records = self.index("lean-core", GITHASH)
+        self.assertEqual(manifest["commit"], GITHASH)
+        self.assertEqual(records[0]["commit"], GITHASH)
+        self.assertEqual(manifest["library_kind"], "core")
+        self.assertIs(manifest["dirty"], False)
+        paths = {r["name"]: r["path"] for r in records if r["record"] == "module"}
+        self.assertEqual(paths, {"Init": "src/Init.lean", "Init.Core": "src/Init/Core.lean"})
+        decl_path = next(r["path"] for r in records if r["record"] == "declaration")
+        self.assertEqual(decl_path, "src/Init/Core.lean")
+        sidecar = json.loads((self.atlas / "index" / f"lean-core@{GITHASH[:12]}" /
+                              "universe-entry.json").read_text(encoding="utf-8"))
+        self.assertEqual(sidecar["spec"]["workspace"], "ws")
+        # and the index is one ingest takes as the pinned lean-core, whole
+        universe = make_universe(self.root / "ws-side", libs=())
+        universe.add_library(library_id="lean-core", repo="https://example.org/lean4",
+                             commit=GITHASH, toolchain="leanprover/lean4:v4.34.0",
+                             roots=["Init.*"])
+        got = ingest.ingest(universe, "lean-core", self.atlas / "index" / f"lean-core@{GITHASH[:12]}",
+                            self.root / "ws-side" / "out")
+        self.assertEqual(got["declarations"], 1)
+        self.assertEqual(got["modules_without_path"], 0)
+
+    def test_core_on_another_toolchain_is_refused(self):
+        self.shard(library="lean-core", roots=["Init"], prefixes=["Init"],
+                   modules=[("Init", None)], decls=[])
+        proc = self.drive(f"lean-core\thttps://example.org/lean4\t{'d' * 40}\tInit\tcore\t"
+                          "WORKSPACE=ws;SHARD_COUNT=1", "lean-core")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("but the Lean of ws", proc.stdout + proc.stderr)
+        self.assertFalse((self.atlas / "index" / f"lean-core@{'d' * 12}" / "index.jsonl").exists())
+
+    def package(self, *, rev: str | None = None, url: str = "https://example.org/batteries"):
+        pkg, head = git_checkout(self.ws / ".lake" / "packages" / "batteries",
+                                 {"Batteries.lean": "", "Batteries/Data.lean": "",
+                                  ".gitignore": ".lake/\n"})
+        write_tree(pkg, {".lake/build/lib/lean/Batteries.olean": "",
+                         ".lake/build/lib/lean/Batteries/Data.olean": ""})
+        (self.ws / "lake-manifest.json").write_text(json.dumps({"packages": [
+            {"name": "batteries", "type": "git", "rev": rev or head, "url": url,
+             "subDir": None}]}), encoding="utf-8")
+        return head
+
+    def test_a_package_is_pinned_at_the_manifest_rev_with_its_own_paths(self):
+        head = self.package()
+        self.shard(library="batteries", roots=["Batteries", "Batteries.Data"],
+                   prefixes=["Batteries"],
+                   modules=[("Batteries", ".lake/packages/batteries/Batteries.lean"),
+                            ("Batteries.Data", None)],
+                   decls=[{"name": "Batteries.thing", "module": "Batteries.Data"}])
+        proc = self.drive(f"batteries\thttps://example.org/batteries\t{head}\tBatteries.*\t"
+                          "package-in-workspace\tWORKSPACE=ws;PACKAGE=batteries;SHARD_COUNT=1",
+                          "batteries")
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr + self.log_of("batteries"))
+        manifest, records = self.index("batteries", head)
+        self.assertEqual(manifest["commit"], head)
+        self.assertNotEqual(manifest["commit"],
+                            manifest["library_source"]["workspace_commit"])
+        self.assertIs(manifest["dirty"], False)
+        paths = {r["name"]: r["path"] for r in records if r["record"] == "module"}
+        self.assertEqual(paths, {"Batteries": "Batteries.lean",
+                                 "Batteries.Data": "Batteries/Data.lean"})
+
+    def test_a_package_at_another_rev_or_from_another_repository_is_refused(self):
+        head = self.package(rev="e" * 40)
+        self.shard(library="batteries", roots=["Batteries"], prefixes=["Batteries"],
+                   modules=[("Batteries", None)], decls=[])
+        line = (f"batteries\thttps://example.org/batteries\t{head}\tBatteries\t"
+                "package-in-workspace\tWORKSPACE=ws;PACKAGE=batteries;SHARD_COUNT=1")
+        proc = self.drive(line, "batteries")
+        self.assertEqual(proc.returncode, 1)
+        self.assertIn("pins batteries at eeeeeeeeeeee", proc.stdout + proc.stderr)
+        proc = self.drive(line.replace("example.org/batteries", "example.org/fork"), "batteries")
+        self.assertEqual(proc.returncode, 1)
+
+    def test_the_list_says_where_each_kind_is_probed(self):
+        tsv = self.root / "u.tsv"
+        good = (f"mathlib\thttps://example.org/mathlib\t{ALPHA}\tMathlib\tbuild\n"
+                f"lean-core\thttps://example.org/lean4\t{GITHASH}\tInit.*\tcore\tWORKSPACE=mathlib\n"
+                f"batteries\thttps://example.org/b\t{ALPHA}\tBatteries.*\tpackage-in-workspace\t"
+                "WORKSPACE=mathlib;PACKAGE=batteries\n")
+        tsv.write_text(good, encoding="utf-8")
+        entries = universe_host.load_universe(tsv)
+        self.assertEqual(entries[1].spec(GITHASH)["workspace"], "mathlib")
+        self.assertEqual(entries[2].spec(ALPHA)["package"], "batteries")
+        for bad in (good.splitlines()[1] + "\n" + good.splitlines()[0],      # workspace after
+                    f"x\thttps://example.org/x\t{ALPHA}\tX\tcore\n",            # no WORKSPACE
+                    f"x\thttps://example.org/x\t{ALPHA}\tX\tpackage-in-workspace\tWORKSPACE=w\n",
+                    f"x\thttps://example.org/x\t{ALPHA}\tX\tbuild\tWORKSPACE=w\n",
+                    f"x\thttps://example.org/x\t{ALPHA}\tX\tcore\tWORKSPACE=x\n",
+                    f"x\thttps://example.org/x\t{ALPHA}\tX\tpackage-in-workspace\t"
+                    "WORKSPACE=w;PACKAGE=..\n"):
+            with self.subTest(line=bad):
+                tsv.write_text(bad, encoding="utf-8")
+                with self.assertRaises(universe_host.UniverseError):
+                    universe_host.load_universe(tsv)
+
+
 class TestD12AtomicWritesKeepTheModeAPlainWriteWould(unittest.TestCase):
     """D12: ``universe.yaml`` was 0600 (mkstemp's mode) beside 0644 indexes."""
 

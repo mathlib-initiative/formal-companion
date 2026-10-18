@@ -24,6 +24,12 @@
 #   PROBE_TEMPLATE     the template                (default: ../../templates/corpus/ from here)
 #   PROBE_NICE         nice level                                       (default 10)
 #   KEEP_WORK=1        keep the per-shard files under <output-dir>/work after a clean merge
+#   LIBRARY_KIND LIBRARY_DIR LIBRARY_COMMIT [LIBRARY_PATH_PREFIX LIBRARY_SRC_DIRS]
+#                      a library probed inside <checkout-dir>, another library's built
+#                      workspace: core (Lean's Init/Std, LIBRARY_DIR the toolchain's src/lean,
+#                      LIBRARY_PATH_PREFIX src/) or package-in-workspace (LIBRARY_DIR its
+#                      .lake/packages/<name>); the index then carries LIBRARY_COMMIT and paths
+#                      inside the library's own repository (probe_merge.py LibrarySource)
 #
 # Output: <output-dir>/index.jsonl, <output-dir>/manifest.json, and
 # <output-dir>/work/ (rendered probe, shard files, per-shard logs and timings).
@@ -118,9 +124,18 @@ if [ "${#failed[@]}" -gt 0 ]; then
   exit 1
 fi
 
+library_args=()
+if [ -n "${LIBRARY_DIR:-}" ] || [ -n "${LIBRARY_KIND:-}" ]; then
+  [ -n "${LIBRARY_KIND:-}" ] && [ -n "${LIBRARY_DIR:-}" ] && [ -n "${LIBRARY_COMMIT:-}" ] \
+    || die "LIBRARY_KIND, LIBRARY_DIR and LIBRARY_COMMIT go together"
+  library_args=(--library-kind "$LIBRARY_KIND" --library-dir "$LIBRARY_DIR"
+    --library-commit "$LIBRARY_COMMIT" --library-path-prefix "${LIBRARY_PATH_PREFIX:-}"
+    --library-src-dirs "${LIBRARY_SRC_DIRS:-.}")
+fi
 clean_env python3 -I "$merge_py" merge --work "$work" --shard-count "$shard_count" \
   --checkout "$checkout" --out-dir "$out_dir" --template "$template" \
   --probe "$work/probe.lean" --parallel "$parallel" --started "$started" \
+  ${library_args[@]+"${library_args[@]}"} \
   || die "merge refused the shard files (they are kept in $work)"
 
 if [ "${KEEP_WORK:-0}" != "1" ]; then

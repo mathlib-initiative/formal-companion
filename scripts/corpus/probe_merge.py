@@ -18,6 +18,13 @@ Subcommands::
     probe_merge.py run-shard --timing FILE -- <command ...>
     probe_merge.py merge     --work DIR --shard-count N --checkout DIR --out-dir DIR --template T
                              --probe FILE --parallel P --started ISO
+                             [--library-kind core|package-in-workspace --library-dir D
+                              --library-commit C [--library-path-prefix P] [--library-src-dirs S]]
+
+The ``--library-*`` options are for a library probed inside another library's
+built workspace (Lean core in Mathlib's toolchain, Batteries in Mathlib's
+``.lake/packages``): the index then records that library's own commit and its
+paths inside its own repository, never the workspace's (:class:`LibrarySource`).
 """
 from __future__ import annotations
 
@@ -189,8 +196,8 @@ def module_of_file(relative: "Path | str") -> str:
 def module_file(name: str) -> str:
     """The ``.lean`` path a module name is read from, relative to its source directory."""
     components = module_components(name)
-    if components is None:
-        raise ProbeError(f"{name!r} is not a module name")
+    if components is None or any(c in (".", "..") or "/" in c for c in components):
+        raise ProbeError(f"{name!r} is not a module name a file can be read from")
     return "/".join(components) + ".lean"
 
 
@@ -457,9 +464,83 @@ def check_roots_indexed(roots: list[str], prefixes: list[str], modules: list[str
                          "index them")
 
 
+#: the library kinds probed inside another library's workspace (universe_host.WORKSPACE_KINDS)
+LIBRARY_KINDS = ("core", "package-in-workspace")
+
+
+class LibrarySource:
+    """Where a library probed inside ANOTHER library's workspace really lives.
+
+    ``core`` (Lean's ``Init``/``Std``, from the workspace's toolchain) and
+    ``package-in-workspace`` (a Lake package under its ``.lake/packages``) are probed
+    from the workspace's checkout, so neither the checkout's HEAD nor paths relative
+    to it describe them.  The merge records instead the library's own ``commit`` and
+    each module's path inside the library's own repository: the module's file found
+    under ``directory`` (one of ``src_dirs`` deep), with ``path_prefix`` -- what the
+    repository puts before that directory (``src/`` for lean4) -- in front.
+    """
+
+    def __init__(self, kind: str, directory: Path, commit: str, path_prefix: str = "",
+                 src_dirs: "list[str] | None" = None):
+        if kind not in LIBRARY_KINDS:
+            raise ProbeError(f"library kind {kind!r} is not one of {', '.join(LIBRARY_KINDS)}")
+        if not re.fullmatch(r"[0-9a-f]{40}", commit or ""):
+            raise ProbeError(f"the library commit {commit!r} is not 40 hex")
+        prefix_parts = [p for p in path_prefix.split("/") if p]
+        if path_prefix.startswith("/") or ".." in prefix_parts or "." in prefix_parts:
+            raise ProbeError(f"the path prefix {path_prefix!r} must be a relative directory")
+        self.kind, self.directory, self.commit = kind, Path(directory), commit
+        self.path_prefix = "/".join(prefix_parts) + "/" if prefix_parts else ""
+        self.src_dirs = [d.strip("/") or "." for d in (src_dirs or ["."])]
+        for d in self.src_dirs:
+            if ".." in d.split("/"):
+                raise ProbeError(f"source directory {d!r} must stay inside the library")
+        if not self.directory.is_dir():
+            raise ProbeError(f"no library directory {self.directory}")
+
+    def path_of(self, module: str) -> "str | None":
+        rel = module_file(module)
+        for d in self.src_dirs:
+            inside = rel if d == "." else f"{d}/{rel}"
+            if (self.directory / inside).is_file():
+                return self.path_prefix + inside
+        return None
+
+
+def _library_facts(library: LibrarySource, header0: dict) -> dict:
+    """The library's own commit, cleanliness, date and dependencies; refused if they disagree."""
+    if library.kind == "core":
+        githash = str(header0.get("lean_githash") or "")
+        if githash != library.commit:
+            raise ProbeError(f"core is pinned at {library.commit[:12]}, but the probe ran on "
+                             f"Lean {githash[:12] or '?'}: the workspace uses another toolchain")
+        # the toolchain's own shipped sources: no git checkout to read, nothing edited in place
+        return {"commit": library.commit, "commit_date": None, "dirty": False,
+                "dependencies": []}
+    head = _git(library.directory, "rev-parse", "HEAD")
+    if head != library.commit:
+        raise ProbeError(f"{library.directory} is at {(head or '?')[:12]}, not the pinned "
+                         f"{library.commit[:12]}")
+    dependencies = []
+    manifest = library.directory / "lake-manifest.json"
+    if manifest.is_file():
+        for package in json.loads(manifest.read_text(encoding="utf-8")).get("packages", []):
+            dependencies.append({"name": package.get("name"), "rev": package.get("rev"),
+                                 "url": package.get("url")})
+    return {"commit": library.commit,
+            "commit_date": _git(library.directory, "log", "-1", "--format=%cI") or None,
+            "dirty": _dirty(library.directory),
+            "dependencies": sorted(dependencies, key=lambda d: str(d["name"]))}
+
+
 def merge(work: Path, count: int, checkout: Path, out_dir: Path, template: Path, probe: Path,
-          parallel: int, started: str) -> dict:
-    """Merge the shards in ``work`` into ``out_dir``/index.jsonl and manifest.json."""
+          parallel: int, started: str, library: "LibrarySource | None" = None) -> dict:
+    """Merge the shards in ``work`` into ``out_dir``/index.jsonl and manifest.json.
+
+    ``library`` is given for a library probed inside another one's workspace
+    (:class:`LibrarySource`): its commit, paths, cleanliness and dependencies
+    are then its own, not the probed checkout's.
+    """
     shards = [read_shard(work / f"shard-{i}.jsonl", i, count) for i in range(count)]
     header0 = shards[0][0]
     for i, (header, *_rest) in enumerate(shards):
@@ -491,7 +572,15 @@ def merge(work: Path, count: int, checkout: Path, out_dir: Path, template: Path,
                                  f"{record['proof_status']!r} is outside the schema")
             declarations[key] = record
 
-    commit = _git(checkout, "rev-parse", "HEAD")
+    facts = None
+    if library is not None:
+        facts = _library_facts(library, header0)
+        paths = {m["name"]: library.path_of(m["name"]) for m in modules}
+        for m in modules:
+            m["path"] = paths[m["name"]]
+        for record in declarations.values():
+            record["path"] = paths[record["module"]]
+    commit = facts["commit"] if facts else _git(checkout, "rev-parse", "HEAD")
     # The index bytes must not depend on how the run was split: the shard fields go to the
     # manifest only, so one shard and thirty-two give the same index.jsonl.
     header = {k: v for k, v in header0.items()
@@ -529,16 +618,26 @@ def merge(work: Path, count: int, checkout: Path, out_dir: Path, template: Path,
         for package in json.loads(lake_manifest.read_text(encoding="utf-8")).get("packages", []):
             dependencies.append({"name": package.get("name"), "rev": package.get("rev"),
                                  "url": package.get("url")})
+    if facts is None:
+        facts = {"commit": commit or None,
+                 "commit_date": _git(checkout, "log", "-1", "--format=%cI") or None,
+                 "dirty": _dirty(checkout),
+                 "dependencies": sorted(dependencies, key=lambda d: str(d["name"]))}
     manifest = {
         "schema": SCHEMA + "/manifest",
         "library": header0["library"],
-        "commit": commit or None,
-        "commit_date": _git(checkout, "log", "-1", "--format=%cI") or None,
-        "dirty": _dirty(checkout),
+        "commit": facts["commit"],
+        "commit_date": facts["commit_date"],
+        "dirty": facts["dirty"],
+        # the toolchain is the probed workspace's, which is the library's own for every kind
         "toolchain": toolchain_file.read_text(encoding="utf-8").strip() if toolchain_file.is_file() else None,
         "lean_version": header0["toolchain"],
         "lean_githash": header0["lean_githash"],
-        "dependencies": sorted(dependencies, key=lambda d: str(d["name"])),
+        "dependencies": facts["dependencies"],
+        "library_kind": library.kind if library else "build",
+        "library_source": ({"path_prefix": library.path_prefix, "src_dirs": library.src_dirs,
+                            "workspace_commit": _git(checkout, "rev-parse", "HEAD") or None}
+                           if library else None),
         "roots": header0["roots"],
         "module_prefixes": header0["module_prefixes"],
         "records": {"header": 1, "module": len(modules), "declaration": len(decls)},
@@ -599,6 +698,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--probe", required=True, type=Path)
     p.add_argument("--parallel", required=True, type=int)
     p.add_argument("--started", required=True)
+    p.add_argument("--library-kind", choices=LIBRARY_KINDS, default=None,
+                   help="a library probed inside another one's workspace (with the four below)")
+    p.add_argument("--library-dir", type=Path, default=None,
+                   help="where its sources are: the toolchain's src/lean, or the package's directory")
+    p.add_argument("--library-commit", default=None, help="its own 40-hex commit")
+    p.add_argument("--library-path-prefix", default="",
+                   help="what its repository puts before --library-dir (src/ for lean4)")
+    p.add_argument("--library-src-dirs", default=".",
+                   help="source directories under --library-dir, comma separated")
     args = parser.parse_args(argv)
     try:
         if args.command == "render":
@@ -612,8 +720,14 @@ def main(argv: list[str] | None = None) -> int:
             if not command:
                 raise ProbeError("run-shard needs a command after --")
             return run_shard(args.timing, command)
+        library = None
+        if args.library_kind or args.library_dir or args.library_commit:
+            if not (args.library_kind and args.library_dir and args.library_commit):
+                raise ProbeError("--library-kind, --library-dir and --library-commit go together")
+            library = LibrarySource(args.library_kind, args.library_dir, args.library_commit,
+                                    args.library_path_prefix, split_list(args.library_src_dirs))
         manifest = merge(args.work, args.shard_count, args.checkout, args.out_dir, args.template,
-                         args.probe, args.parallel, args.started)
+                         args.probe, args.parallel, args.started, library)
         print(json.dumps({k: manifest[k] for k in ("library", "commit", "records", "by_kind",
                                                      "by_proof_status", "index_sha256",
                                                      "wall_seconds")}, sort_keys=True))
