@@ -46,6 +46,9 @@ release has something to say.
   carried `licence: null`, which the consumer refuses), and a re-add with
   `--licence` now records a missing licence (it exited 0 and changed nothing); a
   re-add naming another licence or `brain_lib` than recorded is refused.
+- `agent_call.py` keeps a stdout that is JSON but no object (an array) as `.out`
+  beside its `.json` record; it had been kept as `.json` and then replaced by the
+  record written under the same name in the same second.
 - `cf bench score` refuses a receipt whose `cost.usd` is a lower bound (a call
   that left no priced envelope, e.g. a timeout; or a model in no price table)
   unless `--article-costs` prices every article: an envelope-priced run whose only

@@ -146,6 +146,19 @@ class TestAgentCall(unittest.TestCase):
         # the prose itself is kept beside its record, as before
         self.assertEqual(len(list((self.tmp / "usage").glob("*.out"))), 1)
 
+    def test_r2_json_that_is_no_object_is_kept_beside_its_record(self):
+        """The review's t1-nonobj run: stdout ``["partial", 1]`` was kept as ``.json`` and
+        the record, written under the same name in the same second, replaced it."""
+        proc, _ = self.call("printf '[\"partial\", 1]'\n", task="t-3")
+        kept = sorted(p.name for p in (self.tmp / "usage").iterdir())
+        self.assertEqual(len(kept), 2, kept)
+        (out,) = (self.tmp / "usage").glob("t-3.worker.*.out")
+        self.assertEqual(out.read_bytes(), b'["partial", 1]')
+        (record,) = self.records()
+        self.assertEqual((record["cf_agent_call"]["outcome"],
+                          record["cf_agent_call"]["stdout_bytes"]), ("not_json", 14))
+        self.assertEqual(out.name[:-len(".out")], kept[0][:-len(".json")])
+
     def test_t1_a_priced_envelope_gets_no_record(self):
         proc, _ = self.call(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
         self.assertEqual(proc.returncode, 0, proc.stderr)
