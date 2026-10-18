@@ -604,7 +604,10 @@ like a faithfulness run:
   refusal with its rule (`[rule 2] …`), and its last line says which ownership
   rule judged the change set: `--task-id`/`TEND_TASK_ID`, the task id recovered
   from `orchestrator.sqlite` (whose schema is assumed, not known: any table
-  with a worktree-path-like and a task-id-like column, one task id or none), or
+  with a worktree-path-like and a task-id-like column, one task id or none; a
+  recorded path counts when it resolves to the worktree's directory; the
+  database is opened `mode=ro`, never `immutable=1`, because tend writes it in
+  WAL mode and a live run's rows sit in the WAL until a checkpoint), or
   the single-stem rule. Documents are parsed strictly: a duplicate key or a
   `NaN` is a refusal.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
