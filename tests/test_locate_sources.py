@@ -37,6 +37,7 @@ if str(SCRIPTS) not in sys.path:
 
 import cf as cf_main  # noqa: E402
 from cflib import passages, registry, vocab  # noqa: E402
+from cflib import vendored  # noqa: E402,F401  (vendor/ on sys.path before the format)
 from cflib.errors import CfError  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
 from gate import locate_text  # noqa: E402
