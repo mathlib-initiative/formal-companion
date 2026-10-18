@@ -77,6 +77,7 @@ import re
 import sqlite3
 import sys
 import time
+import urllib.parse
 from typing import Any, Iterable
 
 HERE = pathlib.Path(__file__).resolve().parent
@@ -87,8 +88,56 @@ VENDOR = HERE / "vendor" if (HERE / "vendor").is_dir() else HERE.parent.parent /
 if str(VENDOR) not in sys.path:
     sys.path.insert(0, str(VENDOR))
 
-import locate_text as lt  # noqa: E402
-import verify_findings as vf  # noqa: E402
+#: What went wrong importing the gate's siblings (references/locate-documents.md
+#: section 9: the gate directory holds locate_text.py, verify_findings.py and
+#: locate_records.py beside this file).  A missing or broken one is an
+#: infrastructure failure: ``main`` turns it into exit 3 with ONE ``FAIL`` line,
+#: never the interpreter's exit 1 out of a traceback -- the code a worker is told
+#: means "your documents are wrong".
+IMPORT_ERRORS: list[str] = []
+try:
+    import locate_text as lt  # noqa: E402
+except Exception as _exc:  # noqa: BLE001 - any failure to import is the same failure
+    lt = None  # type: ignore[assignment]
+    IMPORT_ERRORS.append(f"locate_text.py ({_exc.__class__.__name__}: {_exc})")
+try:
+    import verify_findings as vf  # noqa: E402
+except Exception as _exc:  # noqa: BLE001
+    vf = None  # type: ignore[assignment]
+    IMPORT_ERRORS.append(f"verify_findings.py ({_exc.__class__.__name__}: {_exc})")
+
+
+def _load_records():
+    """The export's record builder: ``locate_records.py`` staged here, else the checkout's.
+
+    The gate directory carries ``scripts/locate/records.py`` as
+    ``locate_records.py``; the harvest's in-process gate runs from the skill
+    checkout, where the same file sits at ``scripts/locate/records.py``.
+    """
+    try:
+        import locate_records  # noqa: PLC0415
+        return locate_records
+    except ModuleNotFoundError as exc:
+        if exc.name != "locate_records":
+            raise
+    path = HERE.parent / "locate" / "records.py"
+    if not path.is_file():
+        raise ModuleNotFoundError("no locate_records.py beside the gate, and no checkout "
+                                  "scripts/locate/records.py")
+    import importlib.util  # noqa: PLC0415
+
+    spec = importlib.util.spec_from_file_location("locate_records", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["locate_records"] = module
+    spec.loader.exec_module(module)  # type: ignore[union-attr]
+    return module
+
+
+try:
+    lr = _load_records()
+except Exception as _exc:  # noqa: BLE001
+    lr = None
+    IMPORT_ERRORS.append(f"locate_records.py ({_exc.__class__.__name__}: {_exc})")
 
 EXIT_OK = 0
 EXIT_REJECTED = 1
@@ -139,7 +188,6 @@ UNRESOLVED_BY = frozenset({"worker", "attempt_cap"})
 MAX_LOCATIONS_PER_PASSAGE = 5
 MIN_ABSENCE_QUERIES = 3
 LOCATE_EXTENSION = "org.mathlib-initiative.formal-companion.locate"
-EXPORT_QUOTE_WORDS = 12
 
 #: the one spelling of a passage item a stage writes (``items.passage_item``)
 ITEM = re.compile(r"In-text #[0-9a-f]{8}\Z")
@@ -155,12 +203,23 @@ MAX_DOCUMENT_BYTES = 4 * 1024 * 1024
 #: tend's validation runs this from the worktree; a harvested corpus keeps the
 #: task directories at its top
 DEFAULT_FINDINGS_DIR = "findings"
-NON_DOCUMENT_FILES = frozenset(vf.NON_FINDING_FILES)
+NON_DOCUMENT_FILES = frozenset(vf.NON_FINDING_FILES) if vf is not None else frozenset()
 VENDORED_PACKAGES = ("literature_links", "formal_companion_annotations")
 
 
 class GateBroken(Exception):
     """The gate cannot run: an infrastructure failure, never a verdict on the documents."""
+
+
+def ro_uri(path: pathlib.Path) -> str:
+    """A read-only, immutable SQLite URI for ``path``, with the path percent-quoted.
+
+    Unquoted, a ``?`` or ``#`` in a directory name cuts the query string off --
+    SQLite then opens the truncated path READ-WRITE and creates an empty file --
+    and a ``%xx`` decodes to another path.
+    """
+    return ("file:" + urllib.parse.quote(str(pathlib.Path(path).resolve()))
+            + "?mode=ro&immutable=1")
 
 
 # --------------------------------------------------------------------------- #
@@ -425,8 +484,7 @@ class Context:
                 if not self.cfg.corpus_db.is_file():
                     raise GateBroken(f"corpus.sqlite is missing at {self.cfg.corpus_db}")
                 try:
-                    uri = f"file:{self.cfg.corpus_db.as_posix()}?mode=ro&immutable=1"
-                    self._db = sqlite3.connect(uri, uri=True)
+                    self._db = sqlite3.connect(ro_uri(self.cfg.corpus_db), uri=True)
                 except sqlite3.Error as exc:
                     raise GateBroken(f"corpus.sqlite at {self.cfg.corpus_db} will not open "
                                      f"({exc})") from None
@@ -507,79 +565,83 @@ def _overlaps(a: tuple[int, int], b: tuple[int, int]) -> bool:
 # the preview records (rule 1): what the export will build, checked here
 # --------------------------------------------------------------------------- #
 
-_LL = None
+#: what the gate stands in for when it builds a record the worker's document
+#: implies: the challenge, the location key and the joined proof status are the
+#: harvest's and the export's to fill, never the worker's
+_PLACEHOLDER_SHA = "0" * 64
+_WEB_SOURCE_ID = re.compile(r"[a-z][a-z0-9]{1,23}-([1-9][0-9]*)-([1-9][0-9]*)\Z")
 
 
-def _literature_links():
-    global _LL
-    if _LL is None:
-        try:
-            from literature_links import companion as ll  # noqa: PLC0415 - vendored, after the pin check
-        except ImportError as exc:
-            raise GateBroken(f"the vendored literature_links package will not import ({exc})") from None
-        _LL = ll
-    return _LL
+def capped_quote(layer: str, span: tuple[int, int]) -> dict:
+    """The export's quote of a passage (``locate_records.cap_quote``); RecordError when none."""
+    return lr.cap_quote(layer, span[0], span[1])
 
 
-def _head_quote(layer: str, span: tuple[int, int]) -> str:
-    words = layer[span[0]:span[1]].split(" ")
-    return " ".join(words[:EXPORT_QUOTE_WORDS]).strip() or layer[span[0]:span[1]]
+def _preview_source(cfg: GateConfig, source_id: str) -> dict:
+    pin = cfg.sources.get(source_id) or {}
+    match = _WEB_SOURCE_ID.match(source_id)
+    return {"source_id": source_id, "pageid": int(match.group(1)) if match else 0,
+            "revision": match.group(2) if match else "0",
+            "title": pin.get("title") or source_id,
+            "html_sha256": pin.get("html_sha256") or _PLACEHOLDER_SHA,
+            "renderer": pin.get("renderer") or "", "uri": pin.get("uri") or source_id,
+            "container_title": pin.get("container_title") or "",
+            "licence": pin.get("licence") or ""}
 
 
-def _subject(source_id: str, quote: dict) -> dict:
-    location = {"quote": {k: v for k, v in quote.items() if k in ("exact", "prefix", "suffix")
-                          and isinstance(v, str) and (k == "exact" or v)}}
-    return {"type": "html", "uri": source_id, "location": location}
+def _preview_universe(cfg: GateConfig) -> dict:
+    return {"id": cfg.universe_id or "inventory", "sha256": cfg.universe_sha or _PLACEHOLDER_SHA,
+            "libraries": [{"id": lib, **body} for lib, body in sorted(cfg.libraries.items())]}
 
 
-def _lean_end(cfg: GateConfig, library: str, declaration: Any) -> dict:
-    lib = cfg.libraries.get(library, {})
-    end: dict[str, Any] = {"type": "lean", "uri": lib.get("repo") or library,
-                           "version": lib.get("commit") or "unknown"}
-    if declaration is not None:
-        end["location"] = {"declaration": declaration}
-        end["role"] = "key"
-    return end
+def check_records(cfg: GateConfig, problems: Problems, where: str, *, source_id: str,
+                  layer: str, span: tuple[int, int], quote: dict, item: str,
+                  passage_kind: Any, outcome: str | None, locations: list[dict]) -> None:
+    """Rule 1: build the records this passage implies with the EXPORT'S builder, and check them.
 
-
-def _preview_records(cfg: GateConfig, mode: str, source_id: str, item: str,
-                     quote: dict, passage_kind: str | None, outcome: str | None,
-                     locations: list[dict]) -> list[dict]:
-    """The Literature Links records one passage of a document implies.
-
-    A private, minimal builder: the export's *scripts/locate/records.py* (the
-    planner package) is the real one, and integration points this check at it.
-    It carries what a worker controls -- quote, declaration names, relations --
-    and stands in for what it does not (the uri, the citation, the status).
+    ``locate_records`` (``scripts/locate/records.py``, staged in the gate
+    directory) is the code ``cf export literature-links`` runs, so a document
+    this passes is one the export can turn into records the vendored checker
+    accepts.  What the worker does not control -- the challenge value, the
+    location key, the proof status joined from the index, the source's citation
+    fields when ``gate.json`` does not carry them -- is a placeholder.
     """
-    base: dict[str, Any] = {"id": f"{source_id}::{item}", "subject": [_subject(source_id, quote)]}
-    if passage_kind:
-        base["kind"] = passage_kind
+    source = _preview_source(cfg, source_id)
+    universe = _preview_universe(cfg)
+    passage = {"item": item, "source_id": source_id, "challenge": "not_required",
+               "passage_kind": passage_kind if passage_kind in PASSAGE_KINDS else "other",
+               "absence": {"challenge": "not_required"}}
+    span_sha = lr.sha256_text(layer[span[0]:span[1]])
     records: list[dict] = []
-    for location in locations:
-        if not isinstance(location, dict):
-            continue
-        record = dict(base, object=[_lean_end(cfg, str(location.get("library") or ""),
-                                              location.get("declaration"))],
-                      relation=location.get("relation"))
-        ext = {k: location[k] for k in ("rank", "confidence") if k in location}
-        ext["item"] = item
-        record["extensions"] = {LOCATE_EXTENSION: ext}
-        if location.get("note"):
-            record["note"] = location.get("note")
-        records.append(record)
-    if outcome == "absent":
-        records.append(dict(base, relation=NO_MATCH, status="not_formalized",
-                            object=[_lean_end(cfg, lib, None) for lib in sorted(cfg.libraries)]))
-    if outcome in ("unresolved", None) and not locations:
-        records.append(dict(base, object=[]))
-    return records
-
-
-def _check_records(cfg: GateConfig, problems: Problems, where: str, records: list[dict]) -> None:
-    ll = _literature_links()
+    try:
+        for loc in locations:
+            body = cfg.libraries.get(str(loc.get("library") or ""))
+            if body is None:
+                continue                      # rule 3 names the library already
+            location = {"declaration": str(loc.get("declaration") or ""),
+                        "relation": str(loc.get("relation") or ""),
+                        "proof_status": "proved", "location_key": _PLACEHOLDER_SHA,
+                        "challenge": "not_required",
+                        "confidence": loc.get("confidence") if isinstance(loc.get("confidence"), str) else None,
+                        "note": loc.get("note") if isinstance(loc.get("note"), str) else None}
+            if isinstance(loc.get("rank"), int) and not isinstance(loc.get("rank"), bool):
+                location["rank"] = loc["rank"]
+            records.append(lr.location_record(source, passage, location,
+                                              {"id": str(loc["library"]), **body}, universe, quote,
+                                              span_sha256=span_sha))
+        if outcome == "absent" and universe["libraries"]:
+            records.append(lr.absence_record(source, passage, universe, quote,
+                                             span_sha256=span_sha,
+                                             receipt={"sha256": _PLACEHOLDER_SHA, "queries": 0,
+                                                      "candidates": 0}))
+        elif not locations:
+            records.append(lr.unresolved_record(source, passage, universe, quote,
+                                                span_sha256=span_sha))
+    except (lr.RecordError, KeyError, TypeError, ValueError) as exc:
+        problems.add(1, where, f"the record this implies cannot be built: {exc}")
+        return
     for record in records:
-        for problem in ll.check(record).problems:
+        for problem in lr.check(record):
             problems.add(1, where, f"the record this implies fails the Literature Links "
                                    f"checker: {problem}")
 
@@ -833,9 +895,18 @@ def check_inventory(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
             continue
         starts.append(head_start)
         rows.append((i, p, head_start))
-        _check_records(cfg, problems, where,
-                       _preview_records(cfg, LOCATE_INVENTORY, source_id, str(item), quote,
-                                        p.get("passage_kind"), None, []))
+        # Rule 1: the export quotes this passage with its own capped quote, so a
+        # passage it cannot quote uniquely is refused NOW, while the worker can
+        # still move the start, not after challenge at `cf export`.
+        try:
+            exported = capped_quote(layer, span)
+        except lr.RecordError as exc:
+            problems.add(1, where, f"the export cannot quote this passage ({exc}); start it "
+                                   f"where its first words are distinctive")
+            continue
+        check_records(cfg, problems, where, source_id=source_id, layer=layer, span=span,
+                      quote=exported, item=str(item), passage_kind=p.get("passage_kind"),
+                      outcome=None, locations=[])
     if rows and len(starts) == len(rows):
         try:
             ids = lt.assign_ids(source.head, starts)
@@ -937,7 +1008,13 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
             raise GateBroken(f"task manifest passage {p['item']} of {source_id} hashes to "
                              f"In-text #{digest} on the pinned layer: the frozen inventory is "
                              f"inconsistent")
-        frozen[p["item"]] = dict(p, span=span)
+        try:
+            quote = capped_quote(source.layer, span)
+        except lr.RecordError as exc:
+            raise GateBroken(f"task manifest passage {p['item']} of {source_id} cannot be quoted "
+                             f"by the export ({exc}): the frozen inventory predates the rule "
+                             f"that refuses such a passage") from None
+        frozen[p["item"]] = dict(p, span=span, quote=quote)
     written: dict[str, int] = {}
     stats["passages"] = len(passages)
     handled: set[tuple[str, str]] = set()
@@ -989,16 +1066,26 @@ def check_locate(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_id:
             if cand.get("verdict") == "accepted" or _nonempty_str(cand.get("reason")):
                 handled.add((str(cand.get("library")), str(cand.get("declaration"))))
         span = frozen[item]["span"]
-        quote = {"exact": _head_quote(source.layer, span)}
-        _check_records(cfg, problems, where,
-                       _preview_records(cfg, LOCATE, source_id, item, quote,
-                                        frozen[item].get("passage_kind"), outcome, locations))
+        check_records(cfg, problems, where, source_id=source_id, layer=source.layer, span=span,
+                      quote=frozen[item]["quote"], item=item,
+                      passage_kind=frozen[item].get("passage_kind"), outcome=outcome,
+                      locations=locations)
     missing = sorted(set(frozen) - set(written))
     if missing:
         problems.add(2, name, f"the task's passages {', '.join(missing)} have no outcome")
-    # rule 4: every curated hit handed to the task is located or rejected with a reason
+    # rule 4: every curated hit HANDED TO THIS TASK is located or rejected with a
+    # reason.  The planner gives each of a source's curated hits to exactly one of
+    # its tasks and names them in the manifest's `curated` list; the gate takes
+    # that list intersected with the candidates file it reads itself, so a
+    # manifest cannot add a hit, and a manifest that predates the key hands the
+    # task every hit of the file.
     if not unresolved:
-        unhandled = [hit for hit in _curated(ctx, source_id) if hit not in handled]
+        hits = _curated(ctx, source_id)
+        if "curated" in manifest_doc:
+            named = {(str(e.get("library")), str(e.get("declaration")))
+                     for e in manifest_doc.get("curated") or [] if isinstance(e, dict)}
+            hits = [hit for hit in hits if hit in named]
+        unhandled = [hit for hit in hits if hit not in handled]
         if unhandled:
             problems.add(4, name, f"curated L2 hit(s) {_hits(unhandled)} are neither located nor "
                                   f"rejected with a reason in any receipt"
@@ -1060,13 +1147,18 @@ def check_challenge(doc: dict, name: str, cfg: GateConfig, ctx: Context, source_
                                           if loc.get("relation") != RELATED_MATCH]:
                 problems.add(1, where, "overturning an absence or an unresolved outcome gives a "
                                        "location whose relation counts")
-            if source is not None and locations:
-                rec = records[key]
-                span = _span(rec.get("span"), len(source.layer))
-                quote = {"exact": _head_quote(source.layer, span)} if span else {"exact": str(v.get("item"))}
-                _check_records(cfg, problems, where,
-                               _preview_records(cfg, LOCATE_CHALLENGE, source_id, str(v.get("item")),
-                                                quote, rec.get("passage_kind"), "located", locations))
+            rec = records[key]
+            span = _span(rec.get("span"), len(source.layer)) if source is not None else None
+            if span is not None and locations:
+                try:
+                    quote = capped_quote(source.layer, span)
+                except lr.RecordError as exc:
+                    raise GateBroken(f"challenge record {v.get('item')} of {source_id} cannot be "
+                                     f"quoted by the export ({exc})") from None
+                check_records(cfg, problems, where, source_id=source_id, layer=source.layer,
+                              span=span, quote=quote, item=str(v.get("item")),
+                              passage_kind=rec.get("passage_kind"), outcome="located",
+                              locations=locations)
     owed = [k for k in records if k not in judged]
     if owed:
         problems.add(1, name, f"{len(owed)} record(s) of this task have no verdict "
@@ -1146,7 +1238,7 @@ def task_from_orchestrator(db_path: pathlib.Path | None, worktree: pathlib.Path)
     candidates = {str(worktree), str(worktree.resolve())}
     found: set[str] = set()
     try:
-        con = sqlite3.connect(f"file:{db_path.as_posix()}?mode=ro&immutable=1", uri=True)
+        con = sqlite3.connect(ro_uri(db_path), uri=True)
     except sqlite3.Error as exc:
         return "", f"orchestrator.sqlite will not open ({exc})"
     try:
@@ -1291,6 +1383,12 @@ def write_log(cfg: GateConfig, record: dict) -> None:
         return
 
 
+def incomplete_message() -> str:
+    return ("the gate directory is incomplete: " + "; ".join(IMPORT_ERRORS)
+            + " (cf plan-locate stages verify_locate.py with locate_text.py, verify_findings.py, "
+              "locate_records.py and vendor/ beside it)")
+
+
 def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path] | None = None,
              findings_dir: str = DEFAULT_FINDINGS_DIR, changed_files: bool = False,
              base: str = "main", task_id: str = "", allow_empty: bool = False,
@@ -1303,6 +1401,9 @@ def run_gate(cfg: GateConfig, *, root: pathlib.Path, findings: list[pathlib.Path
     result: dict[str, Any] = {"exit": EXIT_OK, "problems": [], "broken": [], "documents": 0,
                               "by_rule": {}, "stats": [], "ownership": "", "task_id": task_id,
                               "mode": cfg.mode, "run_id": cfg.run_id}
+    if IMPORT_ERRORS:
+        result.update(exit=EXIT_GATE_BROKEN, broken=[incomplete_message()])
+        return result
     ctx = Context(cfg)
     problems = Problems()
     how = "--task-id" if task_id else ""
@@ -1384,6 +1485,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--quiet", action="store_true")
     args = ap.parse_args(argv)
 
+    if IMPORT_ERRORS:
+        # one line, never a traceback: exit 1 would tell the worker to fix its documents
+        print(f"FAIL: {incomplete_message()} — the gate could not run: this is not a finding "
+              f"of yours", file=sys.stderr)
+        print("ownership: not checked (the gate could not run)")
+        return EXIT_GATE_BROKEN
     gate_path = pathlib.Path(args.gate_config).expanduser()
     try:
         if not gate_path.is_file():

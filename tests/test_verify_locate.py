@@ -754,3 +754,151 @@ class TestOwnership(GateTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# --------------------------------------------------------------------------- #
+# wave 2: the gate directory, quoted URIs, the export's records, per-task hits
+# --------------------------------------------------------------------------- #
+
+class TestAnIncompleteGateDirectory(unittest.TestCase):
+    """D1: a sibling that does not import is exit 3 with ONE FAIL line, never a traceback."""
+
+    def test_a_lone_gate_script(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        gate = tmp / "gate"
+        gate.mkdir()
+        shutil.copy2(GATE, gate / "verify_locate.py")
+        (gate / "gate.json").write_text("{}", encoding="utf-8")
+        environ = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+        proc = subprocess.run([sys.executable, str(gate / "verify_locate.py"), "--gate-config",
+                               str(gate / "gate.json")], capture_output=True, text=True,
+                              cwd=str(tmp), env=environ)
+        self.assertEqual(proc.returncode, 3, proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        fails = [line for line in proc.stderr.splitlines() if line.startswith("FAIL:")]
+        self.assertEqual(len(fails), 1, proc.stderr)
+        for sibling in ("locate_text.py", "verify_findings.py", "locate_records.py"):
+            self.assertIn(sibling, fails[0])
+        self.assertIn("not a finding of yours", fails[0])
+        self.assertEqual(proc.stdout.strip().splitlines()[-1],
+                         "ownership: not checked (the gate could not run)")
+
+    def test_in_process_it_is_broken_not_a_raise(self):
+        fx = Fixture(self, "locate-inventory")
+        from unittest import mock
+
+        with mock.patch.object(vl, "IMPORT_ERRORS", ["locate_records.py (ModuleNotFoundError)"]):
+            result = fx.run()
+        self.assertEqual(result["exit"], vl.EXIT_GATE_BROKEN)
+        self.assertIn("locate_records.py", result["broken"][0])
+
+
+class TestSqliteUrisAreQuoted(GateTestCase):
+    """#17: '?', '#' and '%xx' in a directory name may neither truncate nor redirect the URI."""
+
+    def test_odd_directory_names(self):
+        for odd in ("q?dir", "hash#dir", "pct%41dir"):
+            with self.subTest(directory=odd):
+                fx = Fixture(self, "locate")
+                fx.manifest("t-loc-0001", locate_manifest_doc(fx))
+                moved = fx.root / odd / "corpus.sqlite"
+                moved.parent.mkdir()
+                shutil.move(str(fx.db), moved)
+                fx.gate["corpus_db"]["path"] = str(moved)
+                fx.write_gate()
+                doc = fx.document("t-loc-0001", locate_body())
+                before = {p.name for p in fx.root.iterdir()}
+                self.assertOk(fx.run(doc))
+                self.assertLessEqual({p.name for p in fx.root.iterdir()} - before, {"gate-log"},
+                                     "the read-only open created a file")
+                self.assertEqual(sorted(p.name for p in moved.parent.iterdir()), ["corpus.sqlite"])
+        self.assertIn("%3F", vl.ro_uri(Path("/a/q?b/c.sqlite")))
+        self.assertTrue(vl.ro_uri(Path("/a/x#y")).endswith("x%23y?mode=ro&immutable=1"))
+
+    def test_the_orchestrator_lookup_too(self):
+        tmp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, tmp, ignore_errors=True)
+        db = tmp / "root#1" / "orchestrator.sqlite"
+        db.parent.mkdir()
+        con = sqlite3.connect(db)
+        con.execute("CREATE TABLE worktrees (task_id TEXT, path TEXT)")
+        con.execute("INSERT INTO worktrees VALUES ('t-9', '/w/t-9')")
+        con.commit()
+        con.close()
+        self.assertEqual(vl.task_from_orchestrator(db, Path("/w/t-9"))[0], "t-9")
+        self.assertFalse((tmp / "root").exists())
+
+
+class TestRuleOneUsesTheExportsQuote(GateTestCase):
+    """#36/#73 (D8): a passage the export cannot quote uniquely is refused at the gate."""
+
+    def test_a_head_no_32_characters_can_make_unique(self):
+        ctx = "and in every case the same context holds there: "
+        head = ("every finite widget has a spanning gadget whose size divides the order of "
+                "the widget group")
+        tail = " and this tail is identical in both places too."
+        repeated = ctx + head + tail
+        layer = f"Uno distinct opening words here. {repeated} Dos other words here. {repeated}"
+        fx = Fixture(self, "locate-inventory")
+        sdir = fx.root / "sourcesets" / "wpm" / "sources" / SID
+        (sdir / "layer.txt").write_text(layer, encoding="utf-8")
+        (sdir / "formulas.json").write_text("[]", encoding="utf-8")
+        (sdir / "paragraphs.json").write_text("[]", encoding="utf-8")
+        fx.layer_sha = _sha(layer.encode("utf-8"))
+        fx.gate["sources"][SID]["layer_sha256"] = fx.layer_sha
+        fx.write_gate()
+        fx.candidates["curated"] = []
+        fx.write_candidates()
+        fx.manifest(TASK, {"source_id": SID, "source_sha": HTML_SHA, "layer_sha256": fx.layer_sha,
+                           "renderer": "web-html/1", "finders": []})
+        start = layer.index(head)
+        ((_s, digest, words),) = lt.assign_ids(layer, [start])
+        passage = {"item": f"In-text #{digest}", "head_words": words,
+                   "span": [start, start + len(head)],
+                   "quote": {"exact": head, "prefix": layer[:start], "suffix": ""},
+                   "section": [], "fragment": None, "passage_kind": "theorem",
+                   "prominence": "central", "scope": "formal_math",
+                   "statement": "a restatement", "concept": None, "finder": "model"}
+        self.assertEqual(lt.find_quote(layer, head, layer[:start]), [start])
+        result = fx.run(fx.document(TASK, {"passages": [passage], "skips": []}))
+        self.assertRule(result, 1, "the export cannot quote this passage")
+
+    def test_the_gate_carries_no_quote_cap_of_its_own(self):
+        self.assertFalse(hasattr(vl, "EXPORT_QUOTE_WORDS"))
+        self.assertFalse(hasattr(vl, "_preview_records"))
+        self.assertIs(vl.lr.cap_quote, vl.capped_quote.__globals__["lr"].cap_quote)
+
+
+class TestRuleFourIsPerTask(GateTestCase):
+    """#29 (D7): the manifest's `curated` list, intersected with L2, is what a task must handle."""
+
+    TASK = "t-loc-0002"
+
+    def body(self):
+        body = locate_body()
+        body["passages"][0] = {"item": THM_ITEM, "outcome": "unresolved", "locations": [],
+                               "reason": "ambiguous", "receipt": {"queries": [], "candidates": []}}
+        return body
+
+    def run_with(self, curated):
+        fx = Fixture(self, "locate")
+        doc = locate_manifest_doc(fx)
+        if curated is not None:
+            doc["curated"] = curated
+        fx.manifest(self.TASK, doc)
+        return fx.run(fx.document(self.TASK, self.body()))
+
+    def test_a_task_handed_no_hit_owes_none(self):
+        self.assertOk(self.run_with([]))
+
+    def test_a_task_handed_the_hit_owes_it(self):
+        self.assertRule(self.run_with([{"library": "alpha",
+                                        "declaration": "Widget.exists_spanning_gadget"}]),
+                        4, "alpha:Widget.exists_spanning_gadget")
+
+    def test_a_manifest_cannot_add_a_hit(self):
+        self.assertOk(self.run_with([{"library": "beta", "declaration": "Beta.not.in.l2"}]))
+
+    def test_without_the_key_the_task_owes_every_hit_of_the_file(self):
+        self.assertRule(self.run_with(None), 4)
