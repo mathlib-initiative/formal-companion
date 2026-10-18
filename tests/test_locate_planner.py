@@ -455,6 +455,40 @@ class TestTheStagedGateRunsAlone(Campaign):
         self.assertIn("the gate itself failed", proc.stderr)
         self.assertNotIn("Traceback", proc.stderr)
 
+    def test_the_prompts_read_the_exit_codes_the_gate_writes(self):
+        """The worker-prompt half of P2: exit 1 is a verdict, exit 3 is blocked, in every prompt."""
+        from gate import verify_locate as vl
+        from locate import prompts as lprompts
+
+        self.assertEqual((lprompts.GATE_EXIT_REJECTED, lprompts.GATE_EXIT_BROKEN),
+                         (vl.EXIT_REJECTED, vl.EXIT_GATE_BROKEN))
+        bad = json.loads(json.dumps(self.doc))
+        bad["passages"][0]["quote"]["exact"] = "a sentence this layer never held"
+        self.write(bad)
+        rejected = self.gate("--findings", self.doc_rel)
+        self.assertEqual(rejected.returncode, lprompts.GATE_EXIT_REJECTED)
+        self.assertIn(lprompts.GATE_REJECTED_MARK, rejected.stderr)
+        (self.host / "verify_findings.py").unlink()
+        broken = self.gate("--findings", self.doc_rel)
+        self.assertEqual(broken.returncode, lprompts.GATE_EXIT_BROKEN)
+        self.assertIn(lprompts.GATE_BROKEN_MARK, broken.stderr)
+        self.assertNotIn(lprompts.GATE_REJECTED_MARK, broken.stderr)
+        self.locate()
+        self.challenge()
+        for run_id, mode in (("inv-1", "locate-inventory"), ("loc-1", "locate"),
+                             ("chl-1", "locate-challenge")):
+            pdir = self.paths.prompts_dir(run_id)
+            for name, role in (("worker-system.md", "worker"), ("worker.md", "worker"),
+                               ("reviewer-system.md", "reviewer")):
+                with self.subTest(mode=mode, prompt=name):
+                    text = (pdir / name).read_text(encoding="utf-8")
+                    self.assertIn(lprompts.gate_exits(role), text)
+                    self.assertNotIn("Any other non-zero exit", text)
+        worker = lprompts.gate_exits("worker")
+        self.assertIn(f"**exit {vl.EXIT_GATE_BROKEN}**", worker)
+        self.assertIn("`blocked`", worker)
+        self.assertIn("not grounds for rejecting the worker", lprompts.gate_exits("reviewer"))
+
     def test_the_self_check_names_what_is_missing(self):
         shutil.rmtree(self.host / "vendor" / "literature_links")
         proc = self.gate("--self-check")
