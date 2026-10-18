@@ -421,7 +421,7 @@ def challenge_tasks(manifest: Manifest, built: dict,
     spans = _TextSpans(paths, manifest.sourceset_id) if paths is not None else None
     keep = ("key", "target", "item", "span", "text_span", "section", "quote", "location_key",
             "library", "declaration", "relation", "rank", "outcome", "prominence", "scope",
-            "passage_kind", "run_id")
+            "passage_kind", "run_id", "parts", "note")
     for number, batch in enumerate(built["batches"], 1):
         docs: list[dict] = []
         for rec in batch:

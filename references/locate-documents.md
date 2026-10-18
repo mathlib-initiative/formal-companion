@@ -165,6 +165,31 @@ A locate task carries at most eight passages of one frozen inventory.
   document carries `proof_status`, `commit` or `version` anywhere.
 - An absence's receipt lists at least three distinct queries (whitespace and
   case folded) (rule 5).
+- A located passage that says several things may carry a **coverage claim**
+  (the maintainer's decision D1, `references/vocabulary.md` §1.11): its
+  `hasPart` locations together state every clause of the passage, and no part
+  adds a hypothesis stronger than the passage's:
+
+  ```json
+  {"item": "In-text #3fa91c07", "outcome": "located",
+   "locations": [{"library": "alpha", "declaration": "Widget.exists_spanning_gadget",
+                  "relation": "hasPart", "rank": 1, "…": "…"},
+                 {"library": "alpha", "declaration": "Widget.card_dvd",
+                  "relation": "hasPart", "rank": 2, "…": "…"}],
+   "coverage": {"complete": true, "parts": [1, 2],
+                "note": "existence and the divisibility of its size together state it"},
+   "receipt": {"…": "…"}}
+  ```
+
+  `coverage` is an object with exactly these keys (rule 1): `complete` is
+  `true`; `parts` lists at least two distinct ranks (`MIN_COVERAGE_PARTS`), each
+  the rank of one of this passage's `hasPart` locations; `note` is one sentence,
+  non-empty, at most 2,000 characters, saying how the parts together state
+  every clause, in the worker's own words — no more of the source verbatim than
+  the export's quote cap (`EXPORT_QUOTE_WORDS`). A claim on an absent or
+  unresolved passage is refused. The claim upgrades the passage's derived
+  status only once a challenger confirms it (§4), so a passage without one is
+  `partial` however many parts it has.
 
 ## 4. Challenge document (`mode: locate-challenge`)
 
@@ -184,7 +209,8 @@ A locate task carries at most eight passages of one frozen inventory.
    {"item": "In-text #0c4d77b1", "target": "scope", "action": "uphold", "witness": "…"}]}
 ```
 
-- `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`}.
+- `target` ∈ {`location`, `absence`, `unresolved`, `scope`, `prominence`,
+  `coverage`}.
 - `action` ∈ {`confirm`, `downgrade`, `refute`, `overturn`, `uphold`}:
   `confirm`/`uphold` keep the record (`challenge: survived`); `downgrade`
   changes a relation, `refute` removes a location, `overturn` replaces an
@@ -199,7 +225,16 @@ A locate task carries at most eight passages of one frozen inventory.
   the task manifest's record carries that relation), `refute`; `absence` and `unresolved` — `uphold`,
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
-  `uphold`, `overturn` (naming the new `prominence`).
+  `uphold`, `overturn` (naming the new `prominence`); `coverage` — `confirm`
+  (the claim `survived`) or `refute` (the claim is removed and its parts stay
+  `hasPart` locations; the passage's challenge is `downgraded`). A coverage
+  verdict names its record by `item` alone, like every passage-level one.
+- Every coverage claim is a record of the challenge, whatever the passage's
+  prominence, refuted by default: it upgrades a status. Its record in the task
+  manifest carries `parts` — `{location_key, library, declaration, relation,
+  rank}` for each — and the claim's `note`. A document that confirms a claim
+  and refutes or downgrades one of the parts it names is refused (rule 1): the
+  claim would name a location that is no longer a `hasPart` one.
 - A `downgrade` to `closeMatch` may give `note`, the convention difference the
   record will carry; without one, a sentence of its `witness` (at most 300
   characters) becomes the note, since an exported `closeMatch` always names one
@@ -359,6 +394,13 @@ What every record carries beyond §2.7's example:
   `central`, `supporting`), after the challenge (a prominence overturn moves
   it), so a consumer can single out the subject passage without a passage
   table. A passage the outcomes give neither is refused.
+- `extensions[‹locate›].coverage` — on every record of a passage whose
+  coverage claim stands after the challenge (decision D1): `{"complete": true,
+  "parts": [<location_key>, …], "challenge": <value>}`, each part the
+  `location_key` of one of the passage's `hasPart` records; a refuted claim is
+  not exported, and a claim whose parts are not the passage's `hasPart`
+  locations is refused (`records.coverage_problem`). The claim's note is not
+  exported.
 - A location's lean end names its declaration's `module` (in `location`) and
   carries `library`, `path` (the repository-relative `.lean` file) and `line`
   (>= 1) in its extension, **always**: a location whose index row lacks any of
@@ -886,7 +928,9 @@ like a faithfulness run:
   `"records": [...]`, the records it judges: `{key, target, item, span,
   text_span, section, quote, run_id, prominence, scope, passage_kind, outcome}`
   and, for a location, its `location_key`, `library`, `declaration`, `relation`
-  and `rank`. Every task manifest of the plan is also kept beside `run.yaml`, in
+  and `rank`; for a coverage claim, its `parts` (`[{location_key, library,
+  declaration, relation, rank}]`) and `note`. A passage with a coverage claim
+  is never split over two challenge tasks. Every task manifest of the plan is also kept beside `run.yaml`, in
   `runs/<run-id>/planned.json` (`{schema: "cf-locate-planned/1", run_id,
   tasks}`), which the outcomes read the planned passages from — the tend root is
   not something a workspace commits.
@@ -894,10 +938,12 @@ like a faithfulness run:
   runs, required or not: `{schema: "cf-locate-challenge-plan/1", run_id,
   challenged_runs, seed, sample_rate, counts, records: [{key, target, source_id,
   item, location_key, library, declaration, relation, run_id, prominence, scope,
-  outcome, rule, stratum, planned, task_id}]}`. `rule` is `refute_by_default`, `hunt`,
-  `sample` or `none`; `planned` is `required`, `sampled_out` or `not_required`.
+  outcome, rule, stratum, planned, task_id}]}` (a coverage record adds `parts`, its
+  parts' location keys). `rule` is `refute_by_default`, `hunt`,
+  `sample` or `none` — every coverage claim is `refute_by_default`; `planned` is
+  `required`, `sampled_out` or `not_required`.
   A record's `key` is its `location_key`, or sha256 of `<target>\n<source_id>\n<clean(item)>`
-  for an absence, unresolved outcome, scope or prominence. The outcomes read it
+  for an absence, unresolved outcome, scope, prominence or coverage claim. The outcomes read it
   back: a required record no verdict judged is owed (`challenge: null`). The gate
   reads a record's `item`, `target`, `location_key` (location targets only), `span`
   and `passage_kind`.
@@ -1186,6 +1232,7 @@ not a complete gated harvest named in a warning) and
                 "declaration": "Widget.exists_spanning_gadget", "relation": "exactMatch",
                 "rank": 1, "confidence": "high", "proof_status": "proved",
                 "statement": false, "location_key": "<hex>", "challenge": "survived"}],
+ "coverage": null, "coverage_refuted": null,
  "absence": null, "challenge": "survived", "status": "formalized",
  "runs": {"inventory": "r-…", "locate": "r-…", "challenge": "r-…"}}
 ```
@@ -1193,13 +1240,16 @@ not a complete gated harvest named in a warning) and
 `proof_status` and `statement` are joined from `corpus.sqlite` at harvest (with
 the declaration's `module`, `path`, `line`, `end_line` and `kind`), and a
 `proof_status` a document wrote is ignored and named; `status` is
-`cflib.vocab.derive_status` over the surviving locations and the absence; an
-unresolved passage has `status: null` (one that carries locations anyway is
+`cflib.vocab.derive_status` over the surviving locations, the absence and the
+coverage claim; an unresolved passage has `status: null` (one that carries locations anyway is
 named as a problem). A passage whose challenge is still owed carries
 `challenge: null`, and the export refuses it (hard rule 5). A row also carries
 `span`, `head_words`, `section`, `source_sha`, `layer_sha256`, `reason`,
 `unresolved_by` (`worker` — the default — or `attempt_cap`), `refuted` (the
-locations a challenge removed), `task_id`, and `problem` when something about
+locations a challenge removed), `coverage` (the passage's coverage claim:
+`{complete, parts: [location_key, …], note, challenge}`, its ranks turned into
+the joined locations' keys, or null) and `coverage_refuted` (a claim a challenge
+refuted, with the verdict's `witness`, or null), `task_id`, and `problem` when something about
 the passage is wrong: a location that could not be joined, a document whose
 universe or `source_sha`/`layer_sha256` is not the run's pin, an outcome that is
 not one of the three, a challenge that no longer fits its record. A passage the
@@ -1208,7 +1258,8 @@ answered has `outcome: null` and `missing: true`, and an inventory passage scope
 out has `outcome: null`. A passage answered in another task's document than its
 own is ignored there, and a declaration listed twice keeps its best rank. The
 passage's `challenge` is one value over its records — its locations, the
-refuted ones included, and its passage-level and prominence records: owed when
+refuted ones included, its coverage claim (a refuted one included), and its
+passage-level and prominence records: owed when
 any is owed, else `challenge_pending` when any is, else `downgraded` when any
 changed, else `survived` when any was judged, else `sampled_out` or
 `not_required`. A prominence overturn to `subject` or `central` reopens the
@@ -1221,8 +1272,11 @@ A challenge run is applied only to a locate run its plan's `challenged_runs`
 names, only through the plan records whose `run_id` is that run, and a verdict
 counts only on a record the plan REQUIRED (one on any other is named and
 ignored). A location's verdict applies only while its relation is the one the
-plan saw, a passage-level one only while the outcome is (otherwise the record
-is owed again); a `downgrade` must name a strictly weaker relation (exact,
+plan saw, a passage-level one only while the outcome is, a coverage verdict only
+while the claim names the parts the plan saw and only as `confirm` or `refute`
+(otherwise the record is owed again); a claim one of whose parts a location
+verdict refuted or downgraded no longer holds: it upgrades nothing and the
+passage carries a `problem` until the claim is challenged again; a `downgrade` must name a strictly weaker relation (exact,
 then close, then broad, then narrow/hasPart, then related: §4's order,
 `cflib.vocab.RELATION_STRENGTH`); a prominence changes only
 by `overturn`; an `overturn` puts the challenger's locations first in their own

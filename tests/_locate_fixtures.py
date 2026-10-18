@@ -446,10 +446,13 @@ def challenge_documents(paths: WorkspacePaths, run_id: str = "chl-1", *,
 
 
 def default_verdict(rec: dict) -> dict:
-    """Confirm locations, uphold everything else; overturn the absence of Gadget theorem."""
+    """Confirm locations and coverage claims, uphold everything else; overturn the
+    absence of Gadget theorem."""
     v = {"item": rec["item"], "target": rec["target"], "witness": "checked"}
     if rec["target"] == "location":
         v.update(location_key=rec["location_key"], action="confirm")
+    elif rec["target"] == "coverage":
+        v["action"] = "confirm"
     elif rec["target"] == "absence":
         v.update(action="overturn",
                  locations=[_loc("beta", "Beta.gadget_lattice_height", "exactMatch")])

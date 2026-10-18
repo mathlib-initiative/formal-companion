@@ -24,7 +24,9 @@ Every input is a plain mapping:
 Three record shapes, all with ``id = <source_id>::<item>`` and the passage's
 ``section`` (its heading path) and ``prominence`` in the locate extension when
 the passage row carries them -- :func:`passage_records`, the export's entry,
-requires both:
+requires both -- and, for a passage with a coverage claim (the maintainer's
+decision D1), ``coverage: {complete, parts: [location_key, ...], challenge}``
+on every one of its records (:func:`coverage_problem`):
 
 * :func:`location_record` -- one ``lean`` end at the declaration, ``role:
   key``, the relation and the passage's derived status; a ``closeMatch``
@@ -76,8 +78,10 @@ CONTEXT_CHARS = 32
 MAX_LOCATIONS = 5
 NO_MATCH = "noMatch"
 NOT_FORMALIZED = "not_formalized"
-#: ``cflib.vocab.CLOSE_MATCH`` and ``cflib.vocab.PROMINENCE``
+#: ``cflib.vocab.CLOSE_MATCH``, ``HAS_PART``, ``MIN_COVERAGE_PARTS`` and ``PROMINENCE``
 CLOSE_MATCH = "closeMatch"
+HAS_PART = "hasPart"
+MIN_COVERAGE_PARTS = 2
 PROMINENCES = frozenset({"subject", "central", "supporting"})
 #: the keys of a receipt candidate (references/locate-documents.md section 3), the only
 #: ones its sidecar carries
@@ -236,8 +240,39 @@ def _record_ext(passage: Mapping[str, Any], universe: Mapping[str, Any], **extra
         ext["section"] = [str(heading) for heading in passage["section"]]
     if passage.get("prominence"):
         ext["prominence"] = str(passage["prominence"])
+    claim = passage.get("coverage")
+    if claim:
+        ext["coverage"] = {"complete": True, "parts": [str(k) for k in claim["parts"]],
+                           "challenge": str(claim.get("challenge"))}
     ext.update({k: v for k, v in extra.items() if v is not None})
     return ext
+
+
+def coverage_problem(passage: Mapping[str, Any]) -> str | None:
+    """Why a passage's coverage claim cannot ride on its records, or None.
+
+    A claim (the maintainer's decision D1) names at least ``MIN_COVERAGE_PARTS``
+    distinct parts, each the ``location_key`` of one of the passage's ``hasPart``
+    locations, and carries its challenge value (hard rule 5).
+    """
+    claim = passage.get("coverage")
+    if not claim:
+        return None
+    parts = claim.get("parts") if isinstance(claim, Mapping) else None
+    if not isinstance(parts, (list, tuple)) or len(set(map(str, parts))) != len(parts) \
+            or len(parts) < MIN_COVERAGE_PARTS:
+        return (f"{passage.get('item')}: a coverage claim names at least {MIN_COVERAGE_PARTS} "
+                f"distinct parts, not {parts!r}")
+    has_part = {str(loc.get("location_key")) for loc in passage.get("locations") or []
+                if loc.get("relation") == HAS_PART}
+    stray = [str(k) for k in parts if str(k) not in has_part]
+    if stray:
+        return (f"{passage.get('item')}: coverage part(s) {', '.join(k[:12] for k in stray)} "
+                "are not hasPart locations of the passage")
+    if not claim.get("challenge"):
+        return (f"{passage.get('item')}: the coverage claim has no challenge value (hard rule 5: "
+                "nothing leaves the workspace without one)")
+    return None
 
 
 def passage_problem(passage: Mapping[str, Any]) -> str | None:
@@ -428,7 +463,7 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     if len(set(ranks)) != len(ranks):
         raise RecordError(f"{passage['item']}: two locations share a rank")
     passage_challenge(passage)
-    why = passage_problem(passage)
+    why = passage_problem(passage) or coverage_problem(passage)
     if why:
         raise RecordError(why)
     for loc in locations:

@@ -481,6 +481,10 @@ re-runs forty-nine others:
 - every absence and every unresolved outcome on a `subject` or `central`
   passage is hunted: the challenger searches first, with tools the worker did
   not have (ripgrep over the pinned checkouts, a type-search at the pin);
+- every coverage claim (§2.6), whatever the passage's prominence, is refuted
+  by default: the challenger matches each clause of the passage to a part and
+  checks that no part adds a hypothesis, then confirms the claim or refutes it
+  (the parts stay `hasPart`);
 - a stratified sample of `non_math`/`expository` scopes, `supporting`
   demotions and weak relations (`relatedMatch`, `narrowMatch`, `hasPart`) is
   re-judged;
