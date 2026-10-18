@@ -435,7 +435,11 @@ is the closure outside `propext`, `Classical.choice` and `Quot.sound` (`sorryAx`
 included; an axiom declaration's closure holds itself). A declaration whose
 status would turn on an `isProp` the probe could not compute is the conservative
 `statement_only` with `is_prop_unknown` in `flags`; a published index's status
-word, taken without a closure, carries `published_status`. `statement` is set on
+word, taken without a closure, carries `published_status` — Autoform's
+`complete` (no `sorry`, no non-standard axiom) is `proved` for a theorem and
+`definition` for every data kind (`def`, `abbrev`, `opaque`, `instance`,
+`inductive`, `structure`, `class`), its `wanted` is `wanted`, its kind `lemma` is
+written `theorem`, and a word or kind outside that is refused. `statement` is set on
 a `Prop`-valued definition — derived, while the probe emits no such field, from
 a `def`/`abbrev`/`opaque` whose printed type's final codomain is `Prop`. The
 source scan for a `proof_wanted` that adds no constant is not implemented (the

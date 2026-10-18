@@ -192,6 +192,66 @@ class TestD4TheTemplateFindsEscapedModulesSources(unittest.TestCase):
         self.assertIn("def probeRevision : Nat := 2", TEMPLATE.read_text(encoding="utf-8"))
 
 
+class TestD2AutoformsCompleteIsMappedByKind(unittest.TestCase):
+    """D2: every record of a published index whose words are ``complete``/``wanted`` was refused."""
+
+    RECORDS = [
+        {"record": "declaration", "name": "P.lemma_one", "module": "Alpha.Widget",
+         "kind": "lemma", "status": "complete", "signature": "1 = 1"},
+        {"record": "declaration", "name": "P.thm", "module": "Alpha.Widget",
+         "kind": "theorem", "status": "complete", "signature": "True"},
+        {"record": "declaration", "name": "P.fn", "module": "Alpha.Widget",
+         "kind": "def", "status": "complete", "signature": "ℕ → ℕ"},
+        {"record": "declaration", "name": "P.IsGood", "module": "Alpha.Widget",
+         "kind": "def", "status": "complete", "signature": "ℕ → Prop"},
+        {"record": "declaration", "name": "P.inst", "module": "Alpha.Widget",
+         "kind": "instance", "status": "complete", "signature": "Inhabited ℕ"},
+        {"record": "declaration", "name": "P.Shape", "module": "Alpha.Widget",
+         "kind": "structure", "status": "complete", "signature": "Type"},
+        {"record": "declaration", "name": "P.wanted", "module": "Alpha.Widget",
+         "kind": "theorem", "status": "wanted", "signature": "False"},
+    ]
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.universe = make_universe(self.root, canary=False)
+        self.out = self.root / "corpora" / "u1" / "index" / "alpha"
+
+    def ingest(self, records):
+        source = write_probe(self.root / f"pub{len(list(self.root.iterdir()))}", records,
+                             schema="autoform-library-index/v0",
+                             modules=(("Alpha.Widget", None),))
+        ingest.ingest(self.universe, "alpha", source, self.out,
+                      accept_published="the library's CI publishes it")
+        return {r["name"]: r for r in (json.loads(line) for line in
+                (self.out / "decls.jsonl").read_text(encoding="utf-8").splitlines())}
+
+    def test_complete_is_proved_for_a_theorem_and_a_definition_otherwise(self):
+        rows = self.ingest(self.RECORDS)
+        want = {"P.lemma_one": "proved", "P.thm": "proved", "P.fn": "definition",
+                "P.IsGood": "definition", "P.inst": "definition", "P.Shape": "definition",
+                "P.wanted": "wanted"}
+        self.assertEqual({n: r["proof_status"] for n, r in rows.items()}, want)
+        self.assertTrue(rows["P.IsGood"]["statement"])
+        self.assertFalse(rows["P.fn"]["statement"])
+        for row in rows.values():
+            self.assertEqual(row["flags"], ["published_status"])
+        self.assertEqual(rows["P.lemma_one"]["probe_proof_status"], "complete")
+
+    def test_lemma_is_the_probes_theorem(self):
+        rows = self.ingest(self.RECORDS)
+        self.assertEqual(rows["P.lemma_one"]["kind"], "theorem")
+        manifest = json.loads((self.out / "manifest.json").read_text(encoding="utf-8"))
+        self.assertNotIn("lemma", manifest["by_kind"])
+
+    def test_complete_on_a_kind_it_cannot_decide_is_refused(self):
+        for kind in ("axiom", "", "example"):
+            with self.subTest(kind=kind), self.assertRaises(CfError) as caught:
+                self.ingest([{"record": "declaration", "name": "P.x", "module": "Alpha.Widget",
+                              "kind": kind, "status": "complete"}])
+            self.assertIn("complete", str(caught.exception))
+
+
 class TestD12AtomicWritesKeepTheModeAPlainWriteWould(unittest.TestCase):
     """D12: ``universe.yaml`` was 0600 (mkstemp's mode) beside 0644 indexes."""
 

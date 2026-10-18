@@ -79,7 +79,11 @@ publishes itself) were not produced by this probe, so its canary says nothing
 about their statuses and a status word without a closure cannot be re-decided.
 They are refused unless the operator accepts one by name with a reason
 (``accept_published``), which is recorded on the library's universe row; the
-library, commit and toolchain checks apply to them as to a probe index.
+library, commit and toolchain checks apply to them as to a probe index.  A
+published record's own status word is mapped (:func:`published_status`), never
+guessed: Autoform's ``complete`` -- "rests on no sorry and no non-standard
+axiom" -- is ``proved`` for a theorem and ``definition`` for a data kind, and its
+kind word ``lemma`` is the probe's ``theorem``.
 
 The acceptance canary (section 2.4) is ingested by :func:`check_canary`: its
 four declarations must be classified as expected before any library on its
@@ -120,6 +124,22 @@ PUBLISHED_STATUSES = {
     "wanted": vocab.PROOF_WANTED, "statement_only": vocab.PROOF_STATEMENT_ONLY,
     "sorry": vocab.PROOF_STATEMENT_ONLY, "axiom_dependent": vocab.PROOF_AXIOM_DEPENDENT,
 }
+#: ``complete`` -- one of the only two status words Autoform's published index uses
+#: (``complete`` and ``wanted``) -- says a declaration rests on no ``sorry`` and no
+#: non-standard axiom, and nothing about whether it is a proof or data: that is its
+#: kind's.  A theorem is ``proved``; a data kind is a ``definition``.  An instance is
+#: data here, though an instance of a ``Prop``-valued class (``Fact p``) is a proof: the
+#: published record carries no type to tell them apart, and either way no instance
+#: formalizes a theorem passage.  ``complete`` on any other kind (an ``axiom``) is refused.
+PUBLISHED_COMPLETE = "complete"
+PUBLISHED_COMPLETE_BY_KIND = {
+    "theorem": vocab.PROOF_PROVED,
+    **{kind: vocab.PROOF_DEFINITION
+       for kind in ("def", "abbrev", "opaque", "instance", "inductive", "structure", "class")},
+}
+#: kind words of a published index and the probe's kind each is (``lemma`` is
+#: Autoform's word for what Lean and the probe call a ``theorem``)
+PUBLISHED_KINDS = {"lemma": "theorem"}
 DATA_KINDS = frozenset({"inductive", "structure", "class"})
 DEFINITION_KINDS = frozenset({"def", "abbrev", "opaque"})
 #: what each record flag (``cflib.vocab.INDEX_FLAGS``) means, for the command's summary line
@@ -260,6 +280,18 @@ def decide(record: dict) -> tuple[str, bool, list[str]]:
         flags.append(vocab.INDEX_FLAG_IS_PROP_UNKNOWN)
     statement = statement_flag(kind, record.get("signature")) and status != vocab.PROOF_PROVED
     return status, statement, flags
+
+
+def published_status(word: str, kind: str) -> str | None:
+    """The proof status a published record's own status word means, for its kind; None if none.
+
+    ``kind`` is the probe's word (``lemma`` already ``theorem``): ``complete`` is
+    decided by it (:data:`PUBLISHED_COMPLETE_BY_KIND`), every other word by
+    :data:`PUBLISHED_STATUSES` alone.
+    """
+    if word == PUBLISHED_COMPLETE:
+        return PUBLISHED_COMPLETE_BY_KIND.get(kind)
+    return PUBLISHED_STATUSES.get(word)
 
 
 def _printable(record: dict) -> bool:
@@ -550,6 +582,10 @@ def normalise(record: dict, module_paths: dict, checkout: _Checkout, *,
     if not name:
         raise CfError(f"line {line_no}: a declaration record has no name")
     kind = str(record.get("kind") or "")
+    if published:
+        kind = PUBLISHED_KINDS.get(kind, kind)
+        if kind != record.get("kind"):
+            record = {**record, "kind": kind}
     module = _text(record.get("module"), "the module", line_no)
     path = _text(record.get("path"), "the path", line_no) or module_paths.get(str(module))
     probe_status = str(record.get("proof_status") or "")
@@ -558,10 +594,13 @@ def normalise(record: dict, module_paths: dict, checkout: _Checkout, *,
         # re-decide it from: take the status only when it is a word that means one of
         # ours, flagged, and refuse any other
         probe_status = str(record.get("proof_status") or record.get("status") or "")
-        status = PUBLISHED_STATUSES.get(probe_status)
+        status = published_status(probe_status, kind)
         if status is None:
-            raise CfError(f"{name}: published status {probe_status!r} is not one of "
-                          f"{', '.join(sorted(PUBLISHED_STATUSES))}",
+            raise CfError(f"{name}: published status {probe_status!r} of a {kind or 'kindless'} "
+                          f"record is not one ingest maps (one of "
+                          f"{', '.join(sorted({*PUBLISHED_STATUSES, PUBLISHED_COMPLETE}))}; "
+                          f"{PUBLISHED_COMPLETE} only on the kinds "
+                          f"{', '.join(sorted(PUBLISHED_COMPLETE_BY_KIND))})",
                           hint="a status ingest cannot map is refused, never guessed")
         statement = statement_flag(kind, record.get("signature")) and status != vocab.PROOF_PROVED
         flags = [vocab.INDEX_FLAG_PUBLISHED_STATUS]
