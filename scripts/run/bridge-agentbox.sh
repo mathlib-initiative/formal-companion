@@ -58,7 +58,9 @@
 #                          an infrastructure failure is never a verdict
 #   CF_ATTEMPT_CAP         genuine reviewer rejections after which the task ends
 #                          UNRESOLVED (attempt_cap.py; unset or 0 = off, a locate run sets
-#                          3), with CF_TASK_MANIFESTS the gate's tasks/ directory and
+#                          3; 1 or 2 is refused, exit 78, since the locate gate accepts the
+#                          capped documents at no lower count), with CF_TASK_MANIFESTS the
+#                          gate's tasks/ directory and
 #                          CF_MERGE_TARGET the branch the capped change set is read
 #                          against (default main)
 # Claude's JSON envelope is KEPT, outside the worktree, under $ROOT/usage/ (one file
@@ -183,6 +185,10 @@ if [ "$CAP" != 0 ] && [ -n "${TEND_TASK_ID:-}" ]; then
               --cap "$CAP" --worktree "$PWD" 2>>"$ERR")"
   CAPRC=$?
   if [ "$CAPRC" = 0 ]; then printf '%s\n' "$CAPPED"; exit 0; fi
+  if [ "$CAPRC" = 78 ]; then
+    echo "bridge-agentbox: CF_ATTEMPT_CAP=$CAP is refused: under the locate gate's own cap (see $ERR)" >&2
+    exit 78
+  fi
   if [ "$CAPRC" != 10 ]; then
     echo "bridge-agentbox: the attempt cap could not end task $TEND_TASK_ID (exit $CAPRC)" >&2
     exit 1

@@ -1878,6 +1878,9 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
     """
     problems = Problems()
     written: dict[str, list[tuple[str, str]]] = {}
+    #: the tasks whose task file the change set holds, accepted or not: a task
+    #: file refused below has its own line, and "has no tasks/<id>.yaml" would
+    #: be a second, false one
     tasks: set[str] = set()
     seen: set[str] = set()
     for path in sorted(entries):
@@ -1889,6 +1892,8 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
             continue
         what, stem, source = kind
         seen.add(stem)
+        if what == "task":
+            tasks.add(stem)
         if status in ("D", "R"):
             problems.add(7, path, "was deleted or renamed away; a contribution writes its own "
                                   "documents and removes nothing")
@@ -1914,8 +1919,6 @@ def check_changed(entries: dict[str, str], ctx: Context, *, task_id: str = "",
                 why = _task_file_change(at_base(path), root / path)
                 if why:
                     problems.add(7, path, why)
-                    continue
-            tasks.add(stem)
             continue
         written.setdefault(stem, []).append((source, status))
         manifest = ctx.manifest(stem)

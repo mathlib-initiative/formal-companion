@@ -15,7 +15,11 @@ A task a reviewer keeps rejecting used to loop until the run was stopped.  Now:
   explicit ``verdict:`` marker of its prose (``normalize_result.
   explicit_verdict``).  A timeout, a 409, a crash, and a ``request_changes``
   the normaliser fell back to for want of a stated verdict never count;
-* ``worker`` -- before a WORKER call, a task at the cap (``CF_ATTEMPT_CAP``)
+* ``worker`` -- before a WORKER call, a task at the cap (``CF_ATTEMPT_CAP``,
+  0 for off, else at least the locate gate's own :data:`LOCATE_ATTEMPT_CAP`:
+  the gate accepts a ``by: attempt_cap`` document at no lower count, so a lower
+  cap is refused with exit 78 on every call, before any agent is called, rather
+  than writing documents every later gate call refuses)
   gets one schema-valid ``UNRESOLVED`` document per source of its task manifest
   (``unresolved.by: attempt_cap``), written and committed in the worktree with
   the git boundary pinned, and the bridge reports a finished contribution
@@ -51,7 +55,14 @@ if _HERE not in sys.path:
 import normalize_result  # noqa: E402  (bin/'s sibling: the one reading of a verdict)
 
 EXIT_NOT_CAPPED = 10
+#: a cap the locate gate would not honour (sysexits EX_CONFIG, as the bridge's own
+#: configuration errors)
+EXIT_CONFIG = 78
 UNRESOLVED_ATTEMPT_CAP = "attempt_cap"
+#: COPIED from ``cflib.vocab.LOCATE_ATTEMPT_CAP`` (no cflib on the host): the
+#: count at or above which ``gate/verify_locate.py`` accepts a ``by: attempt_cap``
+#: document; tests/test_locate_contract.py pins the three together
+LOCATE_ATTEMPT_CAP = 3
 DOCUMENT_SCHEMA = "cf-locate/1"
 LOCATE_INVENTORY = "locate-inventory"
 
@@ -450,6 +461,12 @@ def main(argv: list[str] | None = None) -> int:
                                 "may be missing")
     args = ap.parse_args(argv)
     root = Path(args.root)
+    if args.cmd != "record" and 0 < args.cap < LOCATE_ATTEMPT_CAP:
+        print(f"attempt_cap: a cap of {args.cap} (CF_ATTEMPT_CAP) is under the locate gate's "
+              f"{LOCATE_ATTEMPT_CAP}: the gate refuses a by: attempt_cap document at a lower "
+              f"count, so the capped task would loop; set CF_ATTEMPT_CAP to 0 (off) or at "
+              f"least {LOCATE_ATTEMPT_CAP} in the wrapper", file=sys.stderr)
+        return EXIT_CONFIG
     if not _safe(args.task):
         print(f"attempt_cap: no usable task id ({args.task!r}); the cap is off", file=sys.stderr)
         return EXIT_NOT_CAPPED

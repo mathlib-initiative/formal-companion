@@ -14,6 +14,8 @@ try:
 except ImportError:  # pragma: no cover
     from tests import _hermetic  # noqa: F401
 
+import contextlib
+import io
 import json
 import os
 import signal
@@ -487,6 +489,41 @@ class TestTheAttemptCap(BridgeCase):
                          attempt_cap.EXIT_NOT_CAPPED)
         self.assertEqual(attempt_cap.main(["worker", "--root", str(self.root), "--task", self.task,
                                            "--manifests", str(self.fx.tasks), "--cap", "0"]),
+                         attempt_cap.EXIT_NOT_CAPPED)
+
+    def test_a_cap_under_the_gates_is_refused_before_any_agent_call(self):
+        """The locate gate accepts a ``by: attempt_cap`` document only at a count of at
+        least its LOCATE_ATTEMPT_CAP, so a bridge capping lower wrote documents that the
+        gate refused on every later call, and the task looped.  A wrapper whose
+        CF_ATTEMPT_CAP is under the gate's is refused on every call, from the first."""
+        low = dict(self.capenv, CF_ATTEMPT_CAP=str(vl.LOCATE_ATTEMPT_CAP - 1))
+        self.agentbox(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
+        for rejected in (0, vl.LOCATE_ATTEMPT_CAP - 1):
+            while attempt_cap.read_count(self.root, self.task) < rejected:
+                self.reject()
+            before = self.called()
+            for role in ("worker", "reviewer"):
+                with self.subTest(rejected=rejected, role=role):
+                    proc = self.bridge(role, **low)
+                    self.assertEqual(proc.returncode, attempt_cap.EXIT_CONFIG, proc.stderr)
+                    self.assertIn(f"CF_ATTEMPT_CAP={vl.LOCATE_ATTEMPT_CAP - 1} is refused",
+                                  proc.stderr)
+                    self.assertEqual(proc.stdout, "")
+            self.assertEqual(self.called(), before, "a refused cap called an agent")
+            self.assertFalse((self.worktree / "findings").exists())
+        self.assertIn("under the locate gate's", (self.root / "agentbox-worker.err").read_text())
+        for cap in ("1", str(vl.LOCATE_ATTEMPT_CAP - 1)):
+            said = io.StringIO()
+            with contextlib.redirect_stderr(said):
+                code = attempt_cap.main(["worker", "--root", str(self.root), "--task", self.task,
+                                         "--manifests", str(self.fx.tasks), "--cap", cap])
+            self.assertEqual(code, attempt_cap.EXIT_CONFIG)
+            self.assertIn(f"set CF_ATTEMPT_CAP to 0 (off) or at least {vl.LOCATE_ATTEMPT_CAP}",
+                          said.getvalue())
+        # the gate's own cap, or one above it, is the bridge's to choose
+        self.assertEqual(attempt_cap.main(["worker", "--root", str(self.root), "--task",
+                                           self.task, "--manifests", str(self.fx.tasks),
+                                           "--cap", str(vl.LOCATE_ATTEMPT_CAP + 1)]),
                          attempt_cap.EXIT_NOT_CAPPED)
 
 
