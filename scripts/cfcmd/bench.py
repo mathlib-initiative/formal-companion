@@ -29,7 +29,7 @@ from pathlib import Path
 
 from cflib import vocab
 from cflib.errors import CfError
-from cflib.jsonio import read_json, write_json
+from cflib.jsonio import atomic_write, read_json, write_json
 from cflib.paths import skill_root
 from cflib.workspace import from_args
 from cflib.yamlio import read_yaml, write_yaml
@@ -74,6 +74,10 @@ def register(subparsers) -> None:
     b.add_argument("--eval", type=float, default=0.5, help="share in eval (default 0.5)")
     b.add_argument("--test", type=float, default=0.0, help="share in test (default 0: no test split)")
     b.add_argument("--seed", type=int, default=0, help="the seed every draw is a function of")
+    b.add_argument("--exclude-unrendered", action="store_true",
+                   help="bench the drawn articles that are rendered and record the others in "
+                        "draw.json's excluded, with their inclusion probabilities (by default "
+                        "the build refuses and lists the sources to fetch and render)")
 
     a = sub.add_parser("anchor", help="G1 resolution, the frozen labeler's emit and transcribe "
                                       "(G1 anchors, G3 blind labels, h, GX), and G4 spot checks")
@@ -254,6 +258,13 @@ def _print_curated(lists: dict) -> None:
               f"by its QID in a plain list")
 
 
+def _unrendered_step(sourceset: str, listed: Path) -> str:
+    """The named step that makes the drawn articles benchable: fetch and render exactly them."""
+    return (f"fetch and render exactly the sources listed in {listed} -- cf sourceset fetch "
+            f"{sourceset}, then cf sourceset render {sourceset} --source <id> for each -- and "
+            f"build again: the draw depends on the frame and the seed alone, so it does not change")
+
+
 def _build(ws, args) -> int:
     paths = ws.paths
     layout = BenchLayout.of(paths, args.bench_id)
@@ -267,15 +278,30 @@ def _build(ws, args) -> int:
     rows = draw_mod.read_frame_list(args.frame)
     curated = curated_mod.read_lists(args.curated_qids)
     frame = draw_mod.build_frame(rows, manifest, curated)
-    write_json(layout.frame_json, {"schema": FRAME_SCHEMA, "bench": args.bench_id,
-                                   "sourceset": manifest.pin,
-                                   "frame_file_sha256": inputs.sha256_file(args.frame),
-                                   **frame}, sort_keys=True)
+    frame_doc = {"schema": FRAME_SCHEMA, "bench": args.bench_id, "sourceset": manifest.pin,
+                 "frame_file_sha256": inputs.sha256_file(args.frame), **frame}
     drawn = draw_mod.draw(frame, uniform=args.uniform, curated=args.curated, seed=args.seed)
+    # the draw reads no layer; the drawn articles' spans do (section 8.5 step 3)
+    unrendered = draw_mod.unrendered_drawn(frame, drawn)
+    if unrendered:
+        atomic_write(layout.unrendered_list, "".join(f"{sid}\n" for sid in unrendered))
+        if not args.exclude_unrendered:
+            raise CfError(
+                f"{len(unrendered)} of the {len(drawn['articles'])} drawn article(s) are not rendered "
+                f"in sourceset {args.sourceset} version {manifest.version}: "
+                + ", ".join(unrendered[:10]) + (" …" if len(unrendered) > 10 else ""),
+                hint=_unrendered_step(args.sourceset, layout.unrendered_list)
+                + "; or pass --exclude-unrendered to bench the rest, each excluded article "
+                  "recorded in draw.json with its inclusion probabilities")
+        drawn = draw_mod.exclude(drawn, unrendered, reason=f"not rendered in sourceset "
+                                 f"{args.sourceset} version {manifest.version}")
+    elif layout.unrendered_list.is_file():
+        layout.unrendered_list.unlink()
     draw_doc = {"schema": DRAW_SCHEMA, "bench": args.bench_id, **drawn}
     if had_gold and old_draw is not None and json.loads(old_draw) != draw_doc:
         raise CfError(f"bench {args.bench_id} already holds gold labelled for another draw",
                       hint="a new draw is a new bench: build it under a new id")
+    write_json(layout.frame_json, frame_doc, sort_keys=True)
     write_json(layout.draw_json, draw_doc, sort_keys=True)
     bench = {"schema": BENCH_SCHEMA, "id": args.bench_id,
              "created": (previous or {}).get("created") or now(),
@@ -308,6 +334,13 @@ def _build(ws, args) -> int:
     print(f"built bench {args.bench_id}: frame {frame['N']} article(s) ({frame['N_curated']} curated), "
           f"drawn {len(articles)} ({drawn['uniform']['n']} uniform, {drawn['curated']['n']} curated), "
           f"{len(clusters['clusters'])} cluster(s), {len(spans)} G3 span(s)")
+    if frame["unrendered"]:
+        print(f"  frame    : {frame['N_rendered']} rendered, {len(frame['unrendered'])} not yet "
+              f"(frame.json unrendered); the draw is the whole frame's, so only drawn ones must be")
+    if drawn.get("excluded"):
+        print(f"  excluded : {len(drawn['excluded'])} drawn article(s) not rendered, benched without "
+              f"them (draw.json excluded, each with its inclusion probabilities; "
+              f"{layout.unrendered_list} lists them)")
     _print_curated(frame["curated_lists"])
     print(f"  splits   : dev {counts['dev']}, eval {counts['eval']}, test {counts['test']}")
     print(f"  host     : {layout.host_manifest} (label-free)")
@@ -505,6 +538,8 @@ def _freeze(ws, args) -> int:
         "library": bench.get("library"),
         "frame_sha256": inputs.sha256_file(layout.frame_json),
         "draw_sha256": inputs.sha256_file(layout.draw_json),
+        "excluded": [{"source_id": r["source_id"], "reason": r["reason"], "pi": r["pi"]}
+                     for r in read_json(layout.draw_json).get("excluded") or []],
         "spans_sha256": inputs.sha256_file(layout.spans_json),
         "clusters_sha256": inputs.sha256_file(layout.clusters_json),
         "clusters": clusters["clusters"],
