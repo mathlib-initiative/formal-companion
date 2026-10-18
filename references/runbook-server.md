@@ -259,16 +259,22 @@ root, bridge and harvest, with these differences:
   cannot be written, and then the line says it was read immutably; **with an assumed
   schema**: read that line on the smoke task, as for §4 step 5), or the single-stem rule,
   with the reason the lookup found no task.
-- **What travels.** `cf run` sends only the run's own sources (their rendered directories),
-  `corpus.sqlite` (and the database the workers search, when the run is blind or planted) and the
-  candidates directory, and checks the database's sha once at the verify stage. **A locate run
-  needs a spend cap**: `cf run --execute` refuses one without a `budget.max_cost`, and has no
-  `--no-budget-cap` escape for it.
+- **What travels.** `cf run` sends `corpus.sqlite` (and the database the workers search, when the
+  run is blind or planted) and the candidates directory, and checks the database's sha once at the
+  verify stage. The run's own sources (their rendered directories, and nothing of any other run's)
+  travel only with `--include-source-text`: the gate fails closed without their layers, so the
+  verify stage checks each of the run's sources on the host (its `layer.txt` against `gate.json`'s
+  `layer_sha256`) and fails while one is missing, and `--execute` without the flag names the
+  sources it expects to find there already. Every `cf run` below therefore carries `--host` and
+  `--include-source-text`. **A locate run needs a spend cap**: `cf run --execute` refuses one
+  without a `budget.max_cost`, and has no `--no-budget-cap` escape for it.
 - **The host-side directories**, all in the tend root and outside every worktree: `usage/` (each
   agent call's JSON envelope, a cost cross-check), `attempts/<task-id>.json` (genuine reviewer
   rejections only; the third makes the worker bridge write `UNRESOLVED` documents with
   `unresolved.by: attempt_cap`, which the reviewer bridge approves mechanically), `gate-log/gate.jsonl`
-  (one line per gate call, by rule, with its `ownership` line, `task_id_from` and `changed_files`).
+  (one line per gate call, by rule, with its `ownership` line, `task_id_from` and `changed_files`;
+  the watchdog's gate-failure rate and the bench's rejection rates count only the
+  `changed_files: true` lines, tend's own calls, never an agent's `--findings` check).
 - **The worker's tools.** The worker allowlist adds the two corpus host tools by absolute path,
   pinned to the run's database (`CF_EXTRA_TOOLS`), and an inventory worker's passage-id tool.
 - **Bringing it home.** `cf harvest <run-id>` lands `corpus/<run-id>/<task-id>/<source-id>.json`,
@@ -284,34 +290,69 @@ root, bridge and harvest, with these differences:
   (`references/locate-bench.md` §7).
 - **Shards.** More than 500 tasks is a campaign:
   1. Run a **pilot** first: a small locate run taken to the smoke stage with `cf run <pilot>
-     --i-have-consent --execute`, watched through worker → gate → reviewer → merge, then raised
-     with `--stage raise --smoke-verified --execute`, which records `run.smoke_verified`. Read its
-     p90 cost per merged task and gate-failure rate from its harvest.
+     --host <alias> --i-have-consent --include-source-text --execute`, watched through worker →
+     gate → reviewer → merge, then raised with `--stage raise --smoke-verified --execute`, which
+     records `run.smoke_verified`. Read its p90 cost per merged task and gate-failure rate from
+     its harvest.
   2. Plan each shard with `cf plan-locate` (each with its own `--max-cost`), then
      `cf campaign plan <id> --shard <r1> --shard <r2> … --host <alias> --pilot <pilot>` with the
      pilot's p90s. `cf campaign plan` stamps `locate.campaign` into each shard's `run.yaml` and
-     refuses a shard stamped by another campaign. Give `--transcript-dirs` (or set
-     `hosts.<alias>.transcript_dirs` in `workspace.yaml`) to have each shard's transcripts exported
-     and pruned, and `--canaries <host path>` to have them scanned for the bench's label canaries.
-  3. Take every shard through `cf run <shard> --i-have-consent --execute --stage verify`, which
-     transfers and verifies it and launches nothing. `cf campaign render <id>` refuses a campaign
-     without a smoke-verified pilot.
-  4. Copy `campaigns/<id>/` to the host and start its `sequencer.sh` there (under `nohup` or a
-     terminal multiplexer). It takes a lock (`sequencer.lock`), so a second start exits 3. It refuses
-     a root that already has a live `tend run`, keys its state by run id, and runs shard k+1 only
-     after shard k's `tend run` ends. Beside each shard its model-free watchdog drains the root
-     (`tend-control drain`) when the shard's spend passes its cap, or when the gate-failure rate or the
-     cost per merged task passes the configured multiple of the pilot's p90. After each shard it
-     scans that shard's transcripts for canaries (`canary_scan.py` writes
-     `{"scanned": N, "hits": [<file>, …], "canaries": K}`), exports their usage and prunes them;
-     a canary hit or a failed scan keeps them. A drain, a canary hit or an unreadable watchdog record
-     stops the campaign. `CF_TEND_CMD`, `CF_TRANSCRIPT_DIRS`, `CF_CANARIES` and `CF_WATCH_INTERVAL`
-     override what was rendered.
-  5. Harvest each shard as it finishes (`cf harvest <shard> --execute`); `cf campaign status <id>`
+     refuses a shard stamped by another campaign; run again, it reads every shard's `run.yaml`
+     afresh and keeps the thresholds, pilot, transcript directories and canaries it is not given.
+     Give `--transcript-dirs` (or set `hosts.<alias>.transcript_dirs` in `workspace.yaml`) to have
+     each shard's transcripts exported and pruned, and `--canaries <host path>` to have them scanned
+     for the bench's label canaries; each is an absolute host path or `~/…` (the host's home).
+     **What the sequencer takes from those directories:** a file that appeared there since a shard
+     first started and names the shard's tend root, entrypoint or gate directory (an agent works in
+     a worktree of the run, from prompts that name its gate) is that shard's: it is scanned,
+     exported into the shard's `usage-<run-id>.jsonl` and then **deleted**. A new file that names
+     none of them (another session of the same user, another run) is left alone, so an agent CLI's
+     per-user directory works; but nothing else of the run itself may write there.
+  3. Take every shard through `cf run <shard> --host <alias> --i-have-consent
+     --include-source-text --execute --stage verify`, which transfers and verifies it and launches
+     nothing. `cf campaign render <id>` refuses a campaign without a smoke-verified pilot, and a
+     shard whose `run.yaml` no longer matches the campaign's record of it (its cap, task count,
+     limits or `locate.campaign` stamp): a shard re-planned since is planned into the campaign
+     again with `cf campaign plan`, then rendered.
+  4. Run the two commands `cf campaign render <id>` prints: the transfer (`ssh <alias> mkdir -p
+     <remote root>/campaigns/<id> && rsync …`, which copies `campaigns/<id>/host/` there) and the
+     start of its `sequencer.sh` under `nohup` (or start it in a terminal multiplexer). It takes a
+     lock (`sequencer.lock`), so a second start exits 3, and nothing it launches holds that lock,
+     so a sequencer that was killed can be started again. It refuses a root that already has a
+     live `tend run` (a killed sequencer's tend run lives on, watched by its watchdog to the end;
+     a watchdog still on a root when its shard is launched again is stopped first), keys its state
+     by run id, and runs shard k+1 only after shard k's `tend run` ends. Beside each
+     shard its model-free watchdog drains the root (`tend-control drain`) when the shard's spend
+     passes its cap, or when the gate-failure rate or the cost per merged task passes the
+     configured multiple of the pilot's p90. After each shard it scans that shard's transcripts for
+     canaries (`canary_scan.py` writes `{"scanned": N, "hits": [<file>, …], "canaries": K,
+     "canary_sha256": [<sha256 of each canary>]}`; `cf bench score` refuses a report that does not
+     list its bench's canary), exports their usage and prunes them; a canary hit keeps them, and a
+     scan that cannot run keeps them unexported for the next attempt. A drain, a reason to drain,
+     a canary hit, a scan that could not run, a watchdog that died during the shard or an
+     unreadable watchdog record stops the campaign (`STOPPED`; `sequencer.log` and
+     `shard-<run-id>.stopped` say why). `CF_TEND_CMD`, `CF_TRANSCRIPT_DIRS`, `CF_CANARIES` and
+     `CF_WATCH_INTERVAL` override what was rendered; a transcript directory or canaries file that
+     is not there stops the sequencer before any shard.
+  5. **Resuming.** Remove `STOPPED` and start the sequencer again. A shard that was interrupted
+     (a reboot, a killed sequencer) keeps the transcript baseline it first took, and its earlier
+     attempt's transcripts are scanned, exported and pruned before anything is relaunched. A
+     shard is **not relaunched** while one of its canary reports holds a hit (a report with a hit
+     is never replaced: a later scan is kept beside it in `canary-<run-id>.attempts/`), or while
+     the watchdog, run once before the launch, already finds a reason to drain it: relaunching it
+     would only spend past the cap and stop again. Either raise its cap (re-plan the shard with
+     `cf plan-locate … --max-cost <usd>`, run `cf campaign plan` and `cf campaign render` again,
+     and transfer) or accept the shard as it stands: `CF_ACCEPT=<run-id>` (several, separated by
+     commas) marks it done, writing into `shard-<run-id>.done` why it had stopped, and the
+     campaign moves on to the next shard; its canary report stays as it is for the harvest. Only a
+     shard that has started (stopped or interrupted) is accepted: an id naming a shard that never
+     started, or no shard of the campaign, is ignored with a line in `sequencer.log`, and that
+     shard runs.
+  6. Harvest each shard as it finishes (`cf harvest <shard> --execute`); `cf campaign status <id>`
      reads the shards' receipts.
 
-  The sequencer needs, on the host: bash 4.4 or later (`mapfile -d`), GNU `comm` (with `-z`),
-  `flock`, `pgrep`, `python3` and rsync.
+  The sequencer needs, on the host: bash 4.4 or later (`mapfile -d`), GNU `comm` and `sort` (with
+  `-z`), `flock`, `pgrep`, `grep`, `gzip`, `python3` and rsync.
 
 ## 10. What stays manual, permanently
 

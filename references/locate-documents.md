@@ -1317,51 +1317,88 @@ tasks: 480
 max_cost: 120.0               # the sum of the shards' caps
 watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5}
 pilot: wpm-pilot              # a run whose run.yaml records run.smoke_verified: true
-transcript_dirs: <host dir>   # colon-separated; else hosts.<host>.transcript_dirs
-canaries: <host path>         # the bench's canaries.txt on the host, or null
+transcript_dirs: <host dir>   # colon-separated, each absolute or ~/…; else hosts.<host>.transcript_dirs
+canaries: <host path>         # the bench's canaries.txt on the host (absolute or ~/…), or null
 sequencer: {path: …/host/sequencer.sh, sha256: <hex>, host_dir: <remote root>/campaigns/<id>}
 ```
 
 A campaign id is letters, digits, `.`, `_` and `-`, starting with a letter or
 digit. `plan` stamps `locate.campaign: <id>` into each shard's `run.yaml` (the
 export seals it) and refuses a shard stamped with another campaign; once the
-campaign is rendered a re-plan may only append shards. `render` refuses a
-campaign whose `pilot` is missing or records no passed smoke test, since the
-sequencer launches each shard at full concurrency with no smoke test of its
-own. Each shard goes through `cf run <shard> --stage verify` first — transfer
-and verify, nothing launched; a shard smoke-tested with `cf run` keeps its own
-tend run going.
+campaign is rendered a re-plan may only append shards. A re-plan reads every
+shard's `run.yaml` again and keeps what it is not given: the watchdog's
+thresholds (`multiple` 2 and `min_tasks` 5 the first time), the pilot, the
+transcript directories and the canaries. A transcript directory or canaries
+path is absolute or `~/…` (the host's home), since render quotes every path
+into the sequencer; anything else is refused, at `plan` for the flags and at
+`render` for `hosts.<host>.transcript_dirs`. `render` refuses a campaign whose
+`pilot` is missing or records no passed smoke test, since the sequencer
+launches each shard at full concurrency with no smoke test of its own, and a
+shard whose `run.yaml` no longer matches its row (`max_cost`, `tasks`,
+`workers`, `reviewers`) or its `locate.campaign` stamp: a shard re-planned
+since is planned into the campaign again with `cf campaign plan`. Each shard
+goes through `cf run <shard> --stage verify` first — transfer and verify,
+nothing launched; a shard smoke-tested with `cf run` keeps its own tend run
+going.
 
 `render` writes `campaigns/<id>/host/`: `sequencer.sh` (from
 `templates/campaign/sequencer.sh.tmpl`, shell, no cflib) beside copies of
 `scripts/run/watchdog.py`, `scripts/cost/usage.py` and
-`scripts/run/canary_scan.py`, and prints the rsync and start commands (every
-path in them shell-quoted). On the host one sequencer at a time holds the
-campaign (`flock` on `sequencer.lock`); it runs each shard's `tend run` in order
-— shard k+1 starts when shard k's ends — refusing a root that already has a live
-tend run, with the watchdog beside it. After each shard it takes the
-transcripts that appeared under `CF_TRANSCRIPT_DIRS` (default: campaign.yaml's)
-since the shard started — the directories' listing before and after, never a
-file that was already there — scans them for `CF_CANARIES` (default:
+`scripts/run/canary_scan.py`, and prints the transfer (`ssh <host> mkdir -p
+<host_dir> && rsync …`) and start commands (every path in them shell-quoted).
+On the host one sequencer at a time holds the campaign (`flock` on
+`sequencer.lock`, which nothing it launches inherits, so a killed sequencer can
+be started again); it reads a leading `~/` of a transcript directory or of the
+canaries path against the host's `$HOME`, and stops before any shard when one
+of them is not there. It runs each shard's `tend run` in order — shard k+1
+starts when shard k's ends — refusing a root that already has a live tend run,
+with the watchdog beside it (`--parent`: a killed sequencer's watchdog watches
+its tend run to the end and exits within seconds of it; before a shard is
+launched, `watchdog.py --stop-others` stops any watchdog still on its root, so a
+relaunch is never watched at a killed sequencer's cap). A shard's transcripts
+are the files that appeared under `CF_TRANSCRIPT_DIRS` (default:
+campaign.yaml's) since the shard first started — the directories' listing when it first started (`.before`,
+taken once: a restart keeps it) and after, never a file that was already there
+or that an earlier attempt already exported — and that name its tend root,
+entrypoint or gate directory; a new file naming none of them is another
+session's and is left alone. After each shard, and before a resumed shard is
+relaunched, the sequencer scans them for `CF_CANARIES` (default:
 campaign.yaml's) into `canary-<run-id>.json` (`{scanned, hits, canaries}`, the
 report `cf bench score --canary-report` reads), appends their usage to
 `usage-<run-id>.jsonl` (a resumed shard keeps its earlier attempt's rows), and
 deletes exactly those files, keeping them all when the scan found a canary or
-could not run, or the export failed. Its state in `<remote root>/campaigns/<id>/`
-is keyed by run id (`shard-<run-id>.done`, `.started`, `.before`, `usage-<run-id>.jsonl`,
-`canary-<run-id>.json`, `sequencer.log`). It writes `STOPPED` and stops when a
-shard's last watchdog record shows a drain, or a reason to drain that no drain
-acted on (a failed `tend-control drain`, or a cap crossed after the last
-periodic check), or cannot be read, and when a canary was found. The watchdog (model-free, stdlib) drains the root with
+the export failed, and keeping them unexported for the next attempt when the
+scan could not run. A later clean scan is merged into a clean report (scanned
+summed; `canary_sha256`, when present, the canaries both scans used); a report
+with a hit, or one that cannot be read, is never replaced, and a later scan is
+kept beside it in `canary-<run-id>.attempts/`. Its state in
+`<remote root>/campaigns/<id>/` is keyed by run id (`shard-<run-id>.done`,
+`.started`, `.before`, `.stopped`, `usage-<run-id>.jsonl`,
+`canary-<run-id>.json`, `canary-<run-id>.attempts/`, `sequencer.log`). It
+writes `STOPPED` (and the reason into `shard-<run-id>.stopped`) and stops when
+a shard's last watchdog record shows a drain, or a reason to drain that no
+drain acted on (a failed `tend-control drain`, or a cap crossed after the last
+periodic check), or cannot be read, when the watchdog died during the shard,
+when a canary was found anywhere in the run's reports, and when the scan could
+not run. A stopped shard is not relaunched as it stands: once `STOPPED` is
+removed, a shard whose canary reports hold a hit, or which the watchdog's dry
+run already finds a reason to drain, stops again before its `tend run` starts.
+`CF_ACCEPT=<run-id>[,…]` accepts such a shard as it stands: the sequencer
+settles what it left, writes why it had stopped into `shard-<run-id>.done`, and
+moves on to the next shard. Only a shard that has started (stopped, or
+interrupted) is accepted; an id naming a shard that never started, or no shard
+of the campaign, is ignored with a log line, and that shard runs. The watchdog (model-free, stdlib) drains the root with
 `tend-control drain` when the spend from `usage/` reaches the shard's cap — the
 priced envelopes' `total_cost_usd` plus, for each call that left no priced
 envelope, its elapsed seconds times the root's highest dollars-per-second
 (`--unpriced-usd-per-hour` before any priced envelope has a duration; the
 record says `estimated_unpriced_usd: null` when neither exists) —
-or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
+or the gate-failure rate of tend's calls in `gate-log/gate.jsonl` (its `changed_files: true`
+lines, over at least 20 of them) or
 the cost per merged task (over at least `min_tasks`) passes `multiple` times the
 pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
-`<root>/watchdog.json`; `--min-gate-calls` and `--min-tasks` are at least 1. The
+`<root>/watchdog.json` (a progress line it cannot print, on a full disk, is
+lost, never the watchdog); `--min-gate-calls` and `--min-tasks` are at least 1. The
 operator's machine only harvests receipts: `status` reads each shard's
 `RECEIPT.json` (complete, the gate as ok, FAILED or UNGATED — a receipt with no
 gate block was never gated — the `locate` block, the priced cost) and totals
