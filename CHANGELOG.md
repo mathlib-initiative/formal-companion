@@ -145,6 +145,29 @@ release has something to say.
   database from a query); `scripts/corpus/query.py` is the read API the other
   locate stages call over the same functions. The WIP probe drivers pin git with
   gitsafe's settings, inlined because they run on the host without cflib.
+- Review fixes to the corpus. Ingest reads the library, commit and toolchain from
+  the index's own header and manifest (which may not disagree, and a missing
+  toolchain is refused), refuses an index whose bytes or record counts are not
+  the ones the probe wrote, a dirty probed checkout, a record without its closure
+  or contradicting itself, an index with no module path, and a `--checkout` that
+  is not the clean pinned commit; drops private declarations whose user names
+  collide (counted) instead of refusing the library; and stores Wikipedia tags in
+  one canonical page-URL form (apostrophes, balanced parentheses and percent
+  encoding kept as the title). A published `autoform-library-index/v0` index no
+  longer bypasses any of this: it is refused unless accepted with
+  `--accept-published <reason>`, recorded in `universe.yaml`. Names and queries
+  are split into words by one rule (`natDegree` finds `Polynomial.natDegree`),
+  the host tools exit 2 on an argument that is not UTF-8, and `cf corpus add
+  --conventions` no longer overwrites a conventions file on a refused add.
+  `probe-command` sets `ATLAS_ROOT` once (an unset one made the clean-up `rm -rf
+  /libs/...`), validates the toolchain, quotes what it prints and builds the
+  canary in a clean, niced environment. **Two host-driver changes**:
+  `build_universe_host.sh` now passes a library's `SRC_DIR` to the probe (it was
+  dropped by the clean environment, so a library whose sources sit under it was
+  indexed with every path null; `index-ok` now re-probes such an index), and its
+  disk floor measures the fullest of `$ATLAS_ROOT`, `/` and `$HOME`, refuses a
+  non-numeric `MIN_FREE_GB` and stops when `df` cannot answer. The universe
+  built on the run host before these fixes predates them.
 - The locate contract the wave-2 packages are built against
   (`references/locate-documents.md` §7–§11): the sourceset manifest and a
   rendered web source's files (the Literature Links layer, `formulas.json`, the
