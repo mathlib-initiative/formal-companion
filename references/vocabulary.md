@@ -270,15 +270,61 @@ challenge sample re-judges. `RELATION_STRENGTH` orders the relations for a chall
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,
-absent)`, each location giving its `relation`, `proof_status` and optional `statement` flag:
+absent, coverage=None)`, each location giving its `relation`, `proof_status`, optional `statement`
+flag and, when a coverage claim names it, its `location_key`; `coverage` is the passage's coverage
+claim (below) or `None`, and the three-argument call is the one it always was:
 
 | status | when |
 |---|---|
-| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration. Definition passage: `exactMatch` or `closeMatch` to a `definition` |
-| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage |
-| `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition |
+| `formalized` | theorem/conjecture passage: `exactMatch`, `closeMatch` or `broadMatch` to a `proved` declaration; `exactMatch` or `closeMatch` to **data** — a `definition` without the `statement` flag (an equivalence, isomorphism, bijection, structure-valued construction: the Chinese remainder theorem as a `RingEquiv`); a **survived coverage claim** whose every part is `proved`. Definition passage: `exactMatch` or `closeMatch` to a `definition`; a survived coverage claim whose every part is a `definition` or `proved` |
+| `statement_only` | the best such location is `statement_only`, `wanted` or `axiom_dependent`, or is a `Prop`-valued definition stating a theorem passage; or a theorem passage's survived coverage claim whose every part is `proved`, `statement_only`, `wanted` or `axiom_dependent` and not every one `proved` |
+| `partial` | only `hasPart` or `narrowMatch`, or `broadMatch` to a definition, with no coverage claim that upgrades them |
 | `not_formalized` | a checked absence, possibly beside `relatedMatch` locations |
 | none (`None`) | unresolved: no location that counts and no absence — including a passage whose only locations are `relatedMatch` |
+
+The best status over all the evidence wins (`formalized` > `statement_only` > `partial` >
+`not_formalized`). A coverage claim whose challenge is anything but `survived` — owed,
+`challenge_pending`, `not_required`, `sampled_out`, `downgraded` — upgrades nothing, and a refuted
+claim is removed by the outcomes before the status is derived.
+
+**The maintainer's decision D1** (2026-10-18), verbatim:
+
+> D1: yes. Formalized when the hasPart locations together cover every clause (challenger confirms
+> coverage), and when an exact/closeMatch is to an equivalence or data declaration that states the
+> theorem (e.g. CRT's RingEquiv). Update vocab and WikiLean's parity table.
+
+It replaces two of the decisions this section used to make the conservative way: a theorem passage
+matched exactly or closely to data was `partial` (as its `broadMatch` still is), and a passage that
+says several things — a conjunction of clauses — stated clause by clause by `hasPart` locations was
+`partial` however completely they covered it. The table above is the decision; the shared parity
+table `tests/data/locate/status-parity.json` (`cf-locate-status-parity/1`) holds its cases with
+their expected status, written by hand, and a consumer's own implementation runs the same cases.
+
+**The coverage claim.** A located passage may carry `coverage: {"complete": true, "parts": [<rank>,
+…], "note": "<one sentence>"}` in its locate document (references/locate-documents.md §3): its
+`hasPart` locations, named by rank, together state every clause of the passage, and none adds a
+hypothesis stronger than the passage's. At least `MIN_COVERAGE_PARTS` (2) distinct parts, each a
+`hasPart` location of the passage; the `note` says how, in the worker's own words, within the
+record note cap (no more than `EXPORT_QUOTE_WORDS` words of the source verbatim, at most 2,000
+characters). The gate refuses a claim on an absent or unresolved passage. Every claim is challenged
+whatever the passage's prominence — refuted by default, target `coverage` (`COVERAGE_TARGET`),
+actions `confirm` or `refute` (`COVERAGE_ACTIONS`) — because it upgrades a status: `confirm` makes
+it `survived`, `refute` removes the claim and leaves its parts `hasPart`. An exported record
+carries it as `extensions[‹locate›].coverage = {"complete": true, "parts": [<location_key>, …],
+"challenge": <value>}`.
+
+Read literally until the maintainer says otherwise (each is a parity case marked with its
+question):
+
+- **Q1** — part B.2 of the agreed specification names definition passages and construction and
+  notation, not the definition row of an `example` or `other` passage (part B.1 names the theorem
+  row of both): a survived claim on an `example` or `other` passage upgrades only by the theorem
+  row, so `definition` parts upgrade nothing there;
+- **Q2** — "proved-or-statement-bearing" is read as the proof statuses `proved`, `statement_only`,
+  `wanted` and `axiom_dependent`: a theorem passage's part that is data, or a `Prop`-valued
+  definition whose proof status is `definition`, upgrades nothing;
+- **Q3** — a definition passage's claim with a `statement_only`, `wanted` or `axiom_dependent` part
+  upgrades nothing (part B.2 gives no `statement_only` fallback, as B.1 does for a theorem).
 
 The proposal's table names theorem/conjecture and definition passages only. Decided here, each
 the conservative way, until the maintainer says otherwise:
@@ -286,13 +332,11 @@ the conservative way, until the maintainer says otherwise:
 - a `construction` or `notation` passage introduces an object or a symbol, so it is judged as a
   definition passage (`DEFINITION_PASSAGE_KINDS`); an `example` or `other` passage is judged by
   **both** rows and takes the better (`EITHER_PASSAGE_KINDS`);
-- a theorem passage matched exactly or closely to **data** (a `definition` with no `statement`
-  flag) is `partial`, as its `broadMatch` is — which understates an instance that states "ℝ is a
-  field", and is listed as an open question;
 - a definition passage matched exactly or closely to a `proved` theorem is `partial`;
 - the relation decides before the proof status or the `statement` flag: `hasPart` and
   `narrowMatch` (and, for a definition passage, `broadMatch`) are `partial` whatever the
-  declaration is, so a sorry'd lemma stating one part of a theorem is never `statement_only`;
+  declaration is, so a sorry'd lemma stating one part of a theorem is never `statement_only` —
+  unless a survived coverage claim names it, when decision D1 above judges the parts together;
 - a passage whose only locations are `relatedMatch`, with no checked absence, has **no status**
   (`None`). It is what a challenge leaves when it downgrades a passage's one location to
   `relatedMatch`: nothing says the passage is formalized and nobody checked that it is absent,
@@ -303,7 +347,10 @@ the conservative way, until the maintainer says otherwise:
 Refused (`CfError`), because no consistent record says them: a checked absence beside a location
 that counts; the `statement` flag on a `proved` declaration (`decide_proof_status` gives a
 `Prop`-valued definition every status but `proved`, which is a theorem's); a `statement` that is
-not a bool (absent or `null` is `false`); and any value outside these sets.
+not a bool (absent or `null` is `false`); a coverage claim that is not `complete: true`, names
+fewer than two distinct parts, or names a part that is not one of the passage's `hasPart`
+locations (a part a challenge refuted or downgraded: the claim is then challenged again), whatever
+its challenge; and any value outside these sets.
 
 **Challenge verdicts** (`CHALLENGE_VERDICTS`, the proposal's §5): every record leaves a workspace with one.
 
@@ -335,15 +382,16 @@ record no verdict judged.
 | `CANDIDATE_VERDICTS` | `accepted` · `rejected` — what a receipt says of each candidate it examined; a rejection carries a reason |
 | `CANDIDATE_VIA` | `wikidata_tag` · `mathlib_1000` · `mathlib_100` · `docstring_url` · `library_metadata` — how an L2 **curated** candidate was found; lexical retrieval is not curated, and only curated hits bind gate rule 4 |
 | `TAG_KINDS` | `wikidata` · `stacks` · `kerodon` · `wikipedia` — the tags the library index parses from a declaration's source span and docstring |
-| `CHALLENGE_TARGETS` | `location` · `absence` · `unresolved` · `scope` · `prominence` |
+| `CHALLENGE_TARGETS` | `location` · `absence` · `unresolved` · `scope` · `prominence` · `coverage` (`COVERAGE_TARGET`: a passage's coverage claim, decision D1; its actions are `COVERAGE_ACTIONS`, `confirm` · `refute`) |
 | `CHALLENGE_ACTIONS` | `confirm` and `uphold` (`CHALLENGE_KEEP`: the record survives) · `downgrade`, `refute` and `overturn` (`CHALLENGE_CHANGE`: the affected records are `downgraded`) |
 | `UNRESOLVED_ATTEMPT_CAP` | `attempt_cap`: the reason on an `UNRESOLVED` document the bridge writes after a task's third genuine reviewer rejection; never a worker's |
 | `UNRESOLVED_BY` | `worker` (`UNRESOLVED_BY_WORKER`: the worker could not decide) · `attempt_cap` (the bridge, at the cap) — an `UNRESOLVED` document's `unresolved.by` |
-| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage) · `hunt` (an absence or unresolved outcome on one) · `sample` (the stratified sample's frame: scope demotions, `supporting` demotions, weak relations) · `none` — why the challenge plan put a record where it did |
+| `CHALLENGE_RULES` | `refute_by_default` (a location on a `subject` or `central` passage, and every coverage claim) · `hunt` (an absence or unresolved outcome on one) · `sample` (the stratified sample's frame: scope demotions, `supporting` demotions, weak relations) · `none` — why the challenge plan put a record where it did |
 | `CHALLENGE_PLANNED` | `required` (`CHALLENGE_REQUIRED`: the record is in a challenge task and its verdict is owed) · `sampled_out` · `not_required` — what the challenge plan says a record is owed, before any verdict |
 | `INDEX_FLAGS` | `is_prop_unknown` (the probe's `isProp` failed, so the status is the conservative `statement_only`) · `published_status` (a published index's own status word, accepted with `cf corpus ingest --accept-published`) — a normalised declaration's `flags` |
 
 Bounds, also in `cflib.vocab`: `MIN_ABSENCE_QUERIES` (3 distinct queries in an absence's receipt),
+`MIN_COVERAGE_PARTS` (2 distinct `hasPart` parts in a coverage claim),
 `MAX_PASSAGES_PER_LOCATE_TASK` (8), `CHALLENGE_BATCH_RECORDS` (about 20 records per challenge
 task), the export's quote caps `EXPORT_QUOTE_WORDS` (12 words of `exact`) and
 `EXPORT_CONTEXT_CHARS` (32 characters of each of `prefix` and `suffix`), the record set's

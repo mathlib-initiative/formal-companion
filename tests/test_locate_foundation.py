@@ -274,9 +274,23 @@ class TestTheDerivedStatus(unittest.TestCase):
         self.assertEqual(self.status("theorem", self.loc("exactMatch", "statement_only"),
                                      self.loc("broadMatch", "proved")), "formalized")
 
+    def test_a_theorem_stated_exactly_by_data_is_formalized(self):
+        """The maintainer's decision D1: an equivalence or other data declaration that
+        states the theorem (the Chinese remainder theorem as a RingEquiv) formalizes it;
+        its broadMatch stays partial, and a Prop-valued definition stays statement_only."""
+        for kind in ("theorem", "conjecture"):
+            for relation in ("exactMatch", "closeMatch"):
+                with self.subTest(kind=kind, relation=relation):
+                    self.assertEqual(self.status(kind, self.loc(relation, "definition")),
+                                     "formalized")
+                    self.assertEqual(self.status(kind, self.loc(relation, "definition", True)),
+                                     "statement_only")
+                    self.assertEqual(self.status(kind, self.loc(relation, "statement_only")),
+                                     "statement_only")
+        self.assertEqual(self.status("theorem", self.loc("broadMatch", "definition")), "partial")
+
     def test_the_cases_the_table_does_not_name_are_conservative(self):
-        # a theorem passage stated exactly by data, a definition passage by a theorem
-        self.assertEqual(self.status("theorem", self.loc("exactMatch", "definition")), "partial")
+        # a definition passage stated exactly by a theorem
         self.assertEqual(self.status("definition", self.loc("exactMatch", "proved")), "partial")
         # construction and notation are definition passages
         self.assertEqual(self.status("construction", self.loc("exactMatch", "definition")),
