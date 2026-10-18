@@ -139,6 +139,22 @@ release has something to say.
   cost on locate and challenge spend when the inventory is shared. The bench
   fixtures are built by `Sourceset`, `render_html`, `Universe` and
   `build_db`, in the harvested layout `corpus/<run>/<task>/<source>.json`.
+  Gold is tighter too: a gold span holds at least four whole words, lettered
+  1000.yaml keys join their base QID, `to_additive` twins are the whole image
+  and renames widen a surviving alias, nested blocks are one span unit, a
+  partial transcription keeps every earlier row and never mixes labelers (the
+  manifest names the labeler from the rows; labeler `locate-label/2`), h is
+  tag-blind end to end and over every anchored passage, GX needs both
+  enumerators, a refused build or `freeze --plant` writes nothing, and the
+  frozen P tier and canary are verified. The score refuses a canary check
+  that read nothing and costs that are not dollars, pins the runs' own
+  renderer, scores E-MEMORY wherever a removed declaration is cited, counts a
+  missing locate result as unresolved, and stratifies every metric. `compare`
+  requires a distinct A/A replicate of the baseline's configuration, a
+  replication of another bench's accepted claim (`--replication
+  BENCH:ENTRY`; `--ledger` is gone), a resolvable alpha in (0, 0.5), and
+  holds the ledger under a lock; a missing baseline safety rate or a
+  zero-cost baseline is no longer a pass.
 
 ### Added
 - Locate L1, web sources (`docs/proposals/wikipedia-locate.md` §2.1, §2.2, §3;
