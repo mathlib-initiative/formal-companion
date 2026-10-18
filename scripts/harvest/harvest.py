@@ -35,7 +35,7 @@ if __package__ in (None, ""):  # `python3 scripts/harvest/harvest.py`
 
 from harvest._compat import (NON_FINDING_FILES, CfError, finding_name, hashing,
                              is_finding_name, iso_now, iter_finding_files, read_json,
-                             write_json)
+                             vocab, write_json)
 
 RECEIPT_NAME = "RECEIPT.json"
 #: how many missing names an error message spells out before truncating
@@ -233,8 +233,8 @@ def malformed_files(dest: Path) -> list[str]:
     return sorted(bad)
 
 
-#: the ``schema`` of every locate document (``cflib.vocab.LOCATE_DOCUMENT_SCHEMA``)
-LOCATE_SCHEMA = "cf-locate/1"
+#: the ``schema`` of every locate document
+LOCATE_SCHEMA = vocab.LOCATE_DOCUMENT_SCHEMA
 
 
 def locate_counts(dest: Path) -> dict | None:
@@ -264,7 +264,7 @@ def locate_counts(dest: Path) -> dict | None:
         block = payload.get("unresolved")
         if isinstance(block, dict):
             out["unresolved_documents"] += 1
-            if block.get("by") == "attempt_cap":
+            if block.get("by") == vocab.UNRESOLVED_ATTEMPT_CAP:
                 out["attempt_capped_documents"] += 1
         passages = payload.get("passages") if isinstance(payload.get("passages"), list) else []
         out["passages"] += len(passages)
