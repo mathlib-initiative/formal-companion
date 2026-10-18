@@ -61,8 +61,10 @@ namespace CfLibraryProbe
 
 def schema : String := "formal-companion-library-index/v0"
 def baseSchema : String := "autoform-library-index/v0"
-/-- Raised by any change here that can alter the bytes of an index. -/
-def probeRevision : Nat := 1
+/-- Raised by any change here that can alter the bytes of an index. 2: a module whose name
+needs «» escaping gets its source path (its components unescaped), and a «»-escaped module
+prefix is parsed as one component. -/
+def probeRevision : Nat := 2
 
 def libraryId : String := @@LIBRARY_ID@@
 /-- The root modules imported above, one per line. -/
@@ -77,13 +79,33 @@ def srcDirsText : String := @@SRC_DIRS@@
 def nonEmptyLines (s : String) : List String :=
   (s.splitOn "\n").filter (fun line => !line.isEmpty)
 
-/-- A dotted module name. Module names are plain identifiers joined by dots. -/
-def parseName (s : String) : Name :=
-  (s.splitOn ".").foldl (fun acc part => Name.str acc part) Name.anonymous
-
 /-- Characters back into a string, with `String.push` (`List.asString` is deprecated in favour
 of `String.ofList`, which older toolchains lack). -/
 def ofChars (cs : List Char) : String := cs.foldl (fun acc ch => acc.push ch) ""
+
+/-- A dotted module name, a component plain or `«escaped»`: `Foo.«0805.3777».Bar` is the three
+components `Foo`, `0805.3777` and `Bar` (a dot inside «» is part of its component), the
+spelling scripts/corpus/probe_merge.py writes. -/
+def parseName (s : String) : Name := Id.run do
+  let mut acc : Name := Name.anonymous
+  let mut cur : List Char := []
+  let mut quoted := false
+  for ch in s.toList do
+    if quoted then
+      if ch == '»' then quoted := false else cur := ch :: cur
+    else if ch == '«' then
+      quoted := true
+    else if ch == '.' then
+      acc := Name.str acc (ofChars cur.reverse)
+      cur := []
+    else
+      cur := ch :: cur
+  return Name.str acc (ofChars cur.reverse)
+
+/-- A module's source file relative to a source directory: its components UNescaped and joined
+by `/` (`Foo.«1»` is `Foo/1.lean`), which is how Lake names the file of a module. -/
+def moduleFile (m : Name) : String :=
+  "/".intercalate (m.components.map (fun c => c.toString (escape := false))) ++ ".lean"
 
 def trimWs (s : String) : String :=
   let cs := s.toList.dropWhile Char.isWhitespace
@@ -346,7 +368,7 @@ def run : MetaM Unit := do
   -- Module records: shard 0 only, so a merge holds each once.
   let mut paths : Std.HashMap Name String := {}
   for (_, m) in libModules do
-    let rel := "/".intercalate (m.components.map toString) ++ ".lean"
+    let rel := moduleFile m
     let mut found : Option String := none
     for d in srcDirs do
       if found.isNone then

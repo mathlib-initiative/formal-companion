@@ -377,14 +377,31 @@ corpora/<universe>/index/<library>/decls.jsonl
 corpora/<universe>/corpus.sqlite                  derived, rebuildable
 ```
 
+The same layout may live under any directory instead of a workspace's
+`corpora/`: `cf corpus <subcommand> --base <dir>` reads and writes
+`<dir>/<universe>/` and reads no workspace (`cflib.paths.CorporaPaths`, which a
+workspace's paths delegate to) — how a universe kept on the run host beside the
+drivers' indexes is made, ingested, built and searched.
+
 `universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
 a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,
 `toolchain`, `roots`, `licence`, `conventions` and, once ingested, `index: {path,
 sha256, declarations}` — and `published_index: {schema, reason, accepted}` when that
 index is one the library publishes itself, accepted by name with `cf corpus ingest
---accept-published <reason>` because neither the probe nor its canary checked it;
-`excluded` lists `{id, reason}`; `canaries` lists, per
+--accept-published <reason>` because neither the probe nor its canary checked it —
+and `host: {kind, ref, options}` when the host driver is to index it other than as a
+`build` of its commit (`cf corpus add --host-kind --host-ref --host-option`): a
+`published-index` from its tag, Lean `core` or a `package-in-workspace` probed inside
+another library's built `WORKSPACE`, and the driver options of its universe-list line,
+checked by the driver's own parser (`scripts/corpus/universe_host.py`). `host` is how
+a pin is built, not what is pinned: it is outside `universe_sha256`, and `cf corpus
+probe-command` prints from it the universe's whole driver list (every library, those
+probed inside a workspace last) and the steps of that library's kind;
+`excluded` lists `{id, reason}` (what a universe leaves out WITHIN a library is a
+choice of its `roots`, stated in the proposal's §2.3 for the default universe: Mathlib
+with its `Wanted` library of `proof_wanted` statements, Lean core without the `Lean`
+namespace); `canaries` lists, per
 toolchain, the acceptance canary's result (`{toolchain, lean_version, passed,
 checked, index_sha256, cases}`) — no library on a toolchain without a passed
 canary is ingested; `corpus_db` is `{path, sha256, built, declarations,
@@ -405,6 +422,13 @@ with `\n` — so a re-probe that changes one index changes the universe.
  "axioms": [], "tags": [{"tag": "wikidata", "value": "Q99999001"}],
  "deprecated": null, "private": false, "probe_proof_status": "proved", "flags": []}
 ```
+
+`module` is the module's name as Lean prints it, a component that is no
+identifier escaped (`Alpha.Problems.«1»`, `Alpha.Arxiv.«0805.3777».Rank`), and
+`path` the file Lake reads it from, its components unescaped
+(`Alpha/Problems/1.lean`). The host driver expands a root glob into such names
+(`scripts/corpus/probe_merge.py` `module_of_file`), compares names by their
+components, and stops — never skips — at a file no module name can express.
 
 **Ingest refuses an index that is not the pinned one, whole**
 (`scripts/corpus/ingest.py`): the library, commit and toolchain are read from the
@@ -428,15 +452,33 @@ is the closure outside `propext`, `Classical.choice` and `Quot.sound` (`sorryAx`
 included; an axiom declaration's closure holds itself). A declaration whose
 status would turn on an `isProp` the probe could not compute is the conservative
 `statement_only` with `is_prop_unknown` in `flags`; a published index's status
-word, taken without a closure, carries `published_status`. `statement` is set on
+word, taken without a closure, carries `published_status` — Autoform's
+`complete` (no `sorry`, no non-standard axiom) is `proved` for a theorem and
+`definition` for every data kind (`def`, `abbrev`, `opaque`, `instance`,
+`inductive`, `structure`, `class`), its `wanted` is `wanted`, its kind `lemma` is
+written `theorem`, and a word or kind outside that is refused. `statement` is set on
 a `Prop`-valued definition — derived, while the probe emits no such field, from
 a `def`/`abbrev`/`opaque` whose printed type's final codomain is `Prop`. The
 source scan for a `proof_wanted` that adds no constant is not implemented (the
 proposal's §2.4, rule 1): such a result is not in the index, and every manifest
 says `proof_wanted_scan: "not implemented"`. `tags` use `cflib.vocab.TAG_KINDS`:
-attributes in the source span from `start_line` to `line`, read from a checkout
-given to the ingest — which must be at the pinned commit (its HEAD read from its
-files) and clean — and Wikipedia URLs in the docstring. A Wikipedia tag's value is
+attributes read from a checkout given to the ingest — which must be at the pinned
+commit (its HEAD read from its files) and clean — and Wikipedia URLs in the
+docstring. An attribute list `@[...]` is read whole, its brackets balanced (`@[ext,
+aesop safe constructors (rule_sets := [G]), wikidata Q1]` is one list, however many
+lines it spans), after comments and string and character literals are blanked; a
+declaration's tags are those of every list that starts in its span (from
+`start_line` to `line`), except that a declaration whose span lies inside a list —
+a `to_additive` twin, which the probe reports at its attribute — takes only that
+list's `(attr := …)` tags, which apply to both twins. An `attribute [wikidata Q1]
+Name` command anywhere in the library tags the declaration `Name` resolves to
+through the enclosing namespaces, innermost first (no `open` namespace is tried); a
+name it cannot resolve in the library is counted in the manifest's
+`attribute_commands`, never guessed. A twin the command generates lies inside its
+list and takes its `(attr := …)` tags as above; an existing twin it pairs its target
+with (`attribute [to_additive (attr := wikidata Q1)] MulWidget` beside a hand-written
+`AddWidget`) is not tagged, since the source never writes that name. `-attr` and
+`local attr` tag nothing. A Wikipedia tag's value is
 one canonical page URL, the DESKTOP form `https://<lang>.wikipedia.org/wiki/<title>`:
 the mobile `<lang>.m.` host folded, the title percent-decoded, spaces and runs of underscores one
 underscore, its first letter upper-case, no fragment or query; an apostrophe
