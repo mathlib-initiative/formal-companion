@@ -623,6 +623,7 @@ class _FileTags:
         self.lists: list[tuple[int, int, frozenset, frozenset, bool]] = []
         #: ``(namespace, written target names, tags)`` per tagging ``attribute`` command
         self.commands: list[tuple[tuple[str, ...], list[str], frozenset]] = []
+        self._starts: list[int] = []
         if not any(word in text for word in _TAG_WORDS):
             return
         mask = code_mask(text)
@@ -670,6 +671,7 @@ class _FileTags:
             if names:
                 self.commands.append((namespace, names, frozenset(own)))
         self.lists.sort(key=lambda entry: entry[0])
+        self._starts = [entry[0] for entry in self.lists]
 
     @staticmethod
     def _targets(text: str, mask: str, begin: int) -> list[str]:
@@ -695,11 +697,10 @@ class _FileTags:
 
     def span_tags(self, start: int, line: int) -> set[tuple[str, str]]:
         """The tags of the declaration whose span runs from ``start`` to its name's ``line``."""
-        starts = [entry[0] for entry in self.lists]
         own: set = set()
         generated: set = set()
         inside = False
-        i = bisect.bisect_right(starts, line) - 1
+        i = bisect.bisect_right(self._starts, line) - 1
         while i >= 0:
             first, last, own_tags, generated_tags, is_command = self.lists[i]
             if last < start:
