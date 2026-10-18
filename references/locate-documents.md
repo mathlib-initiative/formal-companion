@@ -505,7 +505,10 @@ that the coverage floor reads; a bold that only labels its paragraph ("Proof.")
 or is a symbol (a bold R) makes no `bold_definition`. A `/1` rendering cannot be re-rendered in
 place (a recorded `layer_sha256` never changes): `cf sourceset create <new>
 --from <old>` seeds a new sourceset with the old one's identities and bytes and
-no layers, and `cf sourceset render <new>` renders it under the current id. Any
+no layers, and `cf sourceset render <new>` renders it under the current id. The
+seeded sourceset appears whole or not at all — it is built in
+`sourcesets/.seeding-<new>/` and renamed into place once its version is written
+— so an interrupted seeding is re-run as the same command. Any
 change to any view, the layout of a view's file included, is a new renderer
 id: `tests/test_locate_sources.py` pins every view of a synthetic page to it.
 

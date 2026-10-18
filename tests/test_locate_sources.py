@@ -2384,6 +2384,57 @@ class TestFieldS7EnumerationCheckpoints(_FieldCase):
         self.assertFalse(self.paths.sourceset_enumerate_checkpoint("wpm").exists())
 
 
+class TestCreateFromIsReRunnable(_FieldCase):
+    """``create --from`` wrote manifest-1 first and linked every source after it, so an
+    interruption left a sourceset that every re-run refused as existing, with an empty
+    manifest and half its directories linked (CLAUDE.md section 4: every command may be
+    re-run)."""
+
+    def test_an_interrupted_seeding_leaves_nothing_and_a_re_run_finishes(self):
+        from cfcmd import sourceset as cmd
+        self.enumerate()
+        self.fetch()
+        real, calls = cmd._link_or_copy, []
+
+        def flaky(src, dst):
+            calls.append(dst)
+            if len(calls) == 2:
+                raise OSError("interrupted (simulated)")
+            real(src, dst)
+
+        with mock.patch.object(cmd, "_link_or_copy", flaky):
+            with self.assertRaises(OSError):
+                cf(self.root, "sourceset", "create", "new", "--from", "wpm")
+        self.assertEqual(self.paths.sourceset_manifests("new"), [])
+        self.assertFalse(self.paths.sourceset_dir("new").exists())
+        code, out = cf(self.root, "sourceset", "status", "new")
+        self.assertEqual(code, 2, out)                      # no such sourceset, not a broken one
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm")
+        self.assertEqual(code, 0, out)
+        self.assertIn("discarding .seeding-new/", out)
+        seeded = Sourceset.open(self.paths, "new").latest()
+        self.assertEqual(sorted(seeded.entries), sorted(self.ss.latest().entries))
+        self.assertEqual([p.name for p in self.paths.sourcesets_dir.iterdir()
+                          if p.name.startswith(".")], [])
+        for e in seeded:
+            self.assertEqual(Sourceset.open(self.paths, "new").source_problems(e, views=False),
+                             [])
+        code, out = cf(self.root, "sourceset", "create", "new", "--from", "wpm")
+        self.assertEqual(code, 2, out)
+        self.assertIn("already exists", out)
+
+    def test_the_leftover_of_the_earlier_code_is_named(self):
+        code, out = cf(self.root, "sourceset", "create", "new")      # an empty manifest-1
+        self.assertEqual(code, 0, out)
+        self.enumerate()
+        with self.assertRaises(CfError) as ctx:
+            cf_main.main(["--workspace", str(self.root), "sourceset", "create", "new",
+                          "--from", "wpm"])
+        self.assertIn("already exists", str(ctx.exception))
+        self.assertIn("only an empty manifest-1", ctx.exception.hint)
+        self.assertIn(str(self.paths.sourceset_dir("new")), ctx.exception.hint)
+
+
 class TestFieldS5NullFlagsAreReadOffTheAssessment(_FieldCase):
     """S5, as the integrate migration left it: ``create --from`` a sourceset enumerated
     before the flags existed carries ``flags: null`` on every entry, and a plain fetch

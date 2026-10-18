@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -33,6 +34,7 @@ from cflib import log, vocab
 from cflib import state as state_mod
 from cflib.errors import CfError
 from cflib.jsonio import iter_jsonl, write_json
+from cflib.paths import WorkspacePaths
 from cflib.workspace import from_args
 from sources import render_html, websource, wikinet
 from sources.sourceset import Sourceset, is_adopted
@@ -43,6 +45,10 @@ DEFAULT_CHECKPOINT = 200
 #: a fetch stops after this many sources in a row that Wikipedia refused or
 #: rate-limited, instead of sending the rest of the list into the limiter
 MAX_UNAVAILABLE = 3
+#: ``create --from`` builds the new sourceset in ``sourcesets/<prefix><id>/`` and
+#: renames it into place whole; that directory is no sourceset (its manifests
+#: are one level further down), so nothing that lists sourcesets reads it
+SEEDING_PREFIX = ".seeding-"
 
 
 def register(subparsers) -> None:
@@ -247,6 +253,13 @@ def _create_from(workspace, args) -> int:
     with no layer.  The old sourceset is only read, so a run that pinned it still
     verifies.  Every recorded raw and body sha is checked against its file before
     anything is written; a mismatch refuses the whole seeding.
+
+    The new sourceset appears whole or not at all: it is built in a staging
+    directory beside it (``sourcesets/.seeding-<id>/``) and renamed into place
+    once its seeded version is written, so a seeding interrupted half-way
+    through linking thirty thousand sources leaves no sourceset that every
+    later ``create`` would refuse as existing -- re-running the same command
+    discards the staging directory and seeds again.
     """
     paths = workspace.paths
     old = Sourceset.open(paths, args.seed)
@@ -256,6 +269,8 @@ def _create_from(workspace, args) -> int:
                       hint="drop --family: a seeded sourceset keeps its seed's family")
     if args.sourceset_id == old.id:
         raise CfError("a sourceset cannot be seeded from itself")
+    target = paths.sourceset_dir(args.sourceset_id)
+    _refuse_existing(paths, args.sourceset_id, target)
     problems: list[str] = []
     for e in base:
         problems.extend(old.source_problems(e, views=False))   # views are not carried over
@@ -264,7 +279,12 @@ def _create_from(workspace, args) -> int:
                       f"byte sha(s) do not match their files; nothing was created: "
                       + "; ".join(problems[:5]),
                       hint=f"`cf sourceset status {old.id} --verify` lists them")
-    ss = Sourceset.create(paths, args.sourceset_id, base.family, workspace=workspace)
+    staging_root = paths.sourcesets_dir / f"{SEEDING_PREFIX}{args.sourceset_id}"
+    if staging_root.exists():
+        log.info(f"discarding {staging_root.name}/, which an interrupted seeding left")
+        shutil.rmtree(staging_root)
+    staging = WorkspacePaths(staging_root)
+    ss = Sourceset.create(staging, args.sourceset_id, base.family, workspace=workspace)
     entries = []
     with_bytes = 0
     for e in base:
@@ -280,14 +300,41 @@ def _create_from(workspace, args) -> int:
         if e.get("raw_sha256") or e.get("html_sha256"):
             write_json(dst / "source.json", entry, sort_keys=True)
         entries.append(entry)
-    manifest = ss.write_version(ss.latest(), entries)
+    ss.write_version(ss.latest(), entries)
     ss.refresh_state(command="create", details={
         "from": base.pin(), "sources": len(entries), "with_bytes": with_bytes})
-    log.ok(f"created sourceset {ss.id} ({base.family}) from {old.id} version {base.version}: "
-           f"{len(entries)} source(s), {with_bytes} with their bytes, none rendered; version "
-           f"{manifest.version} (sha {manifest.sha256[:12]})")
-    log.info(f"next: cf sourceset render {ss.id}")
+    _refuse_existing(paths, args.sourceset_id, target)       # another writer, meanwhile
+    try:
+        os.rename(staging.sourceset_dir(args.sourceset_id), target)
+    except OSError as exc:
+        raise CfError(f"the seeded sourceset could not be moved into {target} ({exc}); it is "
+                      f"whole in {staging_root}",
+                      hint=f"re-run the command: it discards {staging_root.name}/ and seeds "
+                           f"again") from None
+    shutil.rmtree(staging_root, ignore_errors=True)
+    manifest = Sourceset.open(paths, args.sourceset_id).latest()
+    log.ok(f"created sourceset {args.sourceset_id} ({base.family}) from {old.id} version "
+           f"{base.version}: {len(entries)} source(s), {with_bytes} with their bytes, none "
+           f"rendered; version {manifest.version} (sha {manifest.sha256[:12]})")
+    log.info(f"next: cf sourceset render {args.sourceset_id}")
     return 0
+
+
+def _refuse_existing(paths: WorkspacePaths, sourceset_id: str, target: Path) -> None:
+    """Refuse a ``create --from`` whose target sourceset exists, saying what it holds."""
+    versions = paths.sourceset_manifests(sourceset_id)
+    if not versions and not (target.exists() and any(target.iterdir())):
+        return
+    hint = f"`cf sourceset status {sourceset_id}` shows it; seed another id"
+    if versions and len(versions) == 1:
+        try:
+            bare = len(Sourceset.open(paths, sourceset_id).latest()) == 0
+        except CfError:
+            bare = False
+        if bare:
+            hint = (f"it holds only an empty manifest-1, which an interrupted `create --from` "
+                    f"of an earlier version of this command left: delete {target} and re-run")
+    raise CfError(f"sourceset {sourceset_id!r} already exists at {target}", hint=hint)
 
 
 # ---------------------------------------------------------------------------
