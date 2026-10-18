@@ -116,6 +116,29 @@ release has something to say.
   the format no longer exports. The reference pins move to measure_theory
   `2cd263a` and tao-measure-lean `677ada1`; references written against
   `v1.0.0` must be regenerated.
+- `cf bench` reads every other package's artifact through its owner
+  (`references/locate-bench.md` §4, §8, §10). `anchor` and `freeze --plant`
+  open `corpus.sqlite` through `corpus.query` and refuse one that does not
+  describe the universe as it is now; gold stamps the recomputed universe sha
+  and refuses a new state under existing labels without `--supersede`; the
+  curated library is `Universe.mathlib_library()`; 100.yaml joins by its QID
+  and by `locate.candidates.normalise_title`, as L2 does; a deprecated alias
+  also accepts its new name (`deprecated_to`). `score` refuses an ungated
+  receipt, a run of another universe state, mixed arms across the inventory,
+  locate and challenge runs, a subject-only run, and a `formal_math` passage
+  with no outcome row (a `--source` or shard run, never scored as gate
+  failures); it pins each run's own `skill_commit` and `gate_files`, the tools
+  database and the tally's challenge runs, reports the scorer's code sha apart
+  as `scorer`, counts `coverage.missing_rows` and `challenge_owed`, spreads
+  each run's dollars over its own `source_ids` (`cost.by_stage`, `runs`,
+  `locate_and_challenge`), scores a run whose tools database is `planted` on
+  tier P alone, and reads gate-log reasons by `by_rule` and `[rule N]` per run
+  from the harvested `runs/<run>/host/gate.jsonl` (worker calls only, exit 3
+  apart) and the canary from `runs/<run>/host/canary.json`. `compare` refuses
+  two scorers, two tools-database kinds or two challenge states, and judges
+  cost on locate and challenge spend when the inventory is shared. The bench
+  fixtures are built by `Sourceset`, `render_html`, `Universe` and
+  `build_db`, in the harvested layout `corpus/<run>/<task>/<source>.json`.
 
 ### Added
 - Locate L1, web sources (`docs/proposals/wikipedia-locate.md` §2.1, §2.2, §3;

@@ -39,7 +39,8 @@ from bench import gold as gold_mod
 from bench import inputs
 from bench import score as score_mod
 from bench.layout import (BENCH_SCHEMA, CLUSTERS_SCHEMA, DRAW_SCHEMA, FRAME_SCHEMA, G1_RESOLVED_SCHEMA,
-                          GOLD_SCHEMA, HOST_SCHEMA, SPANS_SCHEMA, BenchLayout, now, sha_of)
+                          GOLD_SCHEMA, HOST_SCHEMA, LABEL_FILES, SPANS_SCHEMA, BenchLayout, now,
+                          sha_of)
 
 NAME = "bench"
 
@@ -116,11 +117,13 @@ def register(subparsers) -> None:
                    help="the G1 arm the run is (default: what its run.yaml says)")
     s.add_argument("--gold-version", type=int, default=None, help="default: the latest")
     s.add_argument("--gate-log", type=Path, default=None,
-                   help="the harvested gate-log directory of the run's tend roots")
+                   help="a gate log (a gate.jsonl, or a directory of them) for every run of the "
+                        "score (default: each run's harvested runs/<run>/host/gate.jsonl)")
     s.add_argument("--transcripts", type=Path, default=None,
                    help="the run's transcripts, scanned for the label canary")
     s.add_argument("--canary-report", type=Path, default=None,
-                   help="a host-side canary scan ({scanned, hits}) instead of --transcripts")
+                   help="a host-side canary scan ({scanned, hits}) instead of --transcripts "
+                        "(default: each run's harvested runs/<run>/host/canary.json)")
     s.add_argument("--no-canary-check", action="store_true",
                    help="score without a canary scan (recorded in the score)")
     s.add_argument("--article-costs", type=Path, default=None,
@@ -202,25 +205,56 @@ def _recluster(paths, layout: BenchLayout, bench: dict) -> dict:
     return doc
 
 
-def _universe(paths, bench: dict, requested: str | None) -> tuple[str, dict]:
+def _universe(paths, bench: dict, requested: str | None):
+    """The ``corpus.universe.Universe`` gold is (or will be) labelled at."""
     uid = requested or (bench.get("universe") or {}).get("id")
     if not uid:
         raise CfError("no universe: gold is labelled at a universe's pins", hint="pass --universe <id>")
-    return uid, inputs.load_universe(paths, uid)
+    return inputs.load_universe(paths, uid)
 
 
-def _library(universe: dict, requested: list[str]) -> str:
+def _labelled(layout: BenchLayout) -> bool:
+    """Does the bench hold anything labelled at its universe (resolved G1 or a label file)?"""
+    return layout.g1_resolved.is_file() or any(layout.label_file(t).is_file() for t in LABEL_FILES)
+
+
+def _stamp_universe(layout: BenchLayout, bench: dict, universe, supersede: bool) -> None:
+    """Stamp the universe's id and RECOMPUTED sha; refuse a change under existing gold.
+
+    Gold is labelled at one state of one universe: a different universe is
+    refused outright, and a new state of the same one (an index re-ingested and
+    rebuilt) is refused once anything is labelled, unless ``--supersede`` starts
+    the gold over at it.
+    """
+    pin = inputs.universe_pin(universe)
+    old = bench.get("universe") or {}
+    if old.get("id") and old["id"] != pin["id"]:
+        raise CfError(f"the bench's gold is labelled at universe {old['id']!r}, not {pin['id']!r}")
+    if old.get("sha256") and old["sha256"] != pin["sha256"] and _labelled(layout) and not supersede:
+        raise CfError(f"the bench's gold is labelled at universe {pin['id']} as it was "
+                      f"({str(old['sha256'])[:12]}…); it is now {pin['sha256'][:12]}…",
+                      hint="label at one state: pass --supersede to resolve and label again at "
+                           "the new one (then cf bench freeze --supersede)")
+    bench["universe"] = pin
+
+
+def _library(universe, requested: list[str]) -> str:
+    """The library the curated lists name: ``--library``, else the universe's Mathlib.
+
+    ``corpus.universe.Universe.mathlib_library`` is the one rule, shared with
+    ``cf locate candidates``.
+    """
     libs = inputs.libraries(universe)
     if requested:
         for lib in requested:
             if lib not in libs:
                 raise CfError(f"library {lib!r} is not in the universe")
         return requested[0]
-    found = [lib for lib, e in libs.items() if e.get("brain_lib") == "Mathlib" or lib == "mathlib"]
-    if len(found) != 1:
-        raise CfError("the universe holds no single Mathlib library for the curated lists",
+    found = universe.mathlib_library()
+    if found is None:
+        raise CfError(f"universe {universe.id} holds no Mathlib library for the curated lists",
                       hint="name it with --library <id>")
-    return found[0]
+    return str(found["id"])
 
 
 def _skill_root() -> str:
@@ -245,7 +279,7 @@ def _build(ws, args) -> int:
     curated = draw_mod.read_qids(args.curated_qids) if args.curated_qids else set()
     frame = draw_mod.build_frame(rows, manifest, curated)
     write_json(layout.frame_json, {"schema": FRAME_SCHEMA, "bench": args.bench_id,
-                                   "sourceset": manifest.pin,
+                                   "sourceset": manifest.pin(),
                                    "frame_file_sha256": inputs.sha256_file(args.frame),
                                    "curated_file_sha256": (inputs.sha256_file(args.curated_qids)
                                                            if args.curated_qids else None),
@@ -258,7 +292,7 @@ def _build(ws, args) -> int:
     write_json(layout.draw_json, draw_doc, sort_keys=True)
     bench = {"schema": BENCH_SCHEMA, "id": args.bench_id,
              "created": (previous or {}).get("created") or now(),
-             "sourceset": manifest.pin, "seed": args.seed,
+             "sourceset": manifest.pin(), "seed": args.seed,
              "draw": {"uniform": args.uniform, "curated": args.curated},
              "spans_per_article": args.spans_per_article,
              "fractions": {"dev": args.dev, "eval": args.eval, "test": args.test},
@@ -310,18 +344,16 @@ def _anchor(ws, args) -> int:
         raise CfError(f"bench {args.bench_id} is frozen: its gold is never edited",
                       hint="pass --supersede to start a new gold version, then "
                            "cf bench freeze --supersede")
-    uid, universe = _universe(paths, bench, args.universe)
-    usha = str(universe.get("universe_sha256") or "")
-    if bench.get("universe") and bench["universe"].get("id") != uid:
-        raise CfError(f"the bench's gold is labelled at universe {bench['universe']['id']!r}, not {uid!r}")
-    bench["universe"] = {"id": uid, "sha256": usha}
-    _save_bench(layout, bench)
-    articles = _articles(layout)
-    conn = inputs.open_corpus(paths.corpus_db(uid))
+    universe = _universe(paths, bench, args.universe)
+    # the database must describe the universe as it is now, before anything is stamped
+    conn = inputs.open_checked(paths, universe)
     try:
+        _stamp_universe(layout, bench, universe, args.supersede)
+        _save_bench(layout, bench)
+        articles = _articles(layout)
         if resolving:
             library = _library(universe, args.library)
-            commit = inputs.libraries(universe)[library]["commit"]
+            commit = str(inputs.libraries(universe)[library]["commit"])
             lists = []
             if args.curated_1000:
                 lists.append(("mathlib_1000", gold_mod.read_curated_1000(args.curated_1000)))
@@ -460,7 +492,13 @@ def _freeze(ws, args) -> int:
                   if articles_split.get(row["source_id"]) in ("eval", "test") and keys(row) & dev_decls)
     if args.plant:
         eval_g1 = [r for r in rows_by_tier["G1"] if articles_split.get(r["source_id"]) == "eval"]
-        ablation = gold_mod.plant(layout, paths.corpus_db(bench["universe"]["id"]), eval_g1)
+        universe = inputs.load_universe(paths, bench["universe"]["id"])
+        if universe.sha256() != bench["universe"]["sha256"]:
+            raise CfError(f"gold is labelled at universe {universe.id} as it was "
+                          f"({str(bench['universe']['sha256'])[:12]}…), which is now "
+                          f"{universe.sha256()[:12]}…: its planted index would be of another state",
+                          hint="re-anchor with --supersede at the new state, or plant at the old one")
+        ablation = gold_mod.plant(layout, paths, universe, eval_g1)
         tiers["P"] = {"ablation_sha256": inputs.sha256_file(layout.ablation_json),
                       "corpus_sha256": ablation["corpus_sha256"],
                       "removed_declarations": len(ablation["removed"]),
@@ -472,15 +510,19 @@ def _freeze(ws, args) -> int:
                       "removed_declarations": len(ablation["removed"]),
                       "modules": len(ablation["modules"])}
     calibration = read_json(layout.calibration_json) if layout.calibration_json.is_file() else None
-    labeler = {"version": gold_mod.LABELER_VERSION, "skill_commit": score_mod.skill_commit(),
+    # the labeler as each mode's args froze it: its file's sha and the checkout it was
+    # emitted from, so re-freezing unchanged gold from a later checkout changes nothing
+    labeler = {"version": gold_mod.LABELER_VERSION, "skill_commit": {},
                "workflow_sha256": {}, "prompt_sha256": {}}
     for mode in sorted(vocab.BENCH_LABEL_MODES):
         emitted = layout.label_args(mode)
         if emitted.is_file():
-            sha = read_json(emitted)["labeler"]["workflow_sha256"]
+            frozen_labeler = read_json(emitted)["labeler"]
+            sha = frozen_labeler["workflow_sha256"]
             labeler["workflow_sha256"][mode] = sha
             # the prompts are inline in the workflow, so its sha is theirs
             labeler["prompt_sha256"][mode] = sha
+            labeler["skill_commit"][mode] = frozen_labeler.get("skill_commit") or score_mod.UNRECORDED
     doc = {
         "schema": GOLD_SCHEMA, "bench": args.bench_id,
         "sourceset": bench["sourceset"], "universe": bench["universe"],
@@ -547,7 +589,8 @@ def _score(ws, args) -> int:
     doc = score_mod.score(paths, layout, bench, run_id=args.run, split=args.split, arm=args.arm,
                           gold_version=args.gold_version, gate_log=args.gate_log,
                           transcripts=args.transcripts, canary_report=args.canary_report,
-                          no_canary_check=args.no_canary_check, article_costs=args.article_costs,
+                          no_canary_check=args.no_canary_check,
+                          article_costs_path=args.article_costs,
                           audit_labels=args.audit_labels, replicates=args.bootstrap,
                           seed=args.seed, pin_overrides=overrides, checkpoint=args.checkpoint)
     if args.as_json:

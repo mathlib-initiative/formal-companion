@@ -121,11 +121,13 @@ def read_qids(path: Path) -> set[str]:
 # --------------------------------------------------------------------------
 
 def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
-    """Resolve every frame row to one rendered source of the pinned manifest."""
-    by_page: dict[int, list[dict]] = {}
-    for entry in manifest.entries.values():
-        if entry.get("pageid") is not None:
-            by_page.setdefault(int(entry["pageid"]), []).append(entry)
+    """Resolve every frame row to one rendered source of the pinned manifest.
+
+    A page id resolves by the sourceset's own rule (``Manifest.preferred``: an
+    adopted revision first, else the highest), so a frame article is the source
+    a run of that page plans; it must be rendered.
+    """
+    preferred = manifest.preferred()
     articles: dict[str, dict] = {}
     missing, unrendered, duplicate = [], [], []
     for row in rows:
@@ -135,16 +137,11 @@ def build_frame(rows: list[dict], manifest, curated: set[str]) -> dict:
                 missing.append(row["source_id"])
                 continue
         else:
-            candidates = sorted(by_page.get(row["pageid"], []),
-                                key=lambda e: int(e.get("revision") or 0))
-            rendered = [e for e in candidates if e.get("layer_sha256")]
-            if not candidates:
+            sid = preferred.get(int(row["pageid"]))
+            entry = manifest.entries.get(sid) if sid else None
+            if entry is None:
                 missing.append(f"pageid {row['pageid']}")
                 continue
-            if not rendered:
-                unrendered.append(candidates[-1]["source_id"])
-                continue
-            entry = rendered[-1]
         if not entry.get("layer_sha256"):
             unrendered.append(entry["source_id"])
             continue

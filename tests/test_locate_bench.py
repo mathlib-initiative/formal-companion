@@ -2,12 +2,14 @@
 
 New code, for docs/proposals/wikipedia-locate.md sections 8 and 9 as
 references/locate-bench.md fixes them.  Every input is synthetic and built by
-the documented formats (tests/_locate_bench_fixtures.py): the sourceset, the
-universe and the harvested runs come from packages built beside this one.
-The metric tests use hand-computed expectations on a handful of passages; the
-refusals are each exercised; and the labeler Workflow is executed under node
-with stubbed agents, its result transcribed back -- the round trip a session
-makes.
+its owner where one exists (tests/_locate_bench_fixtures.py): the sourceset by
+``sources.sourceset`` and ``sources.render_html``, the universe and its
+``corpus.sqlite`` by ``corpus.universe`` and ``corpus.build_db``; the harvested
+runs in the documented formats.  The metric tests use hand-computed
+expectations on a handful of passages; the refusals are each exercised; the
+labeler Workflow is executed under node with stubbed agents, its result
+transcribed back -- the round trip a session makes; and the integration (wave 2)
+seams each have a regression test named for the item it fixes.
 """
 from __future__ import annotations
 
@@ -50,6 +52,7 @@ from bench.layout import BenchLayout, overlap_words  # noqa: E402
 from cflib import vocab  # noqa: E402
 from cflib.errors import CfError  # noqa: E402
 from cflib.paths import WorkspacePaths  # noqa: E402
+from corpus import query  # noqa: E402
 
 NODE = shutil.which("node")
 
@@ -136,14 +139,14 @@ def eval_run(world: fx.World, run_id="loc1", inventory_run="inv1", *, formalize_
         passages[sid] = [fx.passage(world, i, 0, a), fx.passage(world, i, 1, b)]
         outs.append(fx.outcome(world, i, a, status="formalized", outcome_="located",
                                locations=[("mathlib", "Widget.spanning_zero", "exactMatch")],
-                               run_id=run_id, inventory_run=inventory_run))
+                               run_id=run_id, inventory_run=inventory_run, k=0))
         if formalize_second:
             outs.append(fx.outcome(world, i, b, status="formalized", outcome_="located",
                                    locations=[("mathlib", "Widget.conj_three", "exactMatch")],
-                                   run_id=run_id, inventory_run=inventory_run))
+                                   run_id=run_id, inventory_run=inventory_run, k=1))
         else:
             outs.append(fx.outcome(world, i, b, status=None, outcome_="unresolved",
-                                   run_id=run_id, inventory_run=inventory_run))
+                                   run_id=run_id, inventory_run=inventory_run, k=1))
     world.run(run_id, inventory_run=inventory_run, passages=passages, outcomes=outs, **kw)
     return ev
 
@@ -471,20 +474,75 @@ class TestTheBootstrap(unittest.TestCase):
         self.assertTrue(draws and all(d == 0 for d in draws))
 
 
-class TestGateRejections(unittest.TestCase):
+def gate_line(run_id: str, task_id: str, problems=None, *, exit_code: int | None = None) -> dict:
+    """A gate log line as ``verify_locate.run_gate`` writes it, from the gate's own ``Problems``."""
+    reasons = problems.lines() if problems is not None else []
+    return {"at": "2026-10-18T00:00:00Z", "run_id": run_id, "mode": "locate", "task_id": task_id,
+            "ok": not reasons and exit_code in (None, 0),
+            "exit": exit_code if exit_code is not None else (1 if reasons else 0),
+            "documents": 1, "by_rule": problems.by_rule() if problems is not None else {},
+            "broken": "" if exit_code != 3 else "corpus.sqlite is missing", "reasons": reasons}
 
-    def test_reasons_are_classified_and_rated_over_every_attempt(self):
-        lines = [{"task": "t1", "mode": "locate", "ok": True, "reasons": []},
-                 {"task": "t2", "mode": "locate", "ok": False,
-                  "reasons": ["rule 3: alpha:W.ghost does not exist in corpus.sqlite at its commit"]},
-                 {"task": "t3", "mode": "locate", "ok": False,
-                  "reasons": ["library 'gamma' is outside the universe u1"]},
-                 {"task": "t4", "mode": "locate", "ok": False, "reasons": ["rule 6: ranks repeat"]}]
-        found = m.gate_rejections(lines)
-        self.assertEqual((found["attempts"], found["rejected"]), (4, 3))
-        self.assertEqual(found["by_reason"]["phantom_declaration"]["attempts"], 1)
-        self.assertEqual(found["by_reason"]["outside_universe"]["attempts"], 1)
-        self.assertEqual(found["by_reason"]["rule_6"]["rate"], 0.25)
+
+def real_problems(*items) -> "object":
+    """The gate's own reason formatter (``verify_locate.Problems``) over ``(rule, where, message)``."""
+    from gate import verify_locate
+
+    problems = verify_locate.Problems()
+    for rule, where, message in items:
+        problems.add(rule, where, message)
+    return problems
+
+
+DOC = "t-loc/enwiki-1001-2002.json"
+ITEM = "In-text #3fa91c07"
+
+
+class TestGateRejections(unittest.TestCase):
+    """Items 42 and 74: the rule comes from the gate's ``[rule N]`` and ``by_rule``, never prose."""
+
+    def test_real_gate_reasons_are_classified_by_rule_then_by_message(self):
+        cases = [
+            ((3, f"{DOC}: {ITEM}.locations[0]", "mathlib:Widget.x is not in corpus.sqlite at "
+                                                "aaaaaaaaaaaa (a phantom declaration)"),
+             "rule_3:phantom_declaration"),
+            ((3, f"{DOC}: passages[1].locations[0]", "library 'gamma' is not in universe u1 "
+                                                     "(alpha, mathlib)"), "rule_3:outside_universe"),
+            ((5, f"{DOC}: {ITEM}", "an absence lists 1 distinct query; at least 2"),
+             "rule_5:absence_receipt"),
+            ((6, f"{DOC}: {ITEM}", "ranks [1, 1] are not distinct"), "rule_6:ranks"),
+            ((6, f"{DOC}: {ITEM}.locations[1]", "closeMatch needs a note naming the convention "
+                                                "difference"), "rule_6:note"),
+            ((4, DOC, "curated L2 hit(s) mathlib:Widget.a are neither located nor rejected with "
+                      "a reason in any receipt"), "rule_4:curated"),
+            ((2, f"{DOC}: passages[0]", "the quote matches the layer 2 times; it must match "
+                                        "exactly once"), "rule_2:quote"),
+            ((8, DOC, "the math paragraph at [0, 84] (section []) is covered by no passage and "
+                      "no skip (the coverage floor)"), "rule_8:coverage"),
+        ]
+        for item, want in cases:
+            with self.subTest(want=want):
+                reason = real_problems(item).lines()[0]
+                self.assertIn(ITEM if ITEM in item[1] else DOC, reason)
+                self.assertEqual(m.classify_reason(reason), want)
+
+    def test_rates_over_worker_attempts_of_the_scored_runs_only(self):
+        lines = [gate_line("loc1", "t1"),
+                 gate_line("loc1", "t2", real_problems(
+                     (3, f"{DOC}: {ITEM}.locations[0]", "alpha:W.ghost is not in corpus.sqlite at "
+                                                        "bbbbbbbbbbbb (a phantom declaration)"),
+                     (6, f"{DOC}: {ITEM}", "ranks [1, 1] are not distinct"))),
+                 gate_line("loc1", "t3", exit_code=3),           # the gate could not run
+                 gate_line("loc1", "", real_problems((1, DOC, "passages is a list"))),  # a re-gate
+                 gate_line("inv1", "t9", real_problems((8, DOC, "the lead passage at [0, 84] was "
+                                                                "dropped with no skip covering its span")))]
+        found = m.gate_rejections(lines, ["loc1"])
+        self.assertEqual((found["attempts"], found["rejected"], found["broken"]), (2, 1, 1))
+        self.assertEqual(found["dropped_lines"], 2)
+        self.assertEqual(found["by_rule"]["3"]["attempts"], 1)
+        self.assertEqual(found["by_rule"]["6"]["rate"], 0.5)
+        self.assertEqual(set(found["by_reason"]), {"rule_3:phantom_declaration", "rule_6:ranks"})
+        self.assertNotIn("passage_id", json.dumps(found))
 
 
 # ---------------------------------------------------------------------------
@@ -513,14 +571,28 @@ class TestG1Resolution(unittest.TestCase):
         # claims whose accept sets meet are one entry: Q99999000's two articles each merge
         # the 1000.yaml claim with nothing else, and a twin is shared with the 100.yaml one
         self.assertIn(("Widget.spanning_zero", "to_additive"), ones[("mathlib_100",)])
-        three = by_article[world.sid(3)][0]
-        self.assertEqual([(a["declaration"], a["why"]) for a in three["accept"]],
-                         [("Widget.new_name", "renamed")])
+        threes = {tuple(e["via"]): [(a["declaration"], a["why"]) for a in e["accept"]]
+                  for e in by_article[world.sid(3)]}
+        self.assertEqual(threes[("mathlib_1000",)], [("Widget.new_name", "renamed")])
+        # a 100.yaml entry carrying a QID is matched by it, as L2 matches it (item 75)
+        self.assertEqual(threes[("mathlib_100",)], [("Widget.conj_three", "curated")])
         self.assertEqual(by_article[world.sid(2)][0]["via"], ["wikidata_tag"])
-        self.assertNotIn(world.sid(4), by_article)
+        self.assertEqual(by_article[world.sid(2)][0]["evidence"],
+                         ["@[wikidata Q99999002] at Mathlib/Widget/Tags.lean:10"])
         self.assertEqual(doc["dropped_entries"][0]["dropped"][0]["declaration"], "Widget.gone_forever")
         self.assertEqual(doc["unmatched"], {"mathlib_1000": 1})
         self.assertEqual(doc["listed_without_declarations"], {"mathlib_1000": 1})
+        self.assertEqual(doc["universe"], {"id": fx.UNIVERSE, "sha256": world.universe_sha})
+
+    def test_a_deprecated_alias_widens_to_its_new_name_item_23(self):
+        world = anchored(self)
+        doc = json.loads(layout_of(world).g1_resolved.read_text())
+        # "The Widget_lemma 4" is article 4's title under L2's normalisation (item 75), and
+        # it names a deprecated alias whose new name the index records (corpus deprecated_to)
+        four = [e for e in doc["entries"] if e["source_id"] == world.sid(4)]
+        self.assertEqual(len(four), 1)
+        self.assertEqual([(a["declaration"], a["why"]) for a in four[0]["accept"]],
+                         [("Widget.canonical", "renamed"), ("Widget.old_alias", "curated")])
 
 
 class TestTheLabeler(unittest.TestCase):
@@ -804,17 +876,21 @@ class TestFreeze(unittest.TestCase):
         lay = layout_of(world)
         ablation = json.loads(lay.ablation_json.read_text())
         self.assertTrue(ablation["removed"])
-        conn = inputs.open_corpus(lay.planted_db)
+        self.assertEqual(ablation["universe"], {"id": fx.UNIVERSE, "sha256": world.universe_sha})
+        conn = query.open_db(lay.planted_db)
         try:
+            # it describes the same universe (what plan-locate checks of a tools database)
+            meta = query.check_universe(conn, world.universe())
+            self.assertEqual(meta["planted"], "b1")
             for name in ablation["removed"]:
                 lib, decl = name.split(":", 1)
-                self.assertIsNone(inputs.decl(conn, lib, fx.COMMIT_M, decl))
+                self.assertIsNone(query.declaration(conn, lib, decl, commit=fx.COMMIT_M))
         finally:
             conn.close()
-        original = inputs.open_corpus(WorkspacePaths(world.root).corpus_db(fx.UNIVERSE))
+        original = query.open_db(WorkspacePaths(world.root).corpus_db(fx.UNIVERSE))
         try:
             lib, decl = ablation["removed"][0].split(":", 1)
-            self.assertIsNotNone(inputs.decl(original, lib, fx.COMMIT_M, decl))
+            self.assertIsNotNone(query.declaration(original, lib, decl, commit=fx.COMMIT_M))
         finally:
             original.close()
 
@@ -831,8 +907,9 @@ class TestScore(unittest.TestCase):
 
     def test_the_document_and_its_keys(self):
         doc = score(self.world)
-        self.assertLessEqual({"measurement_id", "pins", "tiers", "strata", "cost", "misses",
-                              "audit", "coverage", "canary_check", "per_cluster"}, set(doc))
+        self.assertLessEqual({"measurement_id", "pins", "scorer", "tiers", "strata", "cost",
+                              "misses", "audit", "coverage", "canary_check", "per_cluster",
+                              "gate_rejections", "runs"}, set(doc))
         self.assertEqual(doc["coverage"]["articles"], len(self.eval))
         self.assertEqual(doc["tiers"]["G1"]["arm"], "assisted")
         self.assertEqual(doc["canary_check"], {"ran": False, "basis": "--no-canary-check"})
@@ -842,6 +919,8 @@ class TestScore(unittest.TestCase):
         self.assertTrue(all(miss["code"] in vocab.ERROR_CODES for miss in doc["misses"]))
         self.assertEqual(doc["pins"]["observed_models"], {"claude-opus-test": 300})
         self.assertEqual(doc["pins"]["agent_cli"], "2.0.0")
+        self.assertEqual(doc["runs"], {"inventory": ["inv1"], "locate": ["loc1"], "challenge": []})
+        self.assertEqual(doc["pins"]["tools_corpus_db"], {"kind": "full", "sha256": self.world.corpus_sha})
 
     def test_measurement_id_is_stable_and_moves_with_every_pin(self):
         first = score(self.world)["measurement_id"]
@@ -850,6 +929,7 @@ class TestScore(unittest.TestCase):
             "models": dict(models={"claude-other": {"input": 1}}),
             "prompts": dict(prompts={"worker.md": "9" * 64}),
             "corpus": dict(corpus_db_sha="7" * 64),
+            "commit": dict(skill_commit="9" * 40),
         }
         for name, kw in changes.items():
             with self.subTest(pin=name):
@@ -866,7 +946,7 @@ class TestScore(unittest.TestCase):
         self.assertIn("not complete", str(ctx.exception))
         eval_run(self.world, run_id="loc3", inventory_run="inv3")
         path = WorkspacePaths(self.world.root).receipt_json("inv3")
-        path.write_text(json.dumps({"complete": True}))
+        path.write_text(json.dumps({"complete": True, "gate": {"ok": True}}))
         with self.assertRaises(CfError) as ctx:
             score(self.world, "loc3")
         self.assertIn("no cost block", str(ctx.exception))
@@ -909,7 +989,10 @@ class TestScore(unittest.TestCase):
     def test_one_run_scores_once_per_split(self):
         every = sorted(self.world.articles)
         passages = {sid: [fx.passage(self.world, index_of(sid), 0, "In-text #0000aaaa")] for sid in every}
-        self.world.run("loc-all", inventory_run="inv-all", passages=passages, outcomes=[])
+        outs = [fx.outcome(self.world, index_of(sid), "In-text #0000aaaa", status="not_formalized",
+                           outcome_="absent", run_id="loc-all", inventory_run="inv-all", k=0)
+                for sid in every]
+        self.world.run("loc-all", inventory_run="inv-all", passages=passages, outcomes=outs)
         doc = score(self.world, "loc-all")
         cf(self.world, "bench", "score", "b1", "--run", "loc-all", "--split", "dev", "--bootstrap", 50,
            "--no-canary-check")
@@ -947,23 +1030,30 @@ class TestScore(unittest.TestCase):
         outs = [fx.outcome(self.world, index_of(sid), f"In-text #{index_of(sid):08x}",
                            status="formalized", outcome_="located",
                            locations=[("mathlib", removed, "exactMatch")], run_id="locp",
-                           inventory_run="invp") for sid in ev]
+                           inventory_run="invp", k=0) for sid in ev]
+        # D2: the workers searched the planted database; the gate and the outcomes checked
+        # the full one, where the removed declaration exists, so its citation is a location
         self.world.run("locp", inventory_run="invp", passages=passages, outcomes=outs,
-                       corpus_db_sha=ablation["corpus_sha256"])
+                       tools={"kind": "planted", "sha256": ablation["corpus_sha256"]})
         doc = score(self.world, "locp")
-        self.assertIn("P", doc["tiers"])
+        self.assertEqual(set(doc["tiers"]), {"P"})
+        self.assertGreater(doc["tiers"]["P"]["memory_citations"], 0)
         self.assertTrue(any(x["code"] == "E-MEMORY" for x in doc["misses"]))
+        self.assertEqual(doc["pins"]["tools_corpus_db"]["kind"], "planted")
         self.assertNotIn("P", score(self.world, "loc1")["tiers"])
 
     def test_costs_gate_log_and_the_audit_sample(self):
         costs = self.world.write("inputs/costs.json", json.dumps({s: 2.0 for s in self.eval}))
-        log = self.world.write("inputs/gate-log/a.jsonl",
-                               json.dumps({"task": "t", "mode": "locate", "ok": False,
-                                           "reasons": ["rule 3: W.x does not exist in corpus"]}) + "\n")
+        line = gate_line("loc1", "t-loc", real_problems(
+            (3, f"{DOC}: {ITEM}.locations[0]", "mathlib:W.x is not in corpus.sqlite at "
+                                               "aaaaaaaaaaaa (a phantom declaration)")))
+        log = self.world.write("inputs/gate-log/a.jsonl", json.dumps(line) + "\n")
         doc = score(self.world, "loc1", "--no-canary-check", "--article-costs", costs,
                     "--gate-log", log.parent)
         self.assertEqual(doc["cost"]["value"], 2.0)
-        self.assertEqual(doc["gate_rejections"]["by_reason"]["phantom_declaration"]["attempts"], 1)
+        rejections = doc["gate_rejections"]["loc1"]
+        self.assertEqual(rejections["by_reason"]["rule_3:phantom_declaration"]["attempts"], 1)
+        self.assertEqual(doc["gate_rejections"]["inv1"]["attempts"], 0)
         audit = layout_of(self.world).audit_jsonl(score_mod.score_name("eval", doc["measurement_id"]))
         self.assertTrue(audit.is_file())
 
@@ -974,17 +1064,24 @@ class TestScore(unittest.TestCase):
 
 def score_doc(fnf_cells, *, models=("m1",), renderer=("web-html/1",), split="eval", arm="blind",
               cost=1.0, articles=10, positives=20, gold="g" * 64, overclaim=None, mid=None,
-              strata=None):
+              strata=None, scorer="s" * 64, tools="full", challenge_runs=(), owed=0,
+              inventory=("inv1",), locate_cost=None):
     clusters = sorted(fnf_cells)
     per_cluster = {"G3": {"fnf_rate": fnf_cells,
                           "overclaim_rate": overclaim or {c: [0.0, 1.0] for c in clusters}},
                    "cost": {"usd_per_article": {c: [cost, 1.0] for c in clusters}}}
+    if locate_cost is not None:
+        per_cluster["cost"]["usd_per_article_locate"] = {c: [locate_cost, 1.0] for c in clusters}
     return {"schema": "cf-bench-score/1", "bench": "b1", "split": split, "arm": arm,
             "measurement_id": mid or gold_mod.sha_of([fnf_cells, cost, models]),
+            "scorer": {"sha256": scorer, "files": 8},
+            "runs": {"inventory": list(inventory), "locate": ["loc"], "challenge": list(challenge_runs)},
             "pins": {"observed_models": {mm: 1 for mm in models}, "renderer": list(renderer),
-                     "universe_sha256": "u"},
+                     "universe_sha256": "u", "tools_corpus_db": {"kind": tools, "sha256": "t"},
+                     "challenge_runs": list(challenge_runs)},
             "gold_manifest": {"version": 1, "sha256": gold},
-            "coverage": {"articles": articles, "total_positives": positives},
+            "coverage": {"articles": articles, "total_positives": positives,
+                         "challenge_owed": {"total": owed}},
             "per_cluster": per_cluster, "strata": {"G3": strata or {}},
             "cost": {"basis": "per-article costs"}}
 
@@ -1074,6 +1171,31 @@ class TestCompare(unittest.TestCase):
         with self.assertRaises(CfError):
             self.compare(b, c, claim="G1.fnf_rate")
 
+    def test_another_scorer_tools_database_or_challenge_state_is_refused(self):
+        base = self.write("base", score_doc(self.base_cells))
+        for name, kw, needle in (
+                ("scorer", {"scorer": "t" * 64}, "two scorers"),
+                ("tools", {"tools": "planted"}, "planted"),
+                ("challenged", {"challenge_runs": ("chl1",)}, "challenge run"),
+                ("owed", {"owed": 3}, "owes challenge verdicts")):
+            with self.subTest(name=name), self.assertRaises(CfError) as ctx:
+                self.compare(base, self.write(name, score_doc(self.better_cells, **kw)))
+            self.assertIn(needle, str(ctx.exception))
+
+    def test_the_cost_condition_is_on_locate_spend_when_the_inventory_is_shared(self):
+        # every stage: +10%, inside the rule; locate and challenge alone: +40%, outside it
+        base = self.write("base", score_doc(self.base_cells, cost=2.0, locate_cost=0.5))
+        aa = self.write("aa", score_doc(self.base_cells, cost=2.0, locate_cost=0.5, mid="r"))
+        dear = self.write("dear", score_doc(self.better_cells, cost=2.2, locate_cost=0.7))
+        entry = self.compare(base, dear, aa)
+        self.assertEqual(entry["conditions"]["cost"]["cells"], "usd_per_article_locate")
+        self.assertIn("cost", entry["failed"])
+        other = self.write("other", score_doc(self.better_cells, cost=2.2, locate_cost=0.7,
+                                              inventory=("inv2",)))
+        entry = self.compare(base, other, aa)
+        self.assertEqual(entry["conditions"]["cost"]["cells"], "usd_per_article")
+        self.assertNotIn("cost", entry["failed"])
+
     def test_a_reused_baseline_is_noted(self):
         base = self.write("base", score_doc(self.base_cells))
         cand = self.write("cand", score_doc(self.better_cells))
@@ -1091,6 +1213,373 @@ class TestCompare(unittest.TestCase):
                  "--bootstrap", 100)
         self.assertIn("REJECT", out)          # no A/A replicate
         self.assertIn("aa", out)
+
+
+# ---------------------------------------------------------------------------
+# integration (wave 2) seams: one regression test per item
+# ---------------------------------------------------------------------------
+
+class TestTheUniverseSeams(unittest.TestCase):
+
+    def anchor(self, world, *extra):
+        return cf(world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE, "--curated-1000",
+                  world.curated_1000(), *extra)
+
+    def test_a_database_of_another_state_or_none_is_refused_at_anchor_item_12(self):
+        world = built(self)
+        universe = world.universe()
+        universe.add_library(library_id="beta", repo="https://example.org/beta", commit="e" * 40,
+                             toolchain=fx.TOOLCHAIN, roots=["Beta"])
+        universe.save()                 # the universe moved on; corpus.sqlite did not
+        with self.assertRaises(CfError) as ctx:
+            self.anchor(world)
+        self.assertIn("another state of universe", str(ctx.exception))
+        self.assertIsNone(inputs_bench(world).get("universe"))     # nothing was stamped
+        universe = world.universe()
+        universe.set_index("mathlib", path="index/mathlib/", sha256="9" * 64, declarations=1)
+        universe.save()                 # an index re-ingested: no database describes it
+        with self.assertRaises(CfError) as ctx:
+            self.anchor(world)
+        self.assertIn("records no built corpus.sqlite", str(ctx.exception))
+
+    def test_gold_stamps_the_recomputed_sha_and_one_state_only_item_12(self):
+        world = anchored(self)
+        self.assertEqual(inputs_bench(world)["universe"],
+                         {"id": fx.UNIVERSE, "sha256": world.universe_sha})
+        old = world.universe_sha
+        world.build_universe(fx.DECLARATIONS + (
+            ("mathlib", "Widget.extra", "Mathlib.Widget.Extra", "proved", None, ()),))
+        self.assertNotEqual(world.universe_sha, old)
+        with self.assertRaises(CfError) as ctx:
+            cf(world, "bench", "anchor", "b1", "--emit-args", "anchor")
+        self.assertIn("labelled at universe", str(ctx.exception))
+        cf(world, "bench", "anchor", "b1", "--emit-args", "anchor", "--supersede")
+        self.assertEqual(inputs_bench(world)["universe"]["sha256"], world.universe_sha)
+
+    def test_a_run_of_another_universe_state_is_not_scored_item_26(self):
+        world = frozen(self)
+        eval_run(world, universe_sha="9" * 64)
+        with self.assertRaises(CfError) as ctx:
+            score(world)
+        self.assertIn("gold is labelled at", str(ctx.exception))
+        self.assertIn("--supersede", ctx.exception.hint or "")
+
+    def test_databases_open_read_only_through_corpus_query_item_17(self):
+        world = fx.World(scratch(self) / "ws", articles=1)
+        weird = scratch(self) / "q?h#%41"
+        weird.mkdir()
+        shutil.copy(world.paths.corpus_db(fx.UNIVERSE), weird / "corpus.sqlite")
+        conn = inputs.open_checked(world.paths, world.universe(), weird / "corpus.sqlite")
+        try:
+            self.assertTrue(query.exists(conn, "mathlib", fx.COMMIT_M, "Widget.spanning_zero"))
+        finally:
+            conn.close()
+        self.assertEqual([p.name for p in weird.parent.iterdir()], [weird.name])
+        self.assertEqual([p.name for p in weird.iterdir()], ["corpus.sqlite"])
+        import sqlite3
+
+        other = weird / "other.sqlite"
+        sqlite3.connect(other).execute("CREATE TABLE t (x)").connection.close()
+        with self.assertRaises(CfError):
+            inputs.open_checked(world.paths, world.universe(), other)
+
+    def test_the_universe_is_read_by_its_owner_item_18(self):
+        world = fx.World(scratch(self) / "ws", articles=1)
+        from cflib.yamlio import read_yaml, write_yaml
+
+        path = world.paths.universe_yaml(fx.UNIVERSE)
+        data = read_yaml(path)
+        data["libraries"][0]["roots"] = []
+        write_yaml(path, data)
+        with self.assertRaises(CfError) as ctx:
+            inputs.load_universe(world.paths, fx.UNIVERSE)
+        self.assertIn("not a valid universe", str(ctx.exception))
+
+    def test_the_curated_library_is_the_universes_mathlib_item_24(self):
+        from cfcmd import bench as bench_cmd
+
+        world = built(self)
+        world.build_universe(mathlib_id="mathlib4")
+        self.assertEqual(bench_cmd._library(world.universe(), []), "mathlib4")
+        self.anchor(world)
+        doc = json.loads(layout_of(world).g1_resolved.read_text())
+        self.assertEqual(doc["library"], "mathlib4")
+        self.assertTrue(all(a["library"] == "mathlib4" for e in doc["entries"] for a in e["accept"]
+                            if "wikidata_tag" not in e["via"]))
+        world.build_universe(libraries=("alpha",))
+        with self.assertRaises(CfError) as ctx:
+            bench_cmd._library(world.universe(), [])
+        self.assertIn("--library", ctx.exception.hint or "")
+
+    def test_the_corpus_readers_are_corpus_querys_item_19(self):
+        world = fx.World(scratch(self) / "ws", articles=1)
+        conn = inputs.open_checked(world.paths, world.universe())
+        try:
+            row = inputs.declaration(conn, "mathlib", fx.COMMIT_M, "Widget.old_alias")
+            self.assertEqual(row["deprecated_to"], "Widget.canonical")
+            self.assertIsNone(inputs.declaration(conn, "mathlib", "f" * 40, "Widget.old_alias"))
+            self.assertEqual([r["declaration"] for r in inputs.tagged(conn, "wikidata", "Q99999002",
+                                                                      ["mathlib"])],
+                             ["Widget.tagged_two"])
+            self.assertEqual(inputs.tagged(conn, "wikidata", "Q99999002", ["alpha"]), [])
+        finally:
+            conn.close()
+
+    def test_the_fixtures_are_built_by_the_owners_item_20(self):
+        from corpus import build_db
+        from sources.sourceset import Sourceset
+
+        world = fx.World(scratch(self) / "ws", articles=2)
+        universe = world.universe()
+        self.assertEqual(universe.validate(require_indexes=True), [])
+        self.assertTrue(build_db.current(universe, world.paths.corpus_db(fx.UNIVERSE)))
+        ss = Sourceset.open(world.paths, fx.SOURCESET)
+        manifest = ss.latest()
+        self.assertEqual(len(manifest), 2)
+        self.assertTrue(all(ss.source_problems(e) == [] for e in manifest))
+
+
+def inputs_bench(world: fx.World) -> dict:
+    from cflib.yamlio import read_yaml
+
+    return read_yaml(layout_of(world).bench_yaml)
+
+
+class TestTheCuratedJoinIsL2s(unittest.TestCase):
+    """Item 75: G1 and ``cf locate candidates`` read 1000.yaml/100.yaml through one join."""
+
+    def test_one_normaliser_and_the_same_article_for_every_entry(self):
+        from locate import candidates
+
+        world = fx.World(scratch(self) / "ws")
+        self.assertIs(gold_mod.normalise_title, candidates.normalise_title)
+        lists = candidates.CuratedLists(list_1000=world.curated_1000(), list_100=world.curated_100())
+        l2 = set()
+        for entry in (world.articles[s]["entry"] for s in sorted(world.articles)):
+            qid, key = entry["wikidata"], candidates.normalise_title(entry["title"])
+            l2 |= {(entry["source_id"], "mathlib_1000", n) for n in lists.by_qid_1000.get(qid, [])}
+            for _number, names in lists.by_title_100.get(qid, []) + lists.by_title_100.get(key, []):
+                l2 |= {(entry["source_id"], "mathlib_100", n) for n in names}
+        conn = inputs.open_checked(world.paths, world.universe())
+        try:
+            resolved = gold_mod.resolve_g1(
+                [world.articles[s]["entry"] for s in sorted(world.articles)], conn,
+                library="mathlib", commit=fx.COMMIT_M,
+                lists=[("mathlib_1000", gold_mod.read_curated_1000(world.curated_1000())),
+                       ("mathlib_100", gold_mod.read_curated_100(world.curated_100()))],
+                renames={}, tag_libraries=["mathlib"])
+        finally:
+            conn.close()
+        g1 = {(e["source_id"], via, d["declaration"])
+              for e in resolved["entries"] + resolved["dropped_entries"]
+              for via in e["via"] if via != "wikidata_tag" for d in e["declarations"]}
+        self.assertEqual(g1, l2)
+        self.assertIn((world.sid(4), "mathlib_100", "Widget.old_alias"), g1)       # "The ..._..."
+        self.assertIn((world.sid(3), "mathlib_100", "Widget.conj_three"), g1)      # by its QID
+
+
+class TestTheRunSeams(unittest.TestCase):
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.template = frozen_at(cls.tmp / "template")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        root = scratch(self) / "ws"
+        shutil.copytree(self.template.root, root)
+        self.world = clone_world(self.template, root)
+        self.eval = eval_run(self.world)
+
+    def score(self, run_id="loc1", *extra):
+        return score(self.world, run_id, *extra)
+
+    def test_documents_land_at_task_and_source_item_46(self):
+        rels = [rel for rel, _doc in inputs.locate_documents(self.world.paths, "inv1")]
+        self.assertTrue(rels)
+        self.assertTrue(all(rel == f"t-inv/{rel.split('/')[-1]}" for rel in rels), rels)
+        self.assertFalse(any("findings" in p.parts for p in (self.world.root / "corpus").rglob("*")))
+
+    def test_an_ungated_receipt_is_refused_item_50(self):
+        for n, gated in enumerate((None, False)):
+            eval_run(self.world, run_id=f"loc-u{n}", inventory_run=f"inv-u{n}", gated=gated)
+            with self.subTest(gated=gated), self.assertRaises(CfError) as ctx:
+                self.score(f"loc-u{n}")
+            self.assertIn("not gated", str(ctx.exception))
+
+    def test_a_corrupt_document_is_refused_by_name_item_69(self):
+        eval_run(self.world, run_id="loc-x", inventory_run="inv-x")
+        bad = self.world.root / "corpus" / "inv-x" / "t-inv" / f"{self.eval[0]}.json"
+        bad.write_text("{not json")
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc-x")
+        self.assertIn(f"t-inv/{self.eval[0]}.json", str(ctx.exception))
+
+    def test_a_source_shard_is_refused_not_scored_as_gate_failures_item_59(self):
+        if len(self.eval) < 2:
+            self.skipTest("the draw put one article in eval")
+        keep = self.eval[:1]
+        eval_run(self.world, run_id="loc-s", inventory_run="inv-s", locate_sources=keep)
+        rows = WorkspacePaths(self.world.root).locate_outcomes_jsonl("loc-s")
+        rows.write_text("".join(l + "\n" for l in rows.read_text().splitlines()
+                                if json.loads(l)["source_id"] in keep))
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc-s")
+        self.assertIn("no outcome for the formal_math passages", str(ctx.exception))
+        self.assertIn("locate.source_ids", ctx.exception.hint or "")
+
+    def test_a_missing_row_is_a_gate_failure_and_counted_item_60(self):
+        eval_run(self.world, run_id="loc-m", inventory_run="inv-m")
+        path = WorkspacePaths(self.world.root).locate_outcomes_jsonl("loc-m")
+        rows = [json.loads(l) for l in path.read_text().splitlines()]
+        rows[0].update(outcome=None, status=None, locations=[], missing=True)
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        doc = self.score("loc-m")
+        self.assertEqual(doc["coverage"]["missing_rows"], 1)
+
+    def test_a_subject_only_run_is_refused_item_60(self):
+        eval_run(self.world, run_id="loc-subj", inventory_run="inv-subj", subject_only=True)
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc-subj")
+        self.assertIn("subject-only", str(ctx.exception))
+
+    def test_the_arms_of_every_run_agree_item_63(self):
+        eval_run(self.world, run_id="loc-b", inventory_run="inv-b", arm="blind",
+                 inventory_arm="assisted")
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc-b")
+        self.assertIn("inv-b", str(ctx.exception))
+        eval_run(self.world, run_id="loc-c", inventory_run="inv-c", challenge_runs=["chl-c"])
+        self.world.challenge_run("chl-c", of="loc-c", arm="blind")
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc-c")
+        self.assertIn("chl-c", str(ctx.exception))
+
+    def test_each_runs_cost_is_spread_over_its_own_sources_item_64(self):
+        every = sorted(self.world.articles)
+        eval_run(self.world, run_id="loc-$", inventory_run="inv-$", planned=every,
+                 inventory_usd=60.0, locate_usd=12.0)
+        doc = self.score("loc-$")
+        n = len(self.eval)
+        cost = doc["cost"]
+        self.assertAlmostEqual(cost["value"], 60.0 / len(every) + 12.0 / n)
+        self.assertAlmostEqual(cost["locate_and_challenge"]["value"], 12.0 / n)
+        self.assertAlmostEqual(cost["by_stage"]["inventory"], 60.0 / len(every))
+        self.assertEqual(cost["runs"]["inv-$"], {"usd": 60.0, "sources": len(every),
+                                                 "share": round(60.0 / len(every), 6)})
+        self.assertIn("usd_per_article_locate", doc["per_cluster"]["cost"])
+
+    def test_the_commit_is_each_runs_and_the_scorer_is_apart_item_62(self):
+        doc = self.score()
+        self.assertEqual(doc["pins"]["skill_commit"], {"inv1": fx.RUN_COMMIT, "loc1": fx.RUN_COMMIT})
+        self.assertEqual(doc["pins"]["gate_files"]["loc1"], gold_mod.sha_of(fx.GATE_FILES))
+        self.assertEqual(len(doc["scorer"]["sha256"]), 64)
+        with mock.patch.object(score_mod, "scorer", return_value={"sha256": "0" * 64, "files": 1}):
+            again = self.score()
+        self.assertEqual(again["measurement_id"], doc["measurement_id"])
+        self.assertEqual(again["scorer"]["sha256"], "0" * 64)
+        self.assertEqual(len(list(layout_of(self.world).scores_dir.glob("eval-*.json"))), 1)
+        eval_run(self.world, run_id="loc-old", inventory_run="inv-old", skill_commit=None)
+        self.assertEqual(set(self.score("loc-old")["pins"]["skill_commit"].values()), {"unrecorded"})
+
+    def test_the_harvested_host_files_are_the_defaults_item_68(self):
+        lines = [gate_line("loc1", "t-loc", real_problems(
+                     (5, f"{DOC}: {ITEM}", "an absence lists 1 distinct query; at least 2"))),
+                 gate_line("loc1", "t-loc"), gate_line("loc1", "")]
+        self.world.host("loc1", gate_lines=lines, canary={"scanned": 4, "hits": []})
+        with self.assertRaises(CfError) as ctx:
+            cf(self.world, "bench", "score", "b1", "--run", "loc1", "--split", "eval",
+               "--bootstrap", 20)
+        self.assertIn("inv1", str(ctx.exception))          # one run's scan is not every run's
+        self.world.host("inv1", canary={"scanned": 2, "hits": []})
+        doc = self.score("loc1", "--bootstrap", 20)
+        self.assertEqual(doc["canary_check"]["basis"], "host reports")
+        self.assertEqual(doc["canary_check"]["scanned"], 6)
+        found = doc["gate_rejections"]["loc1"]
+        self.assertEqual((found["attempts"], found["rejected"], found["dropped_lines"]), (2, 1, 1))
+        self.assertEqual(set(found["by_reason"]), {"rule_5:absence_receipt"})
+        self.assertIsNone(doc["gate_rejections"]["inv1"])
+        self.world.host("inv1", canary={"scanned": 2, "hits": ["s1.jsonl"]})
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc1", "--bootstrap", 20)
+        self.assertIn("canary", str(ctx.exception))
+
+    def test_challenge_runs_are_pinned_and_owed_rows_counted_item_70(self):
+        eval_run(self.world, run_id="loc-ch", inventory_run="inv-ch", challenge_runs=["chl-1"])
+        self.world.challenge_run("chl-1", of="loc-ch")
+        path = WorkspacePaths(self.world.root).locate_outcomes_jsonl("loc-ch")
+        rows = [json.loads(l) for l in path.read_text().splitlines()]
+        rows[0]["challenge"] = None
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+        doc = self.score("loc-ch")
+        self.assertEqual(doc["pins"]["challenge_runs"], ["chl-1"])
+        self.assertEqual(doc["runs"]["challenge"], ["chl-1"])
+        self.assertEqual(doc["coverage"]["challenge_owed"]["total"], 1)
+        self.assertIn("chl-1", doc["pins"]["receipts"])
+        self.world.challenge_run("chl-1", of="loc-ch", gated=False)
+        with self.assertRaises(CfError):
+            self.score("loc-ch")
+        (self.world.root / "reports" / "locate-tally.loc1.json").unlink()
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc1")
+        self.assertIn("no locate tally", str(ctx.exception))
+
+    def test_a_planted_run_must_be_this_benchs_ablation_on_eval_item_78(self):
+        eval_run(self.world, run_id="loc-p", inventory_run="inv-p",
+                 tools={"kind": "planted", "sha256": "7" * 64})
+        with self.assertRaises(CfError) as ctx:
+            self.score("loc-p")
+        self.assertIn("not this bench's planted one", str(ctx.exception))
+        ablation = json.loads(layout_of(self.world).ablation_json.read_text())
+        eval_run(self.world, run_id="loc-p2", inventory_run="inv-p2",
+                 tools={"kind": "planted", "sha256": ablation["corpus_sha256"]})
+        with self.assertRaises(CfError) as ctx:
+            cf(self.world, "bench", "score", "b1", "--run", "loc-p2", "--split", "dev",
+               "--no-canary-check", "--bootstrap", 20)
+        self.assertIn("eval", str(ctx.exception))
+
+    def test_no_other_packages_format_is_respelled_here_item_84(self):
+        for path in sorted((SCRIPTS / "bench").glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            with self.subTest(file=path.name):
+                for literal in ("cf-sourceset/1", "cf-corpus/1", "cf-locate/1", '"RECEIPT.json"'):
+                    self.assertNotIn(literal, text)
+                if path.name != "gold.py":       # plant() edits its own copy of the database
+                    self.assertNotIn("SELECT ", text)
+                    self.assertNotIn("sqlite3.connect", text)
+
+
+def frozen_at(root: Path) -> fx.World:
+    """What ``frozen(case, plant=True)`` builds, at ``root``: a template for a test class."""
+    world = fx.World(root)
+    cf(world, "bench", "build", "b1", "--sourceset", fx.SOURCESET, "--frame", world.frame_file(),
+       "--curated-qids", world.curated_1000(), "--uniform", 6, "--curated", 3,
+       "--spans-per-article", 2, "--seed", 7)
+    cf(world, "bench", "anchor", "b1", "--universe", fx.UNIVERSE, "--curated-1000",
+       world.curated_1000(), "--curated-100", world.curated_100(), "--rename-table", world.renames())
+    transcribe(world, "anchor", lambda t: {"task_id": t["task_id"],
+                                           "quote": world.quote(index_of(t["source_id"]), 0, 6),
+                                           "relation": "exactMatch", "passage_kind": "theorem",
+                                           "evidence": "read at the pin"})
+    transcribe(world, "label", lambda t: {
+        "task_id": t["task_id"], "scope": "formal_math", "passage_kind": "theorem",
+        "declarations": [{"library": "mathlib", "declaration": "Widget.conj_three",
+                          "relation": "exactMatch"}], "evidence": "e", "hunters": []})
+    cf(world, "bench", "freeze", "b1", "--plant")
+    return world
+
+
+def clone_world(template: fx.World, root: Path) -> fx.World:
+    """A copy of a built world under ``root`` (the trees are relative; the paths are re-rooted)."""
+    world = object.__new__(fx.World)
+    world.__dict__.update(template.__dict__)
+    world.root = root
+    world.paths = WorkspacePaths(root)
+    return world
 
 
 if __name__ == "__main__":
