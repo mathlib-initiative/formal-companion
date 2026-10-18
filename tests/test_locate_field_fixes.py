@@ -56,9 +56,10 @@ class TestC1LexicalTermsAreTerms(unittest.TestCase):
                 self.assertTrue(candidates.is_lexical_term(term))
 
     def test_c1_the_title_stays_and_only_terms_are_queried(self):
-        view = _View([{"finder": "bold_definition", "term": t} for t in
+        # every bold here is in the lead (section []): only the lead's bold terms are terms
+        view = _View([{"finder": "bold_definition", "term": t, "section": []} for t in
                       ("R", "1'", "Example:", "Proof.", "widget group", "if and only if")]
-                     + [{"finder": "theorem_box", "term": "Theorem"}])
+                     + [{"finder": "theorem_box", "term": "Theorem", "section": []}])
         terms = candidates.source_terms({"title": "Pi"}, view)
         self.assertEqual(terms, [("Pi", "title"), ("widget group", "bold_term")])
 

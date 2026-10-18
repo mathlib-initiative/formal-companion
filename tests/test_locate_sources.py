@@ -1862,7 +1862,7 @@ class TestFieldS11ManifestDeltas(unittest.TestCase):
         # the planner's and the bench's readers see the same version
         from bench import inputs as bench_inputs
         from locate import inputs as locate_inputs
-        for reader in (locate_inputs.load_manifest, bench_inputs.load_manifest):
+        for reader in (locate_inputs.manifest, bench_inputs.load_manifest):
             with self.subTest(reader=reader.__module__):
                 read = reader(self.paths, "wpm", m.version)
                 self.assertEqual((read.sha256, read.entries), (m.sha256, again.entries))

@@ -1,11 +1,11 @@
 You are the worker for task file `tasks/$TEND_TASK_ID.yaml`: a **challenge** (L5) of about {{batch}} records another worker produced in universe `{{universe_id}}`. Your job is to refute them, not to confirm them.
 
-Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each source it lists the records that are yours, each with its `target` (`location`, `absence`, `unresolved`, `scope` or `prominence`), its passage `item` and span, and for a location its `location_key`, `library`, `declaration` and `relation`. Read the passage yourself in `{{sources_dir}}/<source-id>/text.txt` before you judge anything.
+Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each source it lists the records that are yours, each with its `target` (`location`, `absence`, `unresolved`, `scope` or `prominence`), its passage `item`, where to read it (`text_span` in `text.txt`, `section`, `quote`; `span` is a `layer.txt` offset), and for a location its `location_key`, `library`, `declaration` and `relation`. Read the passage yourself in `{{sources_dir}}/<source-id>/text.txt` before you judge anything.
 
 ## How to judge each record
 - **A location** is refuted by default. Restate the passage, read the declaration's signature (`{{show_command}} <library> <declaration>`), and either **confirm** it with a quoted fragment of the signature that states the passage, **downgrade** its relation to the one it really has, or **refute** it when it does not state the passage at all.
 - **An absence or an unresolved outcome** is hunted: search first, harder and differently than the worker did (`{{search_command}} <query words…>` with other names, the objects the statement is about, the generalisation a library would state){{#if checkouts_dir}}, and grep the pinned library checkouts under `{{checkouts_dir}}`{{/if}}. **Overturn** it with the locations you found, or **uphold** it, saying what you searched.
-- **A scope or a prominence** that was demoted is re-read: **uphold** it, or **overturn** a scope with the locations of the passage it hid (a `prominence` record may instead be **downgraded** with the right `prominence`).
+- **A scope or a prominence** that was demoted is re-read: **uphold** it, or **overturn** it: a scope with the locations of the passage it hid, a prominence with the right `prominence`.
 
 ## The document
 Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
@@ -25,7 +25,9 @@ Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
     "locations": [{"library": "<id>", "declaration": "<name>", "relation": "exactMatch",
                    "rank": 1, "confidence": "high", "note": "", "witness": "<why>"}],
     "witness": "<what you searched that the worker did not>"},
-   {"item": "<item>", "target": "scope", "action": "uphold", "witness": "<why>"}]}
+   {"item": "<item>", "target": "scope", "action": "uphold", "witness": "<why>"},
+   {"item": "<item>", "target": "prominence", "action": "overturn", "prominence": "central",
+    "witness": "<why>"}]}
 ```
 
 - One verdict per record of the manifest, and only for those records; `action` is `confirm`, `downgrade`, `refute`, `overturn` or `uphold`; every verdict carries a non-empty `witness`.

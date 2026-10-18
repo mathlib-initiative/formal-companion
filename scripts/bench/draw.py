@@ -61,11 +61,11 @@ from cflib.yamlio import load_yaml
 
 from . import inputs
 from .curated import CuratedLists
-from .layout import overlap_words, word_spans
+from .layout import MIN_OVERLAP_WORDS, curated_qid, overlap_words, word_spans
 
 _INT = re.compile(r"[1-9][0-9]*\Z")
 #: the fewest words a sampled span holds -- the join's overlap floor
-MIN_SPAN_WORDS = 4
+MIN_SPAN_WORDS = MIN_OVERLAP_WORDS
 #: a frame article's ``revision_basis`` when the frame file named its source id; a
 #: page id resolves to a ``cflib.vocab.SOURCE_ORIGINS`` basis (adopted, enumerated)
 BASIS_NAMED = "source_id"
@@ -134,6 +134,19 @@ def read_frame_list(path: Path) -> list[dict]:
     return out
 
 
+def read_qids(path: Path) -> set[str]:
+    """QIDs from a list file, or the QID keys of a curated mapping (Mathlib's ``1000.yaml``).
+
+    A suffixed key (``Q4724004A``) names its base QID, as ``layout.curated_qid`` reads it.
+    """
+    qids = set()
+    for value in _list_file(path):
+        qid = curated_qid(value.get("qid") if isinstance(value, dict) else value)
+        if qid:
+            qids.add(qid)
+    return qids
+
+
 # --------------------------------------------------------------------------
 # the frame
 # --------------------------------------------------------------------------
@@ -165,7 +178,7 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
     if not isinstance(curated, CuratedLists):
         curated = CuratedLists.from_qids(curated or ())
     preferred = manifest.preferred()
-    pages = manifest.page_entries()
+    pages = inputs.page_entries(manifest)
     articles: dict[str, dict] = {}
     seen_pages: dict[int, str] = {}
     missing, duplicate = [], []
@@ -177,7 +190,7 @@ def build_frame(rows: list[dict], manifest, curated: CuratedLists | Iterable[str
                 continue
             basis = BASIS_NAMED
         else:
-            sid = preferred.get(row["pageid"])
+            sid = preferred.get(int(row["pageid"]))
             if sid is None:
                 missing.append(f"pageid {row['pageid']}")
                 continue
@@ -383,7 +396,8 @@ def _section_of(sections: list[dict], start: int) -> tuple[list, str | None]:
 def _outermost(blocks: list[dict]) -> list[dict]:
     """The blocks no other block contains, in layer order; refuses two that only overlap.
 
-    Two blocks with one span are one unit, the first ``paragraphs.json`` lists.
+    Two blocks with one span are one unit, the first ``paragraphs.json`` lists; a
+    unit is ``math`` when any block of it is.
     """
     order = sorted(range(len(blocks)), key=lambda i: (blocks[i]["span"][0], -blocks[i]["span"][1], i))
     out: list[dict] = []
@@ -391,18 +405,26 @@ def _outermost(blocks: list[dict]) -> list[dict]:
         a, b = blocks[i]["span"]
         if out:
             c, d = out[-1]["span"]
-            if b <= d:
-                continue                       # inside the current outermost block
+            if b <= d:                         # inside the current outermost block
+                out[-1]["math"] = out[-1]["math"] or bool(blocks[i].get("math"))
+                continue
             if a < d:
                 raise CfError(f"paragraphs.json blocks [{c}, {d}] and [{a}, {b}] overlap without "
                               f"nesting; the renderer's blocks are a tree, so this source's "
                               f"paragraphs.json is not its renderer's")
-        out.append(blocks[i])
+        out.append(dict(blocks[i]))
     return out
 
 
 def span_frame(layer: str, paragraphs: list[dict], sections: list[dict]) -> list[dict]:
-    """The blocks a span may be drawn from: the outermost ones inside the layer, of four words."""
+    """The blocks a span may be drawn from: inside the layer, at least four words, disjoint.
+
+    ``paragraphs.json`` blocks nest (an ``li`` holding a ``p``, a theorem box
+    holding one: references/locate-documents.md section 7); nested blocks are one
+    unit of the frame, the outermost, ``math`` when any of them is -- so the
+    frame's size ``M`` counts distinct units and ``pi_span = k/M`` is right.  Two
+    blocks that overlap without nesting are refused (:func:`_outermost`).
+    """
     out = []
     for block in paragraphs or []:
         a, b = (int(x) for x in block.get("span") or (0, 0))

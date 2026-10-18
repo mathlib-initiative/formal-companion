@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import math
 from collections import defaultdict
+from fractions import Fraction
 from typing import Iterable
 
 from cflib import hashing, vocab
@@ -36,10 +37,11 @@ from . import outcomes as outcomes_mod
 
 SCHEMA = outcomes_mod.CHALLENGE_PLAN_SCHEMA
 DEFAULT_SAMPLE_RATE = 0.2
-REFUTE = "refute_by_default"
-HUNT = "hunt"
-SAMPLE = "sample"
-NONE = "none"
+#: the rule each record falls under (``cflib.vocab.CHALLENGE_RULES``)
+REFUTE = vocab.CHALLENGE_RULE_REFUTE
+HUNT = vocab.CHALLENGE_RULE_HUNT
+SAMPLE = vocab.CHALLENGE_RULE_SAMPLE
+NONE = vocab.CHALLENGE_RULE_NONE
 
 
 def _rank(seed: int, key: str) -> str:
@@ -50,7 +52,8 @@ def _record(row: dict, target: str, *, run_id: str, location: dict | None = None
     rec = {"target": target, "source_id": row["source_id"], "item": row["item"],
            "run_id": run_id, "prominence": row.get("prominence"),
            "scope": row.get("scope"), "passage_kind": row.get("passage_kind"),
-           "outcome": row.get("outcome"), "span": row.get("span")}
+           "outcome": row.get("outcome"), "span": row.get("span"),
+           "section": row.get("section"), "quote": row.get("quote")}
     if location is not None:
         rec.update({"location_key": location["location_key"], "library": location["library"],
                     "declaration": location["declaration"], "relation": location["relation"],
@@ -100,22 +103,23 @@ def draw(records: list[dict], *, seed: int, sample_rate: float) -> list[dict]:
     strata: dict[str, list[dict]] = defaultdict(list)
     for rec in records:
         if rec["rule"] in (REFUTE, HUNT):
-            rec["planned"] = outcomes_mod.REQUIRED
+            rec["planned"] = vocab.CHALLENGE_REQUIRED
         elif rec["rule"] == SAMPLE:
             strata[rec["stratum"]].append(rec)
         else:
             rec["planned"] = vocab.CHALLENGE_NOT_REQUIRED
     for stratum, members in sorted(strata.items()):
         members.sort(key=lambda r: _rank(seed, r["key"]))
-        take = math.ceil(sample_rate * len(members)) if sample_rate > 0 else 0
+        # exact arithmetic: 0.07 of 100 records is 7, never the 8 a float product rounds to
+        take = math.ceil(Fraction(str(sample_rate)) * len(members)) if sample_rate > 0 else 0
         for i, rec in enumerate(members):
-            rec["planned"] = outcomes_mod.REQUIRED if i < take else vocab.CHALLENGE_SAMPLED_OUT
+            rec["planned"] = vocab.CHALLENGE_REQUIRED if i < take else vocab.CHALLENGE_SAMPLED_OUT
     return records
 
 
 def batches(records: list[dict], *, size: int = vocab.CHALLENGE_BATCH_RECORDS) -> list[list[dict]]:
     """The required records in tasks of at most ``size``, sources kept in order."""
-    required = sorted((r for r in records if r["planned"] == outcomes_mod.REQUIRED),
+    required = sorted((r for r in records if r["planned"] == vocab.CHALLENGE_REQUIRED),
                       key=lambda r: (r["source_id"], (r.get("span") or [0])[0], r["item"],
                                      r["target"], r["key"]))
     out: list[list[dict]] = []
@@ -144,13 +148,20 @@ def plan(paths: WorkspacePaths, locate_runs: list[str], *, seed: int, sample_rat
     if len(pins) > 1:
         raise CfError("the locate runs of one challenge pin different sourcesets or universes",
                       hint="challenge each universe's runs separately")
-    seen: set[str] = set()
+    seen: dict[str, str] = {}
     for rec in records:
-        if rec["key"] in seen:
+        other = seen.get(rec["key"])
+        if other is not None and other != rec["run_id"]:
             raise CfError(f"record {rec['key'][:12]} ({rec['source_id']} {rec['item']}, "
-                          f"{rec['target']}) appears in two locate runs",
+                          f"{rec['target']}) appears in two locate runs, {other} and "
+                          f"{rec['run_id']}",
                           hint="a passage is located by one run; challenge one at a time")
-        seen.add(rec["key"])
+        if other is not None:
+            raise CfError(f"run {rec['run_id']}: {rec['source_id']} {rec['item']} lists "
+                          f"{rec.get('library')}:{rec.get('declaration')} twice",
+                          hint="a passage names a declaration once; the outcomes keep its best "
+                               "rank and say so")
+        seen[rec["key"]] = rec["run_id"]
     draw(records, seed=seed, sample_rate=sample_rate)
     groups = batches(records, size=batch_size)
     first = next(iter(inputs_seen.values()))
@@ -166,7 +177,8 @@ def plan_document(run_id: str, built: dict, *, seed: int, sample_rate: float,
                                                        r["key"])):
         rows.append({k: rec.get(k) for k in (
             "key", "target", "source_id", "item", "location_key", "library", "declaration",
-            "relation", "run_id", "prominence", "scope", "rule", "stratum", "planned")}
+            "relation", "outcome", "run_id", "prominence", "scope", "rule", "stratum",
+            "planned")}
             | {"task_id": task_of.get(rec["key"])})
     counts: dict[str, int] = defaultdict(int)
     for rec in rows:

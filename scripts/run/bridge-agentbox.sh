@@ -159,6 +159,9 @@ case "${CF_GATE_CMD:-}" in
   *) GATE_TOOL=",Bash(${CF_GATE_CMD%% --*}:*)" ;;
 esac
 if [ "$ROLE" = reviewer ]; then
+  # The gate entry above: the gate reads, and its one write is the append-only
+  # gate log outside the worktree. A reviewer that could not verify requested
+  # changes, and that counted as a genuine rejection towards the attempt cap.
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_REVIEWER_TOOLS:-Read,Glob,Grep,Bash(git:*)$GATE_TOOL}}"
 else
   TOOLS="${CF_ALLOWED_TOOLS:-${CF_WORKER_TOOLS:-Read,Glob,Grep,Edit,Write,Bash(git:*)$GATE_TOOL}}"

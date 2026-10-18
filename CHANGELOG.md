@@ -35,6 +35,63 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The locate planner meets the other locate packages through their owners
+  (`references/locate-documents.md` §5, §6, §9, §10): the sourceset through
+  `sources.sourceset.Sourceset` (one source per page, `Manifest.preferred()`;
+  a source whose files moved is refused at plan time; a missing view is never
+  read as empty), the views through `sources.render_html`, the universe through
+  `corpus.universe.Universe`, the database through `corpus.query`, accepted by
+  the universe sha it was built for, never its bytes, and the state file
+  through `Sourceset.record_state`. A run names two databases: the full
+  `corpus.sqlite` the gate checks, and the tools database its workers search
+  — `--blind` the G1-blind build, `cf plan-locate`/`cf locate candidates
+  --tools-corpus-db` a planted one — with `--db` inside the allowlisted prefix
+  and one candidates directory per kind. The staged gate directory and `bin/`
+  are whole (`verify_findings.py`, both corpus tools, `agent_call.py`,
+  `attempt_cap.py` for every run, `watchdog.py`), a missing file is a planning
+  error, and `run.yaml` pins `skill_commit`, every staged file's sha, the
+  tools database and the arm (a plan of another arm than its inventory or
+  challenged runs is refused); `budget.max_cost` comes only from `--max-cost`.
+  Task manifests carry each source's curated hits once (`curated`) and where to
+  read each passage (`text_span`, `section`, `quote`), and are kept in
+  `runs/<run>/planned.json`. Candidates join titles only on the title, by base
+  QID for suffixed `1000.yaml` keys, never across another QID. The outcomes
+  apply a challenge only to the run and records it planned, count a refuted
+  location as judged, accept only a weaker downgrade, re-rank an overturn and
+  stamp every row with its document's shas; the export refuses a closed
+  licence class, problem rows and source text past the cap in receipts, hashes
+  each receipt as written, and never writes into the checkout, a companion or a
+  directory that is not a record set.
+- The locate gate, harvest, `cf run` and campaigns after the wave-2 seam and
+  package reviews (`references/locate-documents.md` §1-§4 and §9-§11). The
+  gate builds rule 1's records with the staged `locate_records.py`, takes rule
+  4's hits from the task manifest's `curated` list, turns a missing sibling
+  module into exit 3, opens SQLite through quoted read-only URIs, reads a
+  document only from a regular file (a symlink is refused), refuses a hostile
+  shape (a list where a word belongs, deep nesting, an overflowing number, a
+  lone surrogate) as rule 1 instead of a traceback, and requires the file name
+  to be the `source_id`, a document for every source of the task, one location
+  per declaration, a downgrade weaker than the record's relation and, for a
+  curated hit, a location whose relation counts or a reasoned rejection (an
+  `accepted` candidate is a location; a `relatedMatch` discharges nothing); a
+  malformed `gate.json` value is exit 3. The bridges' fallback gates only the
+  task's own documents and the reviewer may run the gate; `agent_call.py`
+  forwards TERM/INT/HUP to the agent's group before freeing its slot. A remote
+  `cf harvest` of a locate run brings the host's gate log, a campaign shard's
+  usage export and canary scan to `runs/<run>/host/`, prices from that export,
+  records the run in the sourceset's `state.json`, writes no gate-log line of
+  its own, refuses JSON off the `<task-id>/<source-id>.json` layout, lands no
+  symlink and fails `--verify-sha` closed; status, monitor and tally count
+  nested corpora, and the faithfulness tally leaves locate corpora out.
+  `cf run` refuses a locate run planned for `local`, sends the tools database
+  and only this run's candidates files but no inventory, keeps one spend cap,
+  records `versions: {tend, agentbox, agent_cli}` and the source layers it
+  sent. `cf campaign` stamps `locate.campaign` into its shards, needs a
+  smoke-tested `--pilot` and `cf run <shard> --stage verify` instead of a smoke,
+  quotes every rendered path, and its sequencer holds one lock, refuses a root
+  with a live tend run, keys its state by run id, scans (new
+  `scripts/run/canary_scan.py`), exports and prunes only the transcripts each
+  shard wrote, and stops on any reason to drain a drain did not act on.
 - The overlay writes and reads Literature Links 2.0.0, unreleased. A
   record's `subject` ends are the item's regions of the PDF and its `object`
   end is the declaration in the repository at the export commit, so an item
@@ -136,6 +193,45 @@ release has something to say.
   keeps a run history, `cf sourceset status` writes only with `--verify`, and
   `cf status` lists sourcesets. L2 queries only bold terms that are terms, and
   the inventory prompt keeps one passage where finders share a start.
+- `cf bench` reads every other package's artifact through its owner
+  (`references/locate-bench.md` §4, §8, §10). `anchor` and `freeze --plant`
+  open `corpus.sqlite` through `corpus.query` and refuse one that does not
+  describe the universe as it is now; gold stamps the recomputed universe sha
+  and refuses a new state under existing labels without `--supersede`; the
+  curated library is `Universe.mathlib_library()`; 100.yaml joins by its QID
+  and by `locate.candidates.normalise_title`, as L2 does; a deprecated alias
+  also accepts its new name (`deprecated_to`). `score` refuses an ungated
+  receipt, a run of another universe state, mixed arms across the inventory,
+  locate and challenge runs, a subject-only run, and a `formal_math` passage
+  with no outcome row (a `--source` or shard run, never scored as gate
+  failures); it pins each run's own `skill_commit` and `gate_files`, the tools
+  database and the tally's challenge runs, reports the scorer's code sha apart
+  as `scorer`, counts `coverage.missing_rows` and `challenge_owed`, spreads
+  each run's dollars over its own `source_ids` (`cost.by_stage`, `runs`,
+  `locate_and_challenge`), scores a run whose tools database is `planted` on
+  tier P alone, and reads gate-log reasons by `by_rule` and `[rule N]` per run
+  from the harvested `runs/<run>/host/gate.jsonl` (worker calls only, exit 3
+  apart) and the canary from `runs/<run>/host/canary.json`. `compare` refuses
+  two scorers, two tools-database kinds or two challenge states, and judges
+  cost on locate and challenge spend when the inventory is shared. The bench
+  fixtures are built by `Sourceset`, `render_html`, `Universe` and
+  `build_db`, in the harvested layout `corpus/<run>/<task>/<source>.json`.
+  Gold is tighter too: a gold span holds at least four whole words, lettered
+  1000.yaml keys join their base QID, `to_additive` twins are the whole image
+  and renames widen a surviving alias, nested blocks are one span unit, a
+  partial transcription keeps every earlier row and never mixes labelers (the
+  manifest names the labeler from the rows; labeler `locate-label/2`), h is
+  tag-blind end to end and over every anchored passage, GX needs both
+  enumerators, a refused build or `freeze --plant` writes nothing, and the
+  frozen P tier and canary are verified. The score refuses a canary check
+  that read nothing and costs that are not dollars, pins the runs' own
+  renderer, scores E-MEMORY wherever a removed declaration is cited, counts a
+  missing locate result as unresolved, and stratifies every metric. `compare`
+  requires a distinct A/A replicate of the baseline's configuration, a
+  replication of another bench's accepted claim (`--replication
+  BENCH:ENTRY`; `--ledger` is gone), a resolvable alpha in (0, 0.5), and
+  holds the ledger under a lock; a missing baseline safety rate or a
+  zero-cost baseline is no longer a pass.
 
 ### Added
 - Locate L1, web sources (`docs/proposals/wikipedia-locate.md` §2.1, §2.2, §3;
@@ -221,8 +317,8 @@ release has something to say.
 - `cf run` for a locate run: `--execute` needs a spend cap recorded in its
   `run.yaml` or given as `--max-cost` (a workspace default does not count and
   `--no-budget-cap` is refused); the transfer sends this run's rendered sources
-  (with `--include-source-text`), `corpus.sqlite`, the L2 candidates and the
-  frozen inventory to the host paths its `gate.json` names; the verify stage
+  (with `--include-source-text`), `corpus.sqlite` and the L2 candidates to the
+  host paths its `gate.json` names; the verify stage
   checks `corpus.sqlite`'s sha256 once and that the locate gate is out of tree,
   and the tend config is checked for `verify_locate.py`.
 - Recursive harvest (proposal §3, §6): the listing (`find -print0` on a host),

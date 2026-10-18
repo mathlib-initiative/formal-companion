@@ -305,3 +305,53 @@ class TestFindQuote(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
+    """#84/#85: what runs on the host carries its own copy of a cflib.vocab value; each is pinned.
+
+    The gate, the bridge's helpers and the record builder are copied to a run
+    host with no cflib, so they inline the values they need.  A change to one in
+    cflib.vocab would otherwise silently fork the host: the bridge would write
+    UNRESOLVED documents the gate refuses, or the gate would quote passages
+    differently from the export.
+    """
+
+    def test_the_gate(self):
+        from gate import verify_locate as vl
+        from locate import plan as locate_plan
+
+        self.assertEqual(vl.GATE_SCHEMA, locate_plan.GATE_SCHEMA)
+        self.assertEqual(vl.DOCUMENT_SCHEMA, vocab.LOCATE_DOCUMENT_SCHEMA)
+        self.assertEqual(vl.UNRESOLVED_BY, vocab.UNRESOLVED_BY)
+        self.assertEqual(vl.MAX_LOCATIONS_PER_PASSAGE, vocab.MAX_LOCATIONS_PER_PASSAGE)
+        self.assertEqual(vl.MIN_ABSENCE_QUERIES, vocab.MIN_ABSENCE_QUERIES)
+        self.assertEqual(vl.LOCATE_EXTENSION, vocab.LOCATE_EXTENSION)
+        self.assertEqual(vl.NO_MATCH, vocab.NO_MATCH)
+
+    def test_the_bridge_helpers(self):
+        from run import agent_call, attempt_cap
+
+        self.assertEqual(attempt_cap.UNRESOLVED_ATTEMPT_CAP, vocab.UNRESOLVED_ATTEMPT_CAP)
+        self.assertEqual(attempt_cap.DOCUMENT_SCHEMA, vocab.LOCATE_DOCUMENT_SCHEMA)
+        self.assertEqual(attempt_cap.LOCATE_INVENTORY, vocab.LOCATE_INVENTORY)
+        self.assertEqual(agent_call.DEFAULT_SLOTS, vocab.SESSION_SLOTS)
+        self.assertEqual(agent_call.parse_duration(agent_call.DEFAULT_TIMEOUT),
+                         agent_call.parse_duration(vocab.AGENT_TIMEOUT))
+
+    def test_the_record_builder(self):
+        from locate import records
+
+        self.assertEqual(records.QUOTE_WORDS, vocab.EXPORT_QUOTE_WORDS)
+        self.assertEqual(records.CONTEXT_CHARS, vocab.EXPORT_CONTEXT_CHARS)
+        self.assertEqual(records.EXTENSION, vocab.LOCATE_EXTENSION)
+        self.assertEqual(records.MAX_LOCATIONS, vocab.MAX_LOCATIONS_PER_PASSAGE)
+        self.assertEqual(records.NO_MATCH, vocab.NO_MATCH)
+        self.assertEqual(records.NOT_FORMALIZED, vocab.STATUS_NOT_FORMALIZED)
+
+    def test_the_workspace_side_reads_cflib(self):
+        from harvest import harvest
+        from run import campaign
+
+        self.assertEqual(harvest.LOCATE_SCHEMA, vocab.LOCATE_DOCUMENT_SCHEMA)
+        self.assertEqual(campaign.MAX_ROOT_TASKS, vocab.MAX_TASKS_PER_ROOT)

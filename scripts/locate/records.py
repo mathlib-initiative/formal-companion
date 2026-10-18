@@ -67,6 +67,9 @@ CONTEXT_CHARS = 32
 MAX_LOCATIONS = 5
 NO_MATCH = "noMatch"
 NOT_FORMALIZED = "not_formalized"
+#: the keys of a receipt candidate (references/locate-documents.md section 3), the only
+#: ones its sidecar carries
+RECEIPT_CANDIDATE_KEYS = ("library", "declaration", "verdict", "reason")
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _SPACE = re.compile(r"\s")
 
@@ -288,22 +291,57 @@ def unresolved_record(source: Mapping[str, Any], passage: Mapping[str, Any],
     }
 
 
+def verbatim_run(text: str, layer: str, words: int = QUOTE_WORDS) -> str | None:
+    """The first run of more than ``words`` consecutive words of ``text`` that occurs,
+    whitespace collapsed, on the layer -- source text a free-text field would carry
+    past the quote cap -- or None."""
+    tokens = str(text or "").split()
+    if len(tokens) <= words:
+        return None
+    flat = " ".join(layer.split())
+    for i in range(len(tokens) - words):
+        run = " ".join(tokens[i:i + words + 1])
+        if run in flat:
+            return run
+    return None
+
+
+def _free_text(item: str, what: str, text: str, layer: str) -> None:
+    run = verbatim_run(text, layer)
+    if run is not None:
+        raise RecordError(f"{item}: {what} carries {len(run.split())}+ words of the source "
+                          f"verbatim ({run[:40]!r}...), past the {QUOTE_WORDS}-word quote cap")
+
+
 def receipt_document(source_id: str, item: str, receipt: Mapping[str, Any],
-                     universe: Mapping[str, Any]) -> tuple[str, dict, dict]:
-    """``(sha256, the sidecar, the reference)`` for an absence's search receipt."""
+                     universe: Mapping[str, Any], layer: str = "") -> tuple[str, str, dict]:
+    """``(sha256, the sidecar's text, the reference)`` for an absence's search receipt.
+
+    The sidecar keeps each candidate's documented keys only, refuses a query or a
+    reason that carries the source past the quote cap, and its sha256 is the sha
+    of the exact bytes written -- the name of the file, the record's reference
+    and the seal's entry are one value.
+    """
     queries = [str(q) for q in receipt.get("queries") or []]
-    candidates = [dict(c) for c in receipt.get("candidates") or [] if isinstance(c, dict)]
+    candidates = [{k: c[k] for k in RECEIPT_CANDIDATE_KEYS if k in c}
+                  for c in receipt.get("candidates") or [] if isinstance(c, dict)]
+    for q in queries:
+        _free_text(item, "a receipt query", q, layer)
+    for c in candidates:
+        _free_text(item, "a candidate's reason", str(c.get("reason") or ""), layer)
     body = {"source_id": source_id, "item": item, "universe": str(universe["id"]),
             "universe_sha256": str(universe["sha256"]), "queries": queries,
             "candidates": candidates}
-    digest = sha256_text(canonical(body))
-    return digest, body, {"sha256": digest, "queries": len(set(queries)),
+    text = canonical(body) + "\n"
+    digest = sha256_text(text)
+    return digest, text, {"sha256": digest, "queries": len(set(queries)),
                           "candidates": len(candidates)}
 
 
 def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer: str,
-                    universe: Mapping[str, Any]) -> tuple[list[dict], list[tuple[str, dict]]]:
-    """Every record of one passage outcome, and the receipt sidecars they reference."""
+                    universe: Mapping[str, Any]) -> tuple[list[dict], list[tuple[str, str]]]:
+    """Every record of one passage outcome, and the receipt sidecars they reference
+    (``(sha256, text)``); a location note that carries the source past the cap is refused."""
     span = passage.get("span")
     if not span:
         raise RecordError(f"{passage.get('item')}: no span to quote")
@@ -312,7 +350,7 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     span_sha = sha256_text(layer[start:end])
     libs = {str(lib["id"]): lib for lib in universe["libraries"]}
     records: list[dict] = []
-    sidecars: list[tuple[str, dict]] = []
+    sidecars: list[tuple[str, str]] = []
     outcome = passage.get("outcome")
     locations = sorted(passage.get("locations") or [],
                        key=lambda l: (l.get("rank") or 99, l["library"], l["declaration"]))
@@ -326,13 +364,14 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     for loc in locations:
         if loc["library"] not in libs:
             raise RecordError(f"{passage['item']}: library {loc['library']} is not in the universe")
+        _free_text(str(passage["item"]), "a location's note", str(loc.get("note") or ""), layer)
         records.append(location_record(source, passage, loc, libs[loc["library"]], universe,
                                        quote, span_sha256=span_sha))
     if outcome == "absent":
-        digest, body, ref = receipt_document(str(source["source_id"]), str(passage["item"]),
+        digest, text, ref = receipt_document(str(source["source_id"]), str(passage["item"]),
                                              (passage.get("absence") or {}).get("receipt")
-                                             or passage.get("receipt") or {}, universe)
-        sidecars.append((digest, body))
+                                             or passage.get("receipt") or {}, universe, layer)
+        sidecars.append((digest, text))
         records.append(absence_record(source, passage, universe, quote, span_sha256=span_sha,
                                       receipt=ref))
     elif not locations:
