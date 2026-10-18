@@ -15,7 +15,9 @@ Three steps, in this order, each a function of what landed:
 2. **Challenge.**  The verdicts of the challenge runs given are applied by
    section 4's semantics (``confirm``/``uphold`` keep a record and make it
    ``survived``; ``downgrade``, ``refute`` and ``overturn`` change it and make
-   the affected records ``downgraded``).  A record the challenge plan did not
+   the affected records ``downgraded``, except that a location an overturn
+   adds is the challenger's own witnessed finding, ``survived``; the
+   locations a refute leaves are ranked 1..n again).  A record the challenge plan did not
    require keeps the value the plan recorded (``not_required``,
    ``sampled_out``) -- unless a prominence overturn to ``subject`` or
    ``central`` put it under a rule that requires it, which makes it
@@ -680,7 +682,7 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                     if relation == vocab.CLOSE_MATCH and not str(loc.get("note") or "").strip():
                         loc["note"] = downgrade_note(verdict)
         kept.append(loc)
-    row["locations"] = kept
+    row["locations"] = _renumbered(kept)
     # the passage-level record: an absence, an unresolved outcome, a scope or a prominence
     target = {vocab.OUTCOME_ABSENT: "absence", vocab.OUTCOME_UNRESOLVED: "unresolved"}.get(
         row["outcome"])
@@ -719,8 +721,11 @@ def _apply_challenge(row: dict, planned: dict, verdicts: dict, universe, db,
                                            db, problems)
             for text in dropped:
                 row["problem"] = "; ".join(filter(None, [row.get("problem"), text]))
+            # the overturned record is the absence (or outcome, or scope), and it is
+            # gone; each location the challenger added is its own witnessed, gated
+            # finding -- challenged and standing, never a weakened one (field defect X5)
             for loc in new:
-                loc["challenge"] = vocab.CHALLENGE_DOWNGRADED
+                loc["challenge"] = vocab.CHALLENGE_SURVIVED
             row["record_challenge"] = vocab.CHALLENGE_DOWNGRADED
             row["passage_challenge_override"] = vocab.CHALLENGE_DOWNGRADED
             if t == "scope":
@@ -791,6 +796,20 @@ def downgrade_note(verdict: dict) -> str:
         cut = first.rfind(" ", 0, NOTE_FROM_WITNESS_CHARS)
         first = first[:cut if cut > 0 else NOTE_FROM_WITNESS_CHARS].rstrip(" ,;:") + "\u2026"
     return first
+
+
+def _renumbered(locations: list[dict]) -> list[dict]:
+    """The locations in rank order, ranked 1..n again.
+
+    A refuted location leaves the passage, and the ones after it move up: the
+    export's ranks are the order a reader sees, never a gap where a refuted
+    declaration stood (field defect X4: two passages exported ranks [1, 3]).
+    """
+    ordered = sorted(locations, key=lambda l: (l.get("rank") or 99, l["library"],
+                                               l["declaration"]))
+    for rank, loc in enumerate(ordered, 1):
+        loc["rank"] = rank
+    return ordered
 
 
 def _overturned(new: list[dict], old: list[dict]) -> list[dict]:
