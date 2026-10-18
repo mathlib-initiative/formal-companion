@@ -11,6 +11,13 @@ shape references/locate-documents.md section 8 fixes.  One file per universe,
   sha256, declarations}``;
 * ``published_index`` on a library row -- the recorded acceptance of an index
   the library publishes itself, which the probe and its canary never checked;
+* ``host`` on a library row -- ``{kind, ref, options}``, the rest of the line the
+  host driver's universe list carries for it (``scripts/corpus/universe_host.py``):
+  ``build`` (the default), ``published-index``, ``core`` or ``package-in-workspace``,
+  the ref the driver resolves (the commit by default; a published index's tag),
+  and the driver options (``SHARD_COUNT``, ``SPARSE``, ``WORKSPACE`` ...), validated by
+  the driver's own parser.  Build instructions, not a pin: they are outside
+  ``universe_sha256`` and may be changed on a re-add;
 * ``excluded`` -- ``{id, reason}`` for a library that failed to build or probe,
   so an absence honestly names the smaller universe;
 * ``canaries`` -- one row per toolchain whose acceptance canary was ingested
@@ -32,6 +39,8 @@ from typing import Any, Iterable
 from cflib.errors import CfError
 from cflib.hashing import sha256_text
 from cflib.yamlio import read_yaml, write_yaml
+
+from . import universe_host
 
 #: the universe-local library id: what the host drivers' universe list accepts too
 LIBRARY_ID = re.compile(r"[a-z0-9][a-z0-9._-]{0,63}\Z")
@@ -210,20 +219,36 @@ class Universe:
         row = self.canary(toolchain)
         return bool(row and row.get("passed") is True)
 
+    def driver_lines(self) -> list[list[str]]:
+        """The host driver's universe list for this universe: one field list per library.
+
+        ``[id, repo, ref, roots, kind]`` plus the options when there are any
+        (:func:`host_of`), libraries probed inside a workspace after every other one,
+        since the driver requires a workspace to come first.
+        """
+        rows = sorted(self.libraries, key=lambda lib: (
+            host_of(lib)["kind"] in universe_host.WORKSPACE_KINDS, str(lib.get("id"))))
+        return [driver_fields(lib) for lib in rows]
+
     # -- changing --------------------------------------------------------
     def add_library(self, *, library_id: str, repo: str, commit: str, toolchain: str,
                     roots: list[str], brain_lib: str | None = None,
-                    licence: str | None = None, conventions: str | None = None) -> dict:
+                    licence: str | None = None, conventions: str | None = None,
+                    host: dict | None = None) -> dict:
         """Add one library row; refused when the id exists with other facts or is excluded.
 
         Re-adding the same id with the same repo, commit and toolchain is a no-op,
         so the command is idempotent; changing a pinned commit is not -- a
-        universe is frozen, and a new pin is a new universe.
+        universe is frozen, and a new pin is a new universe.  ``host`` (the
+        driver line's kind, ref and options, see the module docstring) is set or
+        replaced on a re-add: it says how the pin is built, not what is pinned.
         """
         row = {"id": library_id, "brain_lib": brain_lib or library_id, "repo": repo,
                "commit": commit, "toolchain": toolchain, "roots": list(roots),
                "licence": {"spdx": licence} if licence else None,
                "conventions": conventions, "index": None}
+        if host is not None:
+            row["host"] = normalised_host(host, commit)
         problems = _library_problems(row)
         if problems:
             raise CfError(f"library {library_id!r}: " + "; ".join(problems))
@@ -238,6 +263,8 @@ class Universe:
                 raise CfError(f"library {library_id!r} is already pinned at "
                               f"{str(existing.get('commit'))[:12]} ({existing.get('repo')})",
                               hint="a universe is frozen: make a new universe for a new pin")
+            if host is not None:
+                existing["host"] = row["host"]
             return existing
         if brain_lib:
             for existing in self.libraries:
@@ -333,6 +360,16 @@ class Universe:
                 problems.append(f"an exclusion carries no reason: {row!r}")
             elif row.get("id") in seen:
                 problems.append(f"library {row.get('id')!r} is both listed and excluded")
+        kinds = {str(lib.get("id")): host_of(lib)["kind"] for lib in self.libraries
+                 if isinstance(lib, dict)}
+        for lib in self.libraries:
+            if not isinstance(lib, dict):
+                continue
+            host = host_of(lib)
+            workspace = host["options"].get("WORKSPACE")
+            if host["kind"] in universe_host.WORKSPACE_KINDS and kinds.get(workspace, "build") != "build":
+                problems.append(f"library {lib.get('id')!r} is probed inside {workspace!r}, a "
+                                f"{kinds[workspace]} library; a workspace is a built one")
         brain: dict[str, str] = {}
         for lib in self.libraries:
             token = lib.get("brain_lib")
@@ -363,6 +400,45 @@ class Universe:
                                  f"recomputed on every write.\n")
 
 
+def normalised_host(host: dict, commit: str) -> dict:
+    """``{kind, ref, options}`` with the defaults filled: kind ``build``, ref the commit."""
+    options = host.get("options") or {}
+    if not isinstance(options, dict):
+        raise CfError(f"host options {options!r} are not KEY=VALUE pairs")
+    return {"kind": str(host.get("kind") or "build"), "ref": str(host.get("ref") or commit),
+            "options": {str(k): str(v) for k, v in sorted(options.items())}}
+
+
+def host_of(lib: dict) -> dict:
+    """A row's ``host``, or what the driver is told for a row without one: build its commit."""
+    host = lib.get("host")
+    if isinstance(host, dict):
+        return normalised_host(host, str(lib.get("commit") or ""))
+    return {"kind": "build", "ref": str(lib.get("commit") or ""), "options": {}}
+
+
+def driver_fields(lib: dict) -> list[str]:
+    """One row as the fields of the host driver's universe-list line."""
+    host = host_of(lib)
+    fields = [str(lib.get("id") or ""), str(lib.get("repo") or ""), host["ref"],
+              ",".join(str(r) for r in lib.get("roots") or []), host["kind"]]
+    options = ";".join(f"{k}={v}" for k, v in host["options"].items())
+    return fields + [options] if options else fields
+
+
+def _host_problems(lib: dict) -> list[str]:
+    """The row's driver line, parsed by the driver's own parser: what it would refuse."""
+    if "host" not in lib or lib.get("host") is None:
+        return []
+    if not isinstance(lib["host"], dict):
+        return [f"host {lib['host']!r} is not a mapping of kind, ref and options"]
+    try:
+        universe_host.Entry(0, driver_fields(lib))
+    except (universe_host.UniverseError, CfError) as exc:
+        return [f"the host driver would refuse its line: {str(exc).replace('line 0: ', '')}"]
+    return []
+
+
 def _library_problems(lib: dict) -> list[str]:
     problems: list[str] = []
     if not LIBRARY_ID.match(str(lib.get("id") or "")):
@@ -382,4 +458,6 @@ def _library_problems(lib: dict) -> list[str]:
         if bad:
             problems.append(f"roots {bad!r} are not Lake module globs (a module name, "
                             f"optionally .+ or .*), which the host driver refuses")
+        else:
+            problems.extend(_host_problems(lib))
     return problems

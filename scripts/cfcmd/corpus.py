@@ -7,6 +7,8 @@ the files references/locate-documents.md section 8 fixes::
     cf corpus add u1 --library alpha --repo https://example.org/alpha --commit <40 hex> \\
         --toolchain leanprover/lean4:v4.34.0 --roots Alpha [--brain-lib Alpha] [--licence Apache-2.0]
     cf corpus add u1 --library gamma --exclude "the build failed at the pin"
+    cf corpus add u1 --library delta ... --host-kind published-index --host-ref <tag> \
+        --host-option SPARSE=index --host-option INDEX_FILE=index.jsonl
     cf corpus probe-command u1 --library alpha          # prints the host pipeline
     cf corpus probe-command u1 --canary --toolchain leanprover/lean4:v4.34.0
     cf corpus ingest u1 --canary --from <canary index dir>
@@ -20,9 +22,17 @@ the files references/locate-documents.md section 8 fixes::
 ``cf`` never builds a library (the rule ``detect-proxies --lean`` follows):
 ``probe-command`` PRINTS the per-library pipeline for the operator to run on
 the host, and ``ingest`` reads the probe's output when it has come back.
+
+**Where a universe lives.**  In a workspace, ``corpora/<universe>/``.  Every
+subcommand also takes ``--base <dir>``: the universe is then
+``<dir>/<universe>/`` with the same layout (``cflib.paths.CorporaPaths``) and no
+workspace is read at all -- how a universe kept on the run host, beside the
+indexes the drivers wrote, is initialised, filled, built and searched.  A base
+inside this skill's checkout is refused, as ``cf init`` refuses a workspace there.
 """
 from __future__ import annotations
 
+import argparse
 import json
 import re
 import shlex
@@ -33,10 +43,11 @@ from cflib import log
 from cflib.errors import CfError
 from cflib.hashing import short
 from cflib.log import format_table as _format_table
+from cflib.paths import CorporaPaths, skill_root
 from cflib.workspace import from_args
 
-from corpus import build_db, ingest as ingest_mod, query
-from corpus.universe import TOOLCHAIN, Universe, lean_version
+from corpus import build_db, ingest as ingest_mod, query, universe_host
+from corpus.universe import TOOLCHAIN, Universe, driver_fields, host_of, lean_version
 
 #: the host drivers probe-command names, beside each other on the host as here
 DRIVERS = ("scripts/corpus/build_universe_host.sh", "scripts/corpus/probe_host.sh",
@@ -45,15 +56,27 @@ DRIVERS = ("scripts/corpus/build_universe_host.sh", "scripts/corpus/probe_host.s
 DEFAULT_MIN_FREE_GB = 450
 
 
+def _base_option() -> argparse.ArgumentParser:
+    """``--base``, which every subcommand takes (the module docstring says what it is)."""
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--base", default=None, metavar="DIR",
+                        help="the directory holding <universe>/ (universe.yaml, index/, "
+                             "corpus.sqlite) when the universe is outside any workspace, e.g. "
+                             "on the run host; no workspace is read")
+    return common
+
+
 def register(subparsers) -> None:
     p = subparsers.add_parser("corpus", help="universes of Lean libraries: indexes and corpus.sqlite")
     sub = p.add_subparsers(dest="corpus_command", metavar="<subcommand>")
+    common = [_base_option()]
 
-    init = sub.add_parser("init", help="create corpora/<universe>/universe.yaml")
+    init = sub.add_parser("init", parents=common, help="create corpora/<universe>/universe.yaml")
     init.add_argument("universe")
     init.add_argument("--frozen", default=None, help="the date the set is fixed (default: today)")
 
-    add = sub.add_parser("add", help="pin one library in a universe, or exclude it with a reason")
+    add = sub.add_parser("add", parents=common,
+                         help="pin one library in a universe, or exclude it with a reason")
     add.add_argument("universe")
     add.add_argument("--library", required=True, help="the universe-local id (a document's `library`)")
     add.add_argument("--repo", help="https repository URL")
@@ -66,8 +89,18 @@ def register(subparsers) -> None:
                      help="the library's conventions file, copied to conventions/<library>.md")
     add.add_argument("--exclude", default=None, metavar="REASON",
                      help="record the library as excluded (failed to build or probe), with why")
+    add.add_argument("--host-kind", default=None, choices=universe_host.KINDS,
+                     help="how the host driver indexes it: build (default), published-index, "
+                          "core or package-in-workspace")
+    add.add_argument("--host-ref", default=None, metavar="REF",
+                     help="the ref the driver resolves (default: the commit; a published "
+                          "index's tag)")
+    add.add_argument("--host-option", action="append", default=None, metavar="KEY=VALUE",
+                     help="a driver option of its universe-list line (repeatable): SHARD_COUNT, "
+                          "BUILD_TARGETS, SPARSE, INDEX_FILE, WORKSPACE, PACKAGE, ...")
 
-    probe = sub.add_parser("probe-command", help="print the host pipeline for one library (runs nothing)")
+    probe = sub.add_parser("probe-command", parents=common,
+                           help="print the host pipeline for one library (runs nothing)")
     probe.add_argument("universe")
     probe.add_argument("--library", default=None)
     probe.add_argument("--canary", action="store_true", help="the acceptance canary of a toolchain")
@@ -77,8 +110,12 @@ def register(subparsers) -> None:
                             "else $HOME/atlas, as the driver itself defaults)")
     probe.add_argument("--min-free-gb", type=int, default=DEFAULT_MIN_FREE_GB,
                        help=f"the disk floor the driver keeps (default {DEFAULT_MIN_FREE_GB})")
+    probe.add_argument("--drivers", default=None, metavar="DIR",
+                       help="the host directory the drivers were copied to (default: "
+                            "$CF_DRIVERS, else the directory the printed lines are run from)")
 
-    ing = sub.add_parser("ingest", help="ingest a probe index (or a canary) into the universe")
+    ing = sub.add_parser("ingest", parents=common,
+                         help="ingest a probe index (or a canary) into the universe")
     ing.add_argument("universe")
     ing.add_argument("--library", default=None)
     ing.add_argument("--from", dest="source", required=True,
@@ -92,18 +129,21 @@ def register(subparsers) -> None:
                           "which the probe's canary never checked; the reason is recorded in "
                           "universe.yaml")
 
-    bdb = sub.add_parser("build-db", help="build corpus.sqlite from the ingested indexes")
+    bdb = sub.add_parser("build-db", parents=common,
+                         help="build corpus.sqlite from the ingested indexes")
     bdb.add_argument("universe")
     bdb.add_argument("--force", action="store_true", help="rebuild even when it is current")
     bdb.add_argument("--blind", action="store_true",
                      help="build corpus.blind.sqlite instead: the G1-blind database, with no tags "
                           "and no Wikipedia links in the docstrings")
 
-    st = sub.add_parser("status", help="libraries, canaries, indexes and the database")
+    st = sub.add_parser("status", parents=common,
+                        help="libraries, canaries, indexes and the database")
     st.add_argument("universe")
     st.add_argument("--json", action="store_true", dest="as_json")
 
-    se = sub.add_parser("search", help="word search over corpus.sqlite, as the host tool does")
+    se = sub.add_parser("search", parents=common,
+                        help="word search over corpus.sqlite, as the host tool does")
     se.add_argument("universe")
     se.add_argument("words", nargs="+")
     se.add_argument("--library", default=None)
@@ -112,7 +152,7 @@ def register(subparsers) -> None:
                     help="only declarations matching every word (default: any word)")
     se.add_argument("--json", action="store_true", dest="as_json")
 
-    sh = sub.add_parser("show", help="one declaration of corpus.sqlite")
+    sh = sub.add_parser("show", parents=common, help="one declaration of corpus.sqlite")
     sh.add_argument("universe")
     sh.add_argument("library")
     sh.add_argument("declaration")
@@ -124,27 +164,48 @@ def run(args) -> int:
     if not command:
         raise CfError("cf corpus needs a subcommand",
                       hint="init, add, probe-command, ingest, build-db, status, search or show")
-    workspace = from_args(args)
+    paths = universe_paths(args)
     handler = {"init": _init, "add": _add, "probe-command": _probe_command, "ingest": _ingest,
                "build-db": _build_db, "status": _status, "search": _search,
                "show": _show}[command]
-    return handler(workspace, args)
+    return handler(paths, args)
+
+
+def universe_paths(args):
+    """Where the universes are: ``--base <dir>``, else the workspace's ``corpora/``.
+
+    Both answers have the one layout (``CorporaPaths``); the handlers below use
+    nothing of a workspace but these paths.
+    """
+    base = getattr(args, "base", None)
+    if not base:
+        return from_args(args).paths
+    root = Path(base).expanduser().resolve()
+    skill = skill_root()
+    if root == skill or skill in root.parents:
+        raise CfError(f"refusing a universe base inside the skill repo ({skill})",
+                      hint="the skill repo holds code, templates and docs only; keep universes "
+                           "in a workspace's corpora/ or a directory such as ~/atlas/corpus")
+    if not root.is_dir():
+        raise CfError(f"--base {base}: no such directory",
+                      hint="create it first; --base names the directory that holds <universe>/")
+    return CorporaPaths(root)
 
 
 def format_table(rows: list[dict], columns: list[str]) -> str:
     return _format_table(columns, [[row.get(c) for c in columns] for row in rows])
 
 
-def _load(workspace, universe_id: str) -> Universe:
-    return Universe.load(workspace.paths.universe_yaml(universe_id))
+def _load(paths, universe_id: str) -> Universe:
+    return Universe.load(paths.universe_yaml(universe_id))
 
 
 # ---------------------------------------------------------------------------
 # init, add
 
 
-def _init(workspace, args) -> int:
-    path = workspace.paths.universe_yaml(args.universe)
+def _init(paths, args) -> int:
+    path = paths.universe_yaml(args.universe)
     universe = Universe.create(path, args.universe, args.frozen)
     path.parent.mkdir(parents=True, exist_ok=True)
     universe.save()
@@ -152,8 +213,8 @@ def _init(workspace, args) -> int:
     return 0
 
 
-def _add(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _add(paths, args) -> int:
+    universe = _load(paths, args.universe)
     if args.exclude is not None:
         row = universe.exclude(args.library, args.exclude)
         universe.save()
@@ -170,7 +231,7 @@ def _add(workspace, args) -> int:
         src = Path(args.conventions).expanduser()
         if not src.is_file():
             raise CfError(f"no conventions file at {src}")
-        dest = workspace.paths.universe_conventions_md(args.universe, args.library)
+        dest = paths.universe_conventions_md(args.universe, args.library)
         conventions = f"conventions/{dest.name}"
         if dest.exists() and dest.read_bytes() != src.read_bytes():
             raise CfError(f"{dest} already holds other conventions",
@@ -180,14 +241,19 @@ def _add(workspace, args) -> int:
     row = universe.add_library(library_id=args.library, repo=args.repo, commit=args.commit,
                                toolchain=args.toolchain, roots=list(args.roots),
                                brain_lib=args.brain_lib, licence=args.licence,
-                               conventions=conventions)
+                               conventions=conventions, host=_host_arg(args))
     if conventions and row.get("conventions") != conventions:
         row["conventions"] = conventions
     if src is not None and not dest.exists():
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(src, dest)
     universe.save()
-    print(f"{universe.id}: {row['id']} at {short(row['commit'])} ({row['toolchain']})")
+    host = host_of(row)
+    print(f"{universe.id}: {row['id']} at {short(row['commit'])} ({row['toolchain']}); "
+          f"host kind {host['kind']}"
+          + (f", ref {host['ref']}" if host["ref"] != row["commit"] else "")
+          + (f", options {';'.join(f'{k}={v}' for k, v in host['options'].items())}"
+             if host["options"] else ""))
     if not universe.canary_passed(row["toolchain"]):
         print(f"  note: no passed canary for Lean {lean_version(row['toolchain'])} yet; "
               f"`cf corpus probe-command {universe.id} --canary --toolchain {row['toolchain']}` "
@@ -195,12 +261,28 @@ def _add(workspace, args) -> int:
     return 0
 
 
+def _host_arg(args) -> dict | None:
+    """``--host-kind/--host-ref/--host-option`` as a row's ``host``, or None when none is given."""
+    if args.host_kind is None and args.host_ref is None and not args.host_option:
+        return None
+    options: dict[str, str] = {}
+    for pair in args.host_option or []:
+        key, sep, value = pair.partition("=")
+        if not sep or not key:
+            raise CfError(f"--host-option {pair!r} is not KEY=VALUE",
+                          hint="e.g. --host-option SHARD_COUNT=32")
+        if key in options:
+            raise CfError(f"--host-option {key} is given twice")
+        options[key] = value
+    return {"kind": args.host_kind, "ref": args.host_ref, "options": options}
+
+
 # ---------------------------------------------------------------------------
 # probe-command
 
 
-def _probe_command(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _probe_command(paths, args) -> int:
+    universe = _load(paths, args.universe)
     if args.canary:
         if not args.toolchain:
             raise CfError("--canary needs --toolchain", hint="e.g. leanprover/lean4:v4.34.0")
@@ -208,12 +290,12 @@ def _probe_command(workspace, args) -> int:
             raise CfError(f"--toolchain {args.toolchain!r} is not an elan toolchain",
                           hint="e.g. leanprover/lean4:v4.34.0 or "
                                "leanprover/lean4-nightly:nightly-2026-10-01")
-        print(_canary_pipeline(universe, args.toolchain, args.atlas_root))
+        print(_canary_pipeline(universe, args.toolchain, args.atlas_root, args.drivers))
         return 0
     if not args.library:
         raise CfError("probe-command needs --library (or --canary --toolchain)")
     print(_library_pipeline(universe, universe.library(args.library), args.atlas_root,
-                            args.min_free_gb))
+                            args.min_free_gb, args.drivers))
     return 0
 
 
@@ -228,8 +310,22 @@ def _root_line(root: str | None) -> str:
     return 'export ATLAS_ROOT="${ATLAS_ROOT:-$HOME/atlas}"'
 
 
+def _drivers_line(drivers: str | None) -> str:
+    """Set CF_DRIVERS once: the copy of the drivers every later line runs from.
+
+    Without ``--drivers`` it is ``$CF_DRIVERS``, else the directory the printed
+    lines are run from -- taken before any ``cd``, so a later line still names it.
+    """
+    if drivers:
+        return f"export CF_DRIVERS={shlex.quote(drivers)}"
+    return 'export CF_DRIVERS="${CF_DRIVERS:-$PWD}"'
+
+
 #: a path component the printed lines may put inside double quotes unescaped
 _SAFE_COMPONENT = re.compile(r"[A-Za-z0-9._@-]+\Z")
+#: the clean environment the printed lines run heavy steps in, as the drivers do
+_CLEAN = ('env -i HOME="$HOME" USER="${USER:-$(id -un)}" PATH="$HOME/.elan/bin:/usr/bin:/bin" '
+          'LANG=C.UTF-8 LC_ALL=C.UTF-8 nice -n 10 ionice -c3')
 
 
 def _slug(value: str) -> str:
@@ -237,66 +333,157 @@ def _slug(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip("-") or "toolchain"
 
 
-def _library_pipeline(universe: Universe, lib: dict, root: str | None, min_free_gb: int) -> str:
+def _list_lines(universe: Universe) -> list[str]:
+    """The ``printf`` lines that write the universe's whole driver list, one per library.
+
+    Every library, not only the one being probed: the driver runs only the ids it
+    is given, keeps its state per library, and names its state and log directories
+    after the list -- so one list per universe, the same for every library's
+    pipeline, never a one-line list each overwrites.  ``printf`` writes the tabs,
+    which a terminal's copy and paste would turn into spaces.
+    """
+    lines = []
+    for fields in universe.driver_lines():
+        fmt = "\\t".join(["%s"] * len(fields)) + "\\n"
+        lines.append(f"printf '{fmt}' " + " ".join(shlex.quote(f) for f in fields))
+    return lines
+
+
+def _dependents(universe: Universe, lib_id: str) -> list[str]:
+    """The libraries probed inside ``lib_id``'s workspace."""
+    return [str(lib["id"]) for lib in universe.libraries
+            if host_of(lib)["kind"] in universe_host.WORKSPACE_KINDS
+            and host_of(lib)["options"].get("WORKSPACE") == lib_id]
+
+
+def _library_pipeline(universe: Universe, lib: dict, root: str | None, min_free_gb: int,
+                      drivers: str | None = None) -> str:
     commit = lib["commit"]
     lib_id = lib["id"]                       # [a-z0-9._-]: safe inside double quotes
     assert _SAFE_COMPONENT.match(lib_id)
-    roots = ",".join(lib["roots"])
-    tsv = f"{universe.id}.tsv"
+    host = host_of(lib)
+    kind, ref, options = host["kind"], host["ref"], host["options"]
     toolchain = lib["toolchain"]             # validated by universe.py: no shell characters
+    tsv = f'"$ATLAS_ROOT/lists/{universe.id}.tsv"'
+    shown = "; ".join(f"{k}={v}" for k, v in options.items())
+    workspace = options.get("WORKSPACE")
     lines = [
-        f"# Library {lib_id} of universe {universe.id} at {commit} ({toolchain}).",
+        f"# Library {lib_id} of universe {universe.id} at {commit} ({toolchain}),",
+        f"# indexed on the host as kind {kind}"
+        + (f" from ref {ref}" if ref != commit else "") + (f" ({shown})" if shown else "") + ".",
         "# Run on the allowlisted run host, as the operator: `cf` never builds a library.",
         "# Building a third-party library on a shared host is a trust decision the box owner",
-        "# signs (docs/proposals/wikipedia-locate.md sections 6 and 13).",
+        "# signs (docs/proposals/wikipedia-locate.md sections 6 and 13). Every line below that",
+        "# is not a comment runs as printed; a placeholder <...> only ever stands in a comment.",
         "#",
         "# 0. once per host: copy the drivers there, keeping their layout",
         "#      " + " ".join(DRIVERS),
         f"#    and check the canary of Lean {lean_version(toolchain)}: "
         f"`cf corpus probe-command {universe.id} --canary --toolchain {toolchain}`.",
+        "#    Run these lines from that copy, or set CF_DRIVERS to it.",
         _root_line(root),
-        "# 1. the universe-list line the driver reads for this library",
-        f"printf '%s\\t%s\\t%s\\t%s\\t%s\\n' {shlex.quote(lib_id)} {shlex.quote(lib['repo'])} "
-        f"{commit} {shlex.quote(roots)} build > {shlex.quote(tsv)}",
-        "# 2. the disk floor (of the filesystem holding $ATLAS_ROOT, and of / and $HOME) is",
-        "#    checked before every heavy step, the open-file limit raised to 65536, the olean",
-        "#    caches fetched, the library built at the pin and probed, under nice/ionice in a",
-        "#    clean environment:",
-        f"MIN_FREE_GB={int(min_free_gb)} bash scripts/corpus/build_universe_host.sh "
-        f"{shlex.quote(tsv)} {shlex.quote(lib_id)}",
-        "# 3. bring the index back (the directory holds index.jsonl and manifest.json)",
-        f'#      "$ATLAS_ROOT/index/{lib_id}@{commit[:12]}/"',
-        "#    and ingest it here, with the checkout when tags should be read from source spans:",
-        f"cf corpus ingest {universe.id} --library {lib_id} --from <the copied index dir> "
-        f"--checkout <a clean checkout of {lib_id} at {commit[:12]}>",
-        "# 4. on the host, remove the build and keep the index:",
-        f'[ -n "$ATLAS_ROOT" ] && rm -rf -- "$ATLAS_ROOT/libs/{lib_id}/.lake"',
-        "# 5. when every library is in: cf corpus build-db " + universe.id,
+        _drivers_line(drivers),
+        f"# 1. the driver's universe list: every library of {universe.id} (those probed inside a",
+        f"#    workspace last); the driver runs only {lib_id} and keeps its state per library",
+        'mkdir -p "$ATLAS_ROOT/lists"',
+        "{",
+        *_list_lines(universe),
+        "} > " + tsv,
     ]
+    if kind == "build":
+        lines += [
+            "# 2. the disk floor (of the filesystem holding $ATLAS_ROOT, and of / and $HOME) is",
+            "#    checked before every heavy step, the open-file limit raised to 65536, the olean",
+            "#    caches fetched, the library built at the pin and probed, under nice/ionice in a",
+            "#    clean environment:"]
+    elif kind == "published-index":
+        lines += [
+            f"# 2. the library's own published index ({options.get('INDEX_FILE') or 'the INDEX_FILE default'})"
+            f" is copied from {ref} and checked;",
+            "#    nothing is built (the disk floor and a clean environment as for a build):"]
+    elif kind == "core":
+        lines += [
+            f"# 2. Lean core is probed inside the built workspace libs/{workspace}, whose build",
+            f"#    must be in place: {ref[:12]} must be the Lean.githash of its toolchain, and the",
+            "#    paths are the lean4 repository's (src/...); nothing is cloned or built:"]
+    else:
+        lines += [
+            f"# 2. the package {options.get('PACKAGE')} is probed inside the built workspace "
+            f"libs/{workspace},",
+            "#    at the rev its lake-manifest pins (which must be the pin); nothing is cloned or",
+            "#    built:"]
+    index_name = "index.jsonl"
+    source = "<the copied index dir>"
+    if kind == "published-index":
+        index_name = options.get("INDEX_FILE") or universe_host.OPTION_DEFAULTS["INDEX_FILE"]
+        if index_name not in ("index.jsonl", "autoform-library-index.jsonl"):
+            source = f"<the copied index dir>/{index_name}"     # ingest finds only those two
+    lines += [
+        f"MIN_FREE_GB={int(min_free_gb)} bash \"$CF_DRIVERS/scripts/corpus/build_universe_host.sh\" "
+        f"{tsv} {shlex.quote(lib_id)}",
+        f"# 3. bring the index back (the directory holds {index_name} and manifest.json)",
+        f'#      "$ATLAS_ROOT/index/{lib_id}@{commit[:12]}/"',
+        "#    and ingest it where the universe is, filling in the placeholders:",
+    ]
+    ingest = (f"#      cf corpus ingest {universe.id} --library {lib_id} "
+              f"--from {source}")
+    if kind == "published-index":
+        lines += [ingest + " --accept-published '<why the published index is trusted>'",
+                  f"#        --checkout <a clean checkout of {lib_id} at {commit[:12]}>  "
+                  "(for the tags in its source spans)"]
+    elif kind == "core":
+        lines += [ingest,
+                  f"#        [--checkout <a clean lean4 clone at {commit[:12]}>]  "
+                  "(for attribute tags; Init and Std carry none)"]
+    elif kind == "package-in-workspace":
+        lines += [ingest,
+                  f"#        --checkout <a clean checkout of {lib_id} at {commit[:12]}, e.g. a copy of "
+                  f"libs/{workspace}/.lake/packages/{options.get('PACKAGE')}>"]
+    else:
+        lines += [ingest + f" --checkout <a clean checkout of {lib_id} at {commit[:12]}>"]
+    dependents = _dependents(universe, lib_id)
+    if kind != "build":
+        why = ("a published index builds nothing" if kind == "published-index"
+               else f"{lib_id} was probed inside libs/{workspace}, whose own pipeline removes "
+                    "its build")
+        lines.append(f"# 4. nothing to remove: {why}.")
+    elif dependents:
+        lines += [f"# 4. keep the build: {', '.join(dependents)} "
+                  f"{'is' if len(dependents) == 1 else 'are'} probed inside it. Once "
+                  f"{'it is' if len(dependents) == 1 else 'they are'} indexed, remove it:",
+                  f'#      [ -n "$ATLAS_ROOT" ] && rm -rf -- "$ATLAS_ROOT/libs/{lib_id}/.lake"']
+    else:
+        lines += ["# 4. on the host, remove the build and keep the index:",
+                  f'[ -n "$ATLAS_ROOT" ] && rm -rf -- "$ATLAS_ROOT/libs/{lib_id}/.lake"']
+    lines.append("# 5. when every library is in: cf corpus build-db " + universe.id)
     return "\n".join(lines)
 
 
-def _canary_pipeline(universe: Universe, toolchain: str, root: str | None) -> str:
+def _canary_pipeline(universe: Universe, toolchain: str, root: str | None,
+                     drivers: str | None = None) -> str:
     version = lean_version(toolchain)
     work = f'"$ATLAS_ROOT/canary/{_slug(version)}"'
     header = "module\\n\\npublic section"
     sed = shlex.quote(f"s#@@TOOLCHAIN@@#{toolchain}#;s#@@MODULE_HEADER@@#{header}#;"
                       f"s#@@MODULE_FOOTER@@#end#")
-    clean = ('env -i HOME="$HOME" USER="$USER" PATH="$HOME/.elan/bin:/usr/bin:/bin" '
-             'LANG=C.UTF-8 LC_ALL=C.UTF-8 nice -n 10 ionice -c3')
     lines = [
         f"# The acceptance canary of Lean {version} (docs/proposals/wikipedia-locate.md section 2.4),",
-        "# on the run host. Copy templates/corpus/canary/ and the drivers there first.",
+        "# on the run host. Copy the drivers there first (templates/corpus/canary/ with them),",
+        "# and run these lines from that copy, or set CF_DRIVERS to it. Every line that is not",
+        "# a comment runs as printed; a placeholder <...> only ever stands in a comment.",
         _root_line(root),
-        f"mkdir -p {work} && cp -R templates/corpus/canary/. {work}/",
+        _drivers_line(drivers),
+        f'mkdir -p {work} && cp -R "$CF_DRIVERS/templates/corpus/canary/." {work}/',
         f"cd {work} && for f in $(find . -name '*.tmpl'); do",
         f'  sed -e {sed} "$f" > "${{f%.tmpl}}" && rm "$f"; done',
         "# (a toolchain without the module system: replace the header and footer with nothing)",
-        "# the build runs as the probe does: a clean environment, nice and ionice",
-        f"{clean} lake build",
-        f"bash <drivers>/scripts/corpus/probe_host.sh {work} cf-canary CfCanary {work}/index",
-        "# bring the index directory back, then here:",
-        f"cf corpus ingest {universe.id} --canary --from <the copied index dir>",
+        "# the build and the probe run as the drivers run them: a clean environment, nice, ionice",
+        f"{_CLEAN} lake build",
+        f'{_CLEAN} bash "$CF_DRIVERS/scripts/corpus/probe_host.sh" {work} cf-canary CfCanary '
+        f"{work}/index",
+        f'#    the index is in "$ATLAS_ROOT/canary/{_slug(version)}/index/"; bring it back and, '
+        "where the universe is:",
+        f"#      cf corpus ingest {universe.id} --canary --from <the copied index dir>",
     ]
     return "\n".join(lines)
 
@@ -305,8 +492,8 @@ def _canary_pipeline(universe: Universe, toolchain: str, root: str | None) -> st
 # ingest, build-db
 
 
-def _ingest(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _ingest(paths, args) -> int:
+    universe = _load(paths, args.universe)
     source = Path(args.source).expanduser()
     if args.canary:
         result = ingest_mod.check_canary(universe, source)
@@ -323,7 +510,7 @@ def _ingest(workspace, args) -> int:
     if checkout is not None and not checkout.is_dir():
         raise CfError(f"no checkout directory at {checkout}")
     manifest = ingest_mod.ingest(universe, args.library, source,
-                                 workspace.paths.universe_index_dir(args.universe, args.library),
+                                 paths.universe_index_dir(args.universe, args.library),
                                  checkout=checkout, accept_published=args.accept_published)
     universe.save()
     statuses = ", ".join(f"{k} {v}" for k, v in manifest["by_proof_status"].items())
@@ -347,11 +534,11 @@ def _ingest(workspace, args) -> int:
     return 0
 
 
-def _build_db(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
-    db = (workspace.paths.corpus_db_blind(args.universe) if args.blind
-          else workspace.paths.corpus_db(args.universe))
-    result = build_db.build(universe, workspace.paths.universe_dir(args.universe), db,
+def _build_db(paths, args) -> int:
+    universe = _load(paths, args.universe)
+    db = (paths.corpus_db_blind(args.universe) if args.blind
+          else paths.corpus_db(args.universe))
+    result = build_db.build(universe, paths.universe_dir(args.universe), db,
                             force=args.force, blind=args.blind)
     if result["built"]:
         universe.save()
@@ -368,12 +555,12 @@ def _build_db(workspace, args) -> int:
 # status, search, show
 
 
-def _status(workspace, args) -> int:
-    universe = _load(workspace, args.universe)
+def _status(paths, args) -> int:
+    universe = _load(paths, args.universe)
     databases = {}
     for blind, path, recorded in (
-            (False, workspace.paths.corpus_db(args.universe), universe.corpus_db),
-            (True, workspace.paths.corpus_db_blind(args.universe), universe.corpus_db_blind)):
+            (False, paths.corpus_db(args.universe), universe.corpus_db),
+            (True, paths.corpus_db_blind(args.universe), universe.corpus_db_blind)):
         state = "not built"
         if recorded:
             state = ("current" if build_db.current(universe, path, blind=blind)
@@ -388,7 +575,7 @@ def _status(workspace, args) -> int:
         conventions = lib.get("conventions")
         confirmed = False
         if conventions:
-            conv = workspace.paths.universe_dir(args.universe) / conventions
+            conv = paths.universe_dir(args.universe) / conventions
             confirmed = conv.is_file() and "confirmed_by:" in conv.read_text(encoding="utf-8")
         rows.append({"library": lib["id"], "commit": short(lib["commit"]),
                      "lean": lean_version(lib["toolchain"]),
@@ -426,9 +613,9 @@ def _status(workspace, args) -> int:
     return 0
 
 
-def _open(workspace, universe_id: str):
-    universe = _load(workspace, universe_id)
-    db = workspace.paths.corpus_db(universe_id)
+def _open(paths, universe_id: str):
+    universe = _load(paths, universe_id)
+    db = paths.corpus_db(universe_id)
     conn = query.open_db(db)
     if query.meta(conn).get("universe_sha256") != universe.sha256():
         log.warn(f"{db} was built for another state of universe {universe_id}; "
@@ -436,8 +623,8 @@ def _open(workspace, universe_id: str):
     return conn
 
 
-def _search(workspace, args) -> int:
-    conn = _open(workspace, args.universe)
+def _search(paths, args) -> int:
+    conn = _open(paths, args.universe)
     try:
         results = query.search(conn, args.words, library=args.library, limit=args.limit,
                                all_words=args.all_words)
@@ -456,8 +643,8 @@ def _search(workspace, args) -> int:
     return 0
 
 
-def _show(workspace, args) -> int:
-    conn = _open(workspace, args.universe)
+def _show(paths, args) -> int:
+    conn = _open(paths, args.universe)
     try:
         record = query.declaration(conn, args.library, args.declaration)
     finally:

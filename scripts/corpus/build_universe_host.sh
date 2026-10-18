@@ -43,6 +43,15 @@
 #      asset of that name) into <ATLAS_ROOT>/index/<id>@<commit12>/ and write manifest.json.
 #      When the tag commit only adds that file, <commit12> is its parent: the commit the
 #      index describes.
+#   kind=core / package-in-workspace (no clone: the library is inside WORKSPACE, a built
+#   checkout libs/<WORKSPACE>):
+#   2. core: the ref must resolve to the Lean.githash of the workspace's toolchain, whose
+#      shipped src/lean holds the sources; package-in-workspace: the ref must resolve to the
+#      rev the workspace's lake-manifest pins PACKAGE at, from this line's URL, and
+#      .lake/packages/<PACKAGE> must be checked out there;
+#   3. expand the roots in the library's own sources, check the workspace built every root
+#      (its .olean exists), and probe inside the workspace; the index records the library's
+#      own commit and its paths inside the library's own repository (core: src/Init/...).
 #
 # Every git, lake and probe command runs in a clean environment (env -i HOME USER PATH LANG)
 # under nice and ionice -c3, with LEAN_NUM_THREADS capped. One library is processed at a
@@ -103,7 +112,47 @@ heavy() {
   while [ "$#" -gt 0 ] && [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do assigns+=("$1"); shift; done
   cenv LEAN_NUM_THREADS="$LEAN_THREADS" "${assigns[@]}" nice -n "$NICE_LEVEL" ionice -c3 "$@"
 }
-g() { cenv nice -n "$NICE_LEVEL" ionice -c3 git "$@"; }
+# git, as cflib.gitsafe.run makes it (universe_host.py and probe_merge.py inline the same
+# pins; tests/test_locate_corpus_field.py holds all three equal to gitsafe's). A library
+# checkout is a third party's tree: the fixed pins stop git from running an fsmonitor hook,
+# a hooks path, an external diff, a pager, an ssh command or an askpass program it names;
+# the environment ignores /etc/gitconfig and takes no optional lock. Every content filter
+# the checkout resolves is blanked too, since `checkout` runs a smudge filter and `status`
+# a clean one by the name an attribute in the tree chose: as `-c <key>=` for a name without
+# an `=`, and as GIT_CONFIG_COUNT pairs (git 2.31 or later) for every name. A name with an
+# `=` on an older git has no blank at all, and there git is not run.
+GIT_SAFE_CONFIG=(-c core.fsmonitor= -c core.hooksPath=/dev/null -c diff.external= -c core.pager=cat
+  -c core.sshCommand= -c core.askPass=)
+GIT_SAFE_ENV=(GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0)
+git_env_pairs=unknown
+g() {
+  local dir="" key names=() pins=() pairs=() i=0
+  [ "${1:-}" = -C ] && dir=${2:-}
+  if [ -n "$dir" ] && [ -e "$dir/.git" ]; then
+    while IFS= read -r key; do
+      case $key in filter.*.clean|filter.*.smudge|filter.*.process) names+=("$key") ;; esac
+    done < <(cenv "${GIT_SAFE_ENV[@]}" git "${GIT_SAFE_CONFIG[@]}" -C "$dir" config --list --name-only 2>/dev/null)
+  fi
+  for key in ${names[@]+"${names[@]}"}; do
+    if [[ $key == *=* ]]; then
+      if [ "$git_env_pairs" = unknown ]; then
+        git_env_pairs=$(cenv "${GIT_SAFE_ENV[@]}" git "${GIT_SAFE_CONFIG[@]}" --version 2>/dev/null \
+          | awk '{split($3, v, "."); print ((v[1] > 2 || (v[1] == 2 && v[2] >= 31)) ? "yes" : "no")}')
+      fi
+      if [ "$git_env_pairs" != yes ]; then
+        printf 'build_universe: refusing git in %s: it names the content filter %s, which this git cannot blank\n' "$dir" "$key" >&2
+        return 126
+      fi
+    else
+      pins+=(-c "$key=")
+    fi
+    pairs+=("GIT_CONFIG_KEY_$i=$key" "GIT_CONFIG_VALUE_$i=")
+    i=$((i + 1))
+  done
+  [ "$i" -gt 0 ] && pairs+=("GIT_CONFIG_COUNT=$i")
+  cenv "${GIT_SAFE_ENV[@]}" ${pairs[@]+"${pairs[@]}"} nice -n "$NICE_LEVEL" ionice -c3 \
+    git "${GIT_SAFE_CONFIG[@]}" ${pins[@]+"${pins[@]}"} "$@"
+}
 py() { cenv python3 -I "$helper" "$@"; }
 
 if [ "${1:-}" = "--status" ]; then
@@ -207,7 +256,7 @@ process_library() {
   set_state "commit=$commit" "ref_kind=$ref_kind"
 
   local out=""
-  if [ "$LIB_KIND" = build ]; then
+  if [ "$LIB_KIND" != published-index ]; then
     out=$index_root/$id@${commit:0:12}
     local why rc
     why=$(py index-ok --universe "$universe" --id "$id" --commit "$commit" --out-dir "$out" 2>>"$lg"); rc=$?
@@ -221,7 +270,25 @@ process_library() {
     esac
   fi
 
-  # 2. the checkout
+  if [ "$LIB_KIND" = core ] || [ "$LIB_KIND" = package-in-workspace ]; then
+    probe_in_workspace
+  else
+    checkout_library
+    if [ "$LIB_KIND" = published-index ]; then
+      publish_index
+    else
+      build_and_probe
+    fi
+  fi
+  local wall=$(( $(date +%s) - started_epoch ))
+  set_state stage=indexed "finished_at=$(ts)" "wall_seconds=$wall" "index_dir=$out" \
+    "disk_delta_gb=$(( df_start - $(avail_gb) ))" $(py manifest-brief --manifest "$out/manifest.json")
+  log "done $id in ${wall}s -> $out"
+  return 0
+}
+
+# 2. the checkout: clone (partial; sparse when SPARSE is set) and check out the commit.
+checkout_library() {
   local fresh=0
   if [ -e "$dir" ] && [ ! -d "$dir/.git" ]; then fail "$dir exists but is not a git checkout"; fi
   if [ ! -d "$dir/.git" ]; then
@@ -257,17 +324,63 @@ process_library() {
   fi
   [ "$(g -C "$dir" rev-parse HEAD)" = "$commit" ] || fail "HEAD is not $commit after checkout"
   set_state stage=checked-out "checkout=$dir"
+}
 
-  if [ "$LIB_KIND" = published-index ]; then
-    publish_index
+# kind=core / package-in-workspace: a library that lives inside another library's built
+# workspace -- Lean core (Init, Std) of the workspace's toolchain, or a Lake package in its
+# .lake/packages -- probed there, and recorded at its OWN commit with paths inside its OWN
+# repository (docs/proposals/wikipedia-locate.md section 2.3). Nothing is cloned or built.
+probe_in_workspace() {
+  local ws=$libs_dir/$OPT_WORKSPACE roots_file=$state_dir/$id.roots prefixes_file=$state_dir/$id.prefixes
+  local library_dir olean_dir path_prefix="" toolchain
+  [ -d "$ws/.lake/build" ] && [ -f "$ws/lean-toolchain" ] \
+    || fail "$ws is not a built workspace: build $OPT_WORKSPACE (a kind build library) first"
+  toolchain=$(tr -d '[:space:]' <"$ws/lean-toolchain") || fail "no lean-toolchain in $ws"
+  set_state "workspace=$OPT_WORKSPACE" "toolchain=$toolchain"
+  if [ "$LIB_KIND" = core ]; then
+    local lean githash tc
+    lean=$(cd "$ws" && cenv elan which lean 2>>"$lg") || fail "elan which lean failed in $ws"
+    githash=$(cenv "$lean" --githash 2>>"$lg") || fail "$lean --githash failed"
+    [ "$githash" = "$commit" ] \
+      || fail "$LIB_REF is ${commit:0:12}, but the Lean of $OPT_WORKSPACE ($toolchain) is ${githash:0:12}"
+    tc=$(cd "$(dirname "$lean")/.." && pwd -P) || fail "no toolchain directory above $lean"
+    library_dir=$tc/src/lean olean_dir=$tc/lib/lean path_prefix=src/
   else
-    build_and_probe
+    local pin rev subdir head pkg=$ws/.lake/packages/$OPT_PACKAGE
+    pin=$(py package-pin --checkout "$ws" --package "$OPT_PACKAGE" --url "$LIB_URL" 2>>"$lg") \
+      || fail "$OPT_WORKSPACE's lake-manifest.json does not pin $OPT_PACKAGE from $LIB_URL (see $lg)"
+    IFS=$'\t' read -r rev subdir <<<"$pin"
+    [ "$rev" = "$commit" ] \
+      || fail "$LIB_REF is ${commit:0:12}, but $OPT_WORKSPACE pins $OPT_PACKAGE at ${rev:0:12}"
+    head=$(g -C "$pkg" rev-parse HEAD 2>>"$lg")
+    [ "$head" = "$rev" ] || fail "$pkg is at ${head:0:12}, the manifest pins ${rev:0:12}"
+    library_dir=$pkg${subdir:+/$subdir} path_prefix=${subdir:+$subdir/}
+    olean_dir=$library_dir/.lake/build/lib/lean
   fi
-  local wall=$(( $(date +%s) - started_epoch ))
-  set_state stage=indexed "finished_at=$(ts)" "wall_seconds=$wall" "index_dir=$out" \
-    "disk_delta_gb=$(( df_start - $(avail_gb) ))" $(py manifest-brief --manifest "$out/manifest.json")
-  log "done $id in ${wall}s -> $out"
-  return 0
+  [ -d "$library_dir" ] || fail "no source directory $library_dir"
+  set_state stage=checked-out "checkout=$library_dir"
+  step "expand roots $LIB_ROOTS in $library_dir"
+  py expand-roots --checkout "$library_dir" --roots "$LIB_ROOTS" --src-dir "$OPT_SRC_DIR" \
+    --out "$roots_file" --prefixes-out "$prefixes_file" >>"$lg" 2>&1 || fail "the roots did not expand (see $lg)"
+  if [ -n "$OPT_MODULE_PREFIXES" ]; then
+    tr ',' '\n' <<<"$OPT_MODULE_PREFIXES" | sort -u >"$prefixes_file"
+  fi
+  py check-oleans --olean-dir "$olean_dir" --roots-file "$roots_file" >>"$lg" 2>&1 \
+    || fail "$OPT_WORKSPACE has not built every root module of $id (see $lg)"
+  set_state "roots_modules=$(wc -l <"$roots_file")" "prefixes=$(paste -sd, "$prefixes_file")"
+  ensure_space 3 "the probe of $id"
+  set_state stage=probing
+  step "probe_host.sh in $ws (kind $LIB_KIND, SHARD_COUNT=$OPT_SHARD_COUNT, $(wc -l <"$roots_file") root modules)"
+  cenv SHARD_COUNT="$OPT_SHARD_COUNT" ${OPT_MAX_PARALLEL:+MAX_PARALLEL="$OPT_MAX_PARALLEL"} \
+    MODULE_PREFIXES="@$prefixes_file" PROBE_NICE="$NICE_LEVEL" \
+    LIBRARY_KIND="$LIB_KIND" LIBRARY_DIR="$library_dir" LIBRARY_COMMIT="$commit" \
+    LIBRARY_PATH_PREFIX="$path_prefix" LIBRARY_SRC_DIRS="$OPT_SRC_DIR" \
+    timeout --kill-after=120 "$OPT_PROBE_TIMEOUT" bash "$probe_host" "$ws" "$id" "@$roots_file" "$out" \
+    >>"$lg" 2>&1 || fail "probe_host.sh failed (see $lg and $out/work/)"
+  py write-entry --universe "$universe" --id "$id" --commit "$commit" --out-dir "$out" \
+    "workspace=$OPT_WORKSPACE" "workspace_commit=$(g -C "$ws" rev-parse HEAD 2>/dev/null)" \
+    "checkout=$library_dir" "toolchain=$toolchain" 2>>"$lg" \
+    || fail "could not write $out/universe-entry.json"
 }
 
 # kind=published-index: copy what the library publishes, then count and check it.
@@ -306,7 +419,7 @@ publish_index() {
   step "copy ${source} (described commit ${source_commit:0:12}, tag commit ${tag_commit:0:12})"
   if [ -n "$blob" ]; then
     g -C "$dir" show "$tag_commit:$idx" >"$stage/$idx" 2>>"$lg" || fail "git show $idx failed"
-    [ "$(g hash-object "$stage/$idx")" = "$blob" ] || fail "$idx does not hash to its tree blob $blob"
+    [ "$(g hash-object --no-filters "$stage/$idx")" = "$blob" ] || fail "$idx does not hash to its tree blob $blob"
   else
     cenv curl -fsSL --retry 3 -o "$stage/$idx" "${source#asset:}" 2>>"$lg" || fail "download of ${source#asset:} failed"
   fi

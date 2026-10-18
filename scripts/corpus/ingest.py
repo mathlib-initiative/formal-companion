@@ -67,10 +67,13 @@ recording a ``{module, lines}`` end with status ``wanted`` where a toolchain's
 is invisible to the index; the manifest says ``proof_wanted_scan: "not
 implemented"`` so no reader takes its absence for a check.
 
-**Tags** (``cflib.vocab.TAG_KINDS``): ``@[wikidata Q…]``, ``@[stacks …]`` and
-``@[kerodon …]`` attributes in the declaration's source span, read from a
-library checkout -- which must be at the universe's pinned commit and clean,
-read as plain files that may not leave it, nothing in it ever run -- and
+**Tags** (``cflib.vocab.TAG_KINDS``): ``wikidata``, ``stacks`` and ``kerodon``
+attributes, read from a library checkout -- which must be at the universe's
+pinned commit and clean, read as plain files that may not leave it, each once,
+nothing in it ever run -- from the attribute lists in the declaration's source
+span (whole, brackets balanced, comments and literals blanked; a ``to_additive``
+twin's from its list's ``(attr := ...)``) and from ``attribute [...] Name``
+commands anywhere in the library (the rules at :class:`_FileTags`), and
 Wikipedia URLs in the docstring, stored in one canonical form
 (:func:`wikipedia_urls`).
 
@@ -79,7 +82,11 @@ publishes itself) were not produced by this probe, so its canary says nothing
 about their statuses and a status word without a closure cannot be re-decided.
 They are refused unless the operator accepts one by name with a reason
 (``accept_published``), which is recorded on the library's universe row; the
-library, commit and toolchain checks apply to them as to a probe index.
+library, commit and toolchain checks apply to them as to a probe index.  A
+published record's own status word is mapped (:func:`published_status`), never
+guessed: Autoform's ``complete`` -- "rests on no sorry and no non-standard
+axiom" -- is ``proved`` for a theorem and ``definition`` for a data kind, and its
+kind word ``lemma`` is the probe's ``theorem``.
 
 The acceptance canary (section 2.4) is ingested by :func:`check_canary`: its
 four declarations must be classified as expected before any library on its
@@ -88,6 +95,7 @@ toolchain has no passed canary in ``universe.yaml``.
 """
 from __future__ import annotations
 
+import bisect
 import heapq
 import json
 import os
@@ -120,6 +128,22 @@ PUBLISHED_STATUSES = {
     "wanted": vocab.PROOF_WANTED, "statement_only": vocab.PROOF_STATEMENT_ONLY,
     "sorry": vocab.PROOF_STATEMENT_ONLY, "axiom_dependent": vocab.PROOF_AXIOM_DEPENDENT,
 }
+#: ``complete`` -- one of the only two status words Autoform's published index uses
+#: (``complete`` and ``wanted``) -- says a declaration rests on no ``sorry`` and no
+#: non-standard axiom, and nothing about whether it is a proof or data: that is its
+#: kind's.  A theorem is ``proved``; a data kind is a ``definition``.  An instance is
+#: data here, though an instance of a ``Prop``-valued class (``Fact p``) is a proof: the
+#: published record carries no type to tell them apart, and either way no instance
+#: formalizes a theorem passage.  ``complete`` on any other kind (an ``axiom``) is refused.
+PUBLISHED_COMPLETE = "complete"
+PUBLISHED_COMPLETE_BY_KIND = {
+    "theorem": vocab.PROOF_PROVED,
+    **{kind: vocab.PROOF_DEFINITION
+       for kind in ("def", "abbrev", "opaque", "instance", "inductive", "structure", "class")},
+}
+#: kind words of a published index and the probe's kind each is (``lemma`` is
+#: Autoform's word for what Lean and the probe call a ``theorem``)
+PUBLISHED_KINDS = {"lemma": "theorem"}
 DATA_KINDS = frozenset({"inductive", "structure", "class"})
 DEFINITION_KINDS = frozenset({"def", "abbrev", "opaque"})
 #: what each record flag (``cflib.vocab.INDEX_FLAGS``) means, for the command's summary line
@@ -151,7 +175,8 @@ _TAG_ATTR = {
     "stacks": re.compile(r"\bstacks\s+([0-9A-Z]{4})\b"),
     "kerodon": re.compile(r"\bkerodon\s+([0-9A-Z]{4})\b"),
 }
-_ATTRIBUTES = re.compile(r"@\[(.*?)\]", re.S)
+#: a file in which none of these words occurs carries no tag attribute, and is not lexed
+_TAG_WORDS = tuple(_TAG_ATTR)
 #: where a Wikipedia article URL starts: the language, the optional mobile host, /wiki/
 _WIKIPEDIA = re.compile(r"https?://([a-z][a-z0-9-]{1,15})(?:\.m)?\.wikipedia\.org/wiki/",
                         re.IGNORECASE)
@@ -260,6 +285,18 @@ def decide(record: dict) -> tuple[str, bool, list[str]]:
         flags.append(vocab.INDEX_FLAG_IS_PROP_UNKNOWN)
     statement = statement_flag(kind, record.get("signature")) and status != vocab.PROOF_PROVED
     return status, statement, flags
+
+
+def published_status(word: str, kind: str) -> str | None:
+    """The proof status a published record's own status word means, for its kind; None if none.
+
+    ``kind`` is the probe's word (``lemma`` already ``theorem``): ``complete`` is
+    decided by it (:data:`PUBLISHED_COMPLETE_BY_KIND`), every other word by
+    :data:`PUBLISHED_STATUSES` alone.
+    """
+    if word == PUBLISHED_COMPLETE:
+        return PUBLISHED_COMPLETE_BY_KIND.get(kind)
+    return PUBLISHED_STATUSES.get(word)
 
 
 def _printable(record: dict) -> bool:
@@ -423,50 +460,334 @@ def check_checkout(checkout: Path, commit: str) -> None:
                       hint="tags must be read from the pinned tree; stash or reset the changes")
 
 
+# The tag attributes, read from Lean source (references/locate-documents.md section 8):
+#
+# * an attribute list ``@[...]`` is read whole, its brackets balanced -- ``@[ext,
+#   aesop safe constructors (rule_sets := [SimpleGraph]), wikidata Q1]`` is one list,
+#   however many lines it spans -- with comments, string and character literals
+#   blanked first, so a ``]`` or a tag word inside a docstring is neither;
+# * a declaration's own tags are those of every list that starts in its span (from
+#   ``start_line`` to its name's ``line``); a declaration generated BY an attribute in a
+#   list -- ``to_additive``'s twin, whose span the probe reports inside that list --
+#   takes only the tags of the list's ``(attr := ...)`` groups, which apply to both;
+# * ``attribute [wikidata Q1] Name`` commands, anywhere in the library's files, tag the
+#   declaration ``Name`` resolves to: the enclosing namespaces innermost first, as Lean
+#   resolves it, without the ``open`` namespaces -- a name only an ``open`` reaches, or
+#   one outside the library, is counted unresolved, never guessed.  A twin such a
+#   command generates has its span inside the command's list and takes its ``(attr :=
+#   ...)`` tags by the rule above; a twin that already exists elsewhere (``attribute
+#   [to_additive (attr := wikidata Q1)] MulWidget`` pairing ``MulWidget`` with an
+#   ``AddWidget`` declared by hand) is not tagged: the source never writes its name,
+#   which ``to_additive`` derives, and it is not guessed.
+#
+# ``-attr`` (an erasure) and ``local attr`` (gone at the end of its section) tag nothing.
+
+_LEXEME = re.compile(r"--|/-|\"|«|'")
+_COMMENT_EDGE = re.compile(r"/-|-/")
+_STRING = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+_CHAR = re.compile(r"'(?:\\[^'\n]{1,10}|[^'\\\n])'")
+_NOT_NEWLINE = re.compile(r"[^\n]")
+_BRACKET = re.compile(r"[\[\]]")
+_ATTR_LIST = re.compile(r"@\[")
+_ATTR_COMMAND = re.compile(r"(?m)^[ \t]*attribute[ \t]*\[")
+_ATTR_GROUP = re.compile(r"\(\s*attr\s*:=")
+_SCOPE = re.compile(r"(?m)^[ \t]*(?:@\[[^\]\n]*\][ \t]*)?"
+                    r"(?:(?:noncomputable|public|private|protected|meta)[ \t]+)*"
+                    r"(namespace|section|mutual|end)\b[ \t]*([^\s]*)")
+_NAME_TOKEN = re.compile(r"\S+")
+_IDENT = re.compile(r"(?:«[^«»\n]+»|[^\s.«»()\[\]{},:]+)(?:\.(?:«[^«»\n]+»|[^\s.«»()\[\]{},:]+))*")
+
+
+def _is_ident_char(ch: str) -> bool:
+    return ch.isalnum() or ch in "_'!?" or "₀" <= ch <= "ₜ"
+
+
+def code_mask(text: str) -> str:
+    """``text`` with comments, string and character literals blanked, the same length.
+
+    Newlines are kept, so an offset into the mask is a line of the source; an
+    escaped identifier ``«...»`` becomes ``x``s, one word whatever it holds.
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        found = _LEXEME.search(text, i)
+        if not found:
+            out.append(text[i:])
+            break
+        j, token = found.start(), found.group()
+        out.append(text[i:j])
+        fill = " "
+        if token == "--":
+            k = text.find("\n", j)
+            k = n if k < 0 else k
+        elif token == "/-":
+            depth, k = 1, j + 2
+            while depth:
+                edge = _COMMENT_EDGE.search(text, k)
+                if not edge:
+                    k = n
+                    break
+                depth += 1 if edge.group() == "/-" else -1
+                k = edge.end()
+        elif token == '"':
+            string = _STRING.match(text, j)
+            k = string.end() if string else n
+        elif token == "«":
+            k = text.find("»", j + 1)
+            k = n if k < 0 else k + 1
+            fill = "x"
+        else:
+            char = None if j and _is_ident_char(text[j - 1]) else _CHAR.match(text, j)
+            if char is None:                 # a prime in a name (foo'), not a literal
+                out.append("'")
+                i = j + 1
+                continue
+            k = char.end()
+        out.append(_NOT_NEWLINE.sub(fill, text[j:k]))
+        i = k
+    return "".join(out)
+
+
+def _close_bracket(mask: str, opening: int) -> int:
+    """The offset of the ``]`` that closes the ``[`` at ``opening``; -1 when none does."""
+    depth = 0
+    for bracket in _BRACKET.finditer(mask, opening):
+        depth += 1 if bracket.group() == "[" else -1
+        if depth == 0:
+            return bracket.start()
+    return -1
+
+
+def _split_top(inner: str) -> list[str]:
+    """An attribute list's instances: split at the commas outside every bracket."""
+    parts, depth, begin = [], 0, 0
+    for i, ch in enumerate(inner):
+        if ch in "([{⟨":
+            depth += 1
+        elif ch in ")]}⟩":
+            depth = max(0, depth - 1)
+        elif ch == "," and depth == 0:
+            parts.append(inner[begin:i])
+            begin = i + 1
+    parts.append(inner[begin:])
+    return [part.strip() for part in parts if part.strip()]
+
+
+def _paren_group(text: str, opening: int) -> str:
+    depth = 0
+    for i in range(opening, len(text)):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return text[opening:i + 1]
+    return text[opening:]
+
+
+def _tags_in(text: str) -> set[tuple[str, str]]:
+    return {(tag, value) for tag, pattern in _TAG_ATTR.items() for value in pattern.findall(text)}
+
+
+def attribute_tags(inner: str) -> tuple[set, set]:
+    """``(own, generated)``: the tags an attribute list gives its declaration, and the
+    ones it gives a declaration an attribute in it generates (its ``(attr := ...)``)."""
+    own: set[tuple[str, str]] = set()
+    generated: set[tuple[str, str]] = set()
+    for instance in _split_top(inner):
+        words = instance.split(None, 1)
+        if instance.startswith("-") or (words and words[0] == "local"):
+            continue
+        if words and words[0] == "scoped":
+            instance = words[1] if len(words) > 1 else ""
+        own |= _tags_in(instance)
+        for group in _ATTR_GROUP.finditer(instance):
+            generated |= _tags_in(_paren_group(instance, group.start()))
+    return own, generated
+
+
+def _plain_name(written: str) -> str:
+    """A dotted name with its «» escapes removed: the key two spellings of one name share."""
+    if "«" not in written:
+        return written
+    return re.sub(r"«([^«»]*)»", r"\1", written)
+
+
+class _FileTags:
+    """The tag attributes of one source file: its attribute lists and ``attribute`` commands."""
+
+    def __init__(self, text: str):
+        #: ``(start_line, end_line, own, generated, is_command)`` per ``@[...]`` list and per
+        #: ``attribute [...]`` command list, in order of their first line
+        self.lists: list[tuple[int, int, frozenset, frozenset, bool]] = []
+        #: ``(namespace, written target names, tags)`` per tagging ``attribute`` command
+        self.commands: list[tuple[tuple[str, ...], list[str], frozenset]] = []
+        self._starts: list[int] = []
+        if not any(word in text for word in _TAG_WORDS):
+            return
+        mask = code_mask(text)
+        newlines = [m.start() for m in re.finditer("\n", text)]
+
+        def line_of(offset: int) -> int:
+            return bisect.bisect_left(newlines, offset) + 1
+
+        for found in _ATTR_LIST.finditer(mask):
+            close = _close_bracket(mask, found.end() - 1)
+            if close < 0:
+                continue
+            own, generated = attribute_tags(mask[found.end():close])
+            if own or generated:
+                self.lists.append((line_of(found.start()), line_of(close), frozenset(own),
+                                   frozenset(generated), False))
+        events = [(m.start(), "scope", m) for m in _SCOPE.finditer(mask)]
+        events += [(m.start(), "attribute", m) for m in _ATTR_COMMAND.finditer(mask)]
+        stack: list[tuple[str, tuple[str, ...]]] = []
+        for _offset, what, found in sorted(events, key=lambda e: e[0]):
+            if what == "scope":
+                keyword, name = found.group(1), text[found.start(2):found.end(2)]
+                if keyword == "namespace" and name:
+                    stack.append(("namespace", tuple(_plain_name(name).split("."))))
+                elif keyword in ("section", "mutual"):
+                    stack.append((keyword, ()))
+                elif keyword == "end" and stack:
+                    stack.pop()
+                continue
+            close = _close_bracket(mask, found.end() - 1)
+            if close < 0:
+                continue
+            own, generated = attribute_tags(mask[found.end():close])
+            if generated:
+                # a declaration the command generates (a to_additive twin) has its span
+                # inside the command's list, and takes the (attr := ...) tags as above;
+                # no declaration's own span holds a command, so overlapping it is enough
+                self.lists.append((line_of(found.start()), line_of(close), frozenset(),
+                                   frozenset(generated), True))
+            if not own:
+                continue
+            names = self._targets(text, mask, close + 1)
+            namespace = tuple(part for kind, parts in stack if kind == "namespace"
+                              for part in parts)
+            if names:
+                self.commands.append((namespace, names, frozenset(own)))
+        self.lists.sort(key=lambda entry: entry[0])
+        self._starts = [entry[0] for entry in self.lists]
+
+    @staticmethod
+    def _targets(text: str, mask: str, begin: int) -> list[str]:
+        """The names after an ``attribute [...]``: to the end of its line, and on following
+        lines indented under it, up to the first token that is not a name."""
+        names: list[str] = []
+        end = mask.find("\n", begin)
+        end = len(mask) if end < 0 else end
+        while True:
+            for token in _NAME_TOKEN.finditer(mask, begin, end):
+                written = text[token.start():token.end()]
+                if not _IDENT.fullmatch(written):
+                    return names
+                names.append(written)
+            nxt = end + 1
+            if nxt >= len(mask) or mask[nxt:nxt + 1] not in (" ", "\t"):
+                return names
+            line_end = mask.find("\n", nxt)
+            line_end = len(mask) if line_end < 0 else line_end
+            if not mask[nxt:line_end].strip():
+                return names
+            begin, end = nxt, line_end
+
+    def span_tags(self, start: int, line: int) -> set[tuple[str, str]]:
+        """The tags of the declaration whose span runs from ``start`` to its name's ``line``."""
+        own: set = set()
+        generated: set = set()
+        inside = False
+        i = bisect.bisect_right(self._starts, line) - 1
+        while i >= 0:
+            first, last, own_tags, generated_tags, is_command = self.lists[i]
+            if last < start:
+                break
+            if is_command or first < start <= last or (first <= start and line < last):
+                inside = True                      # its span lies inside this list
+                generated |= generated_tags
+            elif start <= first <= line:
+                own |= own_tags
+            i -= 1
+        return generated if inside else own
+
+
+_NO_TAGS = _FileTags("")
+
+
 class _Checkout:
-    """Plain reads of a library checkout's files, never leaving it, a few kept open."""
+    """Plain reads of a library checkout's files, never leaving it, each read once."""
 
     def __init__(self, root: Path | None):
         self.root = Path(root).resolve() if root else None
-        self._lines: "OrderedDict[str, list[str] | None]" = OrderedDict()
+        self._files: dict[str, _FileTags] = {}
         self.unreadable: set[str] = set()
+        #: declaration name -> tags its ``attribute`` commands give it
+        self.command_tags: dict[str, set[tuple[str, str]]] = {}
+        self.commands_applied = 0
+        self.unresolved: list[str] = []
 
-    def lines(self, rel: str | None) -> list[str] | None:
+    def file_tags(self, rel: str | None) -> _FileTags:
         if self.root is None or not rel:
-            return None
-        if rel in self._lines:
-            self._lines.move_to_end(rel)
-            return self._lines[rel]
+            return _NO_TAGS
+        if rel in self._files:
+            return self._files[rel]
         candidate = (self.root / rel).resolve()
-        got: list[str] | None
+        got = _NO_TAGS
         try:
             candidate.relative_to(self.root)
         except ValueError:
-            got = None                     # a path that leaves the checkout is not read
+            self.unreadable.add(rel)       # a path that leaves the checkout is not read
         else:
             try:
-                got = candidate.read_text(encoding="utf-8", errors="replace").splitlines()
+                got = _FileTags(candidate.read_text(encoding="utf-8", errors="replace"))
             except OSError:
-                got = None
-        if got is None:
-            self.unreadable.add(rel)
-        self._lines[rel] = got
-        if len(self._lines) > _FILE_CACHE:
-            self._lines.popitem(last=False)
+                self.unreadable.add(rel)
+        self._files[rel] = got
         return got
+
+    def prepare(self, paths, names: set[str]) -> None:
+        """Read every module file once and resolve its ``attribute`` commands to ``names``."""
+        if self.root is None:
+            return
+        by_plain = {_plain_name(n): n for n in names if "«" in n}
+        for rel in sorted({p for p in paths if p}):
+            for namespace, targets, tags in self.file_tags(rel).commands:
+                for written in targets:
+                    name = self._resolve(namespace, written, names, by_plain)
+                    if name is None:
+                        self.unresolved.append(written)
+                        continue
+                    self.command_tags.setdefault(name, set()).update(tags)
+                    self.commands_applied += 1
+
+    @staticmethod
+    def _resolve(namespace: tuple[str, ...], written: str, names: set[str],
+                 by_plain: dict[str, str]) -> str | None:
+        plain = _plain_name(written)
+        if plain.startswith("_root_."):
+            candidates = [plain[len("_root_."):]]
+        else:
+            candidates = [".".join((*namespace[:k], plain))
+                          for k in range(len(namespace), -1, -1)]
+        for candidate in candidates:
+            if candidate in names:
+                return candidate
+            if candidate in by_plain:
+                return by_plain[candidate]
+        return None
 
 
 def tags_of(record: dict, path: str | None, checkout: _Checkout) -> list[dict]:
-    """The declaration's tags: attributes in its source span, Wikipedia URLs in its docstring."""
+    """The declaration's tags: its attribute lists, ``attribute`` commands naming it, and
+    Wikipedia URLs in its docstring (the rules above)."""
     found: set[tuple[str, str]] = set()
-    lines = checkout.lines(path)
     start, name_line = record.get("start_line"), record.get("line")
-    if lines and isinstance(start, int) and isinstance(name_line, int) and 1 <= start <= name_line:
-        span = "\n".join(lines[start - 1:name_line])
-        for attrs in _ATTRIBUTES.findall(span):
-            for tag, pattern in _TAG_ATTR.items():
-                for value in pattern.findall(attrs):
-                    found.add((tag, value))
+    if isinstance(start, int) and isinstance(name_line, int) and 1 <= start <= name_line:
+        found |= checkout.file_tags(path).span_tags(start, name_line)
+    found |= checkout.command_tags.get(str(record.get("name") or ""), set())
     for url in wikipedia_urls(record.get("docstring") or ""):
         found.add(("wikipedia", url))
     return [{"tag": tag, "value": value} for tag, value in sorted(found)]
@@ -521,11 +842,14 @@ def _text(value, what: str, line_no: int) -> str | None:
     return value
 
 
-def _scan(index: Path) -> dict:
-    """One pass: module paths, record counts, and whether declarations arrive sorted by name."""
+def _scan(index: Path, *, names: bool = False) -> dict:
+    """One pass: module paths, record counts, whether declarations arrive sorted by name,
+    and with ``names`` the set of declaration names (to resolve ``attribute`` commands)."""
     paths: dict[str, str | None] = {}
     sorted_input, last = True, None
     declarations = modules = 0
+    seen: set[str] = set()
+    files: set[str] = set()
     for line_no, record in _records(index):
         kind = record.get("record")
         if kind == "module":
@@ -539,8 +863,13 @@ def _scan(index: Path) -> dict:
             if last is not None and name < last:
                 sorted_input = False
             last = name
+            if names:
+                seen.add(name)
+                if isinstance(record.get("path"), str):
+                    files.add(record["path"])
     return {"paths": paths, "sorted": sorted_input, "declarations": declarations,
-            "modules": modules}
+            "modules": modules, "names": seen,
+            "files": files | {p for p in paths.values() if p}}
 
 
 def normalise(record: dict, module_paths: dict, checkout: _Checkout, *,
@@ -550,6 +879,10 @@ def normalise(record: dict, module_paths: dict, checkout: _Checkout, *,
     if not name:
         raise CfError(f"line {line_no}: a declaration record has no name")
     kind = str(record.get("kind") or "")
+    if published:
+        kind = PUBLISHED_KINDS.get(kind, kind)
+        if kind != record.get("kind"):
+            record = {**record, "kind": kind}
     module = _text(record.get("module"), "the module", line_no)
     path = _text(record.get("path"), "the path", line_no) or module_paths.get(str(module))
     probe_status = str(record.get("proof_status") or "")
@@ -558,10 +891,13 @@ def normalise(record: dict, module_paths: dict, checkout: _Checkout, *,
         # re-decide it from: take the status only when it is a word that means one of
         # ours, flagged, and refuse any other
         probe_status = str(record.get("proof_status") or record.get("status") or "")
-        status = PUBLISHED_STATUSES.get(probe_status)
+        status = published_status(probe_status, kind)
         if status is None:
-            raise CfError(f"{name}: published status {probe_status!r} is not one of "
-                          f"{', '.join(sorted(PUBLISHED_STATUSES))}",
+            raise CfError(f"{name}: published status {probe_status!r} of a {kind or 'kindless'} "
+                          f"record is not one ingest maps (one of "
+                          f"{', '.join(sorted({*PUBLISHED_STATUSES, PUBLISHED_COMPLETE}))}; "
+                          f"{PUBLISHED_COMPLETE} only on the kinds "
+                          f"{', '.join(sorted(PUBLISHED_COMPLETE_BY_KIND))})",
                           hint="a status ingest cannot map is refused, never guessed")
         statement = statement_flag(kind, record.get("signature")) and status != vocab.PROOF_PROVED
         flags = [vocab.INDEX_FLAG_PUBLISHED_STATUS]
@@ -825,13 +1161,14 @@ def ingest(universe: Universe, library_id: str, source: Path, out_dir: Path, *,
                       hint="build and probe templates/corpus/canary/ on that toolchain, then "
                            "`cf corpus ingest <universe> --canary --from <its index>` "
                            "(docs/proposals/wikipedia-locate.md section 2.4)")
-    scan = _scan(index)
+    scan = _scan(index, names=checkout is not None)
     index_sha = _check_whole(index, header, manifest_in, scan, published=published)
     if checkout is not None:
         check_checkout(Path(checkout), str(lib.get("commit")))
     out_dir = Path(out_dir)
     out_dir.parent.mkdir(parents=True, exist_ok=True)
     reader = _Checkout(checkout)
+    reader.prepare(scan["files"], scan["names"])
     work = Path(tempfile.mkdtemp(prefix=f".{library_id}-", dir=out_dir.parent))
     dropped: list[str] = []
     try:
@@ -869,6 +1206,9 @@ def ingest(universe: Universe, library_id: str, source: Path, out_dir: Path, *,
             "tags": dict(sorted(counts["tags"].items())),
             "tags_read_from_checkout": checkout is not None,
             "checkout_files_unreadable": len(reader.unreadable),
+            "attribute_commands": {"applied": reader.commands_applied,
+                                   "unresolved": len(reader.unresolved),
+                                   "unresolved_names": sorted(set(reader.unresolved))[:_NAMED]},
             "proof_wanted_scan": "not implemented",
             "source": {"schema": header.get("schema"), "index_sha256": index_sha,
                        "manifest_sha256": manifest_sha,
