@@ -358,9 +358,12 @@ def receipt_document(source_id: str, item: str, receipt: Mapping[str, Any],
     The sidecar keeps each candidate's documented keys only, refuses a query or a
     reason that carries the source past the quote cap, and its sha256 is the sha
     of the exact bytes written -- the name of the file, the record's reference
-    and the seal's entry are one value.
+    and the seal's entry are one value.  The reference's ``queries`` and
+    ``candidates`` count the sidecar's two lists, which a consumer checks: a query
+    repeated exactly is listed once, in its first place (the gate admits a
+    repetition; it counts distinct queries), so the count and the list agree.
     """
-    queries = [str(q) for q in receipt.get("queries") or []]
+    queries = list(dict.fromkeys(str(q) for q in receipt.get("queries") or []))
     candidates = [{k: c[k] for k in RECEIPT_CANDIDATE_KEYS if k in c}
                   for c in receipt.get("candidates") or [] if isinstance(c, dict)]
     for q in queries:
@@ -372,7 +375,7 @@ def receipt_document(source_id: str, item: str, receipt: Mapping[str, Any],
             "candidates": candidates}
     text = canonical(body) + "\n"
     digest = sha256_text(text)
-    return digest, text, {"sha256": digest, "queries": len(set(queries)),
+    return digest, text, {"sha256": digest, "queries": len(queries),
                           "candidates": len(candidates)}
 
 
