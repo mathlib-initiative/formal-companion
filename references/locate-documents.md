@@ -1162,11 +1162,14 @@ null without `--changed-files`), `ownership_note` (why no task id was found),
 `ok`, `exit`, `documents`, `by_rule`, `reasons`; the watchdog's gate-failure rate
 and the bench's `gate_rejections` count only the `changed_files: true` lines,
 tend's validation and pre-merge calls, whatever their `task_id`, and never a
-worker's or a reviewer's `--findings` check), and the per-user slot directory the bridge's 15-slot
+worker's or a reviewer's `--findings` check; a line with no `changed_files`, from a
+gate older than the field, counts for neither), and the per-user slot directory the bridge's 15-slot
 `flock` semaphore uses. The bridges (`scripts/run/agent_call.py` and
 `scripts/run/attempt_cap.py` beside them) read `CF_SLOT_DIR` (default
 `~/.cache/cf-agent-slots`), `CF_SLOTS` (15), `CF_AGENT_TIMEOUT` (`45m`),
-`CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3), `CF_TASK_MANIFESTS`
+`CF_ATTEMPT_CAP` (unset or 0 is off; a locate run sets 3, and the bridge refuses 1 or 2
+with exit 78 before any agent call: the gate accepts a `by: attempt_cap` document at no
+count under `cflib.vocab.LOCATE_ATTEMPT_CAP`), `CF_TASK_MANIFESTS`
 (the `gate/tasks` directory), `CF_MERGE_TARGET` (the branch a capped task's
 change set is read against, as the gate reads it; default `main`), `CF_EXTRA_TOOLS` (the allowlist entries for the two
 host tools, each `Bash(python3 <gate>/corpus_search.py --db <tools path>:*)` —

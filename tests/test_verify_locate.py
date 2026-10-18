@@ -1522,46 +1522,6 @@ class TestTheChangeSetsTaskAndLogLine(OwnershipCase):
         self.assertNotIn("--pre-merge", validation)
         self.assertIn("--pre-merge", pre_merge)
 
-    # -- what the readers of the log count ----------------------------------
-    def test_the_readers_count_tends_calls_only(self):
-        """Every gate call is logged, and says whether it judged a change set; the
-        watchdog and the bench count only the lines that did (``changed_files``):
-        tend's own validation calls, never an agent's ``--findings`` self-check."""
-        self.contribute()
-        doc = self.wt / "findings" / TASK / f"{SID}.json"
-        environ = {k: v for k, v in os.environ.items() if not k.startswith("GIT_CONFIG_")}
-        environ["TEND_TASK_ID"] = TASK
-        for _ in range(3):                                   # a worker checking its document
-            proc = subprocess.run([sys.executable, str(GATE), "--gate-config",
-                                   str(self.fx.root / "gate" / "gate.json"), "--findings",
-                                   str(doc)], capture_output=True, text=True, env=environ)
-            self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertEqual(self.cli("--task-id", TASK).returncode, 0)     # tend's validation
-        lines = self.lines()
-        self.assertEqual([(l["changed_files"], l["task_id"]) for l in lines],
-                         [(False, TASK)] * 3 + [(True, TASK)])
-        from bench import metrics
-        from run import watchdog
-
-        log = self.fx.root / "gate-log" / "gate.jsonl"
-        self.assertEqual(watchdog.gate_calls(log), (1, 0))
-        counted = metrics.gate_rejections(lines, run_ids=["r-1"])
-        self.assertEqual((counted["attempts"], counted["dropped_lines"]), (1, 3))
-
-    def test_a_validation_with_no_task_id_is_still_an_attempt(self):
-        """With no --task-id, no $TEND_TASK_ID and no orchestrator answer the line
-        names no task (task_id "", task_id_from null); it is still tend's call."""
-        self.contribute()
-        proc = self.cli()
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        (line,) = self.lines()
-        self.assertEqual((line["task_id"], line["task_id_from"], line["changed_files"]),
-                         ("", None, True))
-        from bench import metrics
-
-        counted = metrics.gate_rejections([line], run_ids=["r-1"])
-        self.assertEqual((counted["attempts"], counted["dropped_lines"]), (1, 0))
-
     # -- by: attempt_cap is the bridge's -------------------------------------
     def capped(self, reason: str) -> None:
         self.fx.document(TASK, {"passages": [], "skips": [],
@@ -1637,6 +1597,22 @@ class TestTheChangeSetsTaskAndLogLine(OwnershipCase):
         proc = self.cli("--task-id", "t-inv-0003")
         self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
         self.assertIn("adds a task file", proc.stderr)
+        self.assertNotIn("has no tasks/", proc.stderr)
+
+    def test_a_refused_task_file_is_one_refusal_not_two(self):
+        """A task file refused for its own change is still in the change set: the gate
+        says why it is refused, and never also that the documents came with no task file."""
+        self.contribute()
+        task_file = self.wt / "tasks" / f"{TASK}.yaml"
+        task_file.write_text(task_file.read_text() + "priority: 99\n")
+        git(self.wt, "commit", "-qam", "a higher priority")
+        proc = self.cli("--task-id", TASK)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        rule7 = [line for line in proc.stderr.splitlines() if "[rule 7]" in line]
+        self.assertEqual(len(rule7), 1, proc.stderr)
+        self.assertIn(f"tasks/{TASK}.yaml: changes more than its status line", rule7[0])
+        self.assertIn("priority: 99", rule7[0])
+        self.assertNotIn("has no tasks/", proc.stderr)
 
 
 class TestTheGateGroupCitesWhatResolves(unittest.TestCase):

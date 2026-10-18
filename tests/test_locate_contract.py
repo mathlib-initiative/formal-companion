@@ -391,6 +391,7 @@ class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
         self.assertEqual(attempt_cap.UNRESOLVED_ATTEMPT_CAP, vocab.UNRESOLVED_ATTEMPT_CAP)
         self.assertEqual(attempt_cap.DOCUMENT_SCHEMA, vocab.LOCATE_DOCUMENT_SCHEMA)
         self.assertEqual(attempt_cap.LOCATE_INVENTORY, vocab.LOCATE_INVENTORY)
+        self.assertEqual(attempt_cap.LOCATE_ATTEMPT_CAP, vocab.LOCATE_ATTEMPT_CAP)
         self.assertEqual(agent_call.DEFAULT_SLOTS, vocab.SESSION_SLOTS)
         self.assertEqual(agent_call.parse_duration(agent_call.DEFAULT_TIMEOUT),
                          agent_call.parse_duration(vocab.AGENT_TIMEOUT))

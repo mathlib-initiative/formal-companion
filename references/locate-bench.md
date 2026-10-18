@@ -458,11 +458,9 @@ refused unless `--article-costs` prices every article, and the score then says
 
 `gate_rejections`: per run of the score, its harvested `runs/<run>/host/gate.jsonl` (or the
 `--gate-log` file or directory, filtered to the run), else `null`: `{attempts, rejected,
-rejection_rate, broken, dropped_lines, by_rule, by_reason}`. Only tend's calls of that run
-count, the lines with `changed_files: true`, whatever their `task_id` (empty when no task id
-reached the call): any other line (an agent's own `--findings` check) or one of another `run_id`
-is dropped, the harvest's re-gate writes no line, and a call that exited 3 (the gate could not
-run) is `broken`, never a rejection. A
+rejection_rate, broken, dropped_lines, by_rule, by_reason}`. Only worker calls of that run
+count: a line with an empty `task_id` (the harvest's own re-gate) or another `run_id` is
+dropped, and a call that exited 3 (the gate could not run) is `broken`, never a rejection. A
 rule is the line's `by_rule` key, else the reason's `[rule N]` prefix; `by_reason` classes are
 `rule_<N>` plus, when the message says which, `:<sub-class>` (`phantom_declaration`,
 `outside_universe`, `universe_pin`, `proof_status_written`, `curated`, `absence_receipt`,
