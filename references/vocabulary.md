@@ -264,7 +264,9 @@ direction, subject the passage, object the declaration.
 `noMatch` (`NO_MATCH`) is the relation of an **absence** record only — one `lean` end per universe
 library, no `location` — never of a location. At most `MAX_LOCATIONS_PER_PASSAGE` (5) locations per
 passage, ranked. `WEAK_RELATIONS` (`relatedMatch`, `narrowMatch`, `hasPart`) are the ones the
-challenge sample re-judges.
+challenge sample re-judges. `RELATION_STRENGTH` orders the relations for a challenge's
+`downgrade`, which must name a strictly weaker one: `exactMatch` > `closeMatch` > `broadMatch` >
+`narrowMatch` = `hasPart` > `relatedMatch`.
 
 **The derived status** (`DERIVED_STATUSES`, best first): the Literature Links `status` of a
 passage's records, computed once after challenge by `vocab.derive_status(passage_kind, locations,

@@ -175,7 +175,7 @@ LOCATE_RELATIONS = frozenset({"exactMatch", "closeMatch", "broadMatch", "narrowM
                               "hasPart", "relatedMatch"})
 #: how strong a relation is, strongest first: a challenge's ``downgrade`` names a
 #: relation of a HIGHER number than the record's (references/locate-documents.md
-#: section 4)
+#: section 4); cflib.vocab.RELATION_STRENGTH, inlined and pinned by a test
 RELATION_STRENGTH = {"exactMatch": 0, "closeMatch": 1, "broadMatch": 2, "narrowMatch": 3,
                      "hasPart": 3, "relatedMatch": 4}
 RELATED_MATCH = "relatedMatch"

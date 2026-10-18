@@ -328,6 +328,22 @@ class TestEveryHostCopyOfTheVocabularyIsPinned(unittest.TestCase):
         self.assertEqual(vl.MIN_ABSENCE_QUERIES, vocab.MIN_ABSENCE_QUERIES)
         self.assertEqual(vl.LOCATE_EXTENSION, vocab.LOCATE_EXTENSION)
         self.assertEqual(vl.NO_MATCH, vocab.NO_MATCH)
+        self.assertEqual(vl.RELATION_STRENGTH, vocab.RELATION_STRENGTH)
+
+    def test_one_relation_order(self):
+        """The gate and the outcomes accept the same downgrades: one order, in cflib.vocab."""
+        from gate import verify_locate as vl
+        from locate import outcomes
+
+        self.assertIs(outcomes.RELATION_STRENGTH, vocab.RELATION_STRENGTH)
+        self.assertEqual(set(vocab.RELATION_STRENGTH), set(vocab.LOCATE_RELATIONS))
+        self.assertEqual(set(vl.RELATION_STRENGTH), vl.LOCATE_RELATIONS)
+        s = vocab.RELATION_STRENGTH
+        # broadMatch counts for a theorem in derive_status, narrowMatch and hasPart do not
+        self.assertLess(s[vocab.BROAD_MATCH], s[vocab.NARROW_MATCH])
+        self.assertEqual(s[vocab.NARROW_MATCH], s[vocab.HAS_PART])
+        self.assertLess(s[vocab.CLOSE_MATCH], s[vocab.BROAD_MATCH])
+        self.assertLess(s[vocab.HAS_PART], s[vocab.RELATED_MATCH])
 
     def test_the_bridge_helpers(self):
         from run import agent_call, attempt_cap

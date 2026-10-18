@@ -263,11 +263,42 @@ root, bridge and harvest, with these differences:
   attempt-capped ones separately in the receipt, and also brings the host's gate log (and, for a
   campaign shard, its usage export and canary scan) to `runs/<run-id>/host/`. Then
   `cf tally --locate --run <run-id>`.
-- **Shards.** More than 500 tasks is a campaign: plan each shard with `cf plan-locate`, sequence
-  them with `cf campaign plan`, smoke the first with `cf run <shard> --stage verify`, and start the
-  rendered `campaigns/<id>/` sequencer on the host. Its model-free watchdog drains a shard
-  (`tend-control drain`) when its spend passes the shard's cap, or the gate-failure rate or the cost
-  per merged task passes the configured multiple of the pilot's p90.
+- **What travels, for a blind or planted run.** The gate always checks the full `corpus.sqlite`
+  (`gate.json` `corpus_db`); the workers search the tools database (`tools_corpus_db`: the full one,
+  `corpus.blind.sqlite` for `--blind`, or a planted file given to `cf plan-locate --tools-corpus-db`).
+  `cf run` transfers the tools database too when it is another file, and checks both shas at the
+  verify stage. A P run of the bench is planned that way with the bench's planted database
+  (`references/locate-bench.md` §7).
+- **Shards.** More than 500 tasks is a campaign:
+  1. Run a **pilot** first: a small locate run taken to the smoke stage with `cf run <pilot>
+     --i-have-consent --execute`, watched through worker → gate → reviewer → merge, then raised
+     with `--stage raise --smoke-verified --execute`, which records `run.smoke_verified`. Read its
+     p90 cost per merged task and gate-failure rate from its harvest.
+  2. Plan each shard with `cf plan-locate` (each with its own `--max-cost`), then
+     `cf campaign plan <id> --shard <r1> --shard <r2> … --host <alias> --pilot <pilot>` with the
+     pilot's p90s. `cf campaign plan` stamps `locate.campaign` into each shard's `run.yaml` and
+     refuses a shard stamped by another campaign. Give `--transcript-dirs` (or set
+     `hosts.<alias>.transcript_dirs` in `workspace.yaml`) to have each shard's transcripts exported
+     and pruned, and `--canaries <host path>` to have them scanned for the bench's label canaries.
+  3. Take every shard through `cf run <shard> --i-have-consent --execute --stage verify`, which
+     transfers and verifies it and launches nothing. `cf campaign render <id>` refuses a campaign
+     without a smoke-verified pilot.
+  4. Copy `campaigns/<id>/` to the host and start its `sequencer.sh` there (under `nohup` or a
+     terminal multiplexer). It takes a lock (`sequencer.lock`), so a second start exits 3. It refuses
+     a root that already has a live `tend run`, keys its state by run id, and runs shard k+1 only
+     after shard k's `tend run` ends. Beside each shard its model-free watchdog drains the root
+     (`tend-control drain`) when the shard's spend passes its cap, or when the gate-failure rate or the
+     cost per merged task passes the configured multiple of the pilot's p90. After each shard it
+     scans that shard's transcripts for canaries (`canary_scan.py` writes
+     `{"scanned": N, "hits": [<file>, …], "canaries": K}`), exports their usage and prunes them;
+     a canary hit or a failed scan keeps them. A drain, a canary hit or an unreadable watchdog record
+     stops the campaign. `CF_TEND_CMD`, `CF_TRANSCRIPT_DIRS`, `CF_CANARIES` and `CF_WATCH_INTERVAL`
+     override what was rendered.
+  5. Harvest each shard as it finishes (`cf harvest <shard> --execute`); `cf campaign status <id>`
+     reads the shards' receipts.
+
+  The sequencer needs, on the host: bash 4.4 or later (`mapfile -d`), GNU `comm` (with `-z`),
+  `flock`, `pgrep`, `python3` and rsync.
 
 ## 10. What stays manual, permanently
 

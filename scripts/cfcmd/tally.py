@@ -183,7 +183,12 @@ def _write_agreed(workspace, args, runs: dict[str, Path]) -> None:
 
 
 def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
-    """Write each repo's counts into its companion state.json."""
+    """Write each repo's counts into its companion state.json.
+
+    The runs named are the ones the tally COUNTED: a locate run under corpus/ is
+    left out of the faithfulness tally (``result["locate_runs"]``), so it is left
+    out of the companion's state too."""
+    counted = sorted(set(runs) - set(result.get("locate_runs") or ()))
     for name in workspace.companion_names():
         data = result["repos"].get(name)
         if not data:
@@ -192,9 +197,9 @@ def _record_state(workspace, result: dict, runs: dict[str, Path]) -> None:
             with state_mod.update(workspace, name) as state:
                 state_mod.set_section(state, "tally", {
                     **tally_mod.state_counts(data),
-                    "runs": sorted(runs),
+                    "runs": counted,
                 })
-                state_mod.note(state, "tally", rows=data["rows"], runs=len(runs))
+                state_mod.note(state, "tally", rows=data["rows"], runs=len(counted))
         except Exception as exc:
             log.detail(f"state.json for {name}: {exc}")
 

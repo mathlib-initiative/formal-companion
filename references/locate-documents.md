@@ -905,7 +905,8 @@ counts only on a record the plan REQUIRED (one on any other is named and
 ignored). A location's verdict applies only while its relation is the one the
 plan saw, a passage-level one only while the outcome is (otherwise the record
 is owed again); a `downgrade` must name a strictly weaker relation (exact,
-then close, then broad/narrow/hasPart, then related); a prominence changes only
+then close, then broad, then narrow/hasPart, then related: §4's order,
+`cflib.vocab.RELATION_STRENGTH`); a prominence changes only
 by `overturn`; an `overturn` puts the challenger's locations first in their own
 order, then the kept `relatedMatch` ones, renumbered and capped at five; and a
 scope overturned with no location makes the passage `formal_math` with no

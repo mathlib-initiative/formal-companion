@@ -35,6 +35,19 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- One relation order for a challenge's `downgrade`, `cflib.vocab.RELATION_STRENGTH`
+  (`exactMatch` > `closeMatch` > `broadMatch` > `narrowMatch` = `hasPart` >
+  `relatedMatch`, the order `references/locate-documents.md` §4 states). The
+  outcomes used to rank `broadMatch` level with `narrowMatch` and `hasPart`, so a
+  broad-to-narrow downgrade the gate passed was ignored and its record owed
+  again. The gate keeps its inlined copy, now pinned by a test. The locate
+  prompts state rule 4 as the gate checks it: a curated hit is answered by a
+  location whose relation counts, or by a reasoned rejection, and an `accepted`
+  candidate must be a location. `cf tally` records in a companion's
+  `state.json` only the runs it counted, never a locate run it left out. The
+  bench transcriber names a quote of the wrong shape instead of reporting it
+  as no quote. The synthetic locate end-to-end test
+  (`tests/e2e/locate_synthetic/`) runs every stage in the suite.
 - The locate planner meets the other locate packages through their owners
   (`references/locate-documents.md` §5, §6, §9, §10): the sourceset through
   `sources.sourceset.Sourceset` (one source per page, `Manifest.preferred()`;
@@ -422,8 +435,7 @@ release has something to say.
   source shares, the gate on a host included; its head id is
   `cflib.passages`' frozen rule restated in lockstep, which a test pins.
 - The foundation of locate (`docs/proposals/wikipedia-locate.md`, milestone
-  L-M0, vocabulary and keys only; every stage that uses them is not
-  implemented). `cflib.vocab` gains the three locate run modes
+  L-M0: the vocabulary and the keys the stages above were then built on). `cflib.vocab` gains the three locate run modes
   (`locate-inventory`, `locate`, `locate-challenge`) with their kinds
   (`PASSAGE`, `LOCATION`, `ABSENCE`, `UNRESOLVED`), the relations,
   `noMatch`, passage kinds, prominence, scopes, proof statuses with
@@ -457,8 +469,8 @@ release has something to say.
   workspace overlay may add a family; over a confirmed shipped one it keeps
   `confirmed` and the curated `licence_class` and `licence`, and the shadow
   is reported by `Registry.validate()` and `cf status`.
-  `CLAUDE.md` §3 names the Wikipedia fetcher, not implemented, as the next
-  network exception.
+  `CLAUDE.md` §3 names the Wikipedia fetcher (`scripts/sources/wikinet.py`)
+  as a network exception.
 - Verso hovers in the overlay viewer. `build_site.py` cuts each card's
   statement out of the built site's Verso pages (`tools/verso_extract.py`),
   a tagged example's by its tag comment on its module's page, and writes

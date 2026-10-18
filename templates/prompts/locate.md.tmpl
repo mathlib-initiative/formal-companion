@@ -4,7 +4,7 @@ Read the task file and its manifest `{{tasks_dir}}/$TEND_TASK_ID.json`: for each
 
 ## How to search
 1. Restate the passage to yourself precisely: its objects, its hypotheses, its conclusion.
-2. Read the candidates file `{{candidates_dir}}/<source-id>.json`, and your manifest's `curated` list for the source: the curated candidates THIS task answers for (a source split over several tasks hands them to one of them). **Every curated candidate your manifest lists must appear in your receipt for the passage it concerns** — accepted, or rejected with a reason. The file's `lexical` hits are hints.
+2. Read the candidates file `{{candidates_dir}}/<source-id>.json`, and your manifest's `curated` list for the source: the curated candidates THIS task answers for (a source split over several tasks hands them to one of them). **Every curated candidate your manifest lists must be answered in your receipt for the passage it concerns**: either it is one of that passage's locations with a relation that counts (anything but `relatedMatch`) and its verdict is `accepted`, or its verdict is `rejected` with a reason. A `relatedMatch` location answers nothing, and an `accepted` candidate that is not one of the passage's counting locations is refused. The file's `lexical` hits are hints.
 3. Search with several distinct queries: the name a library would give the result, its key words, the objects it is about. `{{search_command}} <query words…>`, then read each plausible hit with `{{show_command}} <library> <declaration>`. Read the signature: a name is not a statement.
 4. Judge each declaration you would cite by its **relation** to the passage (subject = passage, object = declaration):
    - `exactMatch` — the declaration states the passage;
