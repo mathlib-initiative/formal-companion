@@ -35,6 +35,12 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- Every locate gate-log line records the call's `ownership` line,
+  `task_id_from` (`--task-id`, `$TEND_TASK_ID` or `orchestrator.sqlite`) and
+  `changed_files`, and the ownership line says where the id came from: an
+  agent's own calls carry `TEND_TASK_ID`, so a logged task id was no proof the
+  validation lookup worked. `references/runbook-server.md` §4 step 5 says
+  which record to read.
 - `agent_call.py` keeps a record in `usage/` for a call that left no envelope
   (a timeout, a signal, an empty or non-JSON stdout: `total_cost_usd: null`,
   its elapsed time), and the spend watchdog estimates each at the root's
