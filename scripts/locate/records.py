@@ -12,19 +12,28 @@ Every input is a plain mapping:
   ``title``, ``html_sha256``, ``renderer``) plus ``uri`` (the revision's
   permalink), ``container_title`` and ``licence`` (an SPDX id);
 * ``passage`` -- the outcome row (``item``, ``passage_kind``, ``span``,
-  ``status``, ``challenge``) of references/locate-documents.md section 10;
+  ``status``, ``challenge``, ``section``, ``prominence``) of
+  references/locate-documents.md section 10;
 * ``location`` -- one of its locations, with ``proof_status`` joined from the
-  index, and ``module``, ``path``, ``line``, ``end_line``;
+  index, and ``module``, ``path``, ``line`` and, when the index has one,
+  ``end_line`` (a published index may record ``line`` only: the end then
+  carries no ``end_line``, never a guessed one);
 * ``library`` -- the universe's library (``id``, ``repo``, ``commit``);
 * ``universe`` -- ``{id, sha256, libraries: [library, ...]}``.
 
-Three record shapes, all with ``id = <source_id>::<item>``:
+Three record shapes, all with ``id = <source_id>::<item>`` and the passage's
+``section`` (its heading path) and ``prominence`` in the locate extension when
+the passage row carries them -- :func:`passage_records`, the export's entry,
+requires both:
 
 * :func:`location_record` -- one ``lean`` end at the declaration, ``role:
-  key``, the relation and the passage's derived status;
+  key``, the relation and the passage's derived status; a ``closeMatch``
+  names its convention difference in ``note`` (:func:`passage_records`
+  refuses one with none);
 * :func:`absence_record` -- ``relation: noMatch``, ``status: not_formalized``,
-  one ``lean`` end per universe library with no location (the spec's
-  checked-absence form), and the search receipt referenced by sha256 and
+  one minimal ``lean`` end per universe library (``type``, ``uri``,
+  ``version`` and nothing else: the spec's checked-absence form, at a few
+  dozen bytes a library), and the search receipt referenced by sha256 and
   count, never inline;
 * :func:`unresolved_record` -- ``object: []`` and no status.
 
@@ -67,6 +76,9 @@ CONTEXT_CHARS = 32
 MAX_LOCATIONS = 5
 NO_MATCH = "noMatch"
 NOT_FORMALIZED = "not_formalized"
+#: ``cflib.vocab.CLOSE_MATCH`` and ``cflib.vocab.PROMINENCE``
+CLOSE_MATCH = "closeMatch"
+PROMINENCES = frozenset({"subject", "central", "supporting"})
 #: the keys of a receipt candidate (references/locate-documents.md section 3), the only
 #: ones its sidecar carries
 RECEIPT_CANDIDATE_KEYS = ("library", "declaration", "verdict", "reason")
@@ -186,10 +198,15 @@ def _commit(library: Mapping[str, Any]) -> str:
 
 
 def lean_end(library: Mapping[str, Any], location: Mapping[str, Any] | None = None) -> dict:
-    """A ``lean`` end: at a declaration (``role: key``), or the bare library (an absence)."""
+    """A ``lean`` end: at a declaration (``role: key``), or the bare library (an absence).
+
+    An absence's end is ``{type, uri, version}`` and nothing else: the record
+    names every library of the universe, and the universe file already says
+    which id each repository is.  A declaration's end carries ``line`` and
+    ``end_line`` only as the index has them.
+    """
     end = {"type": "lean", "uri": str(library["repo"]), "version": _commit(library)}
     if location is None:
-        end["extensions"] = {EXTENSION: {"library": str(library["id"])}}
         return end
     loc = {"declaration": str(location["declaration"])}
     if location.get("module"):
@@ -215,8 +232,29 @@ def record_id(source_id: str, item: str) -> str:
 def _record_ext(passage: Mapping[str, Any], universe: Mapping[str, Any], **extra) -> dict:
     ext = {"item": str(passage["item"]), "universe": str(universe["id"]),
            "universe_sha256": str(universe["sha256"]), "challenge": passage_challenge(passage)}
+    if isinstance(passage.get("section"), (list, tuple)):
+        ext["section"] = [str(heading) for heading in passage["section"]]
+    if passage.get("prominence"):
+        ext["prominence"] = str(passage["prominence"])
     ext.update({k: v for k, v in extra.items() if v is not None})
     return ext
+
+
+def passage_problem(passage: Mapping[str, Any]) -> str | None:
+    """Why a passage row cannot be exported as the record set requires, or None.
+
+    Every record names its passage's ``section`` (the heading path, a list of
+    non-empty strings; ``[]`` is the lead) and ``prominence``, so a consumer can
+    single out the article's subject passage without a passage table.
+    """
+    section = passage.get("section")
+    if not isinstance(section, (list, tuple)) or not all(isinstance(h, str) and h.strip()
+                                                         for h in section):
+        return f"{passage.get('item')}: no section heading path to export ({section!r})"
+    if passage.get("prominence") not in PROMINENCES:
+        return (f"{passage.get('item')}: prominence {passage.get('prominence')!r} is not one of "
+                f"{', '.join(sorted(PROMINENCES))}")
+    return None
 
 
 def passage_challenge(passage: Mapping[str, Any]) -> str:
@@ -361,9 +399,15 @@ def passage_records(source: Mapping[str, Any], passage: Mapping[str, Any], layer
     if len(set(ranks)) != len(ranks):
         raise RecordError(f"{passage['item']}: two locations share a rank")
     passage_challenge(passage)
+    why = passage_problem(passage)
+    if why:
+        raise RecordError(why)
     for loc in locations:
         if loc["library"] not in libs:
             raise RecordError(f"{passage['item']}: library {loc['library']} is not in the universe")
+        if loc.get("relation") == CLOSE_MATCH and not str(loc.get("note") or "").strip():
+            raise RecordError(f"{passage['item']}: the closeMatch {loc['library']}:"
+                              f"{loc['declaration']} names no convention difference in its note")
         _free_text(str(passage["item"]), "a location's note", str(loc.get("note") or ""), layer)
         records.append(location_record(source, passage, loc, libs[loc["library"]], universe,
                                        quote, span_sha256=span_sha))

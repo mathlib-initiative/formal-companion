@@ -31,6 +31,7 @@ Write `findings/$TEND_TASK_ID/<source-id>.json` for each source of the manifest:
 ```
 
 - One verdict per record of the manifest, and only for those records; `action` is `confirm`, `downgrade`, `refute`, `overturn` or `uphold`; every verdict carries a non-empty `witness`.
+- A downgrade to `closeMatch` also gives `note`: the convention difference (0 ∈ ℕ, a junk value, a normalisation). Without one, the first sentence of your `witness` becomes the record's note, so make that sentence name the difference.
 - Copy `item`, `location_key`, the source's shas and `renderer` from the manifest exactly; write no commit and no `proof_status`.
 
 ## Before you commit, run the gate

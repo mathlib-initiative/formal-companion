@@ -1630,7 +1630,7 @@ class TestRecords(unittest.TestCase):
                "location_key": "3" * 64, "proof_status": "proved", "module": "Alpha.W",
                "path": "Alpha/W.lean", "line": 3, "end_line": 9, "challenge": "survived"}
         base = {"source_id": F.W1, "item": "In-text #3fa91c07", "passage_kind": "theorem",
-                "span": [0, 40]}
+                "span": [0, 40], "section": ["Statement"], "prominence": "central"}
         located = {**base, "outcome": "located", "status": "formalized",
                    "challenge": "survived", "locations": [loc]}
         absent = {**base, "outcome": "absent", "status": "not_formalized",
@@ -1664,7 +1664,8 @@ class TestRecords(unittest.TestCase):
 
     def test_no_challenge_value_is_refused(self):
         row = {"source_id": F.W1, "item": "In-text #3fa91c07", "passage_kind": "theorem",
-               "span": [0, 40], "outcome": "unresolved", "challenge": None, "locations": []}
+               "span": [0, 40], "outcome": "unresolved", "challenge": None, "locations": [],
+               "section": [], "prominence": "subject"}
         with self.assertRaises(records.RecordError) as caught:
             records.passage_records(self.source(), row, self.LAYER, self.universe())
         self.assertIn("hard rule 5", str(caught.exception))
@@ -1718,7 +1719,8 @@ class TestExport(Campaign):
         self.assertEqual(export_mod.verify_seal(out_dir), [])
         seal = read_json(out_dir / "SEAL.json")
         self.assertEqual(seal["schema"], "cf-locate-recordset/1")
-        self.assertEqual(seal["universe"], F.universe_pin(self.paths))
+        pin = F.universe_pin(self.paths)
+        self.assertEqual(seal["universe"], {"id": pin["id"], "universe_sha256": pin["sha256"]})
         self.assertEqual(seal["sourceset"]["manifest_sha256"],
                          inputs.manifest(self.paths, F.SS).sha256)
         self.assertEqual(sorted(seal["files"]), ["records/enwiki-1001-2002.jsonl",
@@ -1747,8 +1749,10 @@ class TestExport(Campaign):
         self.assertIn(websource.revision_url(fam, 1001, 2002), json.dumps(cite))
         # seam #25: the universe file carries what the universe defines, nothing else
         uni = read_json(out_dir / "universe.json")
-        self.assertTrue(all("display_name" not in lib for lib in uni["libraries"].values()))
-        self.assertEqual(uni["libraries"]["alpha"]["licence"], {"spdx": "Apache-2.0"})
+        libs = {lib["id"]: lib for lib in uni["libraries"]}
+        self.assertEqual(libs["alpha"]["licence"], {"spdx": "Apache-2.0"})
+        # display_name is the library's brain_lib, the one name the universe gives it
+        self.assertEqual([lib["display_name"] for lib in uni["libraries"]], ["Alpha", "Beta"])
 
     def test_an_absence_record_and_its_receipt(self):
         def uphold(rec):

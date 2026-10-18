@@ -348,12 +348,20 @@ A location:
  "relation": "exactMatch", "status": "formalized", "kind": "theorem",
  "extensions": {"‹locate›": {"item": "In-text #3fa91c07", "location_key": "<run-free sha>",
                              "rank": 1, "confidence": "high", "universe": "u1",
-                             "universe_sha256": "<hex>", "challenge": "survived"}}}
+                             "universe_sha256": "<hex>", "challenge": "survived",
+                             "section": ["Theorems"], "prominence": "subject"}}}
 ```
 
 - `id` is the qualified passage id, shared by every record about that passage.
 - `lines` is omitted on whole-declaration ends; path and span ride in the
-  extension so a reader can build a source link at the commit.
+  extension so a reader can build a source link at the commit. `end_line` is
+  there only when the library's index has it (a published index may record
+  `line` alone); a reader treats it as optional.
+- `section` (the passage's heading path) and `prominence` ride on every record
+  of the passage, so a reader can single out the subject passage.
+- A `closeMatch` always names its convention difference in `note`, one a
+  challenge downgraded to `closeMatch` too (the challenger's note, else its
+  witness's first sentence).
 - `proof_status` is joined from the index at export, never written by a worker.
 - `location_key` = sha256(source_id, clean(item), library, commit,
   declaration) — run-free, for idempotent upserts by consumers. The run-scoped
@@ -362,9 +370,10 @@ A location:
 - At most **K = 5** locations per passage, ranked.
 
 An absence is one record with `relation: "noMatch"`, `status:
-"not_formalized"`, and **one `lean` end per universe library** (repo uri,
-40-hex `version`, no `location`) — the spec's own checked-absence form,
-readable without fetching anything. The universe id and sha ride in the
+"not_formalized"`, and **one `lean` end per universe library** (`type`, repo
+`uri` and 40-hex `version`, nothing else: no `location`, no `role`, no
+extension) — the spec's own checked-absence form, readable without fetching
+anything. The universe id and sha ride in the
 extension; the search receipt (queries, candidates examined, reasons) is a
 sidecar file in the sealed record set, referenced by sha256 and count, never
 inline.
@@ -669,8 +678,12 @@ a canary string, and a transcript containing one fails the run.
 ### 11.1 Contract for any consumer
 
 A consumer receives a **sealed record set**: `records.jsonl` per source,
-receipt sidecars, the universe manifest, the sourceset manifest slice and a
-`SEAL.json` of shas. A consumer must not refetch the source; it gets the
+receipt sidecars, the universe manifest (§2.3's shape: `universe_sha256`,
+`frozen`, a list of libraries), the sourceset manifest slice and a `SEAL.json`
+of shas that names the set, a campaign token (the campaign id, or
+`run:<run>[+<challenge run>]` outside one), the universe, the sourceset, the
+skill commit and the byte budget applied (none by default;
+`references/locate-documents.md` §6). A consumer must not refetch the source; it gets the
 canonical body's sha and, when it supplied the bytes (§2.1), matches them.
 
 ### 11.2 WikiLean

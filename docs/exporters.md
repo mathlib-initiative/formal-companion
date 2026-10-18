@@ -365,9 +365,10 @@ A workspace's locate run (`docs/proposals/wikipedia-locate.md` §2.7 and §11.1)
 not a companion's: `--run` names the harvested, gated locate run and
 `--challenge-run` each challenge run whose verdicts apply; the set is written to
 `exports/<set-id>/` (or `--out`) in the layout of `references/locate-documents.md`
-§6, and what was refused to `reports/export.<set-id>.json`. `--byte-budget` is the
-per-source cap on `records/<source-id>.jsonl` (default 262,144 bytes; 0 turns it
-off): a source over it is refused whole, never truncated. Every record is checked
+§6, and what was refused to `reports/export.<set-id>.json`. `--byte-budget` is a
+per-source cap on `records/<source-id>.jsonl` and its receipts for a consumer
+that has one (default 0: no cap): a source over it is refused whole, never
+truncated, and `SEAL.json` records the budget that applied. Every record is checked
 with the vendored Literature Links checker before the set is sealed; a passage
 whose challenge is owed is refused by name (hard rule 5), and the command exits 1
 after writing the rest.

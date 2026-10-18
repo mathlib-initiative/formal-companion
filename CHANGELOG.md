@@ -35,6 +35,16 @@ since the multi-source rewrite. The entries below exist so that the first
 release has something to say.
 
 ### Changed
+- The sealed record set is the shape its consumer reads
+  (`references/locate-documents.md` §6): `SEAL.json` carries `set_id`, a
+  `campaign` that is never null (`run:<run>[+<challenge run>]` outside a
+  campaign), `universe: {id, universe_sha256}` and the `byte_budget` applied;
+  `universe.json` lists its libraries (each with `roots` and `display_name`)
+  under `universe_sha256` with `frozen`; every record carries its passage's
+  `section` and `prominence`; a `closeMatch` a challenge produced keeps a note;
+  an absence's lean ends are `{type, uri, version}` only; and no per-source
+  byte budget applies unless `--byte-budget` asks for one (it had refused 4 of
+  10 sources of the second smoke at 256 KiB).
 - `corpus_search.py --library L` (and `cf corpus search --library`, L2's
   lexical retrieval) reads the FTS5 index first and filters the library on the
   rows it found: SQLite 3.43's planner had walked every row of the library
