@@ -1708,3 +1708,41 @@ class TestFieldS13FormulasWrittenAsHtml(unittest.TestCase):
                       f' and {math("y")} appear.</p>')
         (p,) = r.paragraphs
         self.assertEqual((p["formulas"], p["texhtml"], p["math"]), (1, 1, True))
+
+
+class TestFieldBoldLabelsAreNoDefinitions(unittest.TestCase):
+    """The check found bold_definition passages whose bold was only a label."""
+
+    def finder_terms(self, html: str) -> list:
+        r = rh.render('<p>The widget article opens with this lead paragraph here.</p>\n'
+                      '<h2 id="S">Section</h2>\n' + html)
+        return [f["term"] for f in r.finders if f["finder"] == "bold_definition"]
+
+    def test_a_label_only_bold_makes_no_passage(self):
+        for label in ("Proof", "Proof.", "Example.", "Definition:", "Example 2:", "Case 1:",
+                      "Proof of the lemma.", "Theorem (Widget lemma).", "Solution:",
+                      "Base case:", "Remark 3.1."):
+            with self.subTest(label=label):
+                self.assertEqual(self.finder_terms(
+                    f"<p><b>{label}</b> Split the widget along its spine.</p>"), [])
+
+    def test_a_symbol_bold_makes_no_passage(self):
+        for symbol in ("R", "M", "1'", "2'", "(i)", "v"):
+            with self.subTest(symbol=symbol):
+                self.assertEqual(self.finder_terms(
+                    f"<p>Let <b>{symbol}</b> be a widget ring.</p>"), [])
+
+    def test_the_first_bold_that_names_a_term_is_the_term(self):
+        self.assertEqual(self.finder_terms(
+            "<p><b>Definition:</b> A <b>widget group</b> is a group with a gadget.</p>"),
+            ["widget group"])
+        self.assertEqual(self.finder_terms(
+            "<p>A <b>solution</b> of a widget equation is a value that satisfies it.</p>"),
+            ["solution"])
+        self.assertEqual(self.finder_terms("<p>The <b>Pi</b> gadget.</p>"), ["Pi"])
+
+    def test_every_label_is_in_the_vocabulary_document(self):
+        text = (SKILL / "references" / "vocabulary.md").read_text(encoding="utf-8")
+        for label in sorted(vocab.BOLD_LABELS | vocab.BOLD_LABELS_PUNCTUATED):
+            with self.subTest(label=label):
+                self.assertIn(f"`{label}`", text)

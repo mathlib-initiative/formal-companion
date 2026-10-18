@@ -100,14 +100,17 @@ in full:
 * **The deterministic finders** (``finders.json``, ``cflib.vocab.
   DETERMINISTIC_FINDERS``): ``theorem_box`` -- each theorem box, ``term`` its
   ``.theorem-name`` (or ``.math_theorem_name``) text, else its first ``b`` or
-  ``strong`` (a term is always kept text, ``White_Space``-collapsed); ``bold_definition`` -- each ``p`` with a ``b`` inside and no
-  ``table``, ``caption`` or heading around it, ``term`` the first ``b``'s text;
-  ``lead`` -- the first ``p`` of the lead section with at least
+  ``strong`` (a term is always kept text, ``White_Space``-collapsed);
+  ``bold_definition`` -- each ``p`` with a ``b`` inside that names a term and no
+  ``table``, ``caption`` or heading around it, ``term`` the first such ``b``'s
+  text: one with at least :data:`MIN_TERM_LETTERS` letters that is not only a
+  paragraph label (``cflib.vocab.is_bold_label``: "Proof.", "Example 2:",
+  "Definition:"), so a paragraph whose every bold is a label or a symbol makes
+  no passage; ``lead`` -- the first ``p`` of the lead section with at least
   :data:`LEAD_MIN_WORDS` words of kept text and no ``table`` around it.  A
   passage starts at its element's kept span start and must be a word start of
-  the head text
-  (``locate_text.check_start`` at ``HeadMap.to_head``); one that is not is
-  dropped and counted in ``finders_dropped``.
+  the head text (``locate_text.check_start`` at ``HeadMap.to_head``); one that
+  is not is dropped and counted in ``finders_dropped``.
 * **The reading copy** (``text.txt``) walks the same tree without the dropped
   regions -- ``style``, ``script``, ``template``, ``sup.reference``, ``ol.references``,
   ``.reflist``, ``.mw-references-wrap``, ``.mw-editsection`` -- writing each
@@ -144,11 +147,14 @@ _SCRIPTS = Path(__file__).resolve().parents[1]
 if str(_SCRIPTS) not in sys.path:  # pragma: no cover - imported through cf.py normally
     sys.path.insert(0, str(_SCRIPTS))
 
+from cflib import vocab  # noqa: E402
 from gate import locate_text  # noqa: E402
 
 RENDERER = "web-html/2"
 #: the lead finder skips a lead paragraph shorter than this (a stub's empty line)
 LEAD_MIN_WORDS = 5
+#: a bold run with fewer letters than this is a symbol (a bold R, a 1'), not a term
+MIN_TERM_LETTERS = 2
 
 #: the files a rendering writes into a source's directory, in the order written
 RENDER_FILES = ("body.html", "layer.txt", "formulas.json", "head.txt", "text.txt",
@@ -1072,6 +1078,22 @@ def _first_text(node: _Node, raw: str, predicate) -> str | None:
     return None
 
 
+def is_term(text: str) -> bool:
+    """Does a bold run's text name a term: enough letters, and not only a label?"""
+    return (sum(1 for ch in text if ch.isalpha()) >= MIN_TERM_LETTERS
+            and not vocab.is_bold_label(text))
+
+
+def _defined_term(node: _Node, raw: str) -> str | None:
+    """The kept text of the first ``b`` of a paragraph that names a term, or None."""
+    for el in _iter_kept(node):
+        if el.tag == "b":
+            text = _collapse_ws("".join(raw[a:b] for a, b in _texts(el, kept=True)))
+            if text and is_term(text):
+                return text
+    return None
+
+
 def render(body: str) -> Rendering:
     """Every view of one canonical body.  Deterministic: the same body, the same bytes."""
     if not isinstance(body, str):
@@ -1142,7 +1164,7 @@ def render(body: str) -> Rendering:
     for node, span, in_table, in_heading in walker.paras:
         if in_table or in_heading:
             continue
-        term = _first_text(node, raw, lambda el: el.tag == "b")
+        term = _defined_term(node, raw)
         if term:
             propose("bold_definition", span, term)
     for node, span, in_table, _in_heading in walker.paras:
