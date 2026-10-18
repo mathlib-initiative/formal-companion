@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from cflib import state as state_mod
+from cflib import vocab
 from cflib.errors import CfError
 from cflib.hashing import sha256_file
 from cflib.jsonio import read_json
@@ -27,7 +28,7 @@ from cflib.yamlio import read_yaml, write_yaml
 from . import manifest
 
 #: a root holds at most this many tasks (proposal section 6, Roots)
-MAX_ROOT_TASKS = 500
+MAX_ROOT_TASKS = vocab.MAX_TASKS_PER_ROOT
 CAMPAIGN_VERSION = 1
 
 

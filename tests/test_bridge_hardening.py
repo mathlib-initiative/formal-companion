@@ -348,3 +348,62 @@ class TestTheInventoryAndChallengeShapes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheObservableStateFallback(unittest.TestCase):
+    """#30/#40: with no result file the fallback gates exactly the task's own documents."""
+
+    def setUp(self):
+        self.tmp = scratch(self)
+        self.wt = self.tmp / "worktree"
+        (self.wt / "findings" / "t-1").mkdir(parents=True)
+        (self.wt / "findings" / "t-0").mkdir(parents=True)
+        (self.wt / "findings" / "t-1" / "a.json").write_text("{}")
+        (self.wt / "findings" / "t-0" / "merged.json").write_text("{}")
+        self.argv = self.tmp / "gate-argv"
+
+    def fallback(self, *, ok: bool) -> dict:
+        gate = self.tmp / "gate.py"
+        gate.write_text(
+            "import sys\n"
+            f"open({str(self.argv)!r}, 'w').write('\\n'.join(sys.argv[1:]))\n"
+            + ("print('OK: 1 document')\n" if ok else
+               "print('VALIDATION FAILED (1 problem(s)):', file=sys.stderr)\n"
+               "print('  - [rule 2] t-1/a.json: the quote matches 0 times', file=sys.stderr)\n"
+               "print('  changed files: ownership checked against task t-1')\nsys.exit(1)\n"),
+            encoding="utf-8")
+        script = (f"import sys; sys.path.insert(0, {str(SCRIPTS / 'run')!r}); "
+                  "import normalize_result as n, json; print(json.dumps(n.worker_result(None, '')))")
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                              cwd=str(self.wt),
+                              env=clean_env(CF_GATE_CMD=f"{sys.executable} {gate} --gate-config g.json",
+                                            CF_FINDINGS_GLOB="findings/$TEND_TASK_ID/*.json",
+                                            TEND_TASK_ID="t-1"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_only_the_tasks_documents_reach_the_gate(self):
+        out = self.fallback(ok=True)
+        self.assertEqual(out["status"], "completed")
+        self.assertEqual(self.argv.read_text().splitlines(),
+                         ["--gate-config", "g.json", "--findings", "findings/t-1/a.json"])
+
+    def test_a_refusal_reports_the_reason_not_the_ownership_line(self):
+        out = self.fallback(ok=False)
+        self.assertEqual(out["status"], "needs_review")
+        self.assertIn("[rule 2]", out["notes"])
+
+
+class TestTheReviewerMayRunTheGate(BridgeCase):
+    """#31: the reviewer's checklist has it confirm the gate passes."""
+
+    def test_the_gate_is_on_the_reviewers_surface(self):
+        self.agentbox(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
+        gate = "/srv/r-1-gate"
+        self.bridge("reviewer", CF_GATE_CMD=f"python3 {gate}/verify_locate.py --gate-config "
+                                            f"{gate}/gate.json")
+        argv = (self.tmp / "argv").read_text().splitlines()
+        tools = argv[argv.index("--allowedTools") + 1].split(",")
+        self.assertIn(f"Bash(python3 {gate}/verify_locate.py:*)", tools)
+        self.assertNotIn("Write", tools)
+        self.assertNotIn("Edit", tools)

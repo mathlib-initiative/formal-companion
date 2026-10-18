@@ -91,10 +91,15 @@ def observed() -> dict | None:
     if not files:
         return None
     try:
-        proc = subprocess.run(shlex.split(GATE_CMD), capture_output=True,
-                              text=True, timeout=300)
+        # Exactly the task's own documents, by path: the bare command validates
+        # every document in findings/, and once any other task has merged its
+        # documents are there too, each a rule-7 refusal of THIS contribution.
+        argv = shlex.split(GATE_CMD) + [arg for f in files for arg in ("--findings", f)]
+        proc = subprocess.run(argv, capture_output=True, text=True, timeout=300)
         gate_ok = proc.returncode == 0
-        gate_msg = (proc.stdout or proc.stderr).strip()[:400]
+        # A refusal is on stderr; stdout ends with the ownership line either way.
+        gate_msg = ((proc.stderr + "\n" + proc.stdout) if not gate_ok
+                    else (proc.stdout or proc.stderr)).strip()[:400]
     except Exception as exc:  # gate missing, timeout, unreadable
         gate_ok, gate_msg = False, f"gate could not run: {exc}"
     return {"files": files, "gate_ok": gate_ok, "gate_msg": gate_msg}

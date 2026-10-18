@@ -652,7 +652,12 @@ host tools — and in an inventory run the passage-id tool — worker role only)
 exported by the generated wrappers in `bin/`. A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
 same worktree; only a `request_changes` from a call that completed counts as a
-rejection.
+rejection. Both roles' allowlists carry the gate command's program by absolute
+path (`CF_GATE_CMD` without its flags): the worker runs it before committing and
+the reviewer to confirm the gate passes. When an agent writes no result file,
+the bridge's fallback runs that command with `--findings <file>` for each of the
+task's own documents (the `CF_FINDINGS_GLOB` matches) and reports the gate's
+refusals from stderr.
 
 ## 10. Harvested rows and passage outcomes
 
