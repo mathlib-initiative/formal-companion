@@ -14,7 +14,7 @@ Three things are fixed and live only here:
   entry records, so two fetches of one revision with different parameters can
   never pass for one source;
 * the manifest entry's fields (:data:`ENTRY_FIELDS`) and what each may hold
-  (:func:`entry_problems`);
+  (:func:`entry_problems`), the page flags among them (:func:`page_flags`);
 * the revision permalink, from the family's ``revision_url`` template in the
   registry -- built from the page id and revision, so it survives a page move.
 """
@@ -52,10 +52,17 @@ ENTRY_FIELDS = ("source_id", "family", "pageid", "revision", "title", "wikidata"
                 "assessment", "origin", "licence_class", "fetch", "raw_sha256",
                 "html_sha256", "layer_sha256", "renderer")
 #: optional fields an entry may also carry
-OPTIONAL_FIELDS = ("adopted_from",)
+OPTIONAL_FIELDS = ("adopted_from", "flags")
 #: the fields a later manifest version may fill in (null -> value); every other
 #: field is fixed when the entry is first written
 SHA_FIELDS = ("raw_sha256", "html_sha256", "layer_sha256")
+
+#: the assessment classes that make a page a redirect, a disambiguation page, a list
+REDIRECT_CLASSES = frozenset({"redirect"})
+DISAMBIGUATION_CLASSES = frozenset({"disambig", "disambiguation"})
+LIST_CLASSES = frozenset({"list", "fl"})
+#: a title that names a list
+LIST_TITLE_PREFIXES = ("List of ", "Lists of ")
 
 _SHA = re.compile(r"[0-9a-f]{64}\Z")
 _QID = re.compile(r"Q[1-9][0-9]*\Z")
@@ -163,6 +170,38 @@ def entry(fam: registry_mod.SourceFamily, pageid: int, revision: int, *,
     return record
 
 
+def page_flags(*, title: str | None, assessment: dict | None, redirect: bool = False,
+               disambiguation: bool = False) -> dict:
+    """An enumerated page's ``flags`` (``cflib.vocab.PAGE_FLAGS``); ``biography`` undetermined.
+
+    ``redirect`` and ``disambiguation`` are the page info's, or the project's own
+    class for them; ``list`` is a List or Featured List class, or a title that
+    starts "List of" / "Lists of".  Wikidata's own list and disambiguation
+    classes are not used: they misclass real articles.
+    """
+    cls = str((assessment or {}).get("class") or "").casefold()
+    return {vocab.PAGE_FLAG_REDIRECT: bool(redirect) or cls in REDIRECT_CLASSES,
+            vocab.PAGE_FLAG_DISAMBIGUATION: bool(disambiguation) or cls in DISAMBIGUATION_CLASSES,
+            vocab.PAGE_FLAG_LIST: cls in LIST_CLASSES
+            or str(title or "").startswith(LIST_TITLE_PREFIXES),
+            vocab.PAGE_FLAG_BIOGRAPHY: None}
+
+
+def merged_flags(old: dict | None, new: dict) -> dict:
+    """``old`` with each flag it has not determined taken from ``new`` (a flag never changes)."""
+    out = dict(old or {})
+    for name, value in new.items():
+        if out.get(name) is None and value is not None:
+            out[name] = value
+        out.setdefault(name, value)
+    return out
+
+
+def concept_page(entry: dict) -> bool:
+    """No flag of the entry's page says it is not a concept article (an unknown one does not)."""
+    return not any((entry.get("flags") or {}).values())
+
+
 def entry_problems(record: Any) -> list[str]:
     """What is wrong with one manifest entry; empty when it is well formed."""
     if not isinstance(record, dict):
@@ -217,6 +256,12 @@ def entry_problems(record: Any) -> list[str]:
     adopted = record.get("adopted_from")
     if adopted is not None and not isinstance(adopted, dict):
         out.append(f"{where}: adopted_from is an object")
+    flags = record.get("flags")
+    if flags is not None and not (isinstance(flags, dict) and set(flags) <= vocab.PAGE_FLAGS
+                                  and all(v is None or isinstance(v, bool)
+                                          for v in flags.values())):
+        out.append(f"{where}: flags is null or {{{', '.join(sorted(vocab.PAGE_FLAGS))}}} "
+                   f"each true, false or null")
     return out
 
 

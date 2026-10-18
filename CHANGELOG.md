@@ -116,6 +116,26 @@ release has something to say.
   the format no longer exports. The reference pins move to measure_theory
   `2cd263a` and tao-measure-lean `677ada1`; references written against
   `v1.0.0` must be regenerated.
+- Locate L1, after the first run against real pages
+  (`references/locate-documents.md` §5, §7). The renderer is `web-html/2`: the
+  layer is the Literature Links text layer — no `style`, `script` or `template`
+  text, every `White_Space` run one space — so it equals the consumer's on real
+  pages; a self-closing MathML or SVG element holds nothing; a `{{math}}`
+  (`texhtml`) formula makes a `math` block; a bold that only labels its
+  paragraph ("Proof.", `cflib.vocab.BOLD_LABELS`) or is a symbol makes no
+  `bold_definition`; `layer_map.json` names its renderer and a golden test pins
+  every view to the id. A `/1` sourceset is re-rendered through `cf sourceset
+  create <new> --from <old>`. Manifest versions are snapshots or deltas
+  (`cf-sourceset-delta/1`). `fetch --source/--select` fetches a pilot;
+  `adopt` takes pins without bytes and title pins (their page resolved from
+  the revision under `--execute`), and an adopted revision takes its page's
+  assessment and QID. Entries carry page `flags` (redirect, disambiguation,
+  list, and biography from Wikidata through `cf sourceset flag-biographies`);
+  the enumeration counts the rows that are no article, follows page-info
+  continuations and resumes from a checkpoint. `state.json` counts pages and
+  keeps a run history, `cf sourceset status` writes only with `--verify`, and
+  `cf status` lists sourcesets. L2 queries only bold terms that are terms, and
+  the inventory prompt keeps one passage where finders share a start.
 
 ### Added
 - Locate L1, web sources (`docs/proposals/wikipedia-locate.md` §2.1, §2.2, §3;

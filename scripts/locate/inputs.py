@@ -12,7 +12,10 @@ directly so that it depends on the documented format and nothing else, and
 the integrate step replaces these readers with those packages' own where they
 exist.  Every reader refuses what the format does not allow (a manifest whose
 header is not ``cf-sourceset/1``, a universe whose recorded sha is not the one
-its libraries hash to) instead of guessing.
+its libraries hash to) instead of guessing.  A manifest version written as a
+delta (``cf-sourceset-delta/1``, section 7) is read by the sourceset's own
+reader, ``sources.sourceset.Sourceset.load``, which replays it onto the
+snapshot before it and checks the chain.
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ from cflib.paths import WorkspacePaths
 from cflib.yamlio import read_yaml
 
 SOURCESET_SCHEMA = "cf-sourceset/1"
+SOURCESET_DELTA_SCHEMA = "cf-sourceset-delta/1"
 CORPUS_SCHEMA = "cf-corpus/1"
 _COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
@@ -101,6 +105,12 @@ def load_manifest(paths: WorkspacePaths, sourceset_id: str,
     if not rows:
         raise CfError(f"{path} is empty: line 1 is the cf-sourceset/1 header")
     header = rows[0][1]
+    if header.get("schema") == SOURCESET_DELTA_SCHEMA:
+        from sources.sourceset import Sourceset
+        full = Sourceset(paths, sourceset_id).load(version)
+        return Manifest(sourceset=sourceset_id, version=version, path=path,
+                        sha256=full.sha256, header=full.header,
+                        entries={sid: full.entries[sid] for sid in sorted(full.entries)})
     if header.get("schema") != SOURCESET_SCHEMA:
         raise CfError(f"{path}: line 1 is not a {SOURCESET_SCHEMA} header")
     if str(header.get("id")) != sourceset_id or header.get("version") != version:

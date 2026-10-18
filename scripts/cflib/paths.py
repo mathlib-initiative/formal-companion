@@ -339,6 +339,10 @@ class WorkspacePaths:
         """The sourceset-level state file locate writes instead of companions/<n>/state.json."""
         return self.sourceset_dir(sourceset_id) / "state.json"
 
+    def sourceset_enumerate_checkpoint(self, sourceset_id: str) -> Path:
+        """What an interrupted ``enumerate-wikiproject`` had been answered, to resume from."""
+        return self.sourceset_dir(sourceset_id) / "enumerate.checkpoint.json"
+
     def candidates_dir(self, sourceset_id: str, universe_id: str) -> Path:
         """L2: one candidates file per source, for one universe."""
         return (self.sourceset_dir(sourceset_id) / "candidates"
