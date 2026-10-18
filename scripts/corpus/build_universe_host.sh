@@ -103,7 +103,47 @@ heavy() {
   while [ "$#" -gt 0 ] && [[ $1 =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; do assigns+=("$1"); shift; done
   cenv LEAN_NUM_THREADS="$LEAN_THREADS" "${assigns[@]}" nice -n "$NICE_LEVEL" ionice -c3 "$@"
 }
-g() { cenv nice -n "$NICE_LEVEL" ionice -c3 git "$@"; }
+# git, as cflib.gitsafe.run makes it (universe_host.py and probe_merge.py inline the same
+# pins; tests/test_locate_corpus_field.py holds all three equal to gitsafe's). A library
+# checkout is a third party's tree: the fixed pins stop git from running an fsmonitor hook,
+# a hooks path, an external diff, a pager, an ssh command or an askpass program it names;
+# the environment ignores /etc/gitconfig and takes no optional lock. Every content filter
+# the checkout resolves is blanked too, since `checkout` runs a smudge filter and `status`
+# a clean one by the name an attribute in the tree chose: as `-c <key>=` for a name without
+# an `=`, and as GIT_CONFIG_COUNT pairs (git 2.31 or later) for every name. A name with an
+# `=` on an older git has no blank at all, and there git is not run.
+GIT_SAFE_CONFIG=(-c core.fsmonitor= -c core.hooksPath=/dev/null -c diff.external= -c core.pager=cat
+  -c core.sshCommand= -c core.askPass=)
+GIT_SAFE_ENV=(GIT_CONFIG_NOSYSTEM=1 GIT_OPTIONAL_LOCKS=0 GIT_TERMINAL_PROMPT=0)
+git_env_pairs=unknown
+g() {
+  local dir="" key names=() pins=() pairs=() i=0
+  [ "${1:-}" = -C ] && dir=${2:-}
+  if [ -n "$dir" ] && [ -e "$dir/.git" ]; then
+    while IFS= read -r key; do
+      case $key in filter.*.clean|filter.*.smudge|filter.*.process) names+=("$key") ;; esac
+    done < <(cenv "${GIT_SAFE_ENV[@]}" git "${GIT_SAFE_CONFIG[@]}" -C "$dir" config --list --name-only 2>/dev/null)
+  fi
+  for key in ${names[@]+"${names[@]}"}; do
+    if [[ $key == *=* ]]; then
+      if [ "$git_env_pairs" = unknown ]; then
+        git_env_pairs=$(cenv "${GIT_SAFE_ENV[@]}" git "${GIT_SAFE_CONFIG[@]}" --version 2>/dev/null \
+          | awk '{split($3, v, "."); print ((v[1] > 2 || (v[1] == 2 && v[2] >= 31)) ? "yes" : "no")}')
+      fi
+      if [ "$git_env_pairs" != yes ]; then
+        printf 'build_universe: refusing git in %s: it names the content filter %s, which this git cannot blank\n' "$dir" "$key" >&2
+        return 126
+      fi
+    else
+      pins+=(-c "$key=")
+    fi
+    pairs+=("GIT_CONFIG_KEY_$i=$key" "GIT_CONFIG_VALUE_$i=")
+    i=$((i + 1))
+  done
+  [ "$i" -gt 0 ] && pairs+=("GIT_CONFIG_COUNT=$i")
+  cenv "${GIT_SAFE_ENV[@]}" ${pairs[@]+"${pairs[@]}"} nice -n "$NICE_LEVEL" ionice -c3 \
+    git "${GIT_SAFE_CONFIG[@]}" ${pins[@]+"${pins[@]}"} "$@"
+}
 py() { cenv python3 -I "$helper" "$@"; }
 
 if [ "${1:-}" = "--status" ]; then
@@ -306,7 +346,7 @@ publish_index() {
   step "copy ${source} (described commit ${source_commit:0:12}, tag commit ${tag_commit:0:12})"
   if [ -n "$blob" ]; then
     g -C "$dir" show "$tag_commit:$idx" >"$stage/$idx" 2>>"$lg" || fail "git show $idx failed"
-    [ "$(g hash-object "$stage/$idx")" = "$blob" ] || fail "$idx does not hash to its tree blob $blob"
+    [ "$(g hash-object --no-filters "$stage/$idx")" = "$blob" ] || fail "$idx does not hash to its tree blob $blob"
   else
     cenv curl -fsSL --retry 3 -o "$stage/$idx" "${source#asset:}" 2>>"$lg" || fail "download of ${source#asset:} failed"
   fi
