@@ -1506,6 +1506,101 @@ class TestScore(unittest.TestCase):
 # compare
 # ---------------------------------------------------------------------------
 
+class TestX6APreRegisteredSubsetScore(unittest.TestCase):
+    """Field defect X6: the second smoke covered 4 of the eval split's 36 articles, and
+    ``cf bench score`` could only refuse it ("did not plan").  ``--subset`` scores the
+    articles named, says so in the document and its measurement_id, and the
+    acceptance rule refuses the result.  Freezing stays its own step: gold here is
+    frozen first, as it must be."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp())
+        cls.template = frozen_at(cls.tmp / "template")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def setUp(self):
+        root = scratch(self) / "ws"
+        shutil.copytree(self.template.root, root)
+        self.world = clone_world(self.template, root)
+        self.eval = manifest_of(self.world)["splits"]["eval"]
+        if len(self.eval) < 2:
+            self.skipTest("the draw put one article in eval")
+        self.keep = sorted(self.eval)[:1]
+        # the smoke's case: a run whose inventory and locate cover only `keep`
+        passages, outs = {}, []
+        for sid in self.keep:
+            i = index_of(sid)
+            item = f"In-text #{i:08x}"
+            passages[sid] = [fx.passage(self.world, i, 0, item)]
+            outs.append(fx.outcome(self.world, i, item, status="formalized", outcome_="located",
+                                   locations=[("mathlib", "Widget.spanning_zero", "exactMatch")],
+                                   run_id="loc-smoke", inventory_run="inv-smoke", k=0))
+        self.world.run("loc-smoke", inventory_run="inv-smoke", passages=passages, outcomes=outs)
+
+    def test_x6_the_split_is_refused_and_the_subset_is_scored(self):
+        with self.assertRaises(CfError) as ctx:
+            score(self.world, "loc-smoke")
+        self.assertIn("did not plan", str(ctx.exception))
+        doc = score(self.world, "loc-smoke", "--no-canary-check", "--subset", ",".join(self.keep))
+        self.assertIs(doc["subset"], True)
+        self.assertEqual(doc["subset_articles"], self.keep)
+        self.assertEqual(doc["subset_sha256"], gold_mod.sha_of(self.keep))
+        self.assertEqual(doc["pins"]["subset"], {"articles": self.keep,
+                                                 "sha256": gold_mod.sha_of(self.keep),
+                                                 "of_split": len(self.eval)})
+        self.assertEqual(doc["coverage"]["articles"], len(self.keep))
+        names = [p.name for p in layout_of(self.world).scores_dir.glob("*.json")]
+        self.assertEqual(names, [f"eval-subset-{doc['measurement_id'][:16]}.json"])
+
+    def test_x6_the_subset_is_in_the_measurement_id(self):
+        eval_run(self.world)                           # loc1 covers the whole split
+        full = score(self.world, "loc1")
+        self.assertIs(full["subset"], False)
+        self.assertNotIn("subset", full["pins"])
+        whole = score(self.world, "loc1", "--no-canary-check", "--subset", ",".join(self.eval))
+        part = score(self.world, "loc1", "--no-canary-check", "--subset", self.eval[0])
+        self.assertEqual(len({full["measurement_id"], whole["measurement_id"],
+                              part["measurement_id"]}), 3)
+
+    def test_x6_a_file_of_ids_and_an_article_outside_the_split(self):
+        listing = self.world.write("inputs/subset.txt",
+                                   "# the smoke's articles\n" + "\n".join(self.keep) + "\n")
+        doc = score(self.world, "loc-smoke", "--no-canary-check", "--subset", listing)
+        self.assertEqual(doc["subset_articles"], self.keep)
+        as_json = self.world.write("inputs/subset.json", json.dumps(self.keep))
+        self.assertEqual(score(self.world, "loc-smoke", "--no-canary-check", "--subset",
+                               as_json)["subset_sha256"], doc["subset_sha256"])
+        outside = sorted(set(self.world.articles) - set(self.eval))[:1]
+        if outside:
+            with self.assertRaises(CfError) as ctx:
+                score(self.world, "loc-smoke", "--no-canary-check", "--subset", outside[0])
+            self.assertIn("not in the eval split", str(ctx.exception))
+
+    def test_x6_the_acceptance_rule_refuses_a_subset_score(self):
+        lay = layout_of(self.world)
+        cells = {f"c{i:02d}": [float(i % 2), 1.0] for i in range(20)}
+        base = lay.root / "base.json"
+        base.write_text(json.dumps(score_doc(cells)))
+        sub = score_doc({k: [0.0, 1.0] for k in cells}, mid="s" * 64)
+        sub.update(subset=True, subset_articles=self.keep, subset_sha256=gold_mod.sha_of(self.keep))
+        cand = lay.root / "cand.json"
+        cand.write_text(json.dumps(sub))
+        for b, c, role in ((base, cand, "candidate"), (cand, base, "baseline")):
+            with self.subTest(role=role), self.assertRaises(CfError) as ctx:
+                compare_mod.compare(lay, b, c, claim="G3.fnf_rate", replicates=100, seed=1)
+            self.assertIn(f"the {role}", str(ctx.exception))
+            self.assertIn("subset score", str(ctx.exception))
+        with self.assertRaises(CfError) as ctx:
+            compare_mod.compare(lay, base, base, claim="G3.fnf_rate", aa_path=cand,
+                                replicates=100, seed=1)
+        self.assertIn("A/A replicate", str(ctx.exception))
+        self.assertFalse(lay.ledger_jsonl.exists())
+
+
 def score_doc(fnf_cells, *, models=("m1",), renderer=("web-html/1",), split="eval", arm="blind",
               cost=1.0, articles=10, positives=20, gold="g" * 64, overclaim=None, mid=None,
               strata=None, scorer="s" * 64, tools="full", challenge_runs=(), owed=0,

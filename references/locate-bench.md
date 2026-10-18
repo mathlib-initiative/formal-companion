@@ -348,14 +348,26 @@ a run's.
 
 `cf bench score <id> --run <locate run> --split {dev,eval,test} [--arm A] [--gate-log <path>]
 [--transcripts <dir> | --canary-report <file> | --no-canary-check] [--article-costs <file>]
-[--audit-labels <file>] [--pin KEY=VALUE] [--bootstrap N] [--seed N] [--checkpoint]` writes
+[--audit-labels <file>] [--pin KEY=VALUE] [--bootstrap N] [--seed N] [--checkpoint]
+[--subset <ids>|<file>]` writes
 `scores/<split>-<first 16 hex of measurement_id>.json` (`cf-bench-score/1`); re-scoring the same
 run on the same split rewrites the same file, whatever the checkout committed in between. Top-level
 keys:
 
-`schema, bench, split, arm, checkpoint, run, runs, measurement_id, pins, scorer, gold_manifest,
-coverage, canary_check, tiers, strata, cost, gate_rejections, misses, audit, bootstrap,
-per_cluster, created`.
+`schema, bench, split, arm, checkpoint, run, runs, subset, subset_articles, subset_sha256,
+measurement_id, pins, scorer, gold_manifest, coverage, canary_check, tiers, strata, cost,
+gate_rejections, misses, audit, bootstrap, per_cluster, created`.
+
+**A pre-registered subset.** `--subset` (source ids, comma-separated and repeatable, or a file of
+them: one per line with `#` comments, or a JSON list) scores only the articles it names, each of
+which must be an article of the split, for a run that covers fewer than the whole split (a smoke
+run, a pilot). Every coverage rule below applies to those articles alone. The document says
+`subset: true` with the sorted `subset_articles` and their `subset_sha256`; `pins.subset:
+{articles, sha256, of_split}` puts the list in `measurement_id`; and the file is
+`scores/<split>-subset-<id16>.json`. A whole-split score has `subset: false`, nulls beside it
+and no `pins.subset`, so its `measurement_id` is what it always was. `cf bench compare` refuses a
+subset score in any role (§9). Gold must be frozen for a subset score too: freezing stays its own
+explicit step (`cf bench freeze`).
 
 **The runs** (`runs: {inventory, locate, challenge}`): the inventory run is the locate run's
 `run.yaml` `locate.inventory_run` (with any the outcome rows' `runs.inventory` name; a run
@@ -495,7 +507,9 @@ transcript (or host scan) holding the canary, which fails the run (§8.4).
 ## 9. The acceptance rule and the loop ledger
 
 `cf bench compare <id> <baseline> <candidate> --claim <tier.metric> [--aa <replicate>]
-[--replication BENCH:ENTRY] [--alpha 0.05] [--bootstrap N]` refuses an alpha outside
+[--replication BENCH:ENTRY] [--alpha 0.05] [--bootstrap N]` refuses a subset score (§8: a
+pre-registered subset is a measurement, never a claim) as the baseline, the candidate or the
+A/A replicate, before it reads anything else; an alpha outside
 `0 < alpha < 0.5`; two scores of different benches, splits, arms, gold manifests or scorers
 (`scorer.sha256`); two whose workers searched different kinds of tools database
 (`pins.tools_corpus_db.kind`), or one planted and one not; one scored after a challenge run

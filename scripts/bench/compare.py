@@ -83,6 +83,16 @@ def load_score(path: Path) -> dict:
     return doc
 
 
+def refuse_subset(doc: dict, path: Path, role: str) -> None:
+    """The acceptance rule reads whole-split scores only: a subset score is refused by name."""
+    if doc.get("subset"):
+        n = len(doc.get("subset_articles") or [])
+        raise CfError(f"the {role} {path} is a subset score ({n} article(s) of the "
+                      f"{doc.get('split')} split, subset sha {str(doc.get('subset_sha256'))[:12]}…)",
+                      hint="a pre-registered subset is a measurement, never a claim: compare "
+                           "scores of the whole split")
+
+
 def _challenge_state(doc: dict) -> tuple[bool, bool]:
     """``(scored after a challenge run, rows still owed a verdict)`` of one score."""
     owed = ((doc.get("coverage") or {}).get("challenge_owed") or {}).get("total") or 0
@@ -392,12 +402,15 @@ def compare(layout: BenchLayout, base_path: Path, cand_path: Path, *, claim: str
         raise CfError(f"--alpha {alpha} is not a one-sided significance level",
                       hint="pass 0 < alpha < 0.5 (default 0.05)")
     base, cand = load_score(base_path), load_score(cand_path)
+    refuse_subset(base, base_path, "baseline")
+    refuse_subset(cand, cand_path, "candidate")
     if base.get("bench") != layout.bench_id:
         raise CfError(f"{base_path} is a score of bench {base.get('bench')!r}, not {layout.bench_id!r}")
     differences = refuse_incomparable(base, cand)
     replicate = None
     if aa_path is not None:
         replicate = load_score(aa_path)
+        refuse_subset(replicate, aa_path, "A/A replicate")
         check_replicate(base, replicate)
     ledger_path = layout.ledger_jsonl
     with ledger_lock(ledger_path):
