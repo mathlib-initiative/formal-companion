@@ -75,12 +75,25 @@ def rendered(entry: dict | None) -> bool:
 
 
 def check_source(paths: WorkspacePaths, sourceset_id: str, entry: dict) -> None:
-    """Refuse a source whose files on disk are not the ones its entry pins."""
+    """Refuse a source whose files on disk are not the ones its entry pins.
+
+    A source an older renderer recorded cannot be re-rendered where it is (a
+    recorded layer never changes, references/locate-documents.md section 7), so
+    its refusal names the step that settles it -- a new sourceset seeded from
+    this one's bytes -- instead of a render the sourceset would refuse.
+    """
     problems = Sourceset(paths, sourceset_id).source_problems(entry)
     if problems:
-        raise CfError("; ".join(problems),
-                      hint=f"re-render it: `cf sourceset render {sourceset_id} --source "
-                           f"{entry['source_id']}`")
+        recorded = entry.get("renderer")
+        if recorded and recorded != render_html.RENDERER:
+            hint = (f"{entry['source_id']} was rendered by {recorded}, and a recorded layer "
+                    f"never changes: render it under {render_html.RENDERER} in a new sourceset "
+                    f"seeded from this one's bytes -- `cf sourceset create <new id> --from "
+                    f"{sourceset_id}`, then `cf sourceset render <new id>`")
+        else:
+            hint = (f"re-render it: `cf sourceset render {sourceset_id} --source "
+                    f"{entry['source_id']}`")
+        raise CfError("; ".join(problems), hint=hint)
 
 
 class SourceView:

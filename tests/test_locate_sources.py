@@ -1593,6 +1593,15 @@ class TestFieldS1TheRendererBumpPath(_FieldCase):
         self.assertEqual(code, 1, out)
         self.assertIn("rendered by an older renderer", out)
         self.assertIn("--from old", out)
+        # the planner and L2 read a source through locate.inputs.check_source: an older
+        # renderer's source is refused with the same step, not a render the set refuses
+        from cflib.errors import CfError as _CfError
+        from locate import inputs as locate_inputs
+        with self.assertRaises(_CfError) as ctx:
+            locate_inputs.check_source(self.paths, "old", old_ss.latest().get("enwiki-1001-2002"))
+        self.assertIn("cf sourceset create <new id> --from old", ctx.exception.hint)
+        self.assertIn("web-html/1", ctx.exception.hint)
+        self.assertNotIn("cf sourceset render old", ctx.exception.hint)
         # the path: a new sourceset seeded with the old one's bytes, rendered anew
         code, out = cf(self.root, "sourceset", "create", "new", "--from", "old")
         self.assertEqual(code, 0, out)
