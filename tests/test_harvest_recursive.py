@@ -434,6 +434,28 @@ class TestNestedCorporaAreCounted(unittest.TestCase):
         self.assertTrue(tally_mod.is_locate_corpus(self.ws / "corpus" / "loc-1"))
         self.assertFalse(tally_mod.is_locate_corpus(flat))
 
+    def test_the_companion_state_names_only_the_runs_counted(self):
+        import contextlib
+        from cfcmd import tally as cftally
+
+        sections = {}
+
+        @contextlib.contextmanager
+        def update(workspace, name):
+            yield sections.setdefault(name, {})
+
+        workspace = mock.Mock(companion_names=lambda: ["ours"])
+        result = {"repos": {"ours": {"rows": 3}}, "locate_runs": ["loc-1"]}
+        runs = {"diff-1": self.ws / "corpus" / "diff-1", "loc-1": self.ws / "corpus" / "loc-1"}
+        with mock.patch.object(cftally.state_mod, "update", update), \
+                mock.patch.object(cftally.state_mod, "set_section",
+                                  lambda state, key, value: state.__setitem__(key, value)), \
+                mock.patch.object(cftally.state_mod, "note") as note, \
+                mock.patch.object(cftally.tally_mod, "state_counts", lambda data: {}):
+            cftally._record_state(workspace, result, runs)
+        self.assertEqual(sections["ours"]["tally"]["runs"], ["diff-1"])
+        self.assertEqual(note.call_args.kwargs["runs"], 1)
+
 
 class TestTheGateReadsWhatTheReceiptCounts(unittest.TestCase):
     """Review #63, #70, #71, #78: one listing for the receipt and the gate."""

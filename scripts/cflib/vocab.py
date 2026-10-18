@@ -369,6 +369,14 @@ RELATED_MATCH = "relatedMatch"
 #: but it states something else.
 LOCATE_RELATIONS = frozenset({EXACT_MATCH, CLOSE_MATCH, BROAD_MATCH, NARROW_MATCH,
                               HAS_PART, RELATED_MATCH})
+#: how strong a relation is, strongest first (a lower number is stronger): a
+#: challenge's ``downgrade`` names a relation of a strictly higher number than the
+#: record's.  ``broadMatch`` stands above ``narrowMatch`` and ``hasPart`` because
+#: :func:`derive_status` counts it for a theorem and them only as ``partial``
+#: (references/locate-documents.md section 4).  The gate inlines a copy, pinned by
+#: tests/test_locate_contract.py.
+RELATION_STRENGTH = {EXACT_MATCH: 0, CLOSE_MATCH: 1, BROAD_MATCH: 2, NARROW_MATCH: 3,
+                     HAS_PART: 3, RELATED_MATCH: 4}
 #: The relation of an ABSENCE record, the spec's checked-absence form: one
 #: ``lean`` end per universe library and no ``location``.  Never a location's.
 NO_MATCH = "noMatch"

@@ -400,6 +400,16 @@ documents** (`--findings` from the bridge), loading only the sources they name:
    source must be covered by a passage or a recorded skip (a paragraph-coverage
    floor).
 
+As built (`scripts/gate/verify_locate.py`; `references/locate-documents.md`
+§3): rule 4 has two sides. An inventory of an article with curated hits keeps a
+`subject` passage scoped `formal_math` and scopes no `subject` passage out. A
+locate document answers each hit the planner handed its task (the manifest's
+`curated` list, intersected with the candidates file the gate reads itself)
+with a location whose relation counts, or with a rejection that gives a reason.
+A `relatedMatch` discharges nothing, and an `accepted` candidate must be one of
+its passage's counting locations. Rule 4 is off in the blind arm. Rule 6 also
+allows only one location per declaration.
+
 ## 5. Challenge
 
 The tend reviewer in L3a/L3b checks form and gate output only. Judgment lives
@@ -420,6 +430,12 @@ re-runs forty-nine others:
 
 Hard rule 5 applies per record: nothing leaves the workspace without a
 `challenge` value.
+
+As built (`scripts/locate/outcomes.py`): a challenge applies only to the runs
+its plan names, and only through the records it planned. A `downgrade` names a
+strictly weaker relation, in the order `exactMatch` > `closeMatch` >
+`broadMatch` > `narrowMatch` = `hasPart` > `relatedMatch`
+(`cflib.vocab.RELATION_STRENGTH`; the gate checks the same order).
 
 ## 6. The host
 
@@ -455,6 +471,13 @@ Hard rule 5 applies per record: nothing leaves the workspace without a
   user can still reach the agent daemon from a build, so building a
   third-party library is a trust decision the box owner signs (§13).
 - **Labels never go to the host** (§8.4).
+
+As built (`scripts/run/campaign.py`, `templates/campaign/sequencer.sh.tmpl`;
+`references/runbook-server.md` §9): `cf campaign render` needs a pilot whose
+smoke test is recorded, which then stands for every shard's. The sequencer
+holds a lock, so one runs per campaign. It keys its state by run id, refuses a
+root with a live `tend run`, and scans each shard's transcripts for the bench's
+label canaries before it prunes them.
 
 ## 7. Budget and scale
 
@@ -524,6 +547,11 @@ All per tier, never pooled, with article-clustered intervals:
 
 Runs join to gold by **span overlap on the layer** (one-to-one, at least a
 four-word overlap), never by id.
+
+The definitions the bench settled are in `references/locate-bench.md` §8: the
+join, the cause order of a miss, the interval method, the pins the
+`measurement_id` hashes and the refusals. Where they are more precise than this
+section, they are what is built.
 
 ### 8.3 Splits and pins
 

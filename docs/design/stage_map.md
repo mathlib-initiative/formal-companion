@@ -126,7 +126,12 @@ lines move together or not at all.
                               targets.<name>.json, def-coverage.<name>.json,
                               uncovered.<name>.json, anchor-check.json
   runs/<run-id>/              run.yaml, tasks/, prompts/, gate.json,
-                              tend-root/ (gitignored)
+                              tend-root/ (gitignored); a locate run also
+                              gate.local.json, planned.json (every task
+                              manifest), challenge-plan.json, gate-local-log/
+                              (this machine's gate calls) and host/ (what
+                              `cf harvest` brings home: gate.jsonl,
+                              usage.jsonl, canary.json)
   corpus/<run-id>/            findings + RECEIPT.json  (committed: the baseline)
   pipelines/<id>/             pipeline.yaml, doc.vN.json, stages/<stage>.stage-receipt.json
                               (docs/proposals/pdf-to-companion.md section 4.1; the
@@ -140,7 +145,8 @@ lines move together or not at all.
                               handoff.<date>.md, locate-outcomes.<run>.jsonl,
                               locate-tally.<run>.json, export.<set>.json
   sourcesets/<id>/            locate's web sources: manifest-<n>.jsonl (append-only,
-                              committed), state.json, candidates/<u>/<source>.json,
+                              committed), state.json, candidates/<u>/<source>.json
+                              (a blind or planted arm's under candidates/<u>/<kind>/),
                               sources/<source_id>/ (GITIGNORED: raw bytes, body,
                               layer, head text, reading copy, map, sections,
                               blocks, finders)
@@ -379,7 +385,7 @@ its stages share the run, gate, bridge, harvest and cost machinery above
 |---|---|---|
 | L0 universe | `cf corpus init / add / probe-command / ingest / build-db` | `corpora/<u>/{universe.yaml, index/<lib>/, corpus.sqlite}`; `probe-command` prints the host pipeline and runs nothing |
 | L1 sources | `cf sourceset create / enumerate-wikiproject / adopt / fetch / render` | `sourcesets/<id>/manifest-<n>.jsonl` and each source's rendered files (`web-html/1`) |
-| L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json` |
+| L2 candidates | `cf locate candidates` | `sourcesets/<id>/candidates/<u>/<source>.json`; `--blind` or `--tools-corpus-db` write their own `<kind>/` directory under it |
 | L3a/L3b/L5 | `cf plan-locate --preset locate-inventory / locate / locate-challenge` | `runs/<id>/{run.yaml (a locate block), tasks/, prompts/, gate.json, gate.local.json, challenge-plan.json, tend-root/}` |
 | L4 gate | `scripts/gate/verify_locate.py`, out of tree | nothing but its own log line; exit 0 / 1 / 3 |
 | — | `cf run`, `cf campaign plan / render / status` | `run.yaml`'s records; `campaigns/<id>/` |
@@ -393,7 +399,11 @@ refused in any document a worker wrote; the commit is the universe's. **A
 locate run is pinned by content**: the sourceset by `(id, version, manifest
 sha)`, the universe by `universe_sha256` (a `corpus.sqlite` is matched to it by
 its `meta.universe_sha256`, since two builds of one universe are not byte
-identical), the renderer by its id. **Its state lives in the sourceset**:
+identical), the renderer by its id. A run names two databases: the full `corpus.sqlite`
+that the gate, the outcomes, the export and the bench check, and the tools
+database its workers search (`gate.json` `tools_corpus_db`, recorded in
+`run.yaml` `locate.universe.tools_corpus_db`: the full one, the blind build or
+a planted file). **Its state lives in the sourceset**:
 `sourcesets/<id>/state.json`, written only through
 `sources.sourceset.Sourceset.record_state`, replaces
 `companions/<name>/state.json` for locate.

@@ -34,7 +34,7 @@ A library is named by its id (`library`), a declaration by its full Lean name (`
 - an inventory with no `formal_math` passage, or a subject passage scoped out, while the candidates file holds a curated hit.
 {{/if}}
 {{#unless is_inventory}}
-- a curated hit your task manifest lists that the document neither locates nor rejects with a reason.
+- a curated hit your task manifest lists that the document neither locates with a relation that counts (a `relatedMatch` does not) nor rejects with a reason, or an `accepted` candidate that is not one of its passage's counting locations.
 {{/unless}}
 
 `exit 1` from the gate is a verdict on your document: fix what it names. **Any other non-zero exit means the gate itself could not run** (a missing config, an unreadable layer, a missing index): that is an infrastructure fault, not a verdict on your work — stop, finish with status `blocked`, quote what the gate printed, and do not weaken your document to make it pass.
