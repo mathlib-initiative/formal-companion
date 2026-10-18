@@ -17,11 +17,18 @@ bridge reads:
   observable-state fallback.
 
 The gate directory, outside every worktree, then gets what the locate gate and
-the worker's tools read: ``locate_text.py``, ``passage_ids.py``,
-``locate_records.py`` (``scripts/locate/records.py``), the gate itself and the
-two corpus tools when this checkout carries them (they are other packages';
-each one missing is a warning, as a missing bridge is), ``vendor/`` with both
-vendored packages and their manifests, and ``tasks/<task-id>.json``.
+the worker's tools read: the gate itself, ``locate_text.py`` and
+``verify_findings.py`` (whose hardened change-set reader the gate imports),
+``passage_ids.py``, ``locate_records.py`` (``scripts/locate/records.py``), the
+two corpus tools, ``vendor/`` with both vendored packages and their manifests,
+and ``tasks/<task-id>.json``.  That directory is the whole of what runs on the
+host: every module any of those files imports is either the standard library
+or another file of the directory, so ``python3 -I <gate>/verify_locate.py``
+runs from it with nothing else on the path (references/locate-documents.md
+section 9).  A file of :data:`GATE_FILES` missing from this checkout is a
+refusal, not a warning: a gate directory without ``verify_findings.py`` once
+made every gate call die with ``ModuleNotFoundError`` and Python's exit 1,
+which the worker prompt reads as a verdict on the document (field defect P2).
 """
 from __future__ import annotations
 
@@ -31,6 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from cflib import vocab
+from cflib.errors import CfError
 from cflib.paths import skill_root
 
 from plan.make_tend_root import TendRootPlan, make_tend_root
@@ -38,17 +46,17 @@ from plan.presets import Preset
 
 from .plan import GATE_SCRIPT, TaskSpec
 
-#: (source in the skill as path parts, name in the gate directory, required).
-#: Parts rather than one string: the gate script and the two host tools are
-#: built by other locate packages, and a not-yet-present path spelled out here
-#: would read as a citation of a file this tree does not hold.
+#: (source in the skill as path parts, name in the gate directory).  Every one
+#: is required: the gate imports ``locate_text`` and ``verify_findings``, the
+#: id tool imports ``locate_text``, and the prompts render the other three.
 GATE_FILES = (
-    (("scripts", "gate", "locate_text.py"), "locate_text.py", True),
-    (("scripts", "locate", "passage_ids.py"), "passage_ids.py", True),
-    (("scripts", "locate", "records.py"), "locate_records.py", True),
-    (("scripts", "gate", "verify_locate.py"), GATE_SCRIPT, False),
-    (("scripts", "corpus", "corpus_search.py"), "corpus_search.py", False),
-    (("scripts", "corpus", "corpus_show.py"), "corpus_show.py", False),
+    (("scripts", "gate", "verify_locate.py"), GATE_SCRIPT),
+    (("scripts", "gate", "locate_text.py"), "locate_text.py"),
+    (("scripts", "gate", "verify_findings.py"), "verify_findings.py"),
+    (("scripts", "locate", "passage_ids.py"), "passage_ids.py"),
+    (("scripts", "locate", "records.py"), "locate_records.py"),
+    (("scripts", "corpus", "corpus_search.py"), "corpus_search.py"),
+    (("scripts", "corpus", "corpus_show.py"), "corpus_show.py"),
 )
 VENDORED = ("literature_links", "formal_companion_annotations")
 
@@ -77,6 +85,13 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
           agent: dict[str, Any] | None, allow_sandbox_bypass: bool,
           context: dict[str, Any]) -> dict[str, Any]:
     """Write the root and its locate gate directory; ``{"files", "warnings"}``."""
+    root = skill_root()
+    missing = [root.joinpath(*parts) for parts, _name in GATE_FILES
+               if not root.joinpath(*parts).is_file()]
+    if missing:
+        raise CfError("this checkout cannot stage a locate gate that runs: "
+                      + ", ".join(str(p) for p in missing) + " missing",
+                      hint="plan from a complete formal-companion checkout")
     plan = TendRootPlan(local=Path(layout_local["tend_root"]),
                         tend_root=layout_host["tend_root"],
                         entrypoint=layout_host["entrypoint"],
@@ -90,18 +105,9 @@ def stage(*, layout_host: dict, layout_local: dict, preset: Preset, run_id: str,
         gate_files=(), extra_env=wrapper_env(preset, layout_host["gate_dir"]), context=context,
         generator="cf plan-locate")
     gate = plan.local / "gate"
-    root = skill_root()
-    for parts, name, required in GATE_FILES:
-        src = root.joinpath(*parts)
-        if src.is_file():
-            shutil.copy2(src, gate / name)
-            built["files"].append(str(gate / name))
-        elif required:                                       # pragma: no cover - in this package
-            built["warnings"].append(f"gate file missing: {src}")
-        else:
-            built["warnings"].append(
-                f"{'/'.join(parts)} is not in this checkout, so the gate directory has no {name}; the "
-                f"package that builds it is not merged here yet")
+    for parts, name in GATE_FILES:
+        shutil.copy2(root.joinpath(*parts), gate / name)
+        built["files"].append(str(gate / name))
     vendor_dest = gate / "vendor"
     vendor_dest.mkdir(exist_ok=True)
     for name in VENDORED:
