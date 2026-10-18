@@ -581,6 +581,177 @@ class TestD5LibrariesProbedInsideAWorkspace(unittest.TestCase):
                     universe_host.load_universe(tsv)
 
 
+TAG = "pub-index/aaaaaaaaaaaa"
+
+
+class _Pipelines(unittest.TestCase):
+    """A workspace with universe u1 and the shell to run what probe-command prints."""
+
+    def setUp(self):
+        self.root = _scratch(self)
+        self.ws = self.root / "ws"
+        code, out = run_cf("init", str(self.ws), "--no-git", "-q")
+        self.assertEqual(code, 0, out)
+        self.cf("corpus", "init", "u1", "--frozen", "2026-10-17")
+        self.home = self.root / "home"
+        (self.home / ".elan" / "bin").mkdir(parents=True)
+        self.drivers = self.root / "drivers"
+        self.calls = self.root / "calls"
+        self.calls.mkdir()
+
+    def cf(self, *argv) -> str:
+        code, out = run_cf(*argv, "--workspace", str(self.ws))
+        self.assertEqual(code, 0, out)
+        return out
+
+    def add(self, lib: str, commit: str, roots: str, *host: str) -> None:
+        self.cf("corpus", "add", "u1", "--library", lib, "--repo", f"https://example.org/{lib}",
+                "--commit", commit, "--toolchain", TOOLCHAIN, "--roots", roots, *host)
+
+    def stub(self, path: Path, body: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
+        path.chmod(0o755)
+
+    def run_printed(self, text: str) -> subprocess.CompletedProcess:
+        """``text`` as a script, from the drivers' directory, as the operator would."""
+        for line in text.splitlines():
+            if "<" in line and not line.lstrip().startswith("#"):
+                self.fail(f"a placeholder outside a comment: {line}")
+        atlas = self.root / "atlas"
+        env = {"HOME": str(self.home), "USER": "t", "PATH": "/usr/bin:/bin",
+               "ATLAS_ROOT": str(atlas)}
+        return subprocess.run(["bash", "-euo", "pipefail", "-c", text], cwd=self.drivers,
+                              capture_output=True, text=True, env=env, timeout=60)
+
+
+class TestD6TheLibraryPipelineIsTheLibrarysOwn(_Pipelines):
+    """D6: every library came out as a ``build`` of its commit with no options, and each
+    printed pipeline overwrote one shared one-line universe list."""
+
+    def setUp(self):
+        super().setUp()
+        self.add("alpha", ALPHA, "Alpha", "--host-option", "SHARD_COUNT=32",
+                 "--host-option", "BUILD_TARGETS=Alpha")
+        self.add("delta", "d" * 40, "Delta.+", "--host-kind", "published-index", "--host-ref", TAG,
+                 "--host-option", "SPARSE=index", "--host-option", "INDEX_FILE=delta-index.jsonl")
+        self.add("core", "c" * 40, "Init.*", "--host-kind", "core",
+                 "--host-option", "WORKSPACE=alpha")
+        self.add("beta", "b" * 40, "Beta.*", "--host-kind", "package-in-workspace",
+                 "--host-option", "WORKSPACE=alpha", "--host-option", "PACKAGE=beta")
+        self.add("gamma", "e" * 40, "Gamma")
+        self.stub(self.drivers / "scripts" / "corpus" / "build_universe_host.sh",
+                  f'cp "$1" "{self.calls}/list.tsv"; echo "$1 $2" >> "{self.calls}/driver"')
+
+    def pipeline(self, lib: str) -> str:
+        return self.cf("corpus", "probe-command", "u1", "--library", lib)
+
+    def test_each_kind_reaches_the_driver_with_its_own_line(self):
+        for lib in ("alpha", "delta", "core", "beta", "gamma"):
+            with self.subTest(library=lib):
+                proc = self.run_printed(self.pipeline(lib))
+                self.assertEqual(proc.returncode, 0, proc.stderr)
+        listing = (self.calls / "list.tsv").read_text(encoding="utf-8")
+        entries = {e.id: e for e in universe_host.load_universe(self.calls / "list.tsv")}
+        self.assertEqual(sorted(entries), ["alpha", "beta", "core", "delta", "gamma"])
+        self.assertEqual(entries["alpha"].kind, "build")
+        self.assertEqual(entries["alpha"].options["SHARD_COUNT"], "32")
+        self.assertEqual(entries["alpha"].options["BUILD_TARGETS"], "Alpha")
+        self.assertEqual((entries["delta"].kind, entries["delta"].ref), ("published-index", TAG))
+        self.assertEqual(entries["delta"].options["INDEX_FILE"], "delta-index.jsonl")
+        self.assertEqual(entries["delta"].options["SPARSE"], "index")
+        self.assertEqual((entries["core"].kind, entries["core"].options["WORKSPACE"]),
+                         ("core", "alpha"))
+        self.assertEqual(entries["beta"].options["PACKAGE"], "beta")
+        self.assertEqual(entries["gamma"].ref, "e" * 40)
+        order = [line.split("\t")[0] for line in listing.splitlines()]
+        self.assertLess(order.index("alpha"), order.index("core"))
+        self.assertLess(order.index("alpha"), order.index("beta"))
+        calls = (self.calls / "driver").read_text(encoding="utf-8").split("\n")
+        tsv = str(self.root / "atlas" / "lists" / "u1.tsv")
+        self.assertEqual(calls[:5], [f"{tsv} {lib}" for lib in ("alpha", "delta", "core", "beta",
+                                                                "gamma")])
+
+    def test_the_ingest_and_the_clean_up_follow_the_kind(self):
+        published = self.pipeline("delta")
+        self.assertIn("--accept-published '<why the published index is trusted>'", published)
+        self.assertIn(f'"$ATLAS_ROOT/index/delta@{"d" * 12}/"', published)
+        self.assertIn("nothing to remove: a published index builds nothing", published)
+        core = self.pipeline("core")
+        self.assertIn("inside the built workspace libs/alpha", core)
+        self.assertNotIn("rm -rf", core)
+        workspace = self.pipeline("alpha")
+        self.assertIn("keep the build: beta, core are probed inside it", workspace)
+        # the workspace's clean-up is a comment until what is probed in it is indexed
+        build = self.root / "atlas" / "libs" / "alpha" / ".lake"
+        build.mkdir(parents=True)
+        self.assertEqual(self.run_printed(workspace).returncode, 0)
+        self.assertTrue(build.is_dir())
+        standalone = self.root / "atlas" / "libs" / "gamma" / ".lake"
+        standalone.mkdir(parents=True)
+        self.assertEqual(self.run_printed(self.pipeline("gamma")).returncode, 0)
+        self.assertFalse(standalone.exists())
+
+    def test_host_facts_are_the_drivers_own_and_no_part_of_the_pin(self):
+        universe = Universe_load(self.ws)
+        before = universe.sha256()
+        self.assertEqual(universe.library("delta")["host"],
+                         {"kind": "published-index", "ref": TAG,
+                          "options": {"INDEX_FILE": "delta-index.jsonl", "SPARSE": "index"}})
+        self.add("gamma", "e" * 40, "Gamma", "--host-option", "SHARD_COUNT=4")   # a re-add
+        self.assertEqual(Universe_load(self.ws).library("gamma")["host"]["options"],
+                         {"SHARD_COUNT": "4"})
+        self.assertEqual(Universe_load(self.ws).sha256(), before)
+        for bad in (["--host-option", "NOPE=1"], ["--host-option", "SHARD_COUNT=x"],
+                    ["--host-kind", "core"],                        # no WORKSPACE
+                    ["--host-kind", "core", "--host-option", "WORKSPACE=delta"],  # not a build
+                    ["--host-option", "SHARD_COUNT"]):
+            with self.subTest(flags=bad), self.assertRaises(CfError):
+                cf_main.main(["corpus", "add", "u1", "--library", "eta", "--repo",
+                              "https://example.org/eta", "--commit", "f" * 40, "--toolchain",
+                              TOOLCHAIN, "--roots", "Eta", *bad, "--workspace", str(self.ws)])
+        self.assertNotIn("eta", Universe_load(self.ws).library_ids())
+
+
+def Universe_load(ws: Path):
+    from corpus.universe import Universe
+    return Universe.load(ws / "corpora" / "u1" / "universe.yaml")
+
+
+class TestD7TheCanaryPipelineRunsAsPrinted(_Pipelines):
+    """D7: the printed canary ended in an unrunnable placeholder line and a ``<drivers>`` path."""
+
+    def test_the_printed_text_runs_and_reaches_the_probe(self):
+        shutil.copytree(SKILL / "templates" / "corpus" / "canary",
+                        self.drivers / "templates" / "corpus" / "canary")
+        self.stub(self.drivers / "scripts" / "corpus" / "probe_host.sh",
+                  f'echo "$@" > "{self.calls}/probe"; echo "$HOME|$PATH" > "{self.calls}/env"')
+        self.stub(self.home / ".elan" / "bin" / "lake",
+                  f'[ "$1" = build ] && pwd > "{self.calls}/built"')
+        self.stub(self.home / ".elan" / "bin" / "ionice", 'shift; exec "$@"')
+        text = self.cf("corpus", "probe-command", "u1", "--canary", "--toolchain", TOOLCHAIN)
+        proc = self.run_printed(text)
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        work = self.root / "atlas" / "canary" / "4.34.0"
+        built = Path((self.calls / "built").read_text(encoding="utf-8").strip())
+        self.assertEqual(built.resolve(), work.resolve())          # lake build ran in the canary
+        self.assertEqual((self.calls / "probe").read_text(encoding="utf-8").split(),
+                         [str(work), "cf-canary", "CfCanary", f"{work}/index"])
+        # the probe ran in the clean environment, not the operator's
+        self.assertEqual((self.calls / "env").read_text(encoding="utf-8").strip(),
+                         f"{self.home}|{self.home}/.elan/bin:/usr/bin:/bin")
+        self.assertIn(TOOLCHAIN, (work / "lean-toolchain").read_text(encoding="utf-8"))
+        self.assertFalse(list(work.rglob("*.tmpl")))
+        self.assertTrue(text.splitlines()[-1].startswith("#"))
+        self.assertIn("cf corpus ingest u1 --canary --from <the copied index dir>", text)
+
+    def test_drivers_given_by_name(self):
+        text = self.cf("corpus", "probe-command", "u1", "--canary", "--toolchain", TOOLCHAIN,
+                       "--drivers", "/srv/cf drivers")
+        self.assertIn("export CF_DRIVERS='/srv/cf drivers'", text)
+        self.assertNotIn("<drivers>", text)
+
+
 class TestD12AtomicWritesKeepTheModeAPlainWriteWould(unittest.TestCase):
     """D12: ``universe.yaml`` was 0600 (mkstemp's mode) beside 0644 indexes."""
 

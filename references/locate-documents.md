@@ -389,7 +389,15 @@ a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,
 `toolchain`, `roots`, `licence`, `conventions` and, once ingested, `index: {path,
 sha256, declarations}` — and `published_index: {schema, reason, accepted}` when that
 index is one the library publishes itself, accepted by name with `cf corpus ingest
---accept-published <reason>` because neither the probe nor its canary checked it;
+--accept-published <reason>` because neither the probe nor its canary checked it —
+and `host: {kind, ref, options}` when the host driver is to index it other than as a
+`build` of its commit (`cf corpus add --host-kind --host-ref --host-option`): a
+`published-index` from its tag, Lean `core` or a `package-in-workspace` probed inside
+another library's built `WORKSPACE`, and the driver options of its universe-list line,
+checked by the driver's own parser (`scripts/corpus/universe_host.py`). `host` is how
+a pin is built, not what is pinned: it is outside `universe_sha256`, and `cf corpus
+probe-command` prints from it the universe's whole driver list (every library, those
+probed inside a workspace last) and the steps of that library's kind;
 `excluded` lists `{id, reason}`; `canaries` lists, per
 toolchain, the acceptance canary's result (`{toolchain, lean_version, passed,
 checked, index_sha256, cases}`) — no library on a toolchain without a passed
