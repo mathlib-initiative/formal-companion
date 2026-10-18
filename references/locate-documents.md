@@ -377,6 +377,12 @@ corpora/<universe>/index/<library>/decls.jsonl
 corpora/<universe>/corpus.sqlite                  derived, rebuildable
 ```
 
+The same layout may live under any directory instead of a workspace's
+`corpora/`: `cf corpus <subcommand> --base <dir>` reads and writes
+`<dir>/<universe>/` and reads no workspace (`cflib.paths.CorporaPaths`, which a
+workspace's paths delegate to) — how a universe kept on the run host beside the
+drivers' indexes is made, ingested, built and searched.
+
 `universe.yaml` is the proposal's §2.3 shape, written by `cf corpus`
 (`scripts/corpus/universe.py`). Each library carries `id` (the universe-local id
 a document names as `library`), `brain_lib`, `repo`, a 40-hex `commit`,

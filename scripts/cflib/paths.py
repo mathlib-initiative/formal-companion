@@ -353,26 +353,30 @@ class WorkspacePaths:
         """Universes of libraries.  Not ``corpus/``, which holds harvested findings."""
         return self.root / "corpora"
 
+    @property
+    def corpora(self) -> "CorporaPaths":
+        """The universe layout under ``corpora/`` (:class:`CorporaPaths`)."""
+        return CorporaPaths(self.corpora_dir)
+
     def universe_dir(self, universe_id: str) -> Path:
-        return self.corpora_dir / _safe_id(universe_id, "universe id")
+        return self.corpora.universe_dir(universe_id)
 
     def universe_yaml(self, universe_id: str) -> Path:
-        return self.universe_dir(universe_id) / "universe.yaml"
+        return self.corpora.universe_yaml(universe_id)
 
     def universe_index_dir(self, universe_id: str, library_id: str) -> Path:
-        return self.universe_dir(universe_id) / "index" / _safe_id(library_id, "library id")
+        return self.corpora.universe_index_dir(universe_id, library_id)
 
     def universe_conventions_md(self, universe_id: str, library_id: str) -> Path:
-        return (self.universe_dir(universe_id) / "conventions"
-                / f"{_safe_id(library_id, 'library id')}.md")
+        return self.corpora.universe_conventions_md(universe_id, library_id)
 
     def corpus_db(self, universe_id: str) -> Path:
         """``corpus.sqlite``: derived from the indexes, rebuildable, opened read-only."""
-        return self.universe_dir(universe_id) / "corpus.sqlite"
+        return self.corpora.corpus_db(universe_id)
 
     def corpus_db_blind(self, universe_id: str) -> Path:
         """``corpus.blind.sqlite``: the G1-blind database -- no tags, no docstring Wikipedia URLs."""
-        return self.universe_dir(universe_id) / "corpus.blind.sqlite"
+        return self.corpora.corpus_db_blind(universe_id)
 
     @property
     def exports_dir(self) -> Path:
@@ -495,3 +499,39 @@ class WorkspacePaths:
             return []
         return sorted(p.name for p in self.runs_dir.iterdir()
                       if p.is_dir() and (p / "run.yaml").exists())
+
+
+@dataclass(frozen=True)
+class CorporaPaths:
+    """The universe layout under one directory: a workspace's ``corpora/``, or any other.
+
+    The one definition of where a universe's files live, which
+    ``WorkspacePaths`` delegates to for its ``corpora/``.  ``cf corpus --base
+    <dir>`` addresses a universe kept outside any workspace -- on the run host,
+    ``<dir>/<universe>/universe.yaml`` beside ``index/`` and ``corpus.sqlite`` --
+    through this class alone, so both places hold one layout
+    (references/locate-documents.md section 8).
+    """
+
+    base: Path
+
+    def universe_dir(self, universe_id: str) -> Path:
+        return self.base / _safe_id(universe_id, "universe id")
+
+    def universe_yaml(self, universe_id: str) -> Path:
+        return self.universe_dir(universe_id) / "universe.yaml"
+
+    def universe_index_dir(self, universe_id: str, library_id: str) -> Path:
+        return self.universe_dir(universe_id) / "index" / _safe_id(library_id, "library id")
+
+    def universe_conventions_md(self, universe_id: str, library_id: str) -> Path:
+        return (self.universe_dir(universe_id) / "conventions"
+                / f"{_safe_id(library_id, 'library id')}.md")
+
+    def corpus_db(self, universe_id: str) -> Path:
+        """``corpus.sqlite``: derived from the indexes, rebuildable, opened read-only."""
+        return self.universe_dir(universe_id) / "corpus.sqlite"
+
+    def corpus_db_blind(self, universe_id: str) -> Path:
+        """``corpus.blind.sqlite``: the G1-blind database -- no tags, no docstring Wikipedia URLs."""
+        return self.universe_dir(universe_id) / "corpus.blind.sqlite"
