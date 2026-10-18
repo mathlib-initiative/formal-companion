@@ -42,9 +42,9 @@ def finding_name(path: str | Path, directory: str | Path) -> str:
 def iter_finding_files(directory: str | Path) -> list[Path]:
     """Sorted findings in *directory* and below, excluding receipts and manifests.
 
-    RECURSIVE, sorted by relative path.  A flat faithfulness corpus has no
-    subdirectory holding JSON, so its listing is the one the flat version gave,
-    in the same order.
+    RECURSIVE, sorted by relative path, and regular files only (a symlink is
+    left out).  A flat faithfulness corpus has no subdirectory holding JSON, so
+    its listing is the one the flat version gave, in the same order.
     """
     d = Path(directory)
     if not d.is_dir():
@@ -55,6 +55,9 @@ def iter_finding_files(directory: str | Path) -> list[Path]:
         for name in files:
             path = Path(here) / name
             rel = finding_name(path, d)
-            if is_finding_name(rel) and path.is_file():
+            # never a symlink: the remote listing (`find -type f`) leaves links
+            # out, and following one here counted a document twice, or a file
+            # from outside the corpus once
+            if is_finding_name(rel) and path.is_file() and not path.is_symlink():
                 found.append((rel, path))
     return [path for _rel, path in sorted(found)]

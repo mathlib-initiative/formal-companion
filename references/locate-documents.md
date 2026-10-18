@@ -48,7 +48,10 @@ Every locate document starts with:
 
 `universe` and `universe_sha256` are required in `locate` and
 `locate-challenge` documents and absent from `locate-inventory` ones. One
-document covers one source; it lives at `findings/<task-id>/<source-id>.json`.
+document covers one source; it lives at `findings/<task-id>/<source-id>.json`
+(a file whose name is not its `source_id` is refused, rule 1), and a task that
+writes documents writes one for every source its task manifest names (rule 1),
+each a regular file (a symlink is refused).
 `schema` is `cflib.vocab.LOCATE_DOCUMENT_SCHEMA`; `renderer` is the source's
 (`web-html/1` for the first corpus).
 
@@ -91,7 +94,12 @@ third genuine reviewer rejection (proposal §6), never by a worker.
   context at most 200 — `gate.json` may change both) matches the layer
   **exactly once** with its `prefix` immediately before it and its `suffix`
   immediately after, the match starts at `span[0]`, and `exact` lies inside
-  the span. A passage may not start inside a formula.
+  the span. A passage may not start inside a formula. And the EXPORT must be
+  able to quote it: `locate_records.cap_quote` (`scripts/locate/records.py`:
+  twelve words, at most 32 characters of context) must find it exactly once,
+  or the passage is refused under rule 1 — a worker's longer quote may be
+  unique where the exported one is not, and the refusal comes while the start
+  can still move, not at `cf export literature-links`.
 - A passage whose `finder` is a deterministic one must start where that finder's
   passage of the task starts; a passage the enumerator found is `model`. A
   deterministic passage of the task is dropped only with a skip whose span
@@ -100,8 +108,10 @@ third genuine reviewer rejection (proposal §6), never by a worker.
   `paragraphs.json` entry with `math: true` — overlaps a passage span or a
   `skips` span (the coverage floor).
 - With L2 curated hits for the article (§5; gate rule 4, off in the blind arm),
-  the inventory keeps at least one `formal_math` passage and no `subject`
-  passage is scoped `expository` or `non_math`.
+  the inventory keeps a passage of prominence `subject` scoped `formal_math`
+  (the hits are for the article's own subject, so relabelling it `central`
+  does not turn the rule off) and no `subject` passage is scoped `expository`
+  or `non_math`.
 
 ## 3. Locate document (`mode: locate`)
 
@@ -135,14 +145,21 @@ A locate task carries at most eight passages of one frozen inventory.
 - The document's passages are exactly the task's (the task manifest, §9), each
   once.
 - `relation` ∈ the six locate relations; `rank` 1..5, distinct; `confidence` ∈
-  {`high`, `medium`, `low`}.
+  {`high`, `medium`, `low`}. One location per declaration: a `(library,
+  declaration)` pair appears at most once among a passage's locations (rule 6),
+  since both would carry one `location_key`.
 - `closeMatch` requires a non-empty `note` naming the convention difference.
-- Every curated candidate handed to the task — the task manifest document's
-  `curated` list (§9), a subset of the candidates file's `curated` hits (§5) —
-  must appear in `candidates`, accepted or rejected with a reason, or be
-  located; the gate reads the candidates file itself (rule 4) and intersects it
-  with that list. A source split over several tasks hands its curated hits to
-  one of them.
+- Every curated candidate handed to the task (§5) is located — by a location
+  whose relation counts — or rejected with a reason in a `candidates` entry;
+  the gate reads the candidates file itself (rule 4). A `relatedMatch`
+  location does not discharge a curated hit: "relevant but states something
+  else" is the worker's reason, written as a rejection beside it. An
+  `accepted` candidate is one of its passage's locations with a relation that
+  counts; accepted and not located is refused (rule 1). "Handed to the task" is the task manifest
+  document's `curated: [{library, declaration}]` list intersected with the
+  candidates file (a manifest cannot add a hit): the planner gives each of a
+  source's curated hits to exactly one of its tasks. A manifest without the key
+  hands the task every curated hit of the file.
 - Every declaration a location or an `accepted` candidate names exists in
   `corpus.sqlite` at that library and the universe's commit (rule 3). No
   document carries `proof_status`, `commit` or `version` anywhere.
@@ -173,13 +190,17 @@ A locate task carries at most eight passages of one frozen inventory.
   changes a relation, `refute` removes a location, `overturn` replaces an
   absence or unresolved outcome (or a scope) with the given locations — all
   three give `challenge: downgraded` on the affected records.
-- The actions a target admits: `location` — `confirm`, `downgrade` (naming the
-  weaker `relation`), `refute`; `absence` and `unresolved` — `uphold`,
+- The actions a target admits: `location` — `confirm`, `downgrade` (naming a
+  `relation` weaker than the record's own, in the order `exactMatch` >
+  `closeMatch` > `broadMatch` > `narrowMatch` = `hasPart` > `relatedMatch`;
+  the task manifest's record carries that relation), `refute`; `absence` and `unresolved` — `uphold`,
   `overturn` (with `locations`, at least one whose relation counts); `scope` —
   `uphold`, `overturn` (with `locations`, possibly empty); `prominence` —
   `uphold`, `overturn` (naming the new `prominence`).
 - A challenge task's records are its task manifest's, and each gets exactly one
   verdict (rule 1); overturn locations are checked like a locate document's.
+  A verdict names its record by string `item` (and string `location_key` for a
+  location).
 - A record of the run not named by any challenge task is `not_required` or
   `sampled_out`, as the challenge plan said.
 
@@ -677,7 +698,16 @@ like a faithfulness run:
   `normalize_result.py`, `extract_final_json.py`, `agent_call.py` and
   `attempt_cap.py` — for every run, a faithfulness one too — and, for a locate
   run, `watchdog.py`. No library checkout is named to the challenger: nothing
-  creates, transfers or verifies one on a run host.
+  creates, transfers or verifies one on a run host. Rule 1
+  builds every implied record with `locate_records` itself (`location_record`,
+  `absence_record`, `unresolved_record` and `cap_quote`; the challenge value,
+  the location key and the joined proof status are placeholders, the source's
+  citation fields too unless the `sources` entry carries `uri`, `title`,
+  `container_title` and `licence`), from the gate directory, or from the
+  checkout's `scripts/locate/records.py` when the harvest runs the gate
+  in-process. A sibling that is missing or does not import is exit 3 with one
+  `FAIL` line naming it, never a traceback. Every SQLite database is opened
+  through a percent-quoted `file:` URI with `mode=ro&immutable=1`.
 
   The gate is invoked as `python3 <gate>/verify_locate.py --gate-config
   <gate>/gate.json --changed-files --base <branch> [--task-id <id>]` by tend's
@@ -690,8 +720,17 @@ like a faithfulness run:
   rule judged the change set: `--task-id`/`TEND_TASK_ID`, the task id recovered
   from `orchestrator.sqlite` (whose schema is assumed, not known: any table
   with a worktree-path-like and a task-id-like column, one task id or none), or
-  the single-stem rule. Documents are parsed strictly: a duplicate key or a
-  `NaN` is a refusal.
+  the single-stem rule. Documents are parsed strictly: a duplicate key, a
+  `NaN`/`Infinity` or a number that overflows to one, a lone surrogate, or
+  nesting deeper than 64 levels is a rule 1 refusal, and so is a value of the
+  wrong type where a word or an id belongs; a document is read only from a
+  regular file, at most `max_document_bytes` of it (a symlink, device or fifo
+  is refused under rule 1, and a change-set path that is not a regular file in
+  the worktree under rule 7). Over a directory (a harvested corpus), JSON
+  anywhere but `<task-id>/<source-id>.json` is a rule 7 refusal, never skipped.
+  A `gate.json` value of the wrong shape (a non-positive integer, `kinds` that
+  is not a list of strings, a path that is not a string), and a `formulas.json`
+  or `paragraphs.json` that is not a list of entries, is exit 3.
 - `run.yaml` — the faithfulness run's keys where they apply, plus a `locate`
   block: `{mode, sourceset: {id, version, manifest_sha256}, universe: {id,
   sha256, corpus_db_sha256, tools_corpus_db: {kind, sha256}}, inventory_run,
@@ -719,6 +758,23 @@ like a faithfulness run:
   preset. The run's counts land in the sourceset's `state.json`, through
   `Sourceset.record_state`, not in a companion's.
 
+  `cf run` refuses a locate run planned for `local` (or given `--local`) before
+  it writes anything: a locate run runs on an allowlisted host through tend. It
+  refuses a `--max-cost` that differs from a recorded `budget.max_cost`, and
+  records a given one there when none is, since the campaign, the sequencer and
+  the watchdog read that key. It sends the run's source layers (only with
+  `--include-source-text`, and then `run.sources_transferred` names them),
+  `corpus.sqlite`, the tools database when gate.json's `tools_corpus_db` names
+  another file, and this run's sources' candidates files (never the
+  sourceset's whole directory, and none in the blind arm); the verify stage
+  checks each database against its pinned sha256 once. The frozen inventory is not sent: nothing on
+  the host reads it, and its passages reach the workers and the gate in the task
+  manifests. The preflight prints `tend-version:`, `agentbox-version:` and
+  `agent-cli-version:` lines (the CLI the run's `bridge` launches; `unknown`
+  when a probe finds none), and an executed preflight records them at the top
+  level as `versions: {tend, agentbox, agent_cli}`. `cf campaign plan` adds
+  `campaign: <id>` to a shard's `locate` block (§11).
+
 **On the host, outside every worktree**, in the tend root: `usage/` (Claude's
 JSON envelope per agent call, `<task-id>.<role>.<UTC stamp>.<pid>.json`, kept as
 a cost cross-check), `attempts/<task-id>.json` (`{task_id, rejections, history}`:
@@ -738,19 +794,59 @@ prompt has it run; reviewer role only) and `CF_FINDINGS_GLOB`
 generated wrappers in `bin/`. A timeout exits 124 and
 an empty or 409 envelope 75, with no contribution printed, so tend retries the
 same worktree; only a `request_changes` from a call that completed counts as a
-rejection.
+rejection. Both roles' allowlists carry the gate command's program by absolute
+path (`CF_GATE_CMD` without its flags): the worker runs it before committing and
+the reviewer to confirm the gate passes. When an agent writes no result file,
+the bridge's fallback runs that command with `--findings <file>` for each of the
+task's own documents (the `CF_FINDINGS_GLOB` matches) and reports the gate's
+refusals from stderr.
 
 ## 10. Harvested rows and passage outcomes
 
 Harvest copies the host's `findings/` tree into `corpus/<run-id>/`, so a document
 lands at `corpus/<run-id>/<task-id>/<source-id>.json` and the receipt's listing,
 manifest and missing set are keyed by `<task-id>/<source-id>.json` (the listing
-is `find -print0`, the checksums `shasum` over it). The landed corpus is gated
+is `find -type f -print0`, the checksums `shasum` over it; a symlink is not
+listed, not landed (the rsync runs `--no-links`) and not counted, and with
+`--verify-sha` a landed file the source gave no checksum for is named in
+`sha_unverified` and makes the receipt incomplete). Every file the receipt
+counts is one the re-gate validated or names. The landed corpus is gated
 again with `verify_locate.py` and the run's `gate.local.json`, and the receipt's
 `locate` block counts `documents`, `by_mode`, `tasks`, `passages`, `verdicts`,
 `unresolved_documents`, `attempt_capped_documents` and `unresolved_passages` —
-UNRESOLVED on its own, never as not formalized. Each
-document becomes finding rows that `cflib.hashing.finding_id` keys unchanged —
+UNRESOLVED on its own, never as not formalized. That re-gate writes no line to
+any gate log: it is not a worker's attempt.
+
+A remote `cf harvest <run> --execute` also brings home, outside the findings
+rsync (which carries `*.json` documents only) and outside `corpus/<run-id>/`
+(whose tree is the receipt's manifest), into `runs/<run-id>/host/`
+(`WorkspacePaths.run_host_dir`, `scripts/harvest/host_artifacts.py`):
+
+| local file | from the host |
+|---|---|
+| `gate.jsonl` | `<log_dir>/gate.jsonl`, `log_dir` being the host `gate.json`'s (the tend root's `gate-log/`) |
+| `usage.jsonl` | a campaign shard only: the sequencer's `<campaign dir>/usage-<run-id>.jsonl` (§11) |
+| `canary.json` | a campaign shard only: the sequencer's `<campaign dir>/canary-<run-id>.json` (§11) |
+
+A shard is a run whose `run.yaml` carries `locate.campaign` and which that
+campaign's `campaign.yaml` lists; the campaign directory is the rendered
+sequencer's `host_dir`. Each file is one `rsync -a --ignore-missing-args` and
+lands only once it arrived whole; the dry run prints those commands with the
+findings ones. The receipt records `host_artifacts: {<local name>: {remote,
+fetched, path, sha256, bytes} | {remote, fetched: false, reason,
+kept_previous?}}` (a shard's rows also carry `campaign`); a file the
+host lacks is `absent on the host`, never a failed harvest. With no
+`--transcripts`, a landed `usage.jsonl` is what the receipt's `cost` block
+prices. The harvest then merges `runs.<run-id>` of the sourceset's
+`state.json` through `Sourceset.record_state` — `{status: harvested,
+harvested_at, complete, gate_ok, locate: <the receipt's locate block>}` over the
+row `cf plan-locate` wrote, whose fields stay. The faithfulness `cf tally`
+leaves a locate corpus out (one whose `run.yaml` copy carries a `locate` block
+or a locate mode, or whose receipt has a `locate` block), names it under
+`locate_runs`, and `cf status` and `cf run --status` count a nested corpus by
+the receipt's own listing.
+
+Each document becomes finding rows that `cflib.hashing.finding_id` keys unchanged —
 the library id is the `repo` and `<library>:<declaration>@<commit>` the
 declaration list:
 
@@ -837,22 +933,49 @@ shards:                       # in the order they run
 tasks: 480
 max_cost: 120.0               # the sum of the shards' caps
 watchdog: {p90_cost_per_task: 4.1, p90_gate_failure_rate: 0.12, multiple: 2.0, min_tasks: 5}
+pilot: wpm-pilot              # a run whose run.yaml records run.smoke_verified: true
+transcript_dirs: <host dir>   # colon-separated; else hosts.<host>.transcript_dirs
+canaries: <host path>         # the bench's canaries.txt on the host, or null
 sequencer: {path: …/host/sequencer.sh, sha256: <hex>, host_dir: <remote root>/campaigns/<id>}
 ```
 
+A campaign id is letters, digits, `.`, `_` and `-`, starting with a letter or
+digit. `plan` stamps `locate.campaign: <id>` into each shard's `run.yaml` (the
+export seals it) and refuses a shard stamped with another campaign; once the
+campaign is rendered a re-plan may only append shards. `render` refuses a
+campaign whose `pilot` is missing or records no passed smoke test, since the
+sequencer launches each shard at full concurrency with no smoke test of its
+own. Each shard goes through `cf run <shard> --stage verify` first — transfer
+and verify, nothing launched; a shard smoke-tested with `cf run` keeps its own
+tend run going.
+
 `render` writes `campaigns/<id>/host/`: `sequencer.sh` (from
 `templates/campaign/sequencer.sh.tmpl`, shell, no cflib) beside copies of
-`scripts/run/watchdog.py` and `scripts/cost/usage.py`, and prints the rsync and
-start commands. On the host the sequencer runs each shard's `tend run` in order —
-shard k+1 starts when shard k's ends — with the watchdog beside it, exports the
-shard's usage from `CF_TRANSCRIPT_DIRS` and then prunes the transcripts that
-shard wrote, keeps its state in `<remote root>/campaigns/<id>/` (`shard-<k>.done`,
-`usage-<k>.jsonl`, `sequencer.log`), and writes `STOPPED` and stops the moment a
-watchdog drains a shard. The watchdog (model-free, stdlib) drains the root with
+`scripts/run/watchdog.py`, `scripts/cost/usage.py` and
+`scripts/run/canary_scan.py`, and prints the rsync and start commands (every
+path in them shell-quoted). On the host one sequencer at a time holds the
+campaign (`flock` on `sequencer.lock`); it runs each shard's `tend run` in order
+— shard k+1 starts when shard k's ends — refusing a root that already has a live
+tend run, with the watchdog beside it. After each shard it takes the
+transcripts that appeared under `CF_TRANSCRIPT_DIRS` (default: campaign.yaml's)
+since the shard started — the directories' listing before and after, never a
+file that was already there — scans them for `CF_CANARIES` (default:
+campaign.yaml's) into `canary-<run-id>.json` (`{scanned, hits, canaries}`, the
+report `cf bench score --canary-report` reads), appends their usage to
+`usage-<run-id>.jsonl` (a resumed shard keeps its earlier attempt's rows), and
+deletes exactly those files, keeping them all when the scan found a canary or
+could not run, or the export failed. Its state in `<remote root>/campaigns/<id>/`
+is keyed by run id (`shard-<run-id>.done`, `.started`, `.before`, `usage-<run-id>.jsonl`,
+`canary-<run-id>.json`, `sequencer.log`). It writes `STOPPED` and stops when a
+shard's last watchdog record shows a drain, or a reason to drain that no drain
+acted on (a failed `tend-control drain`, or a cap crossed after the last
+periodic check), or cannot be read, and when a canary was found. The watchdog (model-free, stdlib) drains the root with
 `tend-control drain` when the spend summed from `usage/` reaches the shard's cap,
 or the gate-failure rate from `gate-log/gate.jsonl` (over at least 20 calls) or
 the cost per merged task (over at least `min_tasks`) passes `multiple` times the
 pilot's p90; every check is a line of `<root>/watchdog.jsonl` and the last is
-`<root>/watchdog.json`. The operator's machine only harvests receipts:
-`status` reads each shard's `RECEIPT.json` (complete, gate, the `locate` block,
-the priced cost) and totals the UNRESOLVED rate.
+`<root>/watchdog.json`; `--min-gate-calls` and `--min-tasks` are at least 1. The
+operator's machine only harvests receipts: `status` reads each shard's
+`RECEIPT.json` (complete, the gate as ok, FAILED or UNGATED — a receipt with no
+gate block was never gated — the `locate` block, the priced cost) and totals
+the UNRESOLVED rate.

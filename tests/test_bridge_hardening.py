@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
@@ -113,6 +114,33 @@ class TestAgentCall(unittest.TestCase):
         self.assertLess(time.monotonic() - started, 25)
         self.assertIn("TIMED OUT", proc.stderr)
         self.assertIn("not a verdict", proc.stderr)
+
+    def test_a_signal_reaches_the_agent_and_frees_the_slot_after_it(self):
+        """Review #62: TERM to the caller's group stops the agent before the slot is free."""
+        pidfile = self.tmp / "agent.pid"
+        agent = fake(self.tmp / "agent-sleeps", f"echo $$ > {pidfile}\nexec sleep 30\n")
+        caller = subprocess.Popen([sys.executable, str(AGENT_CALL), "--role", "worker", "--raw",
+                                   str(self.tmp / "raw"), "--task-id", "t-1", "--", str(agent)],
+                                  env={**self.env, "CF_SLOTS": "1"}, start_new_session=True,
+                                  stderr=subprocess.PIPE, text=True)
+        self.addCleanup(lambda: caller.poll() is None and caller.kill())
+        for _ in range(200):
+            if pidfile.exists() and pidfile.read_text().strip():
+                break
+            time.sleep(0.05)
+        agent_pid = int(pidfile.read_text())
+        os.killpg(caller.pid, signal.SIGTERM)          # what tend's stop does to the bridge
+        code = caller.wait(timeout=60)
+        self.assertEqual(code, 128 + signal.SIGTERM, caller.stderr.read())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(agent_pid, 0)
+        import fcntl
+
+        fd = os.open(self.tmp / "slots" / "slot-01.lock", os.O_RDWR)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)   # the slot is free again
+        finally:
+            os.close(fd)
 
     def test_the_slots_bound_concurrency_and_wait_rather_than_fail(self):
         log = self.tmp / "concurrency.log"
@@ -348,3 +376,62 @@ class TestTheInventoryAndChallengeShapes(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheObservableStateFallback(unittest.TestCase):
+    """#30/#40: with no result file the fallback gates exactly the task's own documents."""
+
+    def setUp(self):
+        self.tmp = scratch(self)
+        self.wt = self.tmp / "worktree"
+        (self.wt / "findings" / "t-1").mkdir(parents=True)
+        (self.wt / "findings" / "t-0").mkdir(parents=True)
+        (self.wt / "findings" / "t-1" / "a.json").write_text("{}")
+        (self.wt / "findings" / "t-0" / "merged.json").write_text("{}")
+        self.argv = self.tmp / "gate-argv"
+
+    def fallback(self, *, ok: bool) -> dict:
+        gate = self.tmp / "gate.py"
+        gate.write_text(
+            "import sys\n"
+            f"open({str(self.argv)!r}, 'w').write('\\n'.join(sys.argv[1:]))\n"
+            + ("print('OK: 1 document')\n" if ok else
+               "print('VALIDATION FAILED (1 problem(s)):', file=sys.stderr)\n"
+               "print('  - [rule 2] t-1/a.json: the quote matches 0 times', file=sys.stderr)\n"
+               "print('  changed files: ownership checked against task t-1')\nsys.exit(1)\n"),
+            encoding="utf-8")
+        script = (f"import sys; sys.path.insert(0, {str(SCRIPTS / 'run')!r}); "
+                  "import normalize_result as n, json; print(json.dumps(n.worker_result(None, '')))")
+        proc = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True,
+                              cwd=str(self.wt),
+                              env=clean_env(CF_GATE_CMD=f"{sys.executable} {gate} --gate-config g.json",
+                                            CF_FINDINGS_GLOB="findings/$TEND_TASK_ID/*.json",
+                                            TEND_TASK_ID="t-1"))
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        return json.loads(proc.stdout)
+
+    def test_only_the_tasks_documents_reach_the_gate(self):
+        out = self.fallback(ok=True)
+        self.assertEqual(out["status"], "completed")
+        self.assertEqual(self.argv.read_text().splitlines(),
+                         ["--gate-config", "g.json", "--findings", "findings/t-1/a.json"])
+
+    def test_a_refusal_reports_the_reason_not_the_ownership_line(self):
+        out = self.fallback(ok=False)
+        self.assertEqual(out["status"], "needs_review")
+        self.assertIn("[rule 2]", out["notes"])
+
+
+class TestTheReviewerMayRunTheGate(BridgeCase):
+    """#31: the reviewer's checklist has it confirm the gate passes."""
+
+    def test_the_gate_is_on_the_reviewers_surface(self):
+        self.agentbox(f"printf '%s' '{json.dumps(SUCCESS)}'\n")
+        gate = "/srv/r-1-gate"
+        self.bridge("reviewer", CF_GATE_CMD=f"python3 {gate}/verify_locate.py --gate-config "
+                                            f"{gate}/gate.json")
+        argv = (self.tmp / "argv").read_text().splitlines()
+        tools = argv[argv.index("--allowedTools") + 1].split(",")
+        self.assertIn(f"Bash(python3 {gate}/verify_locate.py:*)", tools)
+        self.assertNotIn("Write", tools)
+        self.assertNotIn("Edit", tools)

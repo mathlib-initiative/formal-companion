@@ -33,8 +33,10 @@ def remote_steps(host: dict, run_id: str, names: dict) -> list[dict]:
     return [
         ssh(f"{host['tend_cmd']} tend-control status --root {shlex.quote(tend_root)}",
             "tend-control status (progress, limits, spend)"),
-        ssh(f"ls -1 {shlex.quote(entrypoint + '/findings')} 2>/dev/null | wc -l",
-            "findings merged on the entrypoint"),
+        # recursive: a locate run merges findings/<task-id>/<source-id>.json, and
+        # `ls -1` counted its task directories; a flat directory counts the same
+        ssh(f"find {shlex.quote(entrypoint + '/findings')} -type f -name '*.json' "
+            f"2>/dev/null | wc -l", "findings merged on the entrypoint"),
         ssh(f"tail -n 20 {shlex.quote(tend_root + '/run.log')}", "last 20 log lines"),
         ssh(f"tail -n 5 {shlex.quote(tend_root + '/agentbox-worker.err')} 2>/dev/null || true",
             "bridge stderr (agentbox failures land here, not in tend)"),
@@ -61,7 +63,11 @@ def corpus_status(paths, run_id: str) -> dict:
     corpus = Path(paths.corpus_run_dir(run_id))
     receipt_path = Path(paths.receipt_json(run_id))
     receipt = read_json(receipt_path, default=None) if receipt_path.exists() else None
-    files = [p for p in sorted(corpus.glob("*.json")) if p.name != "RECEIPT.json"] if corpus.is_dir() else []
+    # the listing the receipt itself counts (nested for a locate corpus, and
+    # without RECEIPT.json, run.yaml or gate.local.json), so the two agree
+    from harvest.files import iter_finding_files
+
+    files = iter_finding_files(corpus) if corpus.is_dir() else []
     return {
         "corpus": str(corpus),
         "files": len(files),
