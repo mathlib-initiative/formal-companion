@@ -642,13 +642,13 @@ class TestTheTendRootRunYamlNames(_HostHarvest):
     def test_r2_host_tend_root_reads_a_relative_and_an_absolute_tend_root(self):
         from harvest.host_artifacts import host_tend_root
 
-        host = {"host": {"remote_root": "/home/u/locate/"}}
+        host = {"host": {"remote_root": "/srv/cf/locate/"}}
         self.assertEqual(host_tend_root({**host, "remote": {"tend_root": "loc-1-tend"}}),
-                         "/home/u/locate/loc-1-tend")
+                         "/srv/cf/locate/loc-1-tend")
         self.assertEqual(host_tend_root({**host, "remote": {"tend_root": "/loc-1-tend/"}},
                                         "/elsewhere/gate-log"), "/loc-1-tend")
         self.assertEqual(host_tend_root({**host, "remote": {"tend_root": "sub/loc-1-tend/"}},
-                                        "/elsewhere/gate-log"), "/home/u/locate/sub/loc-1-tend")
+                                        "/elsewhere/gate-log"), "/srv/cf/locate/sub/loc-1-tend")
         # no remote.tend_root (or no remote_root): the gate log's parent, else nothing
         self.assertEqual(host_tend_root(host, "/srv/t/gate-log/"), "/srv/t")
         self.assertEqual(host_tend_root({"remote": {"tend_root": "x"}}, "/srv/t/gate-log"),
