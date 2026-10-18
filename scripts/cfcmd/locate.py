@@ -5,10 +5,14 @@ subcommand today:
 
     cf locate candidates --sourceset wpm --universe u1 \\
         [--curated-1000 docs-1000.yaml] [--curated-100 docs-100.yaml] \\
-        [--library-metadata results.json] [--blind] [--source enwiki-1001-2002]
+        [--library-metadata results.json] [--blind | --tools-corpus-db FILE] \\
+        [--source enwiki-1001-2002]
 
 writes ``sourcesets/<id>/candidates/<universe>/<source-id>.json`` for every
-rendered source (references/locate-documents.md section 5).  The curated lists
+rendered source (references/locate-documents.md section 5), retrieved from the
+run's TOOLS database (section 9): the full ``corpus.sqlite``; the G1-blind
+``corpus.blind.sqlite`` under ``--blind``, into ``<universe>/blind/``; or a
+planted one under ``--tools-corpus-db``, into ``<universe>/planted-<sha16>/``.  The curated lists
 are the operator's files -- Mathlib's own ``$MATHLIB/docs/1000.yaml`` and
 ``$MATHLIB/docs/100.yaml`` at the universe's commit -- read as data; nothing is fetched.
 """
@@ -39,12 +43,17 @@ def register(subparsers) -> None:
                    help="a 1000.yaml-shaped file: Wikidata QID -> {title, decl|decls}")
     c.add_argument("--curated-100", type=Path, default=None, metavar="FILE",
                    help="a 100.yaml-shaped file: number -> {title, decl|decls}, matched by title")
-    c.add_argument("--curated-library", default="mathlib",
-                   help="the universe library the two curated lists name (default: mathlib)")
+    c.add_argument("--curated-library", default=None,
+                   help="the universe library the two curated lists name (default: the "
+                        "universe's Mathlib library)")
     c.add_argument("--library-metadata", type=Path, default=None, metavar="FILE",
                    help="{\"libraries\": {<id>: [{wikidata, title, declarations}]}}: main results")
     c.add_argument("--blind", action="store_true",
-                   help="the G1-blind arm: write no curated hit, and say so in each file")
+                   help="the G1-blind arm: retrieve from corpus.blind.sqlite, write no curated "
+                        "hit, and say so in each file")
+    c.add_argument("--tools-corpus-db", type=Path, default=None, metavar="FILE",
+                   help="retrieve from this planted database instead (built for the same "
+                        "universe; the run it feeds must name the same file)")
     c.add_argument("--limit", type=int, default=cand_mod.DEFAULT_LIMIT,
                    help=f"lexical hits kept per source (default {cand_mod.DEFAULT_LIMIT})")
 
@@ -60,16 +69,21 @@ def run(args) -> int:
                                   curated_library=args.curated_library)
     result = cand_mod.run(ws.paths, args.sourceset, args.universe, source_ids=args.sources,
                           version=args.manifest_version, lists=lists, blind=args.blind,
-                          limit=args.limit, workspace=ws)
-    with ss_state.update(ws.paths, args.sourceset) as st:
-        ss_state.record(st, "candidates", args.universe, {
-            "manifest": result["sourceset"], "universe_sha256": result["universe"]["sha256"],
-            "blind": result["blind"], "sources": len(result["written"]),
-            "curated": result["curated"], "lexical": result["lexical"],
-            "dropped": result["dropped"],
-            "skipped_unrendered": len(result["skipped_unrendered"])})
+                          planted=args.tools_corpus_db, limit=args.limit, workspace=ws)
+    # one row per universe AND database kind, so the blind arm's run never overwrites the
+    # assisted one's record; a --source run says it covered only those sources
+    kind = result["corpus_db"]["kind"]
+    key = args.universe if kind == "full" else f"{args.universe}/{Path(result['dir']).name}"
+    ss_state.record(ws.paths, args.sourceset, "candidates", key, {
+        "manifest": result["sourceset"], "universe_sha256": result["universe"]["sha256"],
+        "corpus_db": result["corpus_db"], "blind": result["blind"], "dir": result["dir"],
+        "partial": bool(args.sources), "written": result["written"],
+        "sources": len(result["written"]), "curated": result["curated"],
+        "lexical": result["lexical"], "dropped": result["dropped"],
+        "skipped_unrendered": len(result["skipped_unrendered"])})
     log.info(f"candidates: {len(result['written'])} source(s) of {args.sourceset} "
-             f"v{result['sourceset']['version']} against {args.universe}"
+             f"v{result['sourceset']['version']} against {args.universe} "
+             f"({result['corpus_db']['kind']} database)"
              f"{' (BLIND arm: no curated hits)' if args.blind else ''}: "
              f"{result['curated']} curated, {result['lexical']} lexical, "
              f"{result['dropped']} curated name(s) dropped (not in the universe)")

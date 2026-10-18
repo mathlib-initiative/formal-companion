@@ -10,11 +10,19 @@ planner: "sourceset-scoped, not companion-scoped") with the three presets
 
 Writes ``runs/<run-id>/`` in the layout of references/locate-documents.md
 section 9: ``run.yaml`` (with its ``locate`` block: the sourceset pin, the
-universe and ``corpus.sqlite`` shas), ``tasks/*.yaml``, ``prompts/``,
-``gate.json`` (the run host's paths) and ``gate.local.json`` (this machine's),
-a challenge run's ``challenge-plan.json``, and a tend root whose ``gate/``
-holds the task manifests, the gate's helpers and the vendored packages.  The
-counts land in the sourceset's own ``state.json``.
+universe and its two databases, the arm, the skill commit and the sha of
+every file staged for the gate and the bridge), ``tasks/*.yaml``,
+``prompts/``, ``gate.json`` (the run host's paths) and ``gate.local.json``
+(this machine's), a challenge run's ``challenge-plan.json``, and a tend root
+whose ``gate/`` holds the task manifests, the gate and its helpers and the
+vendored packages.  The counts land in the sourceset's own ``state.json``,
+through its one writer.
+
+The workers search the TOOLS database: the full ``corpus.sqlite`` by default,
+the G1-blind ``corpus.blind.sqlite`` with ``--blind``, a planted one for the P
+tier with ``--tools-corpus-db``; the gate always checks against the full one.
+An inventory or locate plan refuses a source with no candidates file, or with
+one retrieved from another kind of database than its workers search.
 
 Nothing here contacts a host or calls a model; planning is local and
 deterministic, and re-planning the same inputs rewrites the same tasks,
@@ -23,16 +31,17 @@ manifests and gate configuration.
 from __future__ import annotations
 
 import datetime as _dt
+from pathlib import Path
 
 from cflib import log, vocab
 from cflib.errors import CfError
-from cflib.hashing import sha256_text
-from cflib.jsonio import write_json
+from cflib.hashing import sha256_file, sha256_text
+from cflib.jsonio import read_json, write_json
 from cflib.workspace import from_args
 from cflib.yamlio import read_yaml, write_yaml
 
-from locate import inputs, plan as lplan, presets as lp, prompts as lprompts, state as ss_state
-from locate import tend_root as ltr
+from locate import export as lexport, inputs, plan as lplan, presets as lp
+from locate import prompts as lprompts, state as ss_state, tend_root as ltr
 from plan import models as models_mod
 from run import manifest as manifest_mod
 
@@ -59,8 +68,12 @@ def register(subparsers) -> None:
     p.add_argument("--subject-only", action="store_true",
                    help="locate: the article-level tier, one subject passage per article")
     p.add_argument("--blind", action="store_true",
-                   help="the G1-blind arm: the gate's curated-hit rule off (the candidates "
-                        "files must have been written with `cf locate candidates --blind`)")
+                   help="the G1-blind arm: the workers search corpus.blind.sqlite and the "
+                        "gate's curated-hit rule is off (the candidates files must have been "
+                        "written with `cf locate candidates --blind`)")
+    p.add_argument("--tools-corpus-db", type=Path, default=None, metavar="FILE",
+                   help="the P tier: the workers search this planted database (built for the "
+                        "same universe); the gate still checks against the full corpus.sqlite")
     p.add_argument("--seed", type=int, default=0,
                    help="locate-challenge: the stratified sample's seed (default 0)")
     p.add_argument("--sample-rate", type=float, default=0.2,
@@ -72,7 +85,8 @@ def register(subparsers) -> None:
                    help="run host; must be in workspace.yaml hosts.allowlist")
     p.add_argument("--model", default=None, help="model id to record and pass to the bridge")
     p.add_argument("--max-cost", type=float, default=None,
-                   help="USD spend cap recorded in run.yaml (required before the run is sent)")
+                   help="USD spend cap recorded in run.yaml as budget.max_cost (`cf run` "
+                        "refuses to send a run without one; the workspace default is not one)")
     p.add_argument("--i-have-consent", action="store_true",
                    help="the host's owner agreed to this run; recorded in run.yaml")
     p.add_argument("--allow-sandbox-bypass", action="store_true",
@@ -90,6 +104,34 @@ def _check_mode_flags(args) -> None:
                       hint="pass --challenge-of <run-id> (repeatable)")
     if args.preset != vocab.LOCATE_CHALLENGE and args.challenge_of:
         raise CfError("--challenge-of belongs to the locate-challenge preset")
+    if args.blind and args.tools_corpus_db:
+        raise CfError("--blind and --tools-corpus-db are two different arms",
+                      hint="the G1-blind arm searches corpus.blind.sqlite; the P tier searches a "
+                           "planted database")
+    if args.preset == vocab.LOCATE_CHALLENGE and args.sources:
+        raise CfError("--source does not narrow a challenge: it judges every required record "
+                      "of the --challenge-of runs",
+                      hint="challenge fewer locate runs per plan, or lower --sample-rate")
+    if args.max_open_tasks is not None and args.max_open_tasks < 1:
+        raise CfError(f"--max-open-tasks must be at least 1, not {args.max_open_tasks}",
+                      hint="omit it to leave tend's open tasks unbounded")
+
+
+def _check_run_id(paths, args, run_id: str, preset) -> None:
+    """Refuse a run id that names a run this plan reads, or a run of another preset."""
+    if run_id == args.inventory_run or run_id in args.challenge_of:
+        raise CfError(f"run id {run_id} names a run this plan reads",
+                      hint="give the new run its own --run-id")
+    path = paths.run_yaml(run_id)
+    if path.is_file():
+        previous = read_yaml(path) or {}
+        mode = (previous.get("locate") or {}).get("mode") if isinstance(previous, dict) else None
+        if not isinstance(previous, dict) or previous.get("preset") != preset.name or \
+                mode != preset.mode:
+            raise CfError(f"run {run_id} exists and was planned as "
+                          f"{previous.get('preset') if isinstance(previous, dict) else '?'!r}, "
+                          f"not {preset.name!r}",
+                          hint="re-planning keeps a run's preset; use a new --run-id")
 
 
 def _host(ws, host: str) -> dict:
@@ -105,18 +147,19 @@ def run(args) -> int:
     _check_mode_flags(args)
     preset = lp.get(args.preset)
     run_id = args.run_id or f"{preset.name}-{_dt.date.today().isoformat()}"
-    manifest = inputs.load_manifest(paths, args.sourceset, args.manifest_version)
+    _check_run_id(paths, args, run_id, preset)
+    manifest = inputs.manifest(paths, args.sourceset, args.manifest_version)
     universe = inputs.load_universe(paths, args.universe)
     db_path = paths.corpus_db(args.universe)
-    with inputs.CorpusDB(db_path) as db:
-        db_sha = db.sha256()
-        if db.meta.get("universe_sha256") not in (None, universe.sha256):
-            raise CfError(f"corpus.sqlite of {universe.id} was built for another universe",
-                          hint="rebuild it after the universe changed")
+    inputs.open_corpus(db_path, universe, blind=False).close()
+    db_sha = sha256_file(db_path)
+    tools_db = inputs.tools_database(paths, universe, blind=args.blind,
+                                     planted=args.tools_corpus_db)
+    arm = vocab.BENCH_ARM_BLIND if args.blind else vocab.BENCH_ARM_ASSISTED
     host = _host(ws, args.host)
     layouts = lplan.host_layout(paths, host=args.host, run_id=run_id,
                                 sourceset_id=args.sourceset, universe_id=args.universe,
-                                inventory_run=args.inventory_run, **host)
+                                tools_db=tools_db, **host)
     warnings: list[str] = []
 
     skipped: dict[str, str] = {}
@@ -124,57 +167,60 @@ def run(args) -> int:
     if preset.mode == vocab.LOCATE_INVENTORY:
         source_ids, unrendered = lplan.select_sources(manifest, args.sources)
         skipped.update({s: "not rendered" for s in unrendered})
+        candidates(paths, args.sourceset, universe, tools_db, source_ids, blind=args.blind)
         tasks = lplan.inventory_tasks(paths, manifest, source_ids)
     elif preset.mode == vocab.LOCATE:
-        inv_run = outcomes_pin_check(paths, args.inventory_run, manifest, universe)
+        inv_run = outcomes_pin_check(paths, args.inventory_run, manifest, universe, arm)
         frozen, left_out = lplan.frozen_inventory(paths, inv_run, manifest)
         skipped.update(left_out)
         wanted = list(args.sources) or sorted(frozen)
         unknown = [s for s in wanted if s not in manifest.entries]
         if unknown:
-            raise CfError(f"not in sourceset {manifest.sourceset} version {manifest.version}: "
+            raise CfError(f"not in sourceset {manifest.sourceset_id} version {manifest.version}: "
                           + ", ".join(unknown[:5]))
         source_ids = sorted(dict.fromkeys(wanted))
+        docs = candidates(paths, args.sourceset, universe, tools_db,
+                          [s for s in source_ids if frozen.get(s)], blind=args.blind)
+        curated = {sid: list(doc.get("curated") or []) for sid, doc in docs.items()}
         tasks, more = lplan.locate_tasks(manifest, frozen, source_ids, per_task=args.per_task,
-                                         subject_only=args.subject_only)
+                                         subject_only=args.subject_only, curated=curated)
         skipped.update(more)
     else:
         for run in args.challenge_of:
-            outcomes_pin_check(paths, run, manifest, universe)
+            outcomes_pin_check(paths, run, manifest, universe, arm)
         built = lplan.challenge_build(paths, list(args.challenge_of), seed=args.seed,
                                       sample_rate=args.sample_rate)
-        tasks = lplan.challenge_tasks(manifest, built)
+        tasks = lplan.challenge_tasks(manifest, built, paths)
         challenge_doc = lplan.challenge_document(run_id, built, tasks, seed=args.seed,
                                                  sample_rate=args.sample_rate,
                                                  locate_runs=list(args.challenge_of))
         source_ids = sorted({d["source_id"] for t in tasks for d in t.documents})
-    lplan.check_root_size(tasks)
-    if args.blind:
-        blind_check(paths, args.sourceset, args.universe, source_ids)
-    missing_candidates = [s for s in source_ids
-                          if not paths.candidates_json(args.sourceset, args.universe, s).is_file()]
-    if missing_candidates:
-        warnings.append(f"{len(missing_candidates)} source(s) have no candidates file for "
-                        f"{args.universe} (`cf locate candidates` writes them); the gate's "
-                        "curated-hit rule reads them")
+    if preset.mode == vocab.LOCATE_CHALLENGE and not tasks and challenge_doc["records"]:
+        # every record is not_required or sampled_out: the plan IS the challenge's result,
+        # and it needs no task, no harvest and no gate
+        warnings.append(f"no record of {', '.join(args.challenge_of)} is required at sample "
+                        f"rate {args.sample_rate}: every one is not_required or sampled_out, "
+                        "there is no challenge task to run, and the plan needs no harvest")
+    else:
+        lplan.check_root_size(tasks, preset.mode)
+    # every refusal is above this line: nothing of a refused re-plan is written
+    lplan.check_task_dir(tasks, paths.tasks_dir(run_id))
 
     model, model_source = models_mod.resolve(requested=args.model, preset=preset, workspace=ws)
     rd = paths.run_dir(run_id)
-    gate_remote = lplan.gate_config(
+    gate_remote, gate_local = (lplan.gate_config(
         preset_mode=preset.mode, preset_name=preset.name, run_id=run_id,
-        layout=layouts["host"], universe=universe, corpus_db_sha256=db_sha, manifest=manifest,
-        source_ids=source_ids, blind=args.blind, inventory_run=args.inventory_run,
-        challenged_runs=list(args.challenge_of))
-    gate_local = lplan.gate_config(
-        preset_mode=preset.mode, preset_name=preset.name, run_id=run_id,
-        layout=layouts["local"], universe=universe, corpus_db_sha256=db_sha, manifest=manifest,
-        source_ids=source_ids, blind=args.blind, inventory_run=args.inventory_run,
-        challenged_runs=list(args.challenge_of))
+        layout=layouts[side], universe=universe, corpus_db_sha256=db_sha, tools_db=tools_db,
+        manifest=manifest, source_ids=source_ids, blind=args.blind,
+        inventory_run=args.inventory_run, challenged_runs=list(args.challenge_of))
+        for side in ("host", "local"))
     rd.mkdir(parents=True, exist_ok=True)
     write_json(paths.gate_json(run_id), gate_remote, sort_keys=True)
     write_json(rd / "gate.local.json", gate_local, sort_keys=True)
     if challenge_doc is not None:
         write_json(rd / "challenge-plan.json", challenge_doc, sort_keys=True)
+    # the task manifests outside the tend root, which a workspace does not commit
+    write_json(rd / lplan.PLANNED_FILE, lplan.planned_document(run_id, tasks), sort_keys=True)
 
     lplan.write_tasks(tasks, paths.tasks_dir(run_id), layout=layouts["host"],
                       max_open_tasks=args.max_open_tasks)
@@ -188,13 +234,14 @@ def run(args) -> int:
         layout_host=layouts["host"], layout_local=layouts["local"], preset=preset,
         run_id=run_id, gate_config=gate_remote, prompts=prompts, tasks=tasks, model=model,
         agent=agent, allow_sandbox_bypass=bool(args.allow_sandbox_bypass),
-        context={"sourceset_pin": f"{manifest.sourceset} v{manifest.version} "
+        context={"sourceset_pin": f"{manifest.sourceset_id} v{manifest.version} "
                                   f"{manifest.sha256[:12]}",
                  "universe_pin": f"{universe.id} {universe.sha256[:12]}"})
     warnings.extend(built_root["warnings"])
-    if args.max_cost is None and ws.budget.get("max_cost_usd") is None:
-        warnings.append("no spend cap is recorded: a locate run is not sent to a host without "
-                        "one (pass --max-cost)")
+    if args.max_cost is None:
+        warnings.append("no spend cap is recorded (budget.max_cost): `cf run` refuses to send "
+                        "this run until --max-cost is given here or to `cf run`; the "
+                        "workspace default is recorded only as budget.workspace_max_cost_usd")
     summary = lplan.summarise(tasks)
     previous = read_yaml(paths.run_yaml(run_id)) if paths.run_yaml(run_id).exists() else {}
     consent = bool(args.i_have_consent)
@@ -214,9 +261,7 @@ def run(args) -> int:
         "remote": {"entrypoint": run_id, "tend_root": f"{run_id}-tend", "gate": f"{run_id}-gate",
                    "sourceset": f"sourcesets/{args.sourceset}/sources",
                    "corpus": f"corpora/{args.universe}",
-                   "candidates": f"sourcesets/{args.sourceset}/candidates/{args.universe}",
-                   "inventory": (f"inventories/{args.inventory_run}"
-                                 if args.inventory_run else None)},
+                   "candidates": f"sourcesets/{args.sourceset}/candidates/{args.universe}"},
         "consent": {"given": consent, "flag": "--i-have-consent",
                     "at": _now() if consent else None,
                     "note": "cf run refuses to start a remote run without this"},
@@ -233,21 +278,25 @@ def run(args) -> int:
         "tasks": {**summary, "max_per_task": (args.per_task if preset.mode == vocab.LOCATE
                                               else lp.shape(preset.name).max_per_task),
                   "max_open": args.max_open_tasks,
-                  "max_per_root": lp.MAX_TASKS_PER_ROOT},
+                  "max_per_root": vocab.MAX_TASKS_PER_ROOT},
         "prompts": {name: sha256_text(text) for name, text in sorted(prompts.items())},
         "concurrency": {"workers": preset.max_workers, "reviewers": preset.max_reviewers},
         "budget": {"currency": "USD",
-                   "max_cost": args.max_cost if args.max_cost is not None
-                   else ws.budget.get("max_cost_usd"),
+                   "max_cost": args.max_cost,
+                   "workspace_max_cost_usd": ws.budget.get("max_cost_usd"),
                    "billing_path": ws.budget.get("billing_path")},
         "locate": {
             "mode": preset.mode,
             "sourceset": manifest.pin(),
             "universe": {"id": universe.id, "sha256": universe.sha256,
-                         "corpus_db_sha256": db_sha},
+                         "corpus_db_sha256": db_sha,
+                         "tools_corpus_db": {"kind": tools_db["kind"],
+                                             "sha256": tools_db["sha256"]}},
             "inventory_run": args.inventory_run,
             "challenged_runs": list(args.challenge_of),
-            "arm": vocab.BENCH_ARM_BLIND if args.blind else vocab.BENCH_ARM_ASSISTED,
+            "arm": arm,
+            "skill_commit": lexport.skill_commit(),
+            "gate_files": built_root["gate_files"],
             "per_task": args.per_task if preset.mode == vocab.LOCATE else None,
             "subject_only": bool(args.subject_only),
             "seed": args.seed if preset.mode == vocab.LOCATE_CHALLENGE else None,
@@ -260,17 +309,17 @@ def run(args) -> int:
         "warnings": warnings,
     }
     write_yaml(paths.run_yaml(run_id), run_doc, header=f"# run.yaml -- {run_id} (locate)\n")
-    with ss_state.update(paths, args.sourceset) as st:
-        ss_state.record(st, "runs", run_id, {
-            "preset": preset.name, "manifest": manifest.pin(), "universe": universe.pin(),
-            "tasks": summary["count"], "documents": summary["documents"],
-            "passages": summary["passages"], "host": args.host, "status": "planned",
-            "skipped": len(skipped)})
+    ss_state.record(paths, args.sourceset, "runs", run_id, {
+        "preset": preset.name, "manifest": manifest.pin(), "universe": universe.pin(),
+        "arm": arm, "tasks": summary["count"], "documents": summary["documents"],
+        "passages": summary["passages"], "host": args.host, "status": "planned",
+        "skipped": len(skipped)})
 
     print(f"planned locate run {run_id}: {summary['count']} task(s) [{preset.name}] -> {rd}")
-    print(f"  sourceset: {manifest.sourceset} v{manifest.version} ({manifest.sha256[:12]}), "
+    print(f"  sourceset: {manifest.sourceset_id} v{manifest.version} ({manifest.sha256[:12]}), "
           f"{len(source_ids)} source(s), {summary['passages']} passage(s)/record(s)")
-    print(f"  universe : {universe.id} ({universe.sha256[:12]}), corpus.sqlite {db_sha[:12]}")
+    print(f"  universe : {universe.id} ({universe.sha256[:12]}), corpus.sqlite {db_sha[:12]}; "
+          f"tools search the {tools_db['kind']} database {tools_db['sha256'][:12]}")
     print(f"  gate     : {layouts['host']['gate_command']}")
     print(f"  model    : {model or '(bridge default)'} (from {model_source})")
     if skipped:
@@ -288,30 +337,72 @@ def _now() -> str:
     return state_mod.now()
 
 
-def outcomes_pin_check(paths, run_id: str, manifest: inputs.Manifest,
-                       universe: inputs.Universe) -> str:
-    """A run this plan builds on pins this sourceset and this universe, or it is refused."""
+def outcomes_pin_check(paths, run_id: str, manifest, universe: inputs.Universe,
+                       arm: str) -> str:
+    """A run this plan builds on pins this sourceset, this universe and this arm, or is refused.
+
+    The arm is the bench's unit of comparison: a blind locate run over an
+    assisted inventory (or a challenge of a run of the other arm) would be
+    scored as one arm while half of it was the other.
+    """
     from locate import outcomes as outcomes_mod
 
     run = outcomes_mod.run_yaml(paths, run_id)
     block = run["locate"]
-    if (block.get("sourceset") or {}).get("id") != manifest.sourceset:
+    if (block.get("sourceset") or {}).get("id") != manifest.sourceset_id:
         raise CfError(f"run {run_id} pins sourceset {(block.get('sourceset') or {}).get('id')!r}, "
-                      f"not {manifest.sourceset!r}")
+                      f"not {manifest.sourceset_id!r}")
     if (block.get("universe") or {}).get("id") != universe.id and block.get("mode") != \
             vocab.LOCATE_INVENTORY:
         raise CfError(f"run {run_id} was located in universe "
                       f"{(block.get('universe') or {}).get('id')!r}, not {universe.id!r}")
+    if (block.get("arm") or vocab.BENCH_ARM_ASSISTED) != arm:
+        raise CfError(f"run {run_id} is the {block.get('arm') or vocab.BENCH_ARM_ASSISTED} arm and "
+                      f"this plan is the {arm} arm",
+                      hint="plan every run of one arm with the same --blind (an inventory, its "
+                           "locate runs and their challenges)")
     return run_id
 
 
-def blind_check(paths, sourceset_id: str, universe_id: str, source_ids: list[str]) -> None:
-    """A blind plan reads candidates files that are blind, or the arm is not blind."""
-    from cflib.jsonio import read_json
+def candidates(paths, sourceset_id: str, universe: inputs.Universe, tools_db: dict,
+               source_ids: list[str], *, blind: bool) -> dict[str, dict]:
+    """``{source_id: candidates document}`` of every planned source, or refuse.
 
+    The gate's curated-hit rule reads each file and fails closed without one, so
+    a missing file is refused here.  Each must have been written for this
+    universe as it is now, from the same kind of database the workers will
+    search (the very file, for a planted one), and in the same arm.
+    """
+    docs: dict[str, dict] = {}
+    missing: list[str] = []
+    fix = (f"`cf locate candidates --sourceset {sourceset_id} --universe {universe.id}"
+           + (" --blind" if blind else "")
+           + (f" --tools-corpus-db {tools_db['path']}"
+              if tools_db["kind"] == inputs.TOOLS_PLANTED else "") + "`")
     for sid in source_ids:
-        path = paths.candidates_json(sourceset_id, universe_id, sid)
-        if path.is_file() and not read_json(path).get("blind"):
-            raise CfError(f"{sid}'s candidates file is not the blind arm's",
-                          hint="re-run `cf locate candidates --blind` for this sourceset and "
-                               "universe before planning the blind arm")
+        path = inputs.candidates_dir(paths, sourceset_id, universe.id, tools_db) / f"{sid}.json"
+        if not path.is_file():
+            missing.append(sid)
+            continue
+        doc = read_json(path)
+        made = doc.get("corpus_db") if isinstance(doc.get("corpus_db"), dict) else {}
+        if doc.get("universe_sha256") != universe.sha256:
+            raise CfError(f"{sid}'s candidates file was written for another state of universe "
+                          f"{universe.id}", hint=f"re-run {fix}")
+        if made.get("kind") != tools_db["kind"] or (
+                tools_db["kind"] == inputs.TOOLS_PLANTED
+                and made.get("sha256") != tools_db["sha256"]):
+            raise CfError(f"{sid}'s candidates were retrieved from the "
+                          f"{made.get('kind') or 'unrecorded'} database, and this run's workers "
+                          f"search the {tools_db['kind']} one", hint=f"re-run {fix}")
+        if bool(doc.get("blind")) != bool(blind):
+            raise CfError(f"{sid}'s candidates file is {'' if doc.get('blind') else 'not '}the "
+                          f"blind arm's, and this plan is {'' if blind else 'not '}blind",
+                          hint=f"re-run {fix}")
+        docs[sid] = doc
+    if missing:
+        raise CfError(f"{len(missing)} planned source(s) have no candidates file from the "
+                      f"{tools_db['kind']} database of universe {universe.id}: "
+                      + ", ".join(missing[:5]),
+                      hint=f"{fix} writes them; the gate's curated-hit rule reads them")
+    return docs

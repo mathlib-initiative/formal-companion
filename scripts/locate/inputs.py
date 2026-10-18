@@ -1,193 +1,152 @@
-"""Readers of the formats the other locate packages write.
+"""The planner's views of the other locate packages' artifacts, through their owners.
 
 New code, reading references/locate-documents.md section 7 (sourcesets and
-rendered web sources), section 8 (universes, library indexes and
-``corpus.sqlite``) and section 10 (harvested documents), for the planner,
-the outcomes and the export.
+rendered web sources), section 8 (universes and ``corpus.sqlite``) and
+section 10 (harvested documents) for the candidates, the planner, the
+outcomes and the export.  Nothing here parses one of those formats itself:
 
-**These are deliberately small, private readers.**  The sourceset writer and
-the renderer are ``scripts/sources/``'s, the universe and ``corpus.sqlite``
-builder ``scripts/corpus/``'s; this package reads their on-disk formats
-directly so that it depends on the documented format and nothing else, and
-the integrate step replaces these readers with those packages' own where they
-exist.  Every reader refuses what the format does not allow (a manifest whose
-header is not ``cf-sourceset/1``, a universe whose recorded sha is not the one
-its libraries hash to) instead of guessing.
+* a sourceset manifest is ``sources.sourceset.Sourceset``'s (:func:`manifest`,
+  :func:`pinned_manifest`), with its own validation, append-only chain and
+  ``preferred()`` one-source-per-page rule; :func:`rendered` is the planner's
+  one extra rule (a source is plannable once it has a body, a layer and a
+  renderer);
+* a rendered source's views are read through :class:`SourceView`, which takes
+  the layer and formulas from ``sources.render_html.read_layer`` and refuses a
+  missing view instead of reading it as empty;
+* a universe is ``corpus.universe.Universe.load``'s, wrapped in the small
+  :class:`Universe` view the planner passes around (its sha COMPUTED, and the
+  recorded one refused when it differs);
+* ``corpus.sqlite`` is opened with ``corpus.query.open_db`` and pinned to the
+  universe with ``corpus.query.check_universe`` (:func:`open_corpus`): a run's
+  identity is the universe sha the database was built for, never the file's
+  bytes, which a rebuild changes;
+* a harvested run is listed with ``harvest.files.iter_finding_files`` and its
+  receipt read with ``harvest.harvest.read_receipt``.
 """
 from __future__ import annotations
 
 import json
-import re
 import sqlite3
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator
+from typing import Any
 
-from cflib import hashing, registry
+from cflib import hashing
 from cflib.errors import CfError
 from cflib.jsonio import read_json
 from cflib.paths import WorkspacePaths
-from cflib.yamlio import read_yaml
 
-SOURCESET_SCHEMA = "cf-sourceset/1"
-CORPUS_SCHEMA = "cf-corpus/1"
-_COMMIT = re.compile(r"[0-9a-f]{40}\Z")
-_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+from corpus import query
+from corpus.universe import Universe as CorpusUniverse
+from harvest import files as harvest_files
+from harvest.harvest import read_receipt
+from sources import render_html
+from sources.sourceset import Manifest, Sourceset
 
-#: files that sit beside findings in a harvested run and are not documents
-#: (``harvest._compat.NON_FINDING_FILES``'s names; matched on the basename)
-NON_DOCUMENT_FILES = {"RECEIPT.json", "run.yaml", "run.json", "manifest.json",
-                      "tally.json", "journal-harvest.json", "gate.json", "gate.local.json",
-                      "queue_remaining.json"}
+#: the database kinds a run's TOOLS database can be (references/locate-documents.md
+#: section 9): the full one, the G1-blind one, a planted (module-ablated) one
+TOOLS_FULL = "full"
+TOOLS_BLIND = "blind"
+TOOLS_PLANTED = "planted"
+TOOLS_KINDS = (TOOLS_FULL, TOOLS_BLIND, TOOLS_PLANTED)
 
 
 # --------------------------------------------------------------------------
 # sourcesets (section 7)
 # --------------------------------------------------------------------------
 
-@dataclass
-class Manifest:
-    """One version of a sourceset: its header, its entries by source id, its sha."""
-
-    sourceset: str
-    version: int
-    path: Path
-    sha256: str
-    header: dict
-    entries: dict[str, dict] = field(default_factory=dict)
-
-    def pin(self) -> dict:
-        """``{id, version, manifest_sha256}``: what a run records."""
-        return {"id": self.sourceset, "version": self.version, "manifest_sha256": self.sha256}
-
-    def rendered(self, source_id: str) -> bool:
-        entry = self.entries.get(source_id) or {}
-        return bool(entry.get("html_sha256") and entry.get("layer_sha256")
-                    and entry.get("renderer"))
+def manifest(paths: WorkspacePaths, sourceset_id: str, version: int | None = None) -> Manifest:
+    """Version ``version`` of a sourceset (the newest by default), validated by its owner."""
+    ss = Sourceset.open(paths, sourceset_id)
+    return ss.latest() if version is None else ss.load(int(version))
 
 
-def _manifest_lines(path: Path) -> Iterator[tuple[int, dict]]:
-    with path.open(encoding="utf-8") as fh:
-        for number, line in enumerate(fh, 1):
-            if not line.strip():
-                continue
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
-                raise CfError(f"{path}:{number}: not JSON ({exc.msg})") from None
-            if not isinstance(row, dict):
-                raise CfError(f"{path}:{number}: a manifest line is a JSON object")
-            yield number, row
+def pinned_manifest(paths: WorkspacePaths, pin: dict) -> Manifest:
+    """The manifest a run pinned (``{id, version, manifest_sha256}``), refused if rewritten."""
+    return Sourceset.open(paths, str(pin["id"])).pinned(int(pin["version"]),
+                                                        str(pin["manifest_sha256"]))
 
 
-def load_manifest(paths: WorkspacePaths, sourceset_id: str,
-                  version: int | None = None) -> Manifest:
-    """Version ``version`` of a sourceset (default: the newest), validated."""
-    versions = paths.sourceset_manifests(sourceset_id)
-    if not versions:
-        raise CfError(f"sourceset {sourceset_id!r} has no manifest under "
-                      f"{paths.sourceset_dir(sourceset_id)}",
-                      hint="the sourceset is created, enumerated, fetched and rendered by the "
-                           "sources stage (references/locate-documents.md section 7)")
-    if version is None:
-        version, path = versions[-1]
-    else:
-        found = dict(versions)
-        if version not in found:
-            raise CfError(f"sourceset {sourceset_id!r} has no manifest version {version}",
-                          hint="versions on disk: " + ", ".join(str(n) for n, _ in versions))
-        path = found[version]
-    rows = list(_manifest_lines(path))
-    if not rows:
-        raise CfError(f"{path} is empty: line 1 is the cf-sourceset/1 header")
-    header = rows[0][1]
-    if header.get("schema") != SOURCESET_SCHEMA:
-        raise CfError(f"{path}: line 1 is not a {SOURCESET_SCHEMA} header")
-    if str(header.get("id")) != sourceset_id or header.get("version") != version:
-        raise CfError(f"{path}: the header names sourceset {header.get('id')!r} version "
-                      f"{header.get('version')!r}, not {sourceset_id!r} version {version}")
-    entries: dict[str, dict] = {}
-    previous = ""
-    for number, row in rows[1:]:
-        sid = str(row.get("source_id") or "")
-        if registry.parse_web_source_id(sid) is None:
-            raise CfError(f"{path}:{number}: {sid!r} is not a web source id")
-        if sid in entries:
-            raise CfError(f"{path}:{number}: source {sid} is listed twice")
-        if sid < previous:
-            raise CfError(f"{path}:{number}: the entries are not sorted by source_id")
-        previous = sid
-        entries[sid] = row
-    return Manifest(sourceset=sourceset_id, version=version, path=path,
-                    sha256=hashing.sha256_file(path), header=header, entries=entries)
+def rendered(entry: dict | None) -> bool:
+    """Is a manifest entry plannable: a body, a layer and the renderer that made it?"""
+    return bool(entry and entry.get("html_sha256") and entry.get("layer_sha256")
+                and entry.get("renderer"))
+
+
+def check_source(paths: WorkspacePaths, sourceset_id: str, entry: dict) -> None:
+    """Refuse a source whose files on disk are not the ones its entry pins."""
+    problems = Sourceset(paths, sourceset_id).source_problems(entry)
+    if problems:
+        raise CfError("; ".join(problems),
+                      hint=f"re-render it: `cf sourceset render {sourceset_id} --source "
+                           f"{entry['source_id']}`")
 
 
 class SourceView:
-    """The files of one rendered web source (section 7's table)."""
+    """The rendered views of one web source (section 7's table), each one required."""
 
-    def __init__(self, directory: Path, source_id: str):
+    def __init__(self, directory: Path, source_id: str, sourceset_id: str = ""):
         self.dir = Path(directory)
         self.source_id = source_id
+        self.sourceset_id = sourceset_id
 
-    def _path(self, name: str) -> Path:
+    def _missing(self, name: str) -> CfError:
+        hint = (f"`cf sourceset render {self.sourceset_id} --source {self.source_id}` restores "
+                f"a view whose layer is unchanged") if self.sourceset_id else None
+        return CfError(f"{self.source_id}: {name} is missing from {self.dir}", hint=hint)
+
+    def json(self, name: str) -> Any:
         path = self.dir / name
         if not path.is_file():
-            raise CfError(f"{self.source_id}: {name} is missing from {self.dir}",
-                          hint="the source is not rendered; the sources stage renders it")
-        return path
-
-    def text(self, name: str) -> str:
-        return self._path(name).read_text(encoding="utf-8")
-
-    def json(self, name: str, default: Any = None) -> Any:
-        path = self.dir / name
-        if not path.is_file():
-            if default is not None:
-                return default
-            self._path(name)
+            raise self._missing(name)
         return read_json(path)
 
+    def layer_and_formulas(self) -> tuple[str, list[dict]]:
+        for name in ("layer.txt", "formulas.json"):
+            if not (self.dir / name).is_file():
+                raise self._missing(name)
+        return render_html.read_layer(self.dir)
+
     def layer(self) -> str:
-        return self.text("layer.txt")
+        return self.layer_and_formulas()[0]
 
     def formulas(self) -> list[dict]:
-        return list(self.json("formulas.json", []))
+        return list(self.layer_and_formulas()[1])
 
     def finders(self) -> list[dict]:
-        return list(self.json("finders.json", []))
+        return list(self.json("finders.json"))
 
     def paragraphs(self) -> list[dict]:
-        return list(self.json("paragraphs.json", []))
+        return list(self.json("paragraphs.json"))
 
     def sections(self) -> list[dict]:
-        return list(self.json("sections.json", []))
+        return list(self.json("sections.json"))
 
-    def layer_sha256(self) -> str:
-        return hashing.sha256_file(self._path("layer.txt"))
+    def layer_map(self) -> list[list[int]]:
+        """``layer_map.json``'s segments (``sources.render_html.LayerMap``)."""
+        if not (self.dir / "layer_map.json").is_file():
+            raise self._missing("layer_map.json")
+        return render_html.LayerMap.read(self.dir).segments
 
 
 def source_view(paths: WorkspacePaths, sourceset_id: str, source_id: str) -> SourceView:
-    return SourceView(paths.sourceset_source_dir(sourceset_id, source_id), source_id)
+    return SourceView(paths.sourceset_source_dir(sourceset_id, source_id), source_id,
+                      sourceset_id)
 
 
 # --------------------------------------------------------------------------
 # universes (section 8)
 # --------------------------------------------------------------------------
 
-def universe_sha256(libraries: Iterable[dict]) -> str:
-    """sha256 over ``<id>\\t<commit>\\t<index sha256>`` per library, sorted by id, ``\\n``-joined."""
-    lines = sorted(f"{lib['id']}\t{lib['commit']}\t{(lib.get('index') or {}).get('sha256', '')}"
-                   for lib in libraries)
-    return hashing.sha256_text("\n".join(lines))
-
-
 @dataclass
 class Universe:
+    """The planner's view of a ``corpus.universe.Universe``: ids, commits, the computed sha."""
+
     id: str
     sha256: str
     libraries: dict[str, dict]
     excluded: list[dict]
-    data: dict
+    owner: CorpusUniverse
 
     def library(self, library_id: str) -> dict:
         try:
@@ -206,127 +165,112 @@ class Universe:
         return {lid: {"repo": str(lib.get("repo") or ""), "commit": str(lib["commit"])}
                 for lid, lib in sorted(self.libraries.items())}
 
+    def mathlib_library(self) -> dict | None:
+        return self.owner.mathlib_library()
+
 
 def load_universe(paths: WorkspacePaths, universe_id: str) -> Universe:
+    """``corpus.universe.Universe.load``, its recorded sha checked against the computed one."""
     path = paths.universe_yaml(universe_id)
-    if not path.is_file():
-        raise CfError(f"universe {universe_id!r} has no universe.yaml at {path}",
-                      hint="the corpus stage writes it (references/locate-documents.md section 8)")
-    data = read_yaml(path)
-    if not isinstance(data, dict) or str(data.get("id")) != universe_id:
-        raise CfError(f"{path} is not universe {universe_id!r}")
-    libraries: dict[str, dict] = {}
-    for lib in data.get("libraries") or []:
-        if not isinstance(lib, dict) or not lib.get("id"):
-            raise CfError(f"{path}: a library without an id")
-        lid = str(lib["id"])
-        if not _COMMIT.match(str(lib.get("commit") or "")):
-            raise CfError(f"{path}: library {lid} has no 40-hex commit")
-        if lid in libraries:
-            raise CfError(f"{path}: library {lid} is listed twice")
-        libraries[lid] = dict(lib)
-    if not libraries:
-        raise CfError(f"{path}: universe {universe_id} has no libraries")
-    computed = universe_sha256(libraries.values())
-    recorded = str(data.get("universe_sha256") or "")
+    owner = CorpusUniverse.load(path)
+    if owner.id != universe_id:
+        raise CfError(f"{path} is universe {owner.id!r}, not {universe_id!r}")
+    computed = owner.sha256()
+    recorded = str(owner.data.get("universe_sha256") or "")
     if recorded != computed:
         raise CfError(f"{path}: universe_sha256 {recorded[:12] or '(none)'} is not the sha its "
                       f"libraries hash to ({computed[:12]})",
-                      hint="a re-probe or an edited library changes the universe; rebuild it "
-                           "through the corpus stage rather than editing the sha")
-    return Universe(id=universe_id, sha256=computed, libraries=libraries,
-                    excluded=list(data.get("excluded") or []), data=data)
+                      hint="a re-probe or an edited library changes the universe; write it "
+                           "through `cf corpus` rather than editing the sha")
+    if not owner.libraries:
+        raise CfError(f"{path}: universe {universe_id} has no libraries")
+    return Universe(id=owner.id, sha256=computed,
+                    libraries={str(lib["id"]): dict(lib) for lib in owner.libraries},
+                    excluded=owner.excluded, owner=owner)
 
 
 # --------------------------------------------------------------------------
 # corpus.sqlite (section 8)
 # --------------------------------------------------------------------------
 
-_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
-_TOKEN = re.compile(r"\w+", re.UNICODE)
+def open_corpus(path: Path, universe: Universe, *, blind: bool | None = None
+                ) -> sqlite3.Connection:
+    """A read-only connection to a database built for ``universe`` as it is now.
+
+    ``corpus.query.check_universe``: the database's ``meta.universe_sha256`` must
+    be the universe's computed sha (and, with ``blind`` given, the database must
+    or must not be the G1-blind one).  The file's bytes are not compared -- a
+    rebuild of an unchanged universe is the same database.
+    """
+    if not Path(path).is_file():
+        raise CfError(f"no corpus database at {path}",
+                      hint=f"build it with `cf corpus build-db {universe.id}"
+                           + (" --blind`" if blind else "`"))
+    conn = query.open_db(path)
+    try:
+        query.check_universe(conn, universe.owner, blind=blind)
+    except CfError:
+        conn.close()
+        raise
+    return conn
 
 
-def name_words(name: str) -> str:
-    """A declaration name split at ``.``, ``_`` and lower-to-upper changes, lowercased."""
-    parts = re.split(r"[._]+", str(name or ""))
-    words: list[str] = []
-    for part in parts:
-        words.extend(w for w in _CAMEL.split(part) if w)
-    return " ".join(w.lower() for w in words)
+def database_record(path: Path, kind: str) -> dict:
+    """``{path, sha256, kind}``: a database as a run records it."""
+    return {"path": str(path), "sha256": hashing.sha256_file(path), "kind": kind}
 
 
-def fts_query(text: str, *, any_word: bool = False) -> str:
-    """An FTS5 MATCH expression for the words of ``text``: every word, or any (``OR``)."""
-    words = [w.lower() for w in _TOKEN.findall(str(text or ""))]
-    quoted = ['"' + w.replace('"', '""') + '"' for w in dict.fromkeys(words)]
-    return (" OR " if any_word else " ").join(quoted)
+def candidates_subdir(db: dict) -> str | None:
+    """The candidates directory of a TOOLS database kind: None for the full one's own."""
+    if db["kind"] == TOOLS_BLIND:
+        return TOOLS_BLIND
+    if db["kind"] == TOOLS_PLANTED:
+        return f"{TOOLS_PLANTED}-{db['sha256'][:16]}"
+    return None
 
 
-class CorpusDB:
-    """``corpus.sqlite`` opened read-only and immutable, as everywhere but its builder."""
+def candidates_dir(paths: WorkspacePaths, sourceset_id: str, universe_id: str,
+                   db: dict) -> Path:
+    """Where the candidates retrieved from ``db`` live (references/locate-documents.md section 5)."""
+    sub = candidates_subdir(db)
+    return (paths.candidates_kind_dir(sourceset_id, universe_id, sub) if sub
+            else paths.candidates_dir(sourceset_id, universe_id))
 
-    def __init__(self, path: Path):
-        self.path = Path(path)
-        if not self.path.is_file():
-            raise CfError(f"corpus.sqlite is missing at {self.path}",
-                          hint="the corpus stage builds it (references/locate-documents.md "
-                               "section 8)")
-        uri = f"file:{self.path.resolve().as_posix()}?mode=ro&immutable=1"
-        self.conn = sqlite3.connect(uri, uri=True)
-        self.conn.row_factory = sqlite3.Row
-        meta = dict(self.conn.execute("SELECT key, value FROM meta").fetchall())
-        if meta.get("schema") != CORPUS_SCHEMA:
-            raise CfError(f"{self.path} is not a {CORPUS_SCHEMA} database")
-        self.meta = meta
 
-    def close(self) -> None:
-        self.conn.close()
+def open_tools(db: dict, universe: Universe) -> sqlite3.Connection:
+    """Open a TOOLS database record, checked as its kind: only ``blind`` is the blind build."""
+    return open_corpus(Path(db["path"]), universe, blind=db["kind"] == TOOLS_BLIND)
 
-    def __enter__(self) -> "CorpusDB":
-        return self
 
-    def __exit__(self, *exc) -> None:
-        self.close()
+def tools_database(paths: WorkspacePaths, universe: Universe, *, blind: bool = False,
+                   planted: Path | None = None) -> dict:
+    """``{path, sha256, kind}`` of the database a run's workers search (section 9).
 
-    def sha256(self) -> str:
-        return hashing.sha256_file(self.path)
-
-    def decl(self, library: str, commit: str, name: str) -> dict | None:
-        """The exact table's row, or None: the existence check of gate rule 3."""
-        row = self.conn.execute(
-            "SELECT * FROM decls WHERE library = ? AND commit_sha = ? AND name = ?",
-            (library, commit, name)).fetchone()
-        return dict(row) if row is not None else None
-
-    def tagged(self, tag: str, value: str) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT d.*, t.value AS tag_value FROM tags t JOIN decls d ON d.id = t.decl_id "
-            "WHERE t.tag = ? AND t.value = ? ORDER BY d.library, d.name", (tag, value)).fetchall()
-        return [dict(r) for r in rows]
-
-    def tags_of_kind(self, tag: str) -> list[dict]:
-        rows = self.conn.execute(
-            "SELECT d.*, t.value AS tag_value FROM tags t JOIN decls d ON d.id = t.decl_id "
-            "WHERE t.tag = ? ORDER BY d.library, d.name, t.value", (tag,)).fetchall()
-        return [dict(r) for r in rows]
-
-    def search(self, query: str, *, limit: int = 20) -> list[dict]:
-        """FTS5 hits for a MATCH expression, best first, with a positive ``score``."""
-        if not query:
-            return []
-        try:
-            rows = self.conn.execute(
-                "SELECT d.*, bm25(decls_fts) AS rank FROM decls_fts "
-                "JOIN decls d ON d.id = decls_fts.rowid WHERE decls_fts MATCH ? "
-                "ORDER BY rank, d.library, d.name LIMIT ?", (query, int(limit))).fetchall()
-        except sqlite3.OperationalError as exc:
-            raise CfError(f"{self.path}: the full-text query {query!r} failed ({exc})") from None
-        out = []
-        for row in rows:
-            item = dict(row)
-            item["score"] = round(-float(item.pop("rank")), 4)
-            out.append(item)
-        return out
+    ``full`` is ``corpora/<u>/corpus.sqlite`` itself; ``blind`` (the G1-blind
+    arm) is ``corpora/<u>/corpus.blind.sqlite``, refused when it was never
+    built; ``planted`` (the P tier) is a file the operator names, which must be
+    a full (not blind) database built for this universe.  Each is opened and
+    pinned to the universe before it is recorded.
+    """
+    if blind and planted:
+        raise CfError("--blind and --tools-corpus-db are two different arms",
+                      hint="the G1-blind arm searches corpus.blind.sqlite; the P tier searches a "
+                           "planted database")
+    if planted:
+        path, kind = Path(planted).resolve(), TOOLS_PLANTED
+        if not path.is_file():
+            raise CfError(f"no planted database at {planted}",
+                          hint="`cf bench freeze --plant` writes one")
+    elif blind:
+        path, kind = paths.corpus_db_blind(universe.id), TOOLS_BLIND
+        if not path.is_file():
+            raise CfError(f"universe {universe.id} has no G1-blind database at {path}",
+                          hint=f"build it with `cf corpus build-db {universe.id} --blind`")
+    else:
+        path, kind = paths.corpus_db(universe.id), TOOLS_FULL
+    record = {"path": str(path), "kind": kind}
+    open_tools(record, universe).close()
+    return database_record(path, kind)
 
 
 # --------------------------------------------------------------------------
@@ -334,21 +278,17 @@ class CorpusDB:
 # --------------------------------------------------------------------------
 
 def harvested_documents(run_dir: Path) -> list[tuple[str, dict]]:
-    """``[(relative path, document)]`` of every JSON document under a harvested run, recursively.
+    """``[(relative path, document)]`` of a harvested run: ``<task-id>/<source-id>.json``.
 
-    ``findings/<task-id>/<source-id>.json`` is the layout; a document that is not
-    a JSON object is refused by name, as the harvest receipt refuses it.
+    The listing is ``harvest.files.iter_finding_files``' -- the receipt's own --
+    so the tally and the receipt agree on which files are documents.  A document
+    that is not a JSON object is refused by name, as the receipt marks it
+    malformed.
     """
     root = Path(run_dir)
-    if not root.is_dir():
-        return []
     out: list[tuple[str, dict]] = []
-    for path in sorted(root.rglob("*.json")):
-        if path.name in NON_DOCUMENT_FILES or path.name.startswith("."):
-            continue
-        if any(part.startswith(".") for part in path.relative_to(root).parts):
-            continue
-        rel = path.relative_to(root).as_posix()
+    for path in harvest_files.iter_finding_files(root):
+        rel = harvest_files.finding_name(path, root)
         try:
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
@@ -360,20 +300,12 @@ def harvested_documents(run_dir: Path) -> list[tuple[str, dict]]:
 
 
 def receipt(run_dir: Path) -> dict | None:
-    path = Path(run_dir) / "RECEIPT.json"
-    if not path.is_file():
-        return None
-    data = read_json(path)
-    return data if isinstance(data, dict) else None
+    got = read_receipt(Path(run_dir))
+    return got if isinstance(got, dict) else None
 
 
 def require_gated(run_dir: Path, run_id: str, what: str) -> dict:
-    """The receipt of a harvested run that is complete and passed its gate, or refuse.
-
-    A frozen inventory and a challenged run are inputs only once the gate froze
-    them: a receipt that is incomplete, or carries no gate block, or whose gate
-    failed, is not one.
-    """
+    """The receipt of a harvested run that is complete and passed its gate, or refuse."""
     got = receipt(run_dir)
     if got is None:
         raise CfError(f"{what} {run_id!r} has no RECEIPT.json under {run_dir}",
